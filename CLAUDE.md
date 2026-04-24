@@ -71,3 +71,8 @@ In `src/components/`: bb-button, bb-input, bb-chip, bb-checkbox, bb-toggle, bb-l
 - "If you can't read it aloud, it's mono" (hashes, IDs, sizes, timestamps)
 - No emojis in UI
 - Honest copy: "We can't recover this" not "bank-grade security"
+
+
+## Keep shared docs in sync
+
+When you add/change/remove endpoints, types, build commands, or dependencies: update the relevant skill file in `/home/guus/code/beebeeb.io/.claude/skills/` (beebeeb-api.md, beebeeb-designs.md, beebeeb-stack.md, beebeeb-dev.md). Other agents depend on these being accurate.
