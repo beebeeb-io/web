@@ -14,6 +14,25 @@ export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY)
 }
 
+// ─── Global error hooks ─────────────────────────────
+// Registered at app startup by ToastProvider / AuthProvider.
+
+type ErrorNotifier = (message: string) => void
+type SessionExpiredHandler = () => void
+
+let notifyError: ErrorNotifier | null = null
+let onSessionExpired: SessionExpiredHandler | null = null
+
+/** Register a callback to show a toast when the API is unreachable. */
+export function registerErrorNotifier(fn: ErrorNotifier): void {
+  notifyError = fn
+}
+
+/** Register a callback to handle 401 (token expired) globally. */
+export function registerSessionExpiredHandler(fn: SessionExpiredHandler): void {
+  onSessionExpired = fn
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {},
@@ -27,10 +46,24 @@ async function request<T>(
     headers['Authorization'] = `Bearer ${token}`
   }
 
-  const res = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers,
-  })
+  let res: Response
+  try {
+    res = await fetch(`${API_URL}${path}`, {
+      ...options,
+      headers,
+    })
+  } catch (_err) {
+    const message = 'Could not reach the server. Check your connection and try again.'
+    notifyError?.(message)
+    throw new ApiError(message, 0)
+  }
+
+  if (res.status === 401) {
+    // Token expired or invalid — auto-logout
+    clearToken()
+    onSessionExpired?.()
+    throw new ApiError('Session expired', 401)
+  }
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))

@@ -1,9 +1,13 @@
-import { useState, useCallback } from 'react'
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { useState, useCallback, useEffect } from 'react'
+import { BrowserRouter, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { AuthProvider, useAuth } from './lib/auth-context'
 import { KeyProvider } from './lib/key-context'
-import { ToastProvider } from './components/toast'
+import { ToastProvider, useToast } from './components/toast'
+import { ErrorBoundary } from './components/error-boundary'
+import { WasmGuard } from './components/wasm-guard'
+import { OfflineBanner } from './components/offline-banner'
+import { registerErrorNotifier, registerSessionExpiredHandler } from './lib/api'
 import { CommandPalette } from './components/command-palette'
 import { ShortcutsCheatsheet } from './components/shortcuts-cheatsheet'
 import { useKeyboardShortcuts } from './hooks/use-keyboard-shortcuts'
@@ -41,7 +45,7 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
   if (loading) return null
   if (!user) return <Navigate to="/login" replace />
-  return <>{children}</>
+  return <WasmGuard>{children}</WasmGuard>
 }
 
 function GuestRoute({ children }: { children: ReactNode }) {
@@ -49,6 +53,27 @@ function GuestRoute({ children }: { children: ReactNode }) {
   if (loading) return null
   if (user) return <Navigate to="/" replace />
   return <>{children}</>
+}
+
+/** Wire API error hooks into the toast + routing system. */
+function ApiErrorWiring() {
+  const { showToast } = useToast()
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    registerErrorNotifier((message) => {
+      showToast({ icon: 'cloud', title: 'Connection error', description: message, danger: true })
+    })
+    registerSessionExpiredHandler(() => {
+      navigate('/login', { replace: true })
+    })
+    return () => {
+      registerErrorNotifier(null as unknown as (m: string) => void)
+      registerSessionExpiredHandler(null as unknown as () => void)
+    }
+  }, [showToast, navigate])
+
+  return null
 }
 
 function GlobalShortcuts() {
@@ -77,10 +102,13 @@ function GlobalShortcuts() {
 
 export function App() {
   return (
+    <ErrorBoundary>
     <BrowserRouter>
       <AuthProvider>
         <KeyProvider>
         <ToastProvider>
+        <ApiErrorWiring />
+        <OfflineBanner />
         <GlobalShortcuts />
         <Routes>
           <Route
@@ -308,5 +336,6 @@ export function App() {
         </KeyProvider>
       </AuthProvider>
     </BrowserRouter>
+    </ErrorBoundary>
   )
 }
