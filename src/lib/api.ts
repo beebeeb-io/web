@@ -510,6 +510,86 @@ export async function inviteMember(email: string): Promise<{ message: string; em
   })
 }
 
+// ─── Shared with me endpoints ────────────────────
+
+export interface SharedWithMeItem {
+  file_name_encrypted: string
+  file_size: number
+  from_email: string
+  access_level: string
+  expires: string | null
+  created_at: string
+  is_folder: boolean
+}
+
+export async function listSharedWithMe(): Promise<SharedWithMeItem[]> {
+  const data = await request<{ items: SharedWithMeItem[] }>('/api/v1/shared-with-me')
+  return data.items
+}
+
+// ─── Passkey endpoints ──────────────────────────
+
+export interface PasskeyInfo {
+  id: string
+  name: string
+  created_at: string
+}
+
+export async function startPasskeyRegistration(): Promise<{
+  publicKey: PublicKeyCredentialCreationOptions
+  reg_state: string
+}> {
+  return request('/api/v1/auth/passkey/register-start', {
+    method: 'POST',
+  })
+}
+
+export async function finishPasskeyRegistration(
+  credential: unknown,
+  regState: string,
+  name?: string,
+): Promise<PasskeyInfo> {
+  return request<PasskeyInfo>('/api/v1/auth/passkey/register-finish', {
+    method: 'POST',
+    body: JSON.stringify({ credential, reg_state: regState, name }),
+  })
+}
+
+export async function startPasskeyLogin(email: string): Promise<{
+  publicKey: PublicKeyCredentialRequestOptions
+  auth_state: string
+  user_id: string
+}> {
+  return request('/api/v1/auth/passkey/login-start', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  })
+}
+
+export async function finishPasskeyLogin(
+  credential: unknown,
+  authState: string,
+  userId: string,
+): Promise<LoginResult> {
+  const data = await request<LoginResult>('/api/v1/auth/passkey/login-finish', {
+    method: 'POST',
+    body: JSON.stringify({ credential, auth_state: authState, user_id: userId }),
+  })
+  if (data.session_token) {
+    setToken(data.session_token)
+  }
+  return data
+}
+
+export async function listPasskeys(): Promise<PasskeyInfo[]> {
+  const data = await request<{ passkeys: PasskeyInfo[] }>('/api/v1/auth/passkeys')
+  return data.passkeys
+}
+
+export async function deletePasskey(id: string): Promise<void> {
+  await request<void>(`/api/v1/auth/passkeys/${id}`, { method: 'DELETE' })
+}
+
 // ─── Activity endpoints ──────────────────────────
 
 export interface ActivityEvent {

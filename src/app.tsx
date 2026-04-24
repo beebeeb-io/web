@@ -32,6 +32,8 @@ import { VerifyEmail } from './pages/verify-email'
 import { Migration } from './pages/migration'
 import { Team } from './pages/team'
 import { AcceptInvite } from './pages/accept-invite'
+import { SharedWithMe } from './pages/shared-with-me'
+import { PasskeySetup } from './pages/passkey-setup'
 import { NotFound } from './pages/errors/not-found'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
@@ -274,6 +276,22 @@ export function App() {
             }
           />
           <Route path="/invite/:token" element={<AcceptInvite />} />
+          <Route
+            path="/shared"
+            element={
+              <ProtectedRoute>
+                <SharedWithMe />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/settings/passkeys"
+            element={
+              <ProtectedRoute>
+                <PasskeySetup />
+              </ProtectedRoute>
+            }
+          />
           <Route path="/s/:token" element={<ShareViewPage />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

@@ -34,7 +34,7 @@ export async function encryptedDownload(
       nonce: string
       ciphertext: string
     }
-    filename = decryptFilename(
+    filename = await decryptFilename(
       fileKey,
       fromBase64(parsed.nonce),
       fromBase64(parsed.ciphertext),
@@ -77,7 +77,7 @@ export async function encryptedDownload(
     // For multi-chunk, the server should separate them or provide metadata.
     const ciphertext = encryptedBytes.slice(offset)
     try {
-      const plaintext = decryptChunk(fileKey, nonce, ciphertext)
+      const plaintext = await decryptChunk(fileKey, nonce, ciphertext)
       decryptedParts.push(plaintext)
       break // Successfully decrypted everything
     } catch {
@@ -87,12 +87,12 @@ export async function encryptedDownload(
       const CHUNK_CT_SIZE = 1024 * 1024 + 16
       if (ciphertext.length > CHUNK_CT_SIZE) {
         const chunkCt = encryptedBytes.slice(offset, offset + CHUNK_CT_SIZE)
-        const plaintext = decryptChunk(fileKey, nonce, chunkCt)
+        const plaintext = await decryptChunk(fileKey, nonce, chunkCt)
         decryptedParts.push(plaintext)
         offset += CHUNK_CT_SIZE
       } else {
         // Last chunk — decrypt whatever is left
-        const plaintext = decryptChunk(fileKey, nonce, ciphertext)
+        const plaintext = await decryptChunk(fileKey, nonce, ciphertext)
         decryptedParts.push(plaintext)
         break
       }

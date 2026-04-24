@@ -37,7 +37,7 @@ export async function encryptedUpload(
   onProgress?.({ stage: 'Encrypting', progress: 0 })
 
   // 1. Encrypt the filename
-  const encName = encryptFilename(fileKey, file.name)
+  const encName = await encryptFilename(fileKey, file.name)
   const nameEncrypted = JSON.stringify({
     nonce: toBase64(encName.nonce),
     ciphertext: toBase64(encName.ciphertext),
@@ -49,7 +49,7 @@ export async function encryptedUpload(
   const encryptedChunks: Array<{ nonce: Uint8Array; ciphertext: Uint8Array }> = []
 
   for (let i = 0; i < totalChunks; i++) {
-    const encrypted = encryptChunk(fileKey, chunks[i])
+    const encrypted = await encryptChunk(fileKey, chunks[i])
     encryptedChunks.push(encrypted)
     onProgress?.({
       stage: 'Encrypting',

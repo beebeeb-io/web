@@ -1,31 +1,36 @@
 // ─── Crypto service ─────────────────────────────────
-// Wraps the beebeeb-wasm module. Master key lives in memory only.
+// Proxies all WASM crypto operations to a Web Worker via Comlink.
+// Master key lives in memory on the main thread only.
 
-import type * as WasmTypes from 'beebeeb-wasm'
+import * as Comlink from 'comlink'
+import type { CryptoWorker } from '../workers/crypto.worker'
 
-let wasmModule: typeof WasmTypes | null = null
+let workerProxy: Comlink.Remote<CryptoWorker> | null = null
 let initPromise: Promise<void> | null = null
 
-/** Lazily initialize the WASM module (singleton). */
+/** Spawn the crypto worker and initialize WASM inside it (singleton). */
 export async function initCrypto(): Promise<void> {
-  if (wasmModule) return
+  if (workerProxy) return
   if (initPromise) return initPromise
 
   initPromise = (async () => {
-    const mod = await import('beebeeb-wasm')
-    // The default export is the init function — call it to load the .wasm
-    await mod.default()
-    wasmModule = mod
+    const worker = new Worker(
+      new URL('../workers/crypto.worker.ts', import.meta.url),
+      { type: 'module' },
+    )
+    const proxy = Comlink.wrap<CryptoWorker>(worker)
+    await proxy.init()
+    workerProxy = proxy
   })()
 
   return initPromise
 }
 
-function getWasm(): typeof WasmTypes {
-  if (!wasmModule) {
-    throw new Error('WASM not initialized — call initCrypto() first')
+function getProxy(): Comlink.Remote<CryptoWorker> {
+  if (!workerProxy) {
+    throw new Error('Crypto worker not initialized — call initCrypto() first')
   }
-  return wasmModule
+  return workerProxy
 }
 
 // ─── Key derivation ─────────────────────────────────
@@ -36,18 +41,16 @@ export async function deriveKeys(
   salt: Uint8Array,
 ): Promise<{ masterKey: Uint8Array }> {
   await initCrypto()
-  const result = getWasm().derive_master_key(password, salt)
-  return { masterKey: result.key as Uint8Array }
+  const masterKey = await getProxy().deriveKeys(password, salt)
+  return { masterKey }
 }
 
 /** Derive a per-file key from the master key and a file ID string. */
-export function deriveFileKey(
+export async function deriveFileKey(
   masterKey: Uint8Array,
   fileId: string,
-): Uint8Array {
-  const encoder = new TextEncoder()
-  const fileIdBytes = encoder.encode(fileId)
-  return getWasm().derive_file_key(masterKey, fileIdBytes)
+): Promise<Uint8Array> {
+  return getProxy().deriveFileKey(masterKey, fileId)
 }
 
 // ─── Chunk encryption ───────────────────────────────
@@ -58,24 +61,24 @@ export interface EncryptedChunk {
 }
 
 /** Encrypt a plaintext chunk with AES-256-GCM. */
-export function encryptChunk(
+export async function encryptChunk(
   fileKey: Uint8Array,
   plaintext: Uint8Array,
-): EncryptedChunk {
-  const result = getWasm().encrypt_chunk(fileKey, plaintext)
+): Promise<EncryptedChunk> {
+  const result = await getProxy().encryptChunk(fileKey, plaintext)
   return {
-    nonce: result.nonce as Uint8Array,
-    ciphertext: result.ciphertext as Uint8Array,
+    nonce: result.nonce,
+    ciphertext: result.ciphertext,
   }
 }
 
 /** Decrypt a chunk that was encrypted with encryptChunk. */
-export function decryptChunk(
+export async function decryptChunk(
   fileKey: Uint8Array,
   nonce: Uint8Array,
   ciphertext: Uint8Array,
-): Uint8Array {
-  return getWasm().decrypt_chunk(fileKey, nonce, ciphertext)
+): Promise<Uint8Array> {
+  return getProxy().decryptChunk(fileKey, nonce, ciphertext)
 }
 
 // ─── Metadata (filename) encryption ─────────────────
@@ -86,43 +89,39 @@ export interface EncryptedMetadata {
 }
 
 /** Encrypt a filename / metadata string with AES-256-GCM. */
-export function encryptFilename(
+export async function encryptFilename(
   fileKey: Uint8Array,
   filename: string,
-): EncryptedMetadata {
-  const result = getWasm().encrypt_metadata(fileKey, filename)
+): Promise<EncryptedMetadata> {
+  const result = await getProxy().encryptFilename(fileKey, filename)
   return {
-    nonce: result.nonce as Uint8Array,
-    ciphertext: result.ciphertext as Uint8Array,
+    nonce: result.nonce,
+    ciphertext: result.ciphertext,
   }
 }
 
 /** Decrypt a filename / metadata string. */
-export function decryptFilename(
+export async function decryptFilename(
   fileKey: Uint8Array,
   nonce: Uint8Array,
   ciphertext: Uint8Array,
-): string {
-  return getWasm().decrypt_metadata(fileKey, nonce, ciphertext)
+): Promise<string> {
+  return getProxy().decryptFilename(fileKey, nonce, ciphertext)
 }
 
 // ─── Recovery phrase ────────────────────────────────
 
 /** Generate a 12-word BIP39 recovery phrase and the corresponding master key. */
-export function generateRecoveryPhrase(): {
+export async function generateRecoveryPhrase(): Promise<{
   phrase: string
   masterKey: Uint8Array
-} {
-  const result = getWasm().generate_recovery_phrase()
-  return {
-    phrase: result.phrase as string,
-    masterKey: result.master_key as Uint8Array,
-  }
+}> {
+  return getProxy().generateRecoveryPhrase()
 }
 
 /** Recover the master key from a 12-word BIP39 phrase. */
-export function recoverFromPhrase(phrase: string): Uint8Array {
-  return getWasm().recover_from_phrase(phrase)
+export async function recoverFromPhrase(phrase: string): Promise<Uint8Array> {
+  return getProxy().recoverFromPhrase(phrase)
 }
 
 // ─── Helpers ────────────────────────────────────────

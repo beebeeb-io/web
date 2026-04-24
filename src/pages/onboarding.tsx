@@ -38,16 +38,23 @@ export function Onboarding() {
 
   useEffect(() => {
     if (!cryptoReady) return
-    try {
-      const { phrase, masterKey } = generateRecoveryPhrase()
-      setRecoveryWords(phrase.split(' '))
-      // Store the recovery-derived master key
-      setMasterKey(masterKey)
-    } catch (err) {
-      setPhraseError(
-        err instanceof Error ? err.message : 'Failed to generate recovery phrase',
-      )
+    let cancelled = false
+    async function generate() {
+      try {
+        const { phrase, masterKey } = await generateRecoveryPhrase()
+        if (cancelled) return
+        setRecoveryWords(phrase.split(' '))
+        // Store the recovery-derived master key
+        setMasterKey(masterKey)
+      } catch (err) {
+        if (cancelled) return
+        setPhraseError(
+          err instanceof Error ? err.message : 'Failed to generate recovery phrase',
+        )
+      }
     }
+    generate()
+    return () => { cancelled = true }
   }, [cryptoReady, setMasterKey])
 
   return (

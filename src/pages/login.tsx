@@ -7,6 +7,7 @@ import { Icon } from '../components/icons'
 import { TwoFactorPrompt } from '../components/two-factor-prompt'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
+import { startPasskeyLogin, finishPasskeyLogin, getMe, setToken } from '../lib/api'
 
 export function Login() {
   const navigate = useNavigate()
@@ -21,6 +22,7 @@ export function Login() {
 
   // 2FA state
   const [partialToken, setPartialToken] = useState<string | null>(null)
+  const [passkeyLoading, setPasskeyLoading] = useState(false)
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -58,6 +60,65 @@ export function Login() {
     const salt = encoder.encode(email)
     await unlock(password, salt)
     navigate('/')
+  }
+
+  async function handlePasskeyLogin() {
+    setError('')
+
+    if (!email) {
+      setError('Enter your email first to sign in with passkey')
+      return
+    }
+
+    setPasskeyLoading(true)
+    try {
+      // Step 1: Get challenge from server
+      const startRes = await startPasskeyLogin(email)
+
+      // Step 2: Call WebAuthn API
+      const credential = await navigator.credentials.get({
+        publicKey: startRes.publicKey,
+      }) as PublicKeyCredential | null
+
+      if (!credential) {
+        setError('Passkey authentication was cancelled')
+        setPasskeyLoading(false)
+        return
+      }
+
+      // Step 3: Send credential back to server
+      const response = credential.response as AuthenticatorAssertionResponse
+      const credentialData = {
+        id: credential.id,
+        rawId: bufferToBase64url(credential.rawId),
+        type: credential.type,
+        response: {
+          authenticatorData: bufferToBase64url(response.authenticatorData),
+          clientDataJSON: bufferToBase64url(response.clientDataJSON),
+          signature: bufferToBase64url(response.signature),
+          userHandle: response.userHandle ? bufferToBase64url(response.userHandle) : null,
+        },
+      }
+
+      const result = await finishPasskeyLogin(
+        credentialData,
+        startRes.auth_state,
+        startRes.user_id,
+      )
+
+      if (result.session_token) {
+        setToken(result.session_token)
+        await getMe()
+        // Note: passkey login skips password-based key unlock.
+        // The vault key would need to be stored encrypted on the server
+        // or retrieved via another mechanism. For now, navigate to drive.
+        navigate('/')
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Passkey authentication failed')
+    } finally {
+      setPasskeyLoading(false)
+    }
   }
 
   // Show 2FA prompt when login returned requires_2fa
@@ -149,11 +210,12 @@ export function Login() {
           type="button"
           variant="default"
           size="md"
-          className="w-full gap-2 opacity-50 cursor-not-allowed"
-          disabled
+          className="w-full gap-2"
+          onClick={handlePasskeyLogin}
+          disabled={passkeyLoading}
         >
           <Icon name="key" size={14} />
-          Sign in with passkey
+          {passkeyLoading ? 'Waiting for device...' : 'Sign in with passkey'}
         </BBButton>
 
         <p className="text-xs text-ink-3 text-center mt-5">
@@ -168,4 +230,15 @@ export function Login() {
       </form>
     </AuthShell>
   )
+}
+
+// ─── WebAuthn helpers ──────────────────────────────
+
+function bufferToBase64url(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }

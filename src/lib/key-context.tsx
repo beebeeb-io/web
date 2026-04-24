@@ -32,8 +32,8 @@ interface KeyState {
   unlock: (password: string, salt: Uint8Array) => Promise<void>
   /** Set the master key directly (e.g. from recovery phrase or signup). */
   setMasterKey: (key: Uint8Array) => void
-  /** Derive a per-file key from the master key. */
-  getFileKey: (fileId: string) => Uint8Array
+  /** Derive a per-file key from the master key (async — runs in worker). */
+  getFileKey: (fileId: string) => Promise<Uint8Array>
   /** Zero and clear the master key. */
   lock: () => void
 }
@@ -75,7 +75,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     setIsUnlocked(true)
   }, [])
 
-  const getFileKey = useCallback((fileId: string): Uint8Array => {
+  const getFileKey = useCallback(async (fileId: string): Promise<Uint8Array> => {
     if (!masterKeyRef.current) {
       throw new Error('Vault is locked — unlock first')
     }

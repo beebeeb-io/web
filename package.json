@@ -13,6 +13,7 @@
   "license": "AGPL-3.0-or-later",
   "dependencies": {
     "beebeeb-wasm": "../../repos/core/beebeeb-wasm/pkg",
+    "comlink": "^4.4.2",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-markdown": "^10.1.0",

@@ -108,6 +108,7 @@ export function Drive() {
   const { getFileKey, isUnlocked, cryptoReady, cryptoError } = useKeys()
   const [activeNav, setActiveNav] = useState<NavId>('files')
   const [files, setFiles] = useState<DriveFile[]>(MOCK_FILES)
+  const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({})
   const [breadcrumbs, setBreadcrumbs] = useState<{ id: string | null; name: string }[]>([
     { id: null, name: 'All files' },
   ])
@@ -234,7 +235,7 @@ export function Drive() {
 
     // Generate a UUID for the file (used for key derivation)
     const fileId = crypto.randomUUID()
-    const fileKey = getFileKey(fileId)
+    const fileKey = await getFileKey(fileId)
 
     try {
       await encryptedUpload(file, fileId, fileKey, currentParentId, (p) => {
@@ -269,7 +270,7 @@ export function Drive() {
     if (!isUnlocked || !cryptoReady || file.is_folder) return
 
     try {
-      const fileKey = getFileKey(file.id)
+      const fileKey = await getFileKey(file.id)
       await encryptedDownload(
         file.id,
         fileKey,
@@ -281,24 +282,42 @@ export function Drive() {
     }
   }
 
-  /** Try to decrypt an encrypted filename for display. Falls back to raw value. */
-  function displayName(file: DriveFile): string {
-    if (!isUnlocked) return file.name_encrypted
-    try {
-      const parsed = JSON.parse(file.name_encrypted) as {
-        nonce: string
-        ciphertext: string
-      }
-      const fileKey = getFileKey(file.id)
-      return decryptFilename(
-        fileKey,
-        fromBase64(parsed.nonce),
-        fromBase64(parsed.ciphertext),
-      )
-    } catch {
-      // Not encrypted JSON — return raw (mock data or plaintext)
-      return file.name_encrypted
+  // Decrypt file names asynchronously when files or unlock state change
+  useEffect(() => {
+    if (!isUnlocked) {
+      setDecryptedNames({})
+      return
     }
+    let cancelled = false
+    async function decryptAll() {
+      const names: Record<string, string> = {}
+      for (const file of files) {
+        if (cancelled) return
+        try {
+          const parsed = JSON.parse(file.name_encrypted) as {
+            nonce: string
+            ciphertext: string
+          }
+          const fileKey = await getFileKey(file.id)
+          names[file.id] = await decryptFilename(
+            fileKey,
+            fromBase64(parsed.nonce),
+            fromBase64(parsed.ciphertext),
+          )
+        } catch {
+          // Not encrypted JSON — use raw value
+          names[file.id] = file.name_encrypted
+        }
+      }
+      if (!cancelled) setDecryptedNames(names)
+    }
+    decryptAll()
+    return () => { cancelled = true }
+  }, [files, isUnlocked, getFileKey])
+
+  /** Get the display name for a file (decrypted if available, raw otherwise). */
+  function displayName(file: DriveFile): string {
+    return decryptedNames[file.id] ?? file.name_encrypted
   }
 
   async function handleCreateFolder(name: string) {
@@ -307,8 +326,8 @@ export function Drive() {
       let nameEncrypted = name
       if (isUnlocked && cryptoReady) {
         const folderId = crypto.randomUUID()
-        const folderKey = getFileKey(folderId)
-        const enc = encryptFilename(folderKey, name)
+        const folderKey = await getFileKey(folderId)
+        const enc = await encryptFilename(folderKey, name)
         nameEncrypted = JSON.stringify({
           nonce: toBase64(enc.nonce),
           ciphertext: toBase64(enc.ciphertext),
