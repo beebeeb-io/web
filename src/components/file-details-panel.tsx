@@ -2,7 +2,6 @@ import { useEffect, useRef } from 'react'
 import { Icon } from './icons'
 import type { IconName } from './icons'
 import { BBButton } from './bb-button'
-import { BBChip } from './bb-chip'
 
 export interface FileDetailsMeta {
   id: string

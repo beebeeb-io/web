@@ -257,6 +257,50 @@ export async function restoreFile(id: string): Promise<void> {
   await request<void>(`/api/v1/files/${id}/restore`, { method: 'POST' })
 }
 
+export async function toggleStar(
+  id: string,
+): Promise<{ id: string; is_starred: boolean }> {
+  return request<{ id: string; is_starred: boolean }>(
+    `/api/v1/files/${id}/star`,
+    { method: 'PATCH' },
+  )
+}
+
+// ─── Password / Account endpoints ───────────────
+
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<{ message: string; salt: string; session_token: string }> {
+  const data = await request<{
+    message: string
+    salt: string
+    session_token: string
+  }>('/api/v1/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify({
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+  })
+  setToken(data.session_token)
+  return data
+}
+
+export async function deleteAccountPermanently(
+  confirmation: string,
+): Promise<{ message: string; shred_after: string }> {
+  const data = await request<{ message: string; shred_after: string }>(
+    '/api/v1/auth/account',
+    {
+      method: 'DELETE',
+      body: JSON.stringify({ confirmation }),
+    },
+  )
+  clearToken()
+  return data
+}
+
 // ─── Share endpoints ────────────────────────────
 
 export interface ShareOptions {

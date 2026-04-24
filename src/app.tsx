@@ -34,6 +34,7 @@ import { Team } from './pages/team'
 import { AcceptInvite } from './pages/accept-invite'
 import { SharedWithMe } from './pages/shared-with-me'
 import { PasskeySetup } from './pages/passkey-setup'
+import { DeleteAccount } from './pages/delete-account'
 import { NotFound } from './pages/errors/not-found'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
@@ -289,6 +290,14 @@ export function App() {
             element={
               <ProtectedRoute>
                 <PasskeySetup />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/settings/delete-account"
+            element={
+              <ProtectedRoute>
+                <DeleteAccount />
               </ProtectedRoute>
             }
           />
