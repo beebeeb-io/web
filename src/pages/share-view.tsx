@@ -1,0 +1,318 @@
+import { useState, useEffect, useCallback } from 'react'
+import { useParams } from 'react-router-dom'
+import { BBLogo } from '../components/bb-logo'
+import { BBButton } from '../components/bb-button'
+import { BBChip } from '../components/bb-chip'
+import { Icon } from '../components/icons'
+import {
+  getShare,
+  verifySharePassphrase,
+  downloadSharedFile,
+  type ShareView as ShareViewData,
+} from '../lib/api'
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+}
+
+function formatExpiry(expiresAt: string | null | undefined): string {
+  if (!expiresAt) return 'Never'
+  const exp = new Date(expiresAt)
+  const now = Date.now()
+  const diff = exp.getTime() - now
+  if (diff <= 0) return 'Expired'
+  const hours = Math.floor(diff / (1000 * 60 * 60))
+  if (hours < 1) {
+    const minutes = Math.floor(diff / (1000 * 60))
+    return `${minutes}m remaining`
+  }
+  if (hours < 24) return `${hours}h remaining`
+  const days = Math.floor(hours / 24)
+  return `${days}d remaining`
+}
+
+export function ShareViewPage() {
+  const { token } = useParams<{ token: string }>()
+  const [shareData, setShareData] = useState<ShareViewData | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [passphrase, setPassphrase] = useState('')
+  const [verifying, setVerifying] = useState(false)
+  const [verifyError, setVerifyError] = useState<string | null>(null)
+  const [downloading, setDownloading] = useState(false)
+
+  useEffect(() => {
+    if (!token) return
+    setLoading(true)
+    getShare(token)
+      .then((data) => {
+        setShareData(data)
+        setLoading(false)
+      })
+      .catch((e) => {
+        setError(e instanceof Error ? e.message : 'Failed to load share')
+        setLoading(false)
+      })
+  }, [token])
+
+  const handleVerify = useCallback(async () => {
+    if (!token || !passphrase.trim()) return
+    setVerifying(true)
+    setVerifyError(null)
+    try {
+      const data = await verifySharePassphrase(token, passphrase)
+      setShareData(data)
+    } catch (e) {
+      setVerifyError(e instanceof Error ? e.message : 'Invalid passphrase')
+    } finally {
+      setVerifying(false)
+    }
+  }, [token, passphrase])
+
+  const handleDownload = useCallback(async () => {
+    if (!token || !shareData) return
+    setDownloading(true)
+    try {
+      const blob = await downloadSharedFile(token)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = shareData.name_encrypted ?? 'download'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch {
+      // Download failed
+    } finally {
+      setDownloading(false)
+    }
+  }, [token, shareData])
+
+  // Honeycomb background pattern
+  const honeycombBg = (
+    <div
+      className="absolute inset-0 opacity-[0.04]"
+      style={{
+        backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='100' viewBox='0 0 56 100'%3E%3Cpath d='M28 66L0 50L0 16L28 0L56 16L56 50L28 66Z' fill='none' stroke='%23000' stroke-width='1'/%3E%3C/svg%3E")`,
+        backgroundSize: '56px 100px',
+      }}
+    />
+  )
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-paper">
+        <div className="text-ink-3 text-sm">Loading...</div>
+      </div>
+    )
+  }
+
+  // Expired or max opens reached
+  if (shareData?.error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-paper relative overflow-hidden">
+        {honeycombBg}
+        <div className="relative w-full max-w-md mx-4">
+          <div className="text-center">
+            <BBLogo size={16} />
+            <div className="mt-8 bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
+              <div className="p-8 text-center">
+                <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-red/10 flex items-center justify-center">
+                  <Icon name="clock" size={24} className="text-red" />
+                </div>
+                <h2 className="text-lg font-semibold text-ink mb-2">
+                  {shareData.error === 'expired' ? 'This link has expired' : 'Link unavailable'}
+                </h2>
+                <p className="text-sm text-ink-3">
+                  {shareData.message}
+                </p>
+              </div>
+              <div className="px-8 py-4 bg-paper-2 border-t border-line">
+                <div className="flex items-center justify-center gap-1.5 text-[11px] text-ink-3">
+                  <Icon name="shield" size={11} className="text-amber-deep" />
+                  End-to-end encrypted with Beebeeb
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // General error
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-paper relative overflow-hidden">
+        {honeycombBg}
+        <div className="relative w-full max-w-md mx-4">
+          <div className="text-center">
+            <BBLogo size={16} />
+            <div className="mt-8 bg-paper border border-line-2 rounded-xl shadow-3 p-8 text-center">
+              <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-red/10 flex items-center justify-center">
+                <Icon name="x" size={24} className="text-red" />
+              </div>
+              <h2 className="text-lg font-semibold text-ink mb-2">Share not found</h2>
+              <p className="text-sm text-ink-3">{error}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Passphrase required
+  if (shareData?.requires_passphrase) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-paper relative overflow-hidden">
+        {honeycombBg}
+        <div className="relative w-full max-w-md mx-4">
+          <div className="text-center mb-8">
+            <BBLogo size={16} />
+          </div>
+          <div className="bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
+            <div className="px-6 py-4 border-b border-line flex items-center gap-2.5">
+              <Icon name="lock" size={14} className="text-amber-deep" />
+              <span className="text-sm font-semibold">Password protected</span>
+            </div>
+            <div className="p-6">
+              <p className="text-sm text-ink-3 mb-4">
+                This file is protected with a passphrase. Enter it below to access the file.
+              </p>
+              <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 mb-3 focus-within:ring-2 focus-within:ring-amber/30 focus-within:border-amber-deep">
+                <Icon name="key" size={14} className="text-ink-3 shrink-0" />
+                <input
+                  type="password"
+                  value={passphrase}
+                  onChange={(e) => setPassphrase(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleVerify()
+                  }}
+                  placeholder="Enter passphrase"
+                  className="flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-4"
+                  autoFocus
+                />
+              </div>
+              {verifyError && (
+                <p className="text-xs text-red mb-3">{verifyError}</p>
+              )}
+              <BBButton
+                variant="amber"
+                size="md"
+                className="w-full justify-center gap-2"
+                onClick={handleVerify}
+                disabled={verifying || !passphrase.trim()}
+              >
+                <Icon name="lock" size={13} />
+                {verifying ? 'Verifying...' : 'Unlock file'}
+              </BBButton>
+            </div>
+            <div className="px-6 py-3 bg-paper-2 border-t border-line">
+              <div className="flex items-center justify-center gap-1.5 text-[11px] text-ink-3">
+                <Icon name="shield" size={11} className="text-amber-deep" />
+                End-to-end encrypted with Beebeeb
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // File info view
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-paper relative overflow-hidden">
+      {honeycombBg}
+      <div className="relative w-full max-w-md mx-4">
+        <div className="text-center mb-8">
+          <BBLogo size={16} />
+        </div>
+        <div className="bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
+          {/* Header */}
+          <div className="px-6 py-4 border-b border-line flex items-center gap-2.5">
+            <Icon name="share" size={14} className="text-ink" />
+            <span className="text-sm font-semibold">Shared file</span>
+            <BBChip variant="amber">
+              <span className="flex items-center gap-1 text-[9.5px]">
+                <Icon name="lock" size={9} /> E2EE
+              </span>
+            </BBChip>
+          </div>
+
+          {/* File info */}
+          <div className="p-6">
+            <div className="flex items-start gap-3 mb-5">
+              <div className="w-11 h-[52px] bg-paper-2 border border-line rounded-md flex items-center justify-center shrink-0">
+                <Icon name="file" size={18} className="text-ink-3" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h2 className="text-[15px] font-semibold text-ink leading-snug break-all">
+                  {shareData?.name_encrypted ?? 'Unknown file'}
+                </h2>
+                <p className="text-xs text-ink-3 mt-1">
+                  {shareData?.size_bytes != null ? formatBytes(shareData.size_bytes) : ''}
+                  {shareData?.mime_type ? ` · ${shareData.mime_type}` : ''}
+                </p>
+              </div>
+            </div>
+
+            {/* Details */}
+            <div className="flex flex-col gap-2 mb-5">
+              {shareData?.shared_by && (
+                <div className="flex items-center text-[12px] gap-3">
+                  <span className="text-ink-3 w-[80px] shrink-0">Shared by</span>
+                  <span className="text-ink-2">{shareData.shared_by}</span>
+                </div>
+              )}
+              {shareData?.expires_at !== undefined && (
+                <div className="flex items-center text-[12px] gap-3">
+                  <span className="text-ink-3 w-[80px] shrink-0">Expires</span>
+                  <span className="text-ink-2">{formatExpiry(shareData.expires_at)}</span>
+                </div>
+              )}
+              {shareData?.open_count != null && shareData?.max_opens != null && (
+                <div className="flex items-center text-[12px] gap-3">
+                  <span className="text-ink-3 w-[80px] shrink-0">Opens</span>
+                  <span className="text-ink-2">{shareData.open_count} / {shareData.max_opens}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Download button */}
+            {shareData?.can_download !== false && (
+              <BBButton
+                variant="amber"
+                size="lg"
+                className="w-full justify-center gap-2"
+                onClick={handleDownload}
+                disabled={downloading}
+              >
+                <Icon name="download" size={14} />
+                {downloading ? 'Downloading...' : 'Download file'}
+              </BBButton>
+            )}
+
+            {shareData?.can_download === false && (
+              <div className="px-3 py-2 bg-paper-2 border border-line rounded-md text-xs text-ink-3 text-center">
+                Download is not enabled for this share
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="px-6 py-3 bg-paper-2 border-t border-line">
+            <div className="flex items-center justify-center gap-1.5 text-[11px] text-ink-3">
+              <Icon name="shield" size={11} className="text-amber-deep" />
+              End-to-end encrypted with Beebeeb
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

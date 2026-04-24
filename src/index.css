@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+@theme {
+  /* Colors -- OKLCH */
+  --color-paper: oklch(0.985 0.004 85);
+  --color-paper-2: oklch(0.968 0.006 85);
+  --color-paper-3: oklch(0.94 0.008 82);
+  --color-line: oklch(0.90 0.008 82);
+  --color-line-2: oklch(0.85 0.01 80);
+  --color-ink: oklch(0.18 0.01 70);
+  --color-ink-2: oklch(0.38 0.01 72);
+  --color-ink-3: oklch(0.52 0.01 78);
+  --color-ink-4: oklch(0.68 0.008 80);
+  --color-amber: oklch(0.82 0.17 84);
+  --color-amber-deep: oklch(0.66 0.15 72);
+  --color-amber-bg: oklch(0.96 0.04 88);
+  --color-green: oklch(0.72 0.16 155);
+  --color-red: oklch(0.62 0.21 25);
+
+  /* Typography */
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  /* Spacing (4px base) */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 12px;
+  --spacing-lg: 18px;
+  --spacing-xl: 24px;
+  --spacing-2xl: 36px;
+
+  /* Radii */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+
+  /* Shadows */
+  --shadow-1: 0 1px 3px oklch(0.18 0.01 70 / 0.04), 0 1px 2px oklch(0.18 0.01 70 / 0.06);
+  --shadow-2: 0 4px 12px oklch(0.18 0.01 70 / 0.06), 0 2px 4px oklch(0.18 0.01 70 / 0.04);
+  --shadow-3: 0 12px 32px oklch(0.18 0.01 70 / 0.1), 0 4px 8px oklch(0.18 0.01 70 / 0.04);
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
