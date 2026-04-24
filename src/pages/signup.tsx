@@ -51,7 +51,7 @@ export function Signup() {
       const encoder = new TextEncoder()
       const salt = encoder.encode(email)
       await unlock(password, salt)
-      navigate('/onboarding')
+      navigate('/verify-email')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
     } finally {

@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { AuthProvider, useAuth } from './lib/auth-context'
 import { KeyProvider } from './lib/key-context'
+import { ToastProvider } from './components/toast'
 import { CommandPalette } from './components/command-palette'
 import { ShortcutsCheatsheet } from './components/shortcuts-cheatsheet'
 import { useKeyboardShortcuts } from './hooks/use-keyboard-shortcuts'
@@ -27,6 +28,7 @@ import { DataExport } from './pages/admin/data-export'
 import { ApiTokens } from './pages/admin/api-tokens'
 import { Compliance } from './pages/admin/compliance'
 import { TwoFactorSetup } from './pages/two-factor-setup'
+import { VerifyEmail } from './pages/verify-email'
 import { NotFound } from './pages/errors/not-found'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
@@ -72,6 +74,7 @@ export function App() {
     <BrowserRouter>
       <AuthProvider>
         <KeyProvider>
+        <ToastProvider>
         <GlobalShortcuts />
         <Routes>
           <Route
@@ -88,6 +91,14 @@ export function App() {
               <GuestRoute>
                 <Login />
               </GuestRoute>
+            }
+          />
+          <Route
+            path="/verify-email"
+            element={
+              <ProtectedRoute>
+                <VerifyEmail />
+              </ProtectedRoute>
             }
           />
           <Route
@@ -246,6 +257,7 @@ export function App() {
           <Route path="/s/:token" element={<ShareViewPage />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
+        </ToastProvider>
         </KeyProvider>
       </AuthProvider>
     </BrowserRouter>

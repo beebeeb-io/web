@@ -108,6 +108,15 @@ export async function logout(): Promise<void> {
   }
 }
 
+export async function verifyEmail(
+  code: string,
+): Promise<{ message: string }> {
+  return request<{ message: string }>('/api/v1/auth/verify-email', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  })
+}
+
 export async function getMe(): Promise<AuthUser> {
   return request<AuthUser>('/api/v1/auth/me')
 }
@@ -529,4 +538,139 @@ export async function listActivity(
   if (since) params.set('since', since)
   const qs = params.toString()
   return request<ActivityResponse>(`/api/v1/activity${qs ? `?${qs}` : ''}`)
+}
+
+// ─── Workspace endpoints ──────────────────────────
+
+export interface Workspace {
+  id: string
+  name: string
+  owner_id: string
+  role: string
+  created_at: string
+}
+
+export interface WorkspaceMemberDetail {
+  id: string
+  email: string
+  role: string
+  joined_at: string
+}
+
+export interface PendingInvite {
+  id: string
+  email: string
+  role: string
+  invited_by: string
+  created_at: string
+  expires_at: string
+}
+
+export interface WorkspaceMembersResponse {
+  members: WorkspaceMemberDetail[]
+  pending_invites: PendingInvite[]
+}
+
+export interface InviteInfo {
+  id: string
+  email: string
+  role: string
+  token: string
+  workspace_name: string
+  invited_by: string
+  expires_at: string
+  created_at: string
+}
+
+export interface AcceptInviteResponse {
+  message: string
+  workspace_id: string
+  workspace_name: string
+  role?: string
+  invited_by?: string
+}
+
+export interface InvitePreview {
+  workspace_name: string
+  invited_by: string
+  role: string
+  expires_at: string
+}
+
+export async function createWorkspace(name: string): Promise<Workspace> {
+  return request<Workspace>('/api/v1/workspaces', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  })
+}
+
+export async function listWorkspaces(): Promise<Workspace[]> {
+  const data = await request<{ workspaces: Workspace[] }>('/api/v1/workspaces')
+  return data.workspaces
+}
+
+export async function listWorkspaceMembers(
+  workspaceId: string,
+): Promise<WorkspaceMembersResponse> {
+  return request<WorkspaceMembersResponse>(
+    `/api/v1/workspaces/${workspaceId}/members`,
+  )
+}
+
+export async function inviteWorkspaceMember(
+  workspaceId: string,
+  email: string,
+  role?: string,
+): Promise<InviteInfo> {
+  return request<InviteInfo>(`/api/v1/workspaces/${workspaceId}/invite`, {
+    method: 'POST',
+    body: JSON.stringify({ email, role }),
+  })
+}
+
+export async function acceptWorkspaceInvite(
+  token: string,
+): Promise<AcceptInviteResponse> {
+  return request<AcceptInviteResponse>('/api/v1/workspaces/accept-invite', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  })
+}
+
+export async function removeWorkspaceMember(
+  workspaceId: string,
+  userId: string,
+): Promise<void> {
+  await request<void>(`/api/v1/workspaces/${workspaceId}/members/${userId}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function updateMemberRole(
+  workspaceId: string,
+  userId: string,
+  role: string,
+): Promise<void> {
+  await request<void>(
+    `/api/v1/workspaces/${workspaceId}/members/${userId}/role`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ role }),
+    },
+  )
+}
+
+export async function getInvitePreview(
+  token: string,
+): Promise<InvitePreview> {
+  // Public endpoint — no auth header needed
+  const res = await fetch(`${API_URL}/api/v1/workspaces/invite-preview/${token}`)
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new ApiError(
+      (body as { message?: string }).message ?? res.statusText,
+      res.status,
+    )
+  }
+  return res.json() as Promise<InvitePreview>
 }

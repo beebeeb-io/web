@@ -8,6 +8,10 @@ import { FileIcon, getFileType } from '../components/file-icon'
 import { UploadZone, useBrowseFiles } from '../components/upload-zone'
 import { UploadProgress, type UploadItem } from '../components/upload-progress'
 import { NewFolderDialog } from '../components/new-folder-dialog'
+import { NotificationInbox, useNotifications } from '../components/notification-inbox'
+import { useToast } from '../components/toast'
+import { useWebSocket } from '../hooks/use-websocket'
+import type { WsEvent } from '../hooks/use-websocket'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
 import {
@@ -130,6 +134,51 @@ export function Drive() {
   useEffect(() => {
     fetchFiles()
   }, [fetchFiles])
+
+  // Notifications
+  const { notifications, unreadCount, addNotification, markRead, markAllRead } = useNotifications()
+  const { showToast } = useToast()
+
+  const handleWsEvent = useCallback((event: WsEvent) => {
+    const id = `${event.type}-${Date.now()}`
+    if (event.type === 'file.uploaded') {
+      const data = event.data as { name_encrypted?: string; size_bytes?: number }
+      addNotification({
+        id,
+        type: event.type,
+        icon: 'upload',
+        title: 'File uploaded',
+        description: data.name_encrypted ?? 'New file',
+        timestamp: event.timestamp,
+        read: false,
+      })
+      showToast({
+        icon: 'upload',
+        title: 'File uploaded',
+        description: data.name_encrypted ?? 'New file',
+      })
+      // Refresh file list
+      fetchFiles()
+    } else if (event.type === 'share.opened') {
+      const data = event.data as { name_encrypted?: string; open_count?: number }
+      addNotification({
+        id,
+        type: event.type,
+        icon: 'share',
+        title: 'Share link opened',
+        description: `${data.name_encrypted ?? 'A file'} was viewed (${data.open_count ?? '?'} opens)`,
+        timestamp: event.timestamp,
+        read: false,
+      })
+      showToast({
+        icon: 'share',
+        title: 'Share link opened',
+        description: `${data.name_encrypted ?? 'A file'} was viewed`,
+      })
+    }
+  }, [addNotification, showToast, fetchFiles])
+
+  useWebSocket({ onEvent: handleWsEvent, enabled: true })
 
   // Synced timer
   useEffect(() => {
@@ -481,6 +530,14 @@ export function Drive() {
           <BBButton size="sm" onClick={browse} className="gap-1.5">
             <Icon name="upload" size={13} /> Upload
           </BBButton>
+
+          {/* Notifications */}
+          <NotificationInbox
+            notifications={notifications}
+            unreadCount={unreadCount}
+            onMarkRead={markRead}
+            onMarkAllRead={markAllRead}
+          />
 
           {/* More options */}
           <BBButton size="sm" variant="ghost" onClick={logout}>

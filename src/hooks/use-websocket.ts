@@ -19,7 +19,7 @@ const BASE_BACKOFF_MS = 1_000
 export function useWebSocket({ onEvent, enabled = true }: UseWebSocketOptions) {
   const wsRef = useRef<WebSocket | null>(null)
   const backoffRef = useRef(BASE_BACKOFF_MS)
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const onEventRef = useRef(onEvent)
   onEventRef.current = onEvent
 
@@ -65,9 +65,9 @@ export function useWebSocket({ onEvent, enabled = true }: UseWebSocketOptions) {
   }, [])
 
   const disconnect = useCallback(() => {
-    if (reconnectTimerRef.current) {
+    if (reconnectTimerRef.current !== null) {
       clearTimeout(reconnectTimerRef.current)
-      reconnectTimerRef.current = undefined
+      reconnectTimerRef.current = null
     }
     if (wsRef.current) {
       wsRef.current.close(1000)
