@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Icon } from '../components/icons'
-import type { IconName } from '../components/icons'
 import { BBButton } from '../components/bb-button'
 import { BBChip } from '../components/bb-chip'
 import { BBInput } from '../components/bb-input'
@@ -161,7 +160,6 @@ function InviteDialog({
 
 export function Team() {
   const { user } = useAuth()
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [activeWs, setActiveWs] = useState<Workspace | null>(null)
   const [members, setMembers] = useState<WorkspaceMemberDetail[]>([])
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([])
@@ -172,7 +170,6 @@ export function Team() {
   const loadWorkspaces = useCallback(async () => {
     try {
       const ws = await listWorkspaces()
-      setWorkspaces(ws)
       if (ws.length > 0) {
         setActiveWs(ws[0])
       }
