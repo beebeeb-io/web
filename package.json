@@ -12,6 +12,7 @@
   "author": "Initlabs B.V.",
   "license": "AGPL-3.0-or-later",
   "dependencies": {
+    "beebeeb-wasm": "../../repos/core/beebeeb-wasm/pkg",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-markdown": "^10.1.0",
@@ -24,6 +25,8 @@
     "@vitejs/plugin-react": "^4.7.0",
     "tailwindcss": "^4.2.4",
     "typescript": "^6.0.3",
-    "vite": "^6.4.2"
+    "vite": "^6.4.2",
+    "vite-plugin-top-level-await": "^1.6.0",
+    "vite-plugin-wasm": "^3.6.0"
   }
 }

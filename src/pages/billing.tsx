@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { SettingsShell, SettingsHeader } from '../components/settings-shell'
 import { BBButton } from '../components/bb-button'
 import { BBChip } from '../components/bb-chip'
@@ -7,6 +8,7 @@ import { UpgradeDialog } from '../components/upgrade-dialog'
 import {
   getSubscription,
   getInvoices,
+  createPortalSession,
   type Subscription,
   type Invoice,
 } from '../lib/api'
@@ -33,11 +35,14 @@ function formatStorage(gb: number): string {
 }
 
 export function Billing() {
+  const [searchParams, setSearchParams] = useSearchParams()
   const [sub, setSub] = useState<Subscription | null>(null)
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [loading, setLoading] = useState(true)
   const [upgradeOpen, setUpgradeOpen] = useState(false)
   const [upgradePlan, setUpgradePlan] = useState<string>('team')
+  const [portalLoading, setPortalLoading] = useState(false)
+  const showSuccess = searchParams.get('success') === 'true'
 
   const loadData = useCallback(async () => {
     try {
@@ -66,6 +71,21 @@ export function Billing() {
     setUpgradeOpen(true)
   }
 
+  function dismissSuccess() {
+    setSearchParams({}, { replace: true })
+  }
+
+  async function handleManageBilling() {
+    setPortalLoading(true)
+    try {
+      const { url } = await createPortalSession()
+      window.location.href = url
+    } catch {
+      // Portal not available (Stripe not configured) — silently ignore
+      setPortalLoading(false)
+    }
+  }
+
   if (loading) {
     return (
       <SettingsShell activeSection="billing">
@@ -83,6 +103,20 @@ export function Billing() {
       />
 
       <div className="p-7 space-y-5">
+        {/* Success banner after Stripe checkout */}
+        {showSuccess && (
+          <div className="flex items-center gap-3 p-3.5 bg-green/10 border border-green/30 rounded-lg text-sm">
+            <Icon name="check" size={14} className="text-green shrink-0" />
+            <span className="flex-1">Your subscription is now active. Welcome aboard.</span>
+            <button
+              onClick={dismissSuccess}
+              className="text-ink-3 hover:text-ink transition-colors"
+            >
+              <Icon name="x" size={14} />
+            </button>
+          </div>
+        )}
+
         {/* Plan summary + Payment methods — side by side */}
         <div className="grid gap-3.5" style={{ gridTemplateColumns: '1.2fr 1fr' }}>
           {/* Current plan */}
@@ -143,7 +177,7 @@ export function Billing() {
             )}
 
             {sub?.plan !== 'free' && (
-              <div className="mt-3">
+              <div className="mt-3 flex gap-2">
                 <BBButton
                   size="sm"
                   onClick={() => openUpgrade(
@@ -153,6 +187,14 @@ export function Billing() {
                 >
                   <Icon name="settings" size={12} className="mr-1.5" />
                   Change plan
+                </BBButton>
+                <BBButton
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => void handleManageBilling()}
+                  disabled={portalLoading}
+                >
+                  {portalLoading ? 'Redirecting...' : 'Manage billing'}
                 </BBButton>
               </div>
             )}

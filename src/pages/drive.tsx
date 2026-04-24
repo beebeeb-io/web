@@ -9,12 +9,15 @@ import { UploadZone, useBrowseFiles } from '../components/upload-zone'
 import { UploadProgress, type UploadItem } from '../components/upload-progress'
 import { NewFolderDialog } from '../components/new-folder-dialog'
 import { useAuth } from '../lib/auth-context'
+import { useKeys } from '../lib/key-context'
 import {
   listFiles,
   createFolder,
-  uploadFile,
   type DriveFile,
 } from '../lib/api'
+import { encryptedUpload } from '../lib/encrypted-upload'
+import { encryptedDownload } from '../lib/encrypted-download'
+import { decryptFilename, encryptFilename, fromBase64, toBase64 } from '../lib/crypto'
 
 // ─── Helpers ───────────────────────────────────────
 
@@ -98,6 +101,7 @@ const MOCK_FILES: DriveFile[] = [
 
 export function Drive() {
   const { logout } = useAuth()
+  const { getFileKey, isUnlocked, cryptoReady, cryptoError } = useKeys()
   const [activeNav, setActiveNav] = useState<NavId>('files')
   const [files, setFiles] = useState<DriveFile[]>(MOCK_FILES)
   const [breadcrumbs, setBreadcrumbs] = useState<{ id: string | null; name: string }[]>([
@@ -163,31 +167,43 @@ export function Drive() {
     // Upload each file
     selectedFiles.forEach((file, i) => {
       const uploadId = newUploads[i].id
-      simulateUpload(uploadId, file)
+      doEncryptedUpload(uploadId, file)
     })
   }
 
-  async function simulateUpload(uploadId: string, file: File) {
-    // Encrypting stage
-    setUploads((prev) =>
-      prev.map((u) => (u.id === uploadId ? { ...u, stage: 'Encrypting', progress: 10 } : u)),
-    )
+  async function doEncryptedUpload(uploadId: string, file: File) {
+    if (!isUnlocked || !cryptoReady) {
+      setUploads((prev) =>
+        prev.map((u) =>
+          u.id === uploadId
+            ? { ...u, stage: 'Queued' as const, progress: 0 }
+            : u,
+        ),
+      )
+      return
+    }
 
-    await delay(400)
-    setUploads((prev) =>
-      prev.map((u) => (u.id === uploadId ? { ...u, stage: 'Uploading', progress: 30 } : u)),
-    )
+    // Generate a UUID for the file (used for key derivation)
+    const fileId = crypto.randomUUID()
+    const fileKey = getFileKey(fileId)
 
     try {
-      // Actual upload
-      await uploadFile(file, currentParentId)
-      setUploads((prev) =>
-        prev.map((u) => (u.id === uploadId ? { ...u, stage: 'Done', progress: 100 } : u)),
-      )
+      await encryptedUpload(file, fileId, fileKey, currentParentId, (p) => {
+        setUploads((prev) =>
+          prev.map((u) =>
+            u.id === uploadId
+              ? { ...u, stage: p.stage, progress: p.progress }
+              : u,
+          ),
+        )
+      })
       fetchFiles()
     } catch {
       // Simulate progress to 100 on API failure (mock mode)
-      for (const pct of [50, 70, 90, 100]) {
+      setUploads((prev) =>
+        prev.map((u) => (u.id === uploadId ? { ...u, stage: 'Encrypting', progress: 10 } : u)),
+      )
+      for (const pct of [30, 50, 70, 90, 100]) {
         await delay(300)
         setUploads((prev) =>
           prev.map((u) =>
@@ -200,9 +216,56 @@ export function Drive() {
     }
   }
 
+  async function handleFileDownload(file: DriveFile) {
+    if (!isUnlocked || !cryptoReady || file.is_folder) return
+
+    try {
+      const fileKey = getFileKey(file.id)
+      await encryptedDownload(
+        file.id,
+        fileKey,
+        file.name_encrypted,
+        file.mime_type,
+      )
+    } catch (err) {
+      console.error('Download failed:', err)
+    }
+  }
+
+  /** Try to decrypt an encrypted filename for display. Falls back to raw value. */
+  function displayName(file: DriveFile): string {
+    if (!isUnlocked) return file.name_encrypted
+    try {
+      const parsed = JSON.parse(file.name_encrypted) as {
+        nonce: string
+        ciphertext: string
+      }
+      const fileKey = getFileKey(file.id)
+      return decryptFilename(
+        fileKey,
+        fromBase64(parsed.nonce),
+        fromBase64(parsed.ciphertext),
+      )
+    } catch {
+      // Not encrypted JSON — return raw (mock data or plaintext)
+      return file.name_encrypted
+    }
+  }
+
   async function handleCreateFolder(name: string) {
     try {
-      await createFolder(name, currentParentId)
+      // Encrypt the folder name if crypto is ready
+      let nameEncrypted = name
+      if (isUnlocked && cryptoReady) {
+        const folderId = crypto.randomUUID()
+        const folderKey = getFileKey(folderId)
+        const enc = encryptFilename(folderKey, name)
+        nameEncrypted = JSON.stringify({
+          nonce: toBase64(enc.nonce),
+          ciphertext: toBase64(enc.ciphertext),
+        })
+      }
+      await createFolder(nameEncrypted, currentParentId)
       fetchFiles()
     } catch {
       // API not available — add mock folder
@@ -224,7 +287,7 @@ export function Drive() {
   }
 
   function handleFolderOpen(folder: DriveFile) {
-    setBreadcrumbs((prev) => [...prev, { id: folder.id, name: folder.name_encrypted }])
+    setBreadcrumbs((prev) => [...prev, { id: folder.id, name: displayName(folder) }])
   }
 
   function handleBreadcrumbNav(index: number) {
@@ -239,7 +302,7 @@ export function Drive() {
     // Folders first
     if (a.is_folder && !b.is_folder) return -1
     if (!a.is_folder && b.is_folder) return 1
-    return a.name_encrypted.localeCompare(b.name_encrypted)
+    return displayName(a).localeCompare(displayName(b))
   })
 
   return (
@@ -466,8 +529,9 @@ export function Drive() {
                 </BBButton>
               </div>
             ) : (
-              sortedFiles.map((file, i) => {
-                const fileType = getFileType(file.name_encrypted, file.is_folder)
+              sortedFiles.map((file) => {
+                const name = displayName(file)
+                const fileType = getFileType(name, file.is_folder)
                 return (
                   <div
                     key={file.id}
@@ -481,12 +545,15 @@ export function Drive() {
                     onClick={() => {
                       if (file.is_folder) handleFolderOpen(file)
                     }}
+                    onDoubleClick={() => {
+                      if (!file.is_folder) handleFileDownload(file)
+                    }}
                   >
                     <FileIcon type={fileType} />
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <span className="font-medium truncate">{file.name_encrypted}</span>
-                        {i === 3 && (
+                        <span className="font-medium truncate">{name}</span>
+                        {isUnlocked && (
                           <BBChip variant="amber">
                             <span className="flex items-center gap-1 text-[9.5px]">
                               <Icon name="lock" size={9} /> E2EE
@@ -531,8 +598,12 @@ export function Drive() {
           <span className="font-mono">{files.length} item{files.length !== 1 ? 's' : ''}</span>
           <span>·</span>
           <span className="flex items-center gap-1.5">
-            <Icon name="shield" size={12} className="text-amber-deep" />
-            All encrypted · AES-256-GCM
+            <Icon name="shield" size={12} className={isUnlocked ? 'text-amber-deep' : 'text-ink-4'} />
+            {cryptoError
+              ? 'Encryption unavailable'
+              : isUnlocked
+                ? 'All encrypted · AES-256-GCM'
+                : 'Vault locked'}
           </span>
           <span className="ml-auto flex items-center gap-1.5">
             <Icon name="cloud" size={12} />

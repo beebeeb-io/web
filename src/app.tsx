@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { AuthProvider, useAuth } from './lib/auth-context'
+import { KeyProvider } from './lib/key-context'
 import { Signup } from './pages/signup'
 import { Login } from './pages/login'
 import { Onboarding } from './pages/onboarding'
@@ -41,6 +42,7 @@ export function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <KeyProvider>
         <Routes>
           <Route
             path="/signup"
@@ -206,6 +208,7 @@ export function App() {
           <Route path="/s/:token" element={<ShareViewPage />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
+        </KeyProvider>
       </AuthProvider>
     </BrowserRouter>
   )

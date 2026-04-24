@@ -374,6 +374,24 @@ export async function getInvoices(): Promise<Invoice[]> {
   return data.invoices
 }
 
+export async function createCheckoutSession(params: {
+  plan: string
+  billing_cycle: string
+  seats?: number
+  region: string
+}): Promise<{ url: string }> {
+  return request<{ url: string }>('/api/v1/billing/checkout', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
+export async function createPortalSession(): Promise<{ url: string }> {
+  return request<{ url: string }>('/api/v1/billing/portal', {
+    method: 'POST',
+  })
+}
+
 // ─── Admin endpoints ──────────────────────────
 
 export interface AuditEvent {

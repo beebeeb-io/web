@@ -1,15 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { BBButton } from '../components/bb-button'
 import { BBCheckbox } from '../components/bb-checkbox'
 import { BBLogo } from '../components/bb-logo'
 import { Icon } from '../components/icons'
-
-const RECOVERY_WORDS = [
-  'hive', 'amber', 'pollen', 'clover',
-  'meadow', 'linden', 'nectar', 'drift',
-  'saffron', 'thistle', 'willow', 'bramble',
-]
+import { useKeys } from '../lib/key-context'
+import { generateRecoveryPhrase } from '../lib/crypto'
 
 const BULLET_POINTS: Array<{
   icon: 'eye' | 'key' | 'shield'
@@ -35,7 +31,24 @@ const BULLET_POINTS: Array<{
 
 export function Onboarding() {
   const navigate = useNavigate()
+  const { setMasterKey, cryptoReady } = useKeys()
   const [saved, setSaved] = useState(false)
+  const [recoveryWords, setRecoveryWords] = useState<string[]>([])
+  const [phraseError, setPhraseError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!cryptoReady) return
+    try {
+      const { phrase, masterKey } = generateRecoveryPhrase()
+      setRecoveryWords(phrase.split(' '))
+      // Store the recovery-derived master key
+      setMasterKey(masterKey)
+    } catch (err) {
+      setPhraseError(
+        err instanceof Error ? err.message : 'Failed to generate recovery phrase',
+      )
+    }
+  }, [cryptoReady, setMasterKey])
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-paper p-xl">
@@ -74,25 +87,38 @@ export function Onboarding() {
 
             {/* Word grid */}
             <div className="bg-paper-2 border border-line rounded-lg p-4.5 mb-4">
-              <div className="grid grid-cols-2 gap-x-7 gap-y-2.5">
-                {RECOVERY_WORDS.map((word, i) => (
-                  <div
-                    key={i}
-                    className="flex items-baseline gap-2.5 pb-2 border-b border-dashed border-line"
-                  >
-                    <span className="font-mono text-[11px] text-ink-4 w-4.5">
-                      {String(i + 1).padStart(2, '0')}
-                    </span>
-                    <span className="font-mono text-sm font-medium text-ink">
-                      {word}
-                    </span>
-                  </div>
-                ))}
-              </div>
+              {phraseError ? (
+                <p className="text-xs text-red">{phraseError}</p>
+              ) : recoveryWords.length === 0 ? (
+                <p className="text-xs text-ink-3">Generating recovery phrase...</p>
+              ) : (
+                <div className="grid grid-cols-2 gap-x-7 gap-y-2.5">
+                  {recoveryWords.map((word, i) => (
+                    <div
+                      key={i}
+                      className="flex items-baseline gap-2.5 pb-2 border-b border-dashed border-line"
+                    >
+                      <span className="font-mono text-[11px] text-ink-4 w-4.5">
+                        {String(i + 1).padStart(2, '0')}
+                      </span>
+                      <span className="font-mono text-sm font-medium text-ink">
+                        {word}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="flex gap-2">
-              <BBButton size="sm">
+              <BBButton
+                size="sm"
+                onClick={() => {
+                  if (recoveryWords.length > 0) {
+                    navigator.clipboard.writeText(recoveryWords.join(' '))
+                  }
+                }}
+              >
                 <Icon name="copy" size={14} className="mr-1.5" />
                 Copy
               </BBButton>

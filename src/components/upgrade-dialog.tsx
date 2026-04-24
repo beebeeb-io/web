@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react'
 import { BBButton } from './bb-button'
 import { BBChip } from './bb-chip'
 import { Icon } from './icons'
-import { subscribe } from '../lib/api'
+import { createCheckoutSession, subscribe } from '../lib/api'
 
 type BillingCycle = 'monthly' | 'yearly'
 type Region = 'frankfurt' | 'amsterdam' | 'paris'
@@ -51,14 +51,31 @@ export function UpgradeDialog({
     setLoading(true)
     setError(null)
     try {
-      await subscribe({
-        plan: planId,
-        billing_cycle: cycle,
-        seats,
-        region,
-      })
-      onSuccess?.()
-      onClose()
+      // Try Stripe checkout first; fall back to mock subscribe if Stripe is not configured
+      try {
+        const { url } = await createCheckoutSession({
+          plan: planId,
+          billing_cycle: cycle,
+          seats,
+          region,
+        })
+        window.location.href = url
+        return
+      } catch (checkoutErr) {
+        // If Stripe isn't configured (400), fall back to mock billing
+        if (checkoutErr instanceof Error && 'status' in checkoutErr && (checkoutErr as { status: number }).status === 400) {
+          await subscribe({
+            plan: planId,
+            billing_cycle: cycle,
+            seats,
+            region,
+          })
+          onSuccess?.()
+          onClose()
+          return
+        }
+        throw checkoutErr
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong')
     } finally {

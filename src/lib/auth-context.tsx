@@ -17,6 +17,13 @@ import {
   signup as apiSignup,
 } from './api'
 
+/** Callback registered by KeyProvider to lock keys on logout. */
+let onLogoutCallback: (() => void) | null = null
+
+export function registerLogoutCallback(cb: () => void): void {
+  onLogoutCallback = cb
+}
+
 interface AuthState {
   user: AuthUser | null
   loading: boolean
@@ -56,6 +63,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const logout = useCallback(async () => {
+    onLogoutCallback?.()
     await apiLogout()
     setUser(null)
   }, [])

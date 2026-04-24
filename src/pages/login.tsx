@@ -5,10 +5,12 @@ import { BBButton } from '../components/bb-button'
 import { BBInput } from '../components/bb-input'
 import { Icon } from '../components/icons'
 import { useAuth } from '../lib/auth-context'
+import { useKeys } from '../lib/key-context'
 
 export function Login() {
   const navigate = useNavigate()
   const { login } = useAuth()
+  const { unlock, cryptoReady, cryptoError } = useKeys()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -19,9 +21,19 @@ export function Login() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setError('')
+
+    if (!cryptoReady) {
+      setError(cryptoError ?? 'Encryption module is not loaded yet. Please wait.')
+      return
+    }
+
     setSubmitting(true)
     try {
       await login(email, password)
+      // Derive master key from password + email as salt
+      const encoder = new TextEncoder()
+      const salt = encoder.encode(email)
+      await unlock(password, salt)
       navigate('/')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')

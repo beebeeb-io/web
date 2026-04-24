@@ -6,6 +6,7 @@ import { BBCheckbox } from '../components/bb-checkbox'
 import { BBInput } from '../components/bb-input'
 import { Icon } from '../components/icons'
 import { useAuth } from '../lib/auth-context'
+import { useKeys } from '../lib/key-context'
 
 function getPasswordStrength(pw: string): {
   level: number
@@ -22,6 +23,7 @@ function getPasswordStrength(pw: string): {
 export function Signup() {
   const navigate = useNavigate()
   const { signup } = useAuth()
+  const { unlock, cryptoReady, cryptoError } = useKeys()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -35,9 +37,20 @@ export function Signup() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setError('')
+
+    if (!cryptoReady) {
+      setError(cryptoError ?? 'Encryption module is not loaded yet. Please wait.')
+      return
+    }
+
     setSubmitting(true)
     try {
       await signup(email, password)
+      // Derive master key from password + user email as salt
+      // (salt will come from the API in production; email is a reasonable stand-in)
+      const encoder = new TextEncoder()
+      const salt = encoder.encode(email)
+      await unlock(password, salt)
       navigate('/onboarding')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
