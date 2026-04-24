@@ -10,7 +10,17 @@ import { SettingsDevices } from './pages/settings/devices'
 import { SettingsNotifications } from './pages/settings/notifications'
 import { SettingsLanguage } from './pages/settings/language'
 import { Security } from './pages/security'
+import { Trash } from './pages/trash'
+import { Search } from './pages/search'
+import { Pricing } from './pages/pricing'
+import { Billing } from './pages/billing'
+import { Photos } from './pages/photos'
 import { ShareViewPage } from './pages/share-view'
+import { AuditLog } from './pages/admin/audit-log'
+import { SsoSetup } from './pages/admin/sso'
+import { DataExport } from './pages/admin/data-export'
+import { ApiTokens } from './pages/admin/api-tokens'
+import { Compliance } from './pages/admin/compliance'
 import { NotFound } from './pages/errors/not-found'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
@@ -109,6 +119,87 @@ export function App() {
             element={
               <ProtectedRoute>
                 <Security />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/photos"
+            element={
+              <ProtectedRoute>
+                <Photos />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/trash"
+            element={
+              <ProtectedRoute>
+                <Trash />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/search"
+            element={
+              <ProtectedRoute>
+                <Search />
+              </ProtectedRoute>
+            }
+          />
+          <Route path="/pricing" element={<Pricing />} />
+          <Route
+            path="/billing"
+            element={
+              <ProtectedRoute>
+                <Billing />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin"
+            element={
+              <ProtectedRoute>
+                <Navigate to="/admin/audit-log" replace />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/audit-log"
+            element={
+              <ProtectedRoute>
+                <AuditLog />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/sso"
+            element={
+              <ProtectedRoute>
+                <SsoSetup />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/data-export"
+            element={
+              <ProtectedRoute>
+                <DataExport />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/api-tokens"
+            element={
+              <ProtectedRoute>
+                <ApiTokens />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/compliance"
+            element={
+              <ProtectedRoute>
+                <Compliance />
               </ProtectedRoute>
             }
           />

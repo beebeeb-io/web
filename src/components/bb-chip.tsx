@@ -4,6 +4,7 @@ type Variant = 'default' | 'amber' | 'green'
 
 interface BBChipProps {
   variant?: Variant
+  className?: string
   children: ReactNode
 }
 
@@ -13,10 +14,10 @@ const variantClasses: Record<Variant, string> = {
   green: 'bg-green/10 text-green',
 }
 
-export function BBChip({ variant = 'default', children }: BBChipProps) {
+export function BBChip({ variant = 'default', className = '', children }: BBChipProps) {
   return (
     <span
-      className={`inline-flex items-center px-sm py-xs text-xs font-medium rounded-sm ${variantClasses[variant]}`}
+      className={`inline-flex items-center px-sm py-xs text-xs font-medium rounded-sm ${variantClasses[variant]} ${className}`}
     >
       {children}
     </span>

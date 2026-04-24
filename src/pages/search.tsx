@@ -1,0 +1,391 @@
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { BBButton } from '../components/bb-button'
+import { BBChip } from '../components/bb-chip'
+import { BBLogo } from '../components/bb-logo'
+import { Icon } from '../components/icons'
+import type { IconName } from '../components/icons'
+import { useAuth } from '../lib/auth-context'
+import { listFiles, type DriveFile } from '../lib/api'
+
+// ─── Helpers ─────────────────────────────────────
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '--'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+}
+
+function timeAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime()
+  const seconds = Math.floor(diff / 1000)
+  if (seconds < 60) return 'just now'
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 7) return `${days} day${days !== 1 ? 's' : ''} ago`
+  const weeks = Math.floor(days / 7)
+  return `${weeks}w ago`
+}
+
+function getIconForFile(file: DriveFile): IconName {
+  if (file.is_folder) return 'folder'
+  const ext = file.name_encrypted.split('.').pop()?.toLowerCase() ?? ''
+  if (['jpg', 'jpeg', 'png', 'gif', 'heic', 'webp', 'svg'].includes(ext)) return 'image'
+  return 'file'
+}
+
+// ─── Mock search results ─────────────────────────
+
+const MOCK_FILES: DriveFile[] = [
+  { id: 's1', name_encrypted: 'board-deck-apr.pdf', mime_type: 'application/pdf', size: 4404019, is_folder: false, parent_id: null, trashed: false, shared_with: 4, owner: 'Anna K.', created_at: '2026-04-23T09:48:00Z', updated_at: '2026-04-23T09:48:00Z' },
+  { id: 's2', name_encrypted: 'term-sheet-v3.docx', mime_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 90112, is_folder: false, parent_id: null, trashed: false, shared_with: 2, owner: 'Marc D.', created_at: '2026-04-23T09:00:00Z', updated_at: '2026-04-23T09:00:00Z' },
+  { id: 's3', name_encrypted: 'Contracts', mime_type: '', size: 0, is_folder: true, parent_id: null, trashed: false, shared_with: 3, owner: 'Anna K.', created_at: '2026-04-21T10:00:00Z', updated_at: '2026-04-21T10:00:00Z' },
+  { id: 's4', name_encrypted: 'architecture.fig', mime_type: 'application/octet-stream', size: 12582912, is_folder: false, parent_id: null, trashed: false, shared_with: 3, owner: 'Lena W.', created_at: '2026-04-22T10:00:00Z', updated_at: '2026-04-22T10:00:00Z' },
+  { id: 's5', name_encrypted: 'notes.md', mime_type: 'text/markdown', size: 6144, is_folder: false, parent_id: null, trashed: false, shared_with: 0, owner: 'You', created_at: '2026-04-23T10:00:00Z', updated_at: '2026-04-23T10:00:00Z' },
+]
+
+// ─── Filter types ────────────────────────────────
+
+type FileTypeFilter = 'all' | 'documents' | 'images' | 'folders'
+
+const FILE_TYPE_FILTERS: { id: FileTypeFilter; label: string; icon: IconName }[] = [
+  { id: 'all', label: 'All types', icon: 'file' },
+  { id: 'documents', label: 'Documents', icon: 'file' },
+  { id: 'images', label: 'Images', icon: 'image' },
+  { id: 'folders', label: 'Folders', icon: 'folder' },
+]
+
+// ─── Nav items (same as Drive sidebar) ───────────
+
+type NavId = 'files' | 'shared' | 'photos' | 'starred' | 'recent' | 'trash'
+
+const navItems: { id: NavId; icon: IconName; label: string; count?: string }[] = [
+  { id: 'files', icon: 'folder', label: 'All files' },
+  { id: 'shared', icon: 'users', label: 'Shared', count: '6' },
+  { id: 'photos', icon: 'image', label: 'Photos', count: '2.4k' },
+  { id: 'starred', icon: 'star', label: 'Starred' },
+  { id: 'recent', icon: 'clock', label: 'Recent' },
+  { id: 'trash', icon: 'trash', label: 'Trash' },
+]
+
+// ─── Search page ─────────────────────────────────
+
+export function Search() {
+  const { logout } = useAuth()
+  const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const initialQuery = searchParams.get('q') ?? ''
+
+  const [query, setQuery] = useState(initialQuery)
+  const [results, setResults] = useState<DriveFile[]>([])
+  const [typeFilter, setTypeFilter] = useState<FileTypeFilter>('all')
+  const [loading, setLoading] = useState(false)
+  const [searched, setSearched] = useState(!!initialQuery)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // Focus input on mount
+  useEffect(() => {
+    inputRef.current?.focus()
+  }, [])
+
+  // Client-side search against file list
+  const runSearch = useCallback(async (q: string) => {
+    if (!q.trim()) {
+      setResults([])
+      setSearched(false)
+      return
+    }
+    setLoading(true)
+    setSearched(true)
+    try {
+      const allFiles = await listFiles()
+      const lower = q.toLowerCase()
+      setResults(allFiles.filter((f) => f.name_encrypted.toLowerCase().includes(lower)))
+    } catch {
+      // API not available -- filter mock data
+      const lower = q.toLowerCase()
+      setResults(MOCK_FILES.filter((f) => f.name_encrypted.toLowerCase().includes(lower)))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  // Run search on initial load if query param present
+  useEffect(() => {
+    if (initialQuery) {
+      runSearch(initialQuery)
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    setSearchParams(query ? { q: query } : {})
+    runSearch(query)
+  }
+
+  const handleClear = () => {
+    setQuery('')
+    setResults([])
+    setSearched(false)
+    setSearchParams({})
+    inputRef.current?.focus()
+  }
+
+  // Apply type filter
+  const filteredResults = results.filter((f) => {
+    if (typeFilter === 'all') return true
+    if (typeFilter === 'folders') return f.is_folder
+    if (typeFilter === 'images') {
+      const ext = f.name_encrypted.split('.').pop()?.toLowerCase() ?? ''
+      return ['jpg', 'jpeg', 'png', 'gif', 'heic', 'webp', 'svg'].includes(ext)
+    }
+    // documents = not folder and not image
+    if (typeFilter === 'documents') {
+      const ext = f.name_encrypted.split('.').pop()?.toLowerCase() ?? ''
+      return !f.is_folder && !['jpg', 'jpeg', 'png', 'gif', 'heic', 'webp', 'svg'].includes(ext)
+    }
+    return true
+  })
+
+  const handleNavClick = (id: NavId) => {
+    if (id === 'files') navigate('/')
+    else if (id === 'trash') navigate('/trash')
+  }
+
+  return (
+    <div className="h-screen flex overflow-hidden bg-paper">
+      {/* ─── Sidebar ─────────────────────────── */}
+      <aside className="w-[220px] shrink-0 border-r border-line bg-paper-2 flex flex-col">
+        <div className="px-4 pt-4 pb-3">
+          <BBLogo size={14} />
+        </div>
+
+        <nav className="px-3 py-1.5">
+          {navItems.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => handleNavClick(item.id)}
+              className="w-full flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] transition-colors text-left text-ink-2 hover:bg-paper-3/50"
+            >
+              <Icon name={item.icon} size={13} className="shrink-0" />
+              <span className="flex-1">{item.label}</span>
+              {item.count && (
+                <span className="font-mono text-[10px] text-ink-4">{item.count}</span>
+              )}
+            </button>
+          ))}
+        </nav>
+
+        <div className="mx-4 my-2.5 h-px bg-line" />
+
+        {/* Storage */}
+        <div className="mt-auto px-4 py-4 border-t border-line">
+          <div className="text-[10px] font-medium uppercase tracking-wider text-ink-3 mb-2">
+            Storage
+          </div>
+          <div className="h-[3px] w-full rounded-full bg-paper-3 overflow-hidden mb-1.5">
+            <div className="h-full rounded-full bg-amber" style={{ width: '38%' }} />
+          </div>
+          <div className="flex justify-between text-[11px]">
+            <span className="font-mono tabular-nums">76 / 200 GB</span>
+            <span className="font-medium text-amber-deep cursor-pointer hover:underline">Upgrade</span>
+          </div>
+          <div className="mt-3 flex items-center gap-1.5 text-[10px] text-ink-3">
+            <Icon name="shield" size={11} className="text-amber-deep" />
+            <span className="font-mono">EU-WEST -- AES-256</span>
+          </div>
+        </div>
+
+        <div className="px-3 pb-3">
+          <button
+            onClick={logout}
+            className="w-full flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] text-ink-3 hover:bg-paper-3/50 transition-colors text-left"
+          >
+            <Icon name="x" size={13} className="shrink-0" />
+            Log out
+          </button>
+        </div>
+      </aside>
+
+      {/* ─── Main area ───────────────────────── */}
+      <main className="flex-1 flex flex-col min-w-0">
+        {/* Search header */}
+        <div className="px-5 py-4 border-b border-line">
+          <form onSubmit={handleSubmit} className="flex items-center gap-3 max-w-2xl">
+            <div className="flex-1 flex items-center gap-2.5 border rounded-lg bg-paper px-3.5 py-2.5 border-line focus-within:ring-2 focus-within:ring-amber/30 focus-within:border-amber-deep">
+              <Icon name="search" size={14} className="text-ink-3 shrink-0" />
+              <input
+                ref={inputRef}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search your vault..."
+                className="flex-1 bg-transparent text-[14px] text-ink outline-none placeholder:text-ink-4"
+              />
+              {query && (
+                <button
+                  type="button"
+                  onClick={handleClear}
+                  className="text-ink-4 hover:text-ink-2 transition-colors"
+                >
+                  <Icon name="x" size={12} />
+                </button>
+              )}
+            </div>
+            <BBButton size="md" variant="amber" type="submit">
+              Search
+            </BBButton>
+          </form>
+
+          {/* Type filters */}
+          {searched && (
+            <div className="flex gap-1.5 mt-3">
+              {FILE_TYPE_FILTERS.map((f) => (
+                <button
+                  key={f.id}
+                  onClick={() => setTypeFilter(f.id)}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[12px] transition-colors cursor-pointer ${
+                    typeFilter === f.id
+                      ? 'bg-amber-bg text-amber-deep font-medium border border-amber-deep'
+                      : 'text-ink-3 hover:bg-paper-2 border border-transparent'
+                  }`}
+                >
+                  <Icon name={f.icon} size={11} />
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Results area */}
+        <div className="flex-1 overflow-y-auto">
+          {!searched ? (
+            /* Empty state: no search yet */
+            <div className="flex flex-col items-center justify-center h-full text-center py-20">
+              <div
+                className="w-14 h-14 mb-4 rounded-2xl flex items-center justify-center"
+                style={{
+                  background: 'var(--color-paper-2)',
+                  border: '1.5px dashed var(--color-line-2)',
+                }}
+              >
+                <Icon name="search" size={24} className="text-ink-3" />
+              </div>
+              <div className="text-[15px] font-semibold text-ink mb-1">Search your vault</div>
+              <div className="text-[13px] text-ink-3 max-w-xs">
+                File names are searched client-side. Content never leaves your device unencrypted.
+              </div>
+            </div>
+          ) : loading ? (
+            <div className="px-5 py-12 text-center text-sm text-ink-3">Searching...</div>
+          ) : filteredResults.length === 0 ? (
+            /* Empty results */
+            <div className="flex flex-col items-center justify-center h-full text-center py-20">
+              <div
+                className="w-14 h-14 mb-4 rounded-2xl flex items-center justify-center"
+                style={{
+                  background: 'var(--color-paper-2)',
+                  border: '1.5px dashed var(--color-line-2)',
+                }}
+              >
+                <Icon name="search" size={24} className="text-ink-3" />
+              </div>
+              <div className="text-[15px] font-semibold text-ink mb-1">No results</div>
+              <div className="text-[13px] text-ink-3 max-w-xs">
+                Nothing matched "{query}". Try a different term or check spelling.
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Results header */}
+              <div className="px-5 py-2 border-b border-line bg-paper-2 flex items-center gap-3">
+                <span className="text-[11px] text-ink-3">
+                  <span className="font-mono">{filteredResults.length}</span> result{filteredResults.length !== 1 ? 's' : ''} for "{query}"
+                </span>
+                <span className="flex items-center gap-1.5 ml-auto text-[10px] text-ink-4">
+                  <Icon name="shield" size={10} className="text-amber-deep" />
+                  Names decrypted locally
+                </span>
+              </div>
+
+              {/* Table header */}
+              <div
+                className="px-5 py-2 border-b border-line bg-paper-2"
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1.4fr 100px 100px 100px',
+                  gap: 14,
+                }}
+              >
+                <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">Name</span>
+                <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">Modified</span>
+                <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">Size</span>
+                <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">Owner</span>
+              </div>
+
+              {/* File rows */}
+              {filteredResults.map((file, i, arr) => {
+                const iconName = getIconForFile(file)
+                return (
+                  <div
+                    key={file.id}
+                    className="group hover:bg-paper-2 transition-colors cursor-pointer"
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1.4fr 100px 100px 100px',
+                      gap: 14,
+                      padding: '10px 20px',
+                      alignItems: 'center',
+                      borderBottom: i < arr.length - 1 ? '1px solid var(--color-line)' : 'none',
+                    }}
+                    onClick={() => {
+                      if (file.is_folder) navigate(`/?folder=${file.id}`)
+                    }}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <Icon
+                        name={iconName}
+                        size={14}
+                        className={iconName === 'folder' ? 'text-amber-deep' : 'text-ink-3'}
+                      />
+                      <span className="text-[13px] text-ink truncate">{file.name_encrypted}</span>
+                      {file.shared_with > 0 && (
+                        <BBChip>
+                          <span className="flex items-center gap-1 text-[9px]">
+                            <Icon name="users" size={9} />
+                            {file.shared_with}
+                          </span>
+                        </BBChip>
+                      )}
+                    </div>
+                    <span className="font-mono text-[11px] text-ink-3">{timeAgo(file.updated_at)}</span>
+                    <span className="font-mono text-[11px] text-ink-3">
+                      {file.is_folder ? '--' : formatBytes(file.size)}
+                    </span>
+                    <span className="text-[11px] text-ink-3">{file.owner}</span>
+                  </div>
+                )
+              })}
+            </>
+          )}
+        </div>
+
+        {/* Status bar */}
+        <div className="px-5 py-2 border-t border-line bg-paper-2 flex items-center gap-3.5 text-[11px] text-ink-3">
+          <span className="flex items-center gap-1.5">
+            <Icon name="shield" size={12} className="text-amber-deep" />
+            Encrypted at rest -- AES-256-GCM
+          </span>
+          <span className="ml-auto font-mono text-[10px] text-ink-4">
+            Search is client-side only
+          </span>
+        </div>
+      </main>
+    </div>
+  )
+}

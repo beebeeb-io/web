@@ -314,3 +314,118 @@ export async function listMyShares(): Promise<MyShare[]> {
 export async function revokeShare(id: string): Promise<void> {
   await request<void>(`/api/v1/shares/${id}`, { method: 'DELETE' })
 }
+
+// ─── Billing endpoints ─────────────────────────
+
+export interface Plan {
+  id: string
+  name: string
+  price_eur: number
+  price_yearly_eur: number
+  storage_bytes: number
+  storage_label: string
+  per_seat: boolean
+  min_seats: number
+  features: string[]
+}
+
+export interface Subscription {
+  plan: string
+  billing_cycle: string
+  seats: number
+  region: string
+  status: string
+  created_at: string | null
+  current_period_end: string | null
+}
+
+export interface Invoice {
+  id: string
+  number: string
+  date: string
+  amount_eur: number
+  status: string
+  period: string
+}
+
+export async function getPlans(): Promise<Plan[]> {
+  const data = await request<{ plans: Plan[] }>('/api/v1/billing/plans')
+  return data.plans
+}
+
+export async function getSubscription(): Promise<Subscription> {
+  return request<Subscription>('/api/v1/billing/subscription')
+}
+
+export async function subscribe(params: {
+  plan: string
+  billing_cycle: string
+  seats?: number
+  region: string
+}): Promise<Subscription> {
+  return request<Subscription>('/api/v1/billing/subscribe', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
+export async function getInvoices(): Promise<Invoice[]> {
+  const data = await request<{ invoices: Invoice[] }>('/api/v1/billing/invoices')
+  return data.invoices
+}
+
+// ─── Admin endpoints ──────────────────────────
+
+export interface AuditEvent {
+  id: string
+  workspace_id: string | null
+  actor: string
+  event: string
+  target: string | null
+  ip_address: string | null
+  device: string | null
+  created_at: string
+}
+
+export interface WorkspaceMember {
+  id: string
+  email: string
+  email_verified: boolean
+  joined_at: string
+}
+
+export async function listAuditLog(params?: {
+  actor?: string
+  event?: string
+  limit?: number
+  offset?: number
+}): Promise<{ events: AuditEvent[]; count: number }> {
+  const qs = new URLSearchParams()
+  if (params?.actor) qs.set('actor', params.actor)
+  if (params?.event) qs.set('event', params.event)
+  if (params?.limit) qs.set('limit', String(params.limit))
+  if (params?.offset) qs.set('offset', String(params.offset))
+  const q = qs.toString()
+  return request<{ events: AuditEvent[]; count: number }>(
+    `/api/v1/admin/audit-log${q ? `?${q}` : ''}`,
+  )
+}
+
+export async function exportAuditLog(): Promise<{
+  export: { format: string; exported_at: string; total: number }
+  events: AuditEvent[]
+}> {
+  return request('/api/v1/admin/audit-log/export')
+}
+
+export async function listMembers(): Promise<WorkspaceMember[]> {
+  const data = await request<{ members: WorkspaceMember[] }>('/api/v1/admin/members')
+  return data.members
+}
+
+export async function inviteMember(email: string): Promise<{ message: string; email: string }> {
+  return request('/api/v1/admin/members/invite', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  })
+}
