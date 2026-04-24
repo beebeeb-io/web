@@ -9,12 +9,14 @@ import {
 import type { ReactNode } from 'react'
 import {
   type AuthUser,
+  type LoginResult,
   clearToken,
   getMe,
   getToken,
   login as apiLogin,
   logout as apiLogout,
   signup as apiSignup,
+  verify2fa as apiVerify2fa,
 } from './api'
 
 /** Callback registered by KeyProvider to lock keys on logout. */
@@ -28,7 +30,8 @@ interface AuthState {
   user: AuthUser | null
   loading: boolean
   signup: (email: string, password: string) => Promise<void>
-  login: (email: string, password: string) => Promise<void>
+  login: (email: string, password: string) => Promise<LoginResult>
+  verify2fa: (partialToken: string, code: string) => Promise<void>
   logout: () => Promise<void>
 }
 
@@ -57,8 +60,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(u)
   }, [])
 
-  const login = useCallback(async (email: string, password: string) => {
-    const { user: u } = await apiLogin(email, password)
+  const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
+    const result = await apiLogin(email, password)
+    if (!result.requires_2fa) {
+      // Full login — fetch user profile
+      const u = await getMe()
+      setUser(u)
+    }
+    return result
+  }, [])
+
+  const verify2fa = useCallback(async (partialToken: string, code: string) => {
+    await apiVerify2fa(partialToken, code)
+    const u = await getMe()
     setUser(u)
   }, [])
 
@@ -69,8 +83,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo<AuthState>(
-    () => ({ user, loading, signup, login, logout }),
-    [user, loading, signup, login, logout],
+    () => ({ user, loading, signup, login, verify2fa, logout }),
+    [user, loading, signup, login, verify2fa, logout],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

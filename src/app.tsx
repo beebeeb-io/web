@@ -1,7 +1,11 @@
+import { useState, useCallback } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { AuthProvider, useAuth } from './lib/auth-context'
 import { KeyProvider } from './lib/key-context'
+import { CommandPalette } from './components/command-palette'
+import { ShortcutsCheatsheet } from './components/shortcuts-cheatsheet'
+import { useKeyboardShortcuts } from './hooks/use-keyboard-shortcuts'
 import { Signup } from './pages/signup'
 import { Login } from './pages/login'
 import { Onboarding } from './pages/onboarding'
@@ -22,6 +26,7 @@ import { SsoSetup } from './pages/admin/sso'
 import { DataExport } from './pages/admin/data-export'
 import { ApiTokens } from './pages/admin/api-tokens'
 import { Compliance } from './pages/admin/compliance'
+import { TwoFactorSetup } from './pages/two-factor-setup'
 import { NotFound } from './pages/errors/not-found'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
@@ -38,11 +43,36 @@ function GuestRoute({ children }: { children: ReactNode }) {
   return <>{children}</>
 }
 
+function GlobalShortcuts() {
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+
+  const closePalette = useCallback(() => setPaletteOpen(false), [])
+  const closeShortcuts = useCallback(() => setShortcutsOpen(false), [])
+
+  useKeyboardShortcuts({
+    onCommandPalette: () => setPaletteOpen((v) => !v),
+    onShortcuts: () => setShortcutsOpen((v) => !v),
+    onEscape: () => {
+      if (paletteOpen) setPaletteOpen(false)
+      else if (shortcutsOpen) setShortcutsOpen(false)
+    },
+  })
+
+  return (
+    <>
+      <CommandPalette open={paletteOpen} onClose={closePalette} />
+      <ShortcutsCheatsheet open={shortcutsOpen} onClose={closeShortcuts} />
+    </>
+  )
+}
+
 export function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
         <KeyProvider>
+        <GlobalShortcuts />
         <Routes>
           <Route
             path="/signup"
@@ -113,6 +143,14 @@ export function App() {
             element={
               <ProtectedRoute>
                 <SettingsLanguage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/settings/2fa"
+            element={
+              <ProtectedRoute>
+                <TwoFactorSetup />
               </ProtectedRoute>
             }
           />

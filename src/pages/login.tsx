@@ -4,12 +4,13 @@ import { AuthShell } from '../components/auth-shell'
 import { BBButton } from '../components/bb-button'
 import { BBInput } from '../components/bb-input'
 import { Icon } from '../components/icons'
+import { TwoFactorPrompt } from '../components/two-factor-prompt'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
 
 export function Login() {
   const navigate = useNavigate()
-  const { login } = useAuth()
+  const { login, verify2fa } = useAuth()
   const { unlock, cryptoReady, cryptoError } = useKeys()
 
   const [email, setEmail] = useState('')
@@ -17,6 +18,9 @@ export function Login() {
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+
+  // 2FA state
+  const [partialToken, setPartialToken] = useState<string | null>(null)
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -29,17 +33,49 @@ export function Login() {
 
     setSubmitting(true)
     try {
-      await login(email, password)
-      // Derive master key from password + email as salt
-      const encoder = new TextEncoder()
-      const salt = encoder.encode(email)
-      await unlock(password, salt)
-      navigate('/')
+      const result = await login(email, password)
+      if (result.requires_2fa && result.partial_token) {
+        setPartialToken(result.partial_token)
+      } else {
+        // Full login — unlock keys and navigate
+        const encoder = new TextEncoder()
+        const salt = encoder.encode(email)
+        await unlock(password, salt)
+        navigate('/')
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
     } finally {
       setSubmitting(false)
     }
+  }
+
+  async function handle2faVerify(code: string) {
+    if (!partialToken) return
+    await verify2fa(partialToken, code)
+    // Unlock keys after successful 2FA
+    const encoder = new TextEncoder()
+    const salt = encoder.encode(email)
+    await unlock(password, salt)
+    navigate('/')
+  }
+
+  // Show 2FA prompt when login returned requires_2fa
+  if (partialToken) {
+    return (
+      <AuthShell
+        title="Two-factor authentication"
+        subtitle="Your account is protected with 2FA."
+      >
+        <TwoFactorPrompt
+          onVerify={handle2faVerify}
+          onCancel={() => {
+            setPartialToken(null)
+            setError('')
+          }}
+        />
+      </AuthShell>
+    )
   }
 
   return (

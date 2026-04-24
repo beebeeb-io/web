@@ -65,6 +65,15 @@ export interface AuthUser {
   email_verified: boolean
 }
 
+/** Login may return a full session OR a 2FA challenge. */
+export interface LoginResult {
+  requires_2fa?: boolean
+  partial_token?: string
+  user_id?: string
+  session_token?: string
+  salt?: string
+}
+
 export async function signup(
   email: string,
   password: string,
@@ -80,12 +89,14 @@ export async function signup(
 export async function login(
   email: string,
   password: string,
-): Promise<AuthResponse> {
-  const data = await request<AuthResponse>('/api/v1/auth/login', {
+): Promise<LoginResult> {
+  const data = await request<LoginResult>('/api/v1/auth/login', {
     method: 'POST',
     body: JSON.stringify({ email, password }),
   })
-  setToken(data.token)
+  if (!data.requires_2fa && data.session_token) {
+    setToken(data.session_token)
+  }
   return data
 }
 
@@ -99,6 +110,48 @@ export async function logout(): Promise<void> {
 
 export async function getMe(): Promise<AuthUser> {
   return request<AuthUser>('/api/v1/auth/me')
+}
+
+// ─── 2FA endpoints ──────────────────────────────
+
+export interface TotpSetupResponse {
+  secret: string
+  qr_uri: string
+  backup_codes: string[]
+}
+
+export async function setup2fa(): Promise<TotpSetupResponse> {
+  return request<TotpSetupResponse>('/api/v1/auth/2fa/setup', {
+    method: 'POST',
+  })
+}
+
+export async function enable2fa(code: string): Promise<{ message: string }> {
+  return request<{ message: string }>('/api/v1/auth/2fa/enable', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  })
+}
+
+export async function disable2fa(code: string): Promise<{ message: string }> {
+  return request<{ message: string }>('/api/v1/auth/2fa/disable', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  })
+}
+
+export async function verify2fa(
+  partialToken: string,
+  code: string,
+): Promise<LoginResult> {
+  const data = await request<LoginResult>('/api/v1/auth/2fa/verify', {
+    method: 'POST',
+    body: JSON.stringify({ partial_token: partialToken, code }),
+  })
+  if (data.session_token) {
+    setToken(data.session_token)
+  }
+  return data
 }
 
 // ─── Drive / Files endpoints ─────────────────────
@@ -446,4 +499,34 @@ export async function inviteMember(email: string): Promise<{ message: string; em
     method: 'POST',
     body: JSON.stringify({ email }),
   })
+}
+
+// ─── Activity endpoints ──────────────────────────
+
+export interface ActivityEvent {
+  id: string
+  type: string
+  subject: string | null
+  details: string | null
+  where: string | null
+  created_at: string
+}
+
+export interface ActivityResponse {
+  events: ActivityEvent[]
+  total: number
+  page: number
+}
+
+export async function listActivity(
+  page?: number,
+  type?: string,
+  since?: string,
+): Promise<ActivityResponse> {
+  const params = new URLSearchParams()
+  if (page) params.set('page', String(page))
+  if (type) params.set('type', type)
+  if (since) params.set('since', since)
+  const qs = params.toString()
+  return request<ActivityResponse>(`/api/v1/activity${qs ? `?${qs}` : ''}`)
 }
