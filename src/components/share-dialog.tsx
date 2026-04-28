@@ -2,7 +2,21 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { BBButton } from './bb-button'
 import { BBChip } from './bb-chip'
 import { Icon } from './icons'
-import { createShare, type ShareInfo, type ShareOptions } from '../lib/api'
+import {
+  createShare,
+  lookupUserByEmail,
+  getUserPublicKey,
+  createUserShare,
+  type ShareInfo,
+  type ShareOptions,
+} from '../lib/api'
+import {
+  encryptFileKeyForSharing,
+  toBase64,
+  fromBase64,
+  zeroize,
+} from '../lib/crypto'
+import { useKeys } from '../lib/key-context'
 
 interface ShareDialogProps {
   open: boolean
@@ -12,6 +26,7 @@ interface ShareDialogProps {
   fileSize: number
 }
 
+type ShareMode = 'link' | 'user'
 type ExpiryOption = { label: string; hours: number | null }
 type MaxOpensOption = { label: string; value: number | null }
 
@@ -120,7 +135,225 @@ function Dropdown<T extends { label: string }>({
   )
 }
 
+// ─── Tab selector ────────────────────────────────────
+
+function TabBar({
+  mode,
+  onChange,
+}: {
+  mode: ShareMode
+  onChange: (m: ShareMode) => void
+}) {
+  return (
+    <div className="flex gap-0 border-b border-line mb-[18px]">
+      <button
+        type="button"
+        onClick={() => onChange('link')}
+        className={`flex items-center gap-1.5 px-3 pb-2 text-[13px] font-medium border-b-2 transition-colors ${
+          mode === 'link'
+            ? 'border-amber-deep text-amber-deep'
+            : 'border-transparent text-ink-3 hover:text-ink-2'
+        }`}
+      >
+        <Icon name="link" size={13} />
+        Link
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange('user')}
+        className={`flex items-center gap-1.5 px-3 pb-2 text-[13px] font-medium border-b-2 transition-colors ${
+          mode === 'user'
+            ? 'border-amber-deep text-amber-deep'
+            : 'border-transparent text-ink-3 hover:text-ink-2'
+        }`}
+      >
+        <Icon name="users" size={13} />
+        User
+      </button>
+    </div>
+  )
+}
+
+// ─── User share section ─────────────────────────────
+
+function UserShareForm({
+  fileId,
+  onSuccess,
+}: {
+  fileId: string
+  onSuccess: (email: string) => void
+}) {
+  const { getFileKey, getMasterKey } = useKeys()
+
+  const [email, setEmail] = useState('')
+  const [canDownload, setCanDownload] = useState(true)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    inputRef.current?.focus()
+  }, [])
+
+  const handleShare = useCallback(async () => {
+    const trimmed = email.trim().toLowerCase()
+    if (!trimmed || !trimmed.includes('@')) {
+      setError('Enter a valid email address.')
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+
+    try {
+      // 1. Look up recipient by email
+      const recipient = await lookupUserByEmail(trimmed)
+
+      // 2. Fetch their X25519 public key
+      const pubKeyResponse = await getUserPublicKey(recipient.user_id)
+      const recipientPublicKey = fromBase64(pubKeyResponse.public_key)
+
+      // 3. Get our master key and the file key
+      const masterKey = getMasterKey()
+      const fileKey = await getFileKey(fileId)
+
+      // 4. Encrypt the file key for the recipient via X25519 key exchange
+      const { encryptedFileKey, nonce } = await encryptFileKeyForSharing(
+        masterKey,
+        recipientPublicKey,
+        fileId,
+        fileKey,
+      )
+
+      // Zero the file key after use
+      zeroize(fileKey)
+
+      // 5. Send to server
+      await createUserShare(
+        fileId,
+        recipient.user_id,
+        toBase64(encryptedFileKey),
+        toBase64(nonce),
+        { can_download: canDownload },
+      )
+
+      onSuccess(trimmed)
+    } catch (e) {
+      if (e instanceof Error) {
+        // Provide clearer messages for common cases
+        if (e.message.includes('not found') || e.message.includes('404')) {
+          setError('No Beebeeb account found for that email.')
+        } else if (e.message.includes('public_key') || e.message.includes('public key')) {
+          setError('That user has not set up encryption yet.')
+        } else {
+          setError(e.message)
+        }
+      } else {
+        setError('Failed to share. Try again.')
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [email, canDownload, fileId, getFileKey, getMasterKey, onSuccess])
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter' && !loading) {
+        e.preventDefault()
+        handleShare()
+      }
+    },
+    [handleShare, loading],
+  )
+
+  return (
+    <div>
+      {/* Email input */}
+      <label className="block text-xs font-medium text-ink-2 mb-1.5">
+        Recipient email
+      </label>
+      <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 mb-3 focus-within:border-line-2 transition-colors">
+        <Icon name="mail" size={13} className="text-ink-3 shrink-0" />
+        <input
+          ref={inputRef}
+          type="email"
+          value={email}
+          onChange={(e) => {
+            setEmail(e.target.value)
+            setError(null)
+          }}
+          onKeyDown={handleKeyDown}
+          placeholder="colleague@example.com"
+          className="flex-1 bg-transparent text-[13px] text-ink outline-none placeholder:text-ink-4"
+        />
+      </div>
+
+      {/* Permissions */}
+      <div className="flex items-center text-[13px] mb-5">
+        <Icon name="download" size={13} className="text-ink-3" />
+        <span className="ml-2.5 flex-1">Can download</span>
+        <Toggle on={canDownload} onChange={setCanDownload} />
+      </div>
+
+      {error && (
+        <div className="mb-4 px-3 py-2 bg-red/10 border border-red/20 rounded-md text-xs text-red">
+          {error}
+        </div>
+      )}
+
+      <BBButton
+        variant="amber"
+        size="lg"
+        className="w-full justify-center gap-2"
+        onClick={handleShare}
+        disabled={loading}
+      >
+        <Icon name="shield" size={13} />
+        {loading ? 'Encrypting...' : 'Share with user'}
+      </BBButton>
+
+      <div className="flex items-center gap-1.5 mt-3 text-[11.5px] text-ink-3">
+        <Icon name="lock" size={11} className="text-amber-deep" />
+        End-to-end encrypted. Only the recipient can decrypt.
+      </div>
+    </div>
+  )
+}
+
+// ─── Success state for user share ────────────────────
+
+function UserShareSuccess({
+  email,
+  onDone,
+}: {
+  email: string
+  onDone: () => void
+}) {
+  return (
+    <div className="text-center py-2">
+      <div className="w-10 h-10 mx-auto mb-3 rounded-full bg-green/10 flex items-center justify-center">
+        <Icon name="check" size={18} className="text-green" />
+      </div>
+      <p className="text-sm font-medium text-ink mb-1">Shared successfully</p>
+      <p className="text-xs text-ink-3 mb-4">
+        <span className="font-mono text-ink-2">{email}</span> can now access
+        this file.
+      </p>
+      <div className="flex items-center gap-1.5 justify-center text-[11.5px] text-ink-3 mb-4">
+        <Icon name="shield" size={11} className="text-amber-deep" />
+        File key encrypted via X25519 key exchange. We never see it.
+      </div>
+      <BBButton size="md" onClick={onDone} className="mx-auto">
+        Done
+      </BBButton>
+    </div>
+  )
+}
+
+// ─── Main dialog ─────────────────────────────────────
+
 export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: ShareDialogProps) {
+  const [mode, setMode] = useState<ShareMode>('link')
   const [expiryIdx, setExpiryIdx] = useState(1) // default: 24 hours
   const [maxOpensIdx, setMaxOpensIdx] = useState(1) // default: 3
   const [canView, setCanView] = useState(true)
@@ -131,12 +364,14 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: Share
   const [shareResult, setShareResult] = useState<ShareInfo | null>(null)
   const [copied, setCopied] = useState<'link' | 'key' | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [userShareDone, setUserShareDone] = useState<string | null>(null)
 
   const dialogRef = useRef<HTMLDivElement>(null)
 
   // Reset state when dialog opens
   useEffect(() => {
     if (open) {
+      setMode('link')
       setExpiryIdx(1)
       setMaxOpensIdx(1)
       setCanView(true)
@@ -146,6 +381,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: Share
       setShareResult(null)
       setError(null)
       setLoading(false)
+      setUserShareDone(null)
     }
   }, [open])
 
@@ -226,7 +462,8 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: Share
 
         {/* Body */}
         <div className="p-[22px]">
-          {shareResult ? (
+          {/* Link share result view */}
+          {mode === 'link' && shareResult ? (
             <>
               {/* Link section */}
               <label className="block text-xs font-medium text-ink-2 mb-1.5">Link</label>
@@ -275,57 +512,76 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: Share
                 Zero-knowledge by default — we never see the key.
               </div>
             </>
+          ) : mode === 'user' && userShareDone ? (
+            /* User share success view */
+            <UserShareSuccess
+              email={userShareDone}
+              onDone={onClose}
+            />
           ) : (
             <>
-              {/* Expiry + Max opens dropdowns */}
-              <div className="grid grid-cols-2 gap-3 mb-[18px]">
-                <div>
-                  <label className="block text-xs font-medium text-ink-2 mb-1.5">Expires</label>
-                  <Dropdown
-                    options={EXPIRY_OPTIONS}
-                    selected={expiryIdx}
-                    onChange={setExpiryIdx}
-                    icon={<Icon name="clock" size={13} className="text-ink-3" />}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-ink-2 mb-1.5">Max opens</label>
-                  <Dropdown
-                    options={MAX_OPENS_OPTIONS}
-                    selected={maxOpensIdx}
-                    onChange={setMaxOpensIdx}
-                  />
-                </div>
-              </div>
+              {/* Tab bar — only show before a result */}
+              <TabBar mode={mode} onChange={setMode} />
 
-              {/* Permissions */}
-              <label className="block text-xs font-medium text-ink-2 mb-2.5">Permissions</label>
-              <div className="flex flex-col gap-2.5 mb-5">
-                {permToggles.map(([label, on, setter, iconName]) => (
-                  <div key={label} className="flex items-center text-[13px]">
-                    <Icon name={iconName} size={13} className="text-ink-3" />
-                    <span className="ml-2.5 flex-1">{label}</span>
-                    <Toggle on={on} onChange={setter} />
+              {mode === 'link' ? (
+                <>
+                  {/* Expiry + Max opens dropdowns */}
+                  <div className="grid grid-cols-2 gap-3 mb-[18px]">
+                    <div>
+                      <label className="block text-xs font-medium text-ink-2 mb-1.5">Expires</label>
+                      <Dropdown
+                        options={EXPIRY_OPTIONS}
+                        selected={expiryIdx}
+                        onChange={setExpiryIdx}
+                        icon={<Icon name="clock" size={13} className="text-ink-3" />}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-ink-2 mb-1.5">Max opens</label>
+                      <Dropdown
+                        options={MAX_OPENS_OPTIONS}
+                        selected={maxOpensIdx}
+                        onChange={setMaxOpensIdx}
+                      />
+                    </div>
                   </div>
-                ))}
-              </div>
 
-              {error && (
-                <div className="mb-4 px-3 py-2 bg-red/10 border border-red/20 rounded-md text-xs text-red">
-                  {error}
-                </div>
+                  {/* Permissions */}
+                  <label className="block text-xs font-medium text-ink-2 mb-2.5">Permissions</label>
+                  <div className="flex flex-col gap-2.5 mb-5">
+                    {permToggles.map(([label, on, setter, iconName]) => (
+                      <div key={label} className="flex items-center text-[13px]">
+                        <Icon name={iconName} size={13} className="text-ink-3" />
+                        <span className="ml-2.5 flex-1">{label}</span>
+                        <Toggle on={on} onChange={setter} />
+                      </div>
+                    ))}
+                  </div>
+
+                  {error && (
+                    <div className="mb-4 px-3 py-2 bg-red/10 border border-red/20 rounded-md text-xs text-red">
+                      {error}
+                    </div>
+                  )}
+
+                  <BBButton
+                    variant="amber"
+                    size="lg"
+                    className="w-full justify-center gap-2"
+                    onClick={handleGenerate}
+                    disabled={loading}
+                  >
+                    <Icon name="lock" size={13} />
+                    {loading ? 'Generating...' : 'Generate encrypted link'}
+                  </BBButton>
+                </>
+              ) : (
+                /* User share form */
+                <UserShareForm
+                  fileId={fileId}
+                  onSuccess={(email) => setUserShareDone(email)}
+                />
               )}
-
-              <BBButton
-                variant="amber"
-                size="lg"
-                className="w-full justify-center gap-2"
-                onClick={handleGenerate}
-                disabled={loading}
-              >
-                <Icon name="lock" size={13} />
-                {loading ? 'Generating...' : 'Generate encrypted link'}
-              </BBButton>
             </>
           )}
         </div>

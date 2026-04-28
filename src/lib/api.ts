@@ -528,6 +528,57 @@ export async function revokeShare(id: string): Promise<void> {
   await request<void>(`/api/v1/shares/${id}`, { method: 'DELETE' })
 }
 
+// ─── User-to-user sharing endpoints ────────────
+
+export interface UserPublicKey {
+  user_id: string
+  public_key: string // base64-encoded X25519 public key
+}
+
+export interface UserLookup {
+  user_id: string
+  email: string
+}
+
+export interface UserShareResult {
+  id: string
+  file_id: string
+  recipient_id: string
+  created_at: string
+}
+
+/** Look up a user by email address (for sharing). */
+export async function lookupUserByEmail(email: string): Promise<UserLookup> {
+  return request<UserLookup>(
+    `/api/v1/users/lookup?email=${encodeURIComponent(email)}`,
+  )
+}
+
+/** Fetch a user's X25519 public key for key exchange. */
+export async function getUserPublicKey(userId: string): Promise<UserPublicKey> {
+  return request<UserPublicKey>(`/api/v1/users/${userId}/public-key`)
+}
+
+/** Create a user-to-user share with encrypted file key. */
+export async function createUserShare(
+  fileId: string,
+  recipientId: string,
+  encryptedFileKey: string,
+  nonce: string,
+  permissions?: { can_download?: boolean; expires_at?: string | null },
+): Promise<UserShareResult> {
+  return request<UserShareResult>('/api/v1/shares/user', {
+    method: 'POST',
+    body: JSON.stringify({
+      file_id: fileId,
+      recipient_id: recipientId,
+      encrypted_file_key: encryptedFileKey,
+      nonce,
+      permissions: permissions ?? {},
+    }),
+  })
+}
+
 // ─── Billing endpoints ─────────────────────────
 
 export interface Plan {

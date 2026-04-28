@@ -158,6 +158,24 @@ const cryptoWorker = {
     const wasm = await ensureWasm()
     return wasm.compute_recovery_check(masterKey) as Uint8Array
   },
+
+  /** Derive X25519 signing side from master key (for sharing). */
+  async deriveX25519Private(masterKey: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.derive_x25519_private(masterKey) as Uint8Array
+  },
+
+  /** Compute X25519 DH result from our keypair and their public part. */
+  async x25519SharedSecret(myPrivate: Uint8Array, theirPublic: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.x25519_shared_secret(myPrivate, theirPublic) as Uint8Array
+  },
+
+  /** Derive a per-file share key from a shared secret and file ID. */
+  async deriveShareKey(sharedSecret: Uint8Array, fileId: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.derive_share_key(sharedSecret, fileId) as Uint8Array
+  },
 }
 
 export type CryptoWorker = typeof cryptoWorker

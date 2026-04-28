@@ -160,6 +160,51 @@ export async function computeRecoveryCheck(masterKey: Uint8Array): Promise<Uint8
   return getProxy().computeRecoveryCheck(masterKey)
 }
 
+/** Derive X25519 signing side from master key (for key exchange). */
+export async function deriveX25519Private(masterKey: Uint8Array): Promise<Uint8Array> {
+  return getProxy().deriveX25519Private(masterKey)
+}
+
+/** Compute X25519 shared secret for user-to-user sharing. */
+export async function x25519SharedSecret(
+  myPrivate: Uint8Array,
+  theirPublic: Uint8Array,
+): Promise<Uint8Array> {
+  return getProxy().x25519SharedSecret(myPrivate, theirPublic)
+}
+
+/** Derive a per-file share key from a shared secret and file ID bytes. */
+export async function deriveShareKey(
+  sharedSecret: Uint8Array,
+  fileId: Uint8Array,
+): Promise<Uint8Array> {
+  return getProxy().deriveShareKey(sharedSecret, fileId)
+}
+
+/**
+ * Encrypt a file key for user-to-user sharing.
+ * Performs the full X25519 key exchange + AES-256-GCM encryption.
+ */
+export async function encryptFileKeyForSharing(
+  masterKey: Uint8Array,
+  recipientPublicKey: Uint8Array,
+  fileId: string,
+  fileKey: Uint8Array,
+): Promise<{ encryptedFileKey: Uint8Array; nonce: Uint8Array }> {
+  const myPrivate = await deriveX25519Private(masterKey)
+  const sharedSecret = await x25519SharedSecret(myPrivate, recipientPublicKey)
+  // Convert file ID (UUID string) to bytes for HKDF info parameter
+  const fileIdBytes = new TextEncoder().encode(fileId)
+  const shareKey = await deriveShareKey(sharedSecret, fileIdBytes)
+  // Encrypt the file key using the share key via AES-256-GCM
+  const result = await encryptChunk(shareKey, fileKey)
+  // Zero intermediate key material
+  zeroize(myPrivate)
+  zeroize(sharedSecret)
+  zeroize(shareKey)
+  return { encryptedFileKey: result.ciphertext, nonce: result.nonce }
+}
+
 // ─── Helpers ────────────────────────────────────────
 
 const CHUNK_SIZE = 1024 * 1024 // 1 MB

@@ -34,6 +34,8 @@ interface KeyState {
   setMasterKey: (key: Uint8Array) => void
   /** Derive a per-file key from the master key (async — runs in worker). */
   getFileKey: (fileId: string) => Promise<Uint8Array>
+  /** Get the raw master key (for X25519 key exchange in sharing). */
+  getMasterKey: () => Uint8Array
   /** Zero and clear the master key. */
   lock: () => void
 }
@@ -82,6 +84,13 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     return deriveFileKey(masterKeyRef.current, fileId)
   }, [])
 
+  const getMasterKey = useCallback((): Uint8Array => {
+    if (!masterKeyRef.current) {
+      throw new Error('Vault is locked — unlock first')
+    }
+    return masterKeyRef.current
+  }, [])
+
   const lock = useCallback(() => {
     if (masterKeyRef.current) {
       zeroize(masterKeyRef.current)
@@ -105,9 +114,10 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       unlock,
       setMasterKey,
       getFileKey,
+      getMasterKey,
       lock,
     }),
-    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, unlock, setMasterKey, getFileKey, lock],
+    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, unlock, setMasterKey, getFileKey, getMasterKey, lock],
   )
 
   return <KeyContext.Provider value={value}>{children}</KeyContext.Provider>
