@@ -38,7 +38,10 @@ export function SettingsShell({ activeSection, children }: SettingsShellProps) {
       >
         {/* Sidebar */}
         <div className="w-[220px] shrink-0 bg-paper-2 border-r border-line flex flex-col">
-          <div className="flex items-center gap-2 px-4 pt-4 pb-2.5">
+          <Link to="/" className="flex items-center gap-1.5 px-4 pt-3 pb-1 text-[11px] text-ink-3 hover:text-ink transition-colors">
+            <span className="rotate-180"><Icon name="chevron-right" size={10} /></span> Back to Drive
+          </Link>
+          <div className="flex items-center gap-2 px-4 pt-2 pb-2.5">
             <Icon name="settings" size={13} className="text-ink-3" />
             <span className="text-sm font-semibold text-ink">Settings</span>
           </div>
