@@ -186,13 +186,13 @@ export function Drive() {
 
   async function doEncryptedUpload(uploadId: string, file: File) {
     if (!isUnlocked || !cryptoReady) {
-      setUploads((prev) =>
-        prev.map((u) =>
-          u.id === uploadId
-            ? { ...u, stage: 'Queued' as const, progress: 0 }
-            : u,
-        ),
-      )
+      showToast({
+        icon: 'lock',
+        title: 'Vault is locked',
+        description: 'Log in again to unlock encryption before uploading.',
+        danger: true,
+      })
+      setUploads((prev) => prev.filter((u) => u.id !== uploadId))
       return
     }
 

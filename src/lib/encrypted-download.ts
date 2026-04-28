@@ -6,9 +6,7 @@ import {
   decryptFilename,
   fromBase64,
 } from './crypto'
-import { getToken, ApiError } from './api'
-
-const API_URL = 'http://localhost:3001'
+import { getToken, getApiUrl, ApiError } from './api'
 
 // AES-256-GCM nonce is 12 bytes
 const NONCE_LENGTH = 12
@@ -49,7 +47,7 @@ export async function encryptedDownload(
   const headers: Record<string, string> = {}
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const res = await fetch(`${API_URL}/api/v1/files/${fileId}/download`, {
+  const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/download`, {
     headers,
   })
   if (!res.ok) {

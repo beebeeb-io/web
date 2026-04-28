@@ -7,10 +7,8 @@ import {
   encryptFilename,
   toBase64,
 } from './crypto'
-import { getToken, ApiError } from './api'
+import { getToken, getApiUrl, ApiError } from './api'
 import type { DriveFile } from './api'
-
-const API_URL = 'http://localhost:3001'
 
 export interface UploadProgress {
   stage: 'Encrypting' | 'Uploading' | 'Done'
@@ -91,7 +89,7 @@ export async function encryptedUpload(
     })
   }
 
-  const res = await fetch(`${API_URL}/api/v1/files/upload`, {
+  const res = await fetch(`${getApiUrl()}/api/v1/files/upload`, {
     method: 'POST',
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     body: form,

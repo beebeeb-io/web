@@ -1,5 +1,9 @@
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 
+export function getApiUrl(): string {
+  return API_URL
+}
+
 const TOKEN_KEY = 'bb_session'
 
 export function hexToBytes(hex: string): Uint8Array {
