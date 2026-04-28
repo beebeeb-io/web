@@ -1,9 +1,11 @@
+import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { BBLogo } from './bb-logo'
 import { Icon } from './icons'
 import type { IconName } from './icons'
 import { useAuth } from '../lib/auth-context'
+import { getSubscription, getPlans, type Subscription, type Plan } from '../lib/api'
 
 const navItems: { path: string; icon: IconName; label: string }[] = [
   { path: '/', icon: 'folder', label: 'All files' },
@@ -14,10 +16,40 @@ const navItems: { path: string; icon: IconName; label: string }[] = [
   { path: '/trash', icon: 'trash', label: 'Trash' },
 ]
 
+function formatStorage(bytes: number): string {
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+}
+
+function regionLabel(region: string): string {
+  const map: Record<string, string> = {
+    frankfurt: 'Frankfurt · Hetzner',
+    falkenstein: 'Falkenstein · Hetzner',
+    helsinki: 'Helsinki · Hetzner',
+  }
+  return map[region] ?? region
+}
+
 export function DriveLayout({ children }: { children: ReactNode }) {
   const location = useLocation()
-  const navigate = useNavigate()
   const { logout } = useAuth()
+  const [sub, setSub] = useState<Subscription | null>(null)
+  const [planDetails, setPlanDetails] = useState<Plan | null>(null)
+
+  useEffect(() => {
+    getSubscription().then(setSub).catch(() => {})
+    getPlans().then((plans) => {
+      getSubscription().then((s) => {
+        const match = plans.find((p) => p.id === s.plan)
+        if (match) setPlanDetails(match)
+      }).catch(() => {})
+    }).catch(() => {})
+  }, [])
+
+  const storageLimit = planDetails?.storage_bytes ?? 10_000_000_000
+  const storageLabel = planDetails?.storage_label ?? formatStorage(storageLimit)
+  const usedBytes = 0
+  const usedPct = storageLimit > 0 ? Math.min(100, (usedBytes / storageLimit) * 100) : 0
 
   return (
     <div className="h-screen flex overflow-hidden bg-paper">
@@ -53,17 +85,19 @@ export function DriveLayout({ children }: { children: ReactNode }) {
             Storage
           </div>
           <div className="h-[3px] w-full rounded-full bg-paper-3 overflow-hidden mb-1.5">
-            <div className="h-full rounded-full bg-amber" style={{ width: '0%' }} />
+            <div className="h-full rounded-full bg-amber" style={{ width: `${usedPct}%` }} />
           </div>
           <div className="flex justify-between text-[11px]">
-            <span className="font-mono tabular-nums">0 / 10 GB</span>
+            <span className="font-mono tabular-nums">
+              {formatStorage(usedBytes)} / {storageLabel}
+            </span>
             <Link to="/billing" className="font-medium text-amber-deep hover:underline">
               Upgrade
             </Link>
           </div>
           <div className="mt-3 flex items-center gap-1.5 text-[10px] text-ink-3">
             <Icon name="shield" size={11} className="text-amber-deep" />
-            <span className="font-mono">Frankfurt · Hetzner</span>
+            <span className="font-mono">{regionLabel(sub?.region ?? 'frankfurt')}</span>
           </div>
         </div>
 
