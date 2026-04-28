@@ -1,7 +1,23 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { BBButton } from '../components/bb-button'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '../components/icons'
+import { listFiles, type DriveFile } from '../lib/api'
+import { useKeys } from '../lib/key-context'
+import { decryptFilename, fromBase64 } from '../lib/crypto'
+
+// ─── Constants ──────────────────────────────────
+
+const IMAGE_EXTENSIONS = new Set([
+  'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif',
+  'bmp', 'tiff', 'tif', 'avif', 'svg', 'ico',
+])
+
+const VIDEO_EXTENSIONS = new Set([
+  'mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v',
+])
+
+const MEDIA_MIME_PREFIXES = ['image/', 'video/']
 
 // ─── Photo types ────────────────────────────────
 
@@ -13,10 +29,75 @@ interface PhotoGroup {
 
 interface PhotoItem {
   id: string
+  name: string
+  sizeBytes: number
   isVideo: boolean
   duration: string | null
   isShared: boolean
   isFeatured: boolean
+}
+
+/** Check if a filename or MIME type represents a media file (image/video). */
+function isMediaFile(name: string, mimeType: string): boolean {
+  const ext = name.split('.').pop()?.toLowerCase() ?? ''
+  if (IMAGE_EXTENSIONS.has(ext) || VIDEO_EXTENSIONS.has(ext)) return true
+  return MEDIA_MIME_PREFIXES.some((p) => mimeType.startsWith(p))
+}
+
+function isVideoFile(name: string, mimeType: string): boolean {
+  const ext = name.split('.').pop()?.toLowerCase() ?? ''
+  if (VIDEO_EXTENSIONS.has(ext)) return true
+  return mimeType.startsWith('video/')
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+}
+
+/** Group a flat list of photo items by date string. */
+function groupByDate(items: PhotoItem[], files: DriveFile[]): PhotoGroup[] {
+  const dateMap = new Map<string, PhotoItem[]>()
+
+  // Build a lookup for dates by file ID
+  const fileDateMap = new Map<string, string>()
+  for (const f of files) {
+    fileDateMap.set(f.id, f.created_at)
+  }
+
+  for (const item of items) {
+    const dateStr = fileDateMap.get(item.id) ?? new Date().toISOString()
+    const date = new Date(dateStr)
+    const label = date.toLocaleDateString('en-GB', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    })
+    const existing = dateMap.get(label)
+    if (existing) {
+      existing.push(item)
+    } else {
+      dateMap.set(label, [item])
+    }
+  }
+
+  // Sort groups newest first
+  return Array.from(dateMap.entries())
+    .sort((a, b) => {
+      // Parse dates for sorting — use the first item's file date
+      const dateA = fileDateMap.get(a[1][0].id) ?? ''
+      const dateB = fileDateMap.get(b[1][0].id) ?? ''
+      return new Date(dateB).getTime() - new Date(dateA).getTime()
+    })
+    .map(([date, items]) => ({
+      date,
+      place: null,
+      items,
+    }))
 }
 
 // ─── Deterministic warm gradient for placeholders ─
@@ -41,12 +122,103 @@ const DATE_RANGES = ['Last 7 days', 'Last 30 days', 'Last 3 months', 'All time']
 // ─── Photos page ────────────────────────────────
 
 export function Photos() {
+  const { getFileKey, isUnlocked } = useKeys()
   const [activeTab, setActiveTab] = useState(0)
   const [dateRange, setDateRange] = useState<(typeof DATE_RANGES)[number]>('All time')
   const [dateDropdownOpen, setDateDropdownOpen] = useState(false)
+  const [allFiles, setAllFiles] = useState<DriveFile[]>([])
+  const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({})
+  const [loading, setLoading] = useState(true)
 
-  const groups: PhotoGroup[] = []
-  const totalItems = groups.reduce((sum, g) => sum + g.items.length, 0)
+  // Fetch all files recursively (flat list)
+  const fetchAllFiles = useCallback(async () => {
+    setLoading(true)
+    try {
+      const files = await listFiles(undefined, false)
+      setAllFiles(files)
+    } catch {
+      setAllFiles([])
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchAllFiles()
+  }, [fetchAllFiles])
+
+  // Decrypt file names
+  useEffect(() => {
+    if (!isUnlocked || allFiles.length === 0) {
+      if (!isUnlocked) setDecryptedNames({})
+      return
+    }
+    let cancelled = false
+    async function decryptAll() {
+      const names: Record<string, string> = {}
+      for (const file of allFiles) {
+        if (cancelled) return
+        try {
+          const parsed = JSON.parse(file.name_encrypted) as {
+            nonce: string
+            ciphertext: string
+          }
+          const fileKey = await getFileKey(file.id)
+          names[file.id] = await decryptFilename(
+            fileKey,
+            fromBase64(parsed.nonce),
+            fromBase64(parsed.ciphertext),
+          )
+        } catch {
+          names[file.id] = file.name_encrypted
+        }
+      }
+      if (!cancelled) setDecryptedNames(names)
+    }
+    decryptAll()
+    return () => { cancelled = true }
+  }, [allFiles, isUnlocked, getFileKey])
+
+  function displayName(file: DriveFile): string {
+    return decryptedNames[file.id] ?? file.name_encrypted
+  }
+
+  // Filter to media files only
+  const mediaFiles = allFiles.filter((f) => {
+    if (f.is_folder) return false
+    const name = displayName(f)
+    return isMediaFile(name, f.mime_type)
+  })
+
+  // Apply date range filter
+  const filteredFiles = mediaFiles.filter((f) => {
+    if (dateRange === 'All time') return true
+    const fileDate = new Date(f.created_at).getTime()
+    const now = Date.now()
+    if (dateRange === 'Last 7 days') return now - fileDate < 7 * 24 * 60 * 60 * 1000
+    if (dateRange === 'Last 30 days') return now - fileDate < 30 * 24 * 60 * 60 * 1000
+    if (dateRange === 'Last 3 months') return now - fileDate < 90 * 24 * 60 * 60 * 1000
+    return true
+  })
+
+  // Build photo items from filtered files
+  const photoItems: PhotoItem[] = filteredFiles.map((f) => {
+    const name = displayName(f)
+    return {
+      id: f.id,
+      name,
+      sizeBytes: f.size_bytes,
+      isVideo: isVideoFile(name, f.mime_type),
+      duration: null,
+      isShared: false,
+      isFeatured: f.is_starred ?? false,
+    }
+  })
+
+  // Group by date
+  const groups: PhotoGroup[] = groupByDate(photoItems, filteredFiles)
+  const totalItems = photoItems.length
+  const totalSize = filteredFiles.reduce((sum, f) => sum + f.size_bytes, 0)
 
   return (
     <DriveLayout>
@@ -56,9 +228,13 @@ export function Photos() {
           <div>
             <div className="text-sm font-semibold text-ink">Photos</div>
             <div className="text-[11px] text-ink-3">
-              <span className="font-mono tabular-nums">{totalItems.toLocaleString()}</span> items
-              {' -- '}
-              <span className="font-mono tabular-nums">32.4 GB</span>
+              <span className="font-mono tabular-nums">{totalItems.toLocaleString()}</span> item{totalItems !== 1 ? 's' : ''}
+              {totalItems > 0 && (
+                <>
+                  {' -- '}
+                  <span className="font-mono tabular-nums">{formatBytes(totalSize)}</span>
+                </>
+              )}
             </div>
           </div>
 
@@ -126,7 +302,33 @@ export function Photos() {
 
         {/* Photo grid */}
         <div className="flex-1 overflow-y-auto px-5 py-[18px]">
-          {groups.map((group, gi) => (
+          {loading ? (
+            <div className="flex items-center justify-center py-20">
+              <svg className="animate-spin h-6 w-6 text-amber" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            </div>
+          ) : groups.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full text-center py-20">
+              <div
+                className="w-14 h-14 mb-4 rounded-2xl flex items-center justify-center"
+                style={{
+                  background: 'var(--color-amber-bg)',
+                  border: '1.5px dashed var(--color-line-2)',
+                }}
+              >
+                <Icon name="image" size={24} className="text-amber-deep" />
+              </div>
+              <div className="text-[15px] font-semibold text-ink mb-1">No photos yet</div>
+              <div className="text-[13px] text-ink-3 mb-1">
+                Upload images from the Drive to see them here.
+              </div>
+              <div className="text-[11px] text-ink-4">
+                Supports JPG, PNG, GIF, WebP, HEIC, AVIF, and more.
+              </div>
+            </div>
+          ) : groups.map((group, gi) => (
             <div key={gi} className="mb-6">
               {/* Group header */}
               <div className="flex items-baseline mb-2.5 gap-2.5">
@@ -155,6 +357,16 @@ export function Photos() {
                         opacity: photo.isFeatured ? 1 : 0.85,
                       }}
                     >
+                      {/* File icon centered (thumbnails are encrypted, so show icon + name) */}
+                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 p-1.5">
+                        <Icon name={photo.isVideo ? 'file' : 'image'} size={20} className="text-ink/30" />
+                        <span
+                          className="text-[8px] leading-tight text-ink/40 font-medium text-center line-clamp-2 max-w-full break-all"
+                        >
+                          {photo.name}
+                        </span>
+                      </div>
+
                       {/* Hover overlay */}
                       <div className="absolute inset-0 bg-ink/0 group-hover/cell:bg-ink/10 transition-colors" />
 
