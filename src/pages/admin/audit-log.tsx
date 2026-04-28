@@ -31,8 +31,7 @@ export function AuditLog() {
       const data = await listAuditLog({ actor, event, limit: 50 })
       setEvents(data.events)
     } catch {
-      // Use demo data when API unavailable
-      setEvents(demoEvents)
+      setEvents([])
     } finally {
       setLoading(false)
     }
@@ -155,14 +154,3 @@ export function AuditLog() {
   )
 }
 
-/* Demo data for offline/dev use */
-const demoEvents: AuditEvent[] = [
-  { id: '1', workspace_id: null, actor: 'isa@example.eu', event: 'file.share.create', target: 'evidence/Tirana-minutes.pdf', ip_address: '85.144.22.10', device: 'macOS · Safari', created_at: new Date().toISOString() },
-  { id: '2', workspace_id: null, actor: 'marc@example.eu', event: 'member.role.change', target: 'legal@example.com → Can view', ip_address: '91.203.11.4', device: 'iOS · 17.4', created_at: new Date(Date.now() - 240_000).toISOString() },
-  { id: '3', workspace_id: null, actor: 'isa@example.eu', event: 'key.rotate', target: 'team key · v23', ip_address: '85.144.22.10', device: 'macOS · Safari', created_at: new Date(Date.now() - 660_000).toISOString() },
-  { id: '4', workspace_id: null, actor: 'system', event: 'session.expire', target: 'editor@example.eu · Firefox', ip_address: null, device: 'server', created_at: new Date(Date.now() - 2_160_000).toISOString() },
-  { id: '5', workspace_id: null, actor: 'editor@example.eu', event: 'file.download', target: 'raw/interview-03.wav', ip_address: '77.22.8.91', device: 'Windows · Chrome', created_at: new Date(Date.now() - 4_920_000).toISOString() },
-  { id: '6', workspace_id: null, actor: 'marc@example.eu', event: 'member.invite', target: 'legal@example.com', ip_address: '91.203.11.4', device: 'macOS · Chrome', created_at: new Date(Date.now() - 6_120_000).toISOString() },
-  { id: '7', workspace_id: null, actor: 'isa@example.eu', event: 'file.upload', target: '14 files · 312 MB', ip_address: '85.144.22.10', device: 'macOS · Safari', created_at: new Date(Date.now() - 12_600_000).toISOString() },
-  { id: '8', workspace_id: null, actor: 'isa@example.eu', event: 'auth.login', target: 'passkey', ip_address: '85.144.22.10', device: 'macOS · Safari', created_at: new Date(Date.now() - 12_840_000).toISOString() },
-]
