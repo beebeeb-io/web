@@ -5,9 +5,17 @@ import { BBButton } from '../components/bb-button'
 import { BBCheckbox } from '../components/bb-checkbox'
 import { BBInput } from '../components/bb-input'
 import { Icon } from '../components/icons'
-import { hexToBytes } from '../lib/api'
+import { opaqueRegisterStart, opaqueRegisterFinish, getMe, setToken } from '../lib/api'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
+import {
+  opaqueRegistrationStart,
+  opaqueRegistrationFinish,
+  generateRecoveryPhrase,
+  deriveX25519Public,
+  computeRecoveryCheck,
+  toBase64,
+} from '../lib/crypto'
 
 function getPasswordStrength(pw: string): {
   level: number
@@ -24,7 +32,7 @@ function getPasswordStrength(pw: string): {
 export function Signup() {
   const navigate = useNavigate()
   const { signup } = useAuth()
-  const { unlock, cryptoReady, cryptoError } = useKeys()
+  const { setMasterKey, cryptoReady, cryptoError } = useKeys()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -46,10 +54,31 @@ export function Signup() {
 
     setSubmitting(true)
     try {
-      const result = await signup(email, password)
-      const salt = hexToBytes(result.salt)
-      await unlock(password, salt)
-      navigate('/verify-email')
+      // 1. Generate master key + recovery phrase
+      const { phrase, masterKey } = await generateRecoveryPhrase()
+
+      // 2. OPAQUE registration (2-round-trip)
+      const regStart = await opaqueRegistrationStart(password)
+      const serverResp = await opaqueRegisterStart(email, toBase64(regStart.message))
+      const serverMsg = Uint8Array.from(atob(serverResp.server_message), c => c.charCodeAt(0))
+      const regUpload = await opaqueRegistrationFinish(regStart.state, password, serverMsg)
+
+      // 3. Derive X25519 public key + recovery check
+      const x25519Pub = await deriveX25519Public(masterKey)
+      const recoveryCheck = await computeRecoveryCheck(masterKey)
+
+      // 4. Finish registration on server
+      const result = await opaqueRegisterFinish(
+        email,
+        toBase64(regUpload),
+        toBase64(x25519Pub),
+        toBase64(recoveryCheck),
+      )
+
+      // 5. Store master key in memory, navigate to onboarding
+      setMasterKey(masterKey)
+      sessionStorage.setItem('bb_mnemonic', phrase)
+      navigate('/onboarding')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
     } finally {
