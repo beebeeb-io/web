@@ -23,6 +23,7 @@ import {
 import { encryptedUpload } from '../lib/encrypted-upload'
 import { encryptedDownload } from '../lib/encrypted-download'
 import { decryptFilename, encryptFilename, fromBase64, toBase64 } from '../lib/crypto'
+import { useSearchIndex } from '../hooks/use-search-index'
 
 // ─── Helpers ───────────────────────────────────────
 
@@ -81,6 +82,7 @@ function AvatarStack({ n }: { n: number }) {
 export function Drive() {
   const { logout } = useAuth()
   const { getFileKey, isUnlocked, cryptoReady, cryptoError } = useKeys()
+  const { indexFile, unindexFile } = useSearchIndex()
   const location = useLocation()
   const navigate = useNavigate()
   const [files, setFiles] = useState<DriveFile[]>([])
@@ -226,6 +228,21 @@ export function Drive() {
           ),
         )
       })
+
+      // Update the encrypted search index with the new file
+      const pathPrefix = breadcrumbs.slice(1).map((b) => b.name).join('/')
+      indexFile(fileId, {
+        name: file.name,
+        path: pathPrefix ? `/${pathPrefix}` : '/',
+        type: file.type || 'application/octet-stream',
+        size: file.size,
+        parent: currentParentId ?? null,
+        starred: false,
+        created: new Date().toISOString(),
+        modified: new Date().toISOString(),
+        tags: [],
+      })
+
       fetchFiles()
     } catch {
       setUploads((prev) =>
@@ -296,8 +313,9 @@ export function Drive() {
     try {
       // Encrypt the folder name if crypto is ready
       let nameEncrypted = name
+      let folderId: string | undefined
       if (isUnlocked && cryptoReady) {
-        const folderId = crypto.randomUUID()
+        folderId = crypto.randomUUID()
         const folderKey = await getFileKey(folderId)
         const enc = await encryptFilename(folderKey, name)
         nameEncrypted = JSON.stringify({
@@ -305,7 +323,22 @@ export function Drive() {
           ciphertext: toBase64(enc.ciphertext),
         })
       }
-      await createFolder(nameEncrypted, currentParentId)
+      const result = await createFolder(nameEncrypted, currentParentId)
+
+      // Update the encrypted search index with the new folder
+      const pathPrefix = breadcrumbs.slice(1).map((b) => b.name).join('/')
+      indexFile(result.id, {
+        name,
+        path: pathPrefix ? `/${pathPrefix}` : '/',
+        type: 'folder',
+        size: 0,
+        parent: currentParentId ?? null,
+        starred: false,
+        created: new Date().toISOString(),
+        modified: new Date().toISOString(),
+        tags: [],
+      })
+
       fetchFiles()
     } catch {
       // API not available

@@ -1,5 +1,5 @@
 import { getToken, getApiUrl } from './api'
-import { deriveKeys, encryptChunk, decryptChunk, toBase64, fromBase64 } from './crypto'
+// crypto imports unused -- search index uses Web Crypto API directly
 
 export interface SearchIndexEntry {
   name: string
@@ -23,7 +23,7 @@ const INDEX_KEY_INFO = 'beebeeb-search-index'
 
 async function deriveIndexKey(masterKey: Uint8Array): Promise<Uint8Array> {
   const { subtle } = globalThis.crypto
-  const baseKey = await subtle.importKey('raw', masterKey, 'HKDF', false, ['deriveBits'])
+  const baseKey = await subtle.importKey('raw', masterKey.buffer as ArrayBuffer, 'HKDF', false, ['deriveBits'])
   const bits = await subtle.deriveBits(
     { name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(0), info: new TextEncoder().encode(INDEX_KEY_INFO) },
     baseKey,
@@ -38,7 +38,7 @@ async function encryptIndex(index: SearchIndex, masterKey: Uint8Array): Promise<
   const plaintext = new TextEncoder().encode(json)
 
   const { subtle } = globalThis.crypto
-  const key = await subtle.importKey('raw', indexKey, 'AES-GCM', false, ['encrypt'])
+  const key = await subtle.importKey('raw', indexKey.buffer as ArrayBuffer, 'AES-GCM', false, ['encrypt'])
   const nonce = globalThis.crypto.getRandomValues(new Uint8Array(12))
   const ciphertext = await subtle.encrypt({ name: 'AES-GCM', iv: nonce }, key, plaintext)
 
@@ -54,7 +54,7 @@ async function decryptIndex(data: Uint8Array, masterKey: Uint8Array): Promise<Se
   const ciphertext = data.slice(12)
 
   const { subtle } = globalThis.crypto
-  const key = await subtle.importKey('raw', indexKey, 'AES-GCM', false, ['decrypt'])
+  const key = await subtle.importKey('raw', indexKey.buffer as ArrayBuffer, 'AES-GCM', false, ['decrypt'])
   const plaintext = await subtle.decrypt({ name: 'AES-GCM', iv: nonce }, key, ciphertext)
 
   const json = new TextDecoder().decode(plaintext)
@@ -90,7 +90,7 @@ export async function saveIndex(index: SearchIndex, masterKey: Uint8Array, etag?
   const res = await fetch(`${getApiUrl()}/api/v1/index`, {
     method: 'PUT',
     headers,
-    body: encrypted,
+    body: encrypted.buffer as ArrayBuffer,
   })
 
   if (!res.ok) return null

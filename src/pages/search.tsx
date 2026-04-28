@@ -1,11 +1,17 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { BBButton } from '../components/bb-button'
-import { BBChip } from '../components/bb-chip'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '../components/icons'
 import type { IconName } from '../components/icons'
-import { listFiles, type DriveFile } from '../lib/api'
+import { useKeys } from '../lib/key-context'
+import {
+  fetchIndex,
+  searchIndex,
+  createEmptyIndex,
+  type SearchIndex,
+  type SearchResult,
+} from '../lib/search-index'
 
 // ─── Helpers ─────────────────────────────────────
 
@@ -31,9 +37,9 @@ function timeAgo(dateStr: string): string {
   return `${weeks}w ago`
 }
 
-function getIconForFile(file: DriveFile): IconName {
-  if (file.is_folder) return 'folder'
-  const ext = file.name_encrypted.split('.').pop()?.toLowerCase() ?? ''
+function getIconForEntry(entry: SearchResult['entry']): IconName {
+  if (entry.type === 'folder') return 'folder'
+  const ext = entry.name.split('.').pop()?.toLowerCase() ?? ''
   if (['jpg', 'jpeg', 'png', 'gif', 'heic', 'webp', 'svg'].includes(ext)) return 'image'
   return 'file'
 }
@@ -49,6 +55,8 @@ const FILE_TYPE_FILTERS: { id: FileTypeFilter; label: string; icon: IconName }[]
   { id: 'folders', label: 'Folders', icon: 'folder' },
 ]
 
+const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'heic', 'webp', 'svg']
+
 // ─── Search page ─────────────────────────────────
 
 export function Search() {
@@ -56,20 +64,57 @@ export function Search() {
   const [searchParams, setSearchParams] = useSearchParams()
   const initialQuery = searchParams.get('q') ?? ''
 
+  const { isUnlocked, getMasterKey } = useKeys()
+
   const [query, setQuery] = useState(initialQuery)
-  const [results, setResults] = useState<DriveFile[]>([])
+  const [results, setResults] = useState<SearchResult[]>([])
   const [typeFilter, setTypeFilter] = useState<FileTypeFilter>('all')
   const [loading, setLoading] = useState(false)
   const [searched, setSearched] = useState(!!initialQuery)
+  const [indexError, setIndexError] = useState<string | null>(null)
+  const [indexLoaded, setIndexLoaded] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // Hold the decrypted index in memory
+  const indexRef = useRef<SearchIndex | null>(null)
 
   // Focus input on mount
   useEffect(() => {
     inputRef.current?.focus()
   }, [])
 
-  // Client-side search against file list
-  const runSearch = useCallback(async (q: string) => {
+  // Fetch and decrypt the search index when the vault is unlocked
+  useEffect(() => {
+    if (!isUnlocked) {
+      indexRef.current = null
+      setIndexLoaded(false)
+      return
+    }
+
+    let cancelled = false
+    async function loadIndex() {
+      try {
+        const masterKey = getMasterKey()
+        const idx = await fetchIndex(masterKey)
+        if (!cancelled) {
+          indexRef.current = idx ?? createEmptyIndex()
+          setIndexError(null)
+          setIndexLoaded(true)
+        }
+      } catch {
+        if (!cancelled) {
+          indexRef.current = createEmptyIndex()
+          setIndexError('Could not load search index.')
+          setIndexLoaded(true)
+        }
+      }
+    }
+    loadIndex()
+    return () => { cancelled = true }
+  }, [isUnlocked, getMasterKey])
+
+  // Search against the local encrypted index
+  const runSearch = useCallback((q: string) => {
     if (!q.trim()) {
       setResults([])
       setSearched(false)
@@ -78,22 +123,23 @@ export function Search() {
     setLoading(true)
     setSearched(true)
     try {
-      const allFiles = await listFiles()
-      const lower = q.toLowerCase()
-      setResults(allFiles.filter((f) => f.name_encrypted.toLowerCase().includes(lower)))
-    } catch {
-      setResults([])
+      const idx = indexRef.current
+      if (!idx) {
+        setResults([])
+        return
+      }
+      setResults(searchIndex(idx, q))
     } finally {
       setLoading(false)
     }
   }, [])
 
-  // Run search on initial load if query param present
+  // Re-run search once index loads (for initial query from URL)
   useEffect(() => {
-    if (initialQuery) {
+    if (initialQuery && indexLoaded) {
       runSearch(initialQuery)
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [initialQuery, indexLoaded, runSearch])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -110,17 +156,17 @@ export function Search() {
   }
 
   // Apply type filter
-  const filteredResults = results.filter((f) => {
+  const filteredResults = results.filter((r) => {
     if (typeFilter === 'all') return true
-    if (typeFilter === 'folders') return f.is_folder
+    if (typeFilter === 'folders') return r.entry.type === 'folder'
     if (typeFilter === 'images') {
-      const ext = f.name_encrypted.split('.').pop()?.toLowerCase() ?? ''
-      return ['jpg', 'jpeg', 'png', 'gif', 'heic', 'webp', 'svg'].includes(ext)
+      const ext = r.entry.name.split('.').pop()?.toLowerCase() ?? ''
+      return IMAGE_EXTENSIONS.includes(ext)
     }
     // documents = not folder and not image
     if (typeFilter === 'documents') {
-      const ext = f.name_encrypted.split('.').pop()?.toLowerCase() ?? ''
-      return !f.is_folder && !['jpg', 'jpeg', 'png', 'gif', 'heic', 'webp', 'svg'].includes(ext)
+      const ext = r.entry.name.split('.').pop()?.toLowerCase() ?? ''
+      return r.entry.type !== 'folder' && !IMAGE_EXTENSIONS.includes(ext)
     }
     return true
   })
@@ -175,6 +221,22 @@ export function Search() {
           )}
         </div>
 
+        {/* Index error banner */}
+        {indexError && (
+          <div className="px-5 py-2 bg-amber-bg border-b border-amber-deep/30 text-[12px] text-ink-2 flex items-center gap-2">
+            <Icon name="shield" size={12} className="text-amber-deep" />
+            {indexError} Results may be incomplete.
+          </div>
+        )}
+
+        {/* Vault locked banner */}
+        {!isUnlocked && (
+          <div className="px-5 py-2 bg-paper-2 border-b border-line text-[12px] text-ink-3 flex items-center gap-2">
+            <Icon name="lock" size={12} className="text-ink-4" />
+            Vault is locked. Log in to search your encrypted files.
+          </div>
+        )}
+
         {/* Results area */}
         <div className="flex-1 overflow-y-auto">
           {!searched ? (
@@ -191,7 +253,7 @@ export function Search() {
               </div>
               <div className="text-[15px] font-semibold text-ink mb-1">Search your vault</div>
               <div className="text-[13px] text-ink-3 max-w-[20rem]">
-                File names are searched client-side. Content never leaves your device unencrypted.
+                File names are searched client-side against your encrypted index. Content never leaves your device unencrypted.
               </div>
             </div>
           ) : loading ? (
@@ -222,7 +284,7 @@ export function Search() {
                 </span>
                 <span className="flex items-center gap-1.5 ml-auto text-[10px] text-ink-4">
                   <Icon name="shield" size={10} className="text-amber-deep" />
-                  Names decrypted locally
+                  Index decrypted locally
                 </span>
               </div>
 
@@ -238,15 +300,16 @@ export function Search() {
                 <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">Name</span>
                 <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">Modified</span>
                 <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">Size</span>
-                <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">Owner</span>
+                <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">Path</span>
               </div>
 
               {/* File rows */}
-              {filteredResults.map((file, i, arr) => {
-                const iconName = getIconForFile(file)
+              {filteredResults.map((result, i, arr) => {
+                const { id, entry, score } = result
+                const iconName = getIconForEntry(entry)
                 return (
                   <div
-                    key={file.id}
+                    key={id}
                     className="group hover:bg-paper-2 transition-colors cursor-pointer"
                     style={{
                       display: 'grid',
@@ -257,7 +320,9 @@ export function Search() {
                       borderBottom: i < arr.length - 1 ? '1px solid var(--color-line)' : 'none',
                     }}
                     onClick={() => {
-                      if (file.is_folder) navigate(`/?folder=${file.id}`)
+                      if (entry.type === 'folder') {
+                        navigate(`/?folder=${id}`)
+                      }
                     }}
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
@@ -266,21 +331,19 @@ export function Search() {
                         size={14}
                         className={iconName === 'folder' ? 'text-amber-deep' : 'text-ink-3'}
                       />
-                      <span className="text-[13px] text-ink truncate">{file.name_encrypted}</span>
-                      {file.shared_with > 0 && (
-                        <BBChip>
-                          <span className="flex items-center gap-1 text-[9px]">
-                            <Icon name="users" size={9} />
-                            {file.shared_with}
-                          </span>
-                        </BBChip>
+                      <span className="text-[13px] text-ink truncate">{entry.name}</span>
+                      {entry.starred && (
+                        <Icon name="star" size={10} className="text-amber-deep shrink-0" />
                       )}
+                      <span className="font-mono text-[9px] text-ink-4 shrink-0">
+                        {score}pt
+                      </span>
                     </div>
-                    <span className="font-mono text-[11px] text-ink-3">{timeAgo(file.updated_at)}</span>
+                    <span className="font-mono text-[11px] text-ink-3">{timeAgo(entry.modified)}</span>
                     <span className="font-mono text-[11px] text-ink-3">
-                      {file.is_folder ? '--' : formatBytes(file.size_bytes)}
+                      {entry.type === 'folder' ? '--' : formatBytes(entry.size)}
                     </span>
-                    <span className="text-[11px] text-ink-3">{file.owner}</span>
+                    <span className="text-[11px] text-ink-3 truncate">{entry.path}</span>
                   </div>
                 )
               })}
@@ -295,7 +358,7 @@ export function Search() {
             Encrypted at rest -- AES-256-GCM
           </span>
           <span className="ml-auto font-mono text-[10px] text-ink-4">
-            Search is client-side only
+            Search is client-side only -- index decrypted in memory
           </span>
         </div>
     </DriveLayout>
