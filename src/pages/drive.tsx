@@ -84,6 +84,7 @@ export function Drive() {
   const location = useLocation()
   const navigate = useNavigate()
   const [files, setFiles] = useState<DriveFile[]>([])
+  const [loading, setLoading] = useState(true)
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({})
   const [breadcrumbs, setBreadcrumbs] = useState<{ id: string | null; name: string }[]>([
     { id: null, name: 'All files' },
@@ -103,6 +104,7 @@ export function Drive() {
   const currentParentId = breadcrumbs[breadcrumbs.length - 1]?.id ?? undefined
 
   const fetchFiles = useCallback(async () => {
+    setLoading(true)
     try {
       const trashed = location.pathname === '/trash'
       let data = await listFiles(currentParentId ?? undefined, trashed)
@@ -115,6 +117,8 @@ export function Drive() {
       setSyncedAgo(0)
     } catch {
       setFiles([])
+    } finally {
+      setLoading(false)
     }
   }, [currentParentId, location.pathname, viewType])
 
@@ -416,8 +420,14 @@ export function Drive() {
         {/* File list with upload zone */}
         <UploadZone onFiles={handleFilesSelected}>
           <div className="flex-1 overflow-y-auto">
-            {sortedFiles.length === 0 ? (
-              /* Empty state */
+            {loading ? (
+              <div className="flex items-center justify-center py-20">
+                <svg className="animate-spin h-6 w-6 text-amber" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+              </div>
+            ) : sortedFiles.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center py-20">
                 <div
                   className="w-14 h-14 mb-4 rounded-2xl flex items-center justify-center"
