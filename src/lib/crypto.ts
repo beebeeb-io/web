@@ -124,6 +124,42 @@ export async function recoverFromPhrase(phrase: string): Promise<Uint8Array> {
   return getProxy().recoverFromPhrase(phrase)
 }
 
+// ─── OPAQUE protocol ───────────────────────────────
+
+export async function opaqueRegistrationStart(password: string) {
+  await initCrypto()
+  return getProxy().opaqueRegistrationStart(password)
+}
+
+export async function opaqueRegistrationFinish(
+  clientState: Uint8Array,
+  password: string,
+  serverResponse: Uint8Array,
+) {
+  return getProxy().opaqueRegistrationFinish(clientState, password, serverResponse)
+}
+
+export async function opaqueLoginStart(password: string) {
+  await initCrypto()
+  return getProxy().opaqueLoginStart(password)
+}
+
+export async function opaqueLoginFinish(
+  clientState: Uint8Array,
+  password: string,
+  serverResponse: Uint8Array,
+) {
+  return getProxy().opaqueLoginFinish(clientState, password, serverResponse)
+}
+
+export async function deriveX25519Public(masterKey: Uint8Array): Promise<Uint8Array> {
+  return getProxy().deriveX25519Public(masterKey)
+}
+
+export async function computeRecoveryCheck(masterKey: Uint8Array): Promise<Uint8Array> {
+  return getProxy().computeRecoveryCheck(masterKey)
+}
+
 // ─── Helpers ────────────────────────────────────────
 
 const CHUNK_SIZE = 1024 * 1024 // 1 MB

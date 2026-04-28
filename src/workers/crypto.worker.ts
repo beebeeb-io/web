@@ -106,6 +106,58 @@ const cryptoWorker = {
     const wasm = await ensureWasm()
     return wasm.recover_from_phrase(phrase)
   },
+
+  /** OPAQUE: start client registration. Returns { message, state }. */
+  async opaqueRegistrationStart(password: string): Promise<{ message: Uint8Array; state: Uint8Array }> {
+    const wasm = await ensureWasm()
+    const result = wasm.opaque_registration_start(new TextEncoder().encode(password))
+    return { message: result.message as Uint8Array, state: result.state as Uint8Array }
+  },
+
+  /** OPAQUE: finish client registration. Returns registration upload bytes. */
+  async opaqueRegistrationFinish(
+    clientState: Uint8Array,
+    password: string,
+    serverResponse: Uint8Array,
+  ): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.opaque_registration_finish(clientState, new TextEncoder().encode(password), serverResponse) as Uint8Array
+  },
+
+  /** OPAQUE: start client login. Returns { message, state }. */
+  async opaqueLoginStart(password: string): Promise<{ message: Uint8Array; state: Uint8Array }> {
+    const wasm = await ensureWasm()
+    const result = wasm.opaque_login_start(new TextEncoder().encode(password))
+    return { message: result.message as Uint8Array, state: result.state as Uint8Array }
+  },
+
+  /** OPAQUE: finish client login. Returns { message, session_key, export_key }. */
+  async opaqueLoginFinish(
+    clientState: Uint8Array,
+    password: string,
+    serverResponse: Uint8Array,
+  ): Promise<{ message: Uint8Array; sessionKey: Uint8Array; exportKey: Uint8Array }> {
+    const wasm = await ensureWasm()
+    const result = wasm.opaque_login_finish(clientState, new TextEncoder().encode(password), serverResponse)
+    return {
+      message: result.message as Uint8Array,
+      sessionKey: result.session_key as Uint8Array,
+      exportKey: result.export_key as Uint8Array,
+    }
+  },
+
+  /** Derive X25519 public key from master key (for sharing). */
+  async deriveX25519Public(masterKey: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    const priv = wasm.derive_x25519_private(masterKey)
+    return wasm.derive_x25519_public(priv) as Uint8Array
+  },
+
+  /** Compute recovery check hash from master key. */
+  async computeRecoveryCheck(masterKey: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.compute_recovery_check(masterKey) as Uint8Array
+  },
 }
 
 export type CryptoWorker = typeof cryptoWorker

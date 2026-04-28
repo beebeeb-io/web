@@ -139,6 +139,60 @@ export async function signup(
   return data
 }
 
+// ─── OPAQUE auth endpoints ─────────────────────────
+
+export async function opaqueRegisterStart(
+  email: string,
+  clientMessage: string,
+): Promise<{ server_message: string }> {
+  return request('/api/v1/opaque/register-start', {
+    method: 'POST',
+    body: JSON.stringify({ email, client_message: clientMessage }),
+  })
+}
+
+export async function opaqueRegisterFinish(
+  email: string,
+  clientMessage: string,
+  x25519PublicKey?: string,
+  recoveryCheck?: string,
+): Promise<{ user_id: string; session_token: string }> {
+  const data = await request<{ user_id: string; session_token: string }>('/api/v1/opaque/register-finish', {
+    method: 'POST',
+    body: JSON.stringify({
+      email,
+      client_message: clientMessage,
+      x25519_public_key: x25519PublicKey,
+      recovery_check: recoveryCheck,
+    }),
+  })
+  setToken(data.session_token)
+  return data
+}
+
+export async function opaqueLoginStart(
+  email: string,
+  clientMessage: string,
+): Promise<{ server_message: string; server_state: string }> {
+  return request('/api/v1/opaque/login-start', {
+    method: 'POST',
+    body: JSON.stringify({ email, client_message: clientMessage }),
+  })
+}
+
+export async function opaqueLoginFinish(
+  email: string,
+  clientMessage: string,
+  serverState: string,
+): Promise<{ user_id: string; session_token: string }> {
+  const data = await request<{ user_id: string; session_token: string }>('/api/v1/opaque/login-finish', {
+    method: 'POST',
+    body: JSON.stringify({ email, client_message: clientMessage, server_state: serverState }),
+  })
+  setToken(data.session_token)
+  return data
+}
+
 export async function login(
   email: string,
   password: string,
