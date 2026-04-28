@@ -353,6 +353,7 @@ function UserShareSuccess({
 // ─── Main dialog ─────────────────────────────────────
 
 export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: ShareDialogProps) {
+  const { getFileKey, isUnlocked } = useKeys()
   const [mode, setMode] = useState<ShareMode>('link')
   const [expiryIdx, setExpiryIdx] = useState(1) // default: 24 hours
   const [maxOpensIdx, setMaxOpensIdx] = useState(1) // default: 3
@@ -362,6 +363,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: Share
   const [canReshare, setCanReshare] = useState(false)
   const [loading, setLoading] = useState(false)
   const [shareResult, setShareResult] = useState<ShareInfo | null>(null)
+  const [decryptionKey, setDecryptionKey] = useState<string>('')
   const [copied, setCopied] = useState<'link' | 'key' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [userShareDone, setUserShareDone] = useState<string | null>(null)
@@ -379,6 +381,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: Share
       setCanEdit(false)
       setCanReshare(false)
       setShareResult(null)
+      setDecryptionKey('')
       setError(null)
       setLoading(false)
       setUserShareDone(null)
@@ -389,6 +392,12 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: Share
     setLoading(true)
     setError(null)
 
+    if (!isUnlocked) {
+      setError('Vault is locked. Log in again to share files.')
+      setLoading(false)
+      return
+    }
+
     const options: ShareOptions = {
       expires_in_hours: EXPIRY_OPTIONS[expiryIdx].hours,
       max_opens: MAX_OPENS_OPTIONS[maxOpensIdx].value,
@@ -396,14 +405,20 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: Share
     }
 
     try {
+      // Derive the real file key for the decryption key
+      const fileKey = await getFileKey(fileId)
+      const keyB64 = toBase64(fileKey)
+      zeroize(fileKey)
+
       const result = await createShare(fileId, options)
       setShareResult(result)
+      setDecryptionKey(keyB64)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to create share link')
     } finally {
       setLoading(false)
     }
-  }, [fileId, expiryIdx, maxOpensIdx, canDownload])
+  }, [fileId, expiryIdx, maxOpensIdx, canDownload, isUnlocked, getFileKey])
 
   const copyToClipboard = useCallback(async (text: string, type: 'link' | 'key') => {
     try {
@@ -417,12 +432,14 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: Share
 
   if (!open) return null
 
+  // The share URL includes the decryption key as a URL fragment (#key=...).
+  // Fragments are never sent to the server, preserving zero-knowledge.
   const shareUrl = shareResult
     ? `beebeeb.io/s/${shareResult.token}`
     : ''
-
-  // Placeholder decryption key (for E2EE demo)
-  const decryptionKey = 'k-a1b4-c7de-f204-9911-bb88'
+  const fullShareUrl = shareResult && decryptionKey
+    ? `https://${shareUrl}#key=${encodeURIComponent(decryptionKey)}`
+    : ''
 
   const permToggles: [string, boolean, (v: boolean) => void, 'eye' | 'download' | 'file' | 'share'][] = [
     ['Can view', canView, setCanView, 'eye'],
@@ -476,7 +493,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: Share
                 />
                 <BBButton
                   size="sm"
-                  onClick={() => copyToClipboard(`https://${shareUrl}`, 'link')}
+                  onClick={() => copyToClipboard(fullShareUrl, 'link')}
                   className="gap-1"
                 >
                   <Icon name={copied === 'link' ? 'check' : 'copy'} size={11} />
