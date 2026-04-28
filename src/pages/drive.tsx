@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { BBButton } from '../components/bb-button'
 import { BBChip } from '../components/bb-chip'
@@ -88,11 +88,9 @@ export function Drive() {
   const [breadcrumbs, setBreadcrumbs] = useState<{ id: string | null; name: string }[]>([
     { id: null, name: 'All files' },
   ])
-  const [newMenuOpen, setNewMenuOpen] = useState(false)
   const [folderDialogOpen, setFolderDialogOpen] = useState(false)
   const [uploads, setUploads] = useState<UploadItem[]>([])
   const [syncedAgo, setSyncedAgo] = useState(14)
-  const newMenuRef = useRef<HTMLDivElement>(null)
 
   // Fetch files from API
   const currentParentId = breadcrumbs[breadcrumbs.length - 1]?.id ?? undefined
@@ -165,17 +163,6 @@ export function Drive() {
     return () => clearInterval(interval)
   }, [])
 
-  // Close "New" dropdown on outside click
-  useEffect(() => {
-    if (!newMenuOpen) return
-    const handleClick = (e: MouseEvent) => {
-      if (newMenuRef.current && !newMenuRef.current.contains(e.target as Node)) {
-        setNewMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [newMenuOpen])
 
   // Browse files hook
   const { browse, HiddenInput } = useBrowseFiles(handleFilesSelected)
@@ -356,7 +343,14 @@ export function Drive() {
           </div>
 
           {/* Search */}
-          <div className="ml-auto flex items-center gap-2 border border-line rounded-md bg-paper px-2.5 py-1.5 w-[260px]">
+          <form
+            className="ml-auto flex items-center gap-2 border border-line rounded-md bg-paper px-2.5 py-1.5 w-[260px]"
+            onSubmit={(e) => {
+              e.preventDefault()
+              const input = e.currentTarget.querySelector('input')
+              if (input?.value.trim()) navigate(`/search?q=${encodeURIComponent(input.value.trim())}`)
+            }}
+          >
             <Icon name="search" size={13} className="text-ink-4 shrink-0" />
             <input
               placeholder="Search files and folders..."
@@ -365,12 +359,17 @@ export function Drive() {
             <kbd className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-mono text-ink-4 bg-paper-2 border border-line rounded">
               <span>⌘</span>K
             </kbd>
-          </div>
+          </form>
 
-          {/* Upload button */}
-          <BBButton size="sm" onClick={browse} className="gap-1.5">
-            <Icon name="upload" size={13} /> Upload
-          </BBButton>
+          {/* New + Upload */}
+          <div className="flex items-center gap-1.5">
+            <BBButton size="sm" variant="amber" onClick={() => setFolderDialogOpen(true)} className="gap-1.5">
+              <Icon name="plus" size={13} /> New
+            </BBButton>
+            <BBButton size="sm" onClick={browse} className="gap-1.5">
+              <Icon name="upload" size={13} /> Upload
+            </BBButton>
+          </div>
 
           {/* Notifications */}
           <NotificationInbox
@@ -379,11 +378,6 @@ export function Drive() {
             onMarkRead={markRead}
             onMarkAllRead={markAllRead}
           />
-
-          {/* More options */}
-          <BBButton size="sm" variant="ghost" onClick={logout}>
-            <Icon name="more" size={14} />
-          </BBButton>
         </div>
 
         {/* Column header */}
