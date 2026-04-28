@@ -76,19 +76,6 @@ function AvatarStack({ n }: { n: number }) {
   )
 }
 
-// ─── Mock data for initial UI ──────────────────────
-
-const MOCK_FILES: DriveFile[] = [
-  { id: '1', name_encrypted: 'Contracts', mime_type: '', size: 0, is_folder: true, parent_id: null, trashed: false, shared_with: 3, owner: 'Anna K.', created_at: '2026-04-21T10:00:00Z', updated_at: '2026-04-21T10:00:00Z' },
-  { id: '2', name_encrypted: 'Q2 Financials', mime_type: '', size: 0, is_folder: true, parent_id: null, trashed: false, shared_with: 2, owner: 'Marc D.', created_at: '2026-04-23T06:00:00Z', updated_at: '2026-04-23T06:00:00Z' },
-  { id: '3', name_encrypted: 'Design Review', mime_type: '', size: 0, is_folder: true, parent_id: null, trashed: false, shared_with: 5, owner: 'Lena W.', created_at: '2026-04-16T10:00:00Z', updated_at: '2026-04-16T10:00:00Z' },
-  { id: '4', name_encrypted: 'board-deck-apr.pdf', mime_type: 'application/pdf', size: 4404019, is_folder: false, parent_id: null, trashed: false, shared_with: 4, owner: 'Anna K.', created_at: '2026-04-23T09:48:00Z', updated_at: '2026-04-23T09:48:00Z' },
-  { id: '5', name_encrypted: 'term-sheet-v3.docx', mime_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 90112, is_folder: false, parent_id: null, trashed: false, shared_with: 2, owner: 'Marc D.', created_at: '2026-04-23T09:00:00Z', updated_at: '2026-04-23T09:00:00Z' },
-  { id: '6', name_encrypted: 'architecture.fig', mime_type: 'application/octet-stream', size: 12582912, is_folder: false, parent_id: null, trashed: false, shared_with: 3, owner: 'Lena W.', created_at: '2026-04-22T10:00:00Z', updated_at: '2026-04-22T10:00:00Z' },
-  { id: '7', name_encrypted: 'client-photos.zip', mime_type: 'application/zip', size: 356515840, is_folder: false, parent_id: null, trashed: false, shared_with: 1, owner: 'Pieter J.', created_at: '2026-04-20T10:00:00Z', updated_at: '2026-04-20T10:00:00Z' },
-  { id: '8', name_encrypted: 'notes.md', mime_type: 'text/markdown', size: 6144, is_folder: false, parent_id: null, trashed: false, shared_with: 0, owner: 'You', created_at: '2026-04-23T10:00:00Z', updated_at: '2026-04-23T10:00:00Z' },
-]
-
 // ─── Drive component ───────────────────────────────
 
 export function Drive() {
@@ -96,7 +83,7 @@ export function Drive() {
   const { getFileKey, isUnlocked, cryptoReady, cryptoError } = useKeys()
   const location = useLocation()
   const navigate = useNavigate()
-  const [files, setFiles] = useState<DriveFile[]>(MOCK_FILES)
+  const [files, setFiles] = useState<DriveFile[]>([])
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({})
   const [breadcrumbs, setBreadcrumbs] = useState<{ id: string | null; name: string }[]>([
     { id: null, name: 'All files' },
@@ -107,7 +94,7 @@ export function Drive() {
   const [syncedAgo, setSyncedAgo] = useState(14)
   const newMenuRef = useRef<HTMLDivElement>(null)
 
-  // Fetch files from API (falls back to mock on error)
+  // Fetch files from API
   const currentParentId = breadcrumbs[breadcrumbs.length - 1]?.id ?? undefined
 
   const fetchFiles = useCallback(async () => {
@@ -117,7 +104,7 @@ export function Drive() {
       setFiles(data)
       setSyncedAgo(0)
     } catch {
-      // API not available, keep current files (mock data on first load)
+      setFiles([])
     }
   }, [currentParentId, location.pathname])
 
@@ -238,20 +225,13 @@ export function Drive() {
       })
       fetchFiles()
     } catch {
-      // Simulate progress to 100 on API failure (mock mode)
       setUploads((prev) =>
-        prev.map((u) => (u.id === uploadId ? { ...u, stage: 'Encrypting', progress: 10 } : u)),
+        prev.map((u) =>
+          u.id === uploadId
+            ? { ...u, stage: 'Queued' as const, progress: 0 }
+            : u,
+        ),
       )
-      for (const pct of [30, 50, 70, 90, 100]) {
-        await delay(300)
-        setUploads((prev) =>
-          prev.map((u) =>
-            u.id === uploadId
-              ? { ...u, stage: pct === 100 ? 'Done' : 'Uploading', progress: pct }
-              : u,
-          ),
-        )
-      }
     }
   }
 
@@ -325,21 +305,7 @@ export function Drive() {
       await createFolder(nameEncrypted, currentParentId)
       fetchFiles()
     } catch {
-      // API not available — add mock folder
-      const mockFolder: DriveFile = {
-        id: `folder-${Date.now()}`,
-        name_encrypted: name,
-        mime_type: '',
-        size: 0,
-        is_folder: true,
-        parent_id: currentParentId ?? null,
-        trashed: false,
-        shared_with: 0,
-        owner: 'You',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }
-      setFiles((prev) => [mockFolder, ...prev])
+      // API not available
     }
   }
 
@@ -555,8 +521,4 @@ export function Drive() {
       />
     </DriveLayout>
   )
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
 }

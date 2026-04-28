@@ -38,16 +38,6 @@ function getIconForFile(file: DriveFile): IconName {
   return 'file'
 }
 
-// ─── Mock search results ─────────────────────────
-
-const MOCK_FILES: DriveFile[] = [
-  { id: 's1', name_encrypted: 'board-deck-apr.pdf', mime_type: 'application/pdf', size: 4404019, is_folder: false, parent_id: null, trashed: false, shared_with: 4, owner: 'Anna K.', created_at: '2026-04-23T09:48:00Z', updated_at: '2026-04-23T09:48:00Z' },
-  { id: 's2', name_encrypted: 'term-sheet-v3.docx', mime_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 90112, is_folder: false, parent_id: null, trashed: false, shared_with: 2, owner: 'Marc D.', created_at: '2026-04-23T09:00:00Z', updated_at: '2026-04-23T09:00:00Z' },
-  { id: 's3', name_encrypted: 'Contracts', mime_type: '', size: 0, is_folder: true, parent_id: null, trashed: false, shared_with: 3, owner: 'Anna K.', created_at: '2026-04-21T10:00:00Z', updated_at: '2026-04-21T10:00:00Z' },
-  { id: 's4', name_encrypted: 'architecture.fig', mime_type: 'application/octet-stream', size: 12582912, is_folder: false, parent_id: null, trashed: false, shared_with: 3, owner: 'Lena W.', created_at: '2026-04-22T10:00:00Z', updated_at: '2026-04-22T10:00:00Z' },
-  { id: 's5', name_encrypted: 'notes.md', mime_type: 'text/markdown', size: 6144, is_folder: false, parent_id: null, trashed: false, shared_with: 0, owner: 'You', created_at: '2026-04-23T10:00:00Z', updated_at: '2026-04-23T10:00:00Z' },
-]
-
 // ─── Filter types ────────────────────────────────
 
 type FileTypeFilter = 'all' | 'documents' | 'images' | 'folders'
@@ -92,9 +82,7 @@ export function Search() {
       const lower = q.toLowerCase()
       setResults(allFiles.filter((f) => f.name_encrypted.toLowerCase().includes(lower)))
     } catch {
-      // API not available -- filter mock data
-      const lower = q.toLowerCase()
-      setResults(MOCK_FILES.filter((f) => f.name_encrypted.toLowerCase().includes(lower)))
+      setResults([])
     } finally {
       setLoading(false)
     }

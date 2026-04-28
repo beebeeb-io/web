@@ -44,21 +44,10 @@ function getIconForFile(file: DriveFile): IconName {
   return 'file'
 }
 
-// ─── Mock data ───────────────────────────────────
-
-const MOCK_TRASH: (DriveFile & { was_in: string })[] = [
-  { id: 't1', name_encrypted: 'test-shot-001.jpg', mime_type: 'image/jpeg', size: 4404019, is_folder: false, parent_id: null, trashed: true, shared_with: 0, owner: 'You', created_at: '2026-04-23T08:00:00Z', updated_at: '2026-04-23T08:00:00Z', was_in: 'field-recordings/' },
-  { id: 't2', name_encrypted: 'draft-v1-OLD.md', mime_type: 'text/markdown', size: 14336, is_folder: false, parent_id: null, trashed: true, shared_with: 0, owner: 'You', created_at: '2026-04-22T10:00:00Z', updated_at: '2026-04-22T10:00:00Z', was_in: 'drafts/' },
-  { id: 't3', name_encrypted: 'test-exports/', mime_type: '', size: 125829120, is_folder: true, parent_id: null, trashed: true, shared_with: 0, owner: 'You', created_at: '2026-04-20T10:00:00Z', updated_at: '2026-04-20T10:00:00Z', was_in: '/' },
-  { id: 't4', name_encrypted: 'screenshot-2025-09-14-09.png', mime_type: 'image/png', size: 2202009, is_folder: false, parent_id: null, trashed: true, shared_with: 0, owner: 'You', created_at: '2026-04-15T10:00:00Z', updated_at: '2026-04-15T10:00:00Z', was_in: 'inbox/' },
-  { id: 't5', name_encrypted: 'notes-scratch.txt', mime_type: 'text/plain', size: 6144, is_folder: false, parent_id: null, trashed: true, shared_with: 0, owner: 'You', created_at: '2026-04-09T10:00:00Z', updated_at: '2026-04-09T10:00:00Z', was_in: 'inbox/' },
-  { id: 't6', name_encrypted: 'duplicate-IMG_0047.heic', mime_type: 'image/heic', size: 3984588, is_folder: false, parent_id: null, trashed: true, shared_with: 0, owner: 'You', created_at: '2026-04-01T10:00:00Z', updated_at: '2026-04-01T10:00:00Z', was_in: 'photos/' },
-]
-
 // ─── Trash page ──────────────────────────────────
 
 export function Trash() {
-  const [files, setFiles] = useState<(DriveFile & { was_in: string })[]>(MOCK_TRASH)
+  const [files, setFiles] = useState<(DriveFile & { was_in: string })[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
 
@@ -68,7 +57,7 @@ export function Trash() {
       const data = await listFiles(undefined, true)
       setFiles(data.map((f) => ({ ...f, was_in: '/' })))
     } catch {
-      // API not available, keep mock data
+      setFiles([])
     }
   }, [])
 
@@ -96,8 +85,7 @@ export function Trash() {
         return next
       })
     } catch {
-      // Mock: just remove from list
-      setFiles((prev) => prev.filter((f) => f.id !== id))
+      // API error — leave file in list
     } finally {
       setLoading(false)
     }
@@ -114,7 +102,7 @@ export function Trash() {
         return next
       })
     } catch {
-      setFiles((prev) => prev.filter((f) => f.id !== id))
+      // API error — leave file in list
     } finally {
       setLoading(false)
     }
@@ -125,7 +113,7 @@ export function Trash() {
     try {
       await Promise.all(files.map((f) => deleteFile(f.id)))
     } catch {
-      // Mock mode
+      // API error
     }
     setFiles([])
     setSelected(new Set())
@@ -137,7 +125,7 @@ export function Trash() {
     try {
       await Promise.all(files.map((f) => restoreFile(f.id)))
     } catch {
-      // Mock mode
+      // API error
     }
     setFiles([])
     setSelected(new Set())

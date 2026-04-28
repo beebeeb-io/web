@@ -44,20 +44,10 @@ function formatExpiry(expiresAt: string | null): { text: string; isUrgent: boole
 
 type FilterId = 'all' | 'people' | 'anonymous'
 
-// ─── Mock data ────────────────────────────────────
-
-const MOCK_ITEMS: SharedWithMeItem[] = [
-  { file_name_encrypted: 'editorial-review/', file_size: 0, from_email: 'anika@publication.eu', access_level: 'Can edit', expires: null, created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), is_folder: true },
-  { file_name_encrypted: 'fact-check-notes.pdf', file_size: 2516582, from_email: 'anika@publication.eu', access_level: 'Read only', expires: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(), created_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(), is_folder: false },
-  { file_name_encrypted: 'source-materials/', file_size: 0, from_email: 'legal@foundation.eu', access_level: 'Read only', expires: new Date(Date.now() + 22 * 24 * 60 * 60 * 1000).toISOString(), created_at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(), is_folder: true },
-  { file_name_encrypted: 'leaked-contract-draft.pdf', file_size: 1153434, from_email: 'confidential-link', access_level: 'One-time view', expires: new Date(Date.now() + 47 * 60 * 60 * 1000).toISOString(), created_at: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(), is_folder: false },
-  { file_name_encrypted: 'podcast-raw/', file_size: 0, from_email: 'pieter@producer.nl', access_level: 'Can edit', expires: null, created_at: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString(), is_folder: true },
-]
-
 // ─── Component ────────────────────────────────────
 
 export function SharedWithMe() {
-  const [items, setItems] = useState<SharedWithMeItem[]>(MOCK_ITEMS)
+  const [items, setItems] = useState<SharedWithMeItem[]>([])
   const [filter, setFilter] = useState<FilterId>('all')
   const { notifications, unreadCount, markRead, markAllRead } = useNotifications()
 
@@ -65,9 +55,7 @@ export function SharedWithMe() {
   useEffect(() => {
     listSharedWithMe()
       .then(setItems)
-      .catch(() => {
-        // API unavailable, keep mock data
-      })
+      .catch(() => {})
   }, [])
 
   const isAnonymous = useCallback((item: SharedWithMeItem) => {

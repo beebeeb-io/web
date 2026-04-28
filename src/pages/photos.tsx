@@ -3,7 +3,7 @@ import { BBButton } from '../components/bb-button'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '../components/icons'
 
-// ─── Mock photo data ────────────────────────────
+// ─── Photo types ────────────────────────────────
 
 interface PhotoGroup {
   date: string
@@ -18,64 +18,6 @@ interface PhotoItem {
   isShared: boolean
   isFeatured: boolean
 }
-
-const MOCK_GROUPS: PhotoGroup[] = [
-  {
-    date: 'Monday · Apr 14',
-    place: 'Lisbon',
-    items: Array.from({ length: 10 }, (_, i) => ({
-      id: `g0-${i}`,
-      isVideo: i === 7,
-      duration: i === 7 ? '0:34' : null,
-      isShared: i === 1,
-      isFeatured: i === 3,
-    })),
-  },
-  {
-    date: 'Sunday · Apr 6',
-    place: 'Paris',
-    items: Array.from({ length: 8 }, (_, i) => ({
-      id: `g1-${i}`,
-      isVideo: i === 4,
-      duration: i === 4 ? '1:12' : null,
-      isShared: i === 0 || i === 6,
-      isFeatured: false,
-    })),
-  },
-  {
-    date: 'Apr 1 — Mar 28',
-    place: null,
-    items: Array.from({ length: 12 }, (_, i) => ({
-      id: `g2-${i}`,
-      isVideo: i === 2,
-      duration: i === 2 ? '2:05' : null,
-      isShared: false,
-      isFeatured: i === 5,
-    })),
-  },
-  {
-    date: 'March 2025',
-    place: null,
-    items: Array.from({ length: 18 }, (_, i) => ({
-      id: `g3-${i}`,
-      isVideo: i === 11,
-      duration: i === 11 ? '0:48' : null,
-      isShared: i === 3 || i === 9,
-      isFeatured: i === 0,
-    })),
-  },
-  {
-    date: 'September 2025',
-    place: null,
-    items: Array.from({ length: 42 }, (_, i) => ({
-      id: `g4-${i}`,
-      isVideo: i === 5 || i === 22 || i === 37,
-      duration: i === 5 ? '0:15' : i === 22 ? '3:41' : i === 37 ? '0:58' : null,
-      isShared: i % 11 === 0,
-      isFeatured: i === 2 || i === 19,
-    })),
-  },
-]
 
 // ─── Deterministic warm gradient for placeholders ─
 
@@ -103,7 +45,8 @@ export function Photos() {
   const [dateRange, setDateRange] = useState<(typeof DATE_RANGES)[number]>('All time')
   const [dateDropdownOpen, setDateDropdownOpen] = useState(false)
 
-  const totalItems = MOCK_GROUPS.reduce((sum, g) => sum + g.items.length, 0)
+  const groups: PhotoGroup[] = []
+  const totalItems = groups.reduce((sum, g) => sum + g.items.length, 0)
 
   return (
     <DriveLayout>
@@ -183,7 +126,7 @@ export function Photos() {
 
         {/* Photo grid */}
         <div className="flex-1 overflow-y-auto px-5 py-[18px]">
-          {MOCK_GROUPS.map((group, gi) => (
+          {groups.map((group, gi) => (
             <div key={gi} className="mb-6">
               {/* Group header */}
               <div className="flex items-baseline mb-2.5 gap-2.5">
