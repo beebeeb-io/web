@@ -459,20 +459,16 @@ export function Drive() {
                           </BBChip>
                         )}
                       </div>
-                      <div className="text-[11px] text-ink-3 mt-0.5">{file.owner}</div>
+                      <div className="text-[11px] text-ink-3 mt-0.5">{file.mime_type || 'Folder'}</div>
                     </div>
                     <span className="font-mono text-[13px] text-ink-3 tabular-nums self-center">
-                      {file.is_folder ? '--' : formatBytes(file.size)}
+                      {file.is_folder ? '--' : formatBytes(file.size_bytes)}
                     </span>
                     <span className="text-[13px] text-ink-3 self-center">
                       {timeAgo(file.updated_at)}
                     </span>
                     <div className="self-center">
-                      {file.shared_with > 0 ? (
-                        <AvatarStack n={file.shared_with} />
-                      ) : (
-                        <span className="text-[13px] text-ink-3">--</span>
-                      )}
+                      <span className="text-[13px] text-ink-3">--</span>
                     </div>
                     <div className="flex justify-end self-center">
                       <BBButton

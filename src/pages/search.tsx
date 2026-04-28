@@ -278,7 +278,7 @@ export function Search() {
                     </div>
                     <span className="font-mono text-[11px] text-ink-3">{timeAgo(file.updated_at)}</span>
                     <span className="font-mono text-[11px] text-ink-3">
-                      {file.is_folder ? '--' : formatBytes(file.size)}
+                      {file.is_folder ? '--' : formatBytes(file.size_bytes)}
                     </span>
                     <span className="text-[11px] text-ink-3">{file.owner}</span>
                   </div>

@@ -235,7 +235,7 @@ export function Trash() {
                     {days} day{days !== 1 ? 's' : ''}
                   </span>
                   <span className="font-mono text-[11px] text-ink-3">
-                    {file.is_folder ? `${file.size > 0 ? formatBytes(file.size) : '--'}` : formatBytes(file.size)}
+                    {file.is_folder ? '--' : formatBytes(file.size_bytes)}
                   </span>
                   <div className="flex gap-1 justify-end">
                     <button

@@ -217,12 +217,11 @@ export interface DriveFile {
   id: string
   name_encrypted: string
   mime_type: string
-  size: number
+  size_bytes: number
   is_folder: boolean
   parent_id: string | null
-  trashed: boolean
-  shared_with: number
-  owner: string
+  chunk_count: number
+  is_starred?: boolean
   created_at: string
   updated_at: string
 }
