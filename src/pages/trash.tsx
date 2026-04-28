@@ -5,6 +5,7 @@ import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '../components/icons'
 import type { IconName } from '../components/icons'
 import { listFiles, restoreFile, deleteFile, type DriveFile } from '../lib/api'
+import { useToast } from '../components/toast'
 
 // ─── Helpers ─────────────────────────────────────
 
@@ -47,6 +48,7 @@ function getIconForFile(file: DriveFile): IconName {
 // ─── Trash page ──────────────────────────────────
 
 export function Trash() {
+  const { showToast } = useToast()
   const [files, setFiles] = useState<(DriveFile & { was_in: string })[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
@@ -84,8 +86,8 @@ export function Trash() {
         next.delete(id)
         return next
       })
-    } catch {
-      // API error — leave file in list
+    } catch (err) {
+      showToast({ icon: 'x', title: 'Restore failed', description: err instanceof Error ? err.message : 'Could not restore file', danger: true })
     } finally {
       setLoading(false)
     }
@@ -101,8 +103,8 @@ export function Trash() {
         next.delete(id)
         return next
       })
-    } catch {
-      // API error — leave file in list
+    } catch (err) {
+      showToast({ icon: 'x', title: 'Delete failed', description: err instanceof Error ? err.message : 'Could not delete file', danger: true })
     } finally {
       setLoading(false)
     }
@@ -112,24 +114,28 @@ export function Trash() {
     setLoading(true)
     try {
       await Promise.all(files.map((f) => deleteFile(f.id)))
-    } catch {
-      // API error
+      setFiles([])
+      setSelected(new Set())
+    } catch (err) {
+      showToast({ icon: 'x', title: 'Empty trash failed', description: err instanceof Error ? err.message : 'Some files could not be deleted', danger: true })
+      fetchTrash()
+    } finally {
+      setLoading(false)
     }
-    setFiles([])
-    setSelected(new Set())
-    setLoading(false)
   }
 
   const handleRestoreAll = async () => {
     setLoading(true)
     try {
       await Promise.all(files.map((f) => restoreFile(f.id)))
-    } catch {
-      // API error
+      setFiles([])
+      setSelected(new Set())
+    } catch (err) {
+      showToast({ icon: 'x', title: 'Restore all failed', description: err instanceof Error ? err.message : 'Some files could not be restored', danger: true })
+      fetchTrash()
+    } finally {
+      setLoading(false)
     }
-    setFiles([])
-    setSelected(new Set())
-    setLoading(false)
   }
 
   return (
