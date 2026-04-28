@@ -1,6 +1,14 @@
-const API_URL = 'http://localhost:3001'
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 
 const TOKEN_KEY = 'bb_session'
+
+export function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2)
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16)
+  }
+  return bytes
+}
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY)
@@ -87,15 +95,22 @@ export class ApiError extends Error {
 
 // ─── Auth endpoints ──────────────────────────────
 
-interface AuthResponse {
-  token: string
-  user: AuthUser
+interface AuthSessionResponse {
+  user_id: string
+  session_token: string
+  salt: string
 }
 
 export interface AuthUser {
   user_id: string
   email: string
   email_verified: boolean
+}
+
+export interface SignupResult {
+  session_token: string
+  salt: string
+  user_id: string
 }
 
 /** Login may return a full session OR a 2FA challenge. */
@@ -110,12 +125,12 @@ export interface LoginResult {
 export async function signup(
   email: string,
   password: string,
-): Promise<AuthResponse> {
-  const data = await request<AuthResponse>('/api/v1/auth/signup', {
+): Promise<SignupResult> {
+  const data = await request<AuthSessionResponse>('/api/v1/auth/signup', {
     method: 'POST',
     body: JSON.stringify({ email, password }),
   })
-  setToken(data.token)
+  setToken(data.session_token)
   return data
 }
 
@@ -220,7 +235,8 @@ export async function listFiles(
   if (parentId) params.set('parent_id', parentId)
   if (trashed !== undefined) params.set('trashed', String(trashed))
   const qs = params.toString()
-  return request<DriveFile[]>(`/api/v1/files${qs ? `?${qs}` : ''}`)
+  const data = await request<{ files: DriveFile[] }>(`/api/v1/files${qs ? `?${qs}` : ''}`)
+  return data.files
 }
 
 export async function createFolder(

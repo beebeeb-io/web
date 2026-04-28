@@ -18,7 +18,7 @@ export function AuthShell({
 }: AuthShellProps) {
   return (
     <div className="min-h-screen flex items-center justify-center bg-paper p-xl">
-      <div className="w-full max-w-md bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
+      <div className="w-full max-w-[28rem] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
         {/* Header */}
         <div className="px-xl py-lg border-b border-line">
           <BBLogo size={14} />

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '../components/icons'
 import type { IconName } from '../components/icons'
 import { BBChip } from '../components/bb-chip'
@@ -31,33 +31,6 @@ function SecurityScoreRing({ score = 82 }: { score?: number }) {
         {score}
       </div>
     </div>
-  )
-}
-
-/* ── Sidebar nav item ────────────────────────────── */
-
-function SideNavItem({ icon, label, active, badge, href }: {
-  icon: IconName
-  label: string
-  active?: boolean
-  badge?: string
-  href: string
-}) {
-  return (
-    <Link
-      to={href}
-      className={`flex items-center gap-2.5 px-2.5 py-[7px] rounded-md text-[13px] transition-colors ${
-        active
-          ? 'bg-paper font-medium text-ink shadow-1'
-          : 'text-ink-2 hover:bg-paper hover:text-ink'
-      }`}
-    >
-      <Icon name={icon} size={13} className={active ? 'text-ink' : 'text-ink-3'} />
-      <span className="flex-1">{label}</span>
-      {badge && (
-        <span className={`font-mono text-[10px] ${active ? 'text-amber' : 'text-ink-4'}`}>{badge}</span>
-      )}
-    </Link>
   )
 }
 
@@ -103,46 +76,10 @@ const toneColors: Record<string, { bg: string; fg: string }> = {
 }
 
 export function Security() {
-  const location = useLocation()
   const [eventFilter, setEventFilter] = useState<EventFilter>('All')
 
   return (
-    <div className="min-h-screen flex items-start justify-center bg-paper p-xl pt-12">
-      <div
-        className="flex overflow-hidden border border-line-2 rounded-xl shadow-2 bg-paper"
-        style={{ width: 1040, height: 760 }}
-      >
-        {/* ── Sidebar ───────────────────────────── */}
-        <div className="w-[220px] shrink-0 bg-paper-2 border-r border-line flex flex-col">
-          <div className="flex items-center gap-2 px-4 pt-4 pb-3">
-            <Icon name="settings" size={13} className="text-ink-3" />
-            <span className="text-sm font-semibold text-ink">Settings</span>
-          </div>
-          <nav className="px-3 py-1.5">
-            <SideNavItem icon="users" label="Account" href="/settings/profile" />
-            <SideNavItem icon="shield" label="Security" active={location.pathname === '/security'} badge="!" href="/security" />
-            <SideNavItem icon="key" label="Passkeys & 2FA" href="/security" />
-            <SideNavItem icon="cloud" label="Devices" badge="4" href="/settings/devices" />
-            <SideNavItem icon="clock" label="Activity" href="/security" />
-            <SideNavItem icon="download" label="Data export" href="/security" />
-          </nav>
-          <div className="mx-4 my-2.5 border-t border-line" />
-          <div className="px-3">
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 px-2.5 pb-2">Workspace</div>
-            <SideNavItem icon="folder" label="Storage & plan" href="/settings/profile" />
-            <SideNavItem icon="users" label="Team" href="/settings/profile" />
-            <SideNavItem icon="share" label="Sharing defaults" href="/settings/profile" />
-          </div>
-          <div className="mt-auto p-4 border-t border-line">
-            <div className="flex items-center gap-2 text-[11px] text-ink-3">
-              <span className="inline-block w-2 h-2 rounded-full bg-green" />
-              <span className="font-mono">Frankfurt</span>
-            </div>
-          </div>
-        </div>
-
-        {/* ── Main content ──────────────────────── */}
-        <div className="flex-1 flex flex-col min-w-0">
+    <DriveLayout>
           {/* Header */}
           <div className="flex items-center gap-3 px-6 py-3.5 border-b border-line">
             <div>
@@ -460,8 +397,6 @@ export function Security() {
               </div>
             </div>
           </div>
-        </div>
-      </div>
-    </div>
+    </DriveLayout>
   )
 }

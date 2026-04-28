@@ -42,7 +42,7 @@ export function NewFolderDialog({ open, onClose, onCreate }: NewFolderDialogProp
       <form
         onSubmit={handleSubmit}
         onClick={(e) => e.stopPropagation()}
-        className="relative w-full max-w-sm bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden"
+        className="relative w-full max-w-[24rem] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden"
       >
         <div className="px-xl py-lg border-b border-line">
           <h3 className="text-sm font-semibold text-ink">New folder</h3>

@@ -1,7 +1,19 @@
 FROM oven/bun:1
 WORKDIR /app
-COPY package.json bun.lock* ./
-RUN bun install
-COPY . .
+
+# Copy WASM package first (web depends on it via local path)
+COPY repos/core/beebeeb-wasm/pkg /wasm-pkg
+
+# Copy web app source (excluding node_modules via .dockerignore)
+COPY repos/web/ .
+
+# Remove .git so Tailwind v4 falls back to filesystem scanning (no git binary in container)
+RUN rm -rf .git
+
+# Rewrite WASM dependency path for container and install
+RUN sed -i 's|../../repos/core/beebeeb-wasm/pkg|/wasm-pkg|' package.json && \
+    rm -rf node_modules && \
+    bun install
+
 EXPOSE 5173
 CMD ["bun", "dev", "--host", "0.0.0.0"]

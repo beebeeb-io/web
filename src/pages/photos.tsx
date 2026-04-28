@@ -1,23 +1,7 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { BBButton } from '../components/bb-button'
-import { BBLogo } from '../components/bb-logo'
+import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '../components/icons'
-import type { IconName } from '../components/icons'
-import { useAuth } from '../lib/auth-context'
-
-// ─── Nav items (same as Drive/Trash sidebar) ────
-
-type NavId = 'files' | 'shared' | 'photos' | 'starred' | 'recent' | 'trash'
-
-const navItems: { id: NavId; icon: IconName; label: string; count?: string }[] = [
-  { id: 'files', icon: 'folder', label: 'All files' },
-  { id: 'shared', icon: 'users', label: 'Shared', count: '6' },
-  { id: 'photos', icon: 'image', label: 'Photos', count: '2.4k' },
-  { id: 'starred', icon: 'star', label: 'Starred' },
-  { id: 'recent', icon: 'clock', label: 'Recent' },
-  { id: 'trash', icon: 'trash', label: 'Trash' },
-]
 
 // ─── Mock photo data ────────────────────────────
 
@@ -115,109 +99,14 @@ const DATE_RANGES = ['Last 7 days', 'Last 30 days', 'Last 3 months', 'All time']
 // ─── Photos page ────────────────────────────────
 
 export function Photos() {
-  const { logout } = useAuth()
-  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState(0)
   const [dateRange, setDateRange] = useState<(typeof DATE_RANGES)[number]>('All time')
   const [dateDropdownOpen, setDateDropdownOpen] = useState(false)
 
-  const handleNavClick = (id: NavId) => {
-    if (id === 'photos') return
-    if (id === 'files') navigate('/')
-    if (id === 'trash') navigate('/trash')
-  }
-
   const totalItems = MOCK_GROUPS.reduce((sum, g) => sum + g.items.length, 0)
 
   return (
-    <div className="h-screen flex overflow-hidden bg-paper">
-      {/* ─── Sidebar ─────────────────────────── */}
-      <aside className="w-[220px] shrink-0 border-r border-line bg-paper-2 flex flex-col">
-        <div className="px-4 pt-4 pb-3">
-          <BBLogo size={14} />
-        </div>
-
-        <nav className="px-3 py-1.5">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => handleNavClick(item.id)}
-              className={`w-full flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] transition-colors text-left ${
-                item.id === 'photos'
-                  ? 'bg-paper-3 font-semibold text-ink'
-                  : 'text-ink-2 hover:bg-paper-3/50'
-              }`}
-            >
-              <Icon name={item.icon} size={13} className="shrink-0" />
-              <span className="flex-1">{item.label}</span>
-              {item.count && (
-                <span className="font-mono text-[10px] text-ink-4">{item.count}</span>
-              )}
-            </button>
-          ))}
-        </nav>
-
-        <div className="mx-4 my-2.5 h-px bg-line" />
-
-        {/* Teams */}
-        <div className="px-3">
-          <div className="px-2 pb-2 text-[10px] font-medium uppercase tracking-wider text-ink-3">
-            Teams
-          </div>
-          {[
-            { name: 'Acme Studio', amber: true },
-            { name: 'Personal', amber: false },
-          ].map((team) => (
-            <button
-              key={team.name}
-              className="w-full flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] text-ink-2 hover:bg-paper-3/50 transition-colors text-left"
-            >
-              <span
-                className="shrink-0 rounded-[3px] border border-line-2"
-                style={{
-                  width: 14,
-                  height: 14,
-                  background: team.amber ? 'var(--color-amber)' : 'var(--color-paper-3)',
-                }}
-              />
-              <span className="flex-1">{team.name}</span>
-            </button>
-          ))}
-        </div>
-
-        {/* Storage + Region */}
-        <div className="mt-auto px-4 py-4 border-t border-line">
-          <div className="text-[10px] font-medium uppercase tracking-wider text-ink-3 mb-2">
-            Storage
-          </div>
-          <div className="h-[3px] w-full rounded-full bg-paper-3 overflow-hidden mb-1.5">
-            <div className="h-full rounded-full bg-amber" style={{ width: '38%' }} />
-          </div>
-          <div className="flex justify-between text-[11px]">
-            <span className="font-mono tabular-nums">76 / 200 GB</span>
-            <span className="font-medium text-amber-deep cursor-pointer hover:underline">
-              Upgrade
-            </span>
-          </div>
-          <div className="mt-3 flex items-center gap-1.5 text-[10px] text-ink-3">
-            <Icon name="shield" size={11} className="text-amber-deep" />
-            <span className="font-mono">EU-WEST -- AES-256</span>
-          </div>
-        </div>
-
-        <div className="px-3 pb-3">
-          <button
-            onClick={logout}
-            className="w-full flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] text-ink-3 hover:bg-paper-3/50 transition-colors text-left"
-          >
-            <Icon name="x" size={13} className="shrink-0" />
-            Log out
-          </button>
-        </div>
-      </aside>
-
-      {/* ─── Main area ───────────────────────── */}
-      <main className="flex-1 flex flex-col min-w-0">
+    <DriveLayout>
         {/* Header */}
         <div className="px-5 py-3 border-b border-line flex items-center gap-3">
           <Icon name="image" size={15} />
@@ -397,7 +286,6 @@ export function Photos() {
             GPS & device serial stripped before encryption
           </span>
         </div>
-      </main>
-    </div>
+    </DriveLayout>
   )
 }

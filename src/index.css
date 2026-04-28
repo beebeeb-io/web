@@ -1,4 +1,6 @@
 @import "tailwindcss";
+@source "../../index.html";
+@source "./**/*.{ts,tsx}";
 
 @theme {
   /* Colors -- OKLCH */
@@ -28,6 +30,19 @@
   --spacing-lg: 18px;
   --spacing-xl: 24px;
   --spacing-2xl: 36px;
+
+  /* Container widths (prevent spacing-* collision with max-w-*) */
+  --container-xs: 20rem;
+  --container-sm: 24rem;
+  --container-md: 28rem;
+  --container-lg: 32rem;
+  --container-xl: 36rem;
+  --container-2xl: 42rem;
+  --container-3xl: 48rem;
+  --container-4xl: 56rem;
+  --container-5xl: 64rem;
+  --container-6xl: 72rem;
+  --container-7xl: 80rem;
 
   /* Radii */
   --radius-sm: 4px;

@@ -5,6 +5,7 @@ import { BBButton } from '../components/bb-button'
 import { BBCheckbox } from '../components/bb-checkbox'
 import { BBInput } from '../components/bb-input'
 import { Icon } from '../components/icons'
+import { hexToBytes } from '../lib/api'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
 
@@ -45,11 +46,8 @@ export function Signup() {
 
     setSubmitting(true)
     try {
-      await signup(email, password)
-      // Derive master key from password + user email as salt
-      // (salt will come from the API in production; email is a reasonable stand-in)
-      const encoder = new TextEncoder()
-      const salt = encoder.encode(email)
+      const result = await signup(email, password)
+      const salt = hexToBytes(result.salt)
       await unlock(password, salt)
       navigate('/verify-email')
     } catch (err) {

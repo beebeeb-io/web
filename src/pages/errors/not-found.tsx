@@ -16,7 +16,7 @@ export function NotFound() {
         style={{ backgroundImage: honeycombBg }}
       />
 
-      <div className="relative text-center max-w-md">
+      <div className="relative text-center max-w-[28rem]">
         <BBLogo size={16} />
 
         <div className="mt-8 font-mono text-[80px] leading-none font-bold text-ink-4 tracking-tight">

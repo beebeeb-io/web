@@ -7,7 +7,7 @@ import { Icon } from '../components/icons'
 import { TwoFactorPrompt } from '../components/two-factor-prompt'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
-import { startPasskeyLogin, finishPasskeyLogin, getMe, setToken } from '../lib/api'
+import { startPasskeyLogin, finishPasskeyLogin, getMe, setToken, hexToBytes } from '../lib/api'
 
 export function Login() {
   const navigate = useNavigate()
@@ -38,10 +38,8 @@ export function Login() {
       const result = await login(email, password)
       if (result.requires_2fa && result.partial_token) {
         setPartialToken(result.partial_token)
-      } else {
-        // Full login — unlock keys and navigate
-        const encoder = new TextEncoder()
-        const salt = encoder.encode(email)
+      } else if (result.salt) {
+        const salt = hexToBytes(result.salt)
         await unlock(password, salt)
         navigate('/')
       }
@@ -54,11 +52,11 @@ export function Login() {
 
   async function handle2faVerify(code: string) {
     if (!partialToken) return
-    await verify2fa(partialToken, code)
-    // Unlock keys after successful 2FA
-    const encoder = new TextEncoder()
-    const salt = encoder.encode(email)
-    await unlock(password, salt)
+    const result = await verify2fa(partialToken, code)
+    if (result?.salt) {
+      const salt = hexToBytes(result.salt)
+      await unlock(password, salt)
+    }
     navigate('/')
   }
 

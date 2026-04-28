@@ -117,7 +117,7 @@ export function ShareViewPage() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-paper relative overflow-hidden">
         {honeycombBg}
-        <div className="relative w-full max-w-md mx-4">
+        <div className="relative w-full max-w-[28rem] mx-4">
           <div className="text-center">
             <BBLogo size={16} />
             <div className="mt-8 bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
@@ -150,7 +150,7 @@ export function ShareViewPage() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-paper relative overflow-hidden">
         {honeycombBg}
-        <div className="relative w-full max-w-md mx-4">
+        <div className="relative w-full max-w-[28rem] mx-4">
           <div className="text-center">
             <BBLogo size={16} />
             <div className="mt-8 bg-paper border border-line-2 rounded-xl shadow-3 p-8 text-center">
@@ -171,7 +171,7 @@ export function ShareViewPage() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-paper relative overflow-hidden">
         {honeycombBg}
-        <div className="relative w-full max-w-md mx-4">
+        <div className="relative w-full max-w-[28rem] mx-4">
           <div className="text-center mb-8">
             <BBLogo size={16} />
           </div>
@@ -228,7 +228,7 @@ export function ShareViewPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-paper relative overflow-hidden">
       {honeycombBg}
-      <div className="relative w-full max-w-md mx-4">
+      <div className="relative w-full max-w-[28rem] mx-4">
         <div className="text-center mb-8">
           <BBLogo size={16} />
         </div>

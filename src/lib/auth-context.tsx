@@ -10,6 +10,7 @@ import type { ReactNode } from 'react'
 import {
   type AuthUser,
   type LoginResult,
+  type SignupResult,
   clearToken,
   getMe,
   getToken,
@@ -29,9 +30,9 @@ export function registerLogoutCallback(cb: () => void): void {
 interface AuthState {
   user: AuthUser | null
   loading: boolean
-  signup: (email: string, password: string) => Promise<void>
+  signup: (email: string, password: string) => Promise<SignupResult>
   login: (email: string, password: string) => Promise<LoginResult>
-  verify2fa: (partialToken: string, code: string) => Promise<void>
+  verify2fa: (partialToken: string, code: string) => Promise<LoginResult>
   logout: () => Promise<void>
 }
 
@@ -55,9 +56,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setLoading(false))
   }, [])
 
-  const signup = useCallback(async (email: string, password: string) => {
-    const { user: u } = await apiSignup(email, password)
+  const signup = useCallback(async (email: string, password: string): Promise<SignupResult> => {
+    const result = await apiSignup(email, password)
+    const u = await getMe()
     setUser(u)
+    return result
   }, [])
 
   const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
@@ -70,10 +73,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return result
   }, [])
 
-  const verify2fa = useCallback(async (partialToken: string, code: string) => {
-    await apiVerify2fa(partialToken, code)
+  const verify2fa = useCallback(async (partialToken: string, code: string): Promise<LoginResult> => {
+    const result = await apiVerify2fa(partialToken, code)
     const u = await getMe()
     setUser(u)
+    return result
   }, [])
 
   const logout = useCallback(async () => {

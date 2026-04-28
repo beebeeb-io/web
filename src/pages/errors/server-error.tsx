@@ -8,7 +8,7 @@ interface ServerErrorProps {
 export function ServerError({ statusUrl = 'https://status.beebeeb.io' }: ServerErrorProps) {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-paper p-6">
-      <div className="text-center max-w-md">
+      <div className="text-center max-w-[28rem]">
         <BBLogo size={16} />
 
         <div className="mt-8 font-mono text-[80px] leading-none font-bold text-ink-4 tracking-tight">

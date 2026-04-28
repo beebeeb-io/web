@@ -735,7 +735,7 @@ export function Migration() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-paper p-xl">
-      <div className="w-full max-w-3xl bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
+      <div className="w-full max-w-[48rem] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
         {/* Logo header */}
         <div className="px-xl py-md border-b border-line flex items-center gap-3">
           <BBLogo size={13} />

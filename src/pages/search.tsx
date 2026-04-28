@@ -2,10 +2,9 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { BBButton } from '../components/bb-button'
 import { BBChip } from '../components/bb-chip'
-import { BBLogo } from '../components/bb-logo'
+import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '../components/icons'
 import type { IconName } from '../components/icons'
-import { useAuth } from '../lib/auth-context'
 import { listFiles, type DriveFile } from '../lib/api'
 
 // ─── Helpers ─────────────────────────────────────
@@ -60,23 +59,9 @@ const FILE_TYPE_FILTERS: { id: FileTypeFilter; label: string; icon: IconName }[]
   { id: 'folders', label: 'Folders', icon: 'folder' },
 ]
 
-// ─── Nav items (same as Drive sidebar) ───────────
-
-type NavId = 'files' | 'shared' | 'photos' | 'starred' | 'recent' | 'trash'
-
-const navItems: { id: NavId; icon: IconName; label: string; count?: string }[] = [
-  { id: 'files', icon: 'folder', label: 'All files' },
-  { id: 'shared', icon: 'users', label: 'Shared', count: '6' },
-  { id: 'photos', icon: 'image', label: 'Photos', count: '2.4k' },
-  { id: 'starred', icon: 'star', label: 'Starred' },
-  { id: 'recent', icon: 'clock', label: 'Recent' },
-  { id: 'trash', icon: 'trash', label: 'Trash' },
-]
-
 // ─── Search page ─────────────────────────────────
 
 export function Search() {
-  const { logout } = useAuth()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const initialQuery = searchParams.get('q') ?? ''
@@ -152,71 +137,11 @@ export function Search() {
     return true
   })
 
-  const handleNavClick = (id: NavId) => {
-    if (id === 'files') navigate('/')
-    else if (id === 'trash') navigate('/trash')
-  }
-
   return (
-    <div className="h-screen flex overflow-hidden bg-paper">
-      {/* ─── Sidebar ─────────────────────────── */}
-      <aside className="w-[220px] shrink-0 border-r border-line bg-paper-2 flex flex-col">
-        <div className="px-4 pt-4 pb-3">
-          <BBLogo size={14} />
-        </div>
-
-        <nav className="px-3 py-1.5">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => handleNavClick(item.id)}
-              className="w-full flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] transition-colors text-left text-ink-2 hover:bg-paper-3/50"
-            >
-              <Icon name={item.icon} size={13} className="shrink-0" />
-              <span className="flex-1">{item.label}</span>
-              {item.count && (
-                <span className="font-mono text-[10px] text-ink-4">{item.count}</span>
-              )}
-            </button>
-          ))}
-        </nav>
-
-        <div className="mx-4 my-2.5 h-px bg-line" />
-
-        {/* Storage */}
-        <div className="mt-auto px-4 py-4 border-t border-line">
-          <div className="text-[10px] font-medium uppercase tracking-wider text-ink-3 mb-2">
-            Storage
-          </div>
-          <div className="h-[3px] w-full rounded-full bg-paper-3 overflow-hidden mb-1.5">
-            <div className="h-full rounded-full bg-amber" style={{ width: '38%' }} />
-          </div>
-          <div className="flex justify-between text-[11px]">
-            <span className="font-mono tabular-nums">76 / 200 GB</span>
-            <span className="font-medium text-amber-deep cursor-pointer hover:underline">Upgrade</span>
-          </div>
-          <div className="mt-3 flex items-center gap-1.5 text-[10px] text-ink-3">
-            <Icon name="shield" size={11} className="text-amber-deep" />
-            <span className="font-mono">EU-WEST -- AES-256</span>
-          </div>
-        </div>
-
-        <div className="px-3 pb-3">
-          <button
-            onClick={logout}
-            className="w-full flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] text-ink-3 hover:bg-paper-3/50 transition-colors text-left"
-          >
-            <Icon name="x" size={13} className="shrink-0" />
-            Log out
-          </button>
-        </div>
-      </aside>
-
-      {/* ─── Main area ───────────────────────── */}
-      <main className="flex-1 flex flex-col min-w-0">
+    <DriveLayout>
         {/* Search header */}
         <div className="px-5 py-4 border-b border-line">
-          <form onSubmit={handleSubmit} className="flex items-center gap-3 max-w-2xl">
+          <form onSubmit={handleSubmit} className="flex items-center gap-3 max-w-[42rem]">
             <div className="flex-1 flex items-center gap-2.5 border rounded-lg bg-paper px-3.5 py-2.5 border-line focus-within:ring-2 focus-within:ring-amber/30 focus-within:border-amber-deep">
               <Icon name="search" size={14} className="text-ink-3 shrink-0" />
               <input
@@ -277,7 +202,7 @@ export function Search() {
                 <Icon name="search" size={24} className="text-ink-3" />
               </div>
               <div className="text-[15px] font-semibold text-ink mb-1">Search your vault</div>
-              <div className="text-[13px] text-ink-3 max-w-xs">
+              <div className="text-[13px] text-ink-3 max-w-[20rem]">
                 File names are searched client-side. Content never leaves your device unencrypted.
               </div>
             </div>
@@ -296,7 +221,7 @@ export function Search() {
                 <Icon name="search" size={24} className="text-ink-3" />
               </div>
               <div className="text-[15px] font-semibold text-ink mb-1">No results</div>
-              <div className="text-[13px] text-ink-3 max-w-xs">
+              <div className="text-[13px] text-ink-3 max-w-[20rem]">
                 Nothing matched "{query}". Try a different term or check spelling.
               </div>
             </div>
@@ -385,7 +310,6 @@ export function Search() {
             Search is client-side only
           </span>
         </div>
-      </main>
-    </div>
+    </DriveLayout>
   )
 }
