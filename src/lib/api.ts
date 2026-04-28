@@ -572,15 +572,15 @@ export async function listAuditLog(params?: {
   event?: string
   limit?: number
   offset?: number
-}): Promise<{ events: AuditEvent[]; count: number }> {
+}): Promise<{ events: AuditEvent[]; total: number; page: number }> {
   const qs = new URLSearchParams()
   if (params?.actor) qs.set('actor', params.actor)
   if (params?.event) qs.set('event', params.event)
   if (params?.limit) qs.set('limit', String(params.limit))
   if (params?.offset) qs.set('offset', String(params.offset))
   const q = qs.toString()
-  return request<{ events: AuditEvent[]; count: number }>(
-    `/api/v1/admin/audit-log${q ? `?${q}` : ''}`,
+  return request<{ events: AuditEvent[]; total: number; page: number }>(
+    `/api/v1/activity${q ? `?${q}` : ''}`,
   )
 }
 
