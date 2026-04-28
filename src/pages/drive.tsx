@@ -4,8 +4,9 @@ import { BBButton } from '../components/bb-button'
 import { BBChip } from '../components/bb-chip'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '../components/icons'
-import type { IconName } from '../components/icons'
 import { FileIcon, getFileType } from '../components/file-icon'
+import { FileDetailsPanel, type FileDetailsMeta } from '../components/file-details-panel'
+import { ShareDialog } from '../components/share-dialog'
 import { UploadZone, useBrowseFiles } from '../components/upload-zone'
 import { UploadProgress, type UploadItem } from '../components/upload-progress'
 import { NewFolderDialog } from '../components/new-folder-dialog'
@@ -18,6 +19,7 @@ import { useKeys } from '../lib/key-context'
 import {
   listFiles,
   createFolder,
+  toggleStar,
   type DriveFile,
 } from '../lib/api'
 import { encryptedUpload } from '../lib/encrypted-upload'
@@ -94,6 +96,8 @@ export function Drive() {
   const [folderDialogOpen, setFolderDialogOpen] = useState(false)
   const [uploads, setUploads] = useState<UploadItem[]>([])
   const [syncedAgo, setSyncedAgo] = useState(14)
+  const [selectedFileId, setSelectedFileId] = useState<string | null>(null)
+  const [shareFileId, setShareFileId] = useState<string | null>(null)
 
   const viewType = location.pathname === '/starred' ? 'starred'
     : location.pathname === '/recent' ? 'recent'
@@ -357,6 +361,54 @@ export function Drive() {
     setUploads((prev) => prev.filter((u) => u.stage !== 'Done'))
   }
 
+  // ─── File details panel helpers ───────────────────
+
+  const selectedFile = files.find((f) => f.id === selectedFileId) ?? null
+
+  function buildDetailsMeta(file: DriveFile): FileDetailsMeta {
+    const name = displayName(file)
+    const ext = name.includes('.') ? name.split('.').pop() ?? '' : ''
+    const locationPath = breadcrumbs.map((b) => b.name).join(' / ')
+    return {
+      id: file.id,
+      name,
+      extension: ext,
+      mimeType: file.mime_type || null,
+      sizeBytes: file.size_bytes,
+      isFolder: file.is_folder,
+      createdAt: file.created_at,
+      updatedAt: file.updated_at,
+      location: locationPath || '/',
+      cipher: isUnlocked ? 'AES-256-GCM' : undefined,
+      keyId: isUnlocked ? file.id : undefined,
+      region: 'eu-central (Frankfurt)',
+    }
+  }
+
+  function handleFileSelect(file: DriveFile) {
+    if (file.is_folder) {
+      handleFolderOpen(file)
+    } else {
+      setSelectedFileId(file.id)
+    }
+  }
+
+  async function handleToggleStar(fileId: string) {
+    try {
+      const result = await toggleStar(fileId)
+      setFiles((prev) =>
+        prev.map((f) =>
+          f.id === fileId ? { ...f, is_starred: result.is_starred } : f,
+        ),
+      )
+    } catch {
+      // API not available
+    }
+  }
+
+  // The file currently shown in the share dialog
+  const shareFile = files.find((f) => f.id === shareFileId) ?? null
+
   const sortedFiles = [...files].sort((a, b) => {
     // Folders first
     if (a.is_folder && !b.is_folder) return -1
@@ -486,16 +538,16 @@ export function Drive() {
                 return (
                   <div
                     key={file.id}
-                    className="group hover:bg-paper-2 transition-colors cursor-pointer"
+                    className={`group hover:bg-paper-2 transition-colors cursor-pointer ${
+                      selectedFileId === file.id ? 'bg-amber-bg/50' : ''
+                    }`}
                     style={{
                       display: 'grid',
                       gridTemplateColumns: '32px 1fr 110px 110px 100px 60px',
                       gap: 14,
                       padding: '11px 20px',
                     }}
-                    onClick={() => {
-                      if (file.is_folder) handleFolderOpen(file)
-                    }}
+                    onClick={() => handleFileSelect(file)}
                     onDoubleClick={() => {
                       if (!file.is_folder) handleFileDownload(file)
                     }}
@@ -568,6 +620,32 @@ export function Drive() {
         items={uploads}
         onClose={clearDoneUploads}
       />
+
+      <FileDetailsPanel
+        open={selectedFile !== null}
+        onClose={() => setSelectedFileId(null)}
+        file={selectedFile ? buildDetailsMeta(selectedFile) : null}
+        onDownload={() => selectedFile && handleFileDownload(selectedFile)}
+        onShare={() => {
+          if (selectedFile) {
+            setShareFileId(selectedFile.id)
+            setSelectedFileId(null)
+          }
+        }}
+        onStar={() => selectedFile && handleToggleStar(selectedFile.id)}
+        isStarred={selectedFile?.is_starred ?? false}
+        onTrash={() => setSelectedFileId(null)}
+      />
+
+      {shareFile && (
+        <ShareDialog
+          open={shareFileId !== null}
+          onClose={() => setShareFileId(null)}
+          fileId={shareFile.id}
+          fileName={displayName(shareFile)}
+          fileSize={shareFile.size_bytes}
+        />
+      )}
     </DriveLayout>
   )
 }
