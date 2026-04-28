@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react'
-import { getToken } from '../lib/api'
+import { getToken, getApiUrl } from '../lib/api'
 
 export interface WsEvent {
   type: string
@@ -12,7 +12,7 @@ interface UseWebSocketOptions {
   enabled?: boolean
 }
 
-const WS_URL = 'ws://localhost:3001/ws'
+const WS_URL = getApiUrl().replace(/^http/, 'ws') + '/ws'
 const MAX_BACKOFF_MS = 30_000
 const BASE_BACKOFF_MS = 1_000
 

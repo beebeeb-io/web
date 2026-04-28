@@ -4,14 +4,14 @@ import { Icon } from '../components/icons'
 import { BBButton } from '../components/bb-button'
 import { BBInput } from '../components/bb-input'
 import { BBCheckbox } from '../components/bb-checkbox'
-import { clearToken } from '../lib/api'
+import { clearToken, getToken, getApiUrl } from '../lib/api'
 
 async function deleteAccount(confirmation: string): Promise<{ shred_after: string }> {
-  const token = localStorage.getItem('bb_session')
+  const token = getToken()
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const res = await fetch('http://localhost:3001/api/v1/auth/account', {
+  const res = await fetch(`${getApiUrl()}/api/v1/auth/account`, {
     method: 'DELETE',
     headers,
     body: JSON.stringify({ confirmation }),

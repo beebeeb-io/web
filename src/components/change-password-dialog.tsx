@@ -33,11 +33,12 @@ async function changePassword(
   currentPassword: string,
   newPassword: string,
 ): Promise<{ session_token: string; salt: string }> {
-  const token = localStorage.getItem('bb_session')
+  const { getToken, getApiUrl } = await import('../lib/api')
+  const token = getToken()
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const res = await fetch('http://localhost:3001/api/v1/auth/change-password', {
+  const res = await fetch(`${getApiUrl()}/api/v1/auth/change-password`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
