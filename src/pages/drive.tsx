@@ -92,19 +92,31 @@ export function Drive() {
   const [uploads, setUploads] = useState<UploadItem[]>([])
   const [syncedAgo, setSyncedAgo] = useState(14)
 
-  // Fetch files from API
+  const viewType = location.pathname === '/starred' ? 'starred'
+    : location.pathname === '/recent' ? 'recent'
+    : 'files'
+
+  const viewTitle = viewType === 'starred' ? 'Starred'
+    : viewType === 'recent' ? 'Recent'
+    : breadcrumbs[breadcrumbs.length - 1]?.name ?? 'All files'
+
   const currentParentId = breadcrumbs[breadcrumbs.length - 1]?.id ?? undefined
 
   const fetchFiles = useCallback(async () => {
     try {
       const trashed = location.pathname === '/trash'
-      const data = await listFiles(currentParentId ?? undefined, trashed)
+      let data = await listFiles(currentParentId ?? undefined, trashed)
+      if (viewType === 'starred') {
+        data = data.filter((f) => f.is_starred)
+      } else if (viewType === 'recent') {
+        data = [...data].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+      }
       setFiles(data)
       setSyncedAgo(0)
     } catch {
       setFiles([])
     }
-  }, [currentParentId, location.pathname])
+  }, [currentParentId, location.pathname, viewType])
 
   useEffect(() => {
     fetchFiles()
@@ -320,26 +332,30 @@ export function Drive() {
       <HiddenInput />
       {/* Top bar */}
         <div className="px-5 py-2.5 border-b border-line flex items-center gap-3">
-          {/* Breadcrumbs */}
+          {/* Breadcrumbs / view title */}
           <div className="flex items-center gap-1.5 text-sm">
-            {breadcrumbs.map((crumb, i) => {
-              const isLast = i === breadcrumbs.length - 1
-              return (
-                <span key={i} className="flex items-center gap-1.5">
-                  {i > 0 && <Icon name="chevron-right" size={12} className="text-ink-4" />}
-                  {isLast ? (
-                    <span className="font-semibold text-ink">{crumb.name}</span>
-                  ) : (
-                    <button
-                      onClick={() => handleBreadcrumbNav(i)}
-                      className="text-ink-3 hover:text-ink transition-colors"
-                    >
-                      {crumb.name}
-                    </button>
-                  )}
-                </span>
-              )
-            })}
+            {viewType !== 'files' ? (
+              <span className="font-semibold text-ink">{viewTitle}</span>
+            ) : (
+              breadcrumbs.map((crumb, i) => {
+                const isLast = i === breadcrumbs.length - 1
+                return (
+                  <span key={i} className="flex items-center gap-1.5">
+                    {i > 0 && <Icon name="chevron-right" size={12} className="text-ink-4" />}
+                    {isLast ? (
+                      <span className="font-semibold text-ink">{crumb.name}</span>
+                    ) : (
+                      <button
+                        onClick={() => handleBreadcrumbNav(i)}
+                        className="text-ink-3 hover:text-ink transition-colors"
+                      >
+                        {crumb.name}
+                      </button>
+                    )}
+                  </span>
+                )
+              })
+            )}
           </div>
 
           {/* Search */}

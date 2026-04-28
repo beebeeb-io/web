@@ -152,6 +152,22 @@ export function App() {
             }
           />
           <Route
+            path="/starred"
+            element={
+              <ProtectedRoute>
+                <Drive />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/recent"
+            element={
+              <ProtectedRoute>
+                <Drive />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/settings"
             element={
               <ProtectedRoute>
