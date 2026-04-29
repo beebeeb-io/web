@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { AuthProvider, useAuth } from './lib/auth-context'
-import { KeyProvider } from './lib/key-context'
+import { KeyProvider, useKeys } from './lib/key-context'
 import { ToastProvider, useToast } from './components/toast'
 import { ErrorBoundary } from './components/error-boundary'
 import { WasmGuard } from './components/wasm-guard'
@@ -46,15 +46,28 @@ import { NotFound } from './pages/errors/not-found'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
+  const { isUnlocked } = useKeys()
+
   if (loading) return null
   if (!user) return <Navigate to="/login" replace />
+
+  // Vault must be unlocked for full access to protected pages.
+  // If not unlocked, redirect to login — login page handles vault unlock
+  // (existing vault) and device provisioning (new device).
+  if (!isUnlocked) return <Navigate to="/login" replace />
+
   return <WasmGuard>{children}</WasmGuard>
 }
 
 function GuestRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
+  const { isUnlocked } = useKeys()
+
   if (loading) return null
-  if (user) return <Navigate to="/" replace />
+  // Only redirect to app if user is fully authenticated AND vault is unlocked.
+  // An authenticated user with a locked vault needs to stay on login to
+  // unlock or provision their device.
+  if (user && isUnlocked) return <Navigate to="/" replace />
   return <>{children}</>
 }
 

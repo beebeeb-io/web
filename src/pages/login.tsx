@@ -5,6 +5,7 @@ import { BBButton } from '../components/bb-button'
 import { BBInput } from '../components/bb-input'
 import { Icon } from '../components/icons'
 import { TwoFactorPrompt } from '../components/two-factor-prompt'
+import { DeviceProvision } from '../components/device-provision'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
 import { startPasskeyLogin, finishPasskeyLogin, getMe, setToken, hexToBytes, opaqueLoginStart as apiOpaqueLoginStart, opaqueLoginFinish as apiOpaqueLoginFinish } from '../lib/api'
@@ -173,36 +174,10 @@ export function Login() {
   // Show device provisioning when OPAQUE auth succeeded but no vault on this device
   if (needsProvision) {
     return (
-      <AuthShell
-        title="Set up this device"
-        subtitle="Your account is authenticated, but this device needs your recovery phrase."
-      >
-        <div className="rounded-lg border border-line bg-paper-2 p-4">
-          <div className="flex items-start gap-3">
-            <Icon name="shield" size={18} className="text-amber-deep mt-0.5 shrink-0" />
-            <div>
-              <p className="text-sm font-medium text-ink mb-1">No vault found on this device</p>
-              <p className="text-xs text-ink-3 leading-relaxed">
-                Enter your recovery phrase to set up this device. Your recovery phrase
-                was shown when you created your account.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <BBButton
-          type="button"
-          variant="default"
-          size="md"
-          className="w-full mt-4"
-          onClick={() => {
-            setNeedsProvision(false)
-            setError('')
-          }}
-        >
-          Back to login
-        </BBButton>
-      </AuthShell>
+      <DeviceProvision
+        password={password}
+        onProvisioned={() => navigate('/')}
+      />
     )
   }
 

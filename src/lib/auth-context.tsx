@@ -20,10 +20,10 @@ import {
   verify2fa as apiVerify2fa,
 } from './api'
 
-/** Callback registered by KeyProvider to lock keys on logout. */
-let onLogoutCallback: (() => void) | null = null
+/** Callback registered by KeyProvider to clear keys + vault on logout. */
+let onLogoutCallback: (() => void | Promise<void>) | null = null
 
-export function registerLogoutCallback(cb: () => void): void {
+export function registerLogoutCallback(cb: () => void | Promise<void>): void {
   onLogoutCallback = cb
 }
 
@@ -87,7 +87,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const logout = useCallback(async () => {
-    onLogoutCallback?.()
+    await onLogoutCallback?.()
     await apiLogout()
     setUser(null)
   }, [])

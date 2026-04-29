@@ -128,11 +128,12 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     setIsUnlocked(false)
   }, [])
 
-  // Auto-lock on logout (not full clear — user may re-unlock)
+  // Full clear on explicit logout — wipe in-memory key AND IndexedDB vault.
+  // The user chose to log out, so the device should not retain wrapped keys.
   useEffect(() => {
-    registerLogoutCallback(lock)
+    registerLogoutCallback(fullLogout)
     return () => registerLogoutCallback(() => {})
-  }, [lock])
+  }, [fullLogout])
 
   const value = useMemo<KeyState>(
     () => ({
