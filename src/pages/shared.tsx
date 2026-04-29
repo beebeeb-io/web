@@ -142,7 +142,6 @@ export function Shared() {
         if (cancelled) return
         if (invite.file_id && invite.sender_public_key && invite.encrypted_file_key && invite.file_name_encrypted) {
           try {
-            // Step 1: Derive shared secret via X25519
             const masterKey = getMasterKey()
             const myPrivate = await deriveX25519Private(masterKey)
             const theirPublic = fromBase64(invite.sender_public_key)
@@ -150,28 +149,20 @@ export function Shared() {
             const fileIdBytes = new TextEncoder().encode(invite.file_id)
             const shareKey = await deriveShareKey(sharedSecret, fileIdBytes)
 
-            // Step 2: Decrypt the encrypted_file_key (nonce + ciphertext) to get the file key
             const efkBytes = fromBase64(invite.encrypted_file_key)
-            const efkNonce = efkBytes.slice(0, 12)
-            const efkCiphertext = efkBytes.slice(12)
-            const fileKey = await decryptChunk(shareKey, efkNonce, efkCiphertext)
+            console.debug(`[shared] efk total=${efkBytes.length} nonce=${efkBytes.slice(0,12).length} ct=${efkBytes.slice(12).length}`)
+            const fileKey = await decryptChunk(shareKey, efkBytes.slice(0, 12), efkBytes.slice(12))
+            console.debug(`[shared] got fileKey len=${fileKey.length}`)
 
-            // Step 3: Decrypt the filename using the file key
-            const parsed = JSON.parse(invite.file_name_encrypted) as {
-              nonce: string
-              ciphertext: string
-            }
-            names[invite.id] = await decryptFilename(
-              fileKey,
-              fromBase64(parsed.nonce),
-              fromBase64(parsed.ciphertext),
-            )
+            const parsed = JSON.parse(invite.file_name_encrypted) as { nonce: string; ciphertext: string }
+            names[invite.id] = await decryptFilename(fileKey, fromBase64(parsed.nonce), fromBase64(parsed.ciphertext))
 
             zeroize(myPrivate)
             zeroize(sharedSecret)
             zeroize(shareKey)
             zeroize(fileKey)
-          } catch {
+          } catch (err) {
+            console.error(`[shared] decrypt FAILED for ${invite.id}:`, err)
             names[invite.id] = invite.file_name_encrypted
           }
         } else {
