@@ -373,6 +373,8 @@ export function Drive() {
       })
 
       setUploads((prev) => prev.filter((u) => u.id !== uploadId))
+      // Remove from paused list if this was a resume
+      setPausedUploads((prev) => prev.filter((u) => u.fileId !== fileId))
       showToast({ icon: 'check', title: 'Uploaded', description: file.name })
       fetchFiles()
     } catch (err) {
@@ -909,6 +911,42 @@ export function Drive() {
             onMarkAllRead={markAllRead}
           />
         </div>
+
+        {/* Resume banner */}
+        {pausedUploads.length > 0 && (
+          <div className="px-5 py-2.5 border-b border-amber/30 bg-amber-bg/40 flex items-center gap-3 text-sm">
+            <Icon name="upload" size={14} className="text-amber-deep shrink-0" />
+            <span className="text-ink">
+              {pausedUploads.length === 1
+                ? `1 upload paused`
+                : `${pausedUploads.length} uploads paused`}
+              {' -- '}
+              <span className="text-ink-3">
+                {pausedUploads.map((u) => u.fileName).join(', ')}
+              </span>
+            </span>
+            <BBButton
+              size="sm"
+              variant="amber"
+              className="ml-auto gap-1.5"
+              onClick={browseResume}
+            >
+              Select file to resume
+            </BBButton>
+            <BBButton
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                for (const u of pausedUploads) {
+                  removeUploadState(u.fileId)
+                }
+                setPausedUploads([])
+              }}
+            >
+              Dismiss
+            </BBButton>
+          </div>
+        )}
 
         {/* Column header */}
         <div

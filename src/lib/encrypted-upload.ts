@@ -130,7 +130,6 @@ export async function encryptedUpload(
 
   // ── Upload chunks ─────────────────────────────────
 
-  const chunksToUpload = totalChunks - skipChunks.size
   let completedChunks = skipChunks.size
 
   function reportProgress() {
