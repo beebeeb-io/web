@@ -636,6 +636,9 @@ export interface ShareInvite {
   file_name_encrypted?: string
   sender_email?: string
   recipient_public_key?: string
+  can_download?: boolean
+  can_reshare?: boolean
+  expires_at?: string | null
 }
 
 export async function createInvite(
@@ -707,6 +710,18 @@ export interface InviteActivity {
 
 export async function getInviteActivity(inviteId: string): Promise<InviteActivity> {
   return request(`/api/v1/shares/invites/${inviteId}/activity`)
+}
+
+export async function resendInvite(inviteId: string): Promise<void> {
+  await request(`/api/v1/shares/invites/${inviteId}/resend`, { method: 'POST' })
+}
+
+export async function withdrawInvite(inviteId: string): Promise<void> {
+  await request(`/api/v1/shares/invites/${inviteId}/withdraw`, { method: 'POST' })
+}
+
+export async function hideInvite(inviteId: string): Promise<void> {
+  await request(`/api/v1/shares/invites/${inviteId}/hide`, { method: 'POST' })
 }
 
 // ─── Billing endpoints ─────────────────────────
