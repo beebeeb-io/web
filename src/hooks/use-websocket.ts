@@ -75,10 +75,13 @@ export function useWebSocket({ onEvent, enabled = true }: UseWebSocketOptions) {
     }
   }, [])
 
+  const mountedRef = useRef(false)
+
   useEffect(() => {
-    if (enabled) {
-      connect()
-    }
+    if (!enabled) return disconnect
+    if (mountedRef.current && wsRef.current) return disconnect
+    mountedRef.current = true
+    connect()
     return disconnect
   }, [enabled, connect, disconnect])
 

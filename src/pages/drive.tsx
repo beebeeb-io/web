@@ -148,22 +148,7 @@ export function Drive() {
   const handleWsEvent = useCallback((event: WsEvent) => {
     const id = `${event.type}-${Date.now()}`
     if (event.type === 'file.uploaded') {
-      const data = event.data as { name_encrypted?: string; size_bytes?: number }
-      addNotification({
-        id,
-        type: event.type,
-        icon: 'upload',
-        title: 'File uploaded',
-        description: data.name_encrypted ?? 'New file',
-        timestamp: event.timestamp,
-        read: false,
-      })
-      showToast({
-        icon: 'upload',
-        title: 'File uploaded',
-        description: data.name_encrypted ?? 'New file',
-      })
-      // Refresh file list
+      // Just refresh the file list — the uploader's own progress UI handles feedback
       fetchFiles()
     } else if (event.type === 'share.opened') {
       const data = event.data as { name_encrypted?: string; open_count?: number }
@@ -256,8 +241,16 @@ export function Drive() {
         tags: [],
       })
 
+      setUploads((prev) => prev.filter((u) => u.id !== uploadId))
+      showToast({ icon: 'check', title: 'Uploaded', description: file.name })
       fetchFiles()
-    } catch {
+    } catch (err) {
+      showToast({
+        icon: 'upload',
+        title: 'Upload failed',
+        description: err instanceof Error ? err.message : 'Something went wrong',
+        danger: true,
+      })
       setUploads((prev) =>
         prev.map((u) =>
           u.id === uploadId
@@ -265,7 +258,6 @@ export function Drive() {
             : u,
         ),
       )
-    }
   }
 
   async function handleFileDownload(file: DriveFile) {
