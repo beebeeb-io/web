@@ -31,6 +31,9 @@ import { SsoSetup } from './pages/admin/sso'
 import { DataExport } from './pages/admin/data-export'
 import { ApiTokens } from './pages/admin/api-tokens'
 import { Compliance } from './pages/admin/compliance'
+import { AdminUsers } from './pages/admin/users'
+import { AdminBilling } from './pages/admin/billing-overview'
+import { StoragePools } from './pages/admin/storage-pools'
 import { TwoFactorSetup } from './pages/two-factor-setup'
 import { VerifyEmail } from './pages/verify-email'
 import { Migration } from './pages/migration'
@@ -293,6 +296,30 @@ export function App() {
             element={
               <ProtectedRoute>
                 <ApiTokens />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/users"
+            element={
+              <ProtectedRoute>
+                <AdminUsers />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/billing"
+            element={
+              <ProtectedRoute>
+                <AdminBilling />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/storage-pools"
+            element={
+              <ProtectedRoute>
+                <StoragePools />
               </ProtectedRoute>
             }
           />
