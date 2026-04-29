@@ -492,7 +492,7 @@ export function Drive() {
 
   // ─── Context menu actions ───────────────────────────
 
-  function handleContextAction(action: string, fileId: string) {
+  async function handleContextAction(action: string, fileId: string) {
     const file = files.find((f) => f.id === fileId)
     if (!file) return
 
