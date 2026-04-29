@@ -29,6 +29,13 @@ import {
 } from '../lib/api'
 import { encryptedUpload } from '../lib/encrypted-upload'
 import { encryptedDownload } from '../lib/encrypted-download'
+import {
+  computeFingerprint,
+  getActiveUploads,
+  findByFingerprint,
+  removeUploadState,
+  type UploadState,
+} from '../lib/upload-resume'
 import { decryptFilename, encryptFilename, fromBase64, toBase64 } from '../lib/crypto'
 import { useSearchIndex } from '../hooks/use-search-index'
 
@@ -108,6 +115,7 @@ export function Drive() {
   const [ctxMenu, setCtxMenu] = useState<{
     open: boolean; x: number; y: number; fileId: string; fileName: string; isFolder: boolean
   }>({ open: false, x: 0, y: 0, fileId: '', fileName: '', isFolder: false })
+  const [pausedUploads, setPausedUploads] = useState<UploadState[]>([])
 
   const viewType = location.pathname === '/starred' ? 'starred'
     : location.pathname === '/recent' ? 'recent'
@@ -141,6 +149,26 @@ export function Drive() {
   useEffect(() => {
     fetchFiles()
   }, [fetchFiles])
+
+  // Check IndexedDB for paused uploads on mount
+  useEffect(() => {
+    getActiveUploads()
+      .then((active) => {
+        // Filter out stale entries older than 7 days
+        const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000
+        const recent = active.filter((u) => u.createdAt > cutoff)
+        setPausedUploads(recent)
+        // Clean up stale entries
+        for (const old of active) {
+          if (old.createdAt <= cutoff) {
+            removeUploadState(old.fileId)
+          }
+        }
+      })
+      .catch(() => {
+        // IndexedDB unavailable — ignore
+      })
+  }, [])
 
   // Notifications
   const { notifications, unreadCount, addNotification, markRead, markAllRead } = useNotifications()
@@ -184,6 +212,89 @@ export function Drive() {
   // Browse files hook
   const { browse, HiddenInput } = useBrowseFiles(handleFilesSelected)
   const { browseFolder, HiddenFolderInput } = useBrowseFolders(handleFolderFilesSelected)
+
+  // Resume upload handler
+  async function handleResumeFile(selectedFiles: File[]) {
+    if (!isUnlocked || !cryptoReady) {
+      showToast({
+        icon: 'lock',
+        title: 'Vault is locked',
+        description: 'Log in again to unlock encryption before resuming.',
+        danger: true,
+      })
+      return
+    }
+    if (selectedFiles.length === 0) return
+
+    for (const file of selectedFiles) {
+      const fingerprint = await computeFingerprint(file)
+      const match = await findByFingerprint(fingerprint)
+
+      if (!match) {
+        showToast({
+          icon: 'upload',
+          title: 'No matching upload found',
+          description: `"${file.name}" does not match any paused upload.`,
+          danger: true,
+        })
+        continue
+      }
+
+      const uploadId = `resume-${Date.now()}-${match.fileId.slice(0, 8)}`
+      setUploads((prev) => [
+        ...prev,
+        {
+          id: uploadId,
+          name: file.name,
+          size: file.size,
+          progress: 0,
+          stage: 'Uploading' as const,
+        },
+      ])
+
+      // Remove from paused list immediately
+      setPausedUploads((prev) => prev.filter((u) => u.fileId !== match.fileId))
+
+      const fileKey = await getFileKey(match.fileId)
+      try {
+        await encryptedUpload(
+          file,
+          match.fileId,
+          fileKey,
+          match.parentId ?? undefined,
+          (p) => {
+            setUploads((prev) =>
+              prev.map((u) =>
+                u.id === uploadId
+                  ? { ...u, stage: p.stage, progress: p.progress }
+                  : u,
+              ),
+            )
+          },
+          match.fileId, // resumeFileId
+        )
+        setUploads((prev) => prev.filter((u) => u.id !== uploadId))
+        showToast({ icon: 'check', title: 'Upload resumed', description: file.name })
+        fetchFiles()
+      } catch (err) {
+        showToast({
+          icon: 'upload',
+          title: 'Resume failed',
+          description: err instanceof Error ? err.message : 'Something went wrong',
+          danger: true,
+        })
+        setUploads((prev) =>
+          prev.map((u) =>
+            u.id === uploadId
+              ? { ...u, stage: 'Queued' as const, progress: 0 }
+              : u,
+          ),
+        )
+      }
+    }
+  }
+
+  const { browse: browseResume, HiddenInput: HiddenResumeInput } = useBrowseFiles(handleResumeFile)
 
   function resolveUniqueName(name: string): string {
     const existing = new Set(Object.values(decryptedNames))
@@ -729,6 +840,7 @@ export function Drive() {
     <DriveLayout>
       <HiddenInput />
       <HiddenFolderInput />
+      <HiddenResumeInput />
       {/* Top bar */}
         <div className="px-5 py-2.5 border-b border-line flex items-center gap-3">
           {/* Breadcrumbs / view title */}

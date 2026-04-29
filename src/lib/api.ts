@@ -405,6 +405,21 @@ export async function completeUpload(
   })
 }
 
+export interface UploadStatusResponse {
+  file_id: string
+  chunk_count: number
+  uploaded_chunks: number[]
+  is_uploading: boolean
+}
+
+export async function getUploadStatus(
+  fileId: string,
+): Promise<UploadStatusResponse> {
+  return request<UploadStatusResponse>(
+    `/api/v1/files/${fileId}/upload/status`,
+  )
+}
+
 export async function getFile(id: string): Promise<DriveFile> {
   return request<DriveFile>(`/api/v1/files/${id}`)
 }
