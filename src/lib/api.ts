@@ -622,55 +622,67 @@ export async function revokeShare(id: string): Promise<void> {
   await request<void>(`/api/v1/shares/${id}`, { method: 'DELETE' })
 }
 
-// ─── User-to-user sharing endpoints ────────────
+// ─── Share invites (blind sharing) ──────────────
 
-export interface UserPublicKey {
-  user_id: string
-  public_key: string // base64-encoded X25519 public key
-}
-
-export interface UserLookup {
-  user_id: string
-  email: string
-}
-
-export interface UserShareResult {
+export interface ShareInvite {
   id: string
   file_id: string
-  recipient_id: string
+  sender_id: string
+  recipient_email: string
+  status: string // invited, claimed, approved, denied, cancelled
   created_at: string
+  claimed_at?: string
+  approved_at?: string
+  file_name_encrypted?: string
+  sender_email?: string
+  recipient_public_key?: string
 }
 
-/** Look up a user by email address (for sharing). */
-export async function lookupUserByEmail(email: string): Promise<UserLookup> {
-  return request<UserLookup>(
-    `/api/v1/users/lookup?email=${encodeURIComponent(email)}`,
-  )
-}
-
-/** Fetch a user's X25519 public key for key exchange. */
-export async function getUserPublicKey(userId: string): Promise<UserPublicKey> {
-  return request<UserPublicKey>(`/api/v1/users/${userId}/public-key`)
-}
-
-/** Create a user-to-user share with encrypted file key. */
-export async function createUserShare(
+export async function createInvite(
   fileId: string,
-  recipientId: string,
-  encryptedFileKey: string,
-  nonce: string,
-  permissions?: { can_download?: boolean; expires_at?: string | null },
-): Promise<UserShareResult> {
-  return request<UserShareResult>('/api/v1/shares/user', {
+  recipientEmail: string,
+): Promise<{ invite_id: string; status: string }> {
+  return request('/api/v1/shares/invites', {
     method: 'POST',
-    body: JSON.stringify({
-      file_id: fileId,
-      recipient_id: recipientId,
-      encrypted_file_key: encryptedFileKey,
-      nonce,
-      permissions: permissions ?? {},
-    }),
+    body: JSON.stringify({ file_id: fileId, recipient_email: recipientEmail }),
   })
+}
+
+export async function getIncomingInvites(): Promise<ShareInvite[]> {
+  const data = await request<{ invites: ShareInvite[] }>('/api/v1/shares/invites/incoming')
+  return data.invites ?? []
+}
+
+export async function getPendingApprovals(): Promise<ShareInvite[]> {
+  const data = await request<{ invites: ShareInvite[] }>('/api/v1/shares/invites/pending-approval')
+  return data.invites ?? []
+}
+
+export async function getSentInvites(): Promise<ShareInvite[]> {
+  const data = await request<{ invites: ShareInvite[] }>('/api/v1/shares/invites/sent')
+  return data.invites ?? []
+}
+
+export async function claimInvite(inviteId: string): Promise<void> {
+  await request(`/api/v1/shares/invites/${inviteId}/claim`, { method: 'POST' })
+}
+
+export async function approveInvite(
+  inviteId: string,
+  encryptedFileKey: string,
+): Promise<void> {
+  await request(`/api/v1/shares/invites/${inviteId}/approve`, {
+    method: 'POST',
+    body: JSON.stringify({ encrypted_file_key: encryptedFileKey }),
+  })
+}
+
+export async function denyInvite(inviteId: string): Promise<void> {
+  await request(`/api/v1/shares/invites/${inviteId}/deny`, { method: 'POST' })
+}
+
+export async function cancelInvite(inviteId: string): Promise<void> {
+  await request(`/api/v1/shares/invites/${inviteId}`, { method: 'DELETE' })
 }
 
 // ─── Billing endpoints ─────────────────────────
