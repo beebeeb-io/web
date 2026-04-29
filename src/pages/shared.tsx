@@ -186,10 +186,10 @@ export function Shared() {
   const handleSharedAction = useCallback(async (action: string, inviteId: string) => {
     switch (action) {
       case 'download':
-        showToast({ icon: 'download', title: 'Downloading...', description: 'Decrypting and downloading file.' })
+        showToast({ icon: 'download', title: 'Not available yet', description: 'Shared file download is coming soon.' })
         break
       case 'save-copy':
-        showToast({ icon: 'folder', title: 'Saving copy...', description: 'Re-encrypting with your key.' })
+        showToast({ icon: 'folder', title: 'Not available yet', description: 'Save copy to drive is coming soon.' })
         break
       case 'forward': {
         const invite = withMeInvites.find((i) => i.id === inviteId)
