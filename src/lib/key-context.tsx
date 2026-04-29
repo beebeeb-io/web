@@ -42,21 +42,45 @@ interface KeyState {
 
 const KeyContext = createContext<KeyState | null>(null)
 
+const MK_SESSION_KEY = 'bb_mk'
+
+function persistMasterKey(key: Uint8Array): void {
+  const b64 = btoa(String.fromCharCode(...key))
+  sessionStorage.setItem(MK_SESSION_KEY, b64)
+}
+
+function loadPersistedMasterKey(): Uint8Array | null {
+  const b64 = sessionStorage.getItem(MK_SESSION_KEY)
+  if (!b64) return null
+  const binary = atob(b64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return bytes
+}
+
+function clearPersistedMasterKey(): void {
+  sessionStorage.removeItem(MK_SESSION_KEY)
+}
+
 export function KeyProvider({ children }: { children: ReactNode }) {
   const [cryptoReady, setCryptoReady] = useState(false)
   const [cryptoLoading, setCryptoLoading] = useState(true)
   const [cryptoError, setCryptoError] = useState<string | null>(null)
   const [isUnlocked, setIsUnlocked] = useState(false)
 
-  // Store master key in a ref to avoid it showing up in React devtools state
   const masterKeyRef = useRef<Uint8Array | null>(null)
 
-  // Initialize WASM on mount
+  // Initialize WASM on mount + restore master key from sessionStorage
   useState(() => {
     initCrypto()
       .then(() => {
         setCryptoReady(true)
         setCryptoLoading(false)
+        const persisted = loadPersistedMasterKey()
+        if (persisted) {
+          masterKeyRef.current = persisted
+          setIsUnlocked(true)
+        }
       })
       .catch((err) => {
         setCryptoError(
@@ -69,11 +93,13 @@ export function KeyProvider({ children }: { children: ReactNode }) {
   const unlock = useCallback(async (password: string, salt: Uint8Array) => {
     const { masterKey } = await deriveKeys(password, salt)
     masterKeyRef.current = masterKey
+    persistMasterKey(masterKey)
     setIsUnlocked(true)
   }, [])
 
   const setMasterKey = useCallback((key: Uint8Array) => {
     masterKeyRef.current = key
+    persistMasterKey(key)
     setIsUnlocked(true)
   }, [])
 
@@ -96,6 +122,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       zeroize(masterKeyRef.current)
       masterKeyRef.current = null
     }
+    clearPersistedMasterKey()
     setIsUnlocked(false)
   }, [])
 
