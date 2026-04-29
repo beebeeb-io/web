@@ -642,6 +642,7 @@ export interface ShareInvite {
   expires_at?: string | null
   size_bytes?: number
   is_folder?: boolean
+  encrypted_file_key?: string
 }
 
 export async function createInvite(

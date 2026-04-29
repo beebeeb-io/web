@@ -22,7 +22,7 @@ import {
   type ShareInvite,
 } from '../lib/api'
 import { useKeys } from '../lib/key-context'
-import { decryptFilename, fromBase64, x25519SharedSecret, deriveShareKey, deriveX25519Private } from '../lib/crypto'
+import { decryptFilename, decryptChunk, fromBase64, x25519SharedSecret, deriveShareKey, deriveX25519Private, zeroize } from '../lib/crypto'
 
 // ─── Helpers ───────────────────────────────────────
 
@@ -138,23 +138,37 @@ export function Shared() {
       const names: Record<string, string> = {}
       for (const invite of withMeInvites) {
         if (cancelled) return
-        if (invite.file_id && invite.sender_public_key && invite.file_name_encrypted) {
+        if (invite.file_id && invite.sender_public_key && invite.encrypted_file_key && invite.file_name_encrypted) {
           try {
-            const parsed = JSON.parse(invite.file_name_encrypted) as {
-              nonce: string
-              ciphertext: string
-            }
+            // Step 1: Derive shared secret via X25519
             const masterKey = getMasterKey()
             const myPrivate = await deriveX25519Private(masterKey)
             const theirPublic = fromBase64(invite.sender_public_key)
             const sharedSecret = await x25519SharedSecret(myPrivate, theirPublic)
             const fileIdBytes = new TextEncoder().encode(invite.file_id)
             const shareKey = await deriveShareKey(sharedSecret, fileIdBytes)
+
+            // Step 2: Decrypt the encrypted_file_key (nonce + ciphertext) to get the file key
+            const efkBytes = fromBase64(invite.encrypted_file_key)
+            const efkNonce = efkBytes.slice(0, 12)
+            const efkCiphertext = efkBytes.slice(12)
+            const fileKey = await decryptChunk(shareKey, efkNonce, efkCiphertext)
+
+            // Step 3: Decrypt the filename using the file key
+            const parsed = JSON.parse(invite.file_name_encrypted) as {
+              nonce: string
+              ciphertext: string
+            }
             names[invite.id] = await decryptFilename(
-              shareKey,
+              fileKey,
               fromBase64(parsed.nonce),
               fromBase64(parsed.ciphertext),
             )
+
+            zeroize(myPrivate)
+            zeroize(sharedSecret)
+            zeroize(shareKey)
+            zeroize(fileKey)
           } catch {
             names[invite.id] = invite.file_name_encrypted
           }
