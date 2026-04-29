@@ -6,6 +6,7 @@ import { KeyProvider, useKeys } from './lib/key-context'
 import { ToastProvider, useToast } from './components/toast'
 import { ErrorBoundary } from './components/error-boundary'
 import { WasmGuard } from './components/wasm-guard'
+import { VaultUnlock } from './components/vault-unlock'
 import { OfflineBanner } from './components/offline-banner'
 import { registerErrorNotifier, registerSessionExpiredHandler } from './lib/api'
 import { CommandPalette } from './components/command-palette'
@@ -46,15 +47,17 @@ import { NotFound } from './pages/errors/not-found'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
-  const { isUnlocked } = useKeys()
+  const { isUnlocked, vaultExists } = useKeys()
 
   if (loading) return null
   if (!user) return <Navigate to="/login" replace />
 
-  // Vault must be unlocked for full access to protected pages.
-  // If not unlocked, redirect to login — login page handles vault unlock
-  // (existing vault) and device provisioning (new device).
-  if (!isUnlocked) return <Navigate to="/login" replace />
+  if (!isUnlocked) {
+    if (vaultExists) {
+      return <VaultUnlock />
+    }
+    return <Navigate to="/login" replace />
+  }
 
   return <WasmGuard>{children}</WasmGuard>
 }
