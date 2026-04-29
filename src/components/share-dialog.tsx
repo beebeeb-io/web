@@ -2,18 +2,15 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { BBButton } from './bb-button'
 import { BBChip } from './bb-chip'
 import { Icon } from './icons'
+import { FeedbackDialog } from './feedback-dialog'
 import {
   createShare,
-  lookupUserByEmail,
-  getUserPublicKey,
-  createUserShare,
+  createInvite,
   type ShareInfo,
   type ShareOptions,
 } from '../lib/api'
 import {
-  encryptFileKeyForSharing,
   toBase64,
-  fromBase64,
   zeroize,
 } from '../lib/crypto'
 import { useKeys } from '../lib/key-context'
@@ -26,7 +23,7 @@ interface ShareDialogProps {
   fileSize: number
 }
 
-type ShareMode = 'link' | 'user'
+type ShareMode = 'link' | 'invite'
 type ExpiryOption = { label: string; hours: number | null }
 type MaxOpensOption = { label: string; value: number | null }
 
@@ -160,42 +157,64 @@ function TabBar({
       </button>
       <button
         type="button"
-        onClick={() => onChange('user')}
+        onClick={() => onChange('invite')}
         className={`flex items-center gap-1.5 px-3 pb-2 text-[13px] font-medium border-b-2 transition-colors ${
-          mode === 'user'
+          mode === 'invite'
             ? 'border-amber-deep text-amber-deep'
             : 'border-transparent text-ink-3 hover:text-ink-2'
         }`}
       >
-        <Icon name="users" size={13} />
-        User
+        <Icon name="mail" size={13} />
+        Invite
       </button>
     </div>
   )
 }
 
-// ─── User share section ─────────────────────────────
+// ─── Rate limit error parsing ────────────────────────
 
-function UserShareForm({
+interface RateLimitInfo {
+  limit_type: 'hourly' | 'daily' | 'per_file'
+  retry_after_seconds?: number
+}
+
+function parseRateLimitError(error: unknown): RateLimitInfo | null {
+  if (!(error instanceof Error)) return null
+  try {
+    const match = error.message.match(/\{.*\}/)
+    if (!match) return null
+    const body = JSON.parse(match[0])
+    if (body.limit_type) return body as RateLimitInfo
+  } catch {
+    if (error.message.includes('429') || error.message.toLowerCase().includes('rate limit')) {
+      return { limit_type: 'hourly' }
+    }
+  }
+  return null
+}
+
+// ─── Invite section (blind sharing) ──────────────────
+
+function InviteForm({
   fileId,
   onSuccess,
+  onRateLimitFeedback,
 }: {
   fileId: string
   onSuccess: (email: string) => void
+  onRateLimitFeedback: () => void
 }) {
-  const { getFileKey, getMasterKey } = useKeys()
-
   const [email, setEmail] = useState('')
-  const [canDownload, setCanDownload] = useState(true)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [rateLimitInfo, setRateLimitInfo] = useState<RateLimitInfo | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     inputRef.current?.focus()
   }, [])
 
-  const handleShare = useCallback(async () => {
+  const handleInvite = useCallback(async () => {
     const trimmed = email.trim().toLowerCase()
     if (!trimmed || !trimmed.includes('@')) {
       setError('Enter a valid email address.')
@@ -204,67 +223,58 @@ function UserShareForm({
 
     setLoading(true)
     setError(null)
+    setRateLimitInfo(null)
 
     try {
-      // 1. Look up recipient by email
-      const recipient = await lookupUserByEmail(trimmed)
-
-      // 2. Fetch their X25519 public key
-      const pubKeyResponse = await getUserPublicKey(recipient.user_id)
-      const recipientPublicKey = fromBase64(pubKeyResponse.public_key)
-
-      // 3. Get our master key and the file key
-      const masterKey = getMasterKey()
-      const fileKey = await getFileKey(fileId)
-
-      // 4. Encrypt the file key for the recipient via X25519 key exchange
-      const { encryptedFileKey, nonce } = await encryptFileKeyForSharing(
-        masterKey,
-        recipientPublicKey,
-        fileId,
-        fileKey,
-      )
-
-      // Zero the file key after use
-      zeroize(fileKey)
-
-      // 5. Send to server
-      await createUserShare(
-        fileId,
-        recipient.user_id,
-        toBase64(encryptedFileKey),
-        toBase64(nonce),
-        { can_download: canDownload },
-      )
-
+      await createInvite(fileId, trimmed)
       onSuccess(trimmed)
     } catch (e) {
-      if (e instanceof Error) {
-        // Provide clearer messages for common cases
-        if (e.message.includes('not found') || e.message.includes('404')) {
-          setError('No Beebeeb account found for that email.')
-        } else if (e.message.includes('public_key') || e.message.includes('public key')) {
-          setError('That user has not set up encryption yet.')
-        } else {
-          setError(e.message)
-        }
+      const rateLimit = parseRateLimitError(e)
+      if (rateLimit) {
+        setRateLimitInfo(rateLimit)
+      } else if (e instanceof Error) {
+        setError(e.message)
       } else {
-        setError('Failed to share. Try again.')
+        setError('Failed to send invite. Try again.')
       }
     } finally {
       setLoading(false)
     }
-  }, [email, canDownload, fileId, getFileKey, getMasterKey, onSuccess])
+  }, [email, fileId, onSuccess])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Enter' && !loading) {
         e.preventDefault()
-        handleShare()
+        handleInvite()
       }
     },
-    [handleShare, loading],
+    [handleInvite, loading],
   )
+
+  const rateLimitMessage = rateLimitInfo ? (() => {
+    switch (rateLimitInfo.limit_type) {
+      case 'hourly': {
+        const minutes = rateLimitInfo.retry_after_seconds
+          ? Math.ceil(rateLimitInfo.retry_after_seconds / 60)
+          : undefined
+        return {
+          text: `50 invites this hour — that's the limit. We do this to prevent spam.${minutes ? ` It resets in ${minutes}m.` : ''} If this is blocking real work, `,
+          hasLink: true,
+        }
+      }
+      case 'daily':
+        return {
+          text: '200 invites today — limit reached. We do this to prevent spam.',
+          hasLink: false,
+        }
+      case 'per_file':
+        return {
+          text: "This file is shared with 20 people — that's the maximum.",
+          hasLink: false,
+        }
+    }
+  })() : null
 
   return (
     <div>
@@ -272,7 +282,7 @@ function UserShareForm({
       <label className="block text-xs font-medium text-ink-2 mb-1.5">
         Recipient email
       </label>
-      <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 mb-3 focus-within:border-line-2 transition-colors">
+      <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 mb-4 focus-within:border-line-2 transition-colors">
         <Icon name="mail" size={13} className="text-ink-3 shrink-0" />
         <input
           ref={inputRef}
@@ -281,18 +291,12 @@ function UserShareForm({
           onChange={(e) => {
             setEmail(e.target.value)
             setError(null)
+            setRateLimitInfo(null)
           }}
           onKeyDown={handleKeyDown}
           placeholder="colleague@example.com"
           className="flex-1 bg-transparent text-[13px] text-ink outline-none placeholder:text-ink-4"
         />
-      </div>
-
-      {/* Permissions */}
-      <div className="flex items-center text-[13px] mb-5">
-        <Icon name="download" size={13} className="text-ink-3" />
-        <span className="ml-2.5 flex-1">Can download</span>
-        <Toggle on={canDownload} onChange={setCanDownload} />
       </div>
 
       {error && (
@@ -301,28 +305,44 @@ function UserShareForm({
         </div>
       )}
 
+      {rateLimitMessage && (
+        <div className="mb-4 px-3 py-2 bg-amber-bg border border-amber/20 rounded-md text-xs text-ink-2">
+          {rateLimitMessage.text}
+          {rateLimitMessage.hasLink && (
+            <button
+              type="button"
+              onClick={onRateLimitFeedback}
+              className="text-amber-deep underline underline-offset-2 hover:text-amber transition-colors"
+            >
+              let us know
+            </button>
+          )}
+          {rateLimitMessage.hasLink && '.'}
+        </div>
+      )}
+
       <BBButton
         variant="amber"
         size="lg"
         className="w-full justify-center gap-2"
-        onClick={handleShare}
+        onClick={handleInvite}
         disabled={loading}
       >
-        <Icon name="shield" size={13} />
-        {loading ? 'Encrypting...' : 'Share with user'}
+        <Icon name="mail" size={13} />
+        {loading ? 'Sending...' : 'Send invite'}
       </BBButton>
 
       <div className="flex items-center gap-1.5 mt-3 text-[11.5px] text-ink-3">
-        <Icon name="lock" size={11} className="text-amber-deep" />
-        End-to-end encrypted. Only the recipient can decrypt.
+        <Icon name="shield" size={11} className="text-amber-deep" />
+        They'll get an email with instructions. Key exchange happens when they accept.
       </div>
     </div>
   )
 }
 
-// ─── Success state for user share ────────────────────
+// ─── Success state for invite ────────────────────────
 
-function UserShareSuccess({
+function InviteSuccess({
   email,
   onDone,
 }: {
@@ -334,14 +354,16 @@ function UserShareSuccess({
       <div className="w-10 h-10 mx-auto mb-3 rounded-full bg-green/10 flex items-center justify-center">
         <Icon name="check" size={18} className="text-green" />
       </div>
-      <p className="text-sm font-medium text-ink mb-1">Shared successfully</p>
+      <p className="text-sm font-medium text-ink mb-1">Invite sent</p>
+      <p className="text-xs text-ink-3 mb-1">
+        Invite sent to <span className="font-mono text-ink-2">{email}</span>.
+      </p>
       <p className="text-xs text-ink-3 mb-4">
-        <span className="font-mono text-ink-2">{email}</span> can now access
-        this file.
+        They'll receive an email with instructions. You'll be notified when they accept.
       </p>
       <div className="flex items-center gap-1.5 justify-center text-[11.5px] text-ink-3 mb-4">
         <Icon name="shield" size={11} className="text-amber-deep" />
-        File key encrypted via X25519 key exchange. We never see it.
+        End-to-end encrypted. Key exchange happens on accept.
       </div>
       <BBButton size="md" onClick={onDone} className="mx-auto">
         Done
@@ -367,7 +389,8 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: Share
   const [copied, setCopied] = useState<'full-link' | 'split-link' | 'split-key' | null>(null)
   const [shareMode, setShareMode] = useState<'full' | 'split'>('full')
   const [error, setError] = useState<string | null>(null)
-  const [userShareDone, setUserShareDone] = useState<string | null>(null)
+  const [inviteDone, setInviteDone] = useState<string | null>(null)
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
 
   const dialogRef = useRef<HTMLDivElement>(null)
 
@@ -385,7 +408,8 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: Share
       setDecryptionKey('')
       setError(null)
       setLoading(false)
-      setUserShareDone(null)
+      setInviteDone(null)
+      setFeedbackOpen(false)
     }
   }, [open])
 
@@ -450,198 +474,207 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: Share
   ]
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      onClick={onClose}
-    >
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-ink/20" />
-
-      {/* Dialog */}
+    <>
       <div
-        ref={dialogRef}
-        onClick={(e) => e.stopPropagation()}
-        className="relative w-full max-w-[500px] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden"
+        className="fixed inset-0 z-50 flex items-center justify-center"
+        onClick={onClose}
       >
-        {/* Header */}
-        <div className="px-xl py-lg border-b border-line flex items-center gap-2.5">
-          <Icon name="share" size={14} className="text-ink" />
-          <span className="text-sm font-semibold text-ink">Send securely</span>
-          <BBChip>
-            {fileName} · {formatBytes(fileSize)}
-          </BBChip>
-          <button
-            onClick={onClose}
-            className="ml-auto text-ink-3 hover:text-ink transition-colors"
-          >
-            <Icon name="x" size={14} />
-          </button>
-        </div>
+        {/* Backdrop */}
+        <div className="absolute inset-0 bg-ink/20" />
 
-        {/* Body */}
-        <div className="p-[22px]">
-          {/* Link share result view */}
-          {mode === 'link' && shareResult ? (
-            <>
-              {/* Share mode toggle */}
-              <div className="flex gap-1 mb-3 p-0.5 bg-paper-2 rounded-md border border-line">
-                <button
-                  type="button"
-                  onClick={() => { setShareMode('full'); setCopied(null) }}
-                  className={`flex-1 text-xs py-1.5 rounded transition-all ${shareMode === 'full' ? 'bg-paper shadow-1 text-ink font-medium' : 'text-ink-3 hover:text-ink-2'}`}
-                >
-                  Full link
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setShareMode('split'); setCopied(null) }}
-                  className={`flex-1 text-xs py-1.5 rounded transition-all ${shareMode === 'split' ? 'bg-paper shadow-1 text-ink font-medium' : 'text-ink-3 hover:text-ink-2'}`}
-                >
-                  Link + key (extra secure)
-                </button>
-              </div>
+        {/* Dialog */}
+        <div
+          ref={dialogRef}
+          onClick={(e) => e.stopPropagation()}
+          className="relative w-full max-w-[500px] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden"
+        >
+          {/* Header */}
+          <div className="px-xl py-lg border-b border-line flex items-center gap-2.5">
+            <Icon name="share" size={14} className="text-ink" />
+            <span className="text-sm font-semibold text-ink">Send securely</span>
+            <BBChip>
+              {fileName} · {formatBytes(fileSize)}
+            </BBChip>
+            <button
+              onClick={onClose}
+              className="ml-auto text-ink-3 hover:text-ink transition-colors"
+            >
+              <Icon name="x" size={14} />
+            </button>
+          </div>
 
-              {shareMode === 'full' ? (
-                <>
-                  <label className="block text-xs font-medium text-ink-2 mb-1.5">Share link</label>
-                  <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 mb-3">
-                    <Icon name="link" size={13} className="text-ink-3 shrink-0" />
-                    <input
-                      value={fullShareUrl}
-                      readOnly
-                      className="flex-1 bg-transparent font-mono text-xs text-ink outline-none truncate"
-                    />
-                  </div>
-                  <BBButton
-                    variant="amber"
-                    size="lg"
-                    className="w-full justify-center gap-2"
-                    onClick={() => copyToClipboard(fullShareUrl, 'full-link')}
+          {/* Body */}
+          <div className="p-[22px]">
+            {/* Link share result view */}
+            {mode === 'link' && shareResult ? (
+              <>
+                {/* Share mode toggle */}
+                <div className="flex gap-1 mb-3 p-0.5 bg-paper-2 rounded-md border border-line">
+                  <button
+                    type="button"
+                    onClick={() => { setShareMode('full'); setCopied(null) }}
+                    className={`flex-1 text-xs py-1.5 rounded transition-all ${shareMode === 'full' ? 'bg-paper shadow-1 text-ink font-medium' : 'text-ink-3 hover:text-ink-2'}`}
                   >
-                    <Icon name={copied === 'full-link' ? 'check' : 'copy'} size={14} />
-                    {copied === 'full-link' ? 'Copied' : 'Copy link'}
-                  </BBButton>
-                  <div className="flex items-center gap-1.5 mt-3 text-[11.5px] text-ink-3">
-                    <Icon name="shield" size={11} className="text-amber-deep" />
-                    Key is embedded in the link. One click to share.
-                  </div>
-                </>
-              ) : (
-                <>
-                  <label className="block text-xs font-medium text-ink-2 mb-1.5">Share link</label>
-                  <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 mb-3">
-                    <Icon name="link" size={13} className="text-ink-3 shrink-0" />
-                    <input
-                      value={shareUrl}
-                      readOnly
-                      className="flex-1 bg-transparent font-mono text-xs text-ink outline-none truncate"
-                    />
-                    <BBButton size="sm" onClick={() => copyToClipboard(shareUrl, 'split-link')} className="shrink-0 gap-1">
-                      <Icon name={copied === 'split-link' ? 'check' : 'copy'} size={11} />
-                      {copied === 'split-link' ? 'Copied' : 'Copy'}
-                    </BBButton>
-                  </div>
+                    Full link
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShareMode('split'); setCopied(null) }}
+                    className={`flex-1 text-xs py-1.5 rounded transition-all ${shareMode === 'split' ? 'bg-paper shadow-1 text-ink font-medium' : 'text-ink-3 hover:text-ink-2'}`}
+                  >
+                    Link + key (extra secure)
+                  </button>
+                </div>
 
-                  <div className="flex items-center gap-1.5 mb-1.5">
-                    <span className="text-xs font-medium text-ink-2">Decryption key</span>
-                    <BBChip variant="amber">Send via a different channel</BBChip>
-                  </div>
-                  <div className="flex items-center gap-2 border rounded-md px-3 py-2 mb-3"
-                    style={{ background: 'oklch(0.97 0.03 84)', borderColor: 'oklch(0.86 0.07 90)' }}>
-                    <Icon name="key" size={13} className="text-amber-deep shrink-0" />
-                    <input
-                      value={decryptionKey}
-                      readOnly
-                      className="flex-1 bg-transparent font-mono text-xs outline-none truncate"
-                      style={{ color: 'oklch(0.35 0.1 72)', fontWeight: 500 }}
-                    />
-                    <BBButton size="sm" onClick={() => copyToClipboard(decryptionKey, 'split-key')} className="shrink-0 gap-1">
-                      <Icon name={copied === 'split-key' ? 'check' : 'copy'} size={11} />
-                      {copied === 'split-key' ? 'Copied' : 'Copy'}
-                    </BBButton>
-                  </div>
-
-                  <div className="flex items-center gap-1.5 text-[11.5px] text-ink-3">
-                    <Icon name="shield" size={11} className="text-amber-deep" />
-                    Zero-knowledge by default — we never see the key.
-                  </div>
-                </>
-              )}
-            </>
-          ) : mode === 'user' && userShareDone ? (
-            /* User share success view */
-            <UserShareSuccess
-              email={userShareDone}
-              onDone={onClose}
-            />
-          ) : (
-            <>
-              {/* Tab bar — only show before a result */}
-              <TabBar mode={mode} onChange={setMode} />
-
-              {mode === 'link' ? (
-                <>
-                  {/* Expiry + Max opens dropdowns */}
-                  <div className="grid grid-cols-2 gap-3 mb-[18px]">
-                    <div>
-                      <label className="block text-xs font-medium text-ink-2 mb-1.5">Expires</label>
-                      <Dropdown
-                        options={EXPIRY_OPTIONS}
-                        selected={expiryIdx}
-                        onChange={setExpiryIdx}
-                        icon={<Icon name="clock" size={13} className="text-ink-3" />}
+                {shareMode === 'full' ? (
+                  <>
+                    <label className="block text-xs font-medium text-ink-2 mb-1.5">Share link</label>
+                    <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 mb-3">
+                      <Icon name="link" size={13} className="text-ink-3 shrink-0" />
+                      <input
+                        value={fullShareUrl}
+                        readOnly
+                        className="flex-1 bg-transparent font-mono text-xs text-ink outline-none truncate"
                       />
                     </div>
-                    <div>
-                      <label className="block text-xs font-medium text-ink-2 mb-1.5">Max opens</label>
-                      <Dropdown
-                        options={MAX_OPENS_OPTIONS}
-                        selected={maxOpensIdx}
-                        onChange={setMaxOpensIdx}
-                      />
+                    <BBButton
+                      variant="amber"
+                      size="lg"
+                      className="w-full justify-center gap-2"
+                      onClick={() => copyToClipboard(fullShareUrl, 'full-link')}
+                    >
+                      <Icon name={copied === 'full-link' ? 'check' : 'copy'} size={14} />
+                      {copied === 'full-link' ? 'Copied' : 'Copy link'}
+                    </BBButton>
+                    <div className="flex items-center gap-1.5 mt-3 text-[11.5px] text-ink-3">
+                      <Icon name="shield" size={11} className="text-amber-deep" />
+                      Key is embedded in the link. One click to share.
                     </div>
-                  </div>
+                  </>
+                ) : (
+                  <>
+                    <label className="block text-xs font-medium text-ink-2 mb-1.5">Share link</label>
+                    <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 mb-3">
+                      <Icon name="link" size={13} className="text-ink-3 shrink-0" />
+                      <input
+                        value={shareUrl}
+                        readOnly
+                        className="flex-1 bg-transparent font-mono text-xs text-ink outline-none truncate"
+                      />
+                      <BBButton size="sm" onClick={() => copyToClipboard(shareUrl, 'split-link')} className="shrink-0 gap-1">
+                        <Icon name={copied === 'split-link' ? 'check' : 'copy'} size={11} />
+                        {copied === 'split-link' ? 'Copied' : 'Copy'}
+                      </BBButton>
+                    </div>
 
-                  {/* Permissions */}
-                  <label className="block text-xs font-medium text-ink-2 mb-2.5">Permissions</label>
-                  <div className="flex flex-col gap-2.5 mb-5">
-                    {permToggles.map(([label, on, setter, iconName]) => (
-                      <div key={label} className="flex items-center text-[13px]">
-                        <Icon name={iconName} size={13} className="text-ink-3" />
-                        <span className="ml-2.5 flex-1">{label}</span>
-                        <Toggle on={on} onChange={setter} />
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                      <span className="text-xs font-medium text-ink-2">Decryption key</span>
+                      <BBChip variant="amber">Send via a different channel</BBChip>
+                    </div>
+                    <div className="flex items-center gap-2 border rounded-md px-3 py-2 mb-3"
+                      style={{ background: 'oklch(0.97 0.03 84)', borderColor: 'oklch(0.86 0.07 90)' }}>
+                      <Icon name="key" size={13} className="text-amber-deep shrink-0" />
+                      <input
+                        value={decryptionKey}
+                        readOnly
+                        className="flex-1 bg-transparent font-mono text-xs outline-none truncate"
+                        style={{ color: 'oklch(0.35 0.1 72)', fontWeight: 500 }}
+                      />
+                      <BBButton size="sm" onClick={() => copyToClipboard(decryptionKey, 'split-key')} className="shrink-0 gap-1">
+                        <Icon name={copied === 'split-key' ? 'check' : 'copy'} size={11} />
+                        {copied === 'split-key' ? 'Copied' : 'Copy'}
+                      </BBButton>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 text-[11.5px] text-ink-3">
+                      <Icon name="shield" size={11} className="text-amber-deep" />
+                      Zero-knowledge by default — we never see the key.
+                    </div>
+                  </>
+                )}
+              </>
+            ) : mode === 'invite' && inviteDone ? (
+              /* Invite success view */
+              <InviteSuccess
+                email={inviteDone}
+                onDone={onClose}
+              />
+            ) : (
+              <>
+                {/* Tab bar — only show before a result */}
+                <TabBar mode={mode} onChange={setMode} />
+
+                {mode === 'link' ? (
+                  <>
+                    {/* Expiry + Max opens dropdowns */}
+                    <div className="grid grid-cols-2 gap-3 mb-[18px]">
+                      <div>
+                        <label className="block text-xs font-medium text-ink-2 mb-1.5">Expires</label>
+                        <Dropdown
+                          options={EXPIRY_OPTIONS}
+                          selected={expiryIdx}
+                          onChange={setExpiryIdx}
+                          icon={<Icon name="clock" size={13} className="text-ink-3" />}
+                        />
                       </div>
-                    ))}
-                  </div>
-
-                  {error && (
-                    <div className="mb-4 px-3 py-2 bg-red/10 border border-red/20 rounded-md text-xs text-red">
-                      {error}
+                      <div>
+                        <label className="block text-xs font-medium text-ink-2 mb-1.5">Max opens</label>
+                        <Dropdown
+                          options={MAX_OPENS_OPTIONS}
+                          selected={maxOpensIdx}
+                          onChange={setMaxOpensIdx}
+                        />
+                      </div>
                     </div>
-                  )}
 
-                  <BBButton
-                    variant="amber"
-                    size="lg"
-                    className="w-full justify-center gap-2"
-                    onClick={handleGenerate}
-                    disabled={loading}
-                  >
-                    <Icon name="lock" size={13} />
-                    {loading ? 'Generating...' : 'Generate encrypted link'}
-                  </BBButton>
-                </>
-              ) : (
-                /* User share form */
-                <UserShareForm
-                  fileId={fileId}
-                  onSuccess={(email) => setUserShareDone(email)}
-                />
-              )}
-            </>
-          )}
+                    {/* Permissions */}
+                    <label className="block text-xs font-medium text-ink-2 mb-2.5">Permissions</label>
+                    <div className="flex flex-col gap-2.5 mb-5">
+                      {permToggles.map(([label, on, setter, iconName]) => (
+                        <div key={label} className="flex items-center text-[13px]">
+                          <Icon name={iconName} size={13} className="text-ink-3" />
+                          <span className="ml-2.5 flex-1">{label}</span>
+                          <Toggle on={on} onChange={setter} />
+                        </div>
+                      ))}
+                    </div>
+
+                    {error && (
+                      <div className="mb-4 px-3 py-2 bg-red/10 border border-red/20 rounded-md text-xs text-red">
+                        {error}
+                      </div>
+                    )}
+
+                    <BBButton
+                      variant="amber"
+                      size="lg"
+                      className="w-full justify-center gap-2"
+                      onClick={handleGenerate}
+                      disabled={loading}
+                    >
+                      <Icon name="lock" size={13} />
+                      {loading ? 'Generating...' : 'Generate encrypted link'}
+                    </BBButton>
+                  </>
+                ) : (
+                  /* Invite form */
+                  <InviteForm
+                    fileId={fileId}
+                    onSuccess={(email) => setInviteDone(email)}
+                    onRateLimitFeedback={() => setFeedbackOpen(true)}
+                  />
+                )}
+              </>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+
+      <FeedbackDialog
+        open={feedbackOpen}
+        onClose={() => setFeedbackOpen(false)}
+        defaultCategory="Sharing limits"
+      />
+    </>
   )
 }
