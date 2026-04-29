@@ -27,6 +27,8 @@ import {
   toggleStar,
   updateFile,
   deleteFile,
+  getIncomingInvites,
+  getPendingApprovals,
   type DriveFile,
 } from '../lib/api'
 import { encryptedUpload } from '../lib/encrypted-upload'
@@ -119,6 +121,11 @@ export function Drive() {
   }>({ open: false, x: 0, y: 0, fileId: '', fileName: '', isFolder: false })
   const [pausedUploads, setPausedUploads] = useState<UploadState[]>([])
 
+  // ─── Pending shares state ────────────────────────────
+  const [incomingInviteCount, setIncomingInviteCount] = useState(0)
+  const [pendingApprovalCount, setPendingApprovalCount] = useState(0)
+  const [pendingSharesDismissed, setPendingSharesDismissed] = useState(false)
+
   // ─── Multi-select state ──────────────────────────────
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const lastClickedIdRef = useRef<string | null>(null)
@@ -175,6 +182,17 @@ export function Drive() {
       .catch(() => {
         // IndexedDB unavailable — ignore
       })
+  }, [])
+
+  // Check for pending share invites on mount
+  useEffect(() => {
+    Promise.all([
+      getIncomingInvites().catch(() => []),
+      getPendingApprovals().catch(() => []),
+    ]).then(([incoming, approvals]) => {
+      setIncomingInviteCount(incoming.length)
+      setPendingApprovalCount(approvals.length)
+    })
   }, [])
 
   // Notifications
@@ -1150,6 +1168,70 @@ export function Drive() {
             >
               Dismiss
             </BBButton>
+          </div>
+        )}
+
+        {/* Pending shares banner */}
+        {!pendingSharesDismissed && (incomingInviteCount > 0 || pendingApprovalCount > 0) && (
+          <div className="px-5 py-2.5 border-b border-amber/30 border-l-4 border-l-amber bg-amber-bg flex flex-col gap-1.5 text-sm">
+            {incomingInviteCount > 0 && (
+              <div className="flex items-center gap-3">
+                <Icon name="share" size={14} className="text-amber-deep shrink-0" />
+                <span className="text-ink">
+                  You have {incomingInviteCount} file share{incomingInviteCount !== 1 ? 's' : ''} waiting
+                </span>
+                <BBButton
+                  size="sm"
+                  variant="amber"
+                  className="ml-auto gap-1.5"
+                  onClick={() => navigate('/shared?tab=pending')}
+                >
+                  View
+                </BBButton>
+                {pendingApprovalCount === 0 && (
+                  <button
+                    onClick={() => setPendingSharesDismissed(true)}
+                    className="p-1 text-ink-3 hover:text-ink transition-colors cursor-pointer"
+                  >
+                    <Icon name="x" size={14} />
+                  </button>
+                )}
+              </div>
+            )}
+            {pendingApprovalCount > 0 && (
+              <div className="flex items-center gap-3">
+                <Icon name="shield" size={14} className="text-amber-deep shrink-0" />
+                <span className="text-ink">
+                  {pendingApprovalCount} share{pendingApprovalCount !== 1 ? 's' : ''} waiting for your approval
+                </span>
+                <BBButton
+                  size="sm"
+                  variant="amber"
+                  className="ml-auto gap-1.5"
+                  onClick={() => navigate('/shared?tab=pending')}
+                >
+                  Review
+                </BBButton>
+                {incomingInviteCount === 0 && (
+                  <button
+                    onClick={() => setPendingSharesDismissed(true)}
+                    className="p-1 text-ink-3 hover:text-ink transition-colors cursor-pointer"
+                  >
+                    <Icon name="x" size={14} />
+                  </button>
+                )}
+              </div>
+            )}
+            {incomingInviteCount > 0 && pendingApprovalCount > 0 && (
+              <div className="flex justify-end -mt-1">
+                <button
+                  onClick={() => setPendingSharesDismissed(true)}
+                  className="p-1 text-ink-3 hover:text-ink transition-colors cursor-pointer"
+                >
+                  <Icon name="x" size={14} />
+                </button>
+              </div>
+            )}
           </div>
         )}
 
