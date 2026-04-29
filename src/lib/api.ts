@@ -721,6 +721,62 @@ export async function inviteMember(email: string): Promise<{ message: string; em
   })
 }
 
+export async function removeMember(id: string): Promise<{ message: string }> {
+  return request(`/api/v1/admin/members/${id}`, { method: 'DELETE' })
+}
+
+// ─── Admin storage pool endpoints ────────────────
+
+export interface StoragePool {
+  id: string
+  name: string
+  provider: string
+  endpoint: string
+  bucket: string
+  region: string
+  display_name: string
+  is_default: boolean
+  is_active: boolean
+  capacity_bytes: number | null
+  used_bytes: number
+  usage_pct: number | null
+  created_at: string
+}
+
+export interface MigrationSummary {
+  pending: number
+  copying: number
+  verifying: number
+  done: number
+  failed: number
+  total: number
+}
+
+export interface MigrationEntry {
+  id: string
+  file_id: string
+  from_pool: string | null
+  to_pool: string | null
+  status: string
+  chunks_copied: number
+  error: string | null
+  started_at: string | null
+  completed_at: string | null
+  created_at: string
+}
+
+export async function listStoragePools(): Promise<StoragePool[]> {
+  const data = await request<{ pools: StoragePool[] }>('/api/v1/admin/storage-pools')
+  return data.pools
+}
+
+export async function listMigrations(): Promise<{
+  summary: MigrationSummary
+  recent: MigrationEntry[]
+}> {
+  return request('/api/v1/admin/migrations')
+}
+
 // ─── Shared with me endpoints ────────────────────
 
 export interface SharedWithMeItem {
