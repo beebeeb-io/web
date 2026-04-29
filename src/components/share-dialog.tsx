@@ -528,46 +528,42 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: Share
                 </>
               ) : (
                 <>
-                  <label className="block text-xs font-medium text-ink-2 mb-1.5">Share link (without key)</label>
-                  <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 mb-2">
+                  <label className="block text-xs font-medium text-ink-2 mb-1.5">Share link</label>
+                  <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 mb-3">
                     <Icon name="link" size={13} className="text-ink-3 shrink-0" />
                     <input
                       value={shareUrl}
                       readOnly
                       className="flex-1 bg-transparent font-mono text-xs text-ink outline-none truncate"
                     />
+                    <BBButton size="sm" onClick={() => copyToClipboard(shareUrl, 'link')} className="shrink-0 gap-1">
+                      <Icon name={copied === 'link' ? 'check' : 'copy'} size={11} />
+                      {copied === 'link' ? 'Copied' : 'Copy'}
+                    </BBButton>
                   </div>
-                  <BBButton
-                    variant="amber"
-                    size="lg"
-                    className="w-full justify-center gap-2 mb-4"
-                    onClick={() => copyToClipboard(shareUrl, 'link')}
-                  >
-                    <Icon name={copied === 'link' ? 'check' : 'copy'} size={14} />
-                    {copied === 'link' ? 'Copied' : 'Copy link'}
-                  </BBButton>
 
-                  <label className="block text-xs font-medium text-ink-2 mb-1.5">Decryption key</label>
-                  <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 mb-2">
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <span className="text-xs font-medium text-ink-2">Decryption key</span>
+                    <BBChip variant="amber">Send via a different channel</BBChip>
+                  </div>
+                  <div className="flex items-center gap-2 border rounded-md px-3 py-2 mb-3"
+                    style={{ background: 'oklch(0.97 0.03 84)', borderColor: 'oklch(0.86 0.07 90)' }}>
                     <Icon name="key" size={13} className="text-amber-deep shrink-0" />
                     <input
                       value={decryptionKey}
                       readOnly
-                      className="flex-1 bg-transparent font-mono text-xs text-ink outline-none truncate"
+                      className="flex-1 bg-transparent font-mono text-xs outline-none truncate"
+                      style={{ color: 'oklch(0.35 0.1 72)', fontWeight: 500 }}
                     />
+                    <BBButton size="sm" onClick={() => copyToClipboard(decryptionKey, 'key')} className="shrink-0 gap-1">
+                      <Icon name={copied === 'key' ? 'check' : 'copy'} size={11} />
+                      {copied === 'key' ? 'Copied' : 'Copy'}
+                    </BBButton>
                   </div>
-                  <BBButton
-                    size="lg"
-                    className="w-full justify-center gap-2"
-                    onClick={() => copyToClipboard(decryptionKey, 'key')}
-                  >
-                    <Icon name={copied === 'key' ? 'check' : 'copy'} size={14} />
-                    {copied === 'key' ? 'Copied' : 'Copy key'}
-                  </BBButton>
 
-                  <div className="flex items-center gap-1.5 mt-3 text-[11.5px] text-ink-3">
+                  <div className="flex items-center gap-1.5 text-[11.5px] text-ink-3">
                     <Icon name="shield" size={11} className="text-amber-deep" />
-                    Send the link and key through different channels for maximum security.
+                    Zero-knowledge by default — we never see the key.
                   </div>
                 </>
               )}
