@@ -1,16 +1,24 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { BBButton } from '../components/bb-button'
+import { BBCheckbox } from '../components/bb-checkbox'
 import { BBChip } from '../components/bb-chip'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '../components/icons'
 import { NotificationInbox, useNotifications } from '../components/notification-inbox'
+import { ShareActivity } from '../components/share-activity'
 import { ShareApprove } from '../components/share-approve'
+import { ShareDialog } from '../components/share-dialog'
+import { SharePermissions } from '../components/share-permissions'
+import { SharedContextMenu, type SharedMenuTab } from '../components/shared-context-menu'
 import { useToast } from '../components/toast'
 import {
   listSharedWithMe,
   getSentInvites,
   getIncomingInvites,
   cancelInvite,
+  resendInvite,
+  withdrawInvite,
+  hideInvite,
   type SharedWithMeItem,
   type ShareInvite,
 } from '../lib/api'
@@ -66,8 +74,28 @@ export function Shared() {
   const [sentInvited, setSentInvited] = useState<ShareInvite[]>([])
   const [incomingClaimed, setIncomingClaimed] = useState<ShareInvite[]>([])
 
-  const [cancellingId, setCancellingId] = useState<string | null>(null)
-  const [revokingId, setRevokingId] = useState<string | null>(null)
+  // Context menu
+  const [ctxMenu, setCtxMenu] = useState<{
+    open: boolean; x: number; y: number; inviteId: string; tab: SharedMenuTab;
+    status?: 'invited' | 'claimed'; role?: 'sender' | 'recipient'; canReshare?: boolean;
+  }>({ open: false, x: 0, y: 0, inviteId: '', tab: 'with-me' })
+
+  // Permissions popover
+  const [permPopover, setPermPopover] = useState<{
+    open: boolean; x: number; y: number; inviteId: string;
+    recipientEmail: string; canDownload: boolean; canReshare: boolean; expiresAt: string | null;
+  }>({ open: false, x: 0, y: 0, inviteId: '', recipientEmail: '', canDownload: true, canReshare: false, expiresAt: null })
+
+  // Activity modal
+  const [activityInviteId, setActivityInviteId] = useState<string | null>(null)
+
+  // Forward share dialog
+  const [forwardFileId, setForwardFileId] = useState<string | null>(null)
+  const [forwardFileName, setForwardFileName] = useState<string>('')
+
+  // Multi-select
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const lastClickedIdRef = useRef<string | null>(null)
 
   // ─── Fetch all data ────────────────────────────
 
@@ -94,6 +122,12 @@ export function Shared() {
   useEffect(() => {
     fetchAll()
   }, [fetchAll])
+
+  // Clear selection on tab change
+  useEffect(() => {
+    setSelectedIds(new Set())
+    lastClickedIdRef.current = null
+  }, [tab])
 
   // ─── Decrypt filenames for "With me" tab ─────
 
@@ -149,30 +183,162 @@ export function Shared() {
   // ─── Actions ──────────────────────────────────
 
   const handleCancelInvite = useCallback(async (invite: ShareInvite) => {
-    setCancellingId(invite.id)
     try {
       await cancelInvite(invite.id)
       setSentInvited((prev) => prev.filter((i) => i.id !== invite.id))
       showToast({ icon: 'check', title: 'Invite cancelled', description: `Invite to ${invite.recipient_email} was cancelled.` })
     } catch (e) {
       showToast({ icon: 'x', title: 'Failed to cancel', description: e instanceof Error ? e.message : 'Something went wrong.', danger: true })
-    } finally {
-      setCancellingId(null)
     }
   }, [showToast])
 
-  const handleRevokeShare = useCallback(async (invite: ShareInvite) => {
-    setRevokingId(invite.id)
-    try {
-      await cancelInvite(invite.id)
-      setSentApproved((prev) => prev.filter((i) => i.id !== invite.id))
-      showToast({ icon: 'check', title: 'Share revoked', description: `Access for ${invite.recipient_email} was revoked.` })
-    } catch (e) {
-      showToast({ icon: 'x', title: 'Failed to revoke', description: e instanceof Error ? e.message : 'Something went wrong.', danger: true })
-    } finally {
-      setRevokingId(null)
+  // ─── Context menu action handler ──────────────
+
+  const handleSharedAction = useCallback(async (action: string, inviteId: string) => {
+    switch (action) {
+      case 'download':
+        showToast({ icon: 'download', title: 'Downloading...', description: 'Decrypting and downloading file.' })
+        break
+      case 'save-copy':
+        showToast({ icon: 'folder', title: 'Saving copy...', description: 'Re-encrypting with your key.' })
+        break
+      case 'forward': {
+        const item = sharedWithMe.find((_, i) => String(i) === inviteId)
+        if (item?.file_id) {
+          setForwardFileId(item.file_id)
+          setForwardFileName(displayName(item, sharedWithMe.indexOf(item)))
+        }
+        break
+      }
+      case 'remove-shared':
+        try {
+          await hideInvite(inviteId)
+          showToast({ icon: 'check', title: 'Removed', description: 'Removed from your shared list.' })
+          fetchAll()
+        } catch (e) {
+          showToast({ icon: 'x', title: 'Failed', description: e instanceof Error ? e.message : 'Something went wrong.', danger: true })
+        }
+        break
+      case 'change-permissions':
+      case 'set-expiry': {
+        const invite = sentApproved.find((i) => i.id === inviteId) ?? sentInvited.find((i) => i.id === inviteId)
+        if (invite) {
+          setPermPopover({
+            open: true, x: ctxMenu.x, y: ctxMenu.y, inviteId,
+            recipientEmail: invite.recipient_email,
+            canDownload: invite.can_download ?? true,
+            canReshare: invite.can_reshare ?? false,
+            expiresAt: invite.expires_at ?? null,
+          })
+        }
+        break
+      }
+      case 'view-activity':
+        setActivityInviteId(inviteId)
+        break
+      case 'revoke-access': {
+        const invite = sentApproved.find((i) => i.id === inviteId)
+        if (invite && confirm(`Revoke access? ${invite.recipient_email} will no longer be able to decrypt this file.`)) {
+          try {
+            await cancelInvite(inviteId)
+            setSentApproved((prev) => prev.filter((i) => i.id !== inviteId))
+            showToast({ icon: 'check', title: 'Access revoked', description: invite.recipient_email })
+          } catch (e) {
+            showToast({ icon: 'x', title: 'Failed to revoke', description: e instanceof Error ? e.message : 'Something went wrong.', danger: true })
+          }
+        }
+        break
+      }
+      case 'resend-email':
+        try {
+          await resendInvite(inviteId)
+          showToast({ icon: 'mail', title: 'Email resent', description: 'Invite email was resent.' })
+        } catch (e) {
+          showToast({ icon: 'x', title: 'Failed to resend', description: e instanceof Error ? e.message : 'Something went wrong.', danger: true })
+        }
+        break
+      case 'cancel-invite':
+        await handleCancelInvite({ id: inviteId } as ShareInvite)
+        break
+      case 'withdraw-claim':
+        try {
+          await withdrawInvite(inviteId)
+          setIncomingClaimed((prev) => prev.filter((i) => i.id !== inviteId))
+          showToast({ icon: 'check', title: 'Claim withdrawn', description: 'You withdrew your claim.' })
+          fetchAll()
+        } catch (e) {
+          showToast({ icon: 'x', title: 'Failed to withdraw', description: e instanceof Error ? e.message : 'Something went wrong.', danger: true })
+        }
+        break
     }
-  }, [showToast])
+  }, [sharedWithMe, sentApproved, sentInvited, ctxMenu.x, ctxMenu.y, showToast, fetchAll, handleCancelInvite])
+
+  // ─── Multi-select helpers ─────────────────────
+
+  function toggleSelection(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+    lastClickedIdRef.current = id
+  }
+
+  function handleCheckboxClick(id: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    toggleSelection(id)
+  }
+
+  function selectAllInTab() {
+    if (tab === 'with-me') {
+      const all = new Set(sharedWithMe.map((_, i) => String(i)))
+      setSelectedIds(selectedIds.size === all.size ? new Set() : all)
+    } else if (tab === 'by-me') {
+      const all = new Set(sentApproved.map((i) => i.id))
+      setSelectedIds(selectedIds.size === all.size ? new Set() : all)
+    } else {
+      const all = new Set([...sentInvited, ...incomingClaimed].map((i) => i.id))
+      setSelectedIds(selectedIds.size === all.size ? new Set() : all)
+    }
+  }
+
+  async function handleBulkRevoke() {
+    const ids = Array.from(selectedIds)
+    if (!confirm(`Revoke access for ${ids.length} recipient${ids.length !== 1 ? 's' : ''}?`)) return
+    try {
+      await Promise.all(ids.map((id) => cancelInvite(id)))
+      showToast({ icon: 'check', title: 'Access revoked', description: `${ids.length} share${ids.length !== 1 ? 's' : ''} revoked.` })
+      setSelectedIds(new Set())
+      fetchAll()
+    } catch (e) {
+      showToast({ icon: 'x', title: 'Bulk revoke failed', description: e instanceof Error ? e.message : 'Something went wrong.', danger: true })
+    }
+  }
+
+  async function handleBulkRemove() {
+    const ids = Array.from(selectedIds)
+    try {
+      await Promise.all(ids.map((id) => hideInvite(id)))
+      showToast({ icon: 'check', title: 'Removed', description: `${ids.length} item${ids.length !== 1 ? 's' : ''} removed.` })
+      setSelectedIds(new Set())
+      fetchAll()
+    } catch (e) {
+      showToast({ icon: 'x', title: 'Bulk remove failed', description: e instanceof Error ? e.message : 'Something went wrong.', danger: true })
+    }
+  }
+
+  async function handleBulkCancelInvites() {
+    const ids = Array.from(selectedIds)
+    try {
+      await Promise.all(ids.map((id) => cancelInvite(id)))
+      showToast({ icon: 'check', title: 'Invites cancelled', description: `${ids.length} invite${ids.length !== 1 ? 's' : ''} cancelled.` })
+      setSelectedIds(new Set())
+      fetchAll()
+    } catch (e) {
+      showToast({ icon: 'x', title: 'Bulk cancel failed', description: e instanceof Error ? e.message : 'Something went wrong.', danger: true })
+    }
+  }
 
   // ─── Spinner ──────────────────────────────────
 
@@ -234,10 +400,19 @@ export function Shared() {
           className="px-[18px] py-2.5 border-b border-line bg-paper-2"
           style={{
             display: 'grid',
-            gridTemplateColumns: '32px 1.4fr 1fr 100px 80px',
+            gridTemplateColumns: '20px 32px 1.4fr 1fr 100px 80px',
             gap: 14,
           }}
         >
+          <span className="flex items-center justify-center">
+            {sharedWithMe.length > 0 && (
+              <BBCheckbox
+                checked={selectedIds.size === sharedWithMe.length && sharedWithMe.length > 0}
+                indeterminate={selectedIds.size > 0 && selectedIds.size < sharedWithMe.length}
+                onChange={() => selectAllInTab()}
+              />
+            )}
+          </span>
           <span />
           <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">Name</span>
           <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">From</span>
@@ -256,12 +431,20 @@ export function Shared() {
                 className="group hover:bg-paper-2 transition-colors cursor-pointer"
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: '32px 1.4fr 1fr 100px 80px',
+                  gridTemplateColumns: '20px 32px 1.4fr 1fr 100px 80px',
                   gap: 14,
                   padding: '11px 18px',
                   borderBottom: i < arr.length - 1 ? '1px solid var(--color-line)' : 'none',
                 }}
               >
+                <span
+                  className={`flex items-center justify-center ${
+                    selectedIds.has(String(i)) ? '' : 'opacity-0 group-hover:opacity-100'
+                  } transition-opacity`}
+                  onClick={(e) => handleCheckboxClick(String(i), e)}
+                >
+                  <BBCheckbox checked={selectedIds.has(String(i))} onChange={() => {}} />
+                </span>
                 <Icon
                   name={isFolder ? 'folder' : 'file'}
                   size={14}
@@ -282,6 +465,14 @@ export function Shared() {
                     size="sm"
                     variant="ghost"
                     className="opacity-0 group-hover:opacity-100 transition-opacity"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                      setCtxMenu({
+                        open: true, x: rect.left, y: rect.bottom + 4,
+                        inviteId: String(i), tab: 'with-me', canReshare: false,
+                      })
+                    }}
                   >
                     <Icon name="more" size={13} />
                   </BBButton>
@@ -315,10 +506,19 @@ export function Shared() {
           className="px-[18px] py-2.5 border-b border-line bg-paper-2"
           style={{
             display: 'grid',
-            gridTemplateColumns: '32px 1.4fr 1fr 100px 80px',
+            gridTemplateColumns: '20px 32px 1.4fr 1fr 100px 80px',
             gap: 14,
           }}
         >
+          <span className="flex items-center justify-center">
+            {sentApproved.length > 0 && (
+              <BBCheckbox
+                checked={selectedIds.size === sentApproved.length && sentApproved.length > 0}
+                indeterminate={selectedIds.size > 0 && selectedIds.size < sentApproved.length}
+                onChange={() => selectAllInTab()}
+              />
+            )}
+          </span>
           <span />
           <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">File</span>
           <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">Shared with</span>
@@ -334,12 +534,20 @@ export function Shared() {
               className="group hover:bg-paper-2 transition-colors"
               style={{
                 display: 'grid',
-                gridTemplateColumns: '32px 1.4fr 1fr 100px 80px',
+                gridTemplateColumns: '20px 32px 1.4fr 1fr 100px 80px',
                 gap: 14,
                 padding: '11px 18px',
                 borderBottom: i < arr.length - 1 ? '1px solid var(--color-line)' : 'none',
               }}
             >
+              <span
+                className={`flex items-center justify-center ${
+                  selectedIds.has(invite.id) ? '' : 'opacity-0 group-hover:opacity-100'
+                } transition-opacity`}
+                onClick={(e) => handleCheckboxClick(invite.id, e)}
+              >
+                <BBCheckbox checked={selectedIds.has(invite.id)} onChange={() => {}} />
+              </span>
               <Icon name="file" size={14} className="text-ink-2 self-center" />
               <div className="flex items-center gap-2 min-w-0">
                 <span className="text-[13px] font-medium truncate">
@@ -356,11 +564,17 @@ export function Shared() {
                 <BBButton
                   size="sm"
                   variant="ghost"
-                  disabled={revokingId === invite.id}
-                  onClick={() => handleRevokeShare(invite)}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity text-ink-3 hover:text-red"
+                  className="opacity-0 group-hover:opacity-100 transition-opacity"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                    setCtxMenu({
+                      open: true, x: rect.left, y: rect.bottom + 4,
+                      inviteId: invite.id, tab: 'by-me',
+                    })
+                  }}
                 >
-                  {revokingId === invite.id ? '...' : 'Revoke'}
+                  <Icon name="more" size={13} />
                 </BBButton>
               </div>
             </div>
@@ -426,11 +640,16 @@ export function Shared() {
                   <BBButton
                     size="sm"
                     variant="ghost"
-                    disabled={cancellingId === invite.id}
-                    onClick={() => handleCancelInvite(invite)}
-                    className="text-ink-3 hover:text-red shrink-0"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                      setCtxMenu({
+                        open: true, x: rect.left, y: rect.bottom + 4,
+                        inviteId: invite.id, tab: 'pending', status: 'invited', role: 'sender',
+                      })
+                    }}
                   >
-                    {cancellingId === invite.id ? '...' : 'Cancel'}
+                    <Icon name="more" size={13} />
                   </BBButton>
                 </div>
               ))}
@@ -460,6 +679,20 @@ export function Shared() {
                     </div>
                   </div>
                   <BBChip variant="default" className="text-[10px] shrink-0">Waiting for approval</BBChip>
+                  <BBButton
+                    size="sm"
+                    variant="ghost"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                      setCtxMenu({
+                        open: true, x: rect.left, y: rect.bottom + 4,
+                        inviteId: invite.id, tab: 'pending', status: 'claimed', role: 'recipient',
+                      })
+                    }}
+                  >
+                    <Icon name="more" size={13} />
+                  </BBButton>
                 </div>
               ))}
             </div>
@@ -557,6 +790,74 @@ export function Shared() {
           End-to-end encrypted
         </span>
       </div>
+
+      {/* Bulk action bar */}
+      {selectedIds.size > 0 && (
+        <div className="px-5 py-2.5 border-t border-line bg-ink flex items-center gap-3.5">
+          <span className="text-sm font-medium text-paper">{selectedIds.size} selected</span>
+          <button onClick={() => setSelectedIds(new Set())} className="text-xs text-paper/60 hover:text-paper transition-colors cursor-pointer">Clear</button>
+          <div className="ml-auto flex items-center gap-1.5">
+            {tab === 'with-me' && (
+              <BBButton size="sm" variant="ghost" className="text-paper/80 hover:text-paper hover:bg-white/10 gap-1.5" onClick={handleBulkRemove}>
+                <Icon name="x" size={13} /> Remove all
+              </BBButton>
+            )}
+            {tab === 'by-me' && (
+              <BBButton size="sm" variant="ghost" className="text-paper/80 hover:text-paper hover:bg-white/10 gap-1.5" onClick={handleBulkRevoke}>
+                <Icon name="trash" size={13} /> Revoke all
+              </BBButton>
+            )}
+            {tab === 'pending' && (
+              <BBButton size="sm" variant="ghost" className="text-paper/80 hover:text-paper hover:bg-white/10 gap-1.5" onClick={handleBulkCancelInvites}>
+                <Icon name="x" size={13} /> Cancel all
+              </BBButton>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Overlays */}
+      <SharedContextMenu
+        open={ctxMenu.open}
+        x={ctxMenu.x}
+        y={ctxMenu.y}
+        tab={ctxMenu.tab}
+        inviteId={ctxMenu.inviteId}
+        status={ctxMenu.status}
+        role={ctxMenu.role}
+        canReshare={ctxMenu.canReshare}
+        onClose={() => setCtxMenu((prev) => ({ ...prev, open: false }))}
+        onAction={handleSharedAction}
+      />
+
+      <SharePermissions
+        open={permPopover.open}
+        x={permPopover.x}
+        y={permPopover.y}
+        inviteId={permPopover.inviteId}
+        recipientEmail={permPopover.recipientEmail}
+        canDownload={permPopover.canDownload}
+        canReshare={permPopover.canReshare}
+        expiresAt={permPopover.expiresAt}
+        onClose={() => setPermPopover((prev) => ({ ...prev, open: false }))}
+        onUpdated={fetchAll}
+      />
+
+      <ShareActivity
+        open={activityInviteId !== null}
+        inviteId={activityInviteId ?? ''}
+        onClose={() => setActivityInviteId(null)}
+      />
+
+      {forwardFileId && (
+        <ShareDialog
+          open={forwardFileId !== null}
+          onClose={() => setForwardFileId(null)}
+          fileId={forwardFileId}
+          fileName={forwardFileName}
+          fileSize={0}
+        />
+      )}
     </DriveLayout>
   )
 }
