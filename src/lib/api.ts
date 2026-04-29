@@ -339,6 +339,70 @@ export async function uploadFile(
   return res.json() as Promise<DriveFile>
 }
 
+// ─── Chunked upload endpoints ────────────────────
+
+export async function initUpload(metadata: {
+  name_encrypted: string
+  mime_type: string
+  size_bytes: number
+  chunk_count: number
+  parent_id?: string | null
+}): Promise<{ file_id: string; chunk_count: number }> {
+  return request<{ file_id: string; chunk_count: number }>(
+    '/api/v1/files/upload/init',
+    {
+      method: 'POST',
+      body: JSON.stringify(metadata),
+    },
+  )
+}
+
+export async function uploadChunk(
+  fileId: string,
+  index: number,
+  data: Uint8Array,
+): Promise<{ index: number; size: number }> {
+  const token = getToken()
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/octet-stream',
+  }
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+
+  let res: Response
+  try {
+    res = await fetch(`${API_URL}/api/v1/files/${fileId}/chunks/${index}`, {
+      method: 'PUT',
+      headers,
+      body: new Uint8Array(data) as BodyInit,
+    })
+  } catch (_err) {
+    const message = 'Could not reach the server. Check your connection and try again.'
+    notifyError?.(message)
+    throw new ApiError(message, 0)
+  }
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as Record<string, unknown>
+    throw new ApiError(
+      (body.message ?? body.error ?? res.statusText) as string,
+      res.status,
+    )
+  }
+
+  return res.json() as Promise<{ index: number; size: number }>
+}
+
+export async function completeUpload(
+  fileId: string,
+): Promise<DriveFile> {
+  return request<DriveFile>(`/api/v1/files/${fileId}/upload/complete`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  })
+}
+
 export async function getFile(id: string): Promise<DriveFile> {
   return request<DriveFile>(`/api/v1/files/${id}`)
 }

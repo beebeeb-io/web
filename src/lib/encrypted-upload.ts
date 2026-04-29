@@ -1,7 +1,7 @@
-// ─── Encrypted upload ──────────────────────────────
-// Streams a file chunk-by-chunk: read slice -> encrypt -> append to FormData.
+// ─── Encrypted chunked upload ──────────────────────
+// Streams a file chunk-by-chunk: read slice -> encrypt -> upload via PUT.
 // Only one plaintext + one ciphertext chunk are in memory at any time,
-// so even multi-GB files won't OOM the browser tab.
+// so even 20GB+ files won't OOM the browser tab.
 
 import {
   CHUNK_SIZE,
@@ -9,7 +9,7 @@ import {
   encryptFilename,
   toBase64,
 } from './crypto'
-import { getToken, getApiUrl, ApiError } from './api'
+import { initUpload, uploadChunk, completeUpload } from './api'
 import type { DriveFile } from './api'
 
 export interface UploadProgress {
@@ -19,10 +19,15 @@ export interface UploadProgress {
 }
 
 /**
- * Encrypt and upload a file with real E2EE.
+ * Encrypt and upload a file with real E2EE using per-chunk HTTP requests.
  *
- * Streams chunks instead of buffering the whole file — keeps memory usage
- * at roughly 2 * CHUNK_SIZE regardless of file size.
+ * Flow:
+ *   1. POST /upload/init   -> get server-assigned file_id
+ *   2. For each 1MB chunk:  read slice -> encrypt in worker -> PUT chunk
+ *   3. POST /upload/complete -> get final file metadata
+ *
+ * Memory: only ONE chunk in memory at a time (read -> encrypt -> upload -> free).
+ * Progress: updates per-chunk as a single 0-100 range (no two-phase split).
  *
  * @param file       The raw File from the browser
  * @param fileId     Pre-generated UUID for this file (used for key derivation)
@@ -32,7 +37,7 @@ export interface UploadProgress {
  */
 export async function encryptedUpload(
   file: File,
-  fileId: string,
+  _fileId: string,
   fileKey: Uint8Array,
   parentId?: string,
   onProgress?: (p: UploadProgress) => void,
@@ -46,11 +51,19 @@ export async function encryptedUpload(
     ciphertext: toBase64(encName.ciphertext),
   })
 
-  // 2. Stream-encrypt chunks one at a time into Blobs
-  //    We only hold one plaintext slice + one encrypted chunk in memory.
   const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE))
-  const encryptedBlobs: Blob[] = []
 
+  // 2. Init the upload on the server
+  const { file_id: serverFileId } = await initUpload({
+    name_encrypted: nameEncrypted,
+    mime_type: file.type || 'application/octet-stream',
+    size_bytes: file.size,
+    chunk_count: totalChunks,
+    parent_id: parentId ?? null,
+  })
+
+  // 3. Encrypt + upload chunks one at a time
+  //    Each chunk = one progress tick across the full 0-100 range.
   for (let i = 0; i < totalChunks; i++) {
     // Read one slice from the File (uses file system, doesn't buffer the rest)
     const start = i * CHUNK_SIZE
@@ -68,52 +81,24 @@ export async function encryptedUpload(
     combined.set(encrypted.nonce, 0)
     combined.set(encrypted.ciphertext, encrypted.nonce.length)
 
-    // Wrap in a Blob so the browser can page it out of memory if needed
-    encryptedBlobs.push(new Blob([combined], { type: 'application/octet-stream' }))
-    // encrypted + combined are now eligible for GC
-
-    onProgress?.({
-      stage: 'Encrypting',
-      progress: Math.round(((i + 1) / totalChunks) * 40),
-    })
-  }
-
-  onProgress?.({ stage: 'Uploading', progress: 40 })
-
-  // 3. Build the multipart upload
-  const token = getToken()
-  const metadata = JSON.stringify({
-    name_encrypted: nameEncrypted,
-    mime_type: file.type || 'application/octet-stream',
-    size_bytes: file.size,
-    parent_id: parentId ?? null,
-  })
-
-  const form = new FormData()
-  form.append('metadata', new Blob([metadata], { type: 'application/json' }))
-
-  for (let i = 0; i < encryptedBlobs.length; i++) {
-    form.append(`chunk_${i}`, encryptedBlobs[i])
     onProgress?.({
       stage: 'Uploading',
-      progress: 40 + Math.round(((i + 1) / encryptedBlobs.length) * 55),
+      progress: Math.round(((i + 0.5) / totalChunks) * 100),
+    })
+
+    // Upload this chunk as raw bytes
+    await uploadChunk(serverFileId, i, combined)
+    // combined + encrypted are now eligible for GC
+
+    onProgress?.({
+      stage: 'Uploading',
+      progress: Math.round(((i + 1) / totalChunks) * 100),
     })
   }
 
-  const res = await fetch(`${getApiUrl()}/api/v1/files/upload`, {
-    method: 'POST',
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-    body: form,
-  })
-
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new ApiError(
-      (body as { message?: string }).message ?? res.statusText,
-      res.status,
-    )
-  }
+  // 4. Complete the upload
+  const fileMeta = await completeUpload(serverFileId)
 
   onProgress?.({ stage: 'Done', progress: 100 })
-  return res.json() as Promise<DriveFile>
+  return fileMeta
 }
