@@ -454,6 +454,10 @@ export async function restoreFile(id: string): Promise<void> {
   await request<void>(`/api/v1/files/${id}/restore`, { method: 'POST' })
 }
 
+export async function permanentDeleteFile(id: string): Promise<void> {
+  await request<void>(`/api/v1/files/${id}/permanent`, { method: 'DELETE' })
+}
+
 export async function toggleStar(
   id: string,
 ): Promise<{ id: string; is_starred: boolean }> {

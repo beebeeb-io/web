@@ -4,7 +4,7 @@ import { BBCheckbox } from '../components/bb-checkbox'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '../components/icons'
 import type { IconName } from '../components/icons'
-import { listFiles, restoreFile, deleteFile, type DriveFile } from '../lib/api'
+import { listFiles, restoreFile, permanentDeleteFile, type DriveFile } from '../lib/api'
 import { useToast } from '../components/toast'
 import { useKeys } from '../lib/key-context'
 import { decryptFilename, fromBase64 } from '../lib/crypto'
@@ -47,6 +47,58 @@ function getIconForName(name: string, isFolder: boolean): IconName {
   return 'file'
 }
 
+// ─── Confirmation dialog ────────────────────────
+
+interface ConfirmDeleteDialogProps {
+  open: boolean
+  count: number
+  onConfirm: () => void
+  onCancel: () => void
+}
+
+function ConfirmDeleteDialog({ open, count, onConfirm, onCancel }: ConfirmDeleteDialogProps) {
+  if (!open) return null
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onCancel}>
+      <div className="absolute inset-0 bg-ink/20" />
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="relative w-full max-w-[440px] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden"
+      >
+        <div className="px-xl py-lg border-b border-line">
+          <div className="flex items-center gap-2.5">
+            <Icon name="trash" size={14} className="text-red" />
+            <span className="text-sm font-semibold text-ink">Permanent deletion</span>
+            <button
+              onClick={onCancel}
+              className="ml-auto text-ink-3 hover:text-ink transition-colors cursor-pointer"
+            >
+              <Icon name="x" size={14} />
+            </button>
+          </div>
+        </div>
+        <div className="p-xl">
+          <div className="flex items-start gap-2.5 px-3 py-2.5 mb-lg rounded-md border"
+            style={{ background: 'oklch(0.99 0.008 25)', borderColor: 'oklch(0.88 0.05 25)' }}
+          >
+            <Icon name="shield" size={12} className="text-red mt-0.5 shrink-0" />
+            <p className="text-[12px] text-ink-2 leading-relaxed">
+              This will permanently delete {count} file{count !== 1 ? 's' : ''}. Your vault key{count !== 1 ? 's' : ''} for {count !== 1 ? 'these files' : 'this file'} will be destroyed. This cannot be undone.
+            </p>
+          </div>
+          <div className="flex gap-2 justify-end">
+            <BBButton size="md" onClick={onCancel}>Cancel</BBButton>
+            <BBButton size="md" variant="danger" onClick={onConfirm}>
+              Delete permanently
+            </BBButton>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Trash page ──────────────────────────────────
 
 export function Trash() {
@@ -56,6 +108,10 @@ export function Trash() {
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({})
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
+  const [confirmDialog, setConfirmDialog] = useState<{
+    open: boolean
+    fileIds: string[]
+  }>({ open: false, fileIds: [] })
 
   // Fetch trashed files from API
   const fetchTrash = useCallback(async () => {
@@ -130,6 +186,7 @@ export function Trash() {
         next.delete(id)
         return next
       })
+      showToast({ icon: 'check', title: 'File restored', description: 'Moved back to your drive' })
     } catch (err) {
       showToast({ icon: 'x', title: 'Restore failed', description: err instanceof Error ? err.message : 'Could not restore file', danger: true })
     } finally {
@@ -137,31 +194,41 @@ export function Trash() {
     }
   }
 
-  const handlePermanentDelete = async (id: string) => {
-    setLoading(true)
-    try {
-      await deleteFile(id)
-      setFiles((prev) => prev.filter((f) => f.id !== id))
-      setSelected((prev) => {
-        const next = new Set(prev)
-        next.delete(id)
-        return next
-      })
-    } catch (err) {
-      showToast({ icon: 'x', title: 'Delete failed', description: err instanceof Error ? err.message : 'Could not delete file', danger: true })
-    } finally {
-      setLoading(false)
-    }
+  /** Show confirmation before permanent delete of a single file. */
+  const requestPermanentDelete = (id: string) => {
+    setConfirmDialog({ open: true, fileIds: [id] })
   }
 
-  const handleEmptyTrash = async () => {
+  /** Show confirmation before emptying trash (all files). */
+  const requestEmptyTrash = () => {
+    setConfirmDialog({ open: true, fileIds: files.map((f) => f.id) })
+  }
+
+  /** Show confirmation before permanent delete of selected files. */
+  const requestDeleteSelected = () => {
+    setConfirmDialog({ open: true, fileIds: Array.from(selected) })
+  }
+
+  /** Execute permanent deletion after confirmation. */
+  const executePermanentDelete = async () => {
+    const ids = confirmDialog.fileIds
+    setConfirmDialog({ open: false, fileIds: [] })
     setLoading(true)
     try {
-      await Promise.all(files.map((f) => deleteFile(f.id)))
-      setFiles([])
-      setSelected(new Set())
+      await Promise.all(ids.map((id) => permanentDeleteFile(id)))
+      setFiles((prev) => prev.filter((f) => !ids.includes(f.id)))
+      setSelected((prev) => {
+        const next = new Set(prev)
+        ids.forEach((id) => next.delete(id))
+        return next
+      })
+      showToast({
+        icon: 'trash',
+        title: `Permanently deleted ${ids.length} file${ids.length !== 1 ? 's' : ''}`,
+        description: 'Vault keys destroyed. Data is unrecoverable.',
+      })
     } catch (err) {
-      showToast({ icon: 'x', title: 'Empty trash failed', description: err instanceof Error ? err.message : 'Some files could not be deleted', danger: true })
+      showToast({ icon: 'x', title: 'Delete failed', description: err instanceof Error ? err.message : 'Some files could not be deleted', danger: true })
       fetchTrash()
     } finally {
       setLoading(false)
@@ -174,6 +241,7 @@ export function Trash() {
       await Promise.all(files.map((f) => restoreFile(f.id)))
       setFiles([])
       setSelected(new Set())
+      showToast({ icon: 'check', title: 'All files restored', description: 'Moved back to your drive' })
     } catch (err) {
       showToast({ icon: 'x', title: 'Restore all failed', description: err instanceof Error ? err.message : 'Some files could not be restored', danger: true })
       fetchTrash()
@@ -184,6 +252,14 @@ export function Trash() {
 
   return (
     <DriveLayout>
+        {/* Confirmation dialog */}
+        <ConfirmDeleteDialog
+          open={confirmDialog.open}
+          count={confirmDialog.fileIds.length}
+          onConfirm={executePermanentDelete}
+          onCancel={() => setConfirmDialog({ open: false, fileIds: [] })}
+        />
+
         {/* Header */}
         <div className="px-5 py-3 border-b border-line flex items-center gap-2.5">
           <Icon name="trash" size={14} />
@@ -200,7 +276,7 @@ export function Trash() {
             <BBButton
               size="sm"
               variant="danger"
-              onClick={handleEmptyTrash}
+              onClick={requestEmptyTrash}
               disabled={loading || files.length === 0}
             >
               Empty trash
@@ -213,7 +289,7 @@ export function Trash() {
           className="px-5 py-2 border-b border-line bg-paper-2"
           style={{
             display: 'grid',
-            gridTemplateColumns: '24px 1.4fr 1fr 110px 110px 110px 60px',
+            gridTemplateColumns: '24px 1.4fr 1fr 110px 110px 110px 100px',
             gap: 14,
           }}
         >
@@ -264,7 +340,7 @@ export function Trash() {
                   className="group hover:bg-paper-2 transition-colors"
                   style={{
                     display: 'grid',
-                    gridTemplateColumns: '24px 1.4fr 1fr 110px 110px 110px 60px',
+                    gridTemplateColumns: '24px 1.4fr 1fr 110px 110px 110px 100px',
                     gap: 14,
                     padding: '10px 20px',
                     alignItems: 'center',
@@ -295,13 +371,21 @@ export function Trash() {
                   <span className="font-mono text-[11px] text-ink-3">
                     {file.is_folder ? '--' : formatBytes(file.size_bytes)}
                   </span>
-                  <div className="flex gap-1 justify-end">
+                  <div className="flex gap-1.5 justify-end">
                     <button
                       onClick={() => handleRestore(file.id)}
                       disabled={loading}
                       className="text-amber-deep text-[11.5px] font-medium cursor-pointer hover:underline"
                     >
                       Restore
+                    </button>
+                    <span className="text-ink-4 text-[11px]">|</span>
+                    <button
+                      onClick={() => requestPermanentDelete(file.id)}
+                      disabled={loading}
+                      className="text-red text-[11.5px] font-medium cursor-pointer hover:underline"
+                    >
+                      Delete
                     </button>
                   </div>
                 </div>
@@ -324,9 +408,7 @@ export function Trash() {
               <BBButton
                 size="sm"
                 variant="danger"
-                onClick={() => {
-                  selected.forEach((id) => handlePermanentDelete(id))
-                }}
+                onClick={requestDeleteSelected}
                 disabled={loading}
               >
                 Delete permanently
