@@ -83,13 +83,10 @@ export async function encryptedUpload(
   // 3. Build the multipart upload
   const token = getToken()
   const metadata = JSON.stringify({
-    file_id: fileId,
     name_encrypted: nameEncrypted,
     mime_type: file.type || 'application/octet-stream',
-    size: file.size,
+    size_bytes: file.size,
     parent_id: parentId ?? null,
-    encrypted: true,
-    chunk_count: totalChunks,
   })
 
   const form = new FormData()
