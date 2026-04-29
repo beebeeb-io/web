@@ -172,9 +172,11 @@ export function Team() {
       const ws = await listWorkspaces()
       if (ws.length > 0) {
         setActiveWs(ws[0])
+      } else {
+        setLoading(false)
       }
     } catch {
-      // ignore
+      setLoading(false)
     }
   }, [])
 
@@ -303,10 +305,16 @@ export function Team() {
           )}
 
           {!loading && members.length === 0 && !activeWs && (
-            <div className="px-6 py-8 text-center">
-              <p className="text-sm text-ink-2 mb-2">No workspace yet</p>
+            <div className="px-6 py-12 text-center">
+              <div
+                className="w-12 h-12 mx-auto mb-3 rounded-xl flex items-center justify-center"
+                style={{ background: 'var(--color-paper-2)', border: '1.5px dashed var(--color-line-2)' }}
+              >
+                <Icon name="users" size={22} className="text-ink-4" />
+              </div>
+              <p className="text-sm font-medium text-ink-2 mb-1">No team members yet</p>
               <p className="text-xs text-ink-3">
-                Create a workspace to start collaborating.
+                Create a workspace and invite your team to start collaborating.
               </p>
             </div>
           )}
