@@ -46,6 +46,7 @@ export function ShareViewPage() {
   const [verifying, setVerifying] = useState(false)
   const [verifyError, setVerifyError] = useState<string | null>(null)
   const [downloading, setDownloading] = useState(false)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
 
   /** Get the display name (decrypted if available, raw otherwise). */
   function displayName(): string {
@@ -124,6 +125,7 @@ export function ShareViewPage() {
   const handleDownload = useCallback(async () => {
     if (!token || !shareData) return
     setDownloading(true)
+    setDownloadError(null)
     try {
       const blob = await downloadSharedFile(token)
       const url = URL.createObjectURL(blob)
@@ -135,7 +137,7 @@ export function ShareViewPage() {
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
     } catch {
-      // Download failed
+      setDownloadError('Download failed. The file may no longer be available.')
     } finally {
       setDownloading(false)
     }
@@ -155,7 +157,10 @@ export function ShareViewPage() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-paper">
-        <div className="text-ink-3 text-sm">Loading...</div>
+        <svg className="animate-spin h-6 w-6 text-amber" viewBox="0 0 24 24" fill="none">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+        </svg>
       </div>
     )
   }
@@ -348,6 +353,12 @@ export function ShareViewPage() {
             {shareData?.can_download === false && (
               <div className="px-3 py-2 bg-paper-2 border border-line rounded-md text-xs text-ink-3 text-center">
                 Download is not enabled for this share
+              </div>
+            )}
+
+            {downloadError && (
+              <div className="mt-3 px-3 py-2 bg-red/10 border border-red/30 rounded-md text-xs text-red text-center">
+                {downloadError}
               </div>
             )}
           </div>

@@ -77,7 +77,12 @@ export function AdminBilling() {
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-5 py-5 flex flex-col gap-4">
         {loading ? (
-          <div className="py-8 text-center text-xs text-ink-3">Loading billing data...</div>
+          <div className="flex items-center justify-center py-12">
+            <svg className="animate-spin h-6 w-6 text-amber" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+          </div>
         ) : error ? (
           <div className="py-8 text-center">
             <div className="text-xs text-red mb-2">{error}</div>

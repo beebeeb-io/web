@@ -55,15 +55,18 @@ export function Trash() {
   const [files, setFiles] = useState<(DriveFile & { was_in: string })[]>([])
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({})
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
 
   // Fetch trashed files from API
   const fetchTrash = useCallback(async () => {
+    setLoading(true)
     try {
       const data = await listFiles(undefined, true)
       setFiles(data.map((f) => ({ ...f, was_in: '/' })))
     } catch {
       setFiles([])
+    } finally {
+      setLoading(false)
     }
   }, [])
 
@@ -225,7 +228,14 @@ export function Trash() {
 
         {/* File list */}
         <div className="flex-1 overflow-y-auto">
-          {files.length === 0 ? (
+          {loading ? (
+            <div className="flex items-center justify-center py-20">
+              <svg className="animate-spin h-6 w-6 text-amber" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            </div>
+          ) : files.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center py-20">
               <div
                 className="w-14 h-14 mb-4 rounded-2xl flex items-center justify-center"

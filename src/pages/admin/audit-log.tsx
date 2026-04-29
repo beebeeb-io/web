@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Icon } from '../../components/icons'
 import { BBButton } from '../../components/bb-button'
 import { BBChip } from '../../components/bb-chip'
+import { useToast } from '../../components/toast'
 import { AdminShell } from './admin-shell'
 import { listAuditLog, exportAuditLog } from '../../lib/api'
 import type { AuditEvent } from '../../lib/api'
@@ -13,6 +14,7 @@ function eventColor(ev: string): string {
 }
 
 export function AuditLog() {
+  const { showToast } = useToast()
   const [events, setEvents] = useState<AuditEvent[]>([])
   const [filter, setFilter] = useState('')
   const [loading, setLoading] = useState(true)
@@ -49,8 +51,8 @@ export function AuditLog() {
       a.download = `audit-log-${new Date().toISOString().slice(0, 10)}.json`
       a.click()
       URL.revokeObjectURL(url)
-    } catch {
-      // silent
+    } catch (err) {
+      showToast({ icon: 'download', title: 'Export failed', description: err instanceof Error ? err.message : 'Could not export audit log', danger: true })
     }
   }
 
@@ -119,7 +121,12 @@ export function AuditLog() {
         </div>
 
         {loading ? (
-          <div className="px-5 py-8 text-center text-xs text-ink-3">Loading...</div>
+          <div className="flex items-center justify-center py-12">
+            <svg className="animate-spin h-6 w-6 text-amber" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+          </div>
         ) : events.length === 0 ? (
           <div className="px-5 py-8 text-center text-xs text-ink-3">No events found</div>
         ) : (

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Icon } from '../../components/icons'
 import { BBButton } from '../../components/bb-button'
 import { BBChip } from '../../components/bb-chip'
+import { useToast } from '../../components/toast'
 import { AdminShell } from './admin-shell'
 import { listMembers, inviteMember, removeMember } from '../../lib/api'
 import type { WorkspaceMember } from '../../lib/api'
@@ -15,6 +16,7 @@ function formatDate(iso: string): string {
 }
 
 export function AdminUsers() {
+  const { showToast } = useToast()
   const [members, setMembers] = useState<WorkspaceMember[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -43,11 +45,12 @@ export function AdminUsers() {
     setInviting(true)
     try {
       await inviteMember(inviteEmail.trim())
+      showToast({ icon: 'mail', title: 'Invite sent', description: inviteEmail.trim() })
       setInviteEmail('')
       setShowInvite(false)
       void load()
-    } catch {
-      // Error handled by global notifier
+    } catch (err) {
+      showToast({ icon: 'x', title: 'Invite failed', description: err instanceof Error ? err.message : 'Could not send invite', danger: true })
     } finally {
       setInviting(false)
     }
@@ -57,9 +60,10 @@ export function AdminUsers() {
     if (!confirm(`Remove ${email} from the workspace?`)) return
     try {
       await removeMember(id)
+      showToast({ icon: 'check', title: 'User removed', description: email })
       void load()
-    } catch {
-      // Error handled by global notifier
+    } catch (err) {
+      showToast({ icon: 'x', title: 'Remove failed', description: err instanceof Error ? err.message : 'Could not remove user', danger: true })
     }
   }
 
@@ -116,7 +120,12 @@ export function AdminUsers() {
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
         {loading ? (
-          <div className="px-5 py-8 text-center text-xs text-ink-3">Loading users...</div>
+          <div className="flex items-center justify-center py-12">
+            <svg className="animate-spin h-6 w-6 text-amber" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+          </div>
         ) : error ? (
           <div className="px-5 py-8 text-center">
             <div className="text-xs text-red mb-2">{error}</div>

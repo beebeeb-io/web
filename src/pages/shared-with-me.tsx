@@ -53,6 +53,7 @@ export function SharedWithMe() {
   const [items, setItems] = useState<SharedWithMeItem[]>([])
   const [decryptedNames, setDecryptedNames] = useState<Record<number, string>>({})
   const [filter, setFilter] = useState<FilterId>('all')
+  const [loading, setLoading] = useState(true)
   const { notifications, unreadCount, markRead, markAllRead } = useNotifications()
 
   /** Get the display name for a shared item (decrypted if available, raw otherwise). */
@@ -62,9 +63,11 @@ export function SharedWithMe() {
 
   // Fetch from API
   useEffect(() => {
+    setLoading(true)
     listSharedWithMe()
       .then(setItems)
-      .catch(() => {})
+      .catch(() => setItems([]))
+      .finally(() => setLoading(false))
   }, [])
 
   // Decrypt shared file names when items or unlock state change
@@ -196,7 +199,14 @@ export function SharedWithMe() {
 
         {/* Items */}
         <div className="flex-1 overflow-y-auto">
-          {filteredItems.length === 0 ? (
+          {loading ? (
+            <div className="flex items-center justify-center py-20">
+              <svg className="animate-spin h-6 w-6 text-amber" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            </div>
+          ) : filteredItems.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center py-20">
               <div
                 className="w-14 h-14 mb-4 rounded-2xl flex items-center justify-center"

@@ -3,6 +3,7 @@ import { Icon } from '../components/icons'
 import { BBButton } from '../components/bb-button'
 import { BBChip } from '../components/bb-chip'
 import { BBInput } from '../components/bb-input'
+import { useToast } from '../components/toast'
 import { useAuth } from '../lib/auth-context'
 import {
   type PendingInvite,
@@ -160,6 +161,7 @@ function InviteDialog({
 
 export function Team() {
   const { user } = useAuth()
+  const { showToast } = useToast()
   const [activeWs, setActiveWs] = useState<Workspace | null>(null)
   const [members, setMembers] = useState<WorkspaceMemberDetail[]>([])
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([])
@@ -211,14 +213,24 @@ export function Team() {
 
   const handleRemove = async (userId: string) => {
     if (!activeWs) return
-    await removeWorkspaceMember(activeWs.id, userId)
-    loadMembers(activeWs.id)
+    try {
+      await removeWorkspaceMember(activeWs.id, userId)
+      showToast({ icon: 'check', title: 'Member removed' })
+      loadMembers(activeWs.id)
+    } catch (err) {
+      showToast({ icon: 'x', title: 'Failed to remove member', description: err instanceof Error ? err.message : 'Something went wrong', danger: true })
+    }
   }
 
   const handleRoleChange = async (userId: string, newRole: string) => {
     if (!activeWs) return
-    await updateMemberRole(activeWs.id, userId, newRole)
-    loadMembers(activeWs.id)
+    try {
+      await updateMemberRole(activeWs.id, userId, newRole)
+      showToast({ icon: 'check', title: 'Role updated' })
+      loadMembers(activeWs.id)
+    } catch (err) {
+      showToast({ icon: 'x', title: 'Failed to update role', description: err instanceof Error ? err.message : 'Something went wrong', danger: true })
+    }
   }
 
   const filteredMembers = members.filter(
@@ -299,8 +311,11 @@ export function Team() {
         {/* Member rows */}
         <div className="divide-y divide-line">
           {loading && members.length === 0 && (
-            <div className="px-6 py-8 text-center text-sm text-ink-3">
-              Loading...
+            <div className="flex items-center justify-center py-12">
+              <svg className="animate-spin h-6 w-6 text-amber" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
             </div>
           )}
 

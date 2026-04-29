@@ -5,6 +5,7 @@ import { BBButton } from '../components/bb-button'
 import { BBChip } from '../components/bb-chip'
 import { Icon } from '../components/icons'
 import { UpgradeDialog } from '../components/upgrade-dialog'
+import { useToast } from '../components/toast'
 import {
   getSubscription,
   getInvoices,
@@ -36,15 +37,19 @@ function formatStorage(gb: number): string {
 
 export function Billing() {
   const [searchParams, setSearchParams] = useSearchParams()
+  const { showToast } = useToast()
   const [sub, setSub] = useState<Subscription | null>(null)
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [upgradeOpen, setUpgradeOpen] = useState(false)
   const [upgradePlan, setUpgradePlan] = useState<string>('team')
   const [portalLoading, setPortalLoading] = useState(false)
   const showSuccess = searchParams.get('success') === 'true'
 
   const loadData = useCallback(async () => {
+    setLoading(true)
+    setError(null)
     try {
       const [subData, invData] = await Promise.all([
         getSubscription(),
@@ -52,8 +57,8 @@ export function Billing() {
       ])
       setSub(subData)
       setInvoices(invData)
-    } catch {
-      // Silently handle — show empty state
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load billing data')
     } finally {
       setLoading(false)
     }
@@ -80,8 +85,8 @@ export function Billing() {
     try {
       const { url } = await createPortalSession()
       window.location.href = url
-    } catch {
-      // Portal not available (Stripe not configured) — silently ignore
+    } catch (err) {
+      showToast({ icon: 'x', title: 'Billing portal unavailable', description: err instanceof Error ? err.message : 'Could not open billing portal', danger: true })
       setPortalLoading(false)
     }
   }
@@ -90,7 +95,24 @@ export function Billing() {
     return (
       <SettingsShell activeSection="billing">
         <SettingsHeader title="Plan & billing" subtitle="Loading..." />
-        <div className="p-7 text-ink-3 text-sm">Loading billing information...</div>
+        <div className="flex items-center justify-center py-16">
+          <svg className="animate-spin h-6 w-6 text-amber" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+        </div>
+      </SettingsShell>
+    )
+  }
+
+  if (error) {
+    return (
+      <SettingsShell activeSection="billing">
+        <SettingsHeader title="Plan & billing" />
+        <div className="py-16 text-center">
+          <div className="text-sm text-red mb-2">{error}</div>
+          <BBButton size="sm" variant="ghost" onClick={() => void loadData()}>Retry</BBButton>
+        </div>
       </SettingsShell>
     )
   }
