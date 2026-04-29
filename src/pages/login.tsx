@@ -13,7 +13,7 @@ import { opaqueLoginStart, opaqueLoginFinish, toBase64, fromBase64 } from '../li
 export function Login() {
   const navigate = useNavigate()
   const { login, refreshUser, verify2fa } = useAuth()
-  const { unlock, setMasterKey, cryptoReady, cryptoError } = useKeys()
+  const { unlock, unlockVault, vaultExists, cryptoReady, cryptoError } = useKeys()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -25,6 +25,9 @@ export function Login() {
   const [partialToken, setPartialToken] = useState<string | null>(null)
   const [passkeyLoading, setPasskeyLoading] = useState(false)
 
+  // Device provisioning state — shown when OPAQUE auth succeeds but no vault exists on this device
+  const [needsProvision, setNeedsProvision] = useState(false)
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setError('')
@@ -35,20 +38,32 @@ export function Login() {
     }
 
     setSubmitting(true)
-    setError(null)
 
     // Try OPAQUE first, then legacy fallback
-    let opaqueWorked = false
     try {
       const loginStart = await opaqueLoginStart(password)
       const serverResp = await apiOpaqueLoginStart(email, toBase64(loginStart.message))
       const serverMsg = Uint8Array.from(atob(serverResp.server_message), c => c.charCodeAt(0))
       const loginFinish = await opaqueLoginFinish(loginStart.state, password, serverMsg)
       await apiOpaqueLoginFinish(email, toBase64(loginFinish.message), serverResp.server_state)
-      await setMasterKey(loginFinish.exportKey.slice(0, 32), password)
+
+      // OPAQUE auth succeeded — refresh user session
       await refreshUser()
-      opaqueWorked = true
-      navigate('/')
+
+      // Now unlock the local vault
+      if (vaultExists) {
+        const ok = await unlockVault(password)
+        if (!ok) {
+          setError('Wrong password — could not unlock vault on this device.')
+          setSubmitting(false)
+          return
+        }
+        navigate('/')
+      } else {
+        // No vault on this device — needs mnemonic provisioning
+        setNeedsProvision(true)
+        setSubmitting(false)
+      }
     } catch {
       // OPAQUE failed — try legacy login
       try {
@@ -151,6 +166,42 @@ export function Login() {
             setError('')
           }}
         />
+      </AuthShell>
+    )
+  }
+
+  // Show device provisioning when OPAQUE auth succeeded but no vault on this device
+  if (needsProvision) {
+    return (
+      <AuthShell
+        title="Set up this device"
+        subtitle="Your account is authenticated, but this device needs your recovery phrase."
+      >
+        <div className="rounded-lg border border-line bg-paper-2 p-4">
+          <div className="flex items-start gap-3">
+            <Icon name="shield" size={18} className="text-amber-deep mt-0.5 shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-ink mb-1">No vault found on this device</p>
+              <p className="text-xs text-ink-3 leading-relaxed">
+                Enter your recovery phrase to set up this device. Your recovery phrase
+                was shown when you created your account.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <BBButton
+          type="button"
+          variant="default"
+          size="md"
+          className="w-full mt-4"
+          onClick={() => {
+            setNeedsProvision(false)
+            setError('')
+          }}
+        >
+          Back to login
+        </BBButton>
       </AuthShell>
     )
   }
