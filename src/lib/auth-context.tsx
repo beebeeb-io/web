@@ -32,6 +32,7 @@ interface AuthState {
   loading: boolean
   signup: (email: string, password: string) => Promise<SignupResult>
   login: (email: string, password: string) => Promise<LoginResult>
+  refreshUser: () => Promise<void>
   verify2fa: (partialToken: string, code: string) => Promise<LoginResult>
   logout: () => Promise<void>
 }
@@ -80,6 +81,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return result
   }, [])
 
+  const refreshUser = useCallback(async () => {
+    const u = await getMe()
+    setUser(u)
+  }, [])
+
   const logout = useCallback(async () => {
     onLogoutCallback?.()
     await apiLogout()
@@ -87,8 +93,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo<AuthState>(
-    () => ({ user, loading, signup, login, verify2fa, logout }),
-    [user, loading, signup, login, verify2fa, logout],
+    () => ({ user, loading, signup, login, refreshUser, verify2fa, logout }),
+    [user, loading, signup, login, refreshUser, verify2fa, logout],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

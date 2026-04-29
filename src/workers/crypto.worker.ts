@@ -10,7 +10,9 @@ let wasmModule: typeof WasmTypes | null = null
 async function ensureWasm(): Promise<typeof WasmTypes> {
   if (wasmModule) return wasmModule
   const mod = await import('beebeeb-wasm')
-  await mod.default()
+  if (typeof mod.default === 'function') {
+    await mod.default()
+  }
   wasmModule = mod
   return wasmModule
 }

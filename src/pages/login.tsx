@@ -8,11 +8,11 @@ import { TwoFactorPrompt } from '../components/two-factor-prompt'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
 import { startPasskeyLogin, finishPasskeyLogin, getMe, setToken, hexToBytes, opaqueLoginStart as apiOpaqueLoginStart, opaqueLoginFinish as apiOpaqueLoginFinish } from '../lib/api'
-import { opaqueLoginStart, opaqueLoginFinish, toBase64 } from '../lib/crypto'
+import { opaqueLoginStart, opaqueLoginFinish, toBase64, fromBase64 } from '../lib/crypto'
 
 export function Login() {
   const navigate = useNavigate()
-  const { login, verify2fa } = useAuth()
+  const { login, refreshUser, verify2fa } = useAuth()
   const { unlock, setMasterKey, cryptoReady, cryptoError } = useKeys()
 
   const [email, setEmail] = useState('')
@@ -35,32 +35,33 @@ export function Login() {
     }
 
     setSubmitting(true)
+    setError(null)
+
+    // Try OPAQUE first, then legacy fallback
+    let opaqueWorked = false
     try {
-      // Try OPAQUE login first
       const loginStart = await opaqueLoginStart(password)
       const serverResp = await apiOpaqueLoginStart(email, toBase64(loginStart.message))
       const serverMsg = Uint8Array.from(atob(serverResp.server_message), c => c.charCodeAt(0))
       const loginFinish = await opaqueLoginFinish(loginStart.state, password, serverMsg)
       await apiOpaqueLoginFinish(email, toBase64(loginFinish.message), serverResp.server_state)
-
-      // OPAQUE export_key is used to derive the master key
-      // For now, use the export_key directly as the master key
-      // (In production, the export_key would decrypt the envelope containing the real master key)
       setMasterKey(loginFinish.exportKey)
+      await refreshUser()
+      opaqueWorked = true
       navigate('/')
-    } catch (opaqueErr) {
-      // Fall back to legacy login for accounts created before OPAQUE
+    } catch {
+      // OPAQUE failed — try legacy login
       try {
         const result = await login(email, password)
         if (result.requires_2fa && result.partial_token) {
           setPartialToken(result.partial_token)
         } else if (result.salt) {
-          const salt = hexToBytes(result.salt)
-          await unlock(password, salt)
+          const saltBytes = fromBase64(result.salt)
+          await unlock(password, saltBytes)
           navigate('/')
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Something went wrong')
+        setError(err instanceof Error ? err.message : 'Invalid email or password')
       }
     } finally {
       setSubmitting(false)

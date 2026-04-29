@@ -234,14 +234,14 @@ export function Pricing() {
         </div>
 
         {/* Plans grid */}
-        <div className="grid grid-cols-4 gap-3.5 p-7 bg-paper-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 p-7 bg-paper-2">
           {plans.map((p) => (
             <PlanCard key={p.id} plan={p} cycle={cycle} onSelect={handleSelect} />
           ))}
         </div>
 
         {/* Trust strip */}
-        <div className="grid grid-cols-4 gap-5 px-9 py-[18px] border-t border-line bg-paper">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 px-9 py-[18px] border-t border-line bg-paper">
           {trustPoints.map(([ico, title, sub], i) => (
             <div key={i} className="flex gap-2.5 items-start">
               <div className="w-6 h-6 shrink-0 rounded-md bg-amber-bg text-amber-deep flex items-center justify-center">

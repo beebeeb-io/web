@@ -80,7 +80,28 @@ export function WasmGuard({ children }: { children: ReactNode }) {
   }
 
   if (!cryptoReady) {
-    return null
+    return (
+      <div className="min-h-screen bg-paper flex items-center justify-center p-xl">
+        <div className="max-w-[440px] w-full text-center">
+          <div className="mb-xl">
+            <BBLogo size={28} />
+          </div>
+          <h1 className="text-lg font-semibold text-ink mb-sm">
+            Encryption engine unavailable
+          </h1>
+          <p className="text-sm text-ink-3 mb-lg">
+            The encryption module loaded but isn't responding. Try refreshing the
+            page. If this keeps happening, clear your browser cache and try again.
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="bg-amber text-ink font-medium text-sm px-lg py-sm rounded-md hover:bg-amber-deep transition-colors"
+          >
+            Refresh page
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return <>{children}</>
