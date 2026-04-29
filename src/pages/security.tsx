@@ -5,6 +5,8 @@ import type { IconName } from '../components/icons'
 import { BBChip } from '../components/bb-chip'
 import { BBButton } from '../components/bb-button'
 import { BBToggle } from '../components/bb-toggle'
+import { ChangePasswordDialog } from '../components/change-password-dialog'
+import { useToast } from '../components/toast'
 
 /* ── Score ring SVG ──────────────────────────────── */
 
@@ -77,6 +79,8 @@ const toneColors: Record<string, { bg: string; fg: string }> = {
 
 export function Security() {
   const [eventFilter, setEventFilter] = useState<EventFilter>('All')
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false)
+  const { showToast } = useToast()
 
   return (
     <DriveLayout>
@@ -212,7 +216,7 @@ export function Security() {
                 </div>
 
                 <div className="flex gap-2">
-                  <BBButton size="sm">Change password</BBButton>
+                  <BBButton size="sm" onClick={() => setChangePasswordOpen(true)}>Change password</BBButton>
                   <BBButton size="sm" variant="ghost">Test strength</BBButton>
                 </div>
               </div>
@@ -397,6 +401,15 @@ export function Security() {
               </div>
             </div>
           </div>
+
+        {/* Change password dialog */}
+        <ChangePasswordDialog
+          open={changePasswordOpen}
+          onClose={() => setChangePasswordOpen(false)}
+          onSuccess={() => {
+            showToast({ icon: 'check', title: 'Password changed', description: 'All other sessions have been signed out' })
+          }}
+        />
     </DriveLayout>
   )
 }
