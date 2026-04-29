@@ -2,28 +2,34 @@
 // Downloads encrypted file data, decrypts chunks + filename, triggers browser download.
 
 import {
+  CHUNK_SIZE,
   decryptChunk,
   decryptFilename,
   fromBase64,
 } from './crypto'
 import { getToken, getApiUrl, ApiError } from './api'
 
-// AES-256-GCM nonce is 12 bytes
+// AES-256-GCM: 12-byte nonce, 16-byte auth tag
 const NONCE_LENGTH = 12
+const GCM_TAG_LENGTH = 16
 
 /**
  * Download and decrypt a file, then trigger a browser save dialog.
  *
- * @param fileId    The file's ID (used for key derivation)
- * @param fileKey   Per-file encryption key
- * @param nameEncryptedJson  The encrypted filename JSON from the API ({nonce, ciphertext} base64)
- * @param mimeType  Original MIME type for the download
+ * @param fileId              The file's UUID
+ * @param fileKey             Per-file encryption key (32 bytes)
+ * @param nameEncryptedJson   The encrypted filename JSON ({nonce, ciphertext} base64)
+ * @param mimeType            Original MIME type for the download
+ * @param chunkCount          Number of encrypted chunks stored on the server
+ * @param sizeBytes           Original plaintext file size in bytes
  */
 export async function encryptedDownload(
   fileId: string,
   fileKey: Uint8Array,
   nameEncryptedJson: string,
   mimeType: string,
+  chunkCount: number,
+  sizeBytes: number,
 ): Promise<void> {
   // 1. Decrypt the filename
   let filename = 'download'
@@ -57,44 +63,53 @@ export async function encryptedDownload(
   const encryptedBlob = await res.arrayBuffer()
   const encryptedBytes = new Uint8Array(encryptedBlob)
 
-  // 3. Decrypt
-  // The blob is nonce (12 bytes) + ciphertext for each chunk, concatenated.
-  // For single-chunk files, it's one nonce+ciphertext pair.
-  // For multi-chunk, the server may return them sequentially.
+  // 3. Split the concatenated stream into individual encrypted chunks and decrypt each.
+  //
+  // Each stored chunk is: nonce (12 bytes) + ciphertext (plaintext_len + 16-byte GCM tag).
+  // For chunks 0..N-2, plaintext is CHUNK_SIZE (1 MB).
+  // For the last chunk (N-1), plaintext is sizeBytes - (N-1) * CHUNK_SIZE.
+  //
+  // Use X-Chunk-Count header if available, otherwise fall back to the passed parameter.
+  const headerChunkCount = res.headers.get('X-Chunk-Count')
+  const effectiveChunkCount = headerChunkCount ? parseInt(headerChunkCount, 10) : chunkCount
+
   const decryptedParts: Uint8Array[] = []
   let offset = 0
 
-  while (offset < encryptedBytes.length) {
-    // Extract nonce
-    const nonce = encryptedBytes.slice(offset, offset + NONCE_LENGTH)
-    offset += NONCE_LENGTH
-
-    // The remaining data until end (or next chunk boundary) is ciphertext.
-    // Since we don't know chunk boundaries from the download, we try to
-    // decrypt the rest. If it's a single chunk, this works directly.
-    // For multi-chunk, the server should separate them or provide metadata.
-    const ciphertext = encryptedBytes.slice(offset)
-    try {
-      const plaintext = await decryptChunk(fileKey, nonce, ciphertext)
-      decryptedParts.push(plaintext)
-      break // Successfully decrypted everything
-    } catch {
-      // If decryption of the full remaining fails, try chunk-sized blocks.
-      // GCM tag is 16 bytes, so ciphertext = plaintext + 16.
-      // Try 1MB + 16 bytes as chunk size.
-      const CHUNK_CT_SIZE = 1024 * 1024 + 16
-      if (ciphertext.length > CHUNK_CT_SIZE) {
-        const chunkCt = encryptedBytes.slice(offset, offset + CHUNK_CT_SIZE)
-        const plaintext = await decryptChunk(fileKey, nonce, chunkCt)
-        decryptedParts.push(plaintext)
-        offset += CHUNK_CT_SIZE
-      } else {
-        // Last chunk — decrypt whatever is left
-        const plaintext = await decryptChunk(fileKey, nonce, ciphertext)
-        decryptedParts.push(plaintext)
-        break
-      }
+  for (let i = 0; i < effectiveChunkCount; i++) {
+    // Calculate the plaintext size for this chunk
+    const isLastChunk = i === effectiveChunkCount - 1
+    let plaintextSize: number
+    if (effectiveChunkCount === 1) {
+      plaintextSize = sizeBytes
+    } else if (isLastChunk) {
+      plaintextSize = sizeBytes - i * CHUNK_SIZE
+    } else {
+      plaintextSize = CHUNK_SIZE
     }
+
+    // The encrypted chunk size: nonce + plaintext + GCM tag
+    const encryptedChunkSize = NONCE_LENGTH + plaintextSize + GCM_TAG_LENGTH
+
+    // Guard: make sure we have enough bytes
+    if (offset + encryptedChunkSize > encryptedBytes.length) {
+      throw new Error(
+        `Chunk ${i}: expected ${encryptedChunkSize} bytes at offset ${offset}, ` +
+        `but only ${encryptedBytes.length - offset} remain`,
+      )
+    }
+
+    // Extract nonce and ciphertext
+    const nonce = encryptedBytes.slice(offset, offset + NONCE_LENGTH)
+    const ciphertext = encryptedBytes.slice(
+      offset + NONCE_LENGTH,
+      offset + encryptedChunkSize,
+    )
+
+    const plaintext = await decryptChunk(fileKey, nonce, ciphertext)
+    decryptedParts.push(plaintext)
+
+    offset += encryptedChunkSize
   }
 
   // 4. Combine decrypted parts

@@ -276,6 +276,7 @@ export function Drive() {
             : u,
         ),
       )
+    }
   }
 
   async function handleFileDownload(file: DriveFile) {
@@ -288,9 +289,17 @@ export function Drive() {
         fileKey,
         file.name_encrypted,
         file.mime_type,
+        file.chunk_count,
+        file.size_bytes,
       )
     } catch (err) {
       console.error('Download failed:', err)
+      showToast({
+        icon: 'download',
+        title: 'Download failed',
+        description: err instanceof Error ? err.message : 'Could not decrypt the file.',
+        danger: true,
+      })
     }
   }
 
