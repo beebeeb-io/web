@@ -5,13 +5,14 @@ import { BBButton } from '../components/bb-button'
 import { BBCheckbox } from '../components/bb-checkbox'
 import { BBInput } from '../components/bb-input'
 import { Icon } from '../components/icons'
-import { opaqueRegisterStart, opaqueRegisterFinish, getMe, setToken } from '../lib/api'
+import { opaqueRegisterStart, opaqueRegisterFinish, opaqueLoginStart as apiOpaqueLoginStart, opaqueLoginFinish as apiOpaqueLoginFinish } from '../lib/api'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
 import {
   opaqueRegistrationStart,
   opaqueRegistrationFinish,
-  generateRecoveryPhrase,
+  opaqueLoginStart,
+  opaqueLoginFinish,
   deriveX25519Public,
   computeRecoveryCheck,
   toBase64,
@@ -31,7 +32,7 @@ function getPasswordStrength(pw: string): {
 
 export function Signup() {
   const navigate = useNavigate()
-  const { signup } = useAuth()
+  const { refreshUser } = useAuth()
   const { setMasterKey, cryptoReady, cryptoError } = useKeys()
 
   const [email, setEmail] = useState('')
@@ -54,31 +55,32 @@ export function Signup() {
 
     setSubmitting(true)
     try {
-      // 1. Generate master key + recovery phrase
-      const { phrase, masterKey } = await generateRecoveryPhrase()
-
-      // 2. OPAQUE registration (2-round-trip)
+      // 1. OPAQUE registration (2-round-trip)
       const regStart = await opaqueRegistrationStart(password)
       const serverResp = await opaqueRegisterStart(email, toBase64(regStart.message))
       const serverMsg = Uint8Array.from(atob(serverResp.server_message), c => c.charCodeAt(0))
       const regUpload = await opaqueRegistrationFinish(regStart.state, password, serverMsg)
 
-      // 3. Derive X25519 public key + recovery check
+      // 2. Finish registration on server
+      await opaqueRegisterFinish(email, toBase64(regUpload))
+
+      // 3. Log in immediately to get the OPAQUE export key (= master key)
+      const loginStart = await opaqueLoginStart(password)
+      const loginResp = await apiOpaqueLoginStart(email, toBase64(loginStart.message))
+      const loginMsg = Uint8Array.from(atob(loginResp.server_message), c => c.charCodeAt(0))
+      const loginFinish = await opaqueLoginFinish(loginStart.state, password, loginMsg)
+      await apiOpaqueLoginFinish(email, toBase64(loginFinish.message), loginResp.server_state)
+
+      // 4. Export key (first 32 bytes) IS the master key
+      const masterKey = loginFinish.exportKey.slice(0, 32)
+      setMasterKey(masterKey)
+
+      // 5. Register X25519 public key for sharing
       const x25519Pub = await deriveX25519Public(masterKey)
       const recoveryCheck = await computeRecoveryCheck(masterKey)
 
-      // 4. Finish registration on server
-      const result = await opaqueRegisterFinish(
-        email,
-        toBase64(regUpload),
-        toBase64(x25519Pub),
-        toBase64(recoveryCheck),
-      )
-
-      // 5. Store master key in memory, navigate to onboarding
-      setMasterKey(masterKey)
-      sessionStorage.setItem('bb_mnemonic', phrase)
-      navigate('/onboarding')
+      await refreshUser()
+      navigate('/')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
     } finally {
