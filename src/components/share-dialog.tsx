@@ -364,7 +364,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: Share
   const [loading, setLoading] = useState(false)
   const [shareResult, setShareResult] = useState<ShareInfo | null>(null)
   const [decryptionKey, setDecryptionKey] = useState<string>('')
-  const [copied, setCopied] = useState<'link' | 'key' | null>(null)
+  const [copied, setCopied] = useState<'full-link' | 'split-link' | 'split-key' | null>(null)
   const [shareMode, setShareMode] = useState<'full' | 'split'>('full')
   const [error, setError] = useState<string | null>(null)
   const [userShareDone, setUserShareDone] = useState<string | null>(null)
@@ -421,7 +421,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: Share
     }
   }, [fileId, expiryIdx, maxOpensIdx, canDownload, isUnlocked, getFileKey])
 
-  const copyToClipboard = useCallback(async (text: string, type: 'link' | 'key') => {
+  const copyToClipboard = useCallback(async (text: string, type: 'full-link' | 'split-link' | 'split-key') => {
     try {
       await navigator.clipboard.writeText(text)
       setCopied(type)
@@ -487,14 +487,14 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: Share
               <div className="flex gap-1 mb-3 p-0.5 bg-paper-2 rounded-md border border-line">
                 <button
                   type="button"
-                  onClick={() => setShareMode('full')}
+                  onClick={() => { setShareMode('full'); setCopied(null) }}
                   className={`flex-1 text-xs py-1.5 rounded transition-all ${shareMode === 'full' ? 'bg-paper shadow-1 text-ink font-medium' : 'text-ink-3 hover:text-ink-2'}`}
                 >
                   Full link
                 </button>
                 <button
                   type="button"
-                  onClick={() => setShareMode('split')}
+                  onClick={() => { setShareMode('split'); setCopied(null) }}
                   className={`flex-1 text-xs py-1.5 rounded transition-all ${shareMode === 'split' ? 'bg-paper shadow-1 text-ink font-medium' : 'text-ink-3 hover:text-ink-2'}`}
                 >
                   Link + key (extra secure)
@@ -516,10 +516,10 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: Share
                     variant="amber"
                     size="lg"
                     className="w-full justify-center gap-2"
-                    onClick={() => copyToClipboard(fullShareUrl, 'link')}
+                    onClick={() => copyToClipboard(fullShareUrl, 'full-link')}
                   >
-                    <Icon name={copied === 'link' ? 'check' : 'copy'} size={14} />
-                    {copied === 'link' ? 'Copied' : 'Copy link'}
+                    <Icon name={copied === 'full-link' ? 'check' : 'copy'} size={14} />
+                    {copied === 'full-link' ? 'Copied' : 'Copy link'}
                   </BBButton>
                   <div className="flex items-center gap-1.5 mt-3 text-[11.5px] text-ink-3">
                     <Icon name="shield" size={11} className="text-amber-deep" />
@@ -536,9 +536,9 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: Share
                       readOnly
                       className="flex-1 bg-transparent font-mono text-xs text-ink outline-none truncate"
                     />
-                    <BBButton size="sm" onClick={() => copyToClipboard(shareUrl, 'link')} className="shrink-0 gap-1">
-                      <Icon name={copied === 'link' ? 'check' : 'copy'} size={11} />
-                      {copied === 'link' ? 'Copied' : 'Copy'}
+                    <BBButton size="sm" onClick={() => copyToClipboard(shareUrl, 'split-link')} className="shrink-0 gap-1">
+                      <Icon name={copied === 'split-link' ? 'check' : 'copy'} size={11} />
+                      {copied === 'split-link' ? 'Copied' : 'Copy'}
                     </BBButton>
                   </div>
 
@@ -555,9 +555,9 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: Share
                       className="flex-1 bg-transparent font-mono text-xs outline-none truncate"
                       style={{ color: 'oklch(0.35 0.1 72)', fontWeight: 500 }}
                     />
-                    <BBButton size="sm" onClick={() => copyToClipboard(decryptionKey, 'key')} className="shrink-0 gap-1">
-                      <Icon name={copied === 'key' ? 'check' : 'copy'} size={11} />
-                      {copied === 'key' ? 'Copied' : 'Copy'}
+                    <BBButton size="sm" onClick={() => copyToClipboard(decryptionKey, 'split-key')} className="shrink-0 gap-1">
+                      <Icon name={copied === 'split-key' ? 'check' : 'copy'} size={11} />
+                      {copied === 'split-key' ? 'Copied' : 'Copy'}
                     </BBButton>
                   </div>
 
