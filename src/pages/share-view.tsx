@@ -10,7 +10,7 @@ import {
   downloadSharedFile,
   type ShareView as ShareViewData,
 } from '../lib/api'
-import { decryptFilename, fromBase64, initCrypto } from '../lib/crypto'
+import { decryptFilename, decryptChunk, fromBase64, initCrypto } from '../lib/crypto'
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
@@ -122,22 +122,39 @@ export function ShareViewPage() {
     }
   }, [token, passphrase])
 
+  const fileKey = getKeyFromFragment()
+  const hasKey = !!fileKey
+
   const handleDownload = useCallback(async () => {
     if (!token || !shareData) return
+    const key = getKeyFromFragment()
+    if (!key) {
+      setDownloadError('Decryption key missing. Make sure you have the full share link including the #key= fragment.')
+      return
+    }
     setDownloading(true)
     setDownloadError(null)
     try {
       const blob = await downloadSharedFile(token)
-      const url = URL.createObjectURL(blob)
+      const encrypted = new Uint8Array(await blob.arrayBuffer())
+
+      // Decrypt: each chunk is nonce(12) + ciphertext
+      const NONCE_LEN = 12
+      const nonce = encrypted.slice(0, NONCE_LEN)
+      const ciphertext = encrypted.slice(NONCE_LEN)
+      const plaintext = await decryptChunk(key, nonce, ciphertext)
+
+      const decryptedBlob = new Blob([plaintext], { type: shareData.mime_type || 'application/octet-stream' })
+      const url = URL.createObjectURL(decryptedBlob)
       const a = document.createElement('a')
       a.href = url
-      a.download = decryptedName ?? shareData.name_encrypted ?? 'download'
+      a.download = decryptedName ?? 'download'
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
     } catch {
-      setDownloadError('Download failed. The file may no longer be available.')
+      setDownloadError('Decryption failed. The share link may have an incorrect key.')
     } finally {
       setDownloading(false)
     }
@@ -336,8 +353,8 @@ export function ShareViewPage() {
               )}
             </div>
 
-            {/* Download button */}
-            {shareData?.can_download !== false && (
+            {/* Download button — only when decryption key is in the URL */}
+            {shareData?.can_download !== false && hasKey && (
               <BBButton
                 variant="amber"
                 size="lg"
@@ -346,8 +363,15 @@ export function ShareViewPage() {
                 disabled={downloading}
               >
                 <Icon name="download" size={14} />
-                {downloading ? 'Downloading...' : 'Download file'}
+                {downloading ? 'Decrypting...' : 'Download and decrypt'}
               </BBButton>
+            )}
+
+            {shareData?.can_download !== false && !hasKey && (
+              <div className="px-3 py-2 bg-amber-bg border border-amber/30 rounded-md text-xs text-ink-2 text-center">
+                <Icon name="lock" size={12} className="inline mr-1" />
+                Decryption key missing. Ask the sender for the full link including the key.
+              </div>
             )}
 
             {shareData?.can_download === false && (
