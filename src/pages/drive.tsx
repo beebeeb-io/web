@@ -24,6 +24,7 @@ import {
   createFolder,
   toggleStar,
   updateFile,
+  deleteFile,
   type DriveFile,
 } from '../lib/api'
 import { encryptedUpload } from '../lib/encrypted-upload'
@@ -524,7 +525,14 @@ export function Drive() {
         handleFileDownload(file)
         break
       case 'trash':
-        // Existing trash logic will be handled separately
+        try {
+          await deleteFile(ctxMenu.fileId)
+          showToast({ icon: 'trash', title: 'Moved to trash', description: ctxMenu.fileName })
+          unindexFile(ctxMenu.fileId)
+          fetchFiles()
+        } catch (err) {
+          showToast({ icon: 'trash', title: 'Failed to trash', description: err instanceof Error ? err.message : 'Something went wrong', danger: true })
+        }
         break
       default:
         break
