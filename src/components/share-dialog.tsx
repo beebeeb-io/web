@@ -435,10 +435,10 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: Share
   // The share URL includes the decryption key as a URL fragment (#key=...).
   // Fragments are never sent to the server, preserving zero-knowledge.
   const shareUrl = shareResult
-    ? `beebeeb.io/s/${shareResult.token}`
+    ? `${window.location.origin}/s/${shareResult.token}`
     : ''
   const fullShareUrl = shareResult && decryptionKey
-    ? `https://${shareUrl}#key=${encodeURIComponent(decryptionKey)}`
+    ? `${shareUrl}#key=${encodeURIComponent(decryptionKey)}`
     : ''
 
   const permToggles: [string, boolean, (v: boolean) => void, 'eye' | 'download' | 'file' | 'share'][] = [
