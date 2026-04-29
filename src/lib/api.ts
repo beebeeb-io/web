@@ -355,6 +355,16 @@ export async function downloadFile(id: string): Promise<Blob> {
   return res.blob()
 }
 
+export async function updateFile(
+  fileId: string,
+  updates: { parent_id?: string; name_encrypted?: string },
+): Promise<DriveFile> {
+  return request<DriveFile>(`/api/v1/files/${fileId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(updates),
+  })
+}
+
 export async function deleteFile(id: string): Promise<void> {
   await request<void>(`/api/v1/files/${id}`, { method: 'DELETE' })
 }
