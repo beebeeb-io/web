@@ -132,3 +132,59 @@ export async function encryptedDownload(
   document.body.removeChild(link)
   URL.revokeObjectURL(url)
 }
+
+/**
+ * Download and decrypt a shared file, returning the plaintext blob and filename.
+ * Same as encryptedDownload but returns data instead of triggering a browser save.
+ */
+export async function decryptToBlob(
+  fileId: string,
+  fileKey: Uint8Array,
+  nameEncryptedJson: string,
+  mimeType: string,
+  chunkCount: number,
+  sizeBytes: number,
+): Promise<{ plaintext: Blob; filename: string }> {
+  let filename = 'download'
+  try {
+    const parsed = JSON.parse(nameEncryptedJson) as { nonce: string; ciphertext: string }
+    filename = await decryptFilename(fileKey, fromBase64(parsed.nonce), fromBase64(parsed.ciphertext))
+  } catch {
+    filename = `file-${fileId}`
+  }
+
+  const token = getToken()
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
+  const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/download`, { headers })
+  if (!res.ok) throw new ApiError(res.statusText, res.status)
+
+  const encryptedBytes = new Uint8Array(await res.arrayBuffer())
+  const headerChunkCount = res.headers.get('X-Chunk-Count')
+  const effectiveChunkCount = headerChunkCount ? parseInt(headerChunkCount, 10) : chunkCount
+
+  const decryptedParts: Uint8Array[] = []
+  let offset = 0
+
+  for (let i = 0; i < effectiveChunkCount; i++) {
+    const isLastChunk = i === effectiveChunkCount - 1
+    let plaintextSize: number
+    if (effectiveChunkCount === 1) plaintextSize = sizeBytes
+    else if (isLastChunk) plaintextSize = sizeBytes - i * CHUNK_SIZE
+    else plaintextSize = CHUNK_SIZE
+
+    const encryptedChunkSize = NONCE_LENGTH + plaintextSize + GCM_TAG_LENGTH
+    if (offset + encryptedChunkSize > encryptedBytes.length) {
+      throw new Error(`Chunk ${i}: expected ${encryptedChunkSize} bytes at offset ${offset}, but only ${encryptedBytes.length - offset} remain`)
+    }
+
+    const nonce = encryptedBytes.slice(offset, offset + NONCE_LENGTH)
+    const ciphertext = encryptedBytes.slice(offset + NONCE_LENGTH, offset + encryptedChunkSize)
+    decryptedParts.push(await decryptChunk(fileKey, nonce, ciphertext))
+    offset += encryptedChunkSize
+  }
+
+  const plaintext = new Blob(decryptedParts as unknown as BlobPart[], { type: mimeType || 'application/octet-stream' })
+  return { plaintext, filename }
+}

@@ -642,6 +642,8 @@ export interface ShareInvite {
   expires_at?: string | null
   size_bytes?: number
   is_folder?: boolean
+  chunk_count?: number
+  mime_type?: string
   encrypted_file_key?: string
 }
 

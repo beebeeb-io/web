@@ -23,6 +23,8 @@ import {
 } from '../lib/api'
 import { useKeys } from '../lib/key-context'
 import { decryptFilename, decryptChunk, fromBase64, x25519SharedSecret, deriveShareKey, deriveX25519Private, zeroize } from '../lib/crypto'
+import { encryptedDownload } from '../lib/encrypted-download'
+import { encryptedUpload } from '../lib/encrypted-upload'
 
 // ─── Helpers ───────────────────────────────────────
 
@@ -55,7 +57,7 @@ type TabId = 'with-me' | 'by-me' | 'pending'
 // ─── Component ───────────────────────────────────
 
 export function Shared() {
-  const { isUnlocked, getMasterKey } = useKeys()
+  const { isUnlocked, getMasterKey, getFileKey } = useKeys()
   const { showToast } = useToast()
   const { notifications, unreadCount, markRead, markAllRead } = useNotifications()
 
@@ -198,16 +200,78 @@ export function Shared() {
     }
   }, [showToast])
 
+  // ─── Derive file key from a shared invite ─────
+
+  async function deriveSharedFileKey(invite: ShareInvite): Promise<Uint8Array> {
+    if (!invite.sender_public_key || !invite.encrypted_file_key) {
+      throw new Error('Missing encryption data for this share')
+    }
+    const masterKey = getMasterKey()
+    const myPrivate = await deriveX25519Private(masterKey)
+    const theirPublic = fromBase64(invite.sender_public_key)
+    const sharedSecret = await x25519SharedSecret(myPrivate, theirPublic)
+    const fileIdBytes = new TextEncoder().encode(invite.file_id)
+    const shareKey = await deriveShareKey(sharedSecret, fileIdBytes)
+    const efkBytes = fromBase64(invite.encrypted_file_key)
+    const fileKey = await decryptChunk(shareKey, efkBytes.slice(0, 12), efkBytes.slice(12))
+    zeroize(myPrivate)
+    zeroize(sharedSecret)
+    zeroize(shareKey)
+    return fileKey
+  }
+
   // ─── Context menu action handler ──────────────
 
   const handleSharedAction = useCallback(async (action: string, inviteId: string) => {
     switch (action) {
-      case 'download':
-        showToast({ icon: 'download', title: 'Not available yet', description: 'Shared file download is coming soon.' })
+      case 'download': {
+        const invite = withMeInvites.find((i) => i.id === inviteId)
+        if (!invite) break
+        try {
+          const fileKey = await deriveSharedFileKey(invite)
+          await encryptedDownload(
+            invite.file_id,
+            fileKey,
+            invite.file_name_encrypted ?? '',
+            invite.mime_type ?? 'application/octet-stream',
+            invite.chunk_count ?? 1,
+            invite.size_bytes ?? 0,
+          )
+          zeroize(fileKey)
+        } catch (e) {
+          showToast({ icon: 'x', title: 'Download failed', description: e instanceof Error ? e.message : 'Could not decrypt the file.', danger: true })
+        }
         break
-      case 'save-copy':
-        showToast({ icon: 'folder', title: 'Not available yet', description: 'Save copy to drive is coming soon.' })
+      }
+      case 'save-copy': {
+        const invite = withMeInvites.find((i) => i.id === inviteId)
+        if (!invite) break
+        try {
+          showToast({ icon: 'folder', title: 'Saving copy...', description: 'Downloading, re-encrypting, and uploading.' })
+          const sharedFileKey = await deriveSharedFileKey(invite)
+          // Download + decrypt using the shared key (same as encryptedDownload but keep the blob)
+          const { decryptToBlob } = await import('../lib/encrypted-download')
+          const { plaintext, filename } = await decryptToBlob(
+            invite.file_id,
+            sharedFileKey,
+            invite.file_name_encrypted ?? '',
+            invite.mime_type ?? 'application/octet-stream',
+            invite.chunk_count ?? 1,
+            invite.size_bytes ?? 0,
+          )
+          zeroize(sharedFileKey)
+          // Re-encrypt with own key and upload
+          const file = new File([plaintext], filename, { type: invite.mime_type ?? 'application/octet-stream' })
+          const newFileId = crypto.randomUUID()
+          const newFileKey = await getFileKey(newFileId)
+          await encryptedUpload(file, newFileId, newFileKey, undefined, () => {})
+          zeroize(newFileKey)
+          showToast({ icon: 'check', title: 'Copy saved', description: `${filename} saved to your drive.` })
+        } catch (e) {
+          showToast({ icon: 'x', title: 'Save failed', description: e instanceof Error ? e.message : 'Could not save copy.', danger: true })
+        }
         break
+      }
       case 'forward': {
         const invite = withMeInvites.find((i) => i.id === inviteId)
         if (invite?.file_id) {
