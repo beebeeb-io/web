@@ -365,6 +365,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: Share
   const [shareResult, setShareResult] = useState<ShareInfo | null>(null)
   const [decryptionKey, setDecryptionKey] = useState<string>('')
   const [copied, setCopied] = useState<'link' | 'key' | null>(null)
+  const [shareMode, setShareMode] = useState<'full' | 'split'>('full')
   const [error, setError] = useState<string | null>(null)
   const [userShareDone, setUserShareDone] = useState<string | null>(null)
 
@@ -482,31 +483,91 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: Share
           {/* Link share result view */}
           {mode === 'link' && shareResult ? (
             <>
-              {/* Share link — includes the decryption key as a URL fragment */}
-              <label className="block text-xs font-medium text-ink-2 mb-1.5">Share link</label>
-              <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 mb-3">
-                <Icon name="link" size={13} className="text-ink-3 shrink-0" />
-                <input
-                  value={fullShareUrl}
-                  readOnly
-                  className="flex-1 bg-transparent font-mono text-xs text-ink outline-none"
-                />
+              {/* Share mode toggle */}
+              <div className="flex gap-1 mb-3 p-0.5 bg-paper-2 rounded-md border border-line">
+                <button
+                  type="button"
+                  onClick={() => setShareMode('full')}
+                  className={`flex-1 text-xs py-1.5 rounded transition-all ${shareMode === 'full' ? 'bg-paper shadow-1 text-ink font-medium' : 'text-ink-3 hover:text-ink-2'}`}
+                >
+                  Full link
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShareMode('split')}
+                  className={`flex-1 text-xs py-1.5 rounded transition-all ${shareMode === 'split' ? 'bg-paper shadow-1 text-ink font-medium' : 'text-ink-3 hover:text-ink-2'}`}
+                >
+                  Link + key (extra secure)
+                </button>
               </div>
 
-              <BBButton
-                variant="amber"
-                size="lg"
-                className="w-full justify-center gap-2"
-                onClick={() => copyToClipboard(fullShareUrl, 'link')}
-              >
-                <Icon name={copied === 'link' ? 'check' : 'copy'} size={14} />
-                {copied === 'link' ? 'Copied to clipboard' : 'Copy link'}
-              </BBButton>
+              {shareMode === 'full' ? (
+                <>
+                  <label className="block text-xs font-medium text-ink-2 mb-1.5">Share link</label>
+                  <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 mb-3">
+                    <Icon name="link" size={13} className="text-ink-3 shrink-0" />
+                    <input
+                      value={fullShareUrl}
+                      readOnly
+                      className="flex-1 bg-transparent font-mono text-xs text-ink outline-none truncate"
+                    />
+                  </div>
+                  <BBButton
+                    variant="amber"
+                    size="lg"
+                    className="w-full justify-center gap-2"
+                    onClick={() => copyToClipboard(fullShareUrl, 'link')}
+                  >
+                    <Icon name={copied === 'link' ? 'check' : 'copy'} size={14} />
+                    {copied === 'link' ? 'Copied' : 'Copy link'}
+                  </BBButton>
+                  <div className="flex items-center gap-1.5 mt-3 text-[11.5px] text-ink-3">
+                    <Icon name="shield" size={11} className="text-amber-deep" />
+                    Key is embedded in the link. One click to share.
+                  </div>
+                </>
+              ) : (
+                <>
+                  <label className="block text-xs font-medium text-ink-2 mb-1.5">Share link (without key)</label>
+                  <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 mb-2">
+                    <Icon name="link" size={13} className="text-ink-3 shrink-0" />
+                    <input
+                      value={shareUrl}
+                      readOnly
+                      className="flex-1 bg-transparent font-mono text-xs text-ink outline-none truncate"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(shareUrl, 'link')}
+                      className="text-ink-3 hover:text-ink transition-colors"
+                    >
+                      <Icon name={copied === 'link' ? 'check' : 'copy'} size={13} />
+                    </button>
+                  </div>
 
-              <div className="flex items-center gap-1.5 mt-3 text-[11.5px] text-ink-3">
-                <Icon name="shield" size={11} className="text-amber-deep" />
-                The key is in the link. It never reaches our servers.
-              </div>
+                  <label className="block text-xs font-medium text-ink-2 mb-1.5">Decryption key</label>
+                  <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 mb-3">
+                    <Icon name="key" size={13} className="text-amber-deep shrink-0" />
+                    <input
+                      value={decryptionKey}
+                      readOnly
+                      className="flex-1 bg-transparent font-mono text-xs text-ink outline-none truncate"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(decryptionKey, 'key')}
+                      className="text-ink-3 hover:text-ink transition-colors"
+                    >
+                      <Icon name={copied === 'key' ? 'check' : 'copy'} size={13} />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 text-[11.5px] text-ink-3">
+                    <Icon name="shield" size={11} className="text-amber-deep" />
+                    Send the link and key through different channels for maximum security.
+                  </div>
+                </>
+              )}
             </>
           ) : mode === 'user' && userShareDone ? (
             /* User share success view */
