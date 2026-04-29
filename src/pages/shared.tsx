@@ -12,14 +12,12 @@ import { SharePermissions } from '../components/share-permissions'
 import { SharedContextMenu, type SharedMenuTab } from '../components/shared-context-menu'
 import { useToast } from '../components/toast'
 import {
-  listSharedWithMe,
   getSentInvites,
   getIncomingInvites,
   cancelInvite,
   resendInvite,
   withdrawInvite,
   hideInvite,
-  type SharedWithMeItem,
   type ShareInvite,
 } from '../lib/api'
 import { useKeys } from '../lib/key-context'
@@ -63,9 +61,9 @@ export function Shared() {
   const [tab, setTab] = useState<TabId>('with-me')
   const [loading, setLoading] = useState(true)
 
-  // "With me" state
-  const [sharedWithMe, setSharedWithMe] = useState<SharedWithMeItem[]>([])
-  const [decryptedNames, setDecryptedNames] = useState<Record<number, string>>({})
+  // "With me" state — approved incoming invites
+  const [withMeInvites, setWithMeInvites] = useState<ShareInvite[]>([])
+  const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({})
 
   // "By me" state — approved sent invites
   const [sentApproved, setSentApproved] = useState<ShareInvite[]>([])
@@ -102,13 +100,12 @@ export function Shared() {
   const fetchAll = useCallback(async () => {
     setLoading(true)
     try {
-      const [withMe, sent, incoming] = await Promise.all([
-        listSharedWithMe().catch(() => []),
+      const [sent, incoming] = await Promise.all([
         getSentInvites().catch(() => []),
         getIncomingInvites().catch(() => []),
       ])
 
-      setSharedWithMe(withMe)
+      setWithMeInvites(incoming.filter((i) => i.status === 'approved'))
       setSentApproved(sent.filter((i) => i.status === 'approved'))
       setSentInvited(sent.filter((i) => i.status === 'invited'))
       setIncomingClaimed(incoming.filter((i) => i.status === 'claimed'))
@@ -132,52 +129,44 @@ export function Shared() {
   // ─── Decrypt filenames for "With me" tab ─────
 
   useEffect(() => {
-    if (!isUnlocked || sharedWithMe.length === 0) return
+    if (!isUnlocked || withMeInvites.length === 0) return
     let cancelled = false
     async function decryptAll() {
-      const names: Record<number, string> = {}
-      for (let i = 0; i < sharedWithMe.length; i++) {
+      const names: Record<string, string> = {}
+      for (const invite of withMeInvites) {
         if (cancelled) return
-        const item = sharedWithMe[i]
-        if (item.file_id && item.sender_public_key) {
+        if (invite.file_id && invite.sender_public_key && invite.file_name_encrypted) {
           try {
-            const parsed = JSON.parse(item.file_name_encrypted) as {
+            const parsed = JSON.parse(invite.file_name_encrypted) as {
               nonce: string
               ciphertext: string
             }
             const masterKey = getMasterKey()
             const myPrivate = await deriveX25519Private(masterKey)
-            const theirPublic = fromBase64(item.sender_public_key)
+            const theirPublic = fromBase64(invite.sender_public_key)
             const sharedSecret = await x25519SharedSecret(myPrivate, theirPublic)
-            const fileIdBytes = new TextEncoder().encode(item.file_id)
+            const fileIdBytes = new TextEncoder().encode(invite.file_id)
             const shareKey = await deriveShareKey(sharedSecret, fileIdBytes)
-            names[i] = await decryptFilename(
+            names[invite.id] = await decryptFilename(
               shareKey,
               fromBase64(parsed.nonce),
               fromBase64(parsed.ciphertext),
             )
           } catch {
-            names[i] = item.file_name_encrypted
+            names[invite.id] = invite.file_name_encrypted
           }
         } else {
-          try {
-            const parsed = JSON.parse(item.file_name_encrypted)
-            if (parsed.nonce && parsed.ciphertext) {
-              names[i] = item.file_name_encrypted
-            }
-          } catch {
-            names[i] = item.file_name_encrypted
-          }
+          names[invite.id] = invite.file_name_encrypted ?? 'Encrypted file'
         }
       }
       if (!cancelled) setDecryptedNames(names)
     }
     decryptAll()
     return () => { cancelled = true }
-  }, [sharedWithMe, isUnlocked, getMasterKey])
+  }, [withMeInvites, isUnlocked, getMasterKey])
 
-  function displayName(item: SharedWithMeItem, index: number): string {
-    return decryptedNames[index] ?? item.file_name_encrypted
+  function displayName(invite: ShareInvite): string {
+    return decryptedNames[invite.id] ?? invite.file_name_encrypted ?? 'Encrypted file'
   }
 
   // ─── Actions ──────────────────────────────────
@@ -203,10 +192,10 @@ export function Shared() {
         showToast({ icon: 'folder', title: 'Saving copy...', description: 'Re-encrypting with your key.' })
         break
       case 'forward': {
-        const item = sharedWithMe.find((_, i) => String(i) === inviteId)
-        if (item?.file_id) {
-          setForwardFileId(item.file_id)
-          setForwardFileName(displayName(item, sharedWithMe.indexOf(item)))
+        const invite = withMeInvites.find((i) => i.id === inviteId)
+        if (invite?.file_id) {
+          setForwardFileId(invite.file_id)
+          setForwardFileName(displayName(invite))
         }
         break
       }
@@ -271,7 +260,7 @@ export function Shared() {
         }
         break
     }
-  }, [sharedWithMe, sentApproved, sentInvited, ctxMenu.x, ctxMenu.y, showToast, fetchAll, handleCancelInvite])
+  }, [withMeInvites, sentApproved, sentInvited, ctxMenu.x, ctxMenu.y, showToast, fetchAll, handleCancelInvite])
 
   // ─── Multi-select helpers ─────────────────────
 
@@ -292,7 +281,7 @@ export function Shared() {
 
   function selectAllInTab() {
     if (tab === 'with-me') {
-      const all = new Set(sharedWithMe.map((_, i) => String(i)))
+      const all = new Set(withMeInvites.map((i) => i.id))
       setSelectedIds(selectedIds.size === all.size ? new Set() : all)
     } else if (tab === 'by-me') {
       const all = new Set(sentApproved.map((i) => i.id))
@@ -383,7 +372,7 @@ export function Shared() {
 
   const renderWithMe = () => {
     if (loading) return <Spinner />
-    if (sharedWithMe.length === 0) {
+    if (withMeInvites.length === 0) {
       return (
         <EmptyState
           icon="share"
@@ -405,10 +394,10 @@ export function Shared() {
           }}
         >
           <span className="flex items-center justify-center">
-            {sharedWithMe.length > 0 && (
+            {withMeInvites.length > 0 && (
               <BBCheckbox
-                checked={selectedIds.size === sharedWithMe.length && sharedWithMe.length > 0}
-                indeterminate={selectedIds.size > 0 && selectedIds.size < sharedWithMe.length}
+                checked={selectedIds.size === withMeInvites.length && withMeInvites.length > 0}
+                indeterminate={selectedIds.size > 0 && selectedIds.size < withMeInvites.length}
                 onChange={() => selectAllInTab()}
               />
             )}
@@ -422,12 +411,12 @@ export function Shared() {
 
         {/* Items */}
         <div className="flex-1 overflow-y-auto">
-          {sharedWithMe.map((item, i, arr) => {
-            const isFolder = item.is_folder
+          {withMeInvites.map((invite, i, arr) => {
+            const isFolder = invite.is_folder ?? false
 
             return (
               <div
-                key={i}
+                key={invite.id}
                 className="group hover:bg-paper-2 transition-colors cursor-pointer"
                 style={{
                   display: 'grid',
@@ -439,11 +428,11 @@ export function Shared() {
               >
                 <span
                   className={`flex items-center justify-center ${
-                    selectedIds.has(String(i)) ? '' : 'opacity-0 group-hover:opacity-100'
+                    selectedIds.has(invite.id) ? '' : 'opacity-0 group-hover:opacity-100'
                   } transition-opacity`}
-                  onClick={(e) => handleCheckboxClick(String(i), e)}
+                  onClick={(e) => handleCheckboxClick(invite.id, e)}
                 >
-                  <BBCheckbox checked={selectedIds.has(String(i))} onChange={() => {}} />
+                  <BBCheckbox checked={selectedIds.has(invite.id)} onChange={() => {}} />
                 </span>
                 <Icon
                   name={isFolder ? 'folder' : 'file'}
@@ -451,14 +440,14 @@ export function Shared() {
                   className={isFolder ? 'text-amber-deep self-center' : 'text-ink-2 self-center'}
                 />
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-[13px] font-medium truncate">{displayName(item, i)}</span>
-                  <span className="text-[11px] text-ink-4 shrink-0">{timeAgo(item.created_at)}</span>
+                  <span className="text-[13px] font-medium truncate">{displayName(invite)}</span>
+                  <span className="text-[11px] text-ink-4 shrink-0">{timeAgo(invite.created_at)}</span>
                 </div>
                 <span className="font-mono text-[11.5px] self-center text-ink-2 truncate">
-                  {item.from_email}
+                  {invite.sender_email ?? ''}
                 </span>
                 <span className="font-mono text-[11px] text-ink-3 self-center">
-                  {isFolder ? '--' : formatBytes(item.file_size)}
+                  {isFolder ? '--' : formatBytes(invite.size_bytes ?? 0)}
                 </span>
                 <div className="flex justify-end self-center">
                   <BBButton
@@ -470,7 +459,7 @@ export function Shared() {
                       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
                       setCtxMenu({
                         open: true, x: rect.left, y: rect.bottom + 4,
-                        inviteId: String(i), tab: 'with-me', canReshare: false,
+                        inviteId: invite.id, tab: 'with-me', canReshare: invite.can_reshare ?? false,
                       })
                     }}
                   >
@@ -705,7 +694,7 @@ export function Shared() {
   // ─── Status bar count ─────────────────────────
 
   const itemCount = tab === 'with-me'
-    ? sharedWithMe.length
+    ? withMeInvites.length
     : tab === 'by-me'
     ? sentApproved.length
     : sentInvited.length + incomingClaimed.length

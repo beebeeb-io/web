@@ -629,16 +629,19 @@ export interface ShareInvite {
   file_id: string
   sender_id: string
   recipient_email: string
-  status: string // invited, claimed, approved, denied, cancelled
+  status: string
   created_at: string
   claimed_at?: string
   approved_at?: string
   file_name_encrypted?: string
   sender_email?: string
+  sender_public_key?: string
   recipient_public_key?: string
   can_download?: boolean
   can_reshare?: boolean
   expires_at?: string | null
+  size_bytes?: number
+  is_folder?: boolean
 }
 
 export async function createInvite(
