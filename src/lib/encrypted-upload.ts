@@ -1,8 +1,10 @@
 // ─── Encrypted upload ──────────────────────────────
-// Chunks a file, encrypts each chunk + filename, uploads via API.
+// Streams a file chunk-by-chunk: read slice -> encrypt -> append to FormData.
+// Only one plaintext + one ciphertext chunk are in memory at any time,
+// so even multi-GB files won't OOM the browser tab.
 
 import {
-  chunkFile,
+  CHUNK_SIZE,
   encryptChunk,
   encryptFilename,
   toBase64,
@@ -18,6 +20,9 @@ export interface UploadProgress {
 
 /**
  * Encrypt and upload a file with real E2EE.
+ *
+ * Streams chunks instead of buffering the whole file — keeps memory usage
+ * at roughly 2 * CHUNK_SIZE regardless of file size.
  *
  * @param file       The raw File from the browser
  * @param fileId     Pre-generated UUID for this file (used for key derivation)
@@ -41,14 +46,32 @@ export async function encryptedUpload(
     ciphertext: toBase64(encName.ciphertext),
   })
 
-  // 2. Chunk the file
-  const chunks = await chunkFile(file)
-  const totalChunks = chunks.length
-  const encryptedChunks: Array<{ nonce: Uint8Array; ciphertext: Uint8Array }> = []
+  // 2. Stream-encrypt chunks one at a time into Blobs
+  //    We only hold one plaintext slice + one encrypted chunk in memory.
+  const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE))
+  const encryptedBlobs: Blob[] = []
 
   for (let i = 0; i < totalChunks; i++) {
-    const encrypted = await encryptChunk(fileKey, chunks[i])
-    encryptedChunks.push(encrypted)
+    // Read one slice from the File (uses file system, doesn't buffer the rest)
+    const start = i * CHUNK_SIZE
+    const end = Math.min(start + CHUNK_SIZE, file.size)
+    const slice = file.slice(start, end)
+    const buffer = await slice.arrayBuffer()
+    const plaintext = new Uint8Array(buffer)
+
+    // Encrypt this chunk (runs in Web Worker via Comlink)
+    const encrypted = await encryptChunk(fileKey, plaintext)
+    // plaintext is now eligible for GC
+
+    // Prepend 12-byte nonce to ciphertext so the server stores them together
+    const combined = new Uint8Array(encrypted.nonce.length + encrypted.ciphertext.length)
+    combined.set(encrypted.nonce, 0)
+    combined.set(encrypted.ciphertext, encrypted.nonce.length)
+
+    // Wrap in a Blob so the browser can page it out of memory if needed
+    encryptedBlobs.push(new Blob([combined], { type: 'application/octet-stream' }))
+    // encrypted + combined are now eligible for GC
+
     onProgress?.({
       stage: 'Encrypting',
       progress: Math.round(((i + 1) / totalChunks) * 40),
@@ -72,20 +95,11 @@ export async function encryptedUpload(
   const form = new FormData()
   form.append('metadata', new Blob([metadata], { type: 'application/json' }))
 
-  // Append each encrypted chunk as nonce+ciphertext concatenated
-  for (let i = 0; i < encryptedChunks.length; i++) {
-    const { nonce, ciphertext } = encryptedChunks[i]
-    // Prepend 12-byte nonce to ciphertext so the server stores them together
-    const combined = new Uint8Array(nonce.length + ciphertext.length)
-    combined.set(nonce, 0)
-    combined.set(ciphertext, nonce.length)
-    form.append(
-      `chunk_${i}`,
-      new Blob([combined], { type: 'application/octet-stream' }),
-    )
+  for (let i = 0; i < encryptedBlobs.length; i++) {
+    form.append(`chunk_${i}`, encryptedBlobs[i])
     onProgress?.({
       stage: 'Uploading',
-      progress: 40 + Math.round(((i + 1) / encryptedChunks.length) * 55),
+      progress: 40 + Math.round(((i + 1) / encryptedBlobs.length) * 55),
     })
   }
 

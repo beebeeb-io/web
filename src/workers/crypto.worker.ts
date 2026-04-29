@@ -5,13 +5,20 @@
 import * as Comlink from 'comlink'
 import type * as WasmTypes from 'beebeeb-wasm'
 
+// Import the .wasm binary URL via Vite's ?url suffix so it resolves
+// correctly inside a bundled worker (import.meta.url in the wasm-pack
+// JS glue points at the worker bundle, not the original source).
+import wasmUrl from 'beebeeb-wasm/beebeeb_wasm_bg.wasm?url'
+
 let wasmModule: typeof WasmTypes | null = null
 
 async function ensureWasm(): Promise<typeof WasmTypes> {
   if (wasmModule) return wasmModule
   const mod = await import('beebeeb-wasm')
   if (typeof mod.default === 'function') {
-    await mod.default()
+    // Pass the resolved WASM URL explicitly — the default() function
+    // accepts a URL/string to fetch the .wasm binary from.
+    await mod.default(wasmUrl)
   }
   wasmModule = mod
   return wasmModule
@@ -44,17 +51,19 @@ const cryptoWorker = {
     return wasm.derive_file_key(masterKey, fileIdBytes)
   },
 
-  /** Encrypt a plaintext chunk with AES-256-GCM. */
+  /** Encrypt a plaintext chunk with AES-256-GCM. Transfers buffers (zero-copy). */
   async encryptChunk(
     fileKey: Uint8Array,
     plaintext: Uint8Array,
   ): Promise<{ nonce: Uint8Array; ciphertext: Uint8Array }> {
     const wasm = await ensureWasm()
     const result = wasm.encrypt_chunk(fileKey, plaintext)
-    return {
-      nonce: result.nonce as Uint8Array,
-      ciphertext: result.ciphertext as Uint8Array,
-    }
+    const nonce = result.nonce as Uint8Array
+    const ciphertext = result.ciphertext as Uint8Array
+    return Comlink.transfer(
+      { nonce, ciphertext },
+      [nonce.buffer, ciphertext.buffer],
+    )
   },
 
   /** Decrypt a chunk that was encrypted with encryptChunk. */

@@ -207,7 +207,7 @@ export async function encryptFileKeyForSharing(
 
 // ─── Helpers ────────────────────────────────────────
 
-const CHUNK_SIZE = 1024 * 1024 // 1 MB
+export const CHUNK_SIZE = 1024 * 1024 // 1 MB
 
 /** Split a file into 1MB chunks. */
 export async function chunkFile(file: File): Promise<Uint8Array[]> {
