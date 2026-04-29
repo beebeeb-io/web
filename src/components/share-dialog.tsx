@@ -482,51 +482,30 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: Share
           {/* Link share result view */}
           {mode === 'link' && shareResult ? (
             <>
-              {/* Link section */}
-              <label className="block text-xs font-medium text-ink-2 mb-1.5">Link</label>
-              <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 mb-4">
+              {/* Share link — includes the decryption key as a URL fragment */}
+              <label className="block text-xs font-medium text-ink-2 mb-1.5">Share link</label>
+              <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 mb-3">
                 <Icon name="link" size={13} className="text-ink-3 shrink-0" />
                 <input
-                  value={shareUrl}
+                  value={fullShareUrl}
                   readOnly
                   className="flex-1 bg-transparent font-mono text-xs text-ink outline-none"
                 />
-                <BBButton
-                  size="sm"
-                  onClick={() => copyToClipboard(fullShareUrl, 'link')}
-                  className="gap-1"
-                >
-                  <Icon name={copied === 'link' ? 'check' : 'copy'} size={11} />
-                  {copied === 'link' ? 'Copied' : 'Copy'}
-                </BBButton>
               </div>
 
-              {/* Decryption key section */}
-              <div className="flex items-center gap-1.5 mb-1.5">
-                <span className="text-xs font-medium text-ink-2">Decryption key</span>
-                <BBChip variant="amber">
-                  <span className="text-[9.5px]">Send via a different channel</span>
-                </BBChip>
-              </div>
-              <div className="flex items-center gap-2 border rounded-md px-3 py-2 bg-amber-bg border-amber-deep/30">
-                <Icon name="key" size={13} className="text-amber-deep shrink-0" />
-                <input
-                  value={decryptionKey}
-                  readOnly
-                  className="flex-1 bg-transparent font-mono text-xs text-amber-deep font-medium outline-none"
-                />
-                <BBButton
-                  size="sm"
-                  onClick={() => copyToClipboard(decryptionKey, 'key')}
-                  className="gap-1"
-                >
-                  <Icon name={copied === 'key' ? 'check' : 'copy'} size={11} />
-                  {copied === 'key' ? 'Copied' : 'Copy'}
-                </BBButton>
-              </div>
-              <div className="flex items-center gap-1.5 mt-2 text-[11.5px] text-ink-3">
+              <BBButton
+                variant="amber"
+                size="lg"
+                className="w-full justify-center gap-2"
+                onClick={() => copyToClipboard(fullShareUrl, 'link')}
+              >
+                <Icon name={copied === 'link' ? 'check' : 'copy'} size={14} />
+                {copied === 'link' ? 'Copied to clipboard' : 'Copy link'}
+              </BBButton>
+
+              <div className="flex items-center gap-1.5 mt-3 text-[11.5px] text-ink-3">
                 <Icon name="shield" size={11} className="text-amber-deep" />
-                Zero-knowledge by default — we never see the key.
+                The key is in the link. It never reaches our servers.
               </div>
             </>
           ) : mode === 'user' && userShareDone ? (
