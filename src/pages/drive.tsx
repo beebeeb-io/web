@@ -344,11 +344,11 @@ export function Drive() {
 
   async function handleCreateFolder(name: string) {
     try {
-      // Encrypt the folder name if crypto is ready
+      // Create folder first to get the server-assigned ID
+      // Then encrypt the name with that ID as the key derivation input
+      const folderId = crypto.randomUUID()
       let nameEncrypted = name
-      let folderId: string | undefined
       if (isUnlocked && cryptoReady) {
-        folderId = crypto.randomUUID()
         const folderKey = await getFileKey(folderId)
         const enc = await encryptFilename(folderKey, name)
         nameEncrypted = JSON.stringify({
@@ -356,7 +356,7 @@ export function Drive() {
           ciphertext: toBase64(enc.ciphertext),
         })
       }
-      const result = await createFolder(nameEncrypted, currentParentId)
+      const result = await createFolder(nameEncrypted, currentParentId, folderId)
 
       // Update the encrypted search index with the new folder
       const pathPrefix = breadcrumbs.slice(1).map((b) => b.name).join('/')

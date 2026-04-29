@@ -299,10 +299,11 @@ export async function listFiles(
 export async function createFolder(
   nameEncrypted: string,
   parentId?: string,
+  folderId?: string,
 ): Promise<DriveFile> {
   return request<DriveFile>('/api/v1/files/folder', {
     method: 'POST',
-    body: JSON.stringify({ name_encrypted: nameEncrypted, parent_id: parentId }),
+    body: JSON.stringify({ name_encrypted: nameEncrypted, parent_id: parentId, folder_id: folderId }),
   })
 }
 
