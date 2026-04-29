@@ -15,6 +15,7 @@ import {
   getSentInvites,
   getIncomingInvites,
   cancelInvite,
+  claimInvite,
   resendInvite,
   withdrawInvite,
   hideInvite,
@@ -70,6 +71,7 @@ export function Shared() {
 
   // "Pending" state
   const [sentInvited, setSentInvited] = useState<ShareInvite[]>([])
+  const [incomingInvited, setIncomingInvited] = useState<ShareInvite[]>([])
   const [incomingClaimed, setIncomingClaimed] = useState<ShareInvite[]>([])
 
   // Context menu
@@ -108,6 +110,7 @@ export function Shared() {
       setWithMeInvites(incoming.filter((i) => i.status === 'approved'))
       setSentApproved(sent.filter((i) => i.status === 'approved'))
       setSentInvited(sent.filter((i) => i.status === 'invited'))
+      setIncomingInvited(incoming.filter((i) => i.status === 'invited'))
       setIncomingClaimed(incoming.filter((i) => i.status === 'claimed'))
     } catch {
       // Silently fail — data stays empty
@@ -579,9 +582,10 @@ export function Shared() {
     if (loading) return <Spinner />
 
     const hasWaiting = sentInvited.length > 0
+    const hasIncomingInvited = incomingInvited.length > 0
     const hasWaitingSender = incomingClaimed.length > 0
 
-    if (!hasWaiting && !hasWaitingSender) {
+    if (!hasWaiting && !hasIncomingInvited && !hasWaitingSender) {
       // Only show ShareApprove section — it handles its own empty state
       return (
         <div className="flex-1 overflow-y-auto">
@@ -603,6 +607,50 @@ export function Shared() {
         <div className="px-5 py-4">
           <ShareApprove onUpdate={fetchAll} />
         </div>
+
+        {/* Section: Shared with you — claim to access */}
+        {hasIncomingInvited && (
+          <>
+            <SectionHeader title="Shared with you" count={incomingInvited.length} />
+            <div className="divide-y divide-line">
+              {incomingInvited.map((invite) => (
+                <div
+                  key={invite.id}
+                  className="flex items-center gap-3 px-5 py-3.5 hover:bg-paper-2 transition-colors"
+                >
+                  <div className="shrink-0 w-[30px] h-[30px] rounded-[8px] bg-amber-bg border border-line flex items-center justify-center">
+                    <Icon name="share" size={13} className="text-amber-deep" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[13px] font-medium text-ink truncate">
+                      {invite.sender_email ?? 'Someone'} shared a file
+                    </div>
+                    <div className="text-[11px] text-ink-3 mt-0.5">
+                      {timeAgo(invite.created_at)}
+                    </div>
+                  </div>
+                  <BBButton
+                    variant="amber"
+                    size="sm"
+                    className="shrink-0 gap-1"
+                    onClick={async () => {
+                      try {
+                        await claimInvite(invite.id)
+                        showToast({ icon: 'check', title: 'Claimed', description: 'Waiting for sender to approve access.' })
+                        fetchAll()
+                      } catch (e) {
+                        showToast({ icon: 'x', title: 'Failed to claim', description: e instanceof Error ? e.message : 'Something went wrong.', danger: true })
+                      }
+                    }}
+                  >
+                    <Icon name="check" size={11} />
+                    Claim
+                  </BBButton>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
 
         {/* Section: Invited — waiting */}
         {hasWaiting && (
@@ -697,7 +745,7 @@ export function Shared() {
     ? withMeInvites.length
     : tab === 'by-me'
     ? sentApproved.length
-    : sentInvited.length + incomingClaimed.length
+    : sentInvited.length + incomingInvited.length + incomingClaimed.length
 
   return (
     <DriveLayout>
@@ -729,7 +777,7 @@ export function Shared() {
         ]).map((t) => {
           const isActive = tab === t.id
           const badgeCount = t.id === 'pending'
-            ? sentInvited.length + incomingClaimed.length
+            ? sentInvited.length + incomingInvited.length + incomingClaimed.length
             : 0
 
           return (
