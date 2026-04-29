@@ -77,9 +77,9 @@ async function request<T>(
   }
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
+    const body = await res.json().catch(() => ({})) as Record<string, unknown>
     throw new ApiError(
-      (body as { message?: string }).message ?? res.statusText,
+      (body.message ?? body.error ?? res.statusText) as string,
       res.status,
     )
   }
@@ -329,9 +329,9 @@ export async function uploadFile(
   })
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
+    const body = await res.json().catch(() => ({})) as Record<string, unknown>
     throw new ApiError(
-      (body as { message?: string }).message ?? res.statusText,
+      (body.message ?? body.error ?? res.statusText) as string,
       res.status,
     )
   }
@@ -479,9 +479,9 @@ export async function getShare(token: string): Promise<ShareView> {
   const res = await fetch(`${API_URL}/api/v1/shares/${token}`)
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
+    const body = await res.json().catch(() => ({})) as Record<string, unknown>
     throw new ApiError(
-      (body as { message?: string }).message ?? res.statusText,
+      (body.message ?? body.error ?? res.statusText) as string,
       res.status,
     )
   }
@@ -500,9 +500,9 @@ export async function verifySharePassphrase(
   })
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
+    const body = await res.json().catch(() => ({})) as Record<string, unknown>
     throw new ApiError(
-      (body as { message?: string }).message ?? res.statusText,
+      (body.message ?? body.error ?? res.statusText) as string,
       res.status,
     )
   }
@@ -947,9 +947,9 @@ export async function getInvitePreview(
   // Public endpoint — no auth header needed
   const res = await fetch(`${API_URL}/api/v1/workspaces/invite-preview/${token}`)
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
+    const body = await res.json().catch(() => ({})) as Record<string, unknown>
     throw new ApiError(
-      (body as { message?: string }).message ?? res.statusText,
+      (body.message ?? body.error ?? res.statusText) as string,
       res.status,
     )
   }
