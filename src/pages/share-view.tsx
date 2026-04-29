@@ -48,9 +48,22 @@ export function ShareViewPage() {
   const [downloading, setDownloading] = useState(false)
   const [downloadError, setDownloadError] = useState<string | null>(null)
 
-  /** Get the display name (decrypted if available, raw otherwise). */
+  /** Check if raw name looks like encrypted JSON (not a human-readable filename). */
+  function isEncryptedName(raw: string | null | undefined): boolean {
+    if (!raw) return false
+    try {
+      const parsed = JSON.parse(raw)
+      return parsed && typeof parsed === 'object' && ('nonce' in parsed || 'ciphertext' in parsed)
+    } catch {
+      return false
+    }
+  }
+
+  /** Get the display name: decrypted if available, "Encrypted file" if raw is encrypted JSON, raw otherwise. */
   function displayName(): string {
-    return decryptedName ?? shareData?.name_encrypted ?? 'Unknown file'
+    if (decryptedName) return decryptedName
+    if (isEncryptedName(shareData?.name_encrypted)) return 'Encrypted file'
+    return shareData?.name_encrypted ?? 'Unknown file'
   }
 
   // Extract the file key from the URL fragment (#key=...)
@@ -101,7 +114,7 @@ export function ShareViewPage() {
         )
         if (!cancelled) setDecryptedName(name)
       } catch {
-        // Can't decrypt -- will show raw name
+        // Can't decrypt -- will show encrypted placeholder
       }
     }
     decrypt()
@@ -317,8 +330,16 @@ export function ShareViewPage() {
           {/* File info */}
           <div className="p-6">
             <div className="flex items-start gap-3 mb-5">
-              <div className="w-11 h-[52px] bg-paper-2 border border-line rounded-md flex items-center justify-center shrink-0">
-                <Icon name="file" size={18} className="text-ink-3" />
+              <div className={`w-11 h-[52px] border rounded-md flex items-center justify-center shrink-0 ${
+                hasKey && decryptedName
+                  ? 'bg-paper-2 border-line'
+                  : 'bg-amber-bg border-amber-deep/30'
+              }`}>
+                <Icon
+                  name={hasKey && decryptedName ? 'file' : 'lock'}
+                  size={18}
+                  className={hasKey && decryptedName ? 'text-ink-3' : 'text-amber-deep'}
+                />
               </div>
               <div className="flex-1 min-w-0">
                 <h2 className="text-[15px] font-semibold text-ink leading-snug break-all">
@@ -326,7 +347,11 @@ export function ShareViewPage() {
                 </h2>
                 <p className="text-xs text-ink-3 mt-1">
                   {shareData?.size_bytes != null ? formatBytes(shareData.size_bytes) : ''}
-                  {shareData?.mime_type ? ` · ${shareData.mime_type}` : ''}
+                  {hasKey && decryptedName && shareData?.mime_type
+                    ? ` · ${shareData.mime_type}`
+                    : !hasKey || !decryptedName
+                      ? shareData?.size_bytes != null ? ' · Encrypted' : 'Encrypted'
+                      : ''}
                 </p>
               </div>
             </div>
