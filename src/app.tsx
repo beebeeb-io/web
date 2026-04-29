@@ -141,9 +141,9 @@ export function App() {
           <Route
             path="/onboarding"
             element={
-              <ProtectedRoute>
+              <GuestRoute>
                 <Onboarding />
-              </ProtectedRoute>
+              </GuestRoute>
             }
           />
           <Route
