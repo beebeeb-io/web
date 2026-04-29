@@ -47,6 +47,10 @@ export function ShareViewPage() {
   const [verifyError, setVerifyError] = useState<string | null>(null)
   const [downloading, setDownloading] = useState(false)
   const [downloadError, setDownloadError] = useState<string | null>(null)
+  const [manualKey, setManualKey] = useState('')
+  const [unlockError, setUnlockError] = useState<string | null>(null)
+  // Tracks whether we have a usable key (from fragment or manual entry)
+  const [keyAvailable, setKeyAvailable] = useState(false)
 
   /** Check if raw name looks like encrypted JSON (not a human-readable filename). */
   function isEncryptedName(raw: string | null | undefined): boolean {
@@ -79,6 +83,13 @@ export function ShareViewPage() {
       return null
     }
   }
+
+  // Check for key in fragment on mount
+  useEffect(() => {
+    if (getKeyFromFragment()) {
+      setKeyAvailable(true)
+    }
+  }, [])
 
   useEffect(() => {
     if (!token) return
@@ -119,7 +130,27 @@ export function ShareViewPage() {
     }
     decrypt()
     return () => { cancelled = true }
-  }, [shareData])
+  }, [shareData, keyAvailable])
+
+  /** Handle manual key entry to unlock the file. */
+  const handleUnlock = useCallback(async () => {
+    const trimmed = manualKey.trim()
+    if (!trimmed) return
+
+    setUnlockError(null)
+
+    try {
+      // Validate the key can be decoded
+      fromBase64(trimmed)
+    } catch {
+      setUnlockError('Invalid key format. Check that you pasted the full key.')
+      return
+    }
+
+    // Set the key as a URL fragment so getKeyFromFragment() picks it up
+    window.location.hash = '#key=' + encodeURIComponent(trimmed)
+    setKeyAvailable(true)
+  }, [manualKey])
 
   const handleVerify = useCallback(async () => {
     if (!token || !passphrase.trim()) return
@@ -135,8 +166,7 @@ export function ShareViewPage() {
     }
   }, [token, passphrase])
 
-  const fileKey = getKeyFromFragment()
-  const hasKey = !!fileKey
+  const hasKey = keyAvailable
 
   const handleDownload = useCallback(async () => {
     if (!token || !shareData) return
@@ -392,10 +422,46 @@ export function ShareViewPage() {
               </BBButton>
             )}
 
+            {/* Key entry form — when no key is present */}
             {shareData?.can_download !== false && !hasKey && (
-              <div className="px-3 py-2 bg-amber-bg border border-amber/30 rounded-md text-xs text-ink-2 text-center">
-                <Icon name="lock" size={12} className="inline mr-1" />
-                Decryption key missing. Ask the sender for the full link including the key.
+              <div className="border border-line-2 rounded-lg bg-paper-2 p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Icon name="lock" size={14} className="text-amber-deep" />
+                  <span className="text-sm font-medium text-ink">This file is encrypted</span>
+                </div>
+                <p className="text-xs text-ink-3 mb-3">
+                  Enter the decryption key to access this file.
+                </p>
+                <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 mb-3 focus-within:border-amber-deep focus-within:ring-2 focus-within:ring-amber/30 transition-colors">
+                  <Icon name="key" size={13} className="text-ink-3 shrink-0" />
+                  <input
+                    type="text"
+                    value={manualKey}
+                    onChange={(e) => {
+                      setManualKey(e.target.value)
+                      setUnlockError(null)
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleUnlock()
+                    }}
+                    placeholder="Paste decryption key"
+                    className="flex-1 bg-transparent font-mono text-xs text-ink outline-none placeholder:text-ink-4"
+                    autoFocus
+                  />
+                </div>
+                {unlockError && (
+                  <p className="text-xs text-red mb-3">{unlockError}</p>
+                )}
+                <BBButton
+                  variant="amber"
+                  size="md"
+                  className="w-full justify-center gap-2"
+                  onClick={handleUnlock}
+                  disabled={!manualKey.trim()}
+                >
+                  <Icon name="lock" size={13} />
+                  Unlock file
+                </BBButton>
               </div>
             )}
 
