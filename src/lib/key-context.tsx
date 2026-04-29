@@ -31,6 +31,8 @@ interface KeyState {
   isUnlocked: boolean
   /** Whether a wrapped key exists in IndexedDB. */
   vaultExists: boolean
+  /** Whether the vault check has completed (prevents race conditions). */
+  vaultChecked: boolean
   /** Set the master key and wrap it with password into IndexedDB vault. */
   setMasterKey: (key: Uint8Array, password: string) => Promise<void>
   /** Unwrap the master key from IndexedDB using password. Returns true if successful. */
@@ -55,6 +57,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
   const [cryptoError, setCryptoError] = useState<string | null>(null)
   const [isUnlocked, setIsUnlocked] = useState(false)
   const [vaultExists, setVaultExists] = useState(false)
+  const [vaultChecked, setVaultChecked] = useState(false)
 
   const masterKeyRef = useRef<Uint8Array | null>(null)
 
@@ -66,6 +69,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
         setCryptoLoading(false)
         const exists = await hasVault()
         setVaultExists(exists)
+        setVaultChecked(true)
       })
       .catch((err) => {
         setCryptoError(
@@ -142,6 +146,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       cryptoError,
       isUnlocked,
       vaultExists,
+      vaultChecked,
       setMasterKey,
       unlockVault,
       unlock,
@@ -150,7 +155,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       lock,
       fullLogout,
     }),
-    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, vaultExists, setMasterKey, unlockVault, unlock, getFileKey, getMasterKey, lock, fullLogout],
+    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, vaultExists, vaultChecked, setMasterKey, unlockVault, unlock, getFileKey, getMasterKey, lock, fullLogout],
   )
 
   return <KeyContext.Provider value={value}>{children}</KeyContext.Provider>

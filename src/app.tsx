@@ -47,9 +47,9 @@ import { NotFound } from './pages/errors/not-found'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
-  const { isUnlocked, vaultExists } = useKeys()
+  const { isUnlocked, vaultExists, vaultChecked } = useKeys()
 
-  if (loading) return null
+  if (loading || !vaultChecked) return null
   if (!user) return <Navigate to="/login" replace />
 
   if (!isUnlocked) {
