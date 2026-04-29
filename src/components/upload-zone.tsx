@@ -2,12 +2,101 @@ import { useState, useRef, useCallback, type ReactNode } from 'react'
 import { Icon } from './icons'
 import { BBButton } from './bb-button'
 
+// ─── Folder traversal helpers ─────────────────────
+
+/** A file with its relative path within the dropped/selected folder. */
+export interface FolderFile {
+  file: File
+  /** Relative path from the root folder, e.g. "photos/2024/img.jpg" */
+  relativePath: string
+}
+
+/** Recursively read all files from a FileSystemDirectoryEntry. */
+function readDirectoryEntry(entry: FileSystemDirectoryEntry): Promise<FolderFile[]> {
+  return new Promise((resolve) => {
+    const reader = entry.createReader()
+    const allEntries: FileSystemEntry[] = []
+
+    // readEntries may return partial results — keep reading until empty
+    function readBatch() {
+      reader.readEntries((entries) => {
+        if (entries.length === 0) {
+          // All entries collected, now recurse
+          processEntries(allEntries).then(resolve)
+        } else {
+          allEntries.push(...entries)
+          readBatch()
+        }
+      })
+    }
+
+    readBatch()
+  })
+}
+
+async function processEntries(entries: FileSystemEntry[]): Promise<FolderFile[]> {
+  const results: FolderFile[] = []
+  for (const entry of entries) {
+    if (entry.isFile) {
+      const fileEntry = entry as FileSystemFileEntry
+      const file = await new Promise<File>((resolve) => fileEntry.file(resolve))
+      results.push({ file, relativePath: entry.fullPath.replace(/^\//, '') })
+    } else if (entry.isDirectory) {
+      const children = await readDirectoryEntry(entry as FileSystemDirectoryEntry)
+      results.push(...children)
+    }
+  }
+  return results
+}
+
+/** Traverse DataTransferItems to detect folders and extract all files with paths. */
+export async function extractDroppedItems(
+  dataTransfer: DataTransfer,
+): Promise<{ files: File[]; folderFiles: FolderFile[] } | null> {
+  const items = Array.from(dataTransfer.items)
+  const entries = items
+    .map((item) => item.webkitGetAsEntry?.())
+    .filter((e): e is FileSystemEntry => e != null)
+
+  // Check if any dropped item is a directory
+  const hasDirectory = entries.some((e) => e.isDirectory)
+
+  if (!hasDirectory) {
+    // Plain file drop — no folder structure
+    return null
+  }
+
+  // At least one folder was dropped — traverse everything
+  const folderFiles: FolderFile[] = []
+  for (const entry of entries) {
+    if (entry.isDirectory) {
+      const children = await readDirectoryEntry(entry as FileSystemDirectoryEntry)
+      // Prefix with the root folder name
+      folderFiles.push(
+        ...children.map((f) => ({
+          ...f,
+          relativePath: f.relativePath,
+        })),
+      )
+    } else if (entry.isFile) {
+      const fileEntry = entry as FileSystemFileEntry
+      const file = await new Promise<File>((resolve) => fileEntry.file(resolve))
+      folderFiles.push({ file, relativePath: file.name })
+    }
+  }
+
+  return { files: [], folderFiles }
+}
+
+// ─── UploadZone ───────────────────────────────────
+
 interface UploadZoneProps {
   onFiles: (files: File[]) => void
+  onFolderFiles?: (folderFiles: FolderFile[]) => void
   children: ReactNode
 }
 
-export function UploadZone({ onFiles, children }: UploadZoneProps) {
+export function UploadZone({ onFiles, onFolderFiles, children }: UploadZoneProps) {
   const [dragging, setDragging] = useState(false)
   const dragCounter = useRef(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -36,16 +125,26 @@ export function UploadZone({ onFiles, children }: UploadZoneProps) {
   }, [])
 
   const handleDrop = useCallback(
-    (e: React.DragEvent) => {
+    async (e: React.DragEvent) => {
       e.preventDefault()
       e.stopPropagation()
       dragCounter.current = 0
       setDragging(false)
 
+      // Try folder-aware extraction first
+      if (onFolderFiles) {
+        const result = await extractDroppedItems(e.dataTransfer)
+        if (result && result.folderFiles.length > 0) {
+          onFolderFiles(result.folderFiles)
+          return
+        }
+      }
+
+      // Plain file drop fallback
       const files = Array.from(e.dataTransfer.files)
       if (files.length > 0) onFiles(files)
     },
-    [onFiles],
+    [onFiles, onFolderFiles],
   )
 
   const handleBrowse = useCallback(() => {
@@ -101,7 +200,7 @@ export function UploadZone({ onFiles, children }: UploadZoneProps) {
             >
               <Icon name="arrow-up" size={20} className="text-ink" />
             </div>
-            <div className="text-[15px] font-semibold mb-1">Drop files to encrypt</div>
+            <div className="text-[15px] font-semibold mb-1">Drop files or folders to encrypt</div>
             <div className="font-mono text-[10.5px] text-ink-3">
               AES-256-GCM · chunked client-side · EU-only transit
             </div>
@@ -159,4 +258,45 @@ export function useBrowseFiles(onFiles: (files: File[]) => void) {
   )
 
   return { browse, HiddenInput }
+}
+
+// Browse folders via hidden input with webkitdirectory
+export function useBrowseFolders(onFolderFiles: (files: FolderFile[]) => void) {
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const browseFolder = useCallback(() => {
+    inputRef.current?.click()
+  }, [])
+
+  const handleChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const fileList = Array.from(e.target.files ?? [])
+      if (fileList.length === 0) return
+
+      const folderFiles: FolderFile[] = fileList.map((f) => ({
+        file: f,
+        // webkitRelativePath gives "rootFolder/subfolder/file.txt"
+        relativePath: f.webkitRelativePath || f.name,
+      }))
+
+      onFolderFiles(folderFiles)
+      e.target.value = ''
+    },
+    [onFolderFiles],
+  )
+
+  const HiddenFolderInput = useCallback(
+    () => (
+      <input
+        ref={inputRef}
+        type="file"
+        className="hidden"
+        onChange={handleChange}
+        {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
+      />
+    ),
+    [handleChange],
+  )
+
+  return { browseFolder, HiddenFolderInput }
 }

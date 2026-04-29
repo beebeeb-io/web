@@ -10,7 +10,7 @@ import { ShareDialog } from '../components/share-dialog'
 import { MoveModal } from '../components/move-modal'
 import { ContextMenu } from '../components/context-menu'
 import { RenameDialog } from '../components/rename-dialog'
-import { UploadZone, useBrowseFiles } from '../components/upload-zone'
+import { UploadZone, useBrowseFiles, useBrowseFolders, type FolderFile } from '../components/upload-zone'
 import { UploadProgress, type UploadItem } from '../components/upload-progress'
 import { NewFolderDialog } from '../components/new-folder-dialog'
 import { NotificationInbox, useNotifications } from '../components/notification-inbox'
@@ -183,6 +183,7 @@ export function Drive() {
 
   // Browse files hook
   const { browse, HiddenInput } = useBrowseFiles(handleFilesSelected)
+  const { browseFolder, HiddenFolderInput } = useBrowseFolders(handleFolderFilesSelected)
 
   function resolveUniqueName(name: string): string {
     const existing = new Set(Object.values(decryptedNames))
@@ -273,6 +274,166 @@ export function Drive() {
       setUploads((prev) =>
         prev.map((u) =>
           u.id === uploadId
+            ? { ...u, stage: 'Queued' as const, progress: 0 }
+            : u,
+        ),
+      )
+    }
+  }
+
+  async function handleFolderFilesSelected(folderFiles: FolderFile[]) {
+    if (!isUnlocked || !cryptoReady) {
+      showToast({
+        icon: 'lock',
+        title: 'Vault is locked',
+        description: 'Log in again to unlock encryption before uploading.',
+        danger: true,
+      })
+      return
+    }
+
+    if (folderFiles.length === 0) return
+
+    // Collect all unique folder paths from the file list, sorted by depth (parent first)
+    const folderPaths = new Set<string>()
+    for (const ff of folderFiles) {
+      const parts = ff.relativePath.split('/')
+      // Build all ancestor folder paths (excluding the filename itself)
+      for (let i = 1; i < parts.length; i++) {
+        folderPaths.add(parts.slice(0, i).join('/'))
+      }
+    }
+    const sortedFolderPaths = Array.from(folderPaths).sort((a, b) => {
+      const depthA = a.split('/').length
+      const depthB = b.split('/').length
+      if (depthA !== depthB) return depthA - depthB
+      return a.localeCompare(b)
+    })
+
+    // Track total progress for all files in the folder upload
+    const totalFiles = folderFiles.length
+    let completedFiles = 0
+    const foldUploadId = `folder-upload-${Date.now()}`
+    const rootFolderName = folderFiles[0].relativePath.split('/')[0]
+
+    setUploads((prev) => [
+      ...prev,
+      {
+        id: foldUploadId,
+        name: `${rootFolderName}/ (${totalFiles} files)`,
+        size: folderFiles.reduce((sum, ff) => sum + ff.file.size, 0),
+        progress: 0,
+        stage: 'Encrypting' as const,
+      },
+    ])
+
+    try {
+      // Map of relative folder path -> server folder ID
+      const folderIdMap: Record<string, string> = {}
+
+      // Create all folders in order (parent before child)
+      for (const folderPath of sortedFolderPaths) {
+        const parts = folderPath.split('/')
+        const folderName = parts[parts.length - 1]
+        const parentPath = parts.slice(0, -1).join('/')
+        const parentId = parentPath ? folderIdMap[parentPath] : currentParentId
+
+        const folderId = crypto.randomUUID()
+        const folderKey = await getFileKey(folderId)
+        const enc = await encryptFilename(folderKey, folderName)
+        const nameEncrypted = JSON.stringify({
+          nonce: toBase64(enc.nonce),
+          ciphertext: toBase64(enc.ciphertext),
+        })
+
+        const result = await createFolder(nameEncrypted, parentId, folderId)
+        folderIdMap[folderPath] = result.id
+
+        // Index the folder in the search index
+        const pathPrefix = breadcrumbs.slice(1).map((b) => b.name).join('/')
+        const folderLocation = parentPath
+          ? `/${pathPrefix ? pathPrefix + '/' : ''}${parentPath}`
+          : pathPrefix ? `/${pathPrefix}` : '/'
+        indexFile(result.id, {
+          name: folderName,
+          path: folderLocation,
+          type: 'folder',
+          size: 0,
+          parent: parentId ?? null,
+          starred: false,
+          created: new Date().toISOString(),
+          modified: new Date().toISOString(),
+          tags: [],
+        })
+      }
+
+      setUploads((prev) =>
+        prev.map((u) =>
+          u.id === foldUploadId ? { ...u, stage: 'Uploading' as const, progress: 5 } : u,
+        ),
+      )
+
+      // Upload all files into their respective folders
+      for (const ff of folderFiles) {
+        const parts = ff.relativePath.split('/')
+        const parentPath = parts.slice(0, -1).join('/')
+        const parentId = parentPath ? folderIdMap[parentPath] : currentParentId
+
+        const fileId = crypto.randomUUID()
+        const fileKey = await getFileKey(fileId)
+
+        await encryptedUpload(ff.file, fileId, fileKey, parentId, (p) => {
+          // Blend per-file progress into overall progress
+          const fileProgress = p.progress / 100
+          const overallProgress = Math.round(
+            5 + ((completedFiles + fileProgress) / totalFiles) * 95,
+          )
+          setUploads((prev) =>
+            prev.map((u) =>
+              u.id === foldUploadId
+                ? { ...u, stage: p.stage === 'Done' ? 'Uploading' as const : p.stage, progress: overallProgress }
+                : u,
+            ),
+          )
+        })
+
+        // Index each file
+        const pathPrefix = breadcrumbs.slice(1).map((b) => b.name).join('/')
+        const filePath = parentPath
+          ? `/${pathPrefix ? pathPrefix + '/' : ''}${parentPath}`
+          : pathPrefix ? `/${pathPrefix}` : '/'
+        indexFile(fileId, {
+          name: ff.file.name,
+          path: filePath,
+          type: ff.file.type || 'application/octet-stream',
+          size: ff.file.size,
+          parent: parentId ?? null,
+          starred: false,
+          created: new Date().toISOString(),
+          modified: new Date().toISOString(),
+          tags: [],
+        })
+
+        completedFiles++
+      }
+
+      setUploads((prev) => prev.filter((u) => u.id !== foldUploadId))
+      showToast({
+        icon: 'check',
+        title: 'Folder uploaded',
+        description: `${rootFolderName}/ -- ${totalFiles} file${totalFiles !== 1 ? 's' : ''}`,
+      })
+      fetchFiles()
+    } catch (err) {
+      showToast({
+        icon: 'upload',
+        title: 'Folder upload failed',
+        description: err instanceof Error ? err.message : 'Something went wrong',
+        danger: true,
+      })
+      setUploads((prev) =>
+        prev.map((u) =>
+          u.id === foldUploadId
             ? { ...u, stage: 'Queued' as const, progress: 0 }
             : u,
         ),
@@ -567,6 +728,7 @@ export function Drive() {
   return (
     <DriveLayout>
       <HiddenInput />
+      <HiddenFolderInput />
       {/* Top bar */}
         <div className="px-5 py-2.5 border-b border-line flex items-center gap-3">
           {/* Breadcrumbs / view title */}
@@ -622,6 +784,9 @@ export function Drive() {
             <BBButton size="sm" onClick={browse} className="gap-1.5">
               <Icon name="upload" size={13} /> Upload
             </BBButton>
+            <BBButton size="sm" onClick={browseFolder} className="gap-1.5">
+              <Icon name="folder" size={13} /> Upload folder
+            </BBButton>
           </div>
 
           {/* Notifications */}
@@ -651,7 +816,7 @@ export function Drive() {
         </div>
 
         {/* File list with upload zone */}
-        <UploadZone onFiles={handleFilesSelected}>
+        <UploadZone onFiles={handleFilesSelected} onFolderFiles={handleFolderFilesSelected}>
           <div className="flex-1 overflow-y-auto">
             {loading ? (
               <div className="flex items-center justify-center py-20">
