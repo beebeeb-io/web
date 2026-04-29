@@ -40,7 +40,7 @@ import { VerifyEmail } from './pages/verify-email'
 import { Migration } from './pages/migration'
 import { Team } from './pages/team'
 import { AcceptInvite } from './pages/accept-invite'
-import { SharedWithMe } from './pages/shared-with-me'
+import { Shared } from './pages/shared'
 import { PasskeySetup } from './pages/passkey-setup'
 import { DeleteAccount } from './pages/delete-account'
 import { NotFound } from './pages/errors/not-found'
@@ -368,9 +368,13 @@ export function App() {
             path="/shared"
             element={
               <ProtectedRoute>
-                <SharedWithMe />
+                <Shared />
               </ProtectedRoute>
             }
+          />
+          <Route
+            path="/shared-with-me"
+            element={<Navigate to="/shared" replace />}
           />
           <Route
             path="/settings/passkeys"
