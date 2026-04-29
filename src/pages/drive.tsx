@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { BBButton } from '../components/bb-button'
+import { BBCheckbox } from '../components/bb-checkbox'
 import { BBChip } from '../components/bb-chip'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '../components/icons'
@@ -19,6 +20,7 @@ import { useWebSocket } from '../hooks/use-websocket'
 import type { WsEvent } from '../hooks/use-websocket'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
+import { modKey } from '../hooks/use-keyboard-shortcuts'
 import {
   listFiles,
   createFolder,
@@ -116,6 +118,11 @@ export function Drive() {
     open: boolean; x: number; y: number; fileId: string; fileName: string; isFolder: boolean
   }>({ open: false, x: 0, y: 0, fileId: '', fileName: '', isFolder: false })
   const [pausedUploads, setPausedUploads] = useState<UploadState[]>([])
+
+  // ─── Multi-select state ──────────────────────────────
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const lastClickedIdRef = useRef<string | null>(null)
+  const [bulkMoveOpen, setBulkMoveOpen] = useState(false)
 
   const viewType = location.pathname === '/starred' ? 'starred'
     : location.pathname === '/recent' ? 'recent'
@@ -823,6 +830,211 @@ export function Drive() {
     }
   }
 
+  // ─── Sorted file list (needed before selection helpers) ──
+  const sortedFiles = [...files].sort((a, b) => {
+    // Folders first
+    if (a.is_folder && !b.is_folder) return -1
+    if (!a.is_folder && b.is_folder) return 1
+    return displayName(a).localeCompare(displayName(b))
+  })
+
+  // ─── Multi-select helpers ──────────────────────────────
+
+  /** Clear selection whenever the folder / view changes. */
+  useEffect(() => {
+    setSelectedIds(new Set())
+    lastClickedIdRef.current = null
+  }, [currentParentId, viewType])
+
+  function toggleSelection(fileId: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(fileId)) {
+        next.delete(fileId)
+      } else {
+        next.add(fileId)
+      }
+      return next
+    })
+    lastClickedIdRef.current = fileId
+  }
+
+  function handleRowClick(file: DriveFile, e: React.MouseEvent) {
+    // If shift key is held and we have a previous click target, do range select
+    if (e.shiftKey && lastClickedIdRef.current) {
+      const ids = sortedFiles.map((f) => f.id)
+      const lastIdx = ids.indexOf(lastClickedIdRef.current)
+      const curIdx = ids.indexOf(file.id)
+      if (lastIdx !== -1 && curIdx !== -1) {
+        const start = Math.min(lastIdx, curIdx)
+        const end = Math.max(lastIdx, curIdx)
+        const rangeIds = ids.slice(start, end + 1)
+        setSelectedIds((prev) => {
+          const next = new Set(prev)
+          for (const id of rangeIds) next.add(id)
+          return next
+        })
+        return
+      }
+    }
+
+    // Ctrl/Cmd+click toggles individual without clearing
+    if (e[modKey]) {
+      toggleSelection(file.id)
+      return
+    }
+
+    // Plain click on a checkbox area is handled by the checkbox itself.
+    // Plain click on the row body: open file/folder (existing behavior).
+    handleFileSelect(file)
+  }
+
+  function handleCheckboxClick(fileId: string, e: React.MouseEvent) {
+    e.stopPropagation()
+
+    if (e.shiftKey && lastClickedIdRef.current) {
+      const ids = sortedFiles.map((f) => f.id)
+      const lastIdx = ids.indexOf(lastClickedIdRef.current)
+      const curIdx = ids.indexOf(fileId)
+      if (lastIdx !== -1 && curIdx !== -1) {
+        const start = Math.min(lastIdx, curIdx)
+        const end = Math.max(lastIdx, curIdx)
+        const rangeIds = ids.slice(start, end + 1)
+        setSelectedIds((prev) => {
+          const next = new Set(prev)
+          for (const id of rangeIds) next.add(id)
+          return next
+        })
+        lastClickedIdRef.current = fileId
+        return
+      }
+    }
+
+    toggleSelection(fileId)
+  }
+
+  function selectAll() {
+    if (selectedIds.size === sortedFiles.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(sortedFiles.map((f) => f.id)))
+    }
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set())
+    lastClickedIdRef.current = null
+  }
+
+  const allSelected = sortedFiles.length > 0 && selectedIds.size === sortedFiles.length
+  const someSelected = selectedIds.size > 0 && selectedIds.size < sortedFiles.length
+
+  // ─── Bulk action handlers ────────────────────────────
+
+  async function handleBulkTrash() {
+    const ids = Array.from(selectedIds)
+    const count = ids.length
+    try {
+      await Promise.all(ids.map((id) => deleteFile(id)))
+      for (const id of ids) unindexFile(id)
+      showToast({
+        icon: 'trash',
+        title: 'Moved to trash',
+        description: `${count} file${count !== 1 ? 's' : ''} moved to trash`,
+      })
+      clearSelection()
+      fetchFiles()
+    } catch (err) {
+      showToast({
+        icon: 'trash',
+        title: 'Failed to trash',
+        description: err instanceof Error ? err.message : 'Something went wrong',
+        danger: true,
+      })
+    }
+  }
+
+  async function handleBulkMoveConfirm(destinationId: string | null, _mode: 'move' | 'copy') {
+    const ids = Array.from(selectedIds)
+    const count = ids.length
+    try {
+      await Promise.all(
+        ids.map((id) => updateFile(id, { parent_id: destinationId ?? undefined })),
+      )
+      showToast({
+        icon: 'folder',
+        title: 'Files moved',
+        description: `${count} file${count !== 1 ? 's' : ''} moved successfully.`,
+      })
+      clearSelection()
+      fetchFiles()
+    } catch (err) {
+      showToast({
+        icon: 'x',
+        title: 'Move failed',
+        description: err instanceof Error ? err.message : 'Could not move files.',
+        danger: true,
+      })
+    } finally {
+      setBulkMoveOpen(false)
+    }
+  }
+
+  function handleBulkShare() {
+    if (selectedIds.size === 1) {
+      setShareFileId(Array.from(selectedIds)[0])
+    } else {
+      showToast({
+        icon: 'share',
+        title: 'Select one file to share',
+        description: 'Sharing multiple files at once is not supported yet.',
+      })
+    }
+  }
+
+  async function handleBulkDownload() {
+    const filesToDownload = sortedFiles.filter(
+      (f) => selectedIds.has(f.id) && !f.is_folder,
+    )
+    if (filesToDownload.length === 0) {
+      showToast({
+        icon: 'download',
+        title: 'Nothing to download',
+        description: 'Select at least one file (not folder) to download.',
+      })
+      return
+    }
+    for (const file of filesToDownload) {
+      await handleFileDownload(file)
+    }
+  }
+
+  // ─── Keyboard shortcuts for selection ─────────────────
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement
+      const isInput =
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable
+
+      if (e.key === 'Escape' && selectedIds.size > 0) {
+        clearSelection()
+        return
+      }
+
+      if (isInput) return
+
+      if (e[modKey] && e.key.toLowerCase() === 'a') {
+        e.preventDefault()
+        selectAll()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [selectedIds.size, sortedFiles.length])
+
   // ─── Derived data ───────────────────────────────────
 
   const moveFile = files.find((f) => f.id === moveFileId) ?? null
@@ -830,13 +1042,6 @@ export function Drive() {
 
   // The file currently shown in the share dialog
   const shareFile = files.find((f) => f.id === shareFileId) ?? null
-
-  const sortedFiles = [...files].sort((a, b) => {
-    // Folders first
-    if (a.is_folder && !b.is_folder) return -1
-    if (!a.is_folder && b.is_folder) return 1
-    return displayName(a).localeCompare(displayName(b))
-  })
 
   return (
     <DriveLayout>
@@ -953,10 +1158,19 @@ export function Drive() {
           className="px-5 py-2 border-b border-line bg-paper-2"
           style={{
             display: 'grid',
-            gridTemplateColumns: '32px 1fr 110px 110px 100px 60px',
+            gridTemplateColumns: '20px 32px 1fr 110px 110px 100px 60px',
             gap: 14,
           }}
         >
+          <span className="flex items-center justify-center">
+            {sortedFiles.length > 0 && (
+              <BBCheckbox
+                checked={allSelected}
+                indeterminate={someSelected}
+                onChange={() => selectAll()}
+              />
+            )}
+          </span>
           <span />
           <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">Name</span>
           <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">Size</span>
@@ -967,7 +1181,15 @@ export function Drive() {
 
         {/* File list with upload zone */}
         <UploadZone onFiles={handleFilesSelected} onFolderFiles={handleFolderFilesSelected}>
-          <div className="flex-1 overflow-y-auto">
+          <div
+            className="flex-1 overflow-y-auto"
+            onClick={(e) => {
+              // Click on empty area (not on a file row) clears selection
+              if (e.target === e.currentTarget && selectedIds.size > 0) {
+                clearSelection()
+              }
+            }}
+          >
             {loading ? (
               <div className="flex items-center justify-center py-20">
                 <svg className="animate-spin h-6 w-6 text-amber" viewBox="0 0 24 24" fill="none">
@@ -1034,19 +1256,24 @@ export function Drive() {
               sortedFiles.map((file) => {
                 const name = displayName(file)
                 const fileType = getFileType(name, file.is_folder)
+                const isSelected = selectedIds.has(file.id)
                 return (
                   <div
                     key={file.id}
-                    className={`group hover:bg-paper-2 transition-colors cursor-pointer ${
-                      selectedFileId === file.id ? 'bg-amber-bg/50' : ''
+                    className={`group transition-colors cursor-pointer ${
+                      isSelected
+                        ? 'bg-amber-bg/50'
+                        : selectedFileId === file.id
+                          ? 'bg-amber-bg/30'
+                          : 'hover:bg-paper-2'
                     }`}
                     style={{
                       display: 'grid',
-                      gridTemplateColumns: '32px 1fr 110px 110px 100px 60px',
+                      gridTemplateColumns: '20px 32px 1fr 110px 110px 100px 60px',
                       gap: 14,
                       padding: '11px 20px',
                     }}
-                    onClick={() => handleFileSelect(file)}
+                    onClick={(e) => handleRowClick(file, e)}
                     onDoubleClick={() => {
                       if (!file.is_folder) handleFileDownload(file)
                     }}
@@ -1062,6 +1289,17 @@ export function Drive() {
                       })
                     }}
                   >
+                    <span
+                      className={`flex items-center justify-center ${
+                        isSelected ? '' : 'opacity-0 group-hover:opacity-100'
+                      } transition-opacity`}
+                      onClick={(e) => handleCheckboxClick(file.id, e)}
+                    >
+                      <BBCheckbox
+                        checked={isSelected}
+                        onChange={() => {/* handled by parent click */}}
+                      />
+                    </span>
                     <FileIcon type={fileType} />
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
@@ -1112,6 +1350,55 @@ export function Drive() {
             )}
           </div>
         </UploadZone>
+
+        {/* Bulk action bar */}
+        {selectedIds.size > 0 && (
+          <div className="px-5 py-2.5 border-t border-line bg-ink flex items-center gap-3.5 animate-slide-in-up">
+            <span className="text-sm font-medium text-paper">
+              {selectedIds.size} selected
+            </span>
+            <button
+              onClick={clearSelection}
+              className="text-xs text-paper/60 hover:text-paper transition-colors cursor-pointer"
+            >
+              Clear
+            </button>
+            <div className="ml-auto flex items-center gap-1.5">
+              <BBButton
+                size="sm"
+                variant="ghost"
+                className="text-paper/80 hover:text-paper hover:bg-white/10 gap-1.5"
+                onClick={() => setBulkMoveOpen(true)}
+              >
+                <Icon name="folder" size={13} /> Move
+              </BBButton>
+              <BBButton
+                size="sm"
+                variant="ghost"
+                className="text-paper/80 hover:text-paper hover:bg-white/10 gap-1.5"
+                onClick={handleBulkTrash}
+              >
+                <Icon name="trash" size={13} /> Trash
+              </BBButton>
+              <BBButton
+                size="sm"
+                variant="ghost"
+                className="text-paper/80 hover:text-paper hover:bg-white/10 gap-1.5"
+                onClick={handleBulkShare}
+              >
+                <Icon name="share" size={13} /> Share
+              </BBButton>
+              <BBButton
+                size="sm"
+                variant="amber"
+                className="gap-1.5"
+                onClick={handleBulkDownload}
+              >
+                <Icon name="download" size={13} /> Download
+              </BBButton>
+            </div>
+          </div>
+        )}
 
         {/* Status bar */}
         <div className="px-5 py-2 border-t border-line bg-paper-2 flex items-center gap-3.5 text-[11px] text-ink-3">
@@ -1190,6 +1477,22 @@ export function Drive() {
           }]}
           mode="move"
           onConfirm={handleMoveConfirm}
+        />
+      )}
+
+      {bulkMoveOpen && selectedIds.size > 0 && (
+        <MoveModal
+          open={bulkMoveOpen}
+          onClose={() => setBulkMoveOpen(false)}
+          items={sortedFiles
+            .filter((f) => selectedIds.has(f.id))
+            .map((f) => ({
+              id: f.id,
+              name: displayName(f),
+              isFolder: f.is_folder,
+            }))}
+          mode="move"
+          onConfirm={handleBulkMoveConfirm}
         />
       )}
 
