@@ -7,6 +7,9 @@ import { Icon } from '../components/icons'
 import { FileIcon, getFileType } from '../components/file-icon'
 import { FileDetailsPanel, type FileDetailsMeta } from '../components/file-details-panel'
 import { ShareDialog } from '../components/share-dialog'
+import { MoveModal } from '../components/move-modal'
+import { ContextMenu } from '../components/context-menu'
+import { RenameDialog } from '../components/rename-dialog'
 import { UploadZone, useBrowseFiles } from '../components/upload-zone'
 import { UploadProgress, type UploadItem } from '../components/upload-progress'
 import { NewFolderDialog } from '../components/new-folder-dialog'
@@ -20,6 +23,7 @@ import {
   listFiles,
   createFolder,
   toggleStar,
+  updateFile,
   type DriveFile,
 } from '../lib/api'
 import { encryptedUpload } from '../lib/encrypted-upload'
@@ -98,6 +102,11 @@ export function Drive() {
   const [syncedAgo, setSyncedAgo] = useState(14)
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null)
   const [shareFileId, setShareFileId] = useState<string | null>(null)
+  const [moveFileId, setMoveFileId] = useState<string | null>(null)
+  const [renameFileId, setRenameFileId] = useState<string | null>(null)
+  const [ctxMenu, setCtxMenu] = useState<{
+    open: boolean; x: number; y: number; fileId: string; fileName: string; isFolder: boolean
+  }>({ open: false, x: 0, y: 0, fileId: '', fileName: '', isFolder: false })
 
   const viewType = location.pathname === '/starred' ? 'starred'
     : location.pathname === '/recent' ? 'recent'
@@ -406,6 +415,108 @@ export function Drive() {
     }
   }
 
+  // ─── Move handler ─────────────────────────────────
+
+  async function handleMoveConfirm(destinationId: string | null, _mode: 'move' | 'copy') {
+    if (!moveFileId) return
+    try {
+      await updateFile(moveFileId, { parent_id: destinationId ?? undefined })
+      showToast({ icon: 'folder', title: 'File moved', description: 'Moved successfully.' })
+      fetchFiles()
+    } catch (err) {
+      showToast({
+        icon: 'x',
+        title: 'Move failed',
+        description: err instanceof Error ? err.message : 'Could not move file.',
+        danger: true,
+      })
+    } finally {
+      setMoveFileId(null)
+    }
+  }
+
+  // ─── Rename handler ─────────────────────────────────
+
+  async function handleRenameConfirm(newName: string) {
+    if (!renameFileId) return
+    if (!isUnlocked || !cryptoReady) {
+      showToast({
+        icon: 'lock',
+        title: 'Vault is locked',
+        description: 'Unlock the vault before renaming files.',
+        danger: true,
+      })
+      return
+    }
+    try {
+      const fileKey = await getFileKey(renameFileId)
+      const enc = await encryptFilename(fileKey, newName)
+      const nameEncrypted = JSON.stringify({
+        nonce: toBase64(enc.nonce),
+        ciphertext: toBase64(enc.ciphertext),
+      })
+      await updateFile(renameFileId, { name_encrypted: nameEncrypted })
+      showToast({ icon: 'check', title: 'Renamed', description: `Renamed to "${newName}".` })
+      fetchFiles()
+    } catch (err) {
+      showToast({
+        icon: 'x',
+        title: 'Rename failed',
+        description: err instanceof Error ? err.message : 'Could not rename file.',
+        danger: true,
+      })
+    } finally {
+      setRenameFileId(null)
+    }
+  }
+
+  // ─── Context menu actions ───────────────────────────
+
+  function handleContextAction(action: string, fileId: string) {
+    const file = files.find((f) => f.id === fileId)
+    if (!file) return
+
+    switch (action) {
+      case 'open':
+        handleFileSelect(file)
+        break
+      case 'share':
+        setShareFileId(fileId)
+        break
+      case 'move':
+        setMoveFileId(fileId)
+        break
+      case 'rename':
+        if (!isUnlocked || !cryptoReady) {
+          showToast({
+            icon: 'lock',
+            title: 'Vault is locked',
+            description: 'Unlock the vault before renaming files.',
+            danger: true,
+          })
+          return
+        }
+        setRenameFileId(fileId)
+        break
+      case 'star':
+        handleToggleStar(fileId)
+        break
+      case 'download':
+        handleFileDownload(file)
+        break
+      case 'trash':
+        // Existing trash logic will be handled separately
+        break
+      default:
+        break
+    }
+  }
+
+  // ─── Derived data ───────────────────────────────────
+
+  const moveFile = files.find((f) => f.id === moveFileId) ?? null
+  const renameFile = files.find((f) => f.id === renameFileId) ?? null
+
   // The file currently shown in the share dialog
   const shareFile = files.find((f) => f.id === shareFileId) ?? null
 
@@ -551,6 +662,17 @@ export function Drive() {
                     onDoubleClick={() => {
                       if (!file.is_folder) handleFileDownload(file)
                     }}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      setCtxMenu({
+                        open: true,
+                        x: e.clientX,
+                        y: e.clientY,
+                        fileId: file.id,
+                        fileName: name,
+                        isFolder: file.is_folder,
+                      })
+                    }}
                   >
                     <FileIcon type={fileType} />
                     <div className="min-w-0">
@@ -580,7 +702,18 @@ export function Drive() {
                         size="sm"
                         variant="ghost"
                         className="opacity-0 group-hover:opacity-100 transition-opacity"
-                        onClick={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                          setCtxMenu({
+                            open: true,
+                            x: rect.left,
+                            y: rect.bottom + 4,
+                            fileId: file.id,
+                            fileName: name,
+                            isFolder: file.is_folder,
+                          })
+                        }}
                       >
                         <Icon name="more" size={14} />
                       </BBButton>
@@ -646,6 +779,38 @@ export function Drive() {
           fileSize={shareFile.size_bytes}
         />
       )}
+
+      <ContextMenu
+        open={ctxMenu.open}
+        x={ctxMenu.x}
+        y={ctxMenu.y}
+        fileId={ctxMenu.fileId}
+        fileName={ctxMenu.fileName}
+        isFolder={ctxMenu.isFolder}
+        onClose={() => setCtxMenu((prev) => ({ ...prev, open: false }))}
+        onAction={handleContextAction}
+      />
+
+      {moveFile && (
+        <MoveModal
+          open={moveFileId !== null}
+          onClose={() => setMoveFileId(null)}
+          items={[{
+            id: moveFile.id,
+            name: displayName(moveFile),
+            isFolder: moveFile.is_folder,
+          }]}
+          mode="move"
+          onConfirm={handleMoveConfirm}
+        />
+      )}
+
+      <RenameDialog
+        open={renameFileId !== null}
+        onClose={() => setRenameFileId(null)}
+        currentName={renameFile ? displayName(renameFile) : ''}
+        onRename={handleRenameConfirm}
+      />
     </DriveLayout>
   )
 }
