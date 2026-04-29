@@ -37,7 +37,7 @@ export interface UploadProgress {
  */
 export async function encryptedUpload(
   file: File,
-  _fileId: string,
+  fileId: string,
   fileKey: Uint8Array,
   parentId?: string,
   onProgress?: (p: UploadProgress) => void,
@@ -55,6 +55,7 @@ export async function encryptedUpload(
 
   // 2. Init the upload on the server
   const { file_id: serverFileId } = await initUpload({
+    file_id: fileId,
     name_encrypted: nameEncrypted,
     mime_type: file.type || 'application/octet-stream',
     size_bytes: file.size,

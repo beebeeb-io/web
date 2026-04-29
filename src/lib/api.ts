@@ -342,6 +342,7 @@ export async function uploadFile(
 // ─── Chunked upload endpoints ────────────────────
 
 export async function initUpload(metadata: {
+  file_id?: string
   name_encrypted: string
   mime_type: string
   size_bytes: number
