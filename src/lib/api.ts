@@ -685,6 +685,30 @@ export async function cancelInvite(inviteId: string): Promise<void> {
   await request(`/api/v1/shares/invites/${inviteId}`, { method: 'DELETE' })
 }
 
+export async function patchInvite(
+  inviteId: string,
+  updates: { can_download?: boolean; can_reshare?: boolean; expires_at?: string },
+): Promise<void> {
+  await request(`/api/v1/shares/invites/${inviteId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(updates),
+  })
+}
+
+export interface InviteActivity {
+  recipient_email: string
+  created_at: string
+  claimed_at: string | null
+  approved_at: string | null
+  download_count: number
+  last_accessed: string | null
+  first_accessed: string | null
+}
+
+export async function getInviteActivity(inviteId: string): Promise<InviteActivity> {
+  return request(`/api/v1/shares/invites/${inviteId}/activity`)
+}
+
 // ─── Billing endpoints ─────────────────────────
 
 export interface Plan {
