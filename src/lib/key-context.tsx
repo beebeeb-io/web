@@ -1,5 +1,5 @@
 // ─── Key context ────────────────────────────────────
-// Holds the master key in memory. Never persists to storage.
+// Holds the master key in memory. Persisted to IndexedDB vault (wrapped with password).
 
 import {
   createContext,
@@ -18,6 +18,7 @@ import {
   zeroize,
 } from './crypto'
 import { registerLogoutCallback } from './auth-context'
+import { wrapAndStore, unwrap, hasVault, clearVault } from './vault'
 
 interface KeyState {
   /** True once WASM is loaded and ready. */
@@ -28,59 +29,43 @@ interface KeyState {
   cryptoError: string | null
   /** Whether the vault is unlocked (master key present). */
   isUnlocked: boolean
-  /** Derive master key from password + salt, store in memory. */
+  /** Whether a wrapped key exists in IndexedDB. */
+  vaultExists: boolean
+  /** Set the master key and wrap it with password into IndexedDB vault. */
+  setMasterKey: (key: Uint8Array, password: string) => Promise<void>
+  /** Unwrap the master key from IndexedDB using password. Returns true if successful. */
+  unlockVault: (password: string) => Promise<boolean>
+  /** Derive master key from password + salt (legacy path). */
   unlock: (password: string, salt: Uint8Array) => Promise<void>
-  /** Set the master key directly (e.g. from recovery phrase or signup). */
-  setMasterKey: (key: Uint8Array) => void
   /** Derive a per-file key from the master key (async — runs in worker). */
   getFileKey: (fileId: string) => Promise<Uint8Array>
   /** Get the raw master key (for X25519 key exchange in sharing). */
   getMasterKey: () => Uint8Array
-  /** Zero and clear the master key. */
+  /** Zero in-memory key. Vault stays in IndexedDB for re-unlock. */
   lock: () => void
+  /** Full logout: zero in-memory key AND clear IndexedDB vault. */
+  fullLogout: () => Promise<void>
 }
 
 const KeyContext = createContext<KeyState | null>(null)
-
-const MK_SESSION_KEY = 'bb_mk'
-
-function persistMasterKey(key: Uint8Array): void {
-  const b64 = btoa(String.fromCharCode(...key))
-  sessionStorage.setItem(MK_SESSION_KEY, b64)
-}
-
-function loadPersistedMasterKey(): Uint8Array | null {
-  const b64 = sessionStorage.getItem(MK_SESSION_KEY)
-  if (!b64) return null
-  const binary = atob(b64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-  return bytes
-}
-
-function clearPersistedMasterKey(): void {
-  sessionStorage.removeItem(MK_SESSION_KEY)
-}
 
 export function KeyProvider({ children }: { children: ReactNode }) {
   const [cryptoReady, setCryptoReady] = useState(false)
   const [cryptoLoading, setCryptoLoading] = useState(true)
   const [cryptoError, setCryptoError] = useState<string | null>(null)
   const [isUnlocked, setIsUnlocked] = useState(false)
+  const [vaultExists, setVaultExists] = useState(false)
 
   const masterKeyRef = useRef<Uint8Array | null>(null)
 
-  // Initialize WASM on mount + restore master key from sessionStorage
+  // Initialize WASM on mount + check if vault exists
   useState(() => {
     initCrypto()
-      .then(() => {
+      .then(async () => {
         setCryptoReady(true)
         setCryptoLoading(false)
-        const persisted = loadPersistedMasterKey()
-        if (persisted) {
-          masterKeyRef.current = persisted
-          setIsUnlocked(true)
-        }
+        const exists = await hasVault()
+        setVaultExists(exists)
       })
       .catch((err) => {
         setCryptoError(
@@ -93,14 +78,22 @@ export function KeyProvider({ children }: { children: ReactNode }) {
   const unlock = useCallback(async (password: string, salt: Uint8Array) => {
     const { masterKey } = await deriveKeys(password, salt)
     masterKeyRef.current = masterKey
-    persistMasterKey(masterKey)
     setIsUnlocked(true)
   }, [])
 
-  const setMasterKey = useCallback((key: Uint8Array) => {
+  const setMasterKey = useCallback(async (key: Uint8Array, password: string) => {
     masterKeyRef.current = key
-    persistMasterKey(key)
+    await wrapAndStore(key, password)
+    setVaultExists(true)
     setIsUnlocked(true)
+  }, [])
+
+  const unlockVault = useCallback(async (password: string): Promise<boolean> => {
+    const key = await unwrap(password)
+    if (!key) return false
+    masterKeyRef.current = key
+    setIsUnlocked(true)
+    return true
   }, [])
 
   const getFileKey = useCallback(async (fileId: string): Promise<Uint8Array> => {
@@ -122,11 +115,20 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       zeroize(masterKeyRef.current)
       masterKeyRef.current = null
     }
-    clearPersistedMasterKey()
     setIsUnlocked(false)
   }, [])
 
-  // Auto-lock on logout
+  const fullLogout = useCallback(async () => {
+    if (masterKeyRef.current) {
+      zeroize(masterKeyRef.current)
+      masterKeyRef.current = null
+    }
+    await clearVault()
+    setVaultExists(false)
+    setIsUnlocked(false)
+  }, [])
+
+  // Auto-lock on logout (not full clear — user may re-unlock)
   useEffect(() => {
     registerLogoutCallback(lock)
     return () => registerLogoutCallback(() => {})
@@ -138,13 +140,16 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       cryptoLoading,
       cryptoError,
       isUnlocked,
-      unlock,
+      vaultExists,
       setMasterKey,
+      unlockVault,
+      unlock,
       getFileKey,
       getMasterKey,
       lock,
+      fullLogout,
     }),
-    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, unlock, setMasterKey, getFileKey, getMasterKey, lock],
+    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, vaultExists, setMasterKey, unlockVault, unlock, getFileKey, getMasterKey, lock, fullLogout],
   )
 
   return <KeyContext.Provider value={value}>{children}</KeyContext.Provider>

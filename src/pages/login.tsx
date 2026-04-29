@@ -45,7 +45,7 @@ export function Login() {
       const serverMsg = Uint8Array.from(atob(serverResp.server_message), c => c.charCodeAt(0))
       const loginFinish = await opaqueLoginFinish(loginStart.state, password, serverMsg)
       await apiOpaqueLoginFinish(email, toBase64(loginFinish.message), serverResp.server_state)
-      setMasterKey(loginFinish.exportKey.slice(0, 32))
+      await setMasterKey(loginFinish.exportKey.slice(0, 32), password)
       await refreshUser()
       opaqueWorked = true
       navigate('/')
