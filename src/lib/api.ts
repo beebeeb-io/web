@@ -647,7 +647,7 @@ export interface ShareInvite {
 export async function createInvite(
   fileId: string,
   recipientEmail: string,
-): Promise<{ invite_id: string; status: string }> {
+): Promise<{ invite_id: string; status: string; recipient_public_key?: string | null }> {
   return request('/api/v1/shares/invites', {
     method: 'POST',
     body: JSON.stringify({ file_id: fileId, recipient_email: recipientEmail }),

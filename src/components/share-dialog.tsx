@@ -6,12 +6,15 @@ import { FeedbackDialog } from './feedback-dialog'
 import {
   createShare,
   createInvite,
+  approveInvite,
   type ShareInfo,
   type ShareOptions,
 } from '../lib/api'
 import {
   toBase64,
+  fromBase64,
   zeroize,
+  encryptFileKeyForSharing,
 } from '../lib/crypto'
 import { useKeys } from '../lib/key-context'
 
@@ -204,6 +207,7 @@ function InviteForm({
   onSuccess: (email: string) => void
   onRateLimitFeedback: () => void
 }) {
+  const { getMasterKey, getFileKey } = useKeys()
   const [email, setEmail] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -226,7 +230,33 @@ function InviteForm({
     setRateLimitInfo(null)
 
     try {
-      await createInvite(fileId, trimmed)
+      const result = await createInvite(fileId, trimmed)
+
+      // If recipient exists with encryption, auto-approve immediately
+      if (result.recipient_public_key && result.status === 'claimed') {
+        try {
+          const masterKey = getMasterKey()
+          const fileKey = await getFileKey(fileId)
+          const recipientPubKey = fromBase64(result.recipient_public_key)
+
+          const { encryptedFileKey, nonce } = await encryptFileKeyForSharing(
+            masterKey,
+            recipientPubKey,
+            fileId,
+            fileKey,
+          )
+          zeroize(fileKey)
+
+          const combined = new Uint8Array(nonce.length + encryptedFileKey.length)
+          combined.set(nonce, 0)
+          combined.set(encryptedFileKey, nonce.length)
+
+          await approveInvite(result.invite_id, toBase64(combined))
+        } catch {
+          // Approval failed — invite is still claimed, sender can approve later
+        }
+      }
+
       onSuccess(trimmed)
     } catch (e) {
       const rateLimit = parseRateLimitError(e)
