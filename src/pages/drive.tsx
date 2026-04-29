@@ -183,8 +183,27 @@ export function Drive() {
   // Browse files hook
   const { browse, HiddenInput } = useBrowseFiles(handleFilesSelected)
 
+  function resolveUniqueName(name: string): string {
+    const existing = new Set(Object.values(decryptedNames))
+    if (!existing.has(name)) return name
+    const dot = name.lastIndexOf('.')
+    const base = dot > 0 ? name.slice(0, dot) : name
+    const ext = dot > 0 ? name.slice(dot) : ''
+    let n = 1
+    while (existing.has(`${base}_${n}${ext}`)) n++
+    return `${base}_${n}${ext}`
+  }
+
   function handleFilesSelected(selectedFiles: File[]) {
-    const newUploads: UploadItem[] = selectedFiles.map((f, i) => ({
+    const resolved = selectedFiles.map((f) => {
+      const uniqueName = resolveUniqueName(f.name)
+      if (uniqueName !== f.name) {
+        return new File([f], uniqueName, { type: f.type, lastModified: f.lastModified })
+      }
+      return f
+    })
+
+    const newUploads: UploadItem[] = resolved.map((f, i) => ({
       id: `upload-${Date.now()}-${i}`,
       name: f.name,
       size: f.size,
@@ -193,8 +212,7 @@ export function Drive() {
     }))
     setUploads((prev) => [...prev, ...newUploads])
 
-    // Upload each file
-    selectedFiles.forEach((file, i) => {
+    resolved.forEach((file, i) => {
       const uploadId = newUploads[i].id
       doEncryptedUpload(uploadId, file)
     })
