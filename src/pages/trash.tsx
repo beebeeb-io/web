@@ -6,6 +6,8 @@ import { Icon } from '../components/icons'
 import type { IconName } from '../components/icons'
 import { listFiles, restoreFile, deleteFile, type DriveFile } from '../lib/api'
 import { useToast } from '../components/toast'
+import { useKeys } from '../lib/key-context'
+import { decryptFilename, fromBase64 } from '../lib/crypto'
 
 // ─── Helpers ─────────────────────────────────────
 
@@ -38,9 +40,9 @@ function timeAgo(dateStr: string): string {
   return `${weeks}w ago`
 }
 
-function getIconForFile(file: DriveFile): IconName {
-  if (file.is_folder) return 'folder'
-  const ext = file.name_encrypted.split('.').pop()?.toLowerCase() ?? ''
+function getIconForName(name: string, isFolder: boolean): IconName {
+  if (isFolder) return 'folder'
+  const ext = name.split('.').pop()?.toLowerCase() ?? ''
   if (['jpg', 'jpeg', 'png', 'gif', 'heic', 'webp', 'svg'].includes(ext)) return 'image'
   return 'file'
 }
@@ -49,7 +51,9 @@ function getIconForFile(file: DriveFile): IconName {
 
 export function Trash() {
   const { showToast } = useToast()
+  const { getFileKey, isUnlocked } = useKeys()
   const [files, setFiles] = useState<(DriveFile & { was_in: string })[]>([])
+  const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({})
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
 
@@ -66,6 +70,43 @@ export function Trash() {
   useEffect(() => {
     fetchTrash()
   }, [fetchTrash])
+
+  // Decrypt file names when files or unlock state change
+  useEffect(() => {
+    if (!isUnlocked) {
+      setDecryptedNames({})
+      return
+    }
+    let cancelled = false
+    async function decryptAll() {
+      const names: Record<string, string> = {}
+      for (const file of files) {
+        if (cancelled) return
+        try {
+          const parsed = JSON.parse(file.name_encrypted) as {
+            nonce: string
+            ciphertext: string
+          }
+          const fileKey = await getFileKey(file.id)
+          names[file.id] = await decryptFilename(
+            fileKey,
+            fromBase64(parsed.nonce),
+            fromBase64(parsed.ciphertext),
+          )
+        } catch {
+          names[file.id] = file.name_encrypted
+        }
+      }
+      if (!cancelled) setDecryptedNames(names)
+    }
+    decryptAll()
+    return () => { cancelled = true }
+  }, [files, isUnlocked, getFileKey])
+
+  /** Get the display name for a file (decrypted if available, raw otherwise). */
+  function displayName(file: DriveFile): string {
+    return decryptedNames[file.id] ?? file.name_encrypted
+  }
 
   const toggleSelect = (id: string) => {
     setSelected((prev) => {
@@ -204,7 +245,8 @@ export function Trash() {
             files.map((file, i, arr) => {
               const days = daysUntilShred(file.updated_at)
               const urgent = days < 7
-              const iconName = getIconForFile(file)
+              const name = displayName(file)
+              const iconName = getIconForName(name, file.is_folder)
 
               return (
                 <div
@@ -229,7 +271,7 @@ export function Trash() {
                       size={14}
                       className={iconName === 'folder' ? 'text-amber-deep' : 'text-ink-3'}
                     />
-                    <span className="text-[13px] text-ink-2 truncate">{file.name_encrypted}</span>
+                    <span className="text-[13px] text-ink-2 truncate">{name}</span>
                   </div>
                   <span className="font-mono text-[11px] text-ink-3">{file.was_in}</span>
                   <span className="font-mono text-[11px] text-ink-3">{timeAgo(file.updated_at)}</span>

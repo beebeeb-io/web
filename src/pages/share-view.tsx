@@ -10,6 +10,7 @@ import {
   downloadSharedFile,
   type ShareView as ShareViewData,
 } from '../lib/api'
+import { decryptFilename, fromBase64, initCrypto } from '../lib/crypto'
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
@@ -38,12 +39,32 @@ function formatExpiry(expiresAt: string | null | undefined): string {
 export function ShareViewPage() {
   const { token } = useParams<{ token: string }>()
   const [shareData, setShareData] = useState<ShareViewData | null>(null)
+  const [decryptedName, setDecryptedName] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [passphrase, setPassphrase] = useState('')
   const [verifying, setVerifying] = useState(false)
   const [verifyError, setVerifyError] = useState<string | null>(null)
   const [downloading, setDownloading] = useState(false)
+
+  /** Get the display name (decrypted if available, raw otherwise). */
+  function displayName(): string {
+    return decryptedName ?? shareData?.name_encrypted ?? 'Unknown file'
+  }
+
+  // Extract the file key from the URL fragment (#key=...)
+  function getKeyFromFragment(): Uint8Array | null {
+    const hash = window.location.hash
+    if (!hash) return null
+    const params = new URLSearchParams(hash.slice(1))
+    const keyB64 = params.get('key')
+    if (!keyB64) return null
+    try {
+      return fromBase64(decodeURIComponent(keyB64))
+    } catch {
+      return null
+    }
+  }
 
   useEffect(() => {
     if (!token) return
@@ -58,6 +79,33 @@ export function ShareViewPage() {
         setLoading(false)
       })
   }, [token])
+
+  // Decrypt the filename using the key from the URL fragment
+  useEffect(() => {
+    if (!shareData?.name_encrypted) return
+    const fileKey = getKeyFromFragment()
+    if (!fileKey) return
+    let cancelled = false
+    async function decrypt() {
+      try {
+        await initCrypto()
+        const parsed = JSON.parse(shareData!.name_encrypted!) as {
+          nonce: string
+          ciphertext: string
+        }
+        const name = await decryptFilename(
+          fileKey!,
+          fromBase64(parsed.nonce),
+          fromBase64(parsed.ciphertext),
+        )
+        if (!cancelled) setDecryptedName(name)
+      } catch {
+        // Can't decrypt -- will show raw name
+      }
+    }
+    decrypt()
+    return () => { cancelled = true }
+  }, [shareData])
 
   const handleVerify = useCallback(async () => {
     if (!token || !passphrase.trim()) return
@@ -81,7 +129,7 @@ export function ShareViewPage() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = shareData.name_encrypted ?? 'download'
+      a.download = decryptedName ?? shareData.name_encrypted ?? 'download'
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -91,7 +139,7 @@ export function ShareViewPage() {
     } finally {
       setDownloading(false)
     }
-  }, [token, shareData])
+  }, [token, shareData, decryptedName])
 
   // Honeycomb background pattern
   const honeycombBg = (
@@ -252,7 +300,7 @@ export function ShareViewPage() {
               </div>
               <div className="flex-1 min-w-0">
                 <h2 className="text-[15px] font-semibold text-ink leading-snug break-all">
-                  {shareData?.name_encrypted ?? 'Unknown file'}
+                  {displayName()}
                 </h2>
                 <p className="text-xs text-ink-3 mt-1">
                   {shareData?.size_bytes != null ? formatBytes(shareData.size_bytes) : ''}

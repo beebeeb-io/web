@@ -845,9 +845,11 @@ export async function listMigrations(): Promise<{
 // ─── Shared with me endpoints ────────────────────
 
 export interface SharedWithMeItem {
+  file_id?: string
   file_name_encrypted: string
   file_size: number
   from_email: string
+  sender_public_key?: string
   access_level: string
   expires: string | null
   created_at: string

@@ -8,9 +8,13 @@ import { VideoPreview } from './video-preview'
 import { MarkdownPreview } from './markdown-preview'
 import { BBButton } from '../bb-button'
 import { Icon } from '../icons'
+import { useKeys } from '../../lib/key-context'
+import { decryptFilename, fromBase64 } from '../../lib/crypto'
 
 interface FilePreviewProps {
   file: DriveFile
+  /** Pre-decrypted filename. If not provided, component will attempt to decrypt. */
+  decryptedName?: string
   onClose: () => void
 }
 
@@ -56,9 +60,39 @@ function pickRenderer(
   return null
 }
 
-export function FilePreview({ file, onClose }: FilePreviewProps) {
+export function FilePreview({ file, decryptedName: decryptedNameProp, onClose }: FilePreviewProps) {
+  const { getFileKey, isUnlocked } = useKeys()
   const [blob, setBlob] = useState<Blob | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [localDecryptedName, setLocalDecryptedName] = useState<string | null>(null)
+
+  // Display name: use prop, then locally decrypted, then raw
+  const name = decryptedNameProp ?? localDecryptedName ?? file.name_encrypted
+
+  // Decrypt filename if not provided as prop
+  useEffect(() => {
+    if (decryptedNameProp || !isUnlocked) return
+    let cancelled = false
+    async function decrypt() {
+      try {
+        const parsed = JSON.parse(file.name_encrypted) as {
+          nonce: string
+          ciphertext: string
+        }
+        const fileKey = await getFileKey(file.id)
+        const decrypted = await decryptFilename(
+          fileKey,
+          fromBase64(parsed.nonce),
+          fromBase64(parsed.ciphertext),
+        )
+        if (!cancelled) setLocalDecryptedName(decrypted)
+      } catch {
+        // Not encrypted JSON or decryption failed -- use raw value
+      }
+    }
+    decrypt()
+    return () => { cancelled = true }
+  }, [file.id, file.name_encrypted, decryptedNameProp, isUnlocked, getFileKey])
 
   useEffect(() => {
     let cancelled = false
@@ -81,7 +115,7 @@ export function FilePreview({ file, onClose }: FilePreviewProps) {
     }
   }, [file.id])
 
-  const sizeStr = formatSize(file.size)
+  const sizeStr = formatSize(file.size_bytes)
   const kindLabel = getKindLabel(file.mime_type)
   const renderer = blob ? pickRenderer(file.mime_type, blob) : null
   const canPreview = renderer !== null
@@ -91,7 +125,7 @@ export function FilePreview({ file, onClose }: FilePreviewProps) {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = file.name_encrypted
+    a.download = name
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
@@ -100,13 +134,13 @@ export function FilePreview({ file, onClose }: FilePreviewProps) {
 
   return (
     <PreviewChrome
-      filename={file.name_encrypted}
+      filename={name}
       kind={file.mime_type}
       size={sizeStr}
       onClose={onClose}
       rightRail={
         <InfoRail
-          filename={file.name_encrypted}
+          filename={name}
           kind={kindLabel}
           size={sizeStr}
           items={[

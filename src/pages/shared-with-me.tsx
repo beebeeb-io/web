@@ -5,6 +5,8 @@ import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '../components/icons'
 import { NotificationInbox, useNotifications } from '../components/notification-inbox'
 import { listSharedWithMe, type SharedWithMeItem } from '../lib/api'
+import { useKeys } from '../lib/key-context'
+import { decryptFilename, fromBase64, x25519SharedSecret, deriveShareKey, deriveX25519Private } from '../lib/crypto'
 
 // ─── Helpers ───────────────────────────────────────
 
@@ -47,9 +49,16 @@ type FilterId = 'all' | 'people' | 'anonymous'
 // ─── Component ────────────────────────────────────
 
 export function SharedWithMe() {
+  const { isUnlocked, getMasterKey } = useKeys()
   const [items, setItems] = useState<SharedWithMeItem[]>([])
+  const [decryptedNames, setDecryptedNames] = useState<Record<number, string>>({})
   const [filter, setFilter] = useState<FilterId>('all')
   const { notifications, unreadCount, markRead, markAllRead } = useNotifications()
+
+  /** Get the display name for a shared item (decrypted if available, raw otherwise). */
+  function displayName(item: SharedWithMeItem, index: number): string {
+    return decryptedNames[index] ?? item.file_name_encrypted
+  }
 
   // Fetch from API
   useEffect(() => {
@@ -57,6 +66,56 @@ export function SharedWithMe() {
       .then(setItems)
       .catch(() => {})
   }, [])
+
+  // Decrypt shared file names when items or unlock state change
+  useEffect(() => {
+    if (!isUnlocked || items.length === 0) return
+    let cancelled = false
+    async function decryptAll() {
+      const names: Record<number, string> = {}
+      for (let i = 0; i < items.length; i++) {
+        if (cancelled) return
+        const item = items[i]
+        // Shared files need file_id + sender_public_key for key exchange decryption
+        if (item.file_id && item.sender_public_key) {
+          try {
+            const parsed = JSON.parse(item.file_name_encrypted) as {
+              nonce: string
+              ciphertext: string
+            }
+            const masterKey = getMasterKey()
+            const myPrivate = await deriveX25519Private(masterKey)
+            const theirPublic = fromBase64(item.sender_public_key)
+            const sharedSecret = await x25519SharedSecret(myPrivate, theirPublic)
+            const fileIdBytes = new TextEncoder().encode(item.file_id)
+            const shareKey = await deriveShareKey(sharedSecret, fileIdBytes)
+            names[i] = await decryptFilename(
+              shareKey,
+              fromBase64(parsed.nonce),
+              fromBase64(parsed.ciphertext),
+            )
+          } catch {
+            names[i] = item.file_name_encrypted
+          }
+        } else {
+          // No file_id or sender key available -- try plain JSON parse as fallback
+          try {
+            const parsed = JSON.parse(item.file_name_encrypted)
+            // If it parses as an encrypted blob, show raw -- we can't decrypt without keys
+            if (parsed.nonce && parsed.ciphertext) {
+              names[i] = item.file_name_encrypted
+            }
+          } catch {
+            // Not JSON -- already a plain name
+            names[i] = item.file_name_encrypted
+          }
+        }
+      }
+      if (!cancelled) setDecryptedNames(names)
+    }
+    decryptAll()
+    return () => { cancelled = true }
+  }, [items, isUnlocked, getMasterKey])
 
   const isAnonymous = useCallback((item: SharedWithMeItem) => {
     return !item.from_email.includes('@')
@@ -155,6 +214,8 @@ export function SharedWithMe() {
             </div>
           ) : (
             filteredItems.map((item, i, arr) => {
+              // Find the original index of this item so we can look up its decrypted name
+              const originalIndex = items.indexOf(item)
               const isFolder = item.is_folder
               const isAnon = isAnonymous(item)
               const expiry = formatExpiry(item.expires)
@@ -178,7 +239,7 @@ export function SharedWithMe() {
                     className={isFolder ? 'text-amber-deep self-center' : 'text-ink-2 self-center'}
                   />
                   <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-[13px] font-medium truncate">{item.file_name_encrypted}</span>
+                    <span className="text-[13px] font-medium truncate">{displayName(item, originalIndex)}</span>
                     <span className="text-[11px] text-ink-4 shrink-0">{timeAgo(item.created_at)}</span>
                   </div>
                   <span className={`font-mono text-[11.5px] self-center ${isAnon ? 'text-ink-3 italic' : 'text-ink-2'}`}>

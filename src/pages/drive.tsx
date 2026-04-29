@@ -158,14 +158,14 @@ export function Drive() {
         type: event.type,
         icon: 'share',
         title: 'Share link opened',
-        description: `${data.name_encrypted ?? 'A file'} was viewed (${data.open_count ?? '?'} opens)`,
+        description: `A file was viewed (${data.open_count ?? '?'} opens)`,
         timestamp: event.timestamp,
         read: false,
       })
       showToast({
         icon: 'share',
         title: 'Share link opened',
-        description: `${data.name_encrypted ?? 'A file'} was viewed`,
+        description: 'A file was viewed',
       })
     }
   }, [addNotification, showToast, fetchFiles])

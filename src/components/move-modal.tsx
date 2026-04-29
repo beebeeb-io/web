@@ -3,6 +3,8 @@ import { BBButton } from './bb-button'
 import { BBChip } from './bb-chip'
 import { Icon } from './icons'
 import { listFiles, createFolder } from '../lib/api'
+import { useKeys } from '../lib/key-context'
+import { decryptFilename, fromBase64 } from '../lib/crypto'
 
 interface MoveModalProps {
   open: boolean
@@ -27,7 +29,9 @@ export function MoveModal({
   mode: initialMode = 'move',
   onConfirm,
 }: MoveModalProps) {
+  const { getFileKey, isUnlocked } = useKeys()
   const [folders, setFolders] = useState<FolderNode[]>([])
+  const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({})
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [breadcrumbs, setBreadcrumbs] = useState<{ id: string | null; name: string }[]>([
     { id: null, name: 'My files' },
@@ -36,6 +40,11 @@ export function MoveModal({
   const [loading, setLoading] = useState(false)
   const [creatingFolder, setCreatingFolder] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
+
+  /** Get the display name for a folder (decrypted if available, raw otherwise). */
+  function displayName(folder: FolderNode): string {
+    return decryptedNames[folder.id] ?? folder.name
+  }
 
   // Fetch folders for the current directory
   const fetchFolders = useCallback(async (parentId?: string) => {
@@ -76,6 +85,32 @@ export function MoveModal({
     }
   }, [open, breadcrumbs, fetchFolders])
 
+  // Decrypt folder names when folders or unlock state change
+  useEffect(() => {
+    if (!isUnlocked || folders.length === 0) return
+    let cancelled = false
+    async function decryptAll() {
+      const names: Record<string, string> = {}
+      for (const folder of folders) {
+        if (cancelled) return
+        try {
+          const parsed = JSON.parse(folder.name) as { nonce: string; ciphertext: string }
+          const fileKey = await getFileKey(folder.id)
+          names[folder.id] = await decryptFilename(
+            fileKey,
+            fromBase64(parsed.nonce),
+            fromBase64(parsed.ciphertext),
+          )
+        } catch {
+          names[folder.id] = folder.name
+        }
+      }
+      if (!cancelled) setDecryptedNames((prev) => ({ ...prev, ...names }))
+    }
+    decryptAll()
+    return () => { cancelled = true }
+  }, [folders, isUnlocked, getFileKey])
+
   // Close on escape
   useEffect(() => {
     if (!open) return
@@ -91,7 +126,7 @@ export function MoveModal({
   }
 
   const handleFolderOpen = (folder: FolderNode) => {
-    setBreadcrumbs((prev) => [...prev, { id: folder.id, name: folder.name }])
+    setBreadcrumbs((prev) => [...prev, { id: folder.id, name: displayName(folder) }])
     setSelectedId(null)
   }
 
@@ -127,7 +162,7 @@ export function MoveModal({
   }
 
   const filteredFolders = search
-    ? folders.filter((f) => f.name.toLowerCase().includes(search.toLowerCase()))
+    ? folders.filter((f) => displayName(f).toLowerCase().includes(search.toLowerCase()))
     : folders
 
   if (!open) return null
@@ -247,7 +282,7 @@ export function MoveModal({
                   <span
                     className={`flex-1 text-[13px] ${isSelected ? 'font-semibold' : ''}`}
                   >
-                    {folder.name}
+                    {displayName(folder)}
                   </span>
                   {isSelected && (
                     <Icon name="check" size={13} className="text-amber-deep" />
