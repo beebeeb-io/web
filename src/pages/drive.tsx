@@ -14,6 +14,7 @@ import { RenameDialog } from '../components/rename-dialog'
 import { UploadZone, useBrowseFiles, useBrowseFolders, type FolderFile } from '../components/upload-zone'
 import { UploadProgress, type UploadItem } from '../components/upload-progress'
 import { NewFolderDialog } from '../components/new-folder-dialog'
+import { VersionHistory } from '../components/version-history'
 import { NotificationInbox, useNotifications } from '../components/notification-inbox'
 import { useToast } from '../components/toast'
 import { useWebSocket } from '../hooks/use-websocket'
@@ -116,6 +117,7 @@ export function Drive() {
   const [shareFileId, setShareFileId] = useState<string | null>(null)
   const [moveFileId, setMoveFileId] = useState<string | null>(null)
   const [renameFileId, setRenameFileId] = useState<string | null>(null)
+  const [versionFileId, setVersionFileId] = useState<string | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{
     open: boolean; x: number; y: number; fileId: string; fileName: string; isFolder: boolean
   }>({ open: false, x: 0, y: 0, fileId: '', fileName: '', isFolder: false })
@@ -829,6 +831,9 @@ export function Drive() {
         break
       case 'star':
         handleToggleStar(fileId)
+        break
+      case 'versions':
+        if (!file.is_folder) setVersionFileId(fileId)
         break
       case 'download':
         handleFileDownload(file)
@@ -1585,6 +1590,19 @@ export function Drive() {
         currentName={renameFile ? displayName(renameFile) : ''}
         onRename={handleRenameConfirm}
       />
+
+      {versionFileId && (
+        <VersionHistory
+          open={true}
+          onClose={() => setVersionFileId(null)}
+          fileId={versionFileId}
+          fileName={(() => {
+            const f = files.find((x) => x.id === versionFileId)
+            return f ? displayName(f) : ''
+          })()}
+          onVersionRestored={fetchFiles}
+        />
+      )}
     </DriveLayout>
   )
 }
