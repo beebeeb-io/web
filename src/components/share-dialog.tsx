@@ -16,6 +16,12 @@ import {
   zeroize,
   encryptFileKeyForSharing,
 } from '../lib/crypto'
+import {
+  generateFolderKey,
+  encryptFolderKeyForRecipient,
+  encryptOwnerFolderKey,
+  encryptAllChildrenKeys,
+} from '../lib/folder-share-crypto'
 import { useKeys } from '../lib/key-context'
 
 interface ShareDialogProps {
@@ -24,6 +30,7 @@ interface ShareDialogProps {
   fileId: string
   fileName: string
   fileSize: number
+  isFolder?: boolean
 }
 
 type ShareMode = 'link' | 'invite'
@@ -200,10 +207,12 @@ function parseRateLimitError(error: unknown): RateLimitInfo | null {
 
 function InviteForm({
   fileId,
+  isFolder,
   onSuccess,
   onRateLimitFeedback,
 }: {
   fileId: string
+  isFolder?: boolean
   onSuccess: (email: string) => void
   onRateLimitFeedback: () => void
 }) {
@@ -218,6 +227,8 @@ function InviteForm({
     inputRef.current?.focus()
   }, [])
 
+  const [progress, setProgress] = useState<string | null>(null)
+
   const handleInvite = useCallback(async () => {
     const trimmed = email.trim().toLowerCase()
     if (!trimmed || !trimmed.includes('@')) {
@@ -228,32 +239,76 @@ function InviteForm({
     setLoading(true)
     setError(null)
     setRateLimitInfo(null)
+    setProgress(null)
 
     try {
-      const result = await createInvite(fileId, trimmed)
+      if (isFolder) {
+        // Folder sharing flow — generate folder_key, encrypt children, create invite
+        const masterKey = getMasterKey()
+        const folderKey = await generateFolderKey()
 
-      // If recipient exists with encryption, auto-approve immediately
-      if (result.recipient_public_key && result.status === 'claimed') {
-        try {
-          const masterKey = getMasterKey()
-          const fileKey = await getFileKey(fileId)
-          const recipientPubKey = fromBase64(result.recipient_public_key)
+        setProgress('Encrypting folder contents...')
+        const folderKeys = await encryptAllChildrenKeys(
+          masterKey, folderKey, fileId,
+          (done, total) => setProgress(`Encrypting keys: ${done}/${total}`),
+        )
 
-          const { encryptedFileKey, nonce } = await encryptFileKeyForSharing(
-            masterKey,
-            recipientPubKey,
-            fileId,
-            fileKey,
-          )
-          zeroize(fileKey)
+        // Encrypt folder key for owner (self-storage)
+        const encOwnerFK = await encryptOwnerFolderKey(masterKey, fileId, folderKey)
 
-          const combined = new Uint8Array(nonce.length + encryptedFileKey.length)
-          combined.set(nonce, 0)
-          combined.set(encryptedFileKey, nonce.length)
+        setProgress('Creating invite...')
+        const result = await createInvite(fileId, trimmed, {
+          is_folder_share: true,
+          encrypted_folder_key: '', // placeholder — filled after auto-claim
+          encrypted_owner_folder_key: toBase64(encOwnerFK),
+          folder_keys: folderKeys,
+        })
 
-          await approveInvite(result.invite_id, toBase64(combined))
-        } catch {
-          // Approval failed — invite is still claimed, sender can approve later
+        // Auto-approve with folder key encryption for recipient
+        if (result.recipient_public_key && result.status === 'claimed') {
+          try {
+            const recipientPubKey = fromBase64(result.recipient_public_key)
+            const encFolderKey = await encryptFolderKeyForRecipient(
+              masterKey, recipientPubKey, fileId, folderKey,
+            )
+            // Update the invite with the encrypted folder key and approve
+            const { patchInvite } = await import('../lib/api')
+            await patchInvite(result.invite_id, {})
+            // For folder shares, approval = setting encrypted_folder_key
+            // We need a dedicated endpoint for this — for now, reuse approve with the folder key
+            await approveInvite(result.invite_id, toBase64(encFolderKey))
+          } catch {
+            // Approval failed — invite is still claimed, sender can approve later
+          }
+        }
+
+        zeroize(folderKey)
+      } else {
+        // Single file sharing flow
+        const result = await createInvite(fileId, trimmed)
+
+        if (result.recipient_public_key && result.status === 'claimed') {
+          try {
+            const masterKey = getMasterKey()
+            const fileKey = await getFileKey(fileId)
+            const recipientPubKey = fromBase64(result.recipient_public_key)
+
+            const { encryptedFileKey, nonce } = await encryptFileKeyForSharing(
+              masterKey,
+              recipientPubKey,
+              fileId,
+              fileKey,
+            )
+            zeroize(fileKey)
+
+            const combined = new Uint8Array(nonce.length + encryptedFileKey.length)
+            combined.set(nonce, 0)
+            combined.set(encryptedFileKey, nonce.length)
+
+            await approveInvite(result.invite_id, toBase64(combined))
+          } catch {
+            // Approval failed — invite is still claimed, sender can approve later
+          }
         }
       }
 
@@ -269,8 +324,9 @@ function InviteForm({
       }
     } finally {
       setLoading(false)
+      setProgress(null)
     }
-  }, [email, fileId, onSuccess])
+  }, [email, fileId, isFolder, onSuccess])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -328,6 +384,12 @@ function InviteForm({
           className="flex-1 bg-transparent text-[13px] text-ink outline-none placeholder:text-ink-4"
         />
       </div>
+
+      {progress && (
+        <div className="mb-4 px-3 py-2 bg-amber-bg border border-amber/20 rounded-md text-xs text-ink-2 font-mono">
+          {progress}
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 px-3 py-2 bg-red/10 border border-red/20 rounded-md text-xs text-red">
@@ -404,7 +466,7 @@ function InviteSuccess({
 
 // ─── Main dialog ─────────────────────────────────────
 
-export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: ShareDialogProps) {
+export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolder }: ShareDialogProps) {
   const { getFileKey, isUnlocked } = useKeys()
   const [mode, setMode] = useState<ShareMode>('link')
   const [expiryIdx, setExpiryIdx] = useState(1) // default: 24 hours
@@ -690,6 +752,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize }: Share
                   /* Invite form */
                   <InviteForm
                     fileId={fileId}
+                    isFolder={isFolder}
                     onSuccess={(email) => setInviteDone(email)}
                     onRateLimitFeedback={() => setFeedbackOpen(true)}
                   />

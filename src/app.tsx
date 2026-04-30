@@ -41,6 +41,7 @@ import { Migration } from './pages/migration'
 import { Team } from './pages/team'
 import { AcceptInvite } from './pages/accept-invite'
 import { Shared } from './pages/shared'
+import { SharedFolder } from './pages/shared-folder'
 import { PasskeySetup } from './pages/passkey-setup'
 import { DeleteAccount } from './pages/delete-account'
 import { NotFound } from './pages/errors/not-found'
@@ -373,8 +374,12 @@ export function App() {
             }
           />
           <Route
-            path="/shared-with-me"
-            element={<Navigate to="/shared" replace />}
+            path="/shared-folder/:folderId"
+            element={
+              <ProtectedRoute>
+                <SharedFolder />
+              </ProtectedRoute>
+            }
           />
           <Route
             path="/settings/passkeys"

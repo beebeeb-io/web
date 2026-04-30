@@ -5,7 +5,18 @@ import { BBLogo } from './bb-logo'
 import { Icon } from './icons'
 import type { IconName } from './icons'
 import { useAuth } from '../lib/auth-context'
-import { getSubscription, getPlans, type Subscription, type Plan } from '../lib/api'
+import { useKeys } from '../lib/key-context'
+import {
+  getSubscription,
+  getPlans,
+  getIncomingInvites,
+  getFolderKeys,
+  type Subscription,
+  type Plan,
+  type ShareInvite,
+} from '../lib/api'
+import { decryptFolderKey, decryptChildFileKey } from '../lib/folder-share-crypto'
+import { decryptFilename, fromBase64 } from '../lib/crypto'
 
 const navItems: { path: string; icon: IconName; label: string }[] = [
   { path: '/', icon: 'folder', label: 'All files' },
@@ -33,8 +44,10 @@ function regionLabel(region: string): string {
 export function DriveLayout({ children }: { children: ReactNode }) {
   const location = useLocation()
   const { logout } = useAuth()
+  const { isUnlocked, getMasterKey } = useKeys()
   const [sub, setSub] = useState<Subscription | null>(null)
   const [planDetails, setPlanDetails] = useState<Plan | null>(null)
+  const [sharedFolders, setSharedFolders] = useState<(ShareInvite & { decryptedName?: string })[]>([])
 
   useEffect(() => {
     getSubscription().then(setSub).catch(() => {})
@@ -45,6 +58,42 @@ export function DriveLayout({ children }: { children: ReactNode }) {
       }).catch(() => {})
     }).catch(() => {})
   }, [])
+
+  useEffect(() => {
+    if (!isUnlocked) return
+    getIncomingInvites().then(async (invites) => {
+      const folderInvites = invites.filter(i => i.is_folder_share && i.status === 'approved')
+      if (folderInvites.length === 0) {
+        setSharedFolders([])
+        return
+      }
+      const withNames = await Promise.all(folderInvites.map(async (invite) => {
+        try {
+          if (!invite.sender_public_key || !invite.encrypted_folder_key || !invite.file_name_encrypted) {
+            return { ...invite, decryptedName: 'Shared folder' }
+          }
+          const folderKey = await decryptFolderKey(
+            getMasterKey(),
+            fromBase64(invite.sender_public_key),
+            invite.file_id,
+            fromBase64(invite.encrypted_folder_key),
+          )
+          const keys = await getFolderKeys(invite.id)
+          const folderEntry = keys.find(k => k.file_id === invite.file_id)
+          if (folderEntry) {
+            const fileKey = await decryptChildFileKey(folderKey, folderEntry.encrypted_file_key)
+            const parsed = JSON.parse(invite.file_name_encrypted) as { nonce: string; ciphertext: string }
+            const name = await decryptFilename(fileKey, fromBase64(parsed.nonce), fromBase64(parsed.ciphertext))
+            return { ...invite, decryptedName: name }
+          }
+          return { ...invite, decryptedName: 'Shared folder' }
+        } catch {
+          return { ...invite, decryptedName: invite.file_name_encrypted ?? 'Shared folder' }
+        }
+      }))
+      setSharedFolders(withNames)
+    }).catch(() => {})
+  }, [isUnlocked, getMasterKey])
 
   const storageLimit = planDetails?.storage_bytes ?? 10_000_000_000
   const storageLabel = planDetails?.storage_label ?? formatStorage(storageLimit)
@@ -77,6 +126,38 @@ export function DriveLayout({ children }: { children: ReactNode }) {
             )
           })}
         </nav>
+
+        {sharedFolders.length > 0 && (
+          <>
+            <div className="mx-4 my-2.5 h-px bg-line" />
+            <div className="px-4 py-1">
+              <div className="text-[10px] font-medium uppercase tracking-wider text-ink-3 mb-1">
+                Shared with me
+              </div>
+            </div>
+            <nav className="px-3 pb-1.5 overflow-y-auto max-h-[200px]">
+              {sharedFolders.map((folder) => {
+                const isActive = location.pathname === `/shared-folder/${folder.file_id}`
+                return (
+                  <Link
+                    key={folder.id}
+                    to={`/shared-folder/${folder.file_id}?invite=${folder.id}`}
+                    className={`w-full flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] transition-colors ${
+                      isActive
+                        ? 'bg-paper-3 font-semibold text-ink'
+                        : 'text-ink-2 hover:bg-paper-3/50'
+                    }`}
+                  >
+                    <div className="relative shrink-0">
+                      <Icon name="folder" size={13} className="text-amber-deep" />
+                    </div>
+                    <span className="flex-1 truncate">{folder.decryptedName}</span>
+                  </Link>
+                )
+              })}
+            </nav>
+          </>
+        )}
 
         <div className="mx-4 my-2.5 h-px bg-line" />
 
