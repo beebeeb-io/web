@@ -36,6 +36,12 @@ export interface UploadProgress {
  * When `resumeFileId` is provided (from a resume banner click), it
  * skips the fingerprint lookup and goes straight to server status check.
  */
+export interface SharedFolderUploadContext {
+  folderKey: Uint8Array
+  sharedFolderId: string
+  inviteId: string
+}
+
 export async function encryptedUpload(
   file: File,
   fileId: string,
@@ -43,6 +49,7 @@ export async function encryptedUpload(
   parentId?: string,
   onProgress?: (p: UploadProgress) => void,
   resumeFileId?: string,
+  sharedFolderContext?: SharedFolderUploadContext,
 ): Promise<DriveFile> {
   onProgress?.({ stage: 'Encrypting', progress: 0 })
 
@@ -185,6 +192,17 @@ export async function encryptedUpload(
 
   // Clean up IndexedDB state on success
   await removeUploadState(serverFileId)
+
+  // If uploading to a shared folder, register the file key under the folder_key
+  if (sharedFolderContext) {
+    const { encryptChildFileKey } = await import('./folder-share-crypto')
+    const { addFolderKeys } = await import('./api')
+    const encryptedKey = await encryptChildFileKey(sharedFolderContext.folderKey, fileKey)
+    await addFolderKeys(sharedFolderContext.inviteId, [{
+      file_id: serverFileId,
+      encrypted_file_key: encryptedKey,
+    }])
+  }
 
   onProgress?.({ stage: 'Done', progress: 100 })
   return fileMeta

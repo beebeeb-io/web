@@ -11,6 +11,8 @@ import {
   getPlans,
   getIncomingInvites,
   getFolderKeys,
+  getPreference,
+  setPreference,
   type Subscription,
   type Plan,
   type ShareInvite,
@@ -48,6 +50,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   const [sub, setSub] = useState<Subscription | null>(null)
   const [planDetails, setPlanDetails] = useState<Plan | null>(null)
   const [sharedFolders, setSharedFolders] = useState<(ShareInvite & { decryptedName?: string })[]>([])
+  const [pinnedIds, setPinnedIds] = useState<string[]>([])
 
   useEffect(() => {
     getSubscription().then(setSub).catch(() => {})
@@ -58,6 +61,20 @@ export function DriveLayout({ children }: { children: ReactNode }) {
       }).catch(() => {})
     }).catch(() => {})
   }, [])
+
+  useEffect(() => {
+    getPreference<{ folder_ids: string[] }>('pinned_shared_folders')
+      .then(pref => setPinnedIds(pref?.folder_ids ?? []))
+      .catch(() => {})
+  }, [])
+
+  async function togglePin(folderId: string) {
+    const newIds = pinnedIds.includes(folderId)
+      ? pinnedIds.filter(id => id !== folderId)
+      : [...pinnedIds, folderId]
+    setPinnedIds(newIds)
+    await setPreference('pinned_shared_folders', { folder_ids: newIds }).catch(() => {})
+  }
 
   useEffect(() => {
     if (!isUnlocked) return
@@ -142,7 +159,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
                   <Link
                     key={folder.id}
                     to={`/shared-folder/${folder.file_id}?invite=${folder.id}`}
-                    className={`w-full flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] transition-colors ${
+                    className={`group w-full flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] transition-colors ${
                       isActive
                         ? 'bg-paper-3 font-semibold text-ink'
                         : 'text-ink-2 hover:bg-paper-3/50'
@@ -152,6 +169,13 @@ export function DriveLayout({ children }: { children: ReactNode }) {
                       <Icon name="folder" size={13} className="text-amber-deep" />
                     </div>
                     <span className="flex-1 truncate">{folder.decryptedName}</span>
+                    <button
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); togglePin(folder.file_id) }}
+                      className={`shrink-0 transition-opacity ${pinnedIds.includes(folder.file_id) ? 'opacity-100 text-amber-deep' : 'opacity-0 group-hover:opacity-100 text-ink-3 hover:text-ink'}`}
+                      title={pinnedIds.includes(folder.file_id) ? 'Unpin from drive' : 'Pin to drive'}
+                    >
+                      <Icon name="star" size={11} />
+                    </button>
                   </Link>
                 )
               })}
