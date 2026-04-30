@@ -3,10 +3,14 @@ import { Icon } from './icons'
 import type { IconName } from './icons'
 import { BBChip } from './bb-chip'
 import { BBButton } from './bb-button'
+import {
+  listNotifications,
+  markNotificationRead,
+  markAllNotificationsRead,
+  type Notification as ApiNotification,
+} from '../lib/api'
 
-// ─── Types ────────────────────────────────────────
-
-export interface Notification {
+interface DisplayNotification {
   id: string
   type: string
   icon: IconName
@@ -15,37 +19,39 @@ export interface Notification {
   timestamp: string
   read: boolean
   danger?: boolean
-  /** Optional route to navigate to on click */
-  href?: string
 }
 
-// ─── localStorage persistence ─────────────────────
+function notificationIcon(type: string): IconName {
+  const map: Record<string, IconName> = {
+    share_received: 'share',
+    share_claimed: 'users',
+    share_approved: 'check',
+    workspace_invite: 'users',
+    quota_warning: 'cloud',
+    quota_critical: 'cloud',
+  }
+  return map[type] ?? 'cloud'
+}
 
-const STORAGE_KEY = 'bb_notifications'
-
-function loadNotifications(): Notification[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return []
-    return JSON.parse(raw) as Notification[]
-  } catch {
-    return []
+function toDisplay(n: ApiNotification): DisplayNotification {
+  return {
+    id: n.id,
+    type: n.type,
+    icon: notificationIcon(n.type),
+    title: n.title,
+    description: n.body ?? '',
+    timestamp: n.created_at,
+    read: n.read,
+    danger: n.type === 'quota_critical',
   }
 }
 
-function saveNotifications(items: Notification[]) {
-  // Keep at most 100 notifications
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(items.slice(0, 100)))
-}
-
-// ─── Time grouping ────────────────────────────────
-
-function groupByTime(items: Notification[]): { heading: string; items: Notification[] }[] {
+function groupByTime(items: DisplayNotification[]): { heading: string; items: DisplayNotification[] }[] {
   const now = new Date()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const yesterday = new Date(today.getTime() - 86_400_000)
 
-  const groups: Record<string, Notification[]> = {}
+  const groups: Record<string, DisplayNotification[]> = {}
   const order: string[] = []
 
   for (const item of items) {
@@ -79,44 +85,52 @@ function timeAgo(dateStr: string): string {
   return `${weeks}w`
 }
 
-// ─── Hook ─────────────────────────────────────────
-
 export function useNotifications() {
-  const [notifications, setNotifications] = useState<Notification[]>(loadNotifications)
+  const [notifications, setNotifications] = useState<DisplayNotification[]>([])
+  const [unreadCount, setUnreadCount] = useState(0)
 
-  const addNotification = useCallback((n: Notification) => {
-    setNotifications((prev) => {
-      const next = [n, ...prev]
-      saveNotifications(next)
-      return next
-    })
+  const refresh = useCallback(async () => {
+    try {
+      const data = await listNotifications()
+      setNotifications(data.notifications.map(toDisplay))
+      setUnreadCount(data.unread_count)
+    } catch {
+      // API not available yet
+    }
   }, [])
 
-  const markRead = useCallback((id: string) => {
-    setNotifications((prev) => {
-      const next = prev.map((n) => (n.id === id ? { ...n, read: true } : n))
-      saveNotifications(next)
-      return next
-    })
+  useEffect(() => {
+    refresh()
+    const interval = setInterval(refresh, 30000)
+    return () => clearInterval(interval)
+  }, [refresh])
+
+  const addNotification = useCallback((n: DisplayNotification) => {
+    setNotifications((prev) => [n, ...prev])
+    if (!n.read) setUnreadCount((prev) => prev + 1)
   }, [])
 
-  const markAllRead = useCallback(() => {
-    setNotifications((prev) => {
-      const next = prev.map((n) => ({ ...n, read: true }))
-      saveNotifications(next)
-      return next
-    })
+  const markRead = useCallback(async (id: string) => {
+    try {
+      await markNotificationRead(id)
+      setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)))
+      setUnreadCount((prev) => Math.max(0, prev - 1))
+    } catch { /* ignore */ }
   }, [])
 
-  const unreadCount = notifications.filter((n) => !n.read).length
+  const markAllRead = useCallback(async () => {
+    try {
+      await markAllNotificationsRead()
+      setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
+      setUnreadCount(0)
+    } catch { /* ignore */ }
+  }, [])
 
-  return { notifications, unreadCount, addNotification, markRead, markAllRead }
+  return { notifications, unreadCount, addNotification, markRead, markAllRead, refresh }
 }
 
-// ─── Component ────────────────────────────────────
-
 interface NotificationInboxProps {
-  notifications: Notification[]
+  notifications: DisplayNotification[]
   unreadCount: number
   onMarkRead: (id: string) => void
   onMarkAllRead: () => void
@@ -131,7 +145,6 @@ export function NotificationInbox({
   const [open, setOpen] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
 
-  // Close on outside click
   useEffect(() => {
     if (!open) return
     function handleClick(e: MouseEvent) {
@@ -143,7 +156,6 @@ export function NotificationInbox({
     return () => document.removeEventListener('mousedown', handleClick)
   }, [open])
 
-  // Close on Escape
   useEffect(() => {
     if (!open) return
     function handleKey(e: KeyboardEvent) {
@@ -157,7 +169,6 @@ export function NotificationInbox({
 
   return (
     <div ref={panelRef} className="relative">
-      {/* Bell trigger */}
       <button
         onClick={() => setOpen((v) => !v)}
         className="relative p-1.5 rounded-md text-ink-2 hover:bg-paper-2 transition-colors"
@@ -171,7 +182,6 @@ export function NotificationInbox({
         )}
       </button>
 
-      {/* Dropdown panel */}
       {open && (
         <div
           className="absolute top-full right-0 mt-2 w-[420px] max-h-[620px] bg-paper border border-line-2 rounded-xl overflow-hidden z-50"
@@ -179,7 +189,6 @@ export function NotificationInbox({
             boxShadow: '0 22px 60px -12px rgba(0,0,0,0.22)',
           }}
         >
-          {/* Header */}
           <div className="px-4 py-3.5 flex items-center gap-2.5 border-b border-line">
             <span className="text-[13px] font-semibold">Activity</span>
             {unreadCount > 0 && (
@@ -187,7 +196,6 @@ export function NotificationInbox({
             )}
           </div>
 
-          {/* Notification list */}
           <div className="max-h-[480px] overflow-auto">
             {notifications.length === 0 ? (
               <div className="px-4 py-10 text-center text-sm text-ink-3">
@@ -209,11 +217,8 @@ export function NotificationInbox({
                         gridTemplateColumns: '26px 1fr auto',
                         alignItems: 'flex-start',
                       }}
-                      onClick={() => {
-                        onMarkRead(item.id)
-                      }}
+                      onClick={() => onMarkRead(item.id)}
                     >
-                      {/* Icon */}
                       <div
                         className={`w-[26px] h-[26px] rounded-[7px] flex items-center justify-center border ${
                           item.danger
@@ -228,7 +233,6 @@ export function NotificationInbox({
                         />
                       </div>
 
-                      {/* Content */}
                       <div className="min-w-0">
                         <div className="text-xs leading-snug">
                           <span className="font-semibold">{item.title}</span>
@@ -242,7 +246,6 @@ export function NotificationInbox({
                         </div>
                       </div>
 
-                      {/* Timestamp */}
                       <span className="text-[10.5px] text-ink-4 whitespace-nowrap">
                         {timeAgo(item.timestamp)}
                       </span>
@@ -253,7 +256,6 @@ export function NotificationInbox({
             )}
           </div>
 
-          {/* Footer */}
           {notifications.length > 0 && (
             <div className="px-4 py-2.5 bg-paper-2 border-t border-line flex items-center gap-2.5">
               <BBButton size="sm" variant="ghost" onClick={onMarkAllRead} className="gap-1.5">

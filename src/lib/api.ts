@@ -1224,3 +1224,118 @@ export async function getInvitePreview(
   }
   return res.json() as Promise<InvitePreview>
 }
+
+// ─── Version History ──────────────────────────────────────
+
+export interface FileVersion {
+  id: string
+  version_number: number
+  size_bytes: number
+  chunk_count: number
+  created_by: string | null
+  created_at: string
+}
+
+export async function listVersions(fileId: string): Promise<{
+  file_id: string
+  current_version: number
+  versions: FileVersion[]
+}> {
+  return request(`/api/v1/files/${fileId}/versions`)
+}
+
+export async function downloadVersion(fileId: string, versionId: string): Promise<Blob> {
+  const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/versions/${versionId}/download`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  })
+  if (!res.ok) throw new ApiError('download failed', res.status)
+  return res.blob()
+}
+
+export async function restoreVersion(fileId: string, versionId: string): Promise<{ message: string; version_number: number }> {
+  return request(`/api/v1/files/${fileId}/versions/${versionId}/restore`, { method: 'POST' })
+}
+
+export async function deleteVersion(fileId: string, versionId: string): Promise<void> {
+  await request(`/api/v1/files/${fileId}/versions/${versionId}`, { method: 'DELETE' })
+}
+
+export interface VersionSetting {
+  id: string
+  scope: string
+  target_id: string | null
+  enabled: boolean
+  max_versions: number | null
+  retention_days: number | null
+}
+
+export async function getVersionSettings(): Promise<{ settings: VersionSetting[] }> {
+  return request('/api/v1/version-settings')
+}
+
+export async function setVersionSetting(params: {
+  scope: string
+  target_id?: string
+  enabled: boolean
+  max_versions?: number
+  retention_days?: number
+}): Promise<void> {
+  await request('/api/v1/version-settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  })
+}
+
+// ─── Notifications ────────────────────────────────────────
+
+export interface Notification {
+  id: string
+  type: string
+  title: string
+  body: string | null
+  data: Record<string, unknown> | null
+  read: boolean
+  created_at: string
+}
+
+export async function listNotifications(unreadOnly?: boolean): Promise<{
+  notifications: Notification[]
+  unread_count: number
+}> {
+  const params = unreadOnly ? '?unread_only=true' : ''
+  return request(`/api/v1/notifications${params}`)
+}
+
+export async function markNotificationRead(id: string): Promise<void> {
+  await request(`/api/v1/notifications/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ read: true }),
+  })
+}
+
+export async function markAllNotificationsRead(): Promise<void> {
+  await request('/api/v1/notifications/read-all', { method: 'POST' })
+}
+
+export async function deleteNotification(id: string): Promise<void> {
+  await request(`/api/v1/notifications/${id}`, { method: 'DELETE' })
+}
+
+// ─── Sessions ─────────────────────────────────────────────
+
+export interface Session {
+  id: string
+  is_current: boolean
+  created_at: string
+  expires_at: string
+}
+
+export async function listSessions(): Promise<{ sessions: Session[] }> {
+  return request('/api/v1/auth/sessions')
+}
+
+export async function revokeSession(id: string): Promise<void> {
+  await request(`/api/v1/auth/sessions/${id}`, { method: 'DELETE' })
+}
