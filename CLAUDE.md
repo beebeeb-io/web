@@ -73,6 +73,27 @@ In `src/components/`: bb-button, bb-input, bb-chip, bb-checkbox, bb-toggle, bb-l
 - Honest copy: "We can't recover this" not "bank-grade security"
 
 
+## How to add a new page
+
+1. Create `src/pages/my-page.tsx` — export a component that wraps content in `<DriveLayout>`
+2. In `src/app.tsx`: import the component, add `<Route path="/my-page" element={<ProtectedRoute><MyPage /></ProtectedRoute>} />`
+3. If it needs a sidebar link: add to `navItems` array in `src/components/drive-layout.tsx`
+
+## How to add a new API function
+
+Add to `src/lib/api.ts` following existing patterns:
+```typescript
+export async function myFunction(param: string): Promise<MyType> {
+  return request<MyType>(`/api/v1/my-endpoint/${param}`)
+}
+```
+
+## Critical prop chains
+
+When opening the ShareDialog, ALWAYS pass `isFolder={file.is_folder}`. Folder sharing generates a folder_key and encrypts all children — without this prop, folder shares silently create regular file shares that don't work.
+
+For full component reference: use `/beebeeb:components` skill.
+
 ## Keep shared docs in sync
 
 When you add/change/remove endpoints, types, build commands, or dependencies: update the relevant skill file in `/home/guus/code/beebeeb.io/.claude/skills/` (beebeeb-api.md, beebeeb-designs.md, beebeeb-stack.md, beebeeb-dev.md). Other agents depend on these being accurate.
