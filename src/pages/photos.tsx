@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { BBButton } from '../components/bb-button'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '../components/icons'
 import { listFiles, type DriveFile } from '../lib/api'
 import { useKeys } from '../lib/key-context'
 import { decryptFilename, fromBase64 } from '../lib/crypto'
+import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 
 // ─── Constants ──────────────────────────────────
 
@@ -35,6 +36,7 @@ interface PhotoItem {
   duration: string | null
   isShared: boolean
   isFeatured: boolean
+  hasThumbnail: boolean
 }
 
 /** Check if a filename or MIME type represents a media file (image/video). */
@@ -128,6 +130,8 @@ export function Photos() {
   const [dateDropdownOpen, setDateDropdownOpen] = useState(false)
   const [allFiles, setAllFiles] = useState<DriveFile[]>([])
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({})
+  const [thumbnails, setThumbnails] = useState<Record<string, string>>({})
+  const loadingThumbs = useRef(new Set<string>())
   const [loading, setLoading] = useState(true)
 
   // Fetch all files recursively (flat list)
@@ -179,6 +183,16 @@ export function Photos() {
     return () => { cancelled = true }
   }, [allFiles, isUnlocked, getFileKey])
 
+  const loadThumbnail = useCallback(async (fileId: string) => {
+    if (thumbnails[fileId] || loadingThumbs.current.has(fileId)) return
+    loadingThumbs.current.add(fileId)
+    try {
+      const fileKey = await getFileKey(fileId)
+      const url = await fetchAndDecryptThumbnail(fileId, fileKey)
+      if (url) setThumbnails((prev) => ({ ...prev, [fileId]: url }))
+    } catch { /* ignore */ }
+  }, [thumbnails, getFileKey])
+
   function displayName(file: DriveFile): string {
     return decryptedNames[file.id] ?? file.name_encrypted
   }
@@ -212,6 +226,7 @@ export function Photos() {
       duration: null,
       isShared: false,
       isFeatured: f.is_starred ?? false,
+      hasThumbnail: f.has_thumbnail ?? false,
     }
   })
 
@@ -345,27 +360,32 @@ export function Photos() {
               <div className="grid gap-1" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))' }}>
                 {group.items.map((photo, pi) => {
                   const globalIndex = gi * 100 + pi
+                  const thumbUrl = thumbnails[photo.id]
+                  if (!thumbUrl && photo.hasThumbnail && isUnlocked) {
+                    loadThumbnail(photo.id)
+                  }
                   return (
                     <div
                       key={photo.id}
                       className="relative overflow-hidden rounded-sm cursor-pointer group/cell"
                       style={{
                         aspectRatio: '1',
-                        background: photo.isFeatured
-                          ? placeholderGradient(globalIndex)
+                        background: thumbUrl
+                          ? `url(${thumbUrl}) center/cover`
                           : placeholderGradient(globalIndex),
                         opacity: photo.isFeatured ? 1 : 0.85,
                       }}
                     >
-                      {/* File icon centered (thumbnails are encrypted, so show icon + name) */}
-                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 p-1.5">
-                        <Icon name={photo.isVideo ? 'file' : 'image'} size={20} className="text-ink/30" />
-                        <span
-                          className="text-[8px] leading-tight text-ink/40 font-medium text-center line-clamp-2 max-w-full break-all"
-                        >
-                          {photo.name}
-                        </span>
-                      </div>
+                      {!thumbUrl && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 p-1.5">
+                          <Icon name={photo.isVideo ? 'file' : 'image'} size={20} className="text-ink/30" />
+                          <span
+                            className="text-[8px] leading-tight text-ink/40 font-medium text-center line-clamp-2 max-w-full break-all"
+                          >
+                            {photo.name}
+                          </span>
+                        </div>
+                      )}
 
                       {/* Hover overlay */}
                       <div className="absolute inset-0 bg-ink/0 group-hover/cell:bg-ink/10 transition-colors" />

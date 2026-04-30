@@ -204,6 +204,17 @@ export async function encryptedUpload(
     }])
   }
 
+  // Generate and upload encrypted thumbnail for image files
+  try {
+    const { generateThumbnail, encryptAndUploadThumbnail } = await import('./thumbnail')
+    const thumbBlob = await generateThumbnail(file)
+    if (thumbBlob) {
+      await encryptAndUploadThumbnail(serverFileId, thumbBlob, fileKey)
+    }
+  } catch {
+    // Thumbnail generation is best-effort
+  }
+
   onProgress?.({ stage: 'Done', progress: 100 })
   return fileMeta
 }

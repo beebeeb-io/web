@@ -280,6 +280,7 @@ export interface DriveFile {
   parent_id: string | null
   chunk_count: number
   is_starred?: boolean
+  has_thumbnail?: boolean
   created_at: string
   updated_at: string
 }
