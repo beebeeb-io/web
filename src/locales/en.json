@@ -1,0 +1,108 @@
+{
+  "common": {
+    "save": "Save changes",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "close": "Close",
+    "loading": "Loading...",
+    "confirm": "Confirm",
+    "upload": "Upload",
+    "download": "Download",
+    "share": "Share",
+    "rename": "Rename",
+    "move": "Move",
+    "copy": "Copy",
+    "search": "Search",
+    "settings": "Settings",
+    "logout": "Sign out"
+  },
+  "nav": {
+    "allFiles": "All files",
+    "shared": "Shared",
+    "photos": "Photos",
+    "starred": "Starred",
+    "recent": "Recent",
+    "trash": "Trash",
+    "sharedWithMe": "Shared with me",
+    "storage": "Storage"
+  },
+  "drive": {
+    "newFolder": "New folder",
+    "uploadFiles": "Upload files",
+    "emptyFolder": "This folder is empty",
+    "dropFilesHere": "Drop files here to upload",
+    "movedToTrash": "Moved to trash",
+    "restored": "Restored",
+    "permanentlyDeleted": "Permanently deleted"
+  },
+  "sharing": {
+    "shareWith": "Share with...",
+    "linkSharing": "Link sharing",
+    "inviteSharing": "Invite sharing",
+    "createLink": "Create link",
+    "revokeAccess": "Revoke access",
+    "permissions": "Share settings",
+    "expiresIn": "Expires in",
+    "canReshare": "Can reshare",
+    "withMe": "With me",
+    "byMe": "By me",
+    "pending": "Pending"
+  },
+  "settings": {
+    "profile": "Profile",
+    "devices": "Devices",
+    "notifications": "Notifications",
+    "language": "Language",
+    "security": "Security",
+    "billing": "Billing",
+    "displayName": "Display name",
+    "email": "Email",
+    "avatar": "Avatar"
+  },
+  "security": {
+    "title": "Security",
+    "zeroKnowledge": "Zero-knowledge",
+    "activeSessions": "Active sessions",
+    "revokeSession": "Revoke",
+    "changePassword": "Change password",
+    "twoFactor": "Two-factor authentication",
+    "passkey": "Passkey",
+    "recoveryPhrase": "Recovery phrase"
+  },
+  "billing": {
+    "currentPlan": "Current plan",
+    "upgrade": "Upgrade",
+    "manageBilling": "Manage billing",
+    "storage": "Storage",
+    "usedOf": "used of"
+  },
+  "auth": {
+    "signIn": "Sign in",
+    "signUp": "Sign up",
+    "email": "Email",
+    "password": "Password",
+    "forgotPassword": "Forgot password?",
+    "noAccount": "Don't have an account?",
+    "hasAccount": "Already have an account?"
+  },
+  "notifications": {
+    "title": "Activity",
+    "markAllRead": "Mark all read",
+    "noNotifications": "No notifications yet",
+    "today": "Today",
+    "yesterday": "Yesterday",
+    "earlier": "Earlier"
+  },
+  "versions": {
+    "title": "Version history",
+    "restore": "Restore this version",
+    "download": "Download",
+    "noVersions": "No previous versions",
+    "versionsCreatedOnReupload": "Versions are created when you re-upload a file with the same name"
+  },
+  "language": {
+    "title": "Language",
+    "current": "English",
+    "comingSoon": "More languages coming soon"
+  }
+}

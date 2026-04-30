@@ -1,16 +1,42 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { SettingsShell, SettingsHeader, SettingsRow } from '../../components/settings-shell'
 import { BBInput } from '../../components/bb-input'
 import { BBButton } from '../../components/bb-button'
 import { BBToggle } from '../../components/bb-toggle'
 import { useAuth } from '../../lib/auth-context'
+import { useToast } from '../../components/toast'
+import { getPreference, setPreference } from '../../lib/api'
 
 export function SettingsProfile() {
   const { user } = useAuth()
+  const { showToast } = useToast()
+  const [displayName, setDisplayName] = useState('')
   const [publicProfile, setPublicProfile] = useState(false)
+  const [saving, setSaving] = useState(false)
 
   const email = user?.email ?? ''
   const initials = email ? email.split('@')[0].slice(0, 2).toUpperCase() : '??'
+
+  useEffect(() => {
+    getPreference<{ display_name: string; public_profile: boolean }>('profile')
+      .then((pref) => {
+        if (pref?.display_name) setDisplayName(pref.display_name)
+        if (pref?.public_profile) setPublicProfile(pref.public_profile)
+      })
+      .catch(() => {})
+  }, [])
+
+  const handleSave = useCallback(async () => {
+    setSaving(true)
+    try {
+      await setPreference('profile', { display_name: displayName, public_profile: publicProfile })
+      showToast({ icon: 'check', title: 'Profile saved' })
+    } catch {
+      showToast({ icon: 'x', title: 'Failed to save', danger: true })
+    } finally {
+      setSaving(false)
+    }
+  }, [displayName, publicProfile, showToast])
 
   return (
     <SettingsShell activeSection="profile">
@@ -24,7 +50,12 @@ export function SettingsProfile() {
       </SettingsRow>
 
       <SettingsRow label="Display name" hint="Shown on shared links if you choose to reveal it">
-        <BBInput defaultValue="" placeholder="Your name" className="max-w-[340px]" />
+        <BBInput
+          value={displayName}
+          onChange={(e) => setDisplayName(e.target.value)}
+          placeholder="Your name"
+          className="max-w-[340px]"
+        />
       </SettingsRow>
 
       <SettingsRow label="Avatar" hint="Stored encrypted. Shown only when you choose.">
@@ -58,6 +89,12 @@ export function SettingsProfile() {
           {user?.created_at ? new Date(user.created_at).toLocaleDateString() : '--'}
         </span>
       </SettingsRow>
+
+      <div className="flex justify-end mt-6">
+        <BBButton variant="amber" onClick={handleSave} disabled={saving}>
+          {saving ? 'Saving...' : 'Save changes'}
+        </BBButton>
+      </div>
     </SettingsShell>
   )
 }

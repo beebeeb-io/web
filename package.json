@@ -14,10 +14,12 @@
   "dependencies": {
     "beebeeb-wasm": "../../repos/core/beebeeb-wasm/pkg",
     "comlink": "^4.4.2",
+    "i18next": "^26.0.8",
     "jsqr": "^1.4.0",
     "qrcode": "^1.5.4",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
+    "react-i18next": "^17.0.6",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.14.2"
   },

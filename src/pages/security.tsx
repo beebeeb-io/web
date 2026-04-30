@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '../components/icons'
 import type { IconName } from '../components/icons'
@@ -7,6 +7,7 @@ import { BBButton } from '../components/bb-button'
 import { BBToggle } from '../components/bb-toggle'
 import { ChangePasswordDialog } from '../components/change-password-dialog'
 import { useToast } from '../components/toast'
+import { listSessions, revokeSession, type Session } from '../lib/api'
 
 /* ── Score ring SVG ──────────────────────────────── */
 
@@ -46,12 +47,6 @@ const checklist = [
   { ok: false, label: 'Set up a trusted contact', hint: 'Optional recovery helper' },
 ]
 
-const trustedDevices = [
-  { name: 'MacBook Pro', os: 'macOS 15.3 · Safari', loc: 'Amsterdam, NL', when: 'Active now', current: true, icon: 'cloud' as IconName, stale: false },
-  { name: 'iPhone 15', os: 'iOS 18.4', loc: 'Amsterdam, NL', when: '12 min ago', current: false, icon: 'image' as IconName, stale: false },
-  { name: 'Workstation', os: 'Fedora 41 · Desktop app', loc: 'Amsterdam, NL', when: '3 hours ago', current: false, icon: 'settings' as IconName, stale: false },
-  { name: 'Old laptop', os: 'Windows 11 · Chrome', loc: 'Berlin, DE', when: 'Apr 2 · 14d ago', current: false, icon: 'file' as IconName, stale: true },
-]
 
 const securityEvents = [
   { icon: 'key' as IconName, label: 'Recovery phrase viewed', meta: 'From MacBook Pro · Amsterdam', when: '2m ago', tone: 'amber' as const },
@@ -80,7 +75,23 @@ const toneColors: Record<string, { bg: string; fg: string }> = {
 export function Security() {
   const [eventFilter, setEventFilter] = useState<EventFilter>('All')
   const [changePasswordOpen, setChangePasswordOpen] = useState(false)
+  const [sessions, setSessions] = useState<Session[]>([])
   const { showToast } = useToast()
+
+  useEffect(() => {
+    listSessions().then((data) => setSessions(data.sessions)).catch(() => {})
+  }, [])
+
+  async function handleRevokeSession(id: string) {
+    if (!confirm('Revoke this session? The device will be signed out.')) return
+    try {
+      await revokeSession(id)
+      setSessions((prev) => prev.filter((s) => s.id !== id))
+      showToast({ icon: 'check', title: 'Session revoked' })
+    } catch {
+      showToast({ icon: 'x', title: 'Failed to revoke', danger: true })
+    }
+  }
 
   return (
     <DriveLayout>
@@ -264,50 +275,51 @@ export function Security() {
               ))}
             </div>
 
-            {/* ── Trusted devices ─────────────────── */}
+            {/* ── Active sessions ─────────────────── */}
             <div className="bg-paper border border-line-2 rounded-xl overflow-hidden shrink-0">
               <div className="flex items-center gap-2 px-4 py-3.5 border-b border-line">
                 <Icon name="cloud" size={14} />
-                <span className="text-sm font-semibold text-ink">Trusted devices</span>
-                <span className="font-mono text-[11px] text-ink-4">4 active</span>
-                <BBButton size="sm" variant="danger" className="ml-auto">Sign out everywhere</BBButton>
+                <span className="text-sm font-semibold text-ink">Active sessions</span>
+                <span className="font-mono text-[11px] text-ink-4">{sessions.length} active</span>
               </div>
-              {trustedDevices.map((d, i) => (
+              {sessions.length === 0 ? (
+                <div className="px-4 py-6 text-center text-sm text-ink-3">Loading sessions...</div>
+              ) : sessions.map((s, i) => (
                 <div
-                  key={i}
+                  key={s.id}
                   className={`grid items-center gap-3.5 px-4 py-3 ${
-                    i < trustedDevices.length - 1 ? 'border-b border-line' : ''
+                    i < sessions.length - 1 ? 'border-b border-line' : ''
                   }`}
-                  style={{ gridTemplateColumns: '28px 1fr 140px 110px 80px' }}
+                  style={{ gridTemplateColumns: '28px 1fr 140px 80px' }}
                 >
                   <div
                     className="w-7 h-7 rounded-md flex items-center justify-center border"
                     style={{
-                      background: d.stale ? 'var(--color-paper-2)' : d.current ? 'var(--color-ink)' : 'var(--color-paper-2)',
-                      borderColor: d.current ? 'var(--color-ink)' : 'var(--color-line)',
-                      color: d.current ? 'var(--color-amber)' : 'var(--color-ink-3)',
+                      background: s.is_current ? 'var(--color-ink)' : 'var(--color-paper-2)',
+                      borderColor: s.is_current ? 'var(--color-ink)' : 'var(--color-line)',
+                      color: s.is_current ? 'var(--color-amber)' : 'var(--color-ink-3)',
                     }}
                   >
-                    <Icon name={d.icon} size={13} />
+                    <Icon name="lock" size={13} />
                   </div>
                   <div>
                     <div className="text-[13px] font-medium text-ink flex items-center gap-1.5">
-                      {d.name}
-                      {d.current && <BBChip variant="amber">This device</BBChip>}
-                      {d.stale && (
-                        <span className="inline-flex items-center px-sm py-xs text-[9.5px] font-medium rounded-sm bg-paper-2 border border-line" style={{ color: 'var(--color-red)', borderColor: 'oklch(0.85 0.08 25)' }}>
-                          Idle 14d
-                        </span>
-                      )}
+                      Session
+                      {s.is_current && <BBChip variant="amber">Current</BBChip>}
                     </div>
-                    <div className="text-[11px] font-mono text-ink-3 mt-px">{d.os}</div>
+                    <div className="text-[11px] font-mono text-ink-3 mt-px">
+                      Created {new Date(s.created_at).toLocaleDateString()} · expires {new Date(s.expires_at).toLocaleDateString()}
+                    </div>
                   </div>
-                  <div className="text-[11px] text-ink-3">{d.loc}</div>
-                  <div className="font-mono text-[11px]" style={{ color: d.current ? 'oklch(0.45 0.12 155)' : 'var(--color-ink-3)' }}>
-                    {d.when}
+                  <div className="font-mono text-[11px]" style={{ color: s.is_current ? 'oklch(0.45 0.12 155)' : 'var(--color-ink-3)' }}>
+                    {s.is_current ? 'Active now' : new Date(s.created_at).toLocaleDateString()}
                   </div>
                   <div className="flex justify-end">
-                    {!d.current && <BBButton size="sm" variant="danger">Revoke</BBButton>}
+                    {!s.is_current && (
+                      <BBButton size="sm" variant="danger" onClick={() => handleRevokeSession(s.id)}>
+                        Revoke
+                      </BBButton>
+                    )}
                   </div>
                 </div>
               ))}
