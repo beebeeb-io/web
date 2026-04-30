@@ -18,6 +18,7 @@ interface VaultEntry {
   salt: Uint8Array
   nonce: Uint8Array
   keyCheck: Uint8Array
+  email?: string
 }
 
 // ─── IndexedDB helpers ─────────────────────────────
