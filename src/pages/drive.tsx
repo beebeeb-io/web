@@ -16,6 +16,7 @@ import { UploadProgress, type UploadItem } from '../components/upload-progress'
 import { NewFolderDialog } from '../components/new-folder-dialog'
 import { VersionHistory } from '../components/version-history'
 import { NotificationInbox, useNotifications } from '../components/notification-inbox'
+import { ShortcutsCheatsheet } from '../components/shortcuts-cheatsheet'
 import { useToast } from '../components/toast'
 import { useWebSocket } from '../hooks/use-websocket'
 import type { WsEvent } from '../hooks/use-websocket'
@@ -90,6 +91,7 @@ export function Drive() {
   const [moveFileId, setMoveFileId] = useState<string | null>(null)
   const [renameFileId, setRenameFileId] = useState<string | null>(null)
   const [versionFileId, setVersionFileId] = useState<string | null>(null)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [ctxMenu, setCtxMenu] = useState<{
     open: boolean; x: number; y: number; fileId: string; fileName: string; isFolder: boolean
   }>({ open: false, x: 0, y: 0, fileId: '', fileName: '', isFolder: false })
@@ -137,6 +139,16 @@ export function Drive() {
   useEffect(() => {
     fetchFiles()
   }, [fetchFiles])
+
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === '?' && !e.ctrlKey && !e.metaKey && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLTextAreaElement)) {
+        setShortcutsOpen(true)
+      }
+    }
+    document.addEventListener('keydown', handleKey)
+    return () => document.removeEventListener('keydown', handleKey)
+  }, [])
 
   // Check IndexedDB for paused uploads on mount
   useEffect(() => {
@@ -1575,6 +1587,11 @@ export function Drive() {
           onVersionRestored={fetchFiles}
         />
       )}
+
+      <ShortcutsCheatsheet
+        open={shortcutsOpen}
+        onClose={() => setShortcutsOpen(false)}
+      />
     </DriveLayout>
   )
 }
