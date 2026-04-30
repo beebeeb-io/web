@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { BBButton } from '../components/bb-button'
 import { BBChip } from '../components/bb-chip'
 import { Icon } from '../components/icons'
+import { useToast } from '../components/toast'
+import { getToken, createCheckoutSession } from '../lib/api'
 
 type BillingCycle = 'monthly' | 'yearly'
 
@@ -178,12 +180,32 @@ function PlanCard({
 export function Pricing() {
   const [cycle, setCycle] = useState<BillingCycle>('monthly')
   const navigate = useNavigate()
+  const { showToast } = useToast()
+  const isLoggedIn = !!getToken()
 
-  function handleSelect(planId: string) {
+  async function handleSelect(planId: string) {
     if (planId === 'free') {
-      navigate('/signup')
-    } else {
+      navigate(isLoggedIn ? '/' : '/signup')
+      return
+    }
+    if (!isLoggedIn) {
       navigate(`/signup?plan=${planId}&cycle=${cycle}`)
+      return
+    }
+    try {
+      const { url } = await createCheckoutSession({
+        plan: planId,
+        billing_cycle: cycle,
+        region: 'frankfurt',
+      })
+      window.location.href = url
+    } catch (err) {
+      showToast({
+        icon: 'x',
+        title: 'Checkout failed',
+        description: err instanceof Error ? err.message : 'Could not start checkout',
+        danger: true,
+      })
     }
   }
 
