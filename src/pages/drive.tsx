@@ -1534,6 +1534,7 @@ export function Drive() {
           fileId={shareFile.id}
           fileName={displayName(shareFile)}
           fileSize={shareFile.size_bytes}
+          isFolder={shareFile.is_folder}
         />
       )}
 
