@@ -9,6 +9,7 @@ import {
   type PendingInvite,
   type Workspace,
   type WorkspaceMemberDetail,
+  createWorkspace,
   inviteWorkspaceMember,
   listWorkspaceMembers,
   listWorkspaces,
@@ -222,6 +223,18 @@ export function Team() {
     }
   }
 
+  const handleCreateWorkspace = async () => {
+    const name = prompt('Workspace name:')
+    if (!name?.trim()) return
+    try {
+      const ws = await createWorkspace(name.trim())
+      setActiveWs(ws)
+      showToast({ icon: 'check', title: `Workspace "${name.trim()}" created` })
+    } catch (err) {
+      showToast({ icon: 'x', title: 'Failed to create workspace', description: err instanceof Error ? err.message : 'Something went wrong', danger: true })
+    }
+  }
+
   const handleRoleChange = async (userId: string, newRole: string) => {
     if (!activeWs) return
     try {
@@ -327,10 +340,14 @@ export function Team() {
               >
                 <Icon name="users" size={22} className="text-ink-4" />
               </div>
-              <p className="text-sm font-medium text-ink-2 mb-1">No team members yet</p>
-              <p className="text-xs text-ink-3">
+              <p className="text-sm font-medium text-ink-2 mb-1">No workspace yet</p>
+              <p className="text-xs text-ink-3 mb-3">
                 Create a workspace and invite your team to start collaborating.
               </p>
+              <BBButton variant="amber" size="sm" onClick={handleCreateWorkspace}>
+                <Icon name="plus" size={11} className="mr-1" />
+                Create workspace
+              </BBButton>
             </div>
           )}
 
