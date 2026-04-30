@@ -17,6 +17,8 @@ import { NewFolderDialog } from '../components/new-folder-dialog'
 import { VersionHistory } from '../components/version-history'
 import { NotificationInbox, useNotifications } from '../components/notification-inbox'
 import { ShortcutsCheatsheet } from '../components/shortcuts-cheatsheet'
+import { WelcomeTour } from '../components/welcome-tour'
+import { getPreference, setPreference } from '../lib/api'
 import { useToast } from '../components/toast'
 import { useWebSocket } from '../hooks/use-websocket'
 import type { WsEvent } from '../hooks/use-websocket'
@@ -92,6 +94,7 @@ export function Drive() {
   const [renameFileId, setRenameFileId] = useState<string | null>(null)
   const [versionFileId, setVersionFileId] = useState<string | null>(null)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [tourOpen, setTourOpen] = useState(false)
   const [ctxMenu, setCtxMenu] = useState<{
     open: boolean; x: number; y: number; fileId: string; fileName: string; isFolder: boolean
   }>({ open: false, x: 0, y: 0, fileId: '', fileName: '', isFolder: false })
@@ -139,6 +142,14 @@ export function Drive() {
   useEffect(() => {
     fetchFiles()
   }, [fetchFiles])
+
+  useEffect(() => {
+    getPreference<{ seen: boolean }>('welcome_tour')
+      .then((pref) => {
+        if (!pref?.seen) setTourOpen(true)
+      })
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
@@ -1591,6 +1602,14 @@ export function Drive() {
       <ShortcutsCheatsheet
         open={shortcutsOpen}
         onClose={() => setShortcutsOpen(false)}
+      />
+
+      <WelcomeTour
+        open={tourOpen}
+        onClose={() => {
+          setTourOpen(false)
+          setPreference('welcome_tour', { seen: true }).catch(() => {})
+        }}
       />
     </DriveLayout>
   )
