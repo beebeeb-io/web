@@ -21,8 +21,7 @@ const WITH_ME_ITEMS: SharedMenuItem[] = [
 ]
 
 const BY_ME_ITEMS: SharedMenuItem[] = [
-  { id: 'change-permissions', label: 'Change permissions', icon: 'settings' },
-  { id: 'set-expiry', label: 'Set expiry', icon: 'clock' },
+  { id: 'share-settings', label: 'Share settings', icon: 'settings' },
   { id: 'view-activity', label: 'View activity', icon: 'eye', dividerAfter: true },
   { id: 'revoke-access', label: 'Revoke access', icon: 'trash', danger: true },
 ]

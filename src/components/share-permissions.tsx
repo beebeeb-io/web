@@ -10,7 +10,6 @@ interface SharePermissionsProps {
   y: number
   inviteId: string
   recipientEmail: string
-  canDownload: boolean
   canReshare: boolean
   expiresAt: string | null
   onClose: () => void
@@ -42,7 +41,6 @@ export function SharePermissions({
   y,
   inviteId,
   recipientEmail,
-  canDownload,
   canReshare,
   expiresAt,
   onClose,
@@ -51,17 +49,13 @@ export function SharePermissions({
   const panelRef = useRef<HTMLDivElement>(null)
   const { showToast } = useToast()
 
-  const [download, setDownload] = useState(canDownload)
   const [reshare, setReshare] = useState(canReshare)
   const [saving, setSaving] = useState(false)
 
-  // Reset toggle state when the popover opens or props change
   useEffect(() => {
-    setDownload(canDownload)
     setReshare(canReshare)
-  }, [open, canDownload, canReshare])
+  }, [open, canReshare])
 
-  // Position adjustment so the panel doesn't overflow viewport
   useEffect(() => {
     if (!open || !panelRef.current) return
     const el = panelRef.current
@@ -77,7 +71,6 @@ export function SharePermissions({
     }
   }, [open, x, y])
 
-  // Close on outside click
   useEffect(() => {
     if (!open) return
     const handleClick = (e: MouseEvent) => {
@@ -94,7 +87,6 @@ export function SharePermissions({
     }
   }, [open, onClose])
 
-  // Close on Escape
   useEffect(() => {
     if (!open) return
     const handleKey = (e: KeyboardEvent) => {
@@ -109,20 +101,17 @@ export function SharePermissions({
   async function savePermissions() {
     setSaving(true)
     try {
-      await patchInvite(inviteId, {
-        can_download: download,
-        can_reshare: reshare,
-      })
+      await patchInvite(inviteId, { can_reshare: reshare })
       showToast({
         icon: 'check',
-        title: 'Permissions updated',
+        title: 'Settings updated',
       })
       onUpdated()
       onClose()
     } catch {
       showToast({
         icon: 'x',
-        title: 'Failed to update permissions',
+        title: 'Failed to update settings',
         danger: true,
       })
     } finally {
@@ -163,7 +152,7 @@ export function SharePermissions({
     >
       {/* Header */}
       <div className="px-4 py-3 border-b border-line">
-        <div className="text-[13px] font-semibold text-ink">Permissions</div>
+        <div className="text-[13px] font-semibold text-ink">Share settings</div>
         <div className="text-[11px] text-ink-3 font-mono truncate mt-0.5">
           {recipientEmail}
         </div>
@@ -172,15 +161,10 @@ export function SharePermissions({
       {/* Toggle rows */}
       <div className="px-4 py-3 space-y-3">
         <div className="flex items-center justify-between">
-          <span className="text-[13px] text-ink">Can download</span>
-          <BBToggle on={download} onChange={setDownload} disabled={saving} />
-        </div>
-        <div className="flex items-center justify-between">
           <span className="text-[13px] text-ink">Can re-share</span>
           <BBToggle on={reshare} onChange={setReshare} disabled={saving} />
         </div>
 
-        {/* Save button */}
         <BBButton
           variant="amber"
           size="sm"
@@ -188,7 +172,7 @@ export function SharePermissions({
           disabled={saving}
           onClick={savePermissions}
         >
-          {saving ? 'Saving...' : 'Save permissions'}
+          {saving ? 'Saving...' : 'Save'}
         </BBButton>
       </div>
 

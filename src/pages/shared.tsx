@@ -85,8 +85,8 @@ export function Shared() {
   // Permissions popover
   const [permPopover, setPermPopover] = useState<{
     open: boolean; x: number; y: number; inviteId: string;
-    recipientEmail: string; canDownload: boolean; canReshare: boolean; expiresAt: string | null;
-  }>({ open: false, x: 0, y: 0, inviteId: '', recipientEmail: '', canDownload: true, canReshare: false, expiresAt: null })
+    recipientEmail: string; canReshare: boolean; expiresAt: string | null;
+  }>({ open: false, x: 0, y: 0, inviteId: '', recipientEmail: '', canReshare: false, expiresAt: null })
 
   // Activity modal
   const [activityInviteId, setActivityInviteId] = useState<string | null>(null)
@@ -150,9 +150,7 @@ export function Shared() {
             const shareKey = await deriveShareKey(sharedSecret, fileIdBytes)
 
             const efkBytes = fromBase64(invite.encrypted_file_key)
-            console.debug(`[shared] efk total=${efkBytes.length} nonce=${efkBytes.slice(0,12).length} ct=${efkBytes.slice(12).length}`)
             const fileKey = await decryptChunk(shareKey, efkBytes.slice(0, 12), efkBytes.slice(12))
-            console.debug(`[shared] got fileKey len=${fileKey.length}`)
 
             const parsed = JSON.parse(invite.file_name_encrypted) as { nonce: string; ciphertext: string }
             names[invite.id] = await decryptFilename(fileKey, fromBase64(parsed.nonce), fromBase64(parsed.ciphertext))
@@ -161,8 +159,7 @@ export function Shared() {
             zeroize(sharedSecret)
             zeroize(shareKey)
             zeroize(fileKey)
-          } catch (err) {
-            console.error(`[shared] decrypt FAILED for ${invite.id}:`, err)
+          } catch {
             names[invite.id] = invite.file_name_encrypted
           }
         } else {
@@ -280,14 +277,12 @@ export function Shared() {
           showToast({ icon: 'x', title: 'Failed', description: e instanceof Error ? e.message : 'Something went wrong.', danger: true })
         }
         break
-      case 'change-permissions':
-      case 'set-expiry': {
+      case 'share-settings': {
         const invite = sentApproved.find((i) => i.id === inviteId) ?? sentInvited.find((i) => i.id === inviteId)
         if (invite) {
           setPermPopover({
             open: true, x: ctxMenu.x, y: ctxMenu.y, inviteId,
             recipientEmail: invite.recipient_email,
-            canDownload: invite.can_download ?? true,
             canReshare: invite.can_reshare ?? false,
             expiresAt: invite.expires_at ?? null,
           })
@@ -942,7 +937,6 @@ export function Shared() {
         y={permPopover.y}
         inviteId={permPopover.inviteId}
         recipientEmail={permPopover.recipientEmail}
-        canDownload={permPopover.canDownload}
         canReshare={permPopover.canReshare}
         expiresAt={permPopover.expiresAt}
         onClose={() => setPermPopover((prev) => ({ ...prev, open: false }))}
