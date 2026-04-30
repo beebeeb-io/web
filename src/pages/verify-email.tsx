@@ -10,7 +10,7 @@ import { useNavigate } from 'react-router-dom'
 import { AuthShell } from '../components/auth-shell'
 import { BBButton } from '../components/bb-button'
 import { useAuth } from '../lib/auth-context'
-import { verifyEmail } from '../lib/api'
+import { verifyEmail, resendVerification } from '../lib/api'
 
 const CODE_LENGTH = 6
 const RESEND_SECONDS = 60
@@ -109,11 +109,15 @@ export function VerifyEmail() {
     }
   }
 
-  function handleResend() {
+  async function handleResend() {
     if (resendCountdown > 0) return
-    // No resend endpoint exists yet -- reset the timer as a placeholder
-    setResendCountdown(RESEND_SECONDS)
-    setError('')
+    try {
+      await resendVerification()
+      setResendCountdown(RESEND_SECONDS)
+      setError('')
+    } catch {
+      setError('Failed to resend verification email')
+    }
   }
 
   const subtitle = user?.email
