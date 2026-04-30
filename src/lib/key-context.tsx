@@ -61,7 +61,45 @@ export function KeyProvider({ children }: { children: ReactNode }) {
 
   const masterKeyRef = useRef<Uint8Array | null>(null)
 
-  // Initialize WASM on mount + check if vault exists
+  const cacheKey = useCallback(async (key: Uint8Array) => {
+    try {
+      const sessionKey = crypto.getRandomValues(new Uint8Array(32))
+      const iv = crypto.getRandomValues(new Uint8Array(12))
+      const ck = await crypto.subtle.importKey('raw', sessionKey.buffer as ArrayBuffer, 'AES-GCM', false, ['encrypt'])
+      const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, ck, key.buffer as ArrayBuffer)
+      sessionStorage.setItem('bb_sk', btoa(String.fromCharCode(...sessionKey)))
+      sessionStorage.setItem('bb_iv', btoa(String.fromCharCode(...iv)))
+      sessionStorage.setItem('bb_mk', btoa(String.fromCharCode(...new Uint8Array(ct))))
+    } catch { /* best effort */ }
+  }, [])
+
+  const restoreCachedKey = useCallback(async (): Promise<Uint8Array | null> => {
+    try {
+      const skB64 = sessionStorage.getItem('bb_sk')
+      const ivB64 = sessionStorage.getItem('bb_iv')
+      const mkB64 = sessionStorage.getItem('bb_mk')
+      if (!skB64 || !ivB64 || !mkB64) return null
+      const sk = Uint8Array.from(atob(skB64), c => c.charCodeAt(0))
+      const iv = Uint8Array.from(atob(ivB64), c => c.charCodeAt(0))
+      const ct = Uint8Array.from(atob(mkB64), c => c.charCodeAt(0))
+      const ck = await crypto.subtle.importKey('raw', sk.buffer as ArrayBuffer, 'AES-GCM', false, ['decrypt'])
+      const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, ck, ct.buffer as ArrayBuffer)
+      return new Uint8Array(pt)
+    } catch {
+      sessionStorage.removeItem('bb_sk')
+      sessionStorage.removeItem('bb_iv')
+      sessionStorage.removeItem('bb_mk')
+      return null
+    }
+  }, [])
+
+  const clearCachedKey = useCallback(() => {
+    sessionStorage.removeItem('bb_sk')
+    sessionStorage.removeItem('bb_iv')
+    sessionStorage.removeItem('bb_mk')
+  }, [])
+
+  // Initialize WASM on mount + check if vault exists + restore cached key
   useState(() => {
     initCrypto()
       .then(async () => {
@@ -70,6 +108,11 @@ export function KeyProvider({ children }: { children: ReactNode }) {
         const exists = await hasVault()
         setVaultExists(exists)
         setVaultChecked(true)
+        const cached = await restoreCachedKey()
+        if (cached) {
+          masterKeyRef.current = cached
+          setIsUnlocked(true)
+        }
       })
       .catch((err) => {
         setCryptoError(
@@ -83,22 +126,25 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     const { masterKey } = await deriveKeys(password, salt)
     masterKeyRef.current = masterKey
     setIsUnlocked(true)
-  }, [])
+    cacheKey(masterKey)
+  }, [cacheKey])
 
   const setMasterKey = useCallback(async (key: Uint8Array, password: string) => {
     masterKeyRef.current = key
     await wrapAndStore(key, password)
     setVaultExists(true)
     setIsUnlocked(true)
-  }, [])
+    cacheKey(key)
+  }, [cacheKey])
 
   const unlockVault = useCallback(async (password: string): Promise<boolean> => {
     const key = await unwrap(password)
     if (!key) return false
     masterKeyRef.current = key
     setIsUnlocked(true)
+    cacheKey(key)
     return true
-  }, [])
+  }, [cacheKey])
 
   const getFileKey = useCallback(async (fileId: string): Promise<Uint8Array> => {
     if (!masterKeyRef.current) {
@@ -119,18 +165,20 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       zeroize(masterKeyRef.current)
       masterKeyRef.current = null
     }
+    clearCachedKey()
     setIsUnlocked(false)
-  }, [])
+  }, [clearCachedKey])
 
   const fullLogout = useCallback(async () => {
     if (masterKeyRef.current) {
       zeroize(masterKeyRef.current)
       masterKeyRef.current = null
     }
+    clearCachedKey()
     await clearVault()
     setVaultExists(false)
     setIsUnlocked(false)
-  }, [])
+  }, [clearCachedKey])
 
   // Full clear on explicit logout — wipe in-memory key AND IndexedDB vault.
   // The user chose to log out, so the device should not retain wrapped keys.
