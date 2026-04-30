@@ -1,9 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { SettingsShell, SettingsHeader } from '../../components/settings-shell'
 import { BBToggle } from '../../components/bb-toggle'
+import { getPreference, setPreference } from '../../lib/api'
 
 interface NotifItem {
   label: string
+  key: string
   inApp: boolean
   email: boolean
 }
@@ -14,43 +16,72 @@ interface NotifGroup {
   items: NotifItem[]
 }
 
-const initialGroups: NotifGroup[] = [
+const defaultGroups: NotifGroup[] = [
   {
     title: 'Security',
     hint: "We can't see your files but we know when devices sign in.",
     items: [
-      { label: 'New device signs in', inApp: true, email: true },
-      { label: 'Recovery phrase used', inApp: true, email: true },
-      { label: 'Password changed', inApp: true, email: true },
-      { label: 'Sign-in from new country', inApp: true, email: false },
+      { label: 'New device signs in', key: 'new_device', inApp: true, email: true },
+      { label: 'Recovery phrase used', key: 'recovery_used', inApp: true, email: true },
+      { label: 'Password changed', key: 'password_changed', inApp: true, email: true },
+      { label: 'Sign-in from new country', key: 'new_country', inApp: true, email: false },
     ],
   },
   {
     title: 'Sharing',
     hint: 'Activity on links and folders you share.',
     items: [
-      { label: 'Someone opens a link you shared', inApp: true, email: false },
-      { label: 'Link expires or is revoked', inApp: false, email: false },
-      { label: 'New team-vault member joins', inApp: true, email: false },
+      { label: 'Someone opens a link you shared', key: 'link_opened', inApp: true, email: false },
+      { label: 'Link expires or is revoked', key: 'link_expired', inApp: false, email: false },
+      { label: 'New team-vault member joins', key: 'member_joined', inApp: true, email: false },
     ],
   },
   {
     title: 'System',
     hint: null,
     items: [
-      { label: 'Storage near limit (>90%)', inApp: true, email: false },
-      { label: 'Sub-processor changes', inApp: false, email: true },
-      { label: 'Product updates & changelog', inApp: false, email: false },
+      { label: 'Storage near limit (>90%)', key: 'storage_warning', inApp: true, email: false },
+      { label: 'Sub-processor changes', key: 'subprocessor', inApp: false, email: true },
+      { label: 'Product updates & changelog', key: 'product_updates', inApp: false, email: false },
     ],
   },
 ]
 
+type NotifPrefs = Record<string, { inApp: boolean; email: boolean }>
+
 export function SettingsNotifications() {
-  const [groups, setGroups] = useState(initialGroups)
+  const [groups, setGroups] = useState(defaultGroups)
+
+  useEffect(() => {
+    getPreference<NotifPrefs>('notification_preferences')
+      .then((prefs) => {
+        if (!prefs) return
+        setGroups((prev) =>
+          prev.map((g) => ({
+            ...g,
+            items: g.items.map((item) => {
+              const saved = prefs[item.key]
+              return saved ? { ...item, inApp: saved.inApp, email: saved.email } : item
+            }),
+          })),
+        )
+      })
+      .catch(() => {})
+  }, [])
+
+  const savePrefs = useCallback((updatedGroups: NotifGroup[]) => {
+    const prefs: NotifPrefs = {}
+    for (const g of updatedGroups) {
+      for (const item of g.items) {
+        prefs[item.key] = { inApp: item.inApp, email: item.email }
+      }
+    }
+    setPreference('notification_preferences', prefs).catch(() => {})
+  }, [])
 
   function toggleItem(gi: number, ii: number, field: 'inApp' | 'email') {
-    setGroups((prev) =>
-      prev.map((g, gIdx) =>
+    setGroups((prev) => {
+      const next = prev.map((g, gIdx) =>
         gIdx !== gi
           ? g
           : {
@@ -59,8 +90,10 @@ export function SettingsNotifications() {
                 iIdx !== ii ? item : { ...item, [field]: !item[field] },
               ),
             },
-      ),
-    )
+      )
+      savePrefs(next)
+      return next
+    })
   }
 
   return (
@@ -70,7 +103,6 @@ export function SettingsNotifications() {
         subtitle="Choose how we tell you about events. Email is always PGP-signed."
       />
 
-      {/* Column headers */}
       <div
         className="grid items-center px-7 py-3 bg-paper-2 border-b border-line"
         style={{ gridTemplateColumns: '1fr 100px 100px' }}
@@ -82,7 +114,6 @@ export function SettingsNotifications() {
 
       {groups.map((g, gi) => (
         <div key={gi}>
-          {/* Group header */}
           <div className="px-7 pt-3.5 pb-2 bg-paper">
             <div className="text-xs font-semibold text-ink-2">{g.title}</div>
             {g.hint && (
@@ -90,7 +121,6 @@ export function SettingsNotifications() {
             )}
           </div>
 
-          {/* Items */}
           {g.items.map((item, ii) => (
             <div
               key={ii}
