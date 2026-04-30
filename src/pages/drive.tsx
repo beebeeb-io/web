@@ -19,7 +19,6 @@ import { NotificationInbox, useNotifications } from '../components/notification-
 import { useToast } from '../components/toast'
 import { useWebSocket } from '../hooks/use-websocket'
 import type { WsEvent } from '../hooks/use-websocket'
-import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
 import { modKey } from '../hooks/use-keyboard-shortcuts'
 import {
@@ -70,36 +69,9 @@ function timeAgo(dateStr: string): string {
 
 // ─── Avatar stack ──────────────────────────────────
 
-const palette = ['#f5b800', '#e85a4f', '#3b82f6', '#a855f7', '#0f766e']
-
-function AvatarStack({ n }: { n: number }) {
-  return (
-    <div className="flex">
-      {Array.from({ length: Math.min(n, 3) }).map((_, i) => (
-        <div
-          key={i}
-          className="shrink-0 rounded-full border-[1.5px] border-paper"
-          style={{
-            width: 18,
-            height: 18,
-            background: palette[i % palette.length],
-            marginLeft: i === 0 ? 0 : -5,
-          }}
-        />
-      ))}
-      {n > 3 && (
-        <span className="font-mono text-[10px] text-ink-3 ml-1 self-center">
-          +{n - 3}
-        </span>
-      )}
-    </div>
-  )
-}
-
 // ─── Drive component ───────────────────────────────
 
 export function Drive() {
-  const { logout } = useAuth()
   const { getFileKey, isUnlocked, cryptoReady, cryptoError } = useKeys()
   const { indexFile, unindexFile } = useSearchIndex()
   const location = useLocation()

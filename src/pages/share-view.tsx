@@ -187,7 +187,7 @@ export function ShareViewPage() {
       const ciphertext = encrypted.slice(NONCE_LEN)
       const plaintext = await decryptChunk(key, nonce, ciphertext)
 
-      const decryptedBlob = new Blob([plaintext], { type: shareData.mime_type || 'application/octet-stream' })
+      const decryptedBlob = new Blob([plaintext as BlobPart], { type: shareData.mime_type || 'application/octet-stream' })
       const url = URL.createObjectURL(decryptedBlob)
       const a = document.createElement('a')
       a.href = url
