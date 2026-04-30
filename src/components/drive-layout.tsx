@@ -9,6 +9,7 @@ import { useKeys } from '../lib/key-context'
 import {
   getSubscription,
   getPlans,
+  getStorageUsage,
   getIncomingInvites,
   getFolderKeys,
   getPreference,
@@ -16,6 +17,7 @@ import {
   type Subscription,
   type Plan,
   type ShareInvite,
+  type StorageUsage,
 } from '../lib/api'
 import { decryptFolderKey, decryptChildFileKey } from '../lib/folder-share-crypto'
 import { decryptFilename, fromBase64 } from '../lib/crypto'
@@ -51,9 +53,11 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   const [planDetails, setPlanDetails] = useState<Plan | null>(null)
   const [sharedFolders, setSharedFolders] = useState<(ShareInvite & { decryptedName?: string })[]>([])
   const [pinnedIds, setPinnedIds] = useState<string[]>([])
+  const [usage, setUsage] = useState<StorageUsage | null>(null)
 
   useEffect(() => {
     getSubscription().then(setSub).catch(() => {})
+    getStorageUsage().then(setUsage).catch(() => {})
     getPlans().then((plans) => {
       getSubscription().then((s) => {
         const match = plans.find((p) => p.id === s.plan)
@@ -112,9 +116,9 @@ export function DriveLayout({ children }: { children: ReactNode }) {
     }).catch(() => {})
   }, [isUnlocked, getMasterKey])
 
-  const storageLimit = planDetails?.storage_bytes ?? 10_000_000_000
-  const storageLabel = planDetails?.storage_label ?? formatStorage(storageLimit)
-  const usedBytes = 0
+  const storageLimit = usage?.plan_limit_bytes ?? planDetails?.storage_bytes ?? 5_368_709_120
+  const storageLabel = formatStorage(storageLimit)
+  const usedBytes = usage?.used_bytes ?? 0
   const usedPct = storageLimit > 0 ? Math.min(100, (usedBytes / storageLimit) * 100) : 0
 
   return (

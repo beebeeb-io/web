@@ -3,11 +3,9 @@ import { useNavigate } from 'react-router-dom'
 import { Icon } from './icons'
 import type { IconName } from './icons'
 import { useAuth } from '../lib/auth-context'
+import { useKeys } from '../lib/key-context'
 import { modLabel } from '../hooks/use-keyboard-shortcuts'
-
-/* ------------------------------------------------------------------ */
-/*  Types                                                              */
-/* ------------------------------------------------------------------ */
+import { fetchIndex, searchIndex as doSearch, type SearchIndex, type SearchResult } from '../lib/search-index'
 
 interface PaletteItem {
   id: string
@@ -23,23 +21,6 @@ interface CommandPaletteProps {
   open: boolean
   onClose: () => void
 }
-
-/* ------------------------------------------------------------------ */
-/*  Mock file data (will be replaced by encrypted index search later) */
-/* ------------------------------------------------------------------ */
-
-const MOCK_FILES: { name: string; path: string; size: string; isFolder: boolean }[] = [
-  { name: 'Tirana-story', path: 'root', size: '24 items', isFolder: true },
-  { name: 'Legal-review', path: 'root', size: '8 items', isFolder: true },
-  { name: 'Archive 2025', path: 'root', size: '142 items', isFolder: true },
-  { name: 'minutes-march.pdf', path: 'Tirana-story', size: '2.4 MB', isFolder: false },
-  { name: 'tirana-interview-03.wav', path: 'Tirana-story / raw', size: '142 MB', isFolder: false },
-  { name: 'court-records-tirana.pdf', path: 'Legal-review', size: '8.7 MB', isFolder: false },
-  { name: 'budget-q2-2025.xlsx', path: 'root', size: '340 KB', isFolder: false },
-  { name: 'brand-guidelines.pdf', path: 'Archive 2025', size: '12 MB', isFolder: false },
-  { name: 'team-photo.png', path: 'root', size: '6.1 MB', isFolder: false },
-  { name: 'contract-draft-v3.docx', path: 'Legal-review', size: '890 KB', isFolder: false },
-]
 
 /* ------------------------------------------------------------------ */
 /*  Fuzzy match                                                        */
@@ -62,23 +43,36 @@ function fuzzyMatch(query: string, text: string): boolean {
 export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
+  const [index, setIndex] = useState<SearchIndex | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
   const { logout } = useAuth()
+  const { getMasterKey, isUnlocked } = useKeys()
 
-  // Build flat list of palette items
+  useEffect(() => {
+    if (!open || !isUnlocked || index) return
+    let cancelled = false
+    async function load() {
+      try {
+        const mk = await getMasterKey()
+        const idx = await fetchIndex(mk)
+        if (!cancelled && idx) setIndex(idx)
+      } catch { /* index not available yet */ }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [open, isUnlocked, getMasterKey, index])
+
   const items = useMemo<PaletteItem[]>(() => {
     const all: PaletteItem[] = []
 
-    // Actions
     all.push(
       { id: 'upload', icon: 'upload', label: 'Upload files...', shortcut: `${modLabel} U`, group: 'actions', action: () => { onClose() } },
       { id: 'new-folder', icon: 'folder', label: 'New folder', shortcut: `${modLabel} N`, group: 'actions', action: () => { onClose() } },
       { id: 'search', icon: 'search', label: 'Search files', shortcut: `${modLabel} F`, group: 'actions', action: () => { navigate('/search'); onClose() } },
     )
 
-    // Navigation
     all.push(
       { id: 'nav-settings', icon: 'settings', label: 'Go to settings', description: 'Profile, devices, notifications', group: 'navigation', action: () => { navigate('/settings'); onClose() } },
       { id: 'nav-security', icon: 'shield', label: 'Go to security', description: 'Encryption, sessions, keys', group: 'navigation', action: () => { navigate('/security'); onClose() } },
@@ -87,27 +81,33 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       { id: 'sign-out', icon: 'lock', label: 'Sign out', description: 'Lock vault and sign out', group: 'actions', action: () => { logout(); onClose() } },
     )
 
-    // Files — only included when there's a query
-    if (query.trim()) {
-      const matching = MOCK_FILES.filter((f) => fuzzyMatch(query, f.name))
-      for (const f of matching) {
+    if (query.trim() && index) {
+      const results: SearchResult[] = doSearch(index, query).slice(0, 10)
+      for (const r of results) {
+        const isFolder = r.entry.type === 'folder'
         all.unshift({
-          id: `file-${f.name}`,
-          icon: f.isFolder ? 'folder' : 'file',
-          label: f.name,
-          description: `${f.path} · ${f.size}`,
+          id: `file-${r.id}`,
+          icon: isFolder ? 'folder' : 'file',
+          label: r.entry.name,
+          description: r.entry.path || undefined,
           group: 'files',
-          action: () => { onClose() },
+          action: () => {
+            if (isFolder) {
+              navigate(`/?folder=${r.id}`)
+            } else {
+              navigate(`/?folder=${r.entry.parent || ''}&highlight=${r.id}`)
+            }
+            onClose()
+          },
         })
       }
     }
 
-    // Filter everything by query
     if (query.trim()) {
-      return all.filter((item) => fuzzyMatch(query, item.label))
+      return all.filter((item) => item.group === 'files' || fuzzyMatch(query, item.label))
     }
     return all
-  }, [query, navigate, onClose, logout])
+  }, [query, navigate, onClose, logout, index])
 
   // Group items for rendering
   const groups = useMemo(() => {

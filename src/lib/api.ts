@@ -775,6 +775,16 @@ export interface Invoice {
   period: string
 }
 
+export interface StorageUsage {
+  used_bytes: number
+  plan_limit_bytes: number
+  plan_name: string
+}
+
+export async function getStorageUsage(): Promise<StorageUsage> {
+  return request<StorageUsage>('/api/v1/files/usage')
+}
+
 export async function getPlans(): Promise<Plan[]> {
   const data = await request<{ plans: Plan[] }>('/api/v1/billing/plans')
   return data.plans

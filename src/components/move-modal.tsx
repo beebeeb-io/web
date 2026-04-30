@@ -4,7 +4,7 @@ import { BBChip } from './bb-chip'
 import { Icon } from './icons'
 import { listFiles, createFolder } from '../lib/api'
 import { useKeys } from '../lib/key-context'
-import { decryptFilename, fromBase64 } from '../lib/crypto'
+import { decryptFilename, encryptFilename, fromBase64, toBase64 } from '../lib/crypto'
 
 interface MoveModalProps {
   open: boolean
@@ -62,15 +62,7 @@ export function MoveModal({
         })),
       )
     } catch {
-      // API not available -- show mock folders
-      setFolders([
-        { id: 'f1', name: 'sources', children: [], loaded: false, expanded: false },
-        { id: 'f2', name: 'drafts', children: [], loaded: false, expanded: false },
-        { id: 'f3', name: 'published-2024', children: [], loaded: false, expanded: false },
-        { id: 'f4', name: 'fixer-contacts', children: [], loaded: false, expanded: false },
-        { id: 'f5', name: 'interviews-sep2025', children: [], loaded: false, expanded: false },
-        { id: 'f6', name: '_archive', children: [], loaded: false, expanded: false },
-      ])
+      setFolders([])
     } finally {
       setLoading(false)
     }
@@ -135,20 +127,21 @@ export function MoveModal({
     setCreatingFolder(true)
     try {
       const parentId = breadcrumbs[breadcrumbs.length - 1]?.id ?? undefined
-      await createFolder(name, parentId)
+      const folderId = crypto.randomUUID()
+      let nameEncrypted = name
+      if (isUnlocked) {
+        const folderKey = await getFileKey(folderId)
+        const enc = await encryptFilename(folderKey, name)
+        nameEncrypted = JSON.stringify({
+          nonce: toBase64(enc.nonce),
+          ciphertext: toBase64(enc.ciphertext),
+        })
+      }
+      const created = await createFolder(nameEncrypted, parentId, folderId)
+      setDecryptedNames((prev) => ({ ...prev, [created.id]: name }))
       setSearch('')
       fetchFolders(parentId)
     } catch {
-      // Mock: add folder locally
-      const newFolder: FolderNode = {
-        id: `new-${Date.now()}`,
-        name,
-        children: [],
-        loaded: false,
-        expanded: false,
-      }
-      setFolders((prev) => [newFolder, ...prev])
-      setSelectedId(newFolder.id)
       setSearch('')
     } finally {
       setCreatingFolder(false)
