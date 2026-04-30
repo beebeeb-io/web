@@ -637,7 +637,6 @@ export interface ShareInvite {
   sender_email?: string
   sender_public_key?: string
   recipient_public_key?: string
-  can_download?: boolean
   can_reshare?: boolean
   expires_at?: string | null
   size_bytes?: number
@@ -645,15 +644,28 @@ export interface ShareInvite {
   chunk_count?: number
   mime_type?: string
   encrypted_file_key?: string
+  is_folder_share?: boolean
+  encrypted_folder_key?: string
+  encrypted_owner_folder_key?: string
 }
 
 export async function createInvite(
   fileId: string,
   recipientEmail: string,
+  folderShare?: {
+    is_folder_share: boolean
+    encrypted_folder_key: string
+    encrypted_owner_folder_key: string
+    folder_keys: { file_id: string; encrypted_file_key: string }[]
+  },
 ): Promise<{ invite_id: string; status: string; recipient_public_key?: string | null }> {
   return request('/api/v1/shares/invites', {
     method: 'POST',
-    body: JSON.stringify({ file_id: fileId, recipient_email: recipientEmail }),
+    body: JSON.stringify({
+      file_id: fileId,
+      recipient_email: recipientEmail,
+      ...folderShare,
+    }),
   })
 }
 
@@ -696,7 +708,7 @@ export async function cancelInvite(inviteId: string): Promise<void> {
 
 export async function patchInvite(
   inviteId: string,
-  updates: { can_download?: boolean; can_reshare?: boolean; expires_at?: string },
+  updates: { can_reshare?: boolean; expires_at?: string },
 ): Promise<void> {
   await request(`/api/v1/shares/invites/${inviteId}`, {
     method: 'PATCH',
@@ -919,23 +931,60 @@ export async function listMigrations(): Promise<{
   return request('/api/v1/admin/migrations')
 }
 
-// ─── Shared with me endpoints ────────────────────
+// ─── Folder sharing ──────────────────────────────
 
-export interface SharedWithMeItem {
-  file_id?: string
-  file_name_encrypted: string
-  file_size: number
-  from_email: string
-  sender_public_key?: string
-  access_level: string
-  expires: string | null
-  created_at: string
-  is_folder: boolean
+export async function getFolderKeys(
+  inviteId: string,
+): Promise<{ file_id: string; encrypted_file_key: string }[]> {
+  const data = await request<{ keys: { file_id: string; encrypted_file_key: string }[] }>(
+    `/api/v1/shares/invites/${inviteId}/folder-keys`,
+  )
+  return data.keys
 }
 
-export async function listSharedWithMe(): Promise<SharedWithMeItem[]> {
-  const data = await request<{ items: SharedWithMeItem[] }>('/api/v1/shared-with-me')
-  return data.items
+export async function addFolderKeys(
+  inviteId: string,
+  keys: { file_id: string; encrypted_file_key: string }[],
+): Promise<void> {
+  await request(`/api/v1/shares/invites/${inviteId}/folder-keys`, {
+    method: 'POST',
+    body: JSON.stringify({ keys }),
+  })
+}
+
+export async function getFolderMembers(
+  folderId: string,
+): Promise<{ members: { user_id: string; public_key: string | null; email: string; is_owner?: boolean }[]; owner_id: string }> {
+  return request(`/api/v1/shares/invites/folder-members/${folderId}`)
+}
+
+export async function listSharedFolderFiles(
+  sharedFolderId: string,
+  parentId?: string,
+): Promise<DriveFile[]> {
+  let url = `/api/v1/files?shared_folder_id=${sharedFolderId}`
+  if (parentId) url += `&parent_id=${parentId}`
+  const data = await request<{ files: DriveFile[] }>(url)
+  return data.files
+}
+
+// ─── User preferences ────────────────────────────
+
+export async function getPreferences(): Promise<Record<string, unknown>> {
+  const data = await request<{ preferences: Record<string, unknown> }>('/api/v1/preferences')
+  return data.preferences
+}
+
+export async function getPreference<T = unknown>(key: string): Promise<T> {
+  const data = await request<{ value: T }>(`/api/v1/preferences/${key}`)
+  return data.value
+}
+
+export async function setPreference(key: string, value: unknown): Promise<void> {
+  await request(`/api/v1/preferences/${key}`, {
+    method: 'PUT',
+    body: JSON.stringify(value),
+  })
 }
 
 // ─── Passkey endpoints ──────────────────────────
