@@ -7,6 +7,7 @@ import { BBToggle } from '../../components/bb-toggle'
 import { Icon } from '../../components/icons'
 import { useAuth } from '../../lib/auth-context'
 import { useToast } from '../../components/toast'
+import { RecentActivity } from '../../components/recent-activity'
 import {
   getPreference, setPreference, getStorageUsage,
   deleteAccountPermanently, changeEmail, exportAccountData,
@@ -254,6 +255,16 @@ export function SettingsAccount() {
         <BBButton variant="amber" onClick={handleSaveProfile} disabled={savingProfile}>
           {savingProfile ? 'Saving...' : 'Save profile'}
         </BBButton>
+      </div>
+
+      {/* ── Section: Recent activity ── */}
+      <div className="mt-4 mb-1 border-t border-line pt-4">
+        <h2 className="text-[11px] font-semibold uppercase tracking-widest text-ink-4 px-7 py-3">
+          Recent activity
+        </h2>
+      </div>
+      <div className="px-7 pb-4">
+        <RecentActivity limit={5} />
       </div>
 
       {/* ── Section 2: Storage breakdown ── */}
