@@ -1,16 +1,44 @@
 {
+  "id": "/",
   "name": "Beebeeb",
   "short_name": "Beebeeb",
-  "description": "End-to-end encrypted cloud storage",
-  "start_url": "/",
+  "description": "End-to-end encrypted cloud storage. Made in Europe.",
+  "start_url": "/?source=pwa",
+  "scope": "/",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "orientation": "any",
+  "lang": "en",
+  "dir": "ltr",
   "theme_color": "#f5b800",
   "background_color": "#faf8f3",
+  "categories": ["productivity", "utilities", "business"],
   "icons": [
     {
       "src": "/favicon.svg",
       "sizes": "any",
-      "type": "image/svg+xml"
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Search",
+      "short_name": "Search",
+      "url": "/search",
+      "description": "Search your encrypted files"
+    },
+    {
+      "name": "Trash",
+      "short_name": "Trash",
+      "url": "/trash",
+      "description": "Restore or permanently delete files"
+    },
+    {
+      "name": "Settings",
+      "short_name": "Settings",
+      "url": "/settings/account",
+      "description": "Manage your account and devices"
     }
   ]
 }
