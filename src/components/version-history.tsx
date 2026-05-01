@@ -3,9 +3,10 @@ import { BBButton } from './bb-button'
 import { formatBytes } from '../lib/format'
 import { Icon } from './icons'
 import { useToast } from './toast'
+import { useKeys } from '../lib/key-context'
+import { decryptVersionToBlob } from '../lib/encrypted-download'
 import {
   listVersions,
-  downloadVersion,
   restoreVersion,
   deleteVersion,
   type FileVersion,
@@ -16,6 +17,8 @@ interface VersionHistoryProps {
   onClose: () => void
   fileId: string
   fileName: string
+  /** Used to pick the right MIME for the decrypted version blob. */
+  mimeType?: string
   onVersionRestored?: () => void
 }
 
@@ -36,6 +39,7 @@ export function VersionHistory({
   onClose,
   fileId,
   fileName,
+  mimeType,
   onVersionRestored,
 }: VersionHistoryProps) {
   const [versions, setVersions] = useState<FileVersion[]>([])
@@ -43,6 +47,7 @@ export function VersionHistory({
   const [selectedIdx, setSelectedIdx] = useState(0)
   const [loading, setLoading] = useState(false)
   const { showToast } = useToast()
+  const { getFileKey } = useKeys()
 
   const fetchVersions = useCallback(async () => {
     if (!fileId) return
@@ -79,11 +84,24 @@ export function VersionHistory({
 
   async function handleDownload(version: FileVersion) {
     try {
-      const blob = await downloadVersion(fileId, version.id)
-      const url = URL.createObjectURL(blob)
+      const fileKey = await getFileKey(fileId)
+      const plaintext = await decryptVersionToBlob(
+        fileId,
+        version.id,
+        fileKey,
+        mimeType ?? 'application/octet-stream',
+        version.chunk_count,
+        version.size_bytes,
+      )
+      const url = URL.createObjectURL(plaintext)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${fileName}_v${version.version_number}`
+      // Inject the version suffix before the extension so the file still
+      // opens correctly: "report.pdf" → "report_v3.pdf".
+      const dot = fileName.lastIndexOf('.')
+      const base = dot > 0 ? fileName.slice(0, dot) : fileName
+      const ext = dot > 0 ? fileName.slice(dot) : ''
+      a.download = `${base}_v${version.version_number}${ext}`
       a.click()
       URL.revokeObjectURL(url)
     } catch {

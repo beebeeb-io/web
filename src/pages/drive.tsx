@@ -1372,18 +1372,19 @@ export function Drive() {
         onRename={handleRenameConfirm}
       />
 
-      {versionFileId && (
-        <VersionHistory
-          open={true}
-          onClose={() => setVersionFileId(null)}
-          fileId={versionFileId}
-          fileName={(() => {
-            const f = files.find((x) => x.id === versionFileId)
-            return f ? displayName(f) : ''
-          })()}
-          onVersionRestored={fetchFiles}
-        />
-      )}
+      {versionFileId && (() => {
+        const f = files.find((x) => x.id === versionFileId)
+        return (
+          <VersionHistory
+            open={true}
+            onClose={() => setVersionFileId(null)}
+            fileId={versionFileId}
+            fileName={f ? displayName(f) : ''}
+            mimeType={f?.mime_type}
+            onVersionRestored={fetchFiles}
+          />
+        )
+      })()}
 
       <WelcomeTour
         open={tourOpen}
