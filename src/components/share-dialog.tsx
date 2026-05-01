@@ -62,26 +62,6 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
 }
 
-function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      onClick={() => onChange(!on)}
-      className={`relative inline-flex h-[20px] w-[36px] shrink-0 cursor-pointer rounded-full border-2 transition-colors ${
-        on ? 'bg-amber border-amber-deep' : 'bg-paper-3 border-line-2'
-      }`}
-    >
-      <span
-        className={`pointer-events-none block h-[16px] w-[16px] rounded-full bg-white shadow-1 transition-transform ${
-          on ? 'translate-x-[16px]' : 'translate-x-0'
-        }`}
-      />
-    </button>
-  )
-}
-
 function Dropdown<T extends { label: string }>({
   options,
   selected,
@@ -472,7 +452,6 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
   const [mode, setMode] = useState<ShareMode>('link')
   const [expiryIdx, setExpiryIdx] = useState(1) // default: 24 hours
   const [maxOpensIdx, setMaxOpensIdx] = useState(1) // default: 3
-  const [canDownload, setCanDownload] = useState(true)
   const [loading, setLoading] = useState(false)
   const [shareResult, setShareResult] = useState<ShareInfo | null>(null)
   const [decryptionKey, setDecryptionKey] = useState<string>('')
@@ -500,7 +479,6 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       setMode('link')
       setExpiryIdx(1)
       setMaxOpensIdx(1)
-      setCanDownload(true)
       setShareResult(null)
       setDecryptionKey('')
       setError(null)
@@ -523,7 +501,6 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
     const options: ShareOptions = {
       expires_in_hours: EXPIRY_OPTIONS[expiryIdx].hours,
       max_opens: MAX_OPENS_OPTIONS[maxOpensIdx].value,
-      can_download: canDownload,
     }
 
     try {
@@ -540,7 +517,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
     } finally {
       setLoading(false)
     }
-  }, [fileId, expiryIdx, maxOpensIdx, canDownload, isUnlocked, getFileKey])
+  }, [fileId, expiryIdx, maxOpensIdx, isUnlocked, getFileKey])
 
   const copyToClipboard = useCallback(async (text: string, type: 'full-link' | 'split-link' | 'split-key') => {
     try {
@@ -644,12 +621,6 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
                       ? `${MAX_OPENS_OPTIONS[maxOpensIdx].value} opens max`
                       : 'Unlimited opens'}
                   </span>
-                  {!canDownload && (
-                    <>
-                      <span className="w-px h-3 bg-line-2" />
-                      <span>View only</span>
-                    </>
-                  )}
                 </div>
 
                 {shareMode === 'full' ? (
@@ -753,21 +724,6 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
                           selected={maxOpensIdx}
                           onChange={setMaxOpensIdx}
                         />
-                      </div>
-                    </div>
-
-                    {/* Permissions */}
-                    <label className="block text-xs font-medium text-ink-2 mb-2.5">Permissions</label>
-                    <div className="flex flex-col gap-2.5 mb-5">
-                      <div className="flex items-center text-[13px] opacity-50">
-                        <Icon name="eye" size={13} className="text-ink-4" />
-                        <span className="ml-2.5 flex-1 text-ink-3">Can view</span>
-                        <span className="text-[11px] text-ink-4">Always on</span>
-                      </div>
-                      <div className="flex items-center text-[13px]">
-                        <Icon name="download" size={13} className="text-ink-3" />
-                        <span className="ml-2.5 flex-1">Can download</span>
-                        <Toggle on={canDownload} onChange={setCanDownload} />
                       </div>
                     </div>
 

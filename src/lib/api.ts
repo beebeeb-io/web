@@ -516,7 +516,6 @@ export interface ShareOptions {
   expires_in_hours?: number | null
   max_opens?: number | null
   passphrase?: string
-  can_download?: boolean
 }
 
 export interface ShareInfo {
@@ -525,7 +524,6 @@ export interface ShareInfo {
   url: string
   expires_at: string | null
   max_opens: number | null
-  can_download: boolean
   has_passphrase: boolean
   created_at: string
 }
@@ -536,7 +534,6 @@ export interface ShareView {
   size_bytes?: number
   mime_type?: string
   shared_by?: string
-  can_download?: boolean
   expires_at?: string | null
   max_opens?: number | null
   open_count?: number
@@ -554,7 +551,6 @@ export interface MyShare {
   expires_at: string | null
   max_opens: number | null
   open_count: number
-  can_download: boolean
   has_passphrase: boolean
   created_at: string
   file: {

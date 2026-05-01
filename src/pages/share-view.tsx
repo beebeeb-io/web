@@ -409,7 +409,7 @@ export function ShareViewPage() {
             </div>
 
             {/* Download button — only when decryption key is in the URL */}
-            {shareData?.can_download !== false && hasKey && (
+            {hasKey && (
               <BBButton
                 variant="amber"
                 size="lg"
@@ -423,7 +423,7 @@ export function ShareViewPage() {
             )}
 
             {/* Key entry form — when no key is present */}
-            {shareData?.can_download !== false && !hasKey && (
+            {!hasKey && (
               <div className="border border-line-2 rounded-lg bg-paper-2 p-4">
                 <div className="flex items-center gap-2 mb-2">
                   <Icon name="lock" size={14} className="text-amber-deep" />
@@ -462,12 +462,6 @@ export function ShareViewPage() {
                   <Icon name="lock" size={13} />
                   Unlock file
                 </BBButton>
-              </div>
-            )}
-
-            {shareData?.can_download === false && (
-              <div className="px-3 py-2 bg-paper-2 border border-line rounded-md text-xs text-ink-3 text-center">
-                Download is not enabled for this share
               </div>
             )}
 
