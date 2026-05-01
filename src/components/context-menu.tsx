@@ -15,6 +15,7 @@ const MENU_ITEMS: ContextMenuItem[] = [
   { id: 'open', label: 'Open', icon: 'file', shortcut: 'Enter' },
   { id: 'preview', label: 'Preview', icon: 'eye', shortcut: 'Space', dividerAfter: true },
   { id: 'share', label: 'Share', icon: 'share', shortcut: 'S' },
+  { id: 'copy-link', label: 'Copy share link', icon: 'link' },
   { id: 'move', label: 'Move to...', icon: 'folder', shortcut: 'M' },
   { id: 'copy', label: 'Copy to...', icon: 'copy', shortcut: 'C', dividerAfter: true },
   { id: 'star', label: 'Star', icon: 'star', shortcut: 'F' },

@@ -32,6 +32,7 @@ import {
   deleteFile,
   getIncomingInvites,
   getPendingApprovals,
+  listMyShares,
   type DriveFile,
 } from '../lib/api'
 import { encryptedUpload } from '../lib/encrypted-upload'
@@ -875,6 +876,41 @@ export function Drive() {
         break
       case 'share':
         setShareFileId(fileId)
+        break
+      case 'copy-link':
+        try {
+          if (!isUnlocked || !cryptoReady) {
+            showToast({
+              icon: 'lock',
+              title: 'Vault is locked',
+              description: 'Unlock the vault to copy share links.',
+              danger: true,
+            })
+            return
+          }
+          const shares = await listMyShares()
+          const existingShare = shares.find((s) => s.file_id === fileId)
+          if (!existingShare) {
+            showToast({
+              icon: 'link',
+              title: 'No share link exists',
+              description: 'Share the file first to create a link.',
+            })
+            return
+          }
+          const fileKey = await getFileKey(fileId)
+          const keyB64 = toBase64(fileKey)
+          const shareUrl = `${window.location.origin}/s/${existingShare.token}#key=${encodeURIComponent(keyB64)}`
+          await navigator.clipboard.writeText(shareUrl)
+          showToast({ icon: 'check', title: 'Share link copied', description: 'Link with decryption key copied to clipboard.' })
+        } catch (err) {
+          showToast({
+            icon: 'x',
+            title: 'Failed to copy link',
+            description: err instanceof Error ? err.message : 'Something went wrong.',
+            danger: true,
+          })
+        }
         break
       case 'move':
         setMoveFileId(fileId)
