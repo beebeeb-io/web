@@ -183,6 +183,15 @@ export function DriveLayout({ children }: { children: ReactNode }) {
       .catch((err) => console.error('[DriveLayout] Failed to load pinned folders:', err))
   }, [])
 
+  useEffect(() => {
+    function onPlanChanged() {
+      getStorageUsage().then(setUsage).catch(() => {})
+      getSubscription().then(setSub).catch(() => {})
+    }
+    window.addEventListener('beebeeb:plan-changed', onPlanChanged)
+    return () => window.removeEventListener('beebeeb:plan-changed', onPlanChanged)
+  }, [])
+
   async function togglePin(folderId: string) {
     const newIds = pinnedIds.includes(folderId)
       ? pinnedIds.filter(id => id !== folderId)

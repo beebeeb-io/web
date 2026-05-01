@@ -551,7 +551,10 @@ export function Billing() {
         minSeats={planMeta[upgradePlan]?.minSeats ?? 3}
         open={upgradeOpen}
         onClose={() => setUpgradeOpen(false)}
-        onSuccess={() => void loadData()}
+        onSuccess={() => {
+          void loadData()
+          window.dispatchEvent(new Event('beebeeb:plan-changed'))
+        }}
       />
     </SettingsShell>
   )
