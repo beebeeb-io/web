@@ -21,6 +21,7 @@ import {
 } from '../lib/api'
 import { decryptFolderKey, decryptChildFileKey } from '../lib/folder-share-crypto'
 import { decryptFilename, fromBase64 } from '../lib/crypto'
+import { QuotaWarning } from './quota-warning'
 
 const navItems: { path: string; icon: IconName; label: string }[] = [
   { path: '/', icon: 'folder', label: 'All files' },
@@ -279,6 +280,12 @@ export function DriveLayout({ children }: { children: ReactNode }) {
           </button>
           <BBLogo size={12} />
         </div>
+        {usage && (
+          <QuotaWarning
+            usedBytes={usage.used_bytes}
+            limitBytes={usage.plan_limit_bytes}
+          />
+        )}
         {children}
       </main>
     </div>

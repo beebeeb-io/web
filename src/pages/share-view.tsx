@@ -4,6 +4,7 @@ import { BBLogo } from '../components/bb-logo'
 import { BBButton } from '../components/bb-button'
 import { BBChip } from '../components/bb-chip'
 import { Icon } from '../components/icons'
+import { ReportDialog } from '../components/report-dialog'
 import {
   getShare,
   verifySharePassphrase,
@@ -51,6 +52,7 @@ export function ShareViewPage() {
   const [unlockError, setUnlockError] = useState<string | null>(null)
   // Tracks whether we have a usable key (from fragment or manual entry)
   const [keyAvailable, setKeyAvailable] = useState(false)
+  const [reportOpen, setReportOpen] = useState(false)
 
   /** Check if raw name looks like encrypted JSON (not a human-readable filename). */
   function isEncryptedName(raw: string | null | undefined): boolean {
@@ -478,8 +480,25 @@ export function ShareViewPage() {
               <Icon name="shield" size={11} className="text-amber-deep" />
               End-to-end encrypted with Beebeeb
             </div>
+            <div className="flex items-center justify-center mt-1.5">
+              <button
+                type="button"
+                onClick={() => setReportOpen(true)}
+                className="text-[11px] text-ink-3 hover:text-ink-2 transition-colors underline-offset-2 hover:underline"
+              >
+                Report this link
+              </button>
+            </div>
           </div>
         </div>
+
+        {token && (
+          <ReportDialog
+            open={reportOpen}
+            onClose={() => setReportOpen(false)}
+            shareToken={token}
+          />
+        )}
       </div>
     </div>
   )

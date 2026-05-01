@@ -1663,3 +1663,27 @@ export async function getHealth(): Promise<HealthResponse> {
   }
   return res.json() as Promise<HealthResponse>
 }
+
+// ─── Abuse reports ──────────────────────────────
+
+export async function reportShareLink(
+  shareToken: string,
+  reason: string,
+): Promise<{ id: string }> {
+  // Public endpoint — no auth header needed
+  const res = await fetch(`${API_URL}/api/v1/reports`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ share_token: shareToken, reason }),
+  })
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as Record<string, unknown>
+    throw new ApiError(
+      (body.message ?? body.error ?? res.statusText) as string,
+      res.status,
+    )
+  }
+
+  return res.json() as Promise<{ id: string }>
+}

@@ -33,8 +33,11 @@ import {
   getIncomingInvites,
   getPendingApprovals,
   listMyShares,
+  getStorageUsage,
   type DriveFile,
+  type StorageUsage,
 } from '../lib/api'
+import { getRemainingBytes } from '../components/quota-warning'
 import { encryptedUpload } from '../lib/encrypted-upload'
 import { encryptedDownload } from '../lib/encrypted-download'
 import {
@@ -123,6 +126,9 @@ export function Drive() {
   const [trashingIds, setTrashingIds] = useState<Set<string>>(new Set())
   const [starPulseId, setStarPulseId] = useState<string | null>(null)
 
+  // ─── Storage quota state ─────────────────────────
+  const [storageUsage, setStorageUsage] = useState<StorageUsage | null>(null)
+
   const currentParentId = breadcrumbs[breadcrumbs.length - 1]?.id ?? undefined
 
   const fetchFiles = useCallback(async () => {
@@ -185,6 +191,15 @@ export function Drive() {
         // IndexedDB unavailable — ignore
       })
   }, [])
+
+  // Fetch storage usage for quota checks
+  const refreshUsage = useCallback(() => {
+    getStorageUsage().then(setStorageUsage).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    refreshUsage()
+  }, [refreshUsage])
 
   // Check for pending share invites on mount
   useEffect(() => {
@@ -347,6 +362,22 @@ export function Drive() {
   }
 
   function handleFilesSelected(selectedFiles: File[]) {
+    // ─── Quota check ──────────────────────────────
+    const remaining = getRemainingBytes(storageUsage?.used_bytes, storageUsage?.plan_limit_bytes)
+    if (remaining !== null) {
+      const totalSize = selectedFiles.reduce((sum, f) => sum + f.size, 0)
+      if (totalSize > remaining) {
+        showToast({
+          icon: 'shield',
+          title: 'Not enough storage',
+          description: `This upload needs ${formatBytes(totalSize)} but you only have ${formatBytes(remaining)} remaining.`,
+          href: '/billing',
+          danger: true,
+        })
+        return
+      }
+    }
+
     const resolved = selectedFiles.map((f) => {
       const uniqueName = resolveUniqueName(f.name)
       if (uniqueName !== f.name) {
@@ -429,6 +460,8 @@ export function Drive() {
       // Remove from paused list if this was a resume
       setPausedUploads((prev) => prev.filter((u) => u.fileId !== fileId))
       showToast({ icon: 'check', title: 'Uploaded', description: file.name })
+      // Refresh storage usage so quota warning updates
+      refreshUsage()
       // Mark as recently uploaded for glow animation
       setRecentlyUploaded((prev) => new Set(prev).add(fileId))
       setTimeout(() => {
@@ -474,6 +507,22 @@ export function Drive() {
     }
 
     if (folderFiles.length === 0) return
+
+    // ─── Quota check ──────────────────────────────
+    const remaining = getRemainingBytes(storageUsage?.used_bytes, storageUsage?.plan_limit_bytes)
+    if (remaining !== null) {
+      const totalSize = folderFiles.reduce((sum, ff) => sum + ff.file.size, 0)
+      if (totalSize > remaining) {
+        showToast({
+          icon: 'shield',
+          title: 'Not enough storage',
+          description: `This folder needs ${formatBytes(totalSize)} but you only have ${formatBytes(remaining)} remaining.`,
+          href: '/billing',
+          danger: true,
+        })
+        return
+      }
+    }
 
     // Collect all unique folder paths from the file list, sorted by depth (parent first)
     const folderPaths = new Set<string>()
@@ -604,6 +653,7 @@ export function Drive() {
         title: 'Folder uploaded',
         description: `${rootFolderName}/ -- ${totalFiles} file${totalFiles !== 1 ? 's' : ''}`,
       })
+      refreshUsage()
       fetchFiles()
     } catch (err) {
       showToast({
