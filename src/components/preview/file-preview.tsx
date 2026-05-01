@@ -272,6 +272,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose }:
       kind={file.mime_type}
       size={sizeStr}
       onClose={onClose}
+      decrypted={!!blob}
       rightRail={
         <InfoRail
           filename={name}

@@ -8,6 +8,7 @@ import { ContextMenu } from './context-menu'
 import { FileRowSkeleton } from './skeleton'
 import { useKeys } from '../lib/key-context'
 import { decryptFilename, fromBase64 } from '../lib/crypto'
+import { onDecrypted } from '../lib/decrypt-events'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { modKey } from '../hooks/use-keyboard-shortcuts'
 import { formatBytes } from '../lib/format'
@@ -280,6 +281,23 @@ export function FileList({
     updateSelection(new Set<string>())
     lastClickedIdRef.current = null
   }, [updateSelection])
+
+  // ─── Decryption pulse ──────────────────────────────
+  // When a file in the list is decrypted (preview/download), briefly pulse
+  // the lock chip to show "something secure happened locally".
+  const [decryptPulseId, setDecryptPulseId] = useState<string | null>(null)
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const off = onDecrypted((fileId) => {
+      setDecryptPulseId(fileId)
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => setDecryptPulseId(null), 900)
+    })
+    return () => {
+      off()
+      if (timer) clearTimeout(timer)
+    }
+  }, [])
 
   // ─── Pinned folders ────────────────────────────────
   const [pinnedFolderIds, setPinnedFolderIds] = useState<Set<string>>(new Set())
@@ -566,11 +584,13 @@ export function FileList({
               </span>
             )}
             {isUnlocked && (
-              <BBChip variant="amber">
-                <span className="flex items-center gap-1 text-[9.5px]">
-                  <Icon name="lock" size={9} /> E2EE
-                </span>
-              </BBChip>
+              <span className={decryptPulseId === file.id ? 'decrypt-pulse inline-flex' : 'inline-flex'}>
+                <BBChip variant="amber">
+                  <span className="flex items-center gap-1 text-[9.5px]">
+                    <Icon name="lock" size={9} /> E2EE
+                  </span>
+                </BBChip>
+              </span>
             )}
             {!file.is_folder && (file.version_number ?? 1) > 1 && (
               <span

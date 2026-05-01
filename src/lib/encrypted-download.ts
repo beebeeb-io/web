@@ -8,6 +8,7 @@ import {
   fromBase64,
 } from './crypto'
 import { getToken, getApiUrl, ApiError } from './api'
+import { dispatchDecrypted } from './decrypt-events'
 
 // AES-256-GCM: 12-byte nonce, 16-byte auth tag
 const NONCE_LENGTH = 12
@@ -131,6 +132,7 @@ export async function encryptedDownload(
   link.click()
   document.body.removeChild(link)
   URL.revokeObjectURL(url)
+  dispatchDecrypted(fileId)
 }
 
 /**
@@ -186,5 +188,6 @@ export async function decryptToBlob(
   }
 
   const plaintext = new Blob(decryptedParts as unknown as BlobPart[], { type: mimeType || 'application/octet-stream' })
+  dispatchDecrypted(fileId)
   return { plaintext, filename }
 }

@@ -9,6 +9,8 @@ interface PreviewChromeProps {
   onClose: () => void
   children: ReactNode
   rightRail?: ReactNode
+  /** True once decryption finished — drives the trust line below the title. */
+  decrypted?: boolean
 }
 
 export function PreviewChrome({
@@ -18,13 +20,14 @@ export function PreviewChrome({
   onClose,
   children,
   rightRail,
+  decrypted = false,
 }: PreviewChromeProps) {
   const kindIcon = kind.startsWith('image') ? 'file' : 'file' as const
 
   return (
     <div className="absolute inset-0 z-30 flex flex-col bg-paper text-ink">
-      {/* Top bar — 48px */}
-      <div className="flex h-12 shrink-0 items-center gap-3 border-b border-line bg-paper px-3.5">
+      {/* Top bar — auto-height to fit two-line title + trust subtitle */}
+      <div className="flex shrink-0 items-center gap-3 border-b border-line bg-paper px-3.5 py-2">
         {/* Back button */}
         <button
           type="button"
@@ -35,18 +38,29 @@ export function PreviewChrome({
         </button>
 
         {/* File info */}
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-[5px] bg-paper-2">
-            <Icon name={kindIcon} size={12} />
-          </span>
-          <span className="truncate text-[13px] font-medium text-ink">
-            {filename}
-          </span>
-          <span className="font-mono text-[11px] text-ink-3">{size}</span>
-          <BBChip variant="amber">
-            <Icon name="lock" size={9} className="mr-1" />
-            <span className="text-[9px]">Decrypted locally</span>
-          </BBChip>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-[5px] bg-paper-2">
+              <Icon name={kindIcon} size={12} />
+            </span>
+            <span className="truncate text-[13px] font-medium text-ink">
+              {filename}
+            </span>
+            <span className="font-mono text-[11px] text-ink-3">{size}</span>
+            <BBChip variant="amber">
+              <Icon name="lock" size={9} className="mr-1" />
+              <span className="text-[9px]">Decrypted locally</span>
+            </BBChip>
+          </div>
+          {decrypted && (
+            <div
+              key={filename}
+              className="decrypt-fade-in font-mono text-[10.5px] text-ink-3 mt-0.5 ml-[30px] flex items-center gap-1.5"
+            >
+              <span className="inline-block h-1 w-1 rounded-full bg-amber-deep" />
+              <span>Decrypted locally · key never left this device</span>
+            </div>
+          )}
         </div>
 
         {/* Action buttons */}
