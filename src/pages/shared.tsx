@@ -114,12 +114,13 @@ export function Shared() {
       setSentInvited(sent.filter((i) => i.status === 'invited'))
       setIncomingInvited(incoming.filter((i) => i.status === 'invited'))
       setIncomingClaimed(incoming.filter((i) => i.status === 'claimed'))
-    } catch {
-      // Silently fail — data stays empty
+    } catch (err) {
+      console.error('[Shared] Failed to load shared items:', err)
+      showToast({ icon: 'x', title: 'Failed to load shared items', danger: true })
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [showToast])
 
   useEffect(() => {
     fetchAll()

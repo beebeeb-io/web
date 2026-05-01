@@ -104,8 +104,8 @@ export function Activity() {
       const res = await listActivity(page, filterDef?.typePrefix)
       setEvents(res.events)
       setTotal(res.total)
-    } catch {
-      // silently fail — the user sees the empty state
+    } catch (err) {
+      console.error('[Activity] Failed to load activity:', err)
     } finally {
       setLoading(false)
     }

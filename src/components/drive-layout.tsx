@@ -56,20 +56,20 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   const [usage, setUsage] = useState<StorageUsage | null>(null)
 
   useEffect(() => {
-    getSubscription().then(setSub).catch(() => {})
-    getStorageUsage().then(setUsage).catch(() => {})
+    getSubscription().then(setSub).catch((err) => console.error('[DriveLayout] Failed to load subscription:', err))
+    getStorageUsage().then(setUsage).catch((err) => console.error('[DriveLayout] Failed to load storage usage:', err))
     getPlans().then((plans) => {
       getSubscription().then((s) => {
         const match = plans.find((p) => p.id === s.plan)
         if (match) setPlanDetails(match)
-      }).catch(() => {})
-    }).catch(() => {})
+      }).catch((err) => console.error('[DriveLayout] Failed to load subscription for plan match:', err))
+    }).catch((err) => console.error('[DriveLayout] Failed to load plans:', err))
   }, [])
 
   useEffect(() => {
     getPreference<{ folder_ids: string[] }>('pinned_shared_folders')
       .then(pref => setPinnedIds(pref?.folder_ids ?? []))
-      .catch(() => {})
+      .catch((err) => console.error('[DriveLayout] Failed to load pinned folders:', err))
   }, [])
 
   async function togglePin(folderId: string) {
@@ -77,7 +77,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
       ? pinnedIds.filter(id => id !== folderId)
       : [...pinnedIds, folderId]
     setPinnedIds(newIds)
-    await setPreference('pinned_shared_folders', { folder_ids: newIds }).catch(() => {})
+    await setPreference('pinned_shared_folders', { folder_ids: newIds }).catch((err) => console.error('[DriveLayout] Failed to save pinned folders:', err))
   }
 
   useEffect(() => {
@@ -113,7 +113,9 @@ export function DriveLayout({ children }: { children: ReactNode }) {
         }
       }))
       setSharedFolders(withNames)
-    }).catch(() => {})
+    }).catch((err) => {
+      console.error('[DriveLayout] Failed to load shared folders:', err)
+    })
   }, [isUnlocked, getMasterKey])
 
   const storageLimit = usage?.plan_limit_bytes ?? planDetails?.storage_bytes ?? 5_368_709_120

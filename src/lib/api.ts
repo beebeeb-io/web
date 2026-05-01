@@ -70,7 +70,7 @@ async function request<T>(
     throw new ApiError(message, 0)
   }
 
-  if (res.status === 401 && path === '/api/v1/auth/me') {
+  if (res.status === 401) {
     clearToken()
     onSessionExpired?.()
     throw new ApiError('Session expired', 401)

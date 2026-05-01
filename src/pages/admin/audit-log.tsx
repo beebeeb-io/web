@@ -32,7 +32,9 @@ export function AuditLog() {
       }
       const data = await listAuditLog({ actor, event, limit: 50 })
       setEvents(data.events)
-    } catch {
+    } catch (err) {
+      console.error('[AuditLog] Failed to load audit events:', err)
+      showToast({ icon: 'x', title: 'Failed to load audit log', danger: true })
       setEvents([])
     } finally {
       setLoading(false)

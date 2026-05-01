@@ -61,7 +61,8 @@ export function MoveModal({
           expanded: false,
         })),
       )
-    } catch {
+    } catch (err) {
+      console.error('[MoveModal] Failed to load folders:', err)
       setFolders([])
     } finally {
       setLoading(false)
@@ -141,7 +142,8 @@ export function MoveModal({
       setDecryptedNames((prev) => ({ ...prev, [created.id]: name }))
       setSearch('')
       fetchFolders(parentId)
-    } catch {
+    } catch (err) {
+      console.error('[MoveModal] Failed to create folder:', err)
       setSearch('')
     } finally {
       setCreatingFolder(false)

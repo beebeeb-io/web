@@ -82,8 +82,8 @@ export function PasskeySetup() {
     try {
       const keys = await listPasskeys()
       setPasskeys(keys)
-    } catch {
-      // API unavailable
+    } catch (err) {
+      console.error('[Passkeys] Failed to load passkeys:', err)
     }
   }
 

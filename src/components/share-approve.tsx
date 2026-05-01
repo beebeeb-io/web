@@ -46,8 +46,8 @@ export function ShareApprove({ onUpdate }: ShareApproveProps) {
     try {
       const pending = await getPendingApprovals()
       setInvites(pending)
-    } catch {
-      // Silently fail — the component is non-critical UI
+    } catch (err) {
+      console.error('[ShareApprove] Failed to load pending approvals:', err)
     } finally {
       setLoading(false)
     }

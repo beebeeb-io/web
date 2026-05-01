@@ -109,7 +109,9 @@ export function Recent() {
     try {
       const data = await listFiles(undefined, false, { recent: true })
       setFiles(data)
-    } catch {
+    } catch (err) {
+      console.error('[Recent] Failed to load recent files:', err)
+      showToast({ icon: 'x', title: 'Failed to load recent files', danger: true })
       setFiles([])
     } finally {
       setLoading(false)

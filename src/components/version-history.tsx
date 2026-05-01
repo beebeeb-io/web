@@ -56,7 +56,8 @@ export function VersionHistory({
       const data = await listVersions(fileId)
       setVersions(data.versions)
       setCurrentVersion(data.current_version)
-    } catch {
+    } catch (err) {
+      console.error('[VersionHistory] Failed to load versions:', err)
       setVersions([])
     } finally {
       setLoading(false)

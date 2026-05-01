@@ -178,18 +178,20 @@ export function Team() {
       } else {
         setLoading(false)
       }
-    } catch {
+    } catch (err) {
+      console.error('[Team] Failed to load workspaces:', err)
+      showToast({ icon: 'x', title: 'Failed to load workspaces', danger: true })
       setLoading(false)
     }
-  }, [])
+  }, [showToast])
 
   const loadMembers = useCallback(async (wsId: string) => {
     try {
       const data = await listWorkspaceMembers(wsId)
       setMembers(data.members)
       setPendingInvites(data.pending_invites)
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error('[Team] Failed to load members:', err)
     } finally {
       setLoading(false)
     }

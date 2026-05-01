@@ -73,7 +73,9 @@ export function Starred() {
     try {
       const data = await listFiles(undefined, false, { starred: true })
       setFiles(data)
-    } catch {
+    } catch (err) {
+      console.error('[Starred] Failed to load starred files:', err)
+      showToast({ icon: 'x', title: 'Failed to load starred files', danger: true })
       setFiles([])
     } finally {
       setLoading(false)

@@ -119,7 +119,9 @@ export function Drive() {
       const data = await listFiles(currentParentId ?? undefined, trashed)
       setFiles(data)
       setSyncedAgo(0)
-    } catch {
+    } catch (err) {
+      console.error('[Drive] Failed to load files:', err)
+      showToast({ icon: 'x', title: 'Failed to load files', danger: true })
       setFiles([])
     } finally {
       setLoading(false)

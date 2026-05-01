@@ -140,7 +140,8 @@ export function Photos() {
     try {
       const files = await listFiles(undefined, false)
       setAllFiles(files)
-    } catch {
+    } catch (err) {
+      console.error('[Photos] Failed to load files:', err)
       setAllFiles([])
     } finally {
       setLoading(false)

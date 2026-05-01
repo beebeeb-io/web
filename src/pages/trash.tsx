@@ -119,7 +119,9 @@ export function Trash() {
     try {
       const data = await listFiles(undefined, true)
       setFiles(data.map((f) => ({ ...f, was_in: '/' })))
-    } catch {
+    } catch (err) {
+      console.error('[Trash] Failed to load trashed files:', err)
+      showToast({ icon: 'x', title: 'Failed to load trash', danger: true })
       setFiles([])
     } finally {
       setLoading(false)

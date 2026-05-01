@@ -94,8 +94,8 @@ export function useNotifications() {
       const data = await listNotifications()
       setNotifications(data.notifications.map(toDisplay))
       setUnreadCount(data.unread_count)
-    } catch {
-      // API not available yet
+    } catch (err) {
+      console.error('[Notifications] Failed to load notifications:', err)
     }
   }, [])
 
@@ -115,7 +115,9 @@ export function useNotifications() {
       await markNotificationRead(id)
       setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)))
       setUnreadCount((prev) => Math.max(0, prev - 1))
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error('[Notifications] Failed to mark notification read:', err)
+    }
   }, [])
 
   const markAllRead = useCallback(async () => {
@@ -123,7 +125,9 @@ export function useNotifications() {
       await markAllNotificationsRead()
       setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
       setUnreadCount(0)
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error('[Notifications] Failed to mark all read:', err)
+    }
   }, [])
 
   return { notifications, unreadCount, addNotification, markRead, markAllRead, refresh }
