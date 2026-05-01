@@ -1,11 +1,11 @@
 # Graph Report - web  (2026-05-01)
 
 ## Corpus Check
-- 182 files · ~175,402 words
+- 182 files · ~175,767 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 923 nodes · 1065 edges · 29 communities detected
+- 926 nodes · 1070 edges · 30 communities detected
 - Extraction: 85% EXTRACTED · 15% INFERRED · 0% AMBIGUOUS · INFERRED: 159 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
@@ -28,7 +28,7 @@
 - [[_COMMUNITY_Community 42|Community 42]]
 - [[_COMMUNITY_Community 43|Community 43]]
 - [[_COMMUNITY_Community 44|Community 44]]
-- [[_COMMUNITY_Community 47|Community 47]]
+- [[_COMMUNITY_Community 45|Community 45]]
 - [[_COMMUNITY_Community 48|Community 48]]
 - [[_COMMUNITY_Community 49|Community 49]]
 - [[_COMMUNITY_Community 52|Community 52]]
@@ -39,9 +39,10 @@
 - [[_COMMUNITY_Community 68|Community 68]]
 - [[_COMMUNITY_Community 69|Community 69]]
 - [[_COMMUNITY_Community 70|Community 70]]
+- [[_COMMUNITY_Community 79|Community 79]]
 
 ## God Nodes (most connected - your core abstractions)
-1. `request()` - 71 edges
+1. `request()` - 73 edges
 2. `getProxy()` - 18 edges
 3. `encryptedUpload()` - 14 edges
 4. `getToken()` - 12 edges
@@ -67,8 +68,8 @@
 ## Communities
 
 ### Community 0 - "Community 0"
-Cohesion: 0.02
-Nodes (101): acceptWorkspaceInvite(), addFolderKeys(), ApiError, approveInvite(), base64urlToBuffer(), bufferToBase64url(), cancelInvite(), changePassword() (+93 more)
+Cohesion: 0.03
+Nodes (102): acceptWorkspaceInvite(), addFolderKeys(), ApiError, approveInvite(), base64urlToBuffer(), bufferToBase64url(), cancelInvite(), changePassword() (+94 more)
 
 ### Community 1 - "Community 1"
 Cohesion: 0.08
@@ -136,11 +137,11 @@ Nodes (1): handleSetDefault()
 
 ### Community 44 - "Community 44"
 Cohesion: 0.33
-Nodes (1): ErrorBoundary
-
-### Community 47 - "Community 47"
-Cohesion: 0.33
 Nodes (3): NewFolderDialog(), RenameDialog(), useFocusTrap()
+
+### Community 45 - "Community 45"
+Cohesion: 0.33
+Nodes (1): ErrorBoundary
 
 ### Community 48 - "Community 48"
 Cohesion: 0.73
@@ -182,6 +183,10 @@ Nodes (1): togglePin()
 Cohesion: 0.83
 Nodes (3): getMenuItems(), getPendingItems(), SharedContextMenu()
 
+### Community 79 - "Community 79"
+Cohesion: 0.67
+Nodes (1): handleSelect()
+
 ## Knowledge Gaps
 - **Thin community `Community 6`** (15 nodes): `restoreFile()`, `ConfirmDeleteDialog()`, `daysUntilShred()`, `displayName()`, `executePermanentDelete()`, `formatBytes()`, `getIconForName()`, `handleRestore()`, `handleRestoreAll()`, `requestDeleteSelected()`, `requestEmptyTrash()`, `requestPermanentDelete()`, `timeAgo()`, `toggleSelect()`, `trash.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
@@ -193,7 +198,7 @@ Nodes (3): getMenuItems(), getPendingItems(), SharedContextMenu()
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 43`** (6 nodes): `formatBytes()`, `formatDate()`, `handleSetDefault()`, `statusColor()`, `UsageBar()`, `storage-pools.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 44`** (6 nodes): `ErrorBoundary`, `.componentDidCatch()`, `.constructor()`, `.getDerivedStateFromError()`, `.render()`, `error-boundary.tsx`
+- **Thin community `Community 45`** (6 nodes): `ErrorBoundary`, `.componentDidCatch()`, `.constructor()`, `.getDerivedStateFromError()`, `.render()`, `error-boundary.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 52`** (5 nodes): `ImpersonationBanner()`, `ImpersonationProvider()`, `useImpersonation()`, `impersonation-banner.tsx`, `impersonation-context.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
@@ -206,6 +211,8 @@ Nodes (3): getMenuItems(), getPendingItems(), SharedContextMenu()
 - **Thin community `Community 68`** (4 nodes): `handleKeyDown()`, `handleSubmit()`, `reportShareLink()`, `report-dialog.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 69`** (4 nodes): `formatStorage()`, `regionLabel()`, `togglePin()`, `drive-layout.tsx`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 79`** (3 nodes): `handleSelect()`, `yearlySavings()`, `pricing.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 
 ## Suggested Questions
@@ -224,4 +231,4 @@ _Questions this graph is uniquely positioned to answer:_
 - **Are the 11 inferred relationships involving `fromBase64()` (e.g. with `encryptedDownload()` and `decryptToBlob()`) actually correct?**
   _`fromBase64()` has 11 INFERRED edges - model-reasoned connections that need verification._
 - **Should `Community 0` be split into smaller, more focused modules?**
-  _Cohesion score 0.02 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.03 - nodes in this community are weakly interconnected._

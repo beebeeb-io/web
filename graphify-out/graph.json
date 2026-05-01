@@ -9,7 +9,7 @@
       "source_file": "vite.config.ts",
       "source_location": "L1",
       "id": "vite_config_ts",
-      "community": 118,
+      "community": 119,
       "norm_label": "vite.config.ts"
     },
     {
@@ -18,7 +18,7 @@
       "source_file": "playwright.config.ts",
       "source_location": "L1",
       "id": "playwright_config_ts",
-      "community": 119,
+      "community": 120,
       "norm_label": "playwright.config.ts"
     },
     {
@@ -2475,7 +2475,7 @@
       "source_file": "design/hifi/hifi-onboarding.jsx",
       "source_location": "L1",
       "id": "design_hifi_hifi_onboarding_jsx",
-      "community": 86,
+      "community": 87,
       "norm_label": "hifi-onboarding.jsx"
     },
     {
@@ -2484,7 +2484,7 @@
       "source_file": "design/hifi/hifi-onboarding.jsx",
       "source_location": "L9",
       "id": "hifi_hifi_onboarding_hionboarding",
-      "community": 86,
+      "community": 87,
       "norm_label": "hionboarding()"
     },
     {
@@ -2583,7 +2583,7 @@
       "source_file": "e2e/drive.spec.ts",
       "source_location": "L1",
       "id": "e2e_drive_spec_ts",
-      "community": 87,
+      "community": 88,
       "norm_label": "drive.spec.ts"
     },
     {
@@ -2592,7 +2592,7 @@
       "source_file": "e2e/drive.spec.ts",
       "source_location": "L6",
       "id": "e2e_drive_spec_uniqueemail",
-      "community": 87,
+      "community": 88,
       "norm_label": "uniqueemail()"
     },
     {
@@ -2655,7 +2655,7 @@
       "source_file": "e2e/auth.spec.ts",
       "source_location": "L1",
       "id": "e2e_auth_spec_ts",
-      "community": 88,
+      "community": 89,
       "norm_label": "auth.spec.ts"
     },
     {
@@ -2664,7 +2664,7 @@
       "source_file": "e2e/auth.spec.ts",
       "source_location": "L14",
       "id": "e2e_auth_spec_uniqueemail",
-      "community": 88,
+      "community": 89,
       "norm_label": "uniqueemail()"
     },
     {
@@ -2673,7 +2673,7 @@
       "source_file": "e2e/upload.spec.ts",
       "source_location": "L1",
       "id": "e2e_upload_spec_ts",
-      "community": 89,
+      "community": 90,
       "norm_label": "upload.spec.ts"
     },
     {
@@ -2682,7 +2682,7 @@
       "source_file": "e2e/upload.spec.ts",
       "source_location": "L19",
       "id": "e2e_upload_spec_uniqueemail",
-      "community": 89,
+      "community": 90,
       "norm_label": "uniqueemail()"
     },
     {
@@ -2691,7 +2691,7 @@
       "source_file": "src/main.tsx",
       "source_location": "L1",
       "id": "src_main_tsx",
-      "community": 120,
+      "community": 121,
       "norm_label": "main.tsx"
     },
     {
@@ -2736,7 +2736,7 @@
       "source_file": "src/vite-env.d.ts",
       "source_location": "L1",
       "id": "src_vite_env_d_ts",
-      "community": 121,
+      "community": 122,
       "norm_label": "vite-env.d.ts"
     },
     {
@@ -2790,7 +2790,7 @@
       "source_file": "src/lib/i18n.ts",
       "source_location": "L1",
       "id": "src_lib_i18n_ts",
-      "community": 122,
+      "community": 123,
       "norm_label": "i18n.ts"
     },
     {
@@ -2851,7 +2851,7 @@
       "label": "registerErrorNotifier()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L39",
+      "source_location": "L41",
       "id": "lib_api_registererrornotifier",
       "community": 0,
       "norm_label": "registererrornotifier()"
@@ -2860,16 +2860,43 @@
       "label": "registerSessionExpiredHandler()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L44",
+      "source_location": "L46",
       "id": "lib_api_registersessionexpiredhandler",
       "community": 0,
       "norm_label": "registersessionexpiredhandler()"
     },
     {
+      "label": "registerConnectionStatusHandler()",
+      "file_type": "code",
+      "source_file": "src/lib/api.ts",
+      "source_location": "L55",
+      "id": "lib_api_registerconnectionstatushandler",
+      "community": 0,
+      "norm_label": "registerconnectionstatushandler()"
+    },
+    {
+      "label": "reportConnection()",
+      "file_type": "code",
+      "source_file": "src/lib/api.ts",
+      "source_location": "L65",
+      "id": "lib_api_reportconnection",
+      "community": 0,
+      "norm_label": "reportconnection()"
+    },
+    {
+      "label": "delay()",
+      "file_type": "code",
+      "source_file": "src/lib/api.ts",
+      "source_location": "L71",
+      "id": "lib_api_delay",
+      "community": 0,
+      "norm_label": "delay()"
+    },
+    {
       "label": "request()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L48",
+      "source_location": "L75",
       "id": "lib_api_request",
       "community": 0,
       "norm_label": "request()"
@@ -2878,7 +2905,7 @@
       "label": "ApiError",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L90",
+      "source_location": "L130",
       "id": "lib_api_apierror",
       "community": 0,
       "norm_label": "apierror"
@@ -2887,7 +2914,7 @@
       "label": ".constructor()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L92",
+      "source_location": "L132",
       "id": "lib_api_apierror_constructor",
       "community": 0,
       "norm_label": ".constructor()"
@@ -2896,7 +2923,7 @@
       "label": "signup()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L129",
+      "source_location": "L169",
       "id": "lib_api_signup",
       "community": 0,
       "norm_label": "signup()"
@@ -2905,7 +2932,7 @@
       "label": "opaqueRegisterStart()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L143",
+      "source_location": "L183",
       "id": "lib_api_opaqueregisterstart",
       "community": 0,
       "norm_label": "opaqueregisterstart()"
@@ -2914,7 +2941,7 @@
       "label": "opaqueRegisterFinish()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L153",
+      "source_location": "L193",
       "id": "lib_api_opaqueregisterfinish",
       "community": 0,
       "norm_label": "opaqueregisterfinish()"
@@ -2923,7 +2950,7 @@
       "label": "opaqueLoginStart()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L172",
+      "source_location": "L212",
       "id": "lib_api_opaqueloginstart",
       "community": 0,
       "norm_label": "opaqueloginstart()"
@@ -2932,7 +2959,7 @@
       "label": "opaqueLoginFinish()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L182",
+      "source_location": "L222",
       "id": "lib_api_opaqueloginfinish",
       "community": 0,
       "norm_label": "opaqueloginfinish()"
@@ -2941,7 +2968,7 @@
       "label": "login()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L195",
+      "source_location": "L235",
       "id": "lib_api_login",
       "community": 0,
       "norm_label": "login()"
@@ -2950,7 +2977,7 @@
       "label": "logout()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L209",
+      "source_location": "L249",
       "id": "lib_api_logout",
       "community": 0,
       "norm_label": "logout()"
@@ -2959,7 +2986,7 @@
       "label": "verifyEmail()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L217",
+      "source_location": "L257",
       "id": "lib_api_verifyemail",
       "community": 0,
       "norm_label": "verifyemail()"
@@ -2968,7 +2995,7 @@
       "label": "resendVerification()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L226",
+      "source_location": "L266",
       "id": "lib_api_resendverification",
       "community": 0,
       "norm_label": "resendverification()"
@@ -2977,7 +3004,7 @@
       "label": "getMe()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L230",
+      "source_location": "L270",
       "id": "lib_api_getme",
       "community": 0,
       "norm_label": "getme()"
@@ -2986,7 +3013,7 @@
       "label": "setup2fa()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L242",
+      "source_location": "L282",
       "id": "lib_api_setup2fa",
       "community": 0,
       "norm_label": "setup2fa()"
@@ -2995,7 +3022,7 @@
       "label": "enable2fa()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L248",
+      "source_location": "L288",
       "id": "lib_api_enable2fa",
       "community": 0,
       "norm_label": "enable2fa()"
@@ -3004,7 +3031,7 @@
       "label": "disable2fa()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L255",
+      "source_location": "L295",
       "id": "lib_api_disable2fa",
       "community": 0,
       "norm_label": "disable2fa()"
@@ -3013,7 +3040,7 @@
       "label": "verify2fa()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L262",
+      "source_location": "L302",
       "id": "lib_api_verify2fa",
       "community": 0,
       "norm_label": "verify2fa()"
@@ -3022,7 +3049,7 @@
       "label": "listFiles()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L292",
+      "source_location": "L332",
       "id": "lib_api_listfiles",
       "community": 1,
       "norm_label": "listfiles()"
@@ -3031,7 +3058,7 @@
       "label": "createFolder()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L307",
+      "source_location": "L347",
       "id": "lib_api_createfolder",
       "community": 0,
       "norm_label": "createfolder()"
@@ -3040,7 +3067,7 @@
       "label": "uploadFile()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L318",
+      "source_location": "L358",
       "id": "lib_api_uploadfile",
       "community": 2,
       "norm_label": "uploadfile()"
@@ -3049,7 +3076,7 @@
       "label": "initUpload()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L353",
+      "source_location": "L393",
       "id": "lib_api_initupload",
       "community": 0,
       "norm_label": "initupload()"
@@ -3058,7 +3085,7 @@
       "label": "uploadChunk()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L370",
+      "source_location": "L410",
       "id": "lib_api_uploadchunk",
       "community": 2,
       "norm_label": "uploadchunk()"
@@ -3067,7 +3094,7 @@
       "label": "completeUpload()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L407",
+      "source_location": "L447",
       "id": "lib_api_completeupload",
       "community": 0,
       "norm_label": "completeupload()"
@@ -3076,7 +3103,7 @@
       "label": "getUploadStatus()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L423",
+      "source_location": "L463",
       "id": "lib_api_getuploadstatus",
       "community": 0,
       "norm_label": "getuploadstatus()"
@@ -3085,7 +3112,7 @@
       "label": "getFile()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L431",
+      "source_location": "L471",
       "id": "lib_api_getfile",
       "community": 0,
       "norm_label": "getfile()"
@@ -3094,7 +3121,7 @@
       "label": "downloadFile()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L435",
+      "source_location": "L475",
       "id": "lib_api_downloadfile",
       "community": 2,
       "norm_label": "downloadfile()"
@@ -3103,7 +3130,7 @@
       "label": "updateFile()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L447",
+      "source_location": "L487",
       "id": "lib_api_updatefile",
       "community": 0,
       "norm_label": "updatefile()"
@@ -3112,7 +3139,7 @@
       "label": "deleteFile()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L457",
+      "source_location": "L497",
       "id": "lib_api_deletefile",
       "community": 7,
       "norm_label": "deletefile()"
@@ -3121,7 +3148,7 @@
       "label": "restoreFile()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L461",
+      "source_location": "L501",
       "id": "lib_api_restorefile",
       "community": 6,
       "norm_label": "restorefile()"
@@ -3130,7 +3157,7 @@
       "label": "permanentDeleteFile()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L465",
+      "source_location": "L505",
       "id": "lib_api_permanentdeletefile",
       "community": 0,
       "norm_label": "permanentdeletefile()"
@@ -3139,7 +3166,7 @@
       "label": "toggleStar()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L469",
+      "source_location": "L509",
       "id": "lib_api_togglestar",
       "community": 0,
       "norm_label": "togglestar()"
@@ -3148,7 +3175,7 @@
       "label": "changePassword()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L480",
+      "source_location": "L520",
       "id": "lib_api_changepassword",
       "community": 0,
       "norm_label": "changepassword()"
@@ -3157,7 +3184,7 @@
       "label": "forgotPassword()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L499",
+      "source_location": "L539",
       "id": "lib_api_forgotpassword",
       "community": 0,
       "norm_label": "forgotpassword()"
@@ -3166,7 +3193,7 @@
       "label": "resetPassword()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L508",
+      "source_location": "L548",
       "id": "lib_api_resetpassword",
       "community": 0,
       "norm_label": "resetpassword()"
@@ -3175,7 +3202,7 @@
       "label": "deleteAccountPermanently()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L523",
+      "source_location": "L563",
       "id": "lib_api_deleteaccountpermanently",
       "community": 0,
       "norm_label": "deleteaccountpermanently()"
@@ -3184,7 +3211,7 @@
       "label": "createShare()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L587",
+      "source_location": "L627",
       "id": "lib_api_createshare",
       "community": 0,
       "norm_label": "createshare()"
@@ -3193,7 +3220,7 @@
       "label": "getShare()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L600",
+      "source_location": "L640",
       "id": "lib_api_getshare",
       "community": 0,
       "norm_label": "getshare()"
@@ -3202,7 +3229,7 @@
       "label": "verifySharePassphrase()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L615",
+      "source_location": "L655",
       "id": "lib_api_verifysharepassphrase",
       "community": 0,
       "norm_label": "verifysharepassphrase()"
@@ -3211,7 +3238,7 @@
       "label": "downloadSharedFile()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L636",
+      "source_location": "L676",
       "id": "lib_api_downloadsharedfile",
       "community": 0,
       "norm_label": "downloadsharedfile()"
@@ -3220,7 +3247,7 @@
       "label": "listMyShares()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L644",
+      "source_location": "L684",
       "id": "lib_api_listmyshares",
       "community": 0,
       "norm_label": "listmyshares()"
@@ -3229,7 +3256,7 @@
       "label": "revokeShare()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L649",
+      "source_location": "L689",
       "id": "lib_api_revokeshare",
       "community": 0,
       "norm_label": "revokeshare()"
@@ -3238,7 +3265,7 @@
       "label": "createInvite()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L680",
+      "source_location": "L720",
       "id": "lib_api_createinvite",
       "community": 0,
       "norm_label": "createinvite()"
@@ -3247,7 +3274,7 @@
       "label": "getIncomingInvites()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L700",
+      "source_location": "L740",
       "id": "lib_api_getincominginvites",
       "community": 0,
       "norm_label": "getincominginvites()"
@@ -3256,7 +3283,7 @@
       "label": "getPendingApprovals()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L705",
+      "source_location": "L745",
       "id": "lib_api_getpendingapprovals",
       "community": 0,
       "norm_label": "getpendingapprovals()"
@@ -3265,7 +3292,7 @@
       "label": "getSentInvites()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L710",
+      "source_location": "L750",
       "id": "lib_api_getsentinvites",
       "community": 0,
       "norm_label": "getsentinvites()"
@@ -3274,7 +3301,7 @@
       "label": "claimInvite()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L715",
+      "source_location": "L755",
       "id": "lib_api_claiminvite",
       "community": 0,
       "norm_label": "claiminvite()"
@@ -3283,7 +3310,7 @@
       "label": "approveInvite()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L719",
+      "source_location": "L759",
       "id": "lib_api_approveinvite",
       "community": 0,
       "norm_label": "approveinvite()"
@@ -3292,7 +3319,7 @@
       "label": "denyInvite()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L729",
+      "source_location": "L769",
       "id": "lib_api_denyinvite",
       "community": 0,
       "norm_label": "denyinvite()"
@@ -3301,7 +3328,7 @@
       "label": "cancelInvite()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L733",
+      "source_location": "L773",
       "id": "lib_api_cancelinvite",
       "community": 0,
       "norm_label": "cancelinvite()"
@@ -3310,7 +3337,7 @@
       "label": "patchInvite()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L737",
+      "source_location": "L777",
       "id": "lib_api_patchinvite",
       "community": 28,
       "norm_label": "patchinvite()"
@@ -3319,7 +3346,7 @@
       "label": "getInviteActivity()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L757",
+      "source_location": "L797",
       "id": "lib_api_getinviteactivity",
       "community": 0,
       "norm_label": "getinviteactivity()"
@@ -3328,7 +3355,7 @@
       "label": "resendInvite()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L761",
+      "source_location": "L801",
       "id": "lib_api_resendinvite",
       "community": 0,
       "norm_label": "resendinvite()"
@@ -3337,7 +3364,7 @@
       "label": "withdrawInvite()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L765",
+      "source_location": "L805",
       "id": "lib_api_withdrawinvite",
       "community": 0,
       "norm_label": "withdrawinvite()"
@@ -3346,7 +3373,7 @@
       "label": "hideInvite()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L769",
+      "source_location": "L809",
       "id": "lib_api_hideinvite",
       "community": 0,
       "norm_label": "hideinvite()"
@@ -3355,7 +3382,7 @@
       "label": "getShareStats()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L781",
+      "source_location": "L821",
       "id": "lib_api_getsharestats",
       "community": 0,
       "norm_label": "getsharestats()"
@@ -3364,7 +3391,7 @@
       "label": "getStorageUsage()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L824",
+      "source_location": "L864",
       "id": "lib_api_getstorageusage",
       "community": 0,
       "norm_label": "getstorageusage()"
@@ -3373,7 +3400,7 @@
       "label": "getPlans()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L828",
+      "source_location": "L868",
       "id": "lib_api_getplans",
       "community": 0,
       "norm_label": "getplans()"
@@ -3382,7 +3409,7 @@
       "label": "getSubscription()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L833",
+      "source_location": "L873",
       "id": "lib_api_getsubscription",
       "community": 0,
       "norm_label": "getsubscription()"
@@ -3391,7 +3418,7 @@
       "label": "subscribe()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L837",
+      "source_location": "L877",
       "id": "lib_api_subscribe",
       "community": 0,
       "norm_label": "subscribe()"
@@ -3400,7 +3427,7 @@
       "label": "getInvoices()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L849",
+      "source_location": "L889",
       "id": "lib_api_getinvoices",
       "community": 0,
       "norm_label": "getinvoices()"
@@ -3409,7 +3436,7 @@
       "label": "createCheckoutSession()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L854",
+      "source_location": "L894",
       "id": "lib_api_createcheckoutsession",
       "community": 0,
       "norm_label": "createcheckoutsession()"
@@ -3418,7 +3445,7 @@
       "label": "createPortalSession()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L866",
+      "source_location": "L906",
       "id": "lib_api_createportalsession",
       "community": 0,
       "norm_label": "createportalsession()"
@@ -3427,7 +3454,7 @@
       "label": "listAuditLog()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L892",
+      "source_location": "L932",
       "id": "lib_api_listauditlog",
       "community": 0,
       "norm_label": "listauditlog()"
@@ -3436,7 +3463,7 @@
       "label": "exportAuditLog()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L909",
+      "source_location": "L949",
       "id": "lib_api_exportauditlog",
       "community": 0,
       "norm_label": "exportauditlog()"
@@ -3445,7 +3472,7 @@
       "label": "listMembers()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L916",
+      "source_location": "L956",
       "id": "lib_api_listmembers",
       "community": 0,
       "norm_label": "listmembers()"
@@ -3454,7 +3481,7 @@
       "label": "inviteMember()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L921",
+      "source_location": "L961",
       "id": "lib_api_invitemember",
       "community": 0,
       "norm_label": "invitemember()"
@@ -3463,7 +3490,7 @@
       "label": "removeMember()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L928",
+      "source_location": "L968",
       "id": "lib_api_removemember",
       "community": 0,
       "norm_label": "removemember()"
@@ -3472,7 +3499,7 @@
       "label": "listAdminUsers()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L967",
+      "source_location": "L1007",
       "id": "lib_api_listadminusers",
       "community": 0,
       "norm_label": "listadminusers()"
@@ -3481,7 +3508,7 @@
       "label": "getAdminUserDetail()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L982",
+      "source_location": "L1022",
       "id": "lib_api_getadminuserdetail",
       "community": 0,
       "norm_label": "getadminuserdetail()"
@@ -3490,7 +3517,7 @@
       "label": "listStoragePools()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1026",
+      "source_location": "L1066",
       "id": "lib_api_liststoragepools",
       "community": 0,
       "norm_label": "liststoragepools()"
@@ -3499,7 +3526,7 @@
       "label": "listMigrations()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1031",
+      "source_location": "L1071",
       "id": "lib_api_listmigrations",
       "community": 0,
       "norm_label": "listmigrations()"
@@ -3508,7 +3535,7 @@
       "label": "createStoragePool()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1038",
+      "source_location": "L1078",
       "id": "lib_api_createstoragepool",
       "community": 0,
       "norm_label": "createstoragepool()"
@@ -3517,7 +3544,7 @@
       "label": "updateStoragePool()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1056",
+      "source_location": "L1096",
       "id": "lib_api_updatestoragepool",
       "community": 0,
       "norm_label": "updatestoragepool()"
@@ -3526,7 +3553,7 @@
       "label": "getPoolUsage()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1078",
+      "source_location": "L1118",
       "id": "lib_api_getpoolusage",
       "community": 0,
       "norm_label": "getpoolusage()"
@@ -3535,7 +3562,7 @@
       "label": "migrateUser()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1085",
+      "source_location": "L1125",
       "id": "lib_api_migrateuser",
       "community": 0,
       "norm_label": "migrateuser()"
@@ -3544,7 +3571,7 @@
       "label": "getFolderKeys()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1097",
+      "source_location": "L1137",
       "id": "lib_api_getfolderkeys",
       "community": 0,
       "norm_label": "getfolderkeys()"
@@ -3553,7 +3580,7 @@
       "label": "addFolderKeys()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1106",
+      "source_location": "L1146",
       "id": "lib_api_addfolderkeys",
       "community": 0,
       "norm_label": "addfolderkeys()"
@@ -3562,7 +3589,7 @@
       "label": "getFolderMembers()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1116",
+      "source_location": "L1156",
       "id": "lib_api_getfoldermembers",
       "community": 0,
       "norm_label": "getfoldermembers()"
@@ -3571,7 +3598,7 @@
       "label": "listSharedFolderFiles()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1122",
+      "source_location": "L1162",
       "id": "lib_api_listsharedfolderfiles",
       "community": 0,
       "norm_label": "listsharedfolderfiles()"
@@ -3580,7 +3607,7 @@
       "label": "getPreferences()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1134",
+      "source_location": "L1174",
       "id": "lib_api_getpreferences",
       "community": 0,
       "norm_label": "getpreferences()"
@@ -3589,7 +3616,7 @@
       "label": "getPreference()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1139",
+      "source_location": "L1179",
       "id": "lib_api_getpreference",
       "community": 0,
       "norm_label": "getpreference()"
@@ -3598,7 +3625,7 @@
       "label": "setPreference()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1144",
+      "source_location": "L1184",
       "id": "lib_api_setpreference",
       "community": 0,
       "norm_label": "setpreference()"
@@ -3607,7 +3634,7 @@
       "label": "base64urlToBuffer()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1162",
+      "source_location": "L1202",
       "id": "lib_api_base64urltobuffer",
       "community": 0,
       "norm_label": "base64urltobuffer()"
@@ -3616,7 +3643,7 @@
       "label": "bufferToBase64url()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1175",
+      "source_location": "L1215",
       "id": "lib_api_buffertobase64url",
       "community": 0,
       "norm_label": "buffertobase64url()"
@@ -3625,7 +3652,7 @@
       "label": "serverOptsToCreateOptions()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1190",
+      "source_location": "L1230",
       "id": "lib_api_serveroptstocreateoptions",
       "community": 0,
       "norm_label": "serveroptstocreateoptions()"
@@ -3634,7 +3661,7 @@
       "label": "serverOptsToGetOptions()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1215",
+      "source_location": "L1255",
       "id": "lib_api_serveroptstogetoptions",
       "community": 0,
       "norm_label": "serveroptstogetoptions()"
@@ -3643,7 +3670,7 @@
       "label": "credentialToRegistrationJSON()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1234",
+      "source_location": "L1274",
       "id": "lib_api_credentialtoregistrationjson",
       "community": 0,
       "norm_label": "credentialtoregistrationjson()"
@@ -3652,7 +3679,7 @@
       "label": "credentialToAuthenticationJSON()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1261",
+      "source_location": "L1301",
       "id": "lib_api_credentialtoauthenticationjson",
       "community": 0,
       "norm_label": "credentialtoauthenticationjson()"
@@ -3661,7 +3688,7 @@
       "label": "startPasskeyRegistration()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1297",
+      "source_location": "L1337",
       "id": "lib_api_startpasskeyregistration",
       "community": 0,
       "norm_label": "startpasskeyregistration()"
@@ -3670,7 +3697,7 @@
       "label": "finishPasskeyRegistration()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1303",
+      "source_location": "L1343",
       "id": "lib_api_finishpasskeyregistration",
       "community": 0,
       "norm_label": "finishpasskeyregistration()"
@@ -3679,7 +3706,7 @@
       "label": "startPasskeyLogin()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1324",
+      "source_location": "L1364",
       "id": "lib_api_startpasskeylogin",
       "community": 0,
       "norm_label": "startpasskeylogin()"
@@ -3688,7 +3715,7 @@
       "label": "finishPasskeyLogin()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1331",
+      "source_location": "L1371",
       "id": "lib_api_finishpasskeylogin",
       "community": 0,
       "norm_label": "finishpasskeylogin()"
@@ -3697,7 +3724,7 @@
       "label": "listPasskeys()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1348",
+      "source_location": "L1388",
       "id": "lib_api_listpasskeys",
       "community": 0,
       "norm_label": "listpasskeys()"
@@ -3706,7 +3733,7 @@
       "label": "deletePasskey()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1353",
+      "source_location": "L1393",
       "id": "lib_api_deletepasskey",
       "community": 0,
       "norm_label": "deletepasskey()"
@@ -3715,7 +3742,7 @@
       "label": "listActivity()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1374",
+      "source_location": "L1414",
       "id": "lib_api_listactivity",
       "community": 0,
       "norm_label": "listactivity()"
@@ -3724,7 +3751,7 @@
       "label": "createWorkspace()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1444",
+      "source_location": "L1484",
       "id": "lib_api_createworkspace",
       "community": 0,
       "norm_label": "createworkspace()"
@@ -3733,7 +3760,7 @@
       "label": "listWorkspaces()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1451",
+      "source_location": "L1491",
       "id": "lib_api_listworkspaces",
       "community": 0,
       "norm_label": "listworkspaces()"
@@ -3742,7 +3769,7 @@
       "label": "listWorkspaceMembers()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1456",
+      "source_location": "L1496",
       "id": "lib_api_listworkspacemembers",
       "community": 0,
       "norm_label": "listworkspacemembers()"
@@ -3751,7 +3778,7 @@
       "label": "inviteWorkspaceMember()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1464",
+      "source_location": "L1504",
       "id": "lib_api_inviteworkspacemember",
       "community": 0,
       "norm_label": "inviteworkspacemember()"
@@ -3760,7 +3787,7 @@
       "label": "acceptWorkspaceInvite()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1475",
+      "source_location": "L1515",
       "id": "lib_api_acceptworkspaceinvite",
       "community": 0,
       "norm_label": "acceptworkspaceinvite()"
@@ -3769,7 +3796,7 @@
       "label": "removeWorkspaceMember()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1484",
+      "source_location": "L1524",
       "id": "lib_api_removeworkspacemember",
       "community": 4,
       "norm_label": "removeworkspacemember()"
@@ -3778,7 +3805,7 @@
       "label": "updateMemberRole()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1493",
+      "source_location": "L1533",
       "id": "lib_api_updatememberrole",
       "community": 4,
       "norm_label": "updatememberrole()"
@@ -3787,7 +3814,7 @@
       "label": "getInvitePreview()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1507",
+      "source_location": "L1547",
       "id": "lib_api_getinvitepreview",
       "community": 0,
       "norm_label": "getinvitepreview()"
@@ -3796,7 +3823,7 @@
       "label": "listVersions()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1533",
+      "source_location": "L1573",
       "id": "lib_api_listversions",
       "community": 0,
       "norm_label": "listversions()"
@@ -3805,7 +3832,7 @@
       "label": "downloadVersion()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1541",
+      "source_location": "L1581",
       "id": "lib_api_downloadversion",
       "community": 2,
       "norm_label": "downloadversion()"
@@ -3814,7 +3841,7 @@
       "label": "restoreVersion()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1549",
+      "source_location": "L1589",
       "id": "lib_api_restoreversion",
       "community": 0,
       "norm_label": "restoreversion()"
@@ -3823,7 +3850,7 @@
       "label": "deleteVersion()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1553",
+      "source_location": "L1593",
       "id": "lib_api_deleteversion",
       "community": 0,
       "norm_label": "deleteversion()"
@@ -3832,7 +3859,7 @@
       "label": "getVersionSettings()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1566",
+      "source_location": "L1606",
       "id": "lib_api_getversionsettings",
       "community": 0,
       "norm_label": "getversionsettings()"
@@ -3841,7 +3868,7 @@
       "label": "setVersionSetting()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1570",
+      "source_location": "L1610",
       "id": "lib_api_setversionsetting",
       "community": 0,
       "norm_label": "setversionsetting()"
@@ -3850,7 +3877,7 @@
       "label": "listNotifications()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1596",
+      "source_location": "L1636",
       "id": "lib_api_listnotifications",
       "community": 0,
       "norm_label": "listnotifications()"
@@ -3859,7 +3886,7 @@
       "label": "markNotificationRead()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1604",
+      "source_location": "L1644",
       "id": "lib_api_marknotificationread",
       "community": 0,
       "norm_label": "marknotificationread()"
@@ -3868,7 +3895,7 @@
       "label": "markAllNotificationsRead()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1612",
+      "source_location": "L1652",
       "id": "lib_api_markallnotificationsread",
       "community": 0,
       "norm_label": "markallnotificationsread()"
@@ -3877,7 +3904,7 @@
       "label": "deleteNotification()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1616",
+      "source_location": "L1656",
       "id": "lib_api_deletenotification",
       "community": 0,
       "norm_label": "deletenotification()"
@@ -3886,7 +3913,7 @@
       "label": "listSessions()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1629",
+      "source_location": "L1669",
       "id": "lib_api_listsessions",
       "community": 0,
       "norm_label": "listsessions()"
@@ -3895,7 +3922,7 @@
       "label": "revokeSession()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1633",
+      "source_location": "L1673",
       "id": "lib_api_revokesession",
       "community": 0,
       "norm_label": "revokesession()"
@@ -3904,7 +3931,7 @@
       "label": "adminImpersonate()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1645",
+      "source_location": "L1685",
       "id": "lib_api_adminimpersonate",
       "community": 0,
       "norm_label": "adminimpersonate()"
@@ -3913,7 +3940,7 @@
       "label": "getAdminStats()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1679",
+      "source_location": "L1719",
       "id": "lib_api_getadminstats",
       "community": 0,
       "norm_label": "getadminstats()"
@@ -3922,7 +3949,7 @@
       "label": "getHealth()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1683",
+      "source_location": "L1723",
       "id": "lib_api_gethealth",
       "community": 0,
       "norm_label": "gethealth()"
@@ -3931,7 +3958,7 @@
       "label": "reportShareLink()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1693",
+      "source_location": "L1733",
       "id": "lib_api_reportsharelink",
       "community": 68,
       "norm_label": "reportsharelink()"
@@ -3940,7 +3967,7 @@
       "label": "listAbuseReports()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1732",
+      "source_location": "L1772",
       "id": "lib_api_listabusereports",
       "community": 0,
       "norm_label": "listabusereports()"
@@ -3949,7 +3976,7 @@
       "label": "updateAbuseReport()",
       "file_type": "code",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1746",
+      "source_location": "L1786",
       "id": "lib_api_updateabusereport",
       "community": 0,
       "norm_label": "updateabusereport()"
@@ -4338,7 +4365,7 @@
       "source_file": "src/lib/key-context.tsx",
       "source_location": "L1",
       "id": "src_lib_key_context_tsx",
-      "community": 90,
+      "community": 91,
       "norm_label": "key-context.tsx"
     },
     {
@@ -4347,7 +4374,7 @@
       "source_file": "src/lib/key-context.tsx",
       "source_location": "L54",
       "id": "lib_key_context_keyprovider",
-      "community": 90,
+      "community": 91,
       "norm_label": "keyprovider()"
     },
     {
@@ -4914,7 +4941,7 @@
       "source_file": "src/pages/migration.tsx",
       "source_location": "L1",
       "id": "src_pages_migration_tsx",
-      "community": 123,
+      "community": 124,
       "norm_label": "migration.tsx"
     },
     {
@@ -5085,7 +5112,7 @@
       "source_file": "src/pages/onboarding.tsx",
       "source_location": "L1",
       "id": "src_pages_onboarding_tsx",
-      "community": 91,
+      "community": 92,
       "norm_label": "onboarding.tsx"
     },
     {
@@ -5094,7 +5121,7 @@
       "source_file": "src/pages/onboarding.tsx",
       "source_location": "L41",
       "id": "pages_onboarding_getpasswordstrength",
-      "community": 91,
+      "community": 92,
       "norm_label": "getpasswordstrength()"
     },
     {
@@ -5139,7 +5166,7 @@
       "source_file": "src/pages/delete-account.tsx",
       "source_location": "L1",
       "id": "src_pages_delete_account_tsx",
-      "community": 124,
+      "community": 125,
       "norm_label": "delete-account.tsx"
     },
     {
@@ -5328,7 +5355,7 @@
       "source_file": "src/pages/signup.tsx",
       "source_location": "L1",
       "id": "src_pages_signup_tsx",
-      "community": 92,
+      "community": 93,
       "norm_label": "signup.tsx"
     },
     {
@@ -5337,7 +5364,7 @@
       "source_file": "src/pages/signup.tsx",
       "source_location": "L16",
       "id": "pages_signup_handlesubmit",
-      "community": 92,
+      "community": 93,
       "norm_label": "handlesubmit()"
     },
     {
@@ -5544,7 +5571,7 @@
       "source_file": "src/pages/pricing.tsx",
       "source_location": "L1",
       "id": "src_pages_pricing_tsx",
-      "community": 0,
+      "community": 79,
       "norm_label": "pricing.tsx"
     },
     {
@@ -5553,7 +5580,7 @@
       "source_file": "src/pages/pricing.tsx",
       "source_location": "L155",
       "id": "pages_pricing_yearlysavings",
-      "community": 0,
+      "community": 79,
       "norm_label": "yearlysavings()"
     },
     {
@@ -5562,7 +5589,7 @@
       "source_file": "src/pages/pricing.tsx",
       "source_location": "L300",
       "id": "pages_pricing_handleselect",
-      "community": 0,
+      "community": 79,
       "norm_label": "handleselect()"
     },
     {
@@ -6030,7 +6057,7 @@
       "source_file": "src/pages/admin/sso.tsx",
       "source_location": "L1",
       "id": "src_pages_admin_sso_tsx",
-      "community": 93,
+      "community": 94,
       "norm_label": "sso.tsx"
     },
     {
@@ -6039,7 +6066,7 @@
       "source_file": "src/pages/admin/sso.tsx",
       "source_location": "L5",
       "id": "admin_sso_ssosetup",
-      "community": 93,
+      "community": 94,
       "norm_label": "ssosetup()"
     },
     {
@@ -6084,7 +6111,7 @@
       "source_file": "src/pages/admin/migrations.tsx",
       "source_location": "L1",
       "id": "src_pages_admin_migrations_tsx",
-      "community": 79,
+      "community": 80,
       "norm_label": "migrations.tsx"
     },
     {
@@ -6093,7 +6120,7 @@
       "source_file": "src/pages/admin/migrations.tsx",
       "source_location": "L9",
       "id": "admin_migrations_formatdate",
-      "community": 79,
+      "community": 80,
       "norm_label": "formatdate()"
     },
     {
@@ -6102,7 +6129,7 @@
       "source_file": "src/pages/admin/migrations.tsx",
       "source_location": "L20",
       "id": "admin_migrations_statuscolor",
-      "community": 79,
+      "community": 80,
       "norm_label": "statuscolor()"
     },
     {
@@ -6111,7 +6138,7 @@
       "source_file": "src/pages/admin/compliance.tsx",
       "source_location": "L1",
       "id": "src_pages_admin_compliance_tsx",
-      "community": 94,
+      "community": 95,
       "norm_label": "compliance.tsx"
     },
     {
@@ -6120,7 +6147,7 @@
       "source_file": "src/pages/admin/compliance.tsx",
       "source_location": "L5",
       "id": "admin_compliance_compliance",
-      "community": 94,
+      "community": 95,
       "norm_label": "compliance()"
     },
     {
@@ -6201,7 +6228,7 @@
       "source_file": "src/pages/admin/data-export.tsx",
       "source_location": "L1",
       "id": "src_pages_admin_data_export_tsx",
-      "community": 95,
+      "community": 96,
       "norm_label": "data-export.tsx"
     },
     {
@@ -6210,7 +6237,7 @@
       "source_file": "src/pages/admin/data-export.tsx",
       "source_location": "L5",
       "id": "admin_data_export_dataexport",
-      "community": 95,
+      "community": 96,
       "norm_label": "dataexport()"
     },
     {
@@ -6219,7 +6246,7 @@
       "source_file": "src/pages/admin/billing-overview.tsx",
       "source_location": "L1",
       "id": "src_pages_admin_billing_overview_tsx",
-      "community": 80,
+      "community": 81,
       "norm_label": "billing-overview.tsx"
     },
     {
@@ -6228,7 +6255,7 @@
       "source_file": "src/pages/admin/billing-overview.tsx",
       "source_location": "L17",
       "id": "admin_billing_overview_formatdate",
-      "community": 80,
+      "community": 81,
       "norm_label": "formatdate()"
     },
     {
@@ -6237,7 +6264,7 @@
       "source_file": "src/pages/admin/billing-overview.tsx",
       "source_location": "L26",
       "id": "admin_billing_overview_formatstorage",
-      "community": 80,
+      "community": 81,
       "norm_label": "formatstorage()"
     },
     {
@@ -6381,7 +6408,7 @@
       "source_file": "src/pages/admin/admin-shell.tsx",
       "source_location": "L1",
       "id": "src_pages_admin_admin_shell_tsx",
-      "community": 125,
+      "community": 126,
       "norm_label": "admin-shell.tsx"
     },
     {
@@ -6390,7 +6417,7 @@
       "source_file": "src/pages/errors/plan-downgrade.tsx",
       "source_location": "L1",
       "id": "src_pages_errors_plan_downgrade_tsx",
-      "community": 126,
+      "community": 127,
       "norm_label": "plan-downgrade.tsx"
     },
     {
@@ -6399,7 +6426,7 @@
       "source_file": "src/pages/errors/storage-full.tsx",
       "source_location": "L1",
       "id": "src_pages_errors_storage_full_tsx",
-      "community": 127,
+      "community": 128,
       "norm_label": "storage-full.tsx"
     },
     {
@@ -6408,7 +6435,7 @@
       "source_file": "src/pages/errors/not-found.tsx",
       "source_location": "L1",
       "id": "src_pages_errors_not_found_tsx",
-      "community": 96,
+      "community": 97,
       "norm_label": "not-found.tsx"
     },
     {
@@ -6417,7 +6444,7 @@
       "source_file": "src/pages/errors/not-found.tsx",
       "source_location": "L6",
       "id": "errors_not_found_notfound",
-      "community": 96,
+      "community": 97,
       "norm_label": "notfound()"
     },
     {
@@ -6426,7 +6453,7 @@
       "source_file": "src/pages/errors/server-error.tsx",
       "source_location": "L1",
       "id": "src_pages_errors_server_error_tsx",
-      "community": 128,
+      "community": 129,
       "norm_label": "server-error.tsx"
     },
     {
@@ -6435,7 +6462,7 @@
       "source_file": "src/pages/settings/appearance.tsx",
       "source_location": "L1",
       "id": "src_pages_settings_appearance_tsx",
-      "community": 129,
+      "community": 130,
       "norm_label": "appearance.tsx"
     },
     {
@@ -6471,7 +6498,7 @@
       "source_file": "src/pages/settings/notifications.tsx",
       "source_location": "L1",
       "id": "src_pages_settings_notifications_tsx",
-      "community": 97,
+      "community": 98,
       "norm_label": "notifications.tsx"
     },
     {
@@ -6480,7 +6507,7 @@
       "source_file": "src/pages/settings/notifications.tsx",
       "source_location": "L82",
       "id": "settings_notifications_toggleitem",
-      "community": 97,
+      "community": 98,
       "norm_label": "toggleitem()"
     },
     {
@@ -6489,7 +6516,7 @@
       "source_file": "src/pages/settings/language.tsx",
       "source_location": "L1",
       "id": "src_pages_settings_language_tsx",
-      "community": 130,
+      "community": 131,
       "norm_label": "language.tsx"
     },
     {
@@ -6516,7 +6543,7 @@
       "source_file": "src/pages/settings/devices.tsx",
       "source_location": "L1",
       "id": "src_pages_settings_devices_tsx",
-      "community": 81,
+      "community": 82,
       "norm_label": "devices.tsx"
     },
     {
@@ -6525,7 +6552,7 @@
       "source_file": "src/pages/settings/devices.tsx",
       "source_location": "L77",
       "id": "settings_devices_cancelprovisioning",
-      "community": 81,
+      "community": 82,
       "norm_label": "cancelprovisioning()"
     },
     {
@@ -6534,7 +6561,7 @@
       "source_file": "src/pages/settings/devices.tsx",
       "source_location": "L85",
       "id": "settings_devices_formattime",
-      "community": 81,
+      "community": 82,
       "norm_label": "formattime()"
     },
     {
@@ -6579,7 +6606,7 @@
       "source_file": "src/hooks/use-focus-trap.ts",
       "source_location": "L1",
       "id": "src_hooks_use_focus_trap_ts",
-      "community": 47,
+      "community": 44,
       "norm_label": "use-focus-trap.ts"
     },
     {
@@ -6588,7 +6615,7 @@
       "source_file": "src/hooks/use-focus-trap.ts",
       "source_location": "L11",
       "id": "hooks_use_focus_trap_usefocustrap",
-      "community": 47,
+      "community": 44,
       "norm_label": "usefocustrap()"
     },
     {
@@ -6615,7 +6642,7 @@
       "source_file": "src/hooks/use-file-preview.ts",
       "source_location": "L1",
       "id": "src_hooks_use_file_preview_ts",
-      "community": 98,
+      "community": 99,
       "norm_label": "use-file-preview.ts"
     },
     {
@@ -6624,7 +6651,7 @@
       "source_file": "src/hooks/use-file-preview.ts",
       "source_location": "L10",
       "id": "hooks_use_file_preview_usefilepreview",
-      "community": 98,
+      "community": 99,
       "norm_label": "usefilepreview()"
     },
     {
@@ -6669,7 +6696,7 @@
       "source_file": "src/components/vault-unlock.tsx",
       "source_location": "L1",
       "id": "src_components_vault_unlock_tsx",
-      "community": 99,
+      "community": 100,
       "norm_label": "vault-unlock.tsx"
     },
     {
@@ -6678,7 +6705,7 @@
       "source_file": "src/components/vault-unlock.tsx",
       "source_location": "L8",
       "id": "components_vault_unlock_vaultunlock",
-      "community": 99,
+      "community": 100,
       "norm_label": "vaultunlock()"
     },
     {
@@ -6687,7 +6714,7 @@
       "source_file": "src/components/two-factor-prompt.tsx",
       "source_location": "L1",
       "id": "src_components_two_factor_prompt_tsx",
-      "community": 82,
+      "community": 83,
       "norm_label": "two-factor-prompt.tsx"
     },
     {
@@ -6696,7 +6723,7 @@
       "source_file": "src/components/two-factor-prompt.tsx",
       "source_location": "L73",
       "id": "components_two_factor_prompt_submitcode",
-      "community": 82,
+      "community": 83,
       "norm_label": "submitcode()"
     },
     {
@@ -6705,7 +6732,7 @@
       "source_file": "src/components/two-factor-prompt.tsx",
       "source_location": "L87",
       "id": "components_two_factor_prompt_handlebackupsubmit",
-      "community": 82,
+      "community": 83,
       "norm_label": "handlebackupsubmit()"
     },
     {
@@ -6714,7 +6741,7 @@
       "source_file": "src/components/wasm-guard.tsx",
       "source_location": "L1",
       "id": "src_components_wasm_guard_tsx",
-      "community": 131,
+      "community": 132,
       "norm_label": "wasm-guard.tsx"
     },
     {
@@ -6723,7 +6750,7 @@
       "source_file": "src/components/welcome-tour.tsx",
       "source_location": "L1",
       "id": "src_components_welcome_tour_tsx",
-      "community": 132,
+      "community": 133,
       "norm_label": "welcome-tour.tsx"
     },
     {
@@ -6840,7 +6867,7 @@
       "source_file": "src/components/error-boundary.tsx",
       "source_location": "L1",
       "id": "src_components_error_boundary_tsx",
-      "community": 44,
+      "community": 45,
       "norm_label": "error-boundary.tsx"
     },
     {
@@ -6849,7 +6876,7 @@
       "source_file": "src/components/error-boundary.tsx",
       "source_location": "L14",
       "id": "components_error_boundary_errorboundary",
-      "community": 44,
+      "community": 45,
       "norm_label": "errorboundary"
     },
     {
@@ -6858,7 +6885,7 @@
       "source_file": "src/components/error-boundary.tsx",
       "source_location": "L15",
       "id": "components_error_boundary_errorboundary_constructor",
-      "community": 44,
+      "community": 45,
       "norm_label": ".constructor()"
     },
     {
@@ -6867,7 +6894,7 @@
       "source_file": "src/components/error-boundary.tsx",
       "source_location": "L20",
       "id": "components_error_boundary_errorboundary_getderivedstatefromerror",
-      "community": 44,
+      "community": 45,
       "norm_label": ".getderivedstatefromerror()"
     },
     {
@@ -6876,7 +6903,7 @@
       "source_file": "src/components/error-boundary.tsx",
       "source_location": "L24",
       "id": "components_error_boundary_errorboundary_componentdidcatch",
-      "community": 44,
+      "community": 45,
       "norm_label": ".componentdidcatch()"
     },
     {
@@ -6885,7 +6912,7 @@
       "source_file": "src/components/error-boundary.tsx",
       "source_location": "L29",
       "id": "components_error_boundary_errorboundary_render",
-      "community": 44,
+      "community": 45,
       "norm_label": ".render()"
     },
     {
@@ -7038,7 +7065,7 @@
       "source_file": "src/components/bb-toggle.tsx",
       "source_location": "L1",
       "id": "src_components_bb_toggle_tsx",
-      "community": 100,
+      "community": 101,
       "norm_label": "bb-toggle.tsx"
     },
     {
@@ -7047,7 +7074,7 @@
       "source_file": "src/components/bb-toggle.tsx",
       "source_location": "L8",
       "id": "components_bb_toggle_bbtoggle",
-      "community": 100,
+      "community": 101,
       "norm_label": "bbtoggle()"
     },
     {
@@ -7056,7 +7083,7 @@
       "source_file": "src/components/file-icon.tsx",
       "source_location": "L1",
       "id": "src_components_file_icon_tsx",
-      "community": 83,
+      "community": 84,
       "norm_label": "file-icon.tsx"
     },
     {
@@ -7065,7 +7092,7 @@
       "source_file": "src/components/file-icon.tsx",
       "source_location": "L75",
       "id": "components_file_icon_getfiletype",
-      "community": 83,
+      "community": 84,
       "norm_label": "getfiletype()"
     },
     {
@@ -7074,7 +7101,7 @@
       "source_file": "src/components/file-icon.tsx",
       "source_location": "L107",
       "id": "components_file_icon_fileicon",
-      "community": 83,
+      "community": 84,
       "norm_label": "fileicon()"
     },
     {
@@ -7155,7 +7182,7 @@
       "source_file": "src/components/bb-checkbox.tsx",
       "source_location": "L1",
       "id": "src_components_bb_checkbox_tsx",
-      "community": 133,
+      "community": 134,
       "norm_label": "bb-checkbox.tsx"
     },
     {
@@ -7164,7 +7191,7 @@
       "source_file": "src/components/upload-progress.tsx",
       "source_location": "L1",
       "id": "src_components_upload_progress_tsx",
-      "community": 45,
+      "community": 46,
       "norm_label": "upload-progress.tsx"
     },
     {
@@ -7173,7 +7200,7 @@
       "source_file": "src/components/upload-progress.tsx",
       "source_location": "L25",
       "id": "components_upload_progress_formatbytes",
-      "community": 45,
+      "community": 46,
       "norm_label": "formatbytes()"
     },
     {
@@ -7182,7 +7209,7 @@
       "source_file": "src/components/upload-progress.tsx",
       "source_location": "L32",
       "id": "components_upload_progress_formatspeed",
-      "community": 45,
+      "community": 46,
       "norm_label": "formatspeed()"
     },
     {
@@ -7191,7 +7218,7 @@
       "source_file": "src/components/upload-progress.tsx",
       "source_location": "L38",
       "id": "components_upload_progress_formateta",
-      "community": 45,
+      "community": 46,
       "norm_label": "formateta()"
     },
     {
@@ -7200,7 +7227,7 @@
       "source_file": "src/components/upload-progress.tsx",
       "source_location": "L51",
       "id": "components_upload_progress_computespeed",
-      "community": 45,
+      "community": 46,
       "norm_label": "computespeed()"
     },
     {
@@ -7209,7 +7236,7 @@
       "source_file": "src/components/upload-progress.tsx",
       "source_location": "L58",
       "id": "components_upload_progress_computeeta",
-      "community": 45,
+      "community": 46,
       "norm_label": "computeeta()"
     },
     {
@@ -7218,7 +7245,7 @@
       "source_file": "src/components/bb-button.tsx",
       "source_location": "L1",
       "id": "src_components_bb_button_tsx",
-      "community": 101,
+      "community": 102,
       "norm_label": "bb-button.tsx"
     },
     {
@@ -7227,7 +7254,7 @@
       "source_file": "src/components/bb-button.tsx",
       "source_location": "L24",
       "id": "components_bb_button_bbbutton",
-      "community": 101,
+      "community": 102,
       "norm_label": "bbbutton()"
     },
     {
@@ -7236,7 +7263,7 @@
       "source_file": "src/components/skeleton.tsx",
       "source_location": "L1",
       "id": "src_components_skeleton_tsx",
-      "community": 46,
+      "community": 47,
       "norm_label": "skeleton.tsx"
     },
     {
@@ -7245,7 +7272,7 @@
       "source_file": "src/components/skeleton.tsx",
       "source_location": "L6",
       "id": "components_skeleton_skeletonline",
-      "community": 46,
+      "community": 47,
       "norm_label": "skeletonline()"
     },
     {
@@ -7254,7 +7281,7 @@
       "source_file": "src/components/skeleton.tsx",
       "source_location": "L16",
       "id": "components_skeleton_skeletonrect",
-      "community": 46,
+      "community": 47,
       "norm_label": "skeletonrect()"
     },
     {
@@ -7263,7 +7290,7 @@
       "source_file": "src/components/skeleton.tsx",
       "source_location": "L26",
       "id": "components_skeleton_filerowskeleton",
-      "community": 46,
+      "community": 47,
       "norm_label": "filerowskeleton()"
     },
     {
@@ -7272,7 +7299,7 @@
       "source_file": "src/components/skeleton.tsx",
       "source_location": "L65",
       "id": "components_skeleton_sharedrowskeleton",
-      "community": 46,
+      "community": 47,
       "norm_label": "sharedrowskeleton()"
     },
     {
@@ -7281,7 +7308,7 @@
       "source_file": "src/components/skeleton.tsx",
       "source_location": "L99",
       "id": "components_skeleton_cardskeleton",
-      "community": 46,
+      "community": 47,
       "norm_label": "cardskeleton()"
     },
     {
@@ -7290,7 +7317,7 @@
       "source_file": "src/components/breadcrumb.tsx",
       "source_location": "L1",
       "id": "src_components_breadcrumb_tsx",
-      "community": 134,
+      "community": 135,
       "norm_label": "breadcrumb.tsx"
     },
     {
@@ -7326,7 +7353,7 @@
       "source_file": "src/components/new-folder-dialog.tsx",
       "source_location": "L1",
       "id": "src_components_new_folder_dialog_tsx",
-      "community": 47,
+      "community": 44,
       "norm_label": "new-folder-dialog.tsx"
     },
     {
@@ -7335,7 +7362,7 @@
       "source_file": "src/components/new-folder-dialog.tsx",
       "source_location": "L11",
       "id": "components_new_folder_dialog_newfolderdialog",
-      "community": 47,
+      "community": 44,
       "norm_label": "newfolderdialog()"
     },
     {
@@ -7389,7 +7416,7 @@
       "source_file": "src/components/shared-folder-banner.tsx",
       "source_location": "L1",
       "id": "src_components_shared_folder_banner_tsx",
-      "community": 135,
+      "community": 136,
       "norm_label": "shared-folder-banner.tsx"
     },
     {
@@ -7398,7 +7425,7 @@
       "source_file": "src/components/rename-dialog.tsx",
       "source_location": "L1",
       "id": "src_components_rename_dialog_tsx",
-      "community": 47,
+      "community": 44,
       "norm_label": "rename-dialog.tsx"
     },
     {
@@ -7407,7 +7434,7 @@
       "source_file": "src/components/rename-dialog.tsx",
       "source_location": "L13",
       "id": "components_rename_dialog_renamedialog",
-      "community": 47,
+      "community": 44,
       "norm_label": "renamedialog()"
     },
     {
@@ -7560,7 +7587,7 @@
       "source_file": "src/components/quota-warning.tsx",
       "source_location": "L1",
       "id": "src_components_quota_warning_tsx",
-      "community": 84,
+      "community": 85,
       "norm_label": "quota-warning.tsx"
     },
     {
@@ -7569,7 +7596,7 @@
       "source_file": "src/components/quota-warning.tsx",
       "source_location": "L8",
       "id": "components_quota_warning_formatstorage",
-      "community": 84,
+      "community": 85,
       "norm_label": "formatstorage()"
     },
     {
@@ -7578,7 +7605,7 @@
       "source_file": "src/components/quota-warning.tsx",
       "source_location": "L46",
       "id": "components_quota_warning_handledismiss",
-      "community": 84,
+      "community": 85,
       "norm_label": "handledismiss()"
     },
     {
@@ -7587,7 +7614,7 @@
       "source_file": "src/components/share-approve.tsx",
       "source_location": "L1",
       "id": "src_components_share_approve_tsx",
-      "community": 102,
+      "community": 103,
       "norm_label": "share-approve.tsx"
     },
     {
@@ -7596,7 +7623,7 @@
       "source_file": "src/components/share-approve.tsx",
       "source_location": "L23",
       "id": "components_share_approve_timeago",
-      "community": 102,
+      "community": 103,
       "norm_label": "timeago()"
     },
     {
@@ -7605,7 +7632,7 @@
       "source_file": "src/components/upgrade-dialog.tsx",
       "source_location": "L1",
       "id": "src_components_upgrade_dialog_tsx",
-      "community": 136,
+      "community": 137,
       "norm_label": "upgrade-dialog.tsx"
     },
     {
@@ -7614,7 +7641,7 @@
       "source_file": "src/components/auth-shell.tsx",
       "source_location": "L1",
       "id": "src_components_auth_shell_tsx",
-      "community": 137,
+      "community": 138,
       "norm_label": "auth-shell.tsx"
     },
     {
@@ -7623,7 +7650,7 @@
       "source_file": "src/components/feedback-dialog.tsx",
       "source_location": "L1",
       "id": "src_components_feedback_dialog_tsx",
-      "community": 85,
+      "community": 86,
       "norm_label": "feedback-dialog.tsx"
     },
     {
@@ -7632,7 +7659,7 @@
       "source_file": "src/components/feedback-dialog.tsx",
       "source_location": "L50",
       "id": "components_feedback_dialog_handleclick",
-      "community": 85,
+      "community": 86,
       "norm_label": "handleclick()"
     },
     {
@@ -7641,7 +7668,7 @@
       "source_file": "src/components/feedback-dialog.tsx",
       "source_location": "L61",
       "id": "components_feedback_dialog_handlesend",
-      "community": 85,
+      "community": 86,
       "norm_label": "handlesend()"
     },
     {
@@ -7668,16 +7695,16 @@
       "source_file": "src/components/offline-banner.tsx",
       "source_location": "L1",
       "id": "src_components_offline_banner_tsx",
-      "community": 103,
+      "community": 104,
       "norm_label": "offline-banner.tsx"
     },
     {
       "label": "OfflineBanner()",
       "file_type": "code",
       "source_file": "src/components/offline-banner.tsx",
-      "source_location": "L6",
+      "source_location": "L10",
       "id": "components_offline_banner_offlinebanner",
-      "community": 103,
+      "community": 104,
       "norm_label": "offlinebanner()"
     },
     {
@@ -7686,7 +7713,7 @@
       "source_file": "src/components/shortcuts-cheatsheet.tsx",
       "source_location": "L1",
       "id": "src_components_shortcuts_cheatsheet_tsx",
-      "community": 104,
+      "community": 105,
       "norm_label": "shortcuts-cheatsheet.tsx"
     },
     {
@@ -7695,7 +7722,7 @@
       "source_file": "src/components/shortcuts-cheatsheet.tsx",
       "source_location": "L39",
       "id": "components_shortcuts_cheatsheet_shortcutscheatsheet",
-      "community": 104,
+      "community": 105,
       "norm_label": "shortcutscheatsheet()"
     },
     {
@@ -7704,7 +7731,7 @@
       "source_file": "src/components/icons.tsx",
       "source_location": "L1",
       "id": "src_components_icons_tsx",
-      "community": 105,
+      "community": 106,
       "norm_label": "icons.tsx"
     },
     {
@@ -7713,7 +7740,7 @@
       "source_file": "src/components/icons.tsx",
       "source_location": "L120",
       "id": "components_icons_icon",
-      "community": 105,
+      "community": 106,
       "norm_label": "icon()"
     },
     {
@@ -7722,7 +7749,7 @@
       "source_file": "src/components/settings-shell.tsx",
       "source_location": "L1",
       "id": "src_components_settings_shell_tsx",
-      "community": 106,
+      "community": 107,
       "norm_label": "settings-shell.tsx"
     },
     {
@@ -7731,7 +7758,7 @@
       "source_file": "src/components/settings-shell.tsx",
       "source_location": "L30",
       "id": "components_settings_shell_settingsshell",
-      "community": 106,
+      "community": 107,
       "norm_label": "settingsshell()"
     },
     {
@@ -7740,7 +7767,7 @@
       "source_file": "src/components/bb-input.tsx",
       "source_location": "L1",
       "id": "src_components_bb_input_tsx",
-      "community": 138,
+      "community": 139,
       "norm_label": "bb-input.tsx"
     },
     {
@@ -7749,7 +7776,7 @@
       "source_file": "src/components/bb-logo.tsx",
       "source_location": "L1",
       "id": "src_components_bb_logo_tsx",
-      "community": 139,
+      "community": 140,
       "norm_label": "bb-logo.tsx"
     },
     {
@@ -7884,7 +7911,7 @@
       "source_file": "src/components/bb-chip.tsx",
       "source_location": "L1",
       "id": "src_components_bb_chip_tsx",
-      "community": 107,
+      "community": 108,
       "norm_label": "bb-chip.tsx"
     },
     {
@@ -7893,7 +7920,7 @@
       "source_file": "src/components/bb-chip.tsx",
       "source_location": "L17",
       "id": "components_bb_chip_bbchip",
-      "community": 107,
+      "community": 108,
       "norm_label": "bbchip()"
     },
     {
@@ -7902,7 +7929,7 @@
       "source_file": "src/components/preview/image-preview.tsx",
       "source_location": "L1",
       "id": "src_components_preview_image_preview_tsx",
-      "community": 108,
+      "community": 109,
       "norm_label": "image-preview.tsx"
     },
     {
@@ -7911,7 +7938,7 @@
       "source_file": "src/components/preview/image-preview.tsx",
       "source_location": "L8",
       "id": "preview_image_preview_imagepreview",
-      "community": 108,
+      "community": 109,
       "norm_label": "imagepreview()"
     },
     {
@@ -7956,7 +7983,7 @@
       "source_file": "src/components/preview/preview-chrome.tsx",
       "source_location": "L1",
       "id": "src_components_preview_preview_chrome_tsx",
-      "community": 140,
+      "community": 141,
       "norm_label": "preview-chrome.tsx"
     },
     {
@@ -7965,7 +7992,7 @@
       "source_file": "src/components/preview/pdf-preview.tsx",
       "source_location": "L1",
       "id": "src_components_preview_pdf_preview_tsx",
-      "community": 109,
+      "community": 110,
       "norm_label": "pdf-preview.tsx"
     },
     {
@@ -7974,7 +8001,7 @@
       "source_file": "src/components/preview/pdf-preview.tsx",
       "source_location": "L7",
       "id": "preview_pdf_preview_pdfpreview",
-      "community": 109,
+      "community": 110,
       "norm_label": "pdfpreview()"
     },
     {
@@ -7983,7 +8010,7 @@
       "source_file": "src/components/preview/markdown-preview.tsx",
       "source_location": "L1",
       "id": "src_components_preview_markdown_preview_tsx",
-      "community": 141,
+      "community": 142,
       "norm_label": "markdown-preview.tsx"
     },
     {
@@ -8046,7 +8073,7 @@
       "source_file": "src/components/preview/info-rail.tsx",
       "source_location": "L1",
       "id": "src_components_preview_info_rail_tsx",
-      "community": 110,
+      "community": 111,
       "norm_label": "info-rail.tsx"
     },
     {
@@ -8055,7 +8082,7 @@
       "source_file": "src/components/preview/info-rail.tsx",
       "source_location": "L8",
       "id": "preview_info_rail_inforail",
-      "community": 110,
+      "community": 111,
       "norm_label": "inforail()"
     },
     {
@@ -8127,7 +8154,7 @@
       "source_file": "src/components/empty-states/forgot-phrase.tsx",
       "source_location": "L1",
       "id": "src_components_empty_states_forgot_phrase_tsx",
-      "community": 142,
+      "community": 143,
       "norm_label": "forgot-phrase.tsx"
     },
     {
@@ -8136,7 +8163,7 @@
       "source_file": "src/components/empty-states/empty-recent.tsx",
       "source_location": "L1",
       "id": "src_components_empty_states_empty_recent_tsx",
-      "community": 111,
+      "community": 112,
       "norm_label": "empty-recent.tsx"
     },
     {
@@ -8145,7 +8172,7 @@
       "source_file": "src/components/empty-states/empty-recent.tsx",
       "source_location": "L7",
       "id": "empty_states_empty_recent_emptyrecent",
-      "community": 111,
+      "community": 112,
       "norm_label": "emptyrecent()"
     },
     {
@@ -8154,7 +8181,7 @@
       "source_file": "src/components/empty-states/empty-trash.tsx",
       "source_location": "L1",
       "id": "src_components_empty_states_empty_trash_tsx",
-      "community": 112,
+      "community": 113,
       "norm_label": "empty-trash.tsx"
     },
     {
@@ -8163,7 +8190,7 @@
       "source_file": "src/components/empty-states/empty-trash.tsx",
       "source_location": "L7",
       "id": "empty_states_empty_trash_emptytrash",
-      "community": 112,
+      "community": 113,
       "norm_label": "emptytrash()"
     },
     {
@@ -8172,7 +8199,7 @@
       "source_file": "src/components/empty-states/empty-search.tsx",
       "source_location": "L1",
       "id": "src_components_empty_states_empty_search_tsx",
-      "community": 143,
+      "community": 144,
       "norm_label": "empty-search.tsx"
     },
     {
@@ -8181,7 +8208,7 @@
       "source_file": "src/components/empty-states/empty-shared.tsx",
       "source_location": "L1",
       "id": "src_components_empty_states_empty_shared_tsx",
-      "community": 113,
+      "community": 114,
       "norm_label": "empty-shared.tsx"
     },
     {
@@ -8190,7 +8217,7 @@
       "source_file": "src/components/empty-states/empty-shared.tsx",
       "source_location": "L36",
       "id": "empty_states_empty_shared_emptyshared",
-      "community": 113,
+      "community": 114,
       "norm_label": "emptyshared()"
     },
     {
@@ -8199,7 +8226,7 @@
       "source_file": "src/components/empty-states/upload-error.tsx",
       "source_location": "L1",
       "id": "src_components_empty_states_upload_error_tsx",
-      "community": 144,
+      "community": 145,
       "norm_label": "upload-error.tsx"
     },
     {
@@ -8208,7 +8235,7 @@
       "source_file": "src/components/empty-states/empty-state.tsx",
       "source_location": "L1",
       "id": "src_components_empty_states_empty_state_tsx",
-      "community": 145,
+      "community": 146,
       "norm_label": "empty-state.tsx"
     },
     {
@@ -8217,7 +8244,7 @@
       "source_file": "src/components/empty-states/empty-drive.tsx",
       "source_location": "L1",
       "id": "src_components_empty_states_empty_drive_tsx",
-      "community": 146,
+      "community": 147,
       "norm_label": "empty-drive.tsx"
     },
     {
@@ -8226,7 +8253,7 @@
       "source_file": "src/components/empty-states/link-expired.tsx",
       "source_location": "L1",
       "id": "src_components_empty_states_link_expired_tsx",
-      "community": 147,
+      "community": 148,
       "norm_label": "link-expired.tsx"
     },
     {
@@ -8235,7 +8262,7 @@
       "source_file": "src/components/empty-states/empty-photos.tsx",
       "source_location": "L1",
       "id": "src_components_empty_states_empty_photos_tsx",
-      "community": 114,
+      "community": 115,
       "norm_label": "empty-photos.tsx"
     },
     {
@@ -8244,7 +8271,7 @@
       "source_file": "src/components/empty-states/empty-photos.tsx",
       "source_location": "L8",
       "id": "empty_states_empty_photos_emptyphotos",
-      "community": 114,
+      "community": 115,
       "norm_label": "emptyphotos()"
     },
     {
@@ -8253,7 +8280,7 @@
       "source_file": "src/components/empty-states/empty-activity.tsx",
       "source_location": "L1",
       "id": "src_components_empty_states_empty_activity_tsx",
-      "community": 115,
+      "community": 116,
       "norm_label": "empty-activity.tsx"
     },
     {
@@ -8262,7 +8289,7 @@
       "source_file": "src/components/empty-states/empty-activity.tsx",
       "source_location": "L7",
       "id": "empty_states_empty_activity_emptyactivity",
-      "community": 115,
+      "community": 116,
       "norm_label": "emptyactivity()"
     },
     {
@@ -8271,7 +8298,7 @@
       "source_file": "src/components/empty-states/offline-state.tsx",
       "source_location": "L1",
       "id": "src_components_empty_states_offline_state_tsx",
-      "community": 148,
+      "community": 149,
       "norm_label": "offline-state.tsx"
     },
     {
@@ -8280,7 +8307,7 @@
       "source_file": "src/components/empty-states/empty-starred.tsx",
       "source_location": "L1",
       "id": "src_components_empty_states_empty_starred_tsx",
-      "community": 116,
+      "community": 117,
       "norm_label": "empty-starred.tsx"
     },
     {
@@ -8289,7 +8316,7 @@
       "source_file": "src/components/empty-states/empty-starred.tsx",
       "source_location": "L7",
       "id": "empty_states_empty_starred_emptystarred",
-      "community": 116,
+      "community": 117,
       "norm_label": "emptystarred()"
     },
     {
@@ -8298,7 +8325,7 @@
       "source_file": "src/workers/crypto.worker.ts",
       "source_location": "L1",
       "id": "src_workers_crypto_worker_ts",
-      "community": 117,
+      "community": 118,
       "norm_label": "crypto.worker.ts"
     },
     {
@@ -8307,7 +8334,7 @@
       "source_file": "src/workers/crypto.worker.ts",
       "source_location": "L15",
       "id": "workers_crypto_worker_ensurewasm",
-      "community": 117,
+      "community": 118,
       "norm_label": "ensurewasm()"
     }
   ],
@@ -11604,7 +11631,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L39",
+      "source_location": "L41",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_registererrornotifier",
@@ -11616,7 +11643,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L44",
+      "source_location": "L46",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_registersessionexpiredhandler",
@@ -11628,7 +11655,43 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L48",
+      "source_location": "L55",
+      "weight": 1.0,
+      "_src": "src_lib_api_ts",
+      "_tgt": "lib_api_registerconnectionstatushandler",
+      "source": "src_lib_api_ts",
+      "target": "lib_api_registerconnectionstatushandler",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/lib/api.ts",
+      "source_location": "L65",
+      "weight": 1.0,
+      "_src": "src_lib_api_ts",
+      "_tgt": "lib_api_reportconnection",
+      "source": "src_lib_api_ts",
+      "target": "lib_api_reportconnection",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/lib/api.ts",
+      "source_location": "L71",
+      "weight": 1.0,
+      "_src": "src_lib_api_ts",
+      "_tgt": "lib_api_delay",
+      "source": "src_lib_api_ts",
+      "target": "lib_api_delay",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/lib/api.ts",
+      "source_location": "L75",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_request",
@@ -11640,7 +11703,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L90",
+      "source_location": "L130",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_apierror",
@@ -11652,7 +11715,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L129",
+      "source_location": "L169",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_signup",
@@ -11664,7 +11727,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L143",
+      "source_location": "L183",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_opaqueregisterstart",
@@ -11676,7 +11739,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L153",
+      "source_location": "L193",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_opaqueregisterfinish",
@@ -11688,7 +11751,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L172",
+      "source_location": "L212",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_opaqueloginstart",
@@ -11700,7 +11763,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L182",
+      "source_location": "L222",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_opaqueloginfinish",
@@ -11712,7 +11775,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L195",
+      "source_location": "L235",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_login",
@@ -11724,7 +11787,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L209",
+      "source_location": "L249",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_logout",
@@ -11736,7 +11799,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L217",
+      "source_location": "L257",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_verifyemail",
@@ -11748,7 +11811,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L226",
+      "source_location": "L266",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_resendverification",
@@ -11760,7 +11823,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L230",
+      "source_location": "L270",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_getme",
@@ -11772,7 +11835,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L242",
+      "source_location": "L282",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_setup2fa",
@@ -11784,7 +11847,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L248",
+      "source_location": "L288",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_enable2fa",
@@ -11796,7 +11859,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L255",
+      "source_location": "L295",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_disable2fa",
@@ -11808,7 +11871,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L262",
+      "source_location": "L302",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_verify2fa",
@@ -11820,7 +11883,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L292",
+      "source_location": "L332",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_listfiles",
@@ -11832,7 +11895,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L307",
+      "source_location": "L347",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_createfolder",
@@ -11844,7 +11907,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L318",
+      "source_location": "L358",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_uploadfile",
@@ -11856,7 +11919,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L353",
+      "source_location": "L393",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_initupload",
@@ -11868,7 +11931,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L370",
+      "source_location": "L410",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_uploadchunk",
@@ -11880,7 +11943,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L407",
+      "source_location": "L447",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_completeupload",
@@ -11892,7 +11955,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L423",
+      "source_location": "L463",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_getuploadstatus",
@@ -11904,7 +11967,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L431",
+      "source_location": "L471",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_getfile",
@@ -11916,7 +11979,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L435",
+      "source_location": "L475",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_downloadfile",
@@ -11928,7 +11991,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L447",
+      "source_location": "L487",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_updatefile",
@@ -11940,7 +12003,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L457",
+      "source_location": "L497",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_deletefile",
@@ -11952,7 +12015,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L461",
+      "source_location": "L501",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_restorefile",
@@ -11964,7 +12027,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L465",
+      "source_location": "L505",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_permanentdeletefile",
@@ -11976,7 +12039,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L469",
+      "source_location": "L509",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_togglestar",
@@ -11988,7 +12051,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L480",
+      "source_location": "L520",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_changepassword",
@@ -12000,7 +12063,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L499",
+      "source_location": "L539",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_forgotpassword",
@@ -12012,7 +12075,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L508",
+      "source_location": "L548",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_resetpassword",
@@ -12024,7 +12087,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L523",
+      "source_location": "L563",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_deleteaccountpermanently",
@@ -12036,7 +12099,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L587",
+      "source_location": "L627",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_createshare",
@@ -12048,7 +12111,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L600",
+      "source_location": "L640",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_getshare",
@@ -12060,7 +12123,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L615",
+      "source_location": "L655",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_verifysharepassphrase",
@@ -12072,7 +12135,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L636",
+      "source_location": "L676",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_downloadsharedfile",
@@ -12084,7 +12147,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L644",
+      "source_location": "L684",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_listmyshares",
@@ -12096,7 +12159,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L649",
+      "source_location": "L689",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_revokeshare",
@@ -12108,7 +12171,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L680",
+      "source_location": "L720",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_createinvite",
@@ -12120,7 +12183,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L700",
+      "source_location": "L740",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_getincominginvites",
@@ -12132,7 +12195,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L705",
+      "source_location": "L745",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_getpendingapprovals",
@@ -12144,7 +12207,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L710",
+      "source_location": "L750",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_getsentinvites",
@@ -12156,7 +12219,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L715",
+      "source_location": "L755",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_claiminvite",
@@ -12168,7 +12231,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L719",
+      "source_location": "L759",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_approveinvite",
@@ -12180,7 +12243,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L729",
+      "source_location": "L769",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_denyinvite",
@@ -12192,7 +12255,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L733",
+      "source_location": "L773",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_cancelinvite",
@@ -12204,7 +12267,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L737",
+      "source_location": "L777",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_patchinvite",
@@ -12216,7 +12279,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L757",
+      "source_location": "L797",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_getinviteactivity",
@@ -12228,7 +12291,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L761",
+      "source_location": "L801",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_resendinvite",
@@ -12240,7 +12303,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L765",
+      "source_location": "L805",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_withdrawinvite",
@@ -12252,7 +12315,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L769",
+      "source_location": "L809",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_hideinvite",
@@ -12264,7 +12327,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L781",
+      "source_location": "L821",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_getsharestats",
@@ -12276,7 +12339,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L824",
+      "source_location": "L864",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_getstorageusage",
@@ -12288,7 +12351,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L828",
+      "source_location": "L868",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_getplans",
@@ -12300,7 +12363,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L833",
+      "source_location": "L873",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_getsubscription",
@@ -12312,7 +12375,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L837",
+      "source_location": "L877",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_subscribe",
@@ -12324,7 +12387,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L849",
+      "source_location": "L889",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_getinvoices",
@@ -12336,7 +12399,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L854",
+      "source_location": "L894",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_createcheckoutsession",
@@ -12348,7 +12411,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L866",
+      "source_location": "L906",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_createportalsession",
@@ -12360,7 +12423,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L892",
+      "source_location": "L932",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_listauditlog",
@@ -12372,7 +12435,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L909",
+      "source_location": "L949",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_exportauditlog",
@@ -12384,7 +12447,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L916",
+      "source_location": "L956",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_listmembers",
@@ -12396,7 +12459,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L921",
+      "source_location": "L961",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_invitemember",
@@ -12408,7 +12471,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L928",
+      "source_location": "L968",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_removemember",
@@ -12420,7 +12483,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L967",
+      "source_location": "L1007",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_listadminusers",
@@ -12432,7 +12495,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L982",
+      "source_location": "L1022",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_getadminuserdetail",
@@ -12444,7 +12507,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1026",
+      "source_location": "L1066",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_liststoragepools",
@@ -12456,7 +12519,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1031",
+      "source_location": "L1071",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_listmigrations",
@@ -12468,7 +12531,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1038",
+      "source_location": "L1078",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_createstoragepool",
@@ -12480,7 +12543,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1056",
+      "source_location": "L1096",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_updatestoragepool",
@@ -12492,7 +12555,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1078",
+      "source_location": "L1118",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_getpoolusage",
@@ -12504,7 +12567,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1085",
+      "source_location": "L1125",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_migrateuser",
@@ -12516,7 +12579,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1097",
+      "source_location": "L1137",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_getfolderkeys",
@@ -12528,7 +12591,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1106",
+      "source_location": "L1146",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_addfolderkeys",
@@ -12540,7 +12603,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1116",
+      "source_location": "L1156",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_getfoldermembers",
@@ -12552,7 +12615,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1122",
+      "source_location": "L1162",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_listsharedfolderfiles",
@@ -12564,7 +12627,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1134",
+      "source_location": "L1174",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_getpreferences",
@@ -12576,7 +12639,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1139",
+      "source_location": "L1179",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_getpreference",
@@ -12588,7 +12651,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1144",
+      "source_location": "L1184",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_setpreference",
@@ -12600,7 +12663,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1162",
+      "source_location": "L1202",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_base64urltobuffer",
@@ -12612,7 +12675,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1175",
+      "source_location": "L1215",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_buffertobase64url",
@@ -12624,7 +12687,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1190",
+      "source_location": "L1230",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_serveroptstocreateoptions",
@@ -12636,7 +12699,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1215",
+      "source_location": "L1255",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_serveroptstogetoptions",
@@ -12648,7 +12711,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1234",
+      "source_location": "L1274",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_credentialtoregistrationjson",
@@ -12660,7 +12723,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1261",
+      "source_location": "L1301",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_credentialtoauthenticationjson",
@@ -12672,7 +12735,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1297",
+      "source_location": "L1337",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_startpasskeyregistration",
@@ -12684,7 +12747,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1303",
+      "source_location": "L1343",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_finishpasskeyregistration",
@@ -12696,7 +12759,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1324",
+      "source_location": "L1364",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_startpasskeylogin",
@@ -12708,7 +12771,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1331",
+      "source_location": "L1371",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_finishpasskeylogin",
@@ -12720,7 +12783,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1348",
+      "source_location": "L1388",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_listpasskeys",
@@ -12732,7 +12795,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1353",
+      "source_location": "L1393",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_deletepasskey",
@@ -12744,7 +12807,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1374",
+      "source_location": "L1414",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_listactivity",
@@ -12756,7 +12819,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1444",
+      "source_location": "L1484",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_createworkspace",
@@ -12768,7 +12831,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1451",
+      "source_location": "L1491",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_listworkspaces",
@@ -12780,7 +12843,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1456",
+      "source_location": "L1496",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_listworkspacemembers",
@@ -12792,7 +12855,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1464",
+      "source_location": "L1504",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_inviteworkspacemember",
@@ -12804,7 +12867,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1475",
+      "source_location": "L1515",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_acceptworkspaceinvite",
@@ -12816,7 +12879,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1484",
+      "source_location": "L1524",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_removeworkspacemember",
@@ -12828,7 +12891,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1493",
+      "source_location": "L1533",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_updatememberrole",
@@ -12840,7 +12903,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1507",
+      "source_location": "L1547",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_getinvitepreview",
@@ -12852,7 +12915,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1533",
+      "source_location": "L1573",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_listversions",
@@ -12864,7 +12927,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1541",
+      "source_location": "L1581",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_downloadversion",
@@ -12876,7 +12939,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1549",
+      "source_location": "L1589",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_restoreversion",
@@ -12888,7 +12951,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1553",
+      "source_location": "L1593",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_deleteversion",
@@ -12900,7 +12963,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1566",
+      "source_location": "L1606",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_getversionsettings",
@@ -12912,7 +12975,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1570",
+      "source_location": "L1610",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_setversionsetting",
@@ -12924,7 +12987,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1596",
+      "source_location": "L1636",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_listnotifications",
@@ -12936,7 +12999,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1604",
+      "source_location": "L1644",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_marknotificationread",
@@ -12948,7 +13011,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1612",
+      "source_location": "L1652",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_markallnotificationsread",
@@ -12960,7 +13023,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1616",
+      "source_location": "L1656",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_deletenotification",
@@ -12972,7 +13035,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1629",
+      "source_location": "L1669",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_listsessions",
@@ -12984,7 +13047,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1633",
+      "source_location": "L1673",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_revokesession",
@@ -12996,7 +13059,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1645",
+      "source_location": "L1685",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_adminimpersonate",
@@ -13008,7 +13071,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1679",
+      "source_location": "L1719",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_getadminstats",
@@ -13020,7 +13083,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1683",
+      "source_location": "L1723",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_gethealth",
@@ -13032,7 +13095,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1693",
+      "source_location": "L1733",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_reportsharelink",
@@ -13044,7 +13107,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1732",
+      "source_location": "L1772",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_listabusereports",
@@ -13056,7 +13119,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1746",
+      "source_location": "L1786",
       "weight": 1.0,
       "_src": "src_lib_api_ts",
       "_tgt": "lib_api_updateabusereport",
@@ -13068,7 +13131,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1542",
+      "source_location": "L1582",
       "weight": 1.0,
       "_src": "lib_api_downloadversion",
       "_tgt": "lib_api_getapiurl",
@@ -13140,7 +13203,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L52",
+      "source_location": "L79",
       "weight": 1.0,
       "_src": "lib_api_request",
       "_tgt": "lib_api_gettoken",
@@ -13152,7 +13215,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L322",
+      "source_location": "L362",
       "weight": 1.0,
       "_src": "lib_api_uploadfile",
       "_tgt": "lib_api_gettoken",
@@ -13164,7 +13227,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L375",
+      "source_location": "L415",
       "weight": 1.0,
       "_src": "lib_api_uploadchunk",
       "_tgt": "lib_api_gettoken",
@@ -13176,7 +13239,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L436",
+      "source_location": "L476",
       "weight": 1.0,
       "_src": "lib_api_downloadfile",
       "_tgt": "lib_api_gettoken",
@@ -13188,7 +13251,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1543",
+      "source_location": "L1583",
       "weight": 1.0,
       "_src": "lib_api_downloadversion",
       "_tgt": "lib_api_gettoken",
@@ -13248,7 +13311,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L137",
+      "source_location": "L177",
       "weight": 1.0,
       "_src": "lib_api_signup",
       "_tgt": "lib_api_settoken",
@@ -13260,7 +13323,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L168",
+      "source_location": "L208",
       "weight": 1.0,
       "_src": "lib_api_opaqueregisterfinish",
       "_tgt": "lib_api_settoken",
@@ -13272,7 +13335,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L191",
+      "source_location": "L231",
       "weight": 1.0,
       "_src": "lib_api_opaqueloginfinish",
       "_tgt": "lib_api_settoken",
@@ -13284,7 +13347,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L204",
+      "source_location": "L244",
       "weight": 1.0,
       "_src": "lib_api_login",
       "_tgt": "lib_api_settoken",
@@ -13296,7 +13359,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L271",
+      "source_location": "L311",
       "weight": 1.0,
       "_src": "lib_api_verify2fa",
       "_tgt": "lib_api_settoken",
@@ -13308,7 +13371,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L495",
+      "source_location": "L535",
       "weight": 1.0,
       "_src": "lib_api_changepassword",
       "_tgt": "lib_api_settoken",
@@ -13320,7 +13383,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L519",
+      "source_location": "L559",
       "weight": 1.0,
       "_src": "lib_api_resetpassword",
       "_tgt": "lib_api_settoken",
@@ -13332,7 +13395,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1341",
+      "source_location": "L1381",
       "weight": 1.0,
       "_src": "lib_api_finishpasskeylogin",
       "_tgt": "lib_api_settoken",
@@ -13356,7 +13419,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L74",
+      "source_location": "L114",
       "weight": 1.0,
       "_src": "lib_api_request",
       "_tgt": "lib_api_cleartoken",
@@ -13368,7 +13431,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L213",
+      "source_location": "L253",
       "weight": 1.0,
       "_src": "lib_api_logout",
       "_tgt": "lib_api_cleartoken",
@@ -13380,7 +13443,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L533",
+      "source_location": "L573",
       "weight": 1.0,
       "_src": "lib_api_deleteaccountpermanently",
       "_tgt": "lib_api_cleartoken",
@@ -13392,7 +13455,31 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L147",
+      "source_location": "L101",
+      "weight": 1.0,
+      "_src": "lib_api_request",
+      "_tgt": "lib_api_reportconnection",
+      "source": "lib_api_reportconnection",
+      "target": "lib_api_request",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "src/lib/api.ts",
+      "source_location": "L95",
+      "weight": 1.0,
+      "_src": "lib_api_request",
+      "_tgt": "lib_api_delay",
+      "source": "lib_api_delay",
+      "target": "lib_api_request",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "src/lib/api.ts",
+      "source_location": "L187",
       "weight": 1.0,
       "_src": "lib_api_opaqueregisterstart",
       "_tgt": "lib_api_request",
@@ -13404,7 +13491,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L176",
+      "source_location": "L216",
       "weight": 1.0,
       "_src": "lib_api_opaqueloginstart",
       "_tgt": "lib_api_request",
@@ -13416,7 +13503,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L220",
+      "source_location": "L260",
       "weight": 1.0,
       "_src": "lib_api_verifyemail",
       "_tgt": "lib_api_request",
@@ -13428,7 +13515,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L227",
+      "source_location": "L267",
       "weight": 1.0,
       "_src": "lib_api_resendverification",
       "_tgt": "lib_api_request",
@@ -13440,7 +13527,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L231",
+      "source_location": "L271",
       "weight": 1.0,
       "_src": "lib_api_getme",
       "_tgt": "lib_api_request",
@@ -13452,7 +13539,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L243",
+      "source_location": "L283",
       "weight": 1.0,
       "_src": "lib_api_setup2fa",
       "_tgt": "lib_api_request",
@@ -13464,7 +13551,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L249",
+      "source_location": "L289",
       "weight": 1.0,
       "_src": "lib_api_enable2fa",
       "_tgt": "lib_api_request",
@@ -13476,7 +13563,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L256",
+      "source_location": "L296",
       "weight": 1.0,
       "_src": "lib_api_disable2fa",
       "_tgt": "lib_api_request",
@@ -13488,7 +13575,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L312",
+      "source_location": "L352",
       "weight": 1.0,
       "_src": "lib_api_createfolder",
       "_tgt": "lib_api_request",
@@ -13500,7 +13587,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L361",
+      "source_location": "L401",
       "weight": 1.0,
       "_src": "lib_api_initupload",
       "_tgt": "lib_api_request",
@@ -13512,7 +13599,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L410",
+      "source_location": "L450",
       "weight": 1.0,
       "_src": "lib_api_completeupload",
       "_tgt": "lib_api_request",
@@ -13524,7 +13611,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L426",
+      "source_location": "L466",
       "weight": 1.0,
       "_src": "lib_api_getuploadstatus",
       "_tgt": "lib_api_request",
@@ -13536,7 +13623,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L432",
+      "source_location": "L472",
       "weight": 1.0,
       "_src": "lib_api_getfile",
       "_tgt": "lib_api_request",
@@ -13548,7 +13635,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L451",
+      "source_location": "L491",
       "weight": 1.0,
       "_src": "lib_api_updatefile",
       "_tgt": "lib_api_request",
@@ -13560,7 +13647,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L472",
+      "source_location": "L512",
       "weight": 1.0,
       "_src": "lib_api_togglestar",
       "_tgt": "lib_api_request",
@@ -13572,7 +13659,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L502",
+      "source_location": "L542",
       "weight": 1.0,
       "_src": "lib_api_forgotpassword",
       "_tgt": "lib_api_request",
@@ -13584,7 +13671,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L591",
+      "source_location": "L631",
       "weight": 1.0,
       "_src": "lib_api_createshare",
       "_tgt": "lib_api_request",
@@ -13596,7 +13683,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L690",
+      "source_location": "L730",
       "weight": 1.0,
       "_src": "lib_api_createinvite",
       "_tgt": "lib_api_request",
@@ -13608,7 +13695,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L716",
+      "source_location": "L756",
       "weight": 1.0,
       "_src": "lib_api_claiminvite",
       "_tgt": "lib_api_request",
@@ -13620,7 +13707,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L723",
+      "source_location": "L763",
       "weight": 1.0,
       "_src": "lib_api_approveinvite",
       "_tgt": "lib_api_request",
@@ -13632,7 +13719,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L730",
+      "source_location": "L770",
       "weight": 1.0,
       "_src": "lib_api_denyinvite",
       "_tgt": "lib_api_request",
@@ -13644,7 +13731,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L734",
+      "source_location": "L774",
       "weight": 1.0,
       "_src": "lib_api_cancelinvite",
       "_tgt": "lib_api_request",
@@ -13656,7 +13743,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L741",
+      "source_location": "L781",
       "weight": 1.0,
       "_src": "lib_api_patchinvite",
       "_tgt": "lib_api_request",
@@ -13668,7 +13755,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L758",
+      "source_location": "L798",
       "weight": 1.0,
       "_src": "lib_api_getinviteactivity",
       "_tgt": "lib_api_request",
@@ -13680,7 +13767,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L762",
+      "source_location": "L802",
       "weight": 1.0,
       "_src": "lib_api_resendinvite",
       "_tgt": "lib_api_request",
@@ -13692,7 +13779,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L766",
+      "source_location": "L806",
       "weight": 1.0,
       "_src": "lib_api_withdrawinvite",
       "_tgt": "lib_api_request",
@@ -13704,7 +13791,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L770",
+      "source_location": "L810",
       "weight": 1.0,
       "_src": "lib_api_hideinvite",
       "_tgt": "lib_api_request",
@@ -13716,7 +13803,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L782",
+      "source_location": "L822",
       "weight": 1.0,
       "_src": "lib_api_getsharestats",
       "_tgt": "lib_api_request",
@@ -13728,7 +13815,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L825",
+      "source_location": "L865",
       "weight": 1.0,
       "_src": "lib_api_getstorageusage",
       "_tgt": "lib_api_request",
@@ -13740,7 +13827,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L834",
+      "source_location": "L874",
       "weight": 1.0,
       "_src": "lib_api_getsubscription",
       "_tgt": "lib_api_request",
@@ -13752,7 +13839,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L843",
+      "source_location": "L883",
       "weight": 1.0,
       "_src": "lib_api_subscribe",
       "_tgt": "lib_api_request",
@@ -13764,7 +13851,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L860",
+      "source_location": "L900",
       "weight": 1.0,
       "_src": "lib_api_createcheckoutsession",
       "_tgt": "lib_api_request",
@@ -13776,7 +13863,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L867",
+      "source_location": "L907",
       "weight": 1.0,
       "_src": "lib_api_createportalsession",
       "_tgt": "lib_api_request",
@@ -13788,7 +13875,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L904",
+      "source_location": "L944",
       "weight": 1.0,
       "_src": "lib_api_listauditlog",
       "_tgt": "lib_api_request",
@@ -13800,7 +13887,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L913",
+      "source_location": "L953",
       "weight": 1.0,
       "_src": "lib_api_exportauditlog",
       "_tgt": "lib_api_request",
@@ -13812,7 +13899,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L922",
+      "source_location": "L962",
       "weight": 1.0,
       "_src": "lib_api_invitemember",
       "_tgt": "lib_api_request",
@@ -13824,7 +13911,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L929",
+      "source_location": "L969",
       "weight": 1.0,
       "_src": "lib_api_removemember",
       "_tgt": "lib_api_request",
@@ -13836,7 +13923,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L977",
+      "source_location": "L1017",
       "weight": 1.0,
       "_src": "lib_api_listadminusers",
       "_tgt": "lib_api_request",
@@ -13848,7 +13935,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L983",
+      "source_location": "L1023",
       "weight": 1.0,
       "_src": "lib_api_getadminuserdetail",
       "_tgt": "lib_api_request",
@@ -13860,7 +13947,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1035",
+      "source_location": "L1075",
       "weight": 1.0,
       "_src": "lib_api_listmigrations",
       "_tgt": "lib_api_request",
@@ -13872,7 +13959,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1050",
+      "source_location": "L1090",
       "weight": 1.0,
       "_src": "lib_api_createstoragepool",
       "_tgt": "lib_api_request",
@@ -13884,7 +13971,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1065",
+      "source_location": "L1105",
       "weight": 1.0,
       "_src": "lib_api_updatestoragepool",
       "_tgt": "lib_api_request",
@@ -13896,7 +13983,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1082",
+      "source_location": "L1122",
       "weight": 1.0,
       "_src": "lib_api_getpoolusage",
       "_tgt": "lib_api_request",
@@ -13908,7 +13995,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1089",
+      "source_location": "L1129",
       "weight": 1.0,
       "_src": "lib_api_migrateuser",
       "_tgt": "lib_api_request",
@@ -13920,7 +14007,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1110",
+      "source_location": "L1150",
       "weight": 1.0,
       "_src": "lib_api_addfolderkeys",
       "_tgt": "lib_api_request",
@@ -13932,7 +14019,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1119",
+      "source_location": "L1159",
       "weight": 1.0,
       "_src": "lib_api_getfoldermembers",
       "_tgt": "lib_api_request",
@@ -13944,7 +14031,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1145",
+      "source_location": "L1185",
       "weight": 1.0,
       "_src": "lib_api_setpreference",
       "_tgt": "lib_api_request",
@@ -13956,7 +14043,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1298",
+      "source_location": "L1338",
       "weight": 1.0,
       "_src": "lib_api_startpasskeyregistration",
       "_tgt": "lib_api_request",
@@ -13968,7 +14055,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1308",
+      "source_location": "L1348",
       "weight": 1.0,
       "_src": "lib_api_finishpasskeyregistration",
       "_tgt": "lib_api_request",
@@ -13980,7 +14067,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1325",
+      "source_location": "L1365",
       "weight": 1.0,
       "_src": "lib_api_startpasskeylogin",
       "_tgt": "lib_api_request",
@@ -13992,7 +14079,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1384",
+      "source_location": "L1424",
       "weight": 1.0,
       "_src": "lib_api_listactivity",
       "_tgt": "lib_api_request",
@@ -14004,7 +14091,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1445",
+      "source_location": "L1485",
       "weight": 1.0,
       "_src": "lib_api_createworkspace",
       "_tgt": "lib_api_request",
@@ -14016,7 +14103,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1459",
+      "source_location": "L1499",
       "weight": 1.0,
       "_src": "lib_api_listworkspacemembers",
       "_tgt": "lib_api_request",
@@ -14028,7 +14115,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1469",
+      "source_location": "L1509",
       "weight": 1.0,
       "_src": "lib_api_inviteworkspacemember",
       "_tgt": "lib_api_request",
@@ -14040,7 +14127,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1478",
+      "source_location": "L1518",
       "weight": 1.0,
       "_src": "lib_api_acceptworkspaceinvite",
       "_tgt": "lib_api_request",
@@ -14052,7 +14139,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1538",
+      "source_location": "L1578",
       "weight": 1.0,
       "_src": "lib_api_listversions",
       "_tgt": "lib_api_request",
@@ -14064,7 +14151,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1550",
+      "source_location": "L1590",
       "weight": 1.0,
       "_src": "lib_api_restoreversion",
       "_tgt": "lib_api_request",
@@ -14076,7 +14163,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1554",
+      "source_location": "L1594",
       "weight": 1.0,
       "_src": "lib_api_deleteversion",
       "_tgt": "lib_api_request",
@@ -14088,7 +14175,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1567",
+      "source_location": "L1607",
       "weight": 1.0,
       "_src": "lib_api_getversionsettings",
       "_tgt": "lib_api_request",
@@ -14100,7 +14187,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1577",
+      "source_location": "L1617",
       "weight": 1.0,
       "_src": "lib_api_setversionsetting",
       "_tgt": "lib_api_request",
@@ -14112,7 +14199,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1601",
+      "source_location": "L1641",
       "weight": 1.0,
       "_src": "lib_api_listnotifications",
       "_tgt": "lib_api_request",
@@ -14124,7 +14211,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1605",
+      "source_location": "L1645",
       "weight": 1.0,
       "_src": "lib_api_marknotificationread",
       "_tgt": "lib_api_request",
@@ -14136,7 +14223,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1613",
+      "source_location": "L1653",
       "weight": 1.0,
       "_src": "lib_api_markallnotificationsread",
       "_tgt": "lib_api_request",
@@ -14148,7 +14235,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1617",
+      "source_location": "L1657",
       "weight": 1.0,
       "_src": "lib_api_deletenotification",
       "_tgt": "lib_api_request",
@@ -14160,7 +14247,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1630",
+      "source_location": "L1670",
       "weight": 1.0,
       "_src": "lib_api_listsessions",
       "_tgt": "lib_api_request",
@@ -14172,7 +14259,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1634",
+      "source_location": "L1674",
       "weight": 1.0,
       "_src": "lib_api_revokesession",
       "_tgt": "lib_api_request",
@@ -14184,7 +14271,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1680",
+      "source_location": "L1720",
       "weight": 1.0,
       "_src": "lib_api_getadminstats",
       "_tgt": "lib_api_request",
@@ -14196,7 +14283,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1750",
+      "source_location": "L1790",
       "weight": 1.0,
       "_src": "lib_api_updateabusereport",
       "_tgt": "lib_api_request",
@@ -14208,7 +14295,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L92",
+      "source_location": "L132",
       "weight": 1.0,
       "_src": "lib_api_apierror",
       "_tgt": "lib_api_apierror_constructor",
@@ -14556,7 +14643,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1193",
+      "source_location": "L1233",
       "weight": 1.0,
       "_src": "lib_api_serveroptstocreateoptions",
       "_tgt": "lib_api_base64urltobuffer",
@@ -14568,7 +14655,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1218",
+      "source_location": "L1258",
       "weight": 1.0,
       "_src": "lib_api_serveroptstogetoptions",
       "_tgt": "lib_api_base64urltobuffer",
@@ -14580,7 +14667,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1247",
+      "source_location": "L1287",
       "weight": 1.0,
       "_src": "lib_api_credentialtoregistrationjson",
       "_tgt": "lib_api_buffertobase64url",
@@ -14592,7 +14679,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/api.ts",
-      "source_location": "L1276",
+      "source_location": "L1316",
       "weight": 1.0,
       "_src": "lib_api_credentialtoauthenticationjson",
       "_tgt": "lib_api_buffertobase64url",
@@ -20508,7 +20595,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/components/offline-banner.tsx",
-      "source_location": "L6",
+      "source_location": "L10",
       "weight": 1.0,
       "_src": "src_components_offline_banner_tsx",
       "_tgt": "components_offline_banner_offlinebanner",
