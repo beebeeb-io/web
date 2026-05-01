@@ -1170,31 +1170,40 @@ export function Drive() {
     }
   }
 
-  // ─── Keyboard shortcuts for selection ─────────────────
+  // ─── Keyboard shortcuts ─────────────────────────────
 
+  useKeyboardShortcuts({
+    onUpload: browse,
+    onNewFolder: () => setFolderDialogOpen(true),
+    onSelectAll: selectAll,
+    onTrashSelected: () => {
+      if (selectedIds.size > 0) handleBulkTrash()
+    },
+    onDownloadSelected: () => {
+      if (selectedIds.size > 0) handleBulkDownload()
+    },
+    onSearch: () => navigate('/search'),
+    onEscape: () => {
+      if (selectedIds.size > 0) clearSelection()
+    },
+  })
+
+  // Open shortcuts cheatsheet with '?'
   useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      const target = e.target as HTMLElement
-      const isInput =
-        target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
-        target.isContentEditable
-
-      if (e.key === 'Escape' && selectedIds.size > 0) {
-        clearSelection()
-        return
-      }
-
-      if (isInput) return
-
-      if (e[modKey] && e.key.toLowerCase() === 'a') {
-        e.preventDefault()
-        selectAll()
+    function handleKey(e: KeyboardEvent) {
+      if (
+        e.key === '?' &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !(e.target instanceof HTMLInputElement) &&
+        !(e.target instanceof HTMLTextAreaElement)
+      ) {
+        setShortcutsOpen(true)
       }
     }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [selectedIds.size, sortedFiles.length])
+    document.addEventListener('keydown', handleKey)
+    return () => document.removeEventListener('keydown', handleKey)
+  }, [])
 
   // ─── Derived data ───────────────────────────────────
 
@@ -1535,7 +1544,7 @@ export function Drive() {
 
         {/* Bulk action bar */}
         {selectedIds.size > 0 && (
-          <div className="px-5 py-2.5 border-t border-line bg-ink flex items-center gap-3.5 animate-slide-in-up">
+          <div className="px-3 md:px-5 py-2.5 border-t border-line bg-ink flex items-center gap-2 md:gap-3.5 animate-slide-in-up">
             <span className="text-sm font-medium text-paper">
               {selectedIds.size} selected
             </span>
@@ -1583,7 +1592,7 @@ export function Drive() {
         )}
 
         {/* Status bar */}
-        <div className="px-5 py-2 border-t border-line bg-paper-2 flex items-center gap-3.5 text-[11px] text-ink-3">
+        <div className="px-3 md:px-5 py-2 border-t border-line bg-paper-2 flex items-center gap-2 md:gap-3.5 text-[11px] text-ink-3">
           <span className="font-mono">{files.length} item{files.length !== 1 ? 's' : ''}</span>
           <span>·</span>
           <span className="flex items-center gap-1.5">

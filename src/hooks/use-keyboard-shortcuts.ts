@@ -16,6 +16,7 @@ interface ShortcutActions {
   onNewFolder?: () => void
   onSearch?: () => void
   onShortcuts?: () => void
+  onSelectAll?: () => void
   onTrashSelected?: () => void
   onDownloadSelected?: () => void
   onStarSelected?: () => void
@@ -60,6 +61,13 @@ export function useKeyboardShortcuts(actions: ShortcutActions) {
         e.preventDefault()
         actions.onNewFolder?.()
         return
+      }
+      if (mod && e.key.toLowerCase() === 'a') {
+        if (actions.onSelectAll) {
+          e.preventDefault()
+          actions.onSelectAll()
+          return
+        }
       }
       if (mod && e.key.toLowerCase() === 'f') {
         e.preventDefault()

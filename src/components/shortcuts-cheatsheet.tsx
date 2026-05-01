@@ -26,7 +26,7 @@ const groups = [
       ['Quick preview', 'Space'],
       ['Open', 'Enter'],
       ['Download', `${modLabel} D`],
-      ['Move to trash', `${modLabel} Del`],
+      ['Move to trash', 'Del'],
       ['Rename', 'F2'],
     ],
   },
