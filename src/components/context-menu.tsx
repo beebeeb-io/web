@@ -96,8 +96,8 @@ export function ContextMenu({
       ref={menuRef}
       role="menu"
       aria-label="File actions"
-      className="fixed z-[60] min-w-[220px] bg-paper border border-line-2 rounded-lg shadow-3 overflow-hidden py-1"
-      style={{ left: x, top: y }}
+      className="fixed z-[60] min-w-[220px] bg-paper border border-line-2 rounded-lg shadow-3 overflow-hidden py-1 ctx-menu-enter"
+      style={{ left: x, top: y, transformOrigin: '0 0' }}
     >
       {MENU_ITEMS.map((item) => (
         <div key={item.id}>

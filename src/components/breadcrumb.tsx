@@ -16,7 +16,10 @@ export function Breadcrumb({ items, onNavigate }: BreadcrumbProps) {
       {items.map((crumb, i) => {
         const isLast = i === items.length - 1
         return (
-          <span key={i} className="flex items-center gap-1.5">
+          <span
+            key={crumb.id ?? 'root'}
+            className={`flex items-center gap-1.5${isLast && i > 0 ? ' breadcrumb-enter' : ''}`}
+          >
             {i > 0 && <Icon name="chevron-right" size={12} className="text-ink-4" />}
             {isLast ? (
               <span className="font-semibold text-ink">{crumb.name}</span>

@@ -118,6 +118,11 @@ export function Drive() {
   const [draggedFileId, setDraggedFileId] = useState<string | null>(null)
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null)
 
+  // ─── Micro-interaction state ───────────────────────
+  const [recentlyUploaded, setRecentlyUploaded] = useState<Set<string>>(new Set())
+  const [trashingIds, setTrashingIds] = useState<Set<string>>(new Set())
+  const [starPulseId, setStarPulseId] = useState<string | null>(null)
+
   const currentParentId = breadcrumbs[breadcrumbs.length - 1]?.id ?? undefined
 
   const fetchFiles = useCallback(async () => {
@@ -424,6 +429,15 @@ export function Drive() {
       // Remove from paused list if this was a resume
       setPausedUploads((prev) => prev.filter((u) => u.fileId !== fileId))
       showToast({ icon: 'check', title: 'Uploaded', description: file.name })
+      // Mark as recently uploaded for glow animation
+      setRecentlyUploaded((prev) => new Set(prev).add(fileId))
+      setTimeout(() => {
+        setRecentlyUploaded((prev) => {
+          const next = new Set(prev)
+          next.delete(fileId)
+          return next
+        })
+      }, 1200)
       fetchFiles()
     } catch (err) {
       uploadAbortRef.current.delete(uploadId)
@@ -799,6 +813,9 @@ export function Drive() {
           f.id === fileId ? { ...f, is_starred: result.is_starred } : f,
         ),
       )
+      // Trigger star pulse animation
+      setStarPulseId(fileId)
+      setTimeout(() => setStarPulseId(null), 400)
     } catch (err) {
       showToast({
         icon: 'star',
@@ -937,14 +954,24 @@ export function Drive() {
         handleFileDownload(file)
         break
       case 'trash':
-        try {
-          await deleteFile(ctxMenu.fileId)
-          showToast({ icon: 'trash', title: 'Moved to trash', description: ctxMenu.fileName })
-          unindexFile(ctxMenu.fileId)
-          fetchFiles()
-        } catch (err) {
-          showToast({ icon: 'trash', title: 'Failed to trash', description: err instanceof Error ? err.message : 'Something went wrong', danger: true })
-        }
+        // Animate the row out, then delete
+        setTrashingIds((prev) => new Set(prev).add(ctxMenu.fileId))
+        setTimeout(async () => {
+          try {
+            await deleteFile(ctxMenu.fileId)
+            showToast({ icon: 'trash', title: 'Moved to trash', description: ctxMenu.fileName })
+            unindexFile(ctxMenu.fileId)
+            fetchFiles()
+          } catch (err) {
+            showToast({ icon: 'trash', title: 'Failed to trash', description: err instanceof Error ? err.message : 'Something went wrong', danger: true })
+          } finally {
+            setTrashingIds((prev) => {
+              const next = new Set(prev)
+              next.delete(ctxMenu.fileId)
+              return next
+            })
+          }
+        }, 200)
         break
       default:
         break
@@ -1055,24 +1082,30 @@ export function Drive() {
   async function handleBulkTrash() {
     const ids = Array.from(selectedIds)
     const count = ids.length
-    try {
-      await Promise.all(ids.map((id) => deleteFile(id)))
-      for (const id of ids) unindexFile(id)
-      showToast({
-        icon: 'trash',
-        title: 'Moved to trash',
-        description: `${count} file${count !== 1 ? 's' : ''} moved to trash`,
-      })
-      clearSelection()
-      fetchFiles()
-    } catch (err) {
-      showToast({
-        icon: 'trash',
-        title: 'Failed to trash',
-        description: err instanceof Error ? err.message : 'Something went wrong',
-        danger: true,
-      })
-    }
+    // Animate all selected rows out
+    setTrashingIds(new Set(ids))
+    setTimeout(async () => {
+      try {
+        await Promise.all(ids.map((id) => deleteFile(id)))
+        for (const id of ids) unindexFile(id)
+        showToast({
+          icon: 'trash',
+          title: 'Moved to trash',
+          description: `${count} file${count !== 1 ? 's' : ''} moved to trash`,
+        })
+        clearSelection()
+        fetchFiles()
+      } catch (err) {
+        showToast({
+          icon: 'trash',
+          title: 'Failed to trash',
+          description: err instanceof Error ? err.message : 'Something went wrong',
+          danger: true,
+        })
+      } finally {
+        setTrashingIds(new Set())
+      }
+    }, 200)
   }
 
   async function handleBulkMoveConfirm(destinationId: string | null, _mode: 'move' | 'copy') {
@@ -1489,24 +1522,30 @@ export function Drive() {
                 const isSelected = selectedIds.has(file.id)
                 const isDragTarget = file.is_folder && dragOverFolderId === file.id
                 const isDragging = draggedFileId === file.id
+                const isTrashing = trashingIds.has(file.id)
+                const isRecentUpload = recentlyUploaded.has(file.id)
                 return (
                   <div
                     key={file.id}
-                    draggable
+                    draggable={!isTrashing}
                     onDragStart={(e) => handleDragStart(e, file)}
                     onDragEnd={handleDragEnd}
                     onDragOver={(e) => handleDragOver(e, file)}
                     onDragLeave={(e) => handleDragLeave(e, file.id)}
                     onDrop={(e) => handleDrop(e, file)}
-                    className={`group transition-colors cursor-pointer grid gap-2.5 md:gap-[14px] grid-cols-[20px_32px_1fr_40px] md:grid-cols-[20px_32px_1fr_110px_110px_100px_60px] px-3 md:px-5 py-[11px] ${
+                    className={[
+                      'file-row group transition-colors duration-150 cursor-pointer grid gap-2.5 md:gap-[14px] grid-cols-[20px_32px_1fr_40px] md:grid-cols-[20px_32px_1fr_110px_110px_100px_60px] px-3 md:px-5 py-[11px]',
                       isDragTarget
-                        ? 'bg-amber-bg ring-2 ring-amber ring-inset'
+                        ? 'file-row--drag-target bg-amber-bg ring-2 ring-amber ring-inset'
                         : isSelected
-                          ? 'bg-amber-bg/50'
+                          ? 'file-row--selected bg-amber-bg/50'
                           : selectedFileId === file.id
                             ? 'bg-amber-bg/30'
-                            : 'hover:bg-paper-2'
-                    } ${isDragging ? 'opacity-40' : ''}`}
+                            : 'hover:bg-paper-2',
+                      isDragging ? 'opacity-40' : '',
+                      isTrashing ? 'trash-slide-out' : '',
+                      isRecentUpload ? 'upload-glow' : '',
+                    ].filter(Boolean).join(' ')}
                     onClick={(e) => handleRowClick(file, e)}
                     onDoubleClick={() => {
                       if (!file.is_folder) handleFileDownload(file)
@@ -1538,6 +1577,11 @@ export function Drive() {
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
                         <span className="font-medium truncate">{name}</span>
+                        {file.is_starred && (
+                          <span className={`inline-flex text-amber-deep${starPulseId === file.id ? ' star-pulse' : ''}`}>
+                            <Icon name="star" size={11} />
+                          </span>
+                        )}
                         {isUnlocked && (
                           <BBChip variant="amber">
                             <span className="flex items-center gap-1 text-[9.5px]">
