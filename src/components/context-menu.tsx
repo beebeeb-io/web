@@ -32,6 +32,7 @@ interface ContextMenuProps {
   fileId: string
   fileName: string
   isFolder: boolean
+  isPinned?: boolean
   onClose: () => void
   onAction: (action: string, fileId: string) => void
 }
@@ -41,6 +42,8 @@ export function ContextMenu({
   x,
   y,
   fileId,
+  isFolder,
+  isPinned,
   onClose,
   onAction,
 }: ContextMenuProps) {
@@ -131,6 +134,23 @@ export function ContextMenu({
           )}
         </div>
       ))}
+      {isFolder && (
+        <div>
+          <div className="mx-2 my-1 h-px bg-line" />
+          <button
+            type="button"
+            role="menuitem"
+            className="w-full text-left flex items-center gap-2.5 px-3 py-[7px] text-[13px] text-ink hover:bg-paper-2 transition-colors"
+            onClick={() => {
+              onAction(isPinned ? 'unpin' : 'pin', fileId)
+              onClose()
+            }}
+          >
+            <Icon name="star" size={13} className="text-ink-3" />
+            <span className="flex-1">{isPinned ? 'Unpin from Quick access' : 'Pin to Quick access'}</span>
+          </button>
+        </div>
+      )}
     </div>
   )
 }

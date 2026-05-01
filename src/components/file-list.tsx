@@ -11,6 +11,7 @@ import { decryptFilename, fromBase64 } from '../lib/crypto'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { modKey } from '../hooks/use-keyboard-shortcuts'
 import { formatBytes } from '../lib/format'
+import { getPreference, setPreference } from '../lib/api'
 import type { DriveFile } from '../lib/api'
 
 // ─── Sort types ─────────────────────────────────────
@@ -279,6 +280,35 @@ export function FileList({
     updateSelection(new Set<string>())
     lastClickedIdRef.current = null
   }, [updateSelection])
+
+  // ─── Pinned folders ────────────────────────────────
+  const [pinnedFolderIds, setPinnedFolderIds] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    getPreference<{ folder_ids: string[] }>('pinned_folders')
+      .then(pref => setPinnedFolderIds(new Set(pref?.folder_ids ?? [])))
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    function onPinChanged() {
+      getPreference<{ folder_ids: string[] }>('pinned_folders')
+        .then(pref => setPinnedFolderIds(new Set(pref?.folder_ids ?? [])))
+        .catch(() => {})
+    }
+    window.addEventListener('beebeeb:pins-changed', onPinChanged)
+    return () => window.removeEventListener('beebeeb:pins-changed', onPinChanged)
+  }, [])
+
+  async function handleTogglePin(folderId: string) {
+    const pref = await getPreference<{ folder_ids: string[] }>('pinned_folders').catch(() => null)
+    const current = pref?.folder_ids ?? []
+    const newIds = current.includes(folderId)
+      ? current.filter(id => id !== folderId)
+      : [...current, folderId]
+    await setPreference('pinned_folders', { folder_ids: newIds }).catch(() => {})
+    window.dispatchEvent(new Event('beebeeb:pins-changed'))
+  }
 
   // ─── Context menu ──────────────────────────────────
   const [ctxMenu, setCtxMenu] = useState<{
@@ -765,8 +795,13 @@ export function FileList({
         fileId={ctxMenu.fileId}
         fileName={ctxMenu.fileName}
         isFolder={ctxMenu.isFolder}
+        isPinned={pinnedFolderIds.has(ctxMenu.fileId)}
         onClose={() => setCtxMenu((prev) => ({ ...prev, open: false }))}
         onAction={(action, fileId) => {
+          if (action === 'pin' || action === 'unpin') {
+            handleTogglePin(fileId)
+            return
+          }
           const file = files.find((f) => f.id === fileId)
           if (file) onFileAction?.(action, file)
         }}
