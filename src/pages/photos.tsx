@@ -8,6 +8,7 @@ import { useKeys } from '../lib/key-context'
 import { decryptFilename, fromBase64 } from '../lib/crypto'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { EmptyPhotos } from '../components/empty-states/empty-photos'
+import { PhotoGroupSkeleton } from '../components/skeleton'
 import { FilePreview } from '../components/preview/file-preview'
 import { useFilePreview } from '../hooks/use-file-preview'
 import { formatBytes } from '../lib/format'
@@ -319,11 +320,9 @@ export function Photos() {
         {/* Photo grid */}
         <div className="flex-1 overflow-y-auto px-5 py-[18px]">
           {loading ? (
-            <div className="flex items-center justify-center py-20">
-              <svg className="animate-spin h-6 w-6 text-amber" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
+            <div>
+              <PhotoGroupSkeleton />
+              <PhotoGroupSkeleton />
             </div>
           ) : groups.length === 0 ? (
             <EmptyPhotos

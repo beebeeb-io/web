@@ -8,6 +8,7 @@ import type { IconName } from '../components/icons'
 import { listFiles, restoreFile, permanentDeleteFile, type DriveFile } from '../lib/api'
 import { useToast } from '../components/toast'
 import { useKeys } from '../lib/key-context'
+import { TrashRowSkeleton } from '../components/skeleton'
 import { decryptFilename, fromBase64 } from '../lib/crypto'
 import { useWsEvent } from '../lib/ws-context'
 import { EmptyTrash } from '../components/empty-states/empty-trash'
@@ -313,12 +314,7 @@ export function Trash() {
         {/* File list */}
         <div className="flex-1 overflow-y-auto">
           {loading ? (
-            <div className="flex items-center justify-center py-20">
-              <svg className="animate-spin h-6 w-6 text-amber" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-            </div>
+            <div>{Array.from({ length: 6 }, (_, i) => <TrashRowSkeleton key={i} />)}</div>
           ) : files.length === 0 ? (
             <EmptyTrash onGoToDrive={() => navigate('/')} />
           ) : (

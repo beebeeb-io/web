@@ -105,3 +105,54 @@ export function CardSkeleton() {
     </div>
   )
 }
+
+/** Mimics a trash row. Matches the grid layout of trash.tsx. */
+export function TrashRowSkeleton() {
+  return (
+    <div
+      className="animate-pulse"
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '24px 1.4fr 1fr 110px 110px 110px 100px',
+        gap: 14,
+        padding: '10px 20px',
+      }}
+    >
+      <span />
+      <div className="flex items-center gap-2.5">
+        <SkeletonRect width="28px" height="28px" />
+        <SkeletonLine width="55%" />
+      </div>
+      <div className="self-center"><SkeletonLine width="60%" /></div>
+      <div className="self-center"><SkeletonLine width="56px" /></div>
+      <div className="self-center"><SkeletonLine width="46px" /></div>
+      <div className="self-center"><SkeletonLine width="50px" /></div>
+      <span />
+    </div>
+  )
+}
+
+/** Mimics a photo grid tile. */
+export function PhotoTileSkeleton() {
+  return (
+    <div
+      className="animate-pulse rounded-md bg-paper-2 aspect-square"
+      style={{ width: '100%' }}
+    />
+  )
+}
+
+/** Mimics a date-grouped photo grid (one heading + 8 tiles). */
+export function PhotoGroupSkeleton() {
+  return (
+    <div className="mb-6">
+      <div className="flex items-baseline mb-2.5 gap-2.5">
+        <SkeletonLine width="80px" />
+        <SkeletonLine width="60px" />
+      </div>
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(120px,1fr))] gap-2">
+        {Array.from({ length: 8 }, (_, i) => <PhotoTileSkeleton key={i} />)}
+      </div>
+    </div>
+  )
+}
