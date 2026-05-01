@@ -2,15 +2,12 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { BBButton } from '../components/bb-button'
 import { Breadcrumb } from '../components/breadcrumb'
-import { BBCheckbox } from '../components/bb-checkbox'
-import { BBChip } from '../components/bb-chip'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '../components/icons'
-import { FileIcon, getFileType } from '../components/file-icon'
+import { FileList } from '../components/file-list'
 import { FileDetailsPanel, type FileDetailsMeta } from '../components/file-details-panel'
 import { ShareDialog } from '../components/share-dialog'
 import { MoveModal } from '../components/move-modal'
-import { ContextMenu } from '../components/context-menu'
 import { RenameDialog } from '../components/rename-dialog'
 import { UploadZone, useBrowseFiles, useBrowseFolders, type FolderFile } from '../components/upload-zone'
 import { UploadProgress, type UploadItem } from '../components/upload-progress'
@@ -23,7 +20,7 @@ import { getPreference, setPreference } from '../lib/api'
 import { useToast } from '../components/toast'
 import { useWsEvent } from '../lib/ws-context'
 import { useKeys } from '../lib/key-context'
-import { modKey, useKeyboardShortcuts } from '../hooks/use-keyboard-shortcuts'
+import { useKeyboardShortcuts } from '../hooks/use-keyboard-shortcuts'
 import {
   listFiles,
   createFolder,
@@ -47,56 +44,14 @@ import {
   removeUploadState,
   type UploadState,
 } from '../lib/upload-resume'
-import { decryptFilename, encryptFilename, fromBase64, toBase64 } from '../lib/crypto'
+import { encryptFilename, toBase64 } from '../lib/crypto'
 import { useSearchIndex } from '../hooks/use-search-index'
-import { FileRowSkeleton } from '../components/skeleton'
 import { EmptyDrive } from '../components/empty-states/empty-drive'
 import { formatBytes } from '../lib/format'
 
-// ─── Sort options ───────────────────────────────────
+// ─── Drive component ────────────────────────────────
 // Folders are always grouped before files; the chosen key only orders
 // within each group. localStorage key: 'bb_drive_sort'.
-
-type SortKey =
-  | 'name-asc' | 'name-desc'
-  | 'modified-desc' | 'modified-asc'
-  | 'size-desc' | 'size-asc'
-  | 'type-asc'
-
-const SORT_OPTIONS: { key: SortKey; label: string }[] = [
-  { key: 'name-asc',     label: 'Name (A → Z)' },
-  { key: 'name-desc',    label: 'Name (Z → A)' },
-  { key: 'modified-desc', label: 'Modified (newest)' },
-  { key: 'modified-asc',  label: 'Modified (oldest)' },
-  { key: 'size-desc',    label: 'Size (largest)' },
-  { key: 'size-asc',     label: 'Size (smallest)' },
-  { key: 'type-asc',     label: 'Type' },
-]
-
-function sortLabel(key: SortKey): string {
-  return SORT_OPTIONS.find((o) => o.key === key)?.label ?? 'Sort'
-}
-
-// ─── Helpers ───────────────────────────────────────
-
-
-function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime()
-  const seconds = Math.floor(diff / 1000)
-  if (seconds < 60) return 'just now'
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  if (days < 7) return `${days}d ago`
-  const weeks = Math.floor(days / 7)
-  return `${weeks}w ago`
-}
-
-// ─── Avatar stack ──────────────────────────────────
-
-// ─── Drive component ───────────────────────────────
 
 export function Drive() {
   const { getFileKey, isUnlocked, cryptoReady, cryptoError } = useKeys()
@@ -105,7 +60,6 @@ export function Drive() {
   const navigate = useNavigate()
   const [files, setFiles] = useState<DriveFile[]>([])
   const [loading, setLoading] = useState(true)
-  const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({})
   const [breadcrumbs, setBreadcrumbs] = useState<{ id: string | null; name: string }[]>([
     { id: null, name: 'All files' },
   ])
@@ -121,22 +75,6 @@ export function Drive() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [tourOpen, setTourOpen] = useState(false)
   const [tourCompleted, setTourCompleted] = useState<Set<string>>(new Set())
-  const [sortKey, setSortKey] = useState<SortKey>(() => {
-    try {
-      const raw = localStorage.getItem('bb_drive_sort')
-      if (raw) {
-        const parsed = JSON.parse(raw) as { key?: string }
-        if (parsed.key && SORT_OPTIONS.some((o) => o.key === parsed.key)) {
-          return parsed.key as SortKey
-        }
-      }
-    } catch { /* fall through to default */ }
-    return 'name-asc'
-  })
-  const [sortMenuOpen, setSortMenuOpen] = useState(false)
-  const [ctxMenu, setCtxMenu] = useState<{
-    open: boolean; x: number; y: number; fileId: string; fileName: string; isFolder: boolean
-  }>({ open: false, x: 0, y: 0, fileId: '', fileName: '', isFolder: false })
   const [pausedUploads, setPausedUploads] = useState<UploadState[]>([])
 
   // ─── Pending shares state ────────────────────────────
@@ -144,19 +82,18 @@ export function Drive() {
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0)
   const [pendingSharesDismissed, setPendingSharesDismissed] = useState(false)
 
-  // ─── Multi-select state ──────────────────────────────
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const lastClickedIdRef = useRef<string | null>(null)
+  // ─── Bulk move state ─────────────────────────────────
+  const [bulkMoveIds, setBulkMoveIds] = useState<string[]>([])
   const [bulkMoveOpen, setBulkMoveOpen] = useState(false)
-
-  // ─── Drag-and-drop state ────────────────────────────
-  const [draggedFileId, setDraggedFileId] = useState<string | null>(null)
-  const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null)
 
   // ─── Micro-interaction state ───────────────────────
   const [recentlyUploaded, setRecentlyUploaded] = useState<Set<string>>(new Set())
   const [trashingIds, setTrashingIds] = useState<Set<string>>(new Set())
   const [starPulseId, setStarPulseId] = useState<string | null>(null)
+
+  // ─── External selection + decrypted names (for keyboard shortcuts + dialogs) ─
+  const [externalSelectedIds, setExternalSelectedIds] = useState<Set<string>>(new Set())
+  const [externalDecryptedNames, setExternalDecryptedNames] = useState<Record<string, string>>({})
 
   // ─── Storage quota state ─────────────────────────
   const [storageUsage, setStorageUsage] = useState<StorageUsage | null>(null)
@@ -384,7 +321,7 @@ export function Drive() {
   const { browse: browseResume, HiddenInput: HiddenResumeInput } = useBrowseFiles(handleResumeFile)
 
   function resolveUniqueName(name: string): string {
-    const existing = new Set(Object.values(decryptedNames))
+    const existing = new Set(Object.values(externalDecryptedNames))
     if (!existing.has(name)) return name
     const dot = name.lastIndexOf('.')
     const base = dot > 0 ? name.slice(0, dot) : name
@@ -729,42 +666,8 @@ export function Drive() {
     }
   }
 
-  // Decrypt file names asynchronously when files or unlock state change
-  useEffect(() => {
-    if (!isUnlocked) {
-      setDecryptedNames({})
-      return
-    }
-    let cancelled = false
-    async function decryptAll() {
-      const names: Record<string, string> = {}
-      for (const file of files) {
-        if (cancelled) return
-        try {
-          const parsed = JSON.parse(file.name_encrypted) as {
-            nonce: string
-            ciphertext: string
-          }
-          const fileKey = await getFileKey(file.id)
-          names[file.id] = await decryptFilename(
-            fileKey,
-            fromBase64(parsed.nonce),
-            fromBase64(parsed.ciphertext),
-          )
-        } catch {
-          // Not encrypted JSON — use raw value
-          names[file.id] = file.name_encrypted
-        }
-      }
-      if (!cancelled) setDecryptedNames(names)
-    }
-    decryptAll()
-    return () => { cancelled = true }
-  }, [files, isUnlocked, getFileKey])
-
-  /** Get the display name for a file (decrypted if available, raw otherwise). */
   function displayName(file: DriveFile): string {
-    return decryptedNames[file.id] ?? file.name_encrypted
+    return externalDecryptedNames[file.id] ?? file.name_encrypted
   }
 
   async function handleCreateFolder(name: string) {
@@ -809,7 +712,10 @@ export function Drive() {
   }
 
   function handleFolderOpen(folder: DriveFile) {
-    setBreadcrumbs((prev) => [...prev, { id: folder.id, name: displayName(folder) }])
+    setBreadcrumbs((prev) => [
+      ...prev,
+      { id: folder.id, name: externalDecryptedNames[folder.id] ?? folder.name_encrypted },
+    ])
   }
 
   function handleBreadcrumbNav(index: number) {
@@ -877,14 +783,6 @@ export function Drive() {
       cipher: isUnlocked ? 'AES-256-GCM' : undefined,
       keyId: isUnlocked ? file.id : undefined,
       region: 'eu-central (Frankfurt)',
-    }
-  }
-
-  function handleFileSelect(file: DriveFile) {
-    if (file.is_folder) {
-      handleFolderOpen(file)
-    } else {
-      setSelectedFileId(file.id)
     }
   }
 
@@ -964,406 +862,149 @@ export function Drive() {
     }
   }
 
-  // ─── Context menu actions ───────────────────────────
+  // ─── File action handler (from FileList context menu + double-click) ──
 
-  async function handleContextAction(action: string, fileId: string) {
-    const file = files.find((f) => f.id === fileId)
-    if (!file) return
-
+  async function handleFileAction(action: string, file: DriveFile) {
     switch (action) {
       case 'open':
-        handleFileSelect(file)
+        if (file.is_folder) handleFolderOpen(file)
+        else setSelectedFileId(file.id)
         break
       case 'share':
-        setShareFileId(fileId)
+        setShareFileId(file.id)
         break
       case 'copy-link':
         try {
           if (!isUnlocked || !cryptoReady) {
-            showToast({
-              icon: 'lock',
-              title: 'Vault is locked',
-              description: 'Unlock the vault to copy share links.',
-              danger: true,
-            })
+            showToast({ icon: 'lock', title: 'Vault is locked', description: 'Unlock the vault to copy share links.', danger: true })
             return
           }
           const shares = await listMyShares()
-          const existingShare = shares.find((s) => s.file_id === fileId)
+          const existingShare = shares.find((s) => s.file_id === file.id)
           if (!existingShare) {
-            showToast({
-              icon: 'link',
-              title: 'No share link exists',
-              description: 'Share the file first to create a link.',
-            })
+            showToast({ icon: 'link', title: 'No share link exists', description: 'Share the file first to create a link.' })
             return
           }
-          const fileKey = await getFileKey(fileId)
+          const fileKey = await getFileKey(file.id)
           const keyB64 = toBase64(fileKey)
           const shareUrl = `${window.location.origin}/s/${existingShare.token}#key=${encodeURIComponent(keyB64)}`
           await navigator.clipboard.writeText(shareUrl)
           showToast({ icon: 'check', title: 'Share link copied', description: 'Link with decryption key copied to clipboard.' })
         } catch (err) {
-          showToast({
-            icon: 'x',
-            title: 'Failed to copy link',
-            description: err instanceof Error ? err.message : 'Something went wrong.',
-            danger: true,
-          })
+          showToast({ icon: 'x', title: 'Failed to copy link', description: err instanceof Error ? err.message : 'Something went wrong.', danger: true })
         }
         break
       case 'move':
-        setMoveFileId(fileId)
+        setMoveFileId(file.id)
         break
       case 'rename':
         if (!isUnlocked || !cryptoReady) {
-          showToast({
-            icon: 'lock',
-            title: 'Vault is locked',
-            description: 'Unlock the vault before renaming files.',
-            danger: true,
-          })
+          showToast({ icon: 'lock', title: 'Vault is locked', description: 'Unlock the vault before renaming files.', danger: true })
           return
         }
-        setRenameFileId(fileId)
+        setRenameFileId(file.id)
         break
       case 'star':
-        handleToggleStar(fileId)
+        handleToggleStar(file.id)
         break
       case 'versions':
-        if (!file.is_folder) setVersionFileId(fileId)
+        if (!file.is_folder) setVersionFileId(file.id)
         break
       case 'download':
         handleFileDownload(file)
         break
-      case 'trash':
-        // Animate the row out, then delete
-        setTrashingIds((prev) => new Set(prev).add(ctxMenu.fileId))
+      case 'trash': {
+        const trashName = displayName(file)
+        setTrashingIds((prev) => new Set(prev).add(file.id))
         setTimeout(async () => {
           try {
-            await deleteFile(ctxMenu.fileId)
-            showToast({ icon: 'trash', title: 'Moved to trash', description: ctxMenu.fileName })
-            unindexFile(ctxMenu.fileId)
+            await deleteFile(file.id)
+            showToast({ icon: 'trash', title: 'Moved to trash', description: trashName })
+            unindexFile(file.id)
             fetchFiles()
           } catch (err) {
             showToast({ icon: 'trash', title: 'Failed to trash', description: err instanceof Error ? err.message : 'Something went wrong', danger: true })
           } finally {
-            setTrashingIds((prev) => {
-              const next = new Set(prev)
-              next.delete(ctxMenu.fileId)
-              return next
-            })
+            setTrashingIds((prev) => { const next = new Set(prev); next.delete(file.id); return next })
           }
         }, 200)
         break
-      default:
-        break
+      }
     }
   }
 
-  // ─── Sorted file list (needed before selection helpers) ──
-  // Folders always come first, regardless of the chosen key — moving a
-  // folder into the middle of the file list looks broken even when the
-  // sort technically makes sense (e.g. by size).
-  const sortedFiles = [...files].sort((a, b) => {
-    if (a.is_folder && !b.is_folder) return -1
-    if (!a.is_folder && b.is_folder) return 1
+  // ─── Drop to folder handler ────────────────────────
 
-    switch (sortKey) {
-      case 'name-asc':
-        return displayName(a).localeCompare(displayName(b))
-      case 'name-desc':
-        return displayName(b).localeCompare(displayName(a))
-      case 'modified-desc':
-        return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-      case 'modified-asc':
-        return new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
-      case 'size-desc':
-        return b.size_bytes - a.size_bytes
-      case 'size-asc':
-        return a.size_bytes - b.size_bytes
-      case 'type-asc': {
-        // Group by mime_type, fall back to extension, then by name within
-        // each group so similar files cluster.
-        const ta = (a.mime_type || displayName(a).split('.').pop() || '').toLowerCase()
-        const tb = (b.mime_type || displayName(b).split('.').pop() || '').toLowerCase()
-        if (ta !== tb) return ta.localeCompare(tb)
-        return displayName(a).localeCompare(displayName(b))
-      }
-    }
-  })
-
-  // Persist the user's choice; localStorage write is cheap and keyed
-  // globally so it carries across folders within the same browser.
-  useEffect(() => {
+  async function handleDropToFolder(ids: string[], targetFolder: DriveFile) {
+    const targetName = displayName(targetFolder)
     try {
-      localStorage.setItem('bb_drive_sort', JSON.stringify({ key: sortKey }))
-    } catch { /* localStorage full or blocked — fine, in-memory is enough */ }
-  }, [sortKey])
-
-  // ─── Multi-select helpers ──────────────────────────────
-
-  /** Clear selection whenever the folder changes. */
-  useEffect(() => {
-    setSelectedIds(new Set())
-    lastClickedIdRef.current = null
-  }, [currentParentId])
-
-  function toggleSelection(fileId: string) {
-    setSelectedIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(fileId)) {
-        next.delete(fileId)
+      await Promise.all(ids.map((id) => updateFile(id, { parent_id: targetFolder.id })))
+      if (ids.length === 1) {
+        const movedFile = files.find((f) => f.id === ids[0])
+        const movedName = movedFile ? displayName(movedFile) : 'File'
+        showToast({ icon: 'folder', title: `Moved ${movedName} to ${targetName}` })
       } else {
-        next.add(fileId)
+        showToast({ icon: 'folder', title: `Moved ${ids.length} items to ${targetName}` })
       }
-      return next
-    })
-    lastClickedIdRef.current = fileId
-  }
-
-  function handleRowClick(file: DriveFile, e: React.MouseEvent) {
-    // If shift key is held and we have a previous click target, do range select
-    if (e.shiftKey && lastClickedIdRef.current) {
-      const ids = sortedFiles.map((f) => f.id)
-      const lastIdx = ids.indexOf(lastClickedIdRef.current)
-      const curIdx = ids.indexOf(file.id)
-      if (lastIdx !== -1 && curIdx !== -1) {
-        const start = Math.min(lastIdx, curIdx)
-        const end = Math.max(lastIdx, curIdx)
-        const rangeIds = ids.slice(start, end + 1)
-        setSelectedIds((prev) => {
-          const next = new Set(prev)
-          for (const id of rangeIds) next.add(id)
-          return next
-        })
-        return
-      }
-    }
-
-    // Ctrl/Cmd+click toggles individual without clearing
-    if (e[modKey]) {
-      toggleSelection(file.id)
-      return
-    }
-
-    // Plain click on a checkbox area is handled by the checkbox itself.
-    // Plain click on the row body: open file/folder (existing behavior).
-    handleFileSelect(file)
-  }
-
-  function handleCheckboxClick(fileId: string, e: React.MouseEvent) {
-    e.stopPropagation()
-
-    if (e.shiftKey && lastClickedIdRef.current) {
-      const ids = sortedFiles.map((f) => f.id)
-      const lastIdx = ids.indexOf(lastClickedIdRef.current)
-      const curIdx = ids.indexOf(fileId)
-      if (lastIdx !== -1 && curIdx !== -1) {
-        const start = Math.min(lastIdx, curIdx)
-        const end = Math.max(lastIdx, curIdx)
-        const rangeIds = ids.slice(start, end + 1)
-        setSelectedIds((prev) => {
-          const next = new Set(prev)
-          for (const id of rangeIds) next.add(id)
-          return next
-        })
-        lastClickedIdRef.current = fileId
-        return
-      }
-    }
-
-    toggleSelection(fileId)
-  }
-
-  function selectAll() {
-    if (selectedIds.size === sortedFiles.length) {
-      setSelectedIds(new Set())
-    } else {
-      setSelectedIds(new Set(sortedFiles.map((f) => f.id)))
+      fetchFiles()
+    } catch (err) {
+      showToast({ icon: 'x', title: 'Move failed', description: err instanceof Error ? err.message : 'Could not move files.', danger: true })
     }
   }
-
-  function clearSelection() {
-    setSelectedIds(new Set())
-    lastClickedIdRef.current = null
-  }
-
-  const allSelected = sortedFiles.length > 0 && selectedIds.size === sortedFiles.length
-  const someSelected = selectedIds.size > 0 && selectedIds.size < sortedFiles.length
 
   // ─── Bulk action handlers ────────────────────────────
 
-  async function handleBulkTrash() {
-    const ids = Array.from(selectedIds)
+  async function handleBulkTrash(ids: string[]) {
     const count = ids.length
-    // Animate all selected rows out
     setTrashingIds(new Set(ids))
-    setTimeout(async () => {
-      try {
-        await Promise.all(ids.map((id) => deleteFile(id)))
-        for (const id of ids) unindexFile(id)
-        showToast({
-          icon: 'trash',
-          title: 'Moved to trash',
-          description: `${count} file${count !== 1 ? 's' : ''} moved to trash`,
-        })
-        clearSelection()
-        fetchFiles()
-      } catch (err) {
-        showToast({
-          icon: 'trash',
-          title: 'Failed to trash',
-          description: err instanceof Error ? err.message : 'Something went wrong',
-          danger: true,
-        })
-      } finally {
-        setTrashingIds(new Set())
-      }
-    }, 200)
+    return new Promise<void>((resolve) => {
+      setTimeout(async () => {
+        try {
+          await Promise.all(ids.map((id) => deleteFile(id)))
+          for (const id of ids) unindexFile(id)
+          showToast({ icon: 'trash', title: 'Moved to trash', description: `${count} file${count !== 1 ? 's' : ''} moved to trash` })
+          fetchFiles()
+        } catch (err) {
+          showToast({ icon: 'trash', title: 'Failed to trash', description: err instanceof Error ? err.message : 'Something went wrong', danger: true })
+        } finally {
+          setTrashingIds(new Set())
+          resolve()
+        }
+      }, 200)
+    })
   }
 
   async function handleBulkMoveConfirm(destinationId: string | null, _mode: 'move' | 'copy') {
-    const ids = Array.from(selectedIds)
+    const ids = bulkMoveIds
     const count = ids.length
     try {
-      await Promise.all(
-        ids.map((id) => updateFile(id, { parent_id: destinationId })),
-      )
-      showToast({
-        icon: 'folder',
-        title: 'Files moved',
-        description: `${count} file${count !== 1 ? 's' : ''} moved successfully.`,
-      })
-      clearSelection()
+      await Promise.all(ids.map((id) => updateFile(id, { parent_id: destinationId })))
+      showToast({ icon: 'folder', title: 'Files moved', description: `${count} file${count !== 1 ? 's' : ''} moved successfully.` })
       fetchFiles()
     } catch (err) {
-      showToast({
-        icon: 'x',
-        title: 'Move failed',
-        description: err instanceof Error ? err.message : 'Could not move files.',
-        danger: true,
-      })
+      showToast({ icon: 'x', title: 'Move failed', description: err instanceof Error ? err.message : 'Could not move files.', danger: true })
     } finally {
       setBulkMoveOpen(false)
+      setBulkMoveIds([])
     }
   }
 
-  function handleBulkShare() {
-    if (selectedIds.size === 1) {
-      setShareFileId(Array.from(selectedIds)[0])
+  function handleBulkShare(ids: string[]) {
+    if (ids.length === 1) {
+      setShareFileId(ids[0])
     } else {
-      showToast({
-        icon: 'share',
-        title: 'Select one file to share',
-        description: 'Sharing multiple files at once is not supported yet.',
-      })
+      showToast({ icon: 'share', title: 'Select one file to share', description: 'Sharing multiple files at once is not supported yet.' })
     }
   }
 
-  async function handleBulkDownload() {
-    const filesToDownload = sortedFiles.filter(
-      (f) => selectedIds.has(f.id) && !f.is_folder,
-    )
+  async function handleBulkDownload(ids: string[]) {
+    const filesToDownload = files.filter((f) => ids.includes(f.id) && !f.is_folder)
     if (filesToDownload.length === 0) {
-      showToast({
-        icon: 'download',
-        title: 'Nothing to download',
-        description: 'Select at least one file (not folder) to download.',
-      })
+      showToast({ icon: 'download', title: 'Nothing to download', description: 'Select at least one file (not folder) to download.' })
       return
     }
     for (const file of filesToDownload) {
       await handleFileDownload(file)
-    }
-  }
-
-  // ─── Drag-and-drop handlers ────────────────────────────
-
-  function handleDragStart(e: React.DragEvent, file: DriveFile) {
-    // If the dragged file is part of a multi-selection, drag all selected files
-    if (selectedIds.size > 1 && selectedIds.has(file.id)) {
-      e.dataTransfer.setData('text/plain', JSON.stringify(Array.from(selectedIds)))
-      e.dataTransfer.effectAllowed = 'move'
-    } else {
-      e.dataTransfer.setData('text/plain', JSON.stringify([file.id]))
-      e.dataTransfer.effectAllowed = 'move'
-    }
-    setDraggedFileId(file.id)
-  }
-
-  function handleDragEnd() {
-    setDraggedFileId(null)
-    setDragOverFolderId(null)
-  }
-
-  function handleDragOver(e: React.DragEvent, folder: DriveFile) {
-    if (!folder.is_folder) return
-    // Prevent dropping a folder onto itself
-    if (draggedFileId === folder.id) return
-    // Prevent dropping selected items onto a folder that is itself selected
-    if (selectedIds.size > 1 && selectedIds.has(draggedFileId ?? '') && selectedIds.has(folder.id)) return
-    e.preventDefault()
-    e.dataTransfer.dropEffect = 'move'
-    setDragOverFolderId(folder.id)
-  }
-
-  function handleDragLeave(e: React.DragEvent, folderId: string) {
-    // Only clear if we're actually leaving the folder row (not entering a child element)
-    const relatedTarget = e.relatedTarget as HTMLElement | null
-    const currentTarget = e.currentTarget as HTMLElement
-    if (relatedTarget && currentTarget.contains(relatedTarget)) return
-    if (dragOverFolderId === folderId) {
-      setDragOverFolderId(null)
-    }
-  }
-
-  async function handleDrop(e: React.DragEvent, targetFolder: DriveFile) {
-    e.preventDefault()
-    setDragOverFolderId(null)
-    setDraggedFileId(null)
-
-    if (!targetFolder.is_folder) return
-
-    let fileIds: string[]
-    try {
-      fileIds = JSON.parse(e.dataTransfer.getData('text/plain')) as string[]
-    } catch {
-      return
-    }
-
-    // Filter out the target folder itself (can't drop a folder into itself)
-    fileIds = fileIds.filter((id) => id !== targetFolder.id)
-    if (fileIds.length === 0) return
-
-    const targetName = displayName(targetFolder)
-
-    try {
-      await Promise.all(
-        fileIds.map((id) => updateFile(id, { parent_id: targetFolder.id })),
-      )
-      if (fileIds.length === 1) {
-        const movedFile = files.find((f) => f.id === fileIds[0])
-        const movedName = movedFile ? displayName(movedFile) : 'File'
-        showToast({
-          icon: 'folder',
-          title: `Moved ${movedName} to ${targetName}`,
-        })
-      } else {
-        showToast({
-          icon: 'folder',
-          title: `Moved ${fileIds.length} items to ${targetName}`,
-        })
-      }
-      clearSelection()
-      fetchFiles()
-    } catch (err) {
-      showToast({
-        icon: 'x',
-        title: 'Move failed',
-        description: err instanceof Error ? err.message : 'Could not move files.',
-        danger: true,
-      })
     }
   }
 
@@ -1372,17 +1013,15 @@ export function Drive() {
   useKeyboardShortcuts({
     onUpload: browse,
     onNewFolder: () => setFolderDialogOpen(true),
-    onSelectAll: selectAll,
+    onSelectAll: () => {}, // handled inside FileList
     onTrashSelected: () => {
-      if (selectedIds.size > 0) handleBulkTrash()
+      if (externalSelectedIds.size > 0) handleBulkTrash(Array.from(externalSelectedIds))
     },
     onDownloadSelected: () => {
-      if (selectedIds.size > 0) handleBulkDownload()
+      if (externalSelectedIds.size > 0) handleBulkDownload(Array.from(externalSelectedIds))
     },
     onSearch: () => navigate('/search'),
-    onEscape: () => {
-      if (selectedIds.size > 0) clearSelection()
-    },
+    onEscape: () => {}, // handled inside FileList
   })
 
   // Open shortcuts cheatsheet with '?'
@@ -1561,98 +1200,17 @@ export function Drive() {
           </div>
         )}
 
-        {/* Sort + column header */}
-        <div className="px-3 md:px-5 py-1.5 border-b border-line bg-paper-2 flex items-center justify-end relative">
-          <button
-            type="button"
-            onClick={() => setSortMenuOpen((v) => !v)}
-            className="flex items-center gap-1.5 px-2 py-1 text-[11px] text-ink-2 rounded hover:bg-paper hover:text-ink transition-colors"
-            aria-label={`Sort: ${sortLabel(sortKey)}`}
-            aria-haspopup="menu"
-            aria-expanded={sortMenuOpen}
-          >
-            <span className="text-ink-3">Sort:</span>
-            <span className="font-medium">{sortLabel(sortKey)}</span>
-            <Icon name="chevron-down" size={10} className="text-ink-3" />
-          </button>
-          {sortMenuOpen && (
-            <>
-              <div
-                className="fixed inset-0 z-30"
-                onClick={() => setSortMenuOpen(false)}
-              />
-              <div
-                role="menu"
-                className="absolute right-3 md:right-5 top-full mt-0.5 z-40 bg-paper border border-line-2 rounded-md shadow-2 py-1 min-w-[200px]"
-              >
-                {SORT_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.key}
-                    role="menuitemradio"
-                    aria-checked={opt.key === sortKey}
-                    onClick={() => {
-                      setSortKey(opt.key)
-                      setSortMenuOpen(false)
-                    }}
-                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-paper-2 transition-colors ${
-                      opt.key === sortKey ? 'text-ink font-medium' : 'text-ink-2'
-                    }`}
-                  >
-                    <span className="w-3 inline-flex">
-                      {opt.key === sortKey && <Icon name="check" size={10} />}
-                    </span>
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-        <div className="px-3 md:px-5 py-2 border-b border-line bg-paper-2 grid gap-2.5 md:gap-[14px] grid-cols-[20px_32px_1fr_40px] md:grid-cols-[20px_32px_1fr_110px_110px_100px_60px]">
-          <span className="flex items-center justify-center">
-            {sortedFiles.length > 0 && (
-              <BBCheckbox
-                checked={allSelected}
-                indeterminate={someSelected}
-                onChange={() => selectAll()}
-              />
-            )}
-          </span>
-          <span />
-          <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">Name</span>
-          <span className="hidden md:inline text-[10px] font-medium uppercase tracking-wider text-ink-3">Size</span>
-          <span className="hidden md:inline text-[10px] font-medium uppercase tracking-wider text-ink-3">Modified</span>
-          <span className="hidden md:inline text-[10px] font-medium uppercase tracking-wider text-ink-3">Shared</span>
-          <span />
-        </div>
-
         {/* File list with upload zone */}
         <UploadZone onFiles={handleFilesSelected} onFolderFiles={handleFolderFilesSelected}>
-          <div
-            className="flex-1 overflow-y-auto"
-            onClick={(e) => {
-              // Click on empty area (not on a file row) clears selection
-              if (e.target === e.currentTarget && selectedIds.size > 0) {
-                clearSelection()
-              }
-            }}
-          >
-            {loading ? (
-              <div>
-                {Array.from({ length: 8 }, (_, i) => (
-                  <FileRowSkeleton key={i} />
-                ))}
-              </div>
-            ) : sortedFiles.length === 0 ? (
+          <FileList
+            files={files}
+            loading={loading}
+            emptyState={
               currentParentId ? (
-                /* Subfolder is empty */
                 <div className="flex flex-col items-center justify-center h-full text-center py-20">
                   <div
                     className="w-14 h-14 mb-4 rounded-2xl flex items-center justify-center"
-                    style={{
-                      background: 'var(--color-amber-bg)',
-                      border: '1.5px dashed var(--color-line-2)',
-                    }}
+                    style={{ background: 'var(--color-amber-bg)', border: '1.5px dashed var(--color-line-2)' }}
                   >
                     <Icon name="folder" size={24} className="text-amber-deep" />
                   </div>
@@ -1670,191 +1228,25 @@ export function Drive() {
                   </div>
                 </div>
               ) : (
-                /* Root drive is empty — first-time experience */
-                <EmptyDrive
-                  onUpload={browse}
-                  onCreateFolder={() => setFolderDialogOpen(true)}
-                />
+                <EmptyDrive onUpload={browse} onCreateFolder={() => setFolderDialogOpen(true)} />
               )
-            ) : (
-              sortedFiles.map((file) => {
-                const name = displayName(file)
-                const fileType = getFileType(name, file.is_folder)
-                const isSelected = selectedIds.has(file.id)
-                const isDragTarget = file.is_folder && dragOverFolderId === file.id
-                const isDragging = draggedFileId === file.id
-                const isTrashing = trashingIds.has(file.id)
-                const isRecentUpload = recentlyUploaded.has(file.id)
-                return (
-                  <div
-                    key={file.id}
-                    draggable={!isTrashing}
-                    onDragStart={(e) => handleDragStart(e, file)}
-                    onDragEnd={handleDragEnd}
-                    onDragOver={(e) => handleDragOver(e, file)}
-                    onDragLeave={(e) => handleDragLeave(e, file.id)}
-                    onDrop={(e) => handleDrop(e, file)}
-                    className={[
-                      'file-row group transition-colors duration-150 cursor-pointer grid gap-2.5 md:gap-[14px] grid-cols-[20px_32px_1fr_40px] md:grid-cols-[20px_32px_1fr_110px_110px_100px_60px] px-3 md:px-5 py-[11px]',
-                      isDragTarget
-                        ? 'file-row--drag-target bg-amber-bg ring-2 ring-amber ring-inset'
-                        : isSelected
-                          ? 'file-row--selected bg-amber-bg/50'
-                          : selectedFileId === file.id
-                            ? 'bg-amber-bg/30'
-                            : 'hover:bg-paper-2',
-                      isDragging ? 'opacity-40' : '',
-                      isTrashing ? 'trash-slide-out' : '',
-                      isRecentUpload ? 'upload-glow' : '',
-                    ].filter(Boolean).join(' ')}
-                    onClick={(e) => handleRowClick(file, e)}
-                    onDoubleClick={() => {
-                      if (!file.is_folder) handleFileDownload(file)
-                    }}
-                    onContextMenu={(e) => {
-                      e.preventDefault()
-                      setCtxMenu({
-                        open: true,
-                        x: e.clientX,
-                        y: e.clientY,
-                        fileId: file.id,
-                        fileName: name,
-                        isFolder: file.is_folder,
-                      })
-                    }}
-                  >
-                    <span
-                      className={`flex items-center justify-center ${
-                        isSelected ? '' : 'opacity-0 group-hover:opacity-100'
-                      } transition-opacity`}
-                      onClick={(e) => handleCheckboxClick(file.id, e)}
-                    >
-                      <BBCheckbox
-                        checked={isSelected}
-                        onChange={() => {/* handled by parent click */}}
-                      />
-                    </span>
-                    <FileIcon type={fileType} />
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-medium truncate">{name}</span>
-                        {file.is_starred && (
-                          <span className={`inline-flex text-amber-deep${starPulseId === file.id ? ' star-pulse' : ''}`}>
-                            <Icon name="star" size={11} />
-                          </span>
-                        )}
-                        {isUnlocked && (
-                          <BBChip variant="amber">
-                            <span className="flex items-center gap-1 text-[9.5px]">
-                              <Icon name="lock" size={9} /> E2EE
-                            </span>
-                          </BBChip>
-                        )}
-                      </div>
-                      <div className="text-[11px] text-ink-3 mt-0.5 flex items-center gap-1.5 flex-wrap">
-                        <span className="truncate">{file.mime_type || 'Folder'}</span>
-                        {/* On mobile the size + modified columns are hidden,
-                            so fold their data into the filename subtitle —
-                            otherwise the user has no way to see it. */}
-                        {!file.is_folder && (
-                          <>
-                            <span className="md:hidden text-line-2">·</span>
-                            <span className="md:hidden font-mono tabular-nums">{formatBytes(file.size_bytes)}</span>
-                          </>
-                        )}
-                        <span className="md:hidden text-line-2">·</span>
-                        <span className="md:hidden">{timeAgo(file.updated_at)}</span>
-                      </div>
-                    </div>
-                    <span className="hidden md:inline font-mono text-[13px] text-ink-3 tabular-nums self-center">
-                      {file.is_folder ? '--' : formatBytes(file.size_bytes)}
-                    </span>
-                    <span className="hidden md:inline text-[13px] text-ink-3 self-center">
-                      {timeAgo(file.updated_at)}
-                    </span>
-                    <div className="hidden md:block self-center">
-                      <span className="text-[13px] text-ink-3">--</span>
-                    </div>
-                    <div className="flex justify-end self-center">
-                      <BBButton
-                        size="sm"
-                        variant="ghost"
-                        // Touch devices can't hover, so the kebab needs to
-                        // be visible by default. On md+ it's the existing
-                        // hover-reveal so the row stays clean at idle.
-                        className="md:opacity-0 md:group-hover:opacity-100 transition-opacity"
-                        aria-label="File actions"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                          setCtxMenu({
-                            open: true,
-                            x: rect.left,
-                            y: rect.bottom + 4,
-                            fileId: file.id,
-                            fileName: name,
-                            isFolder: file.is_folder,
-                          })
-                        }}
-                      >
-                        <Icon name="more" size={14} />
-                      </BBButton>
-                    </div>
-                  </div>
-                )
-              })
-            )}
-          </div>
+            }
+            onNavigateFolder={handleFolderOpen}
+            selectedFileId={selectedFileId}
+            onSelectFile={(file) => file && setSelectedFileId(file.id)}
+            onSelectionChange={setExternalSelectedIds}
+            onDecryptedNamesChange={setExternalDecryptedNames}
+            onFileAction={handleFileAction}
+            onDropToFolder={handleDropToFolder}
+            onBulkTrash={handleBulkTrash}
+            onBulkMove={(ids) => { setBulkMoveIds(ids); setBulkMoveOpen(true) }}
+            onBulkShare={handleBulkShare}
+            onBulkDownload={handleBulkDownload}
+            trashingIds={trashingIds}
+            starPulseId={starPulseId}
+            recentlyUploadedIds={recentlyUploaded}
+          />
         </UploadZone>
-
-        {/* Bulk action bar */}
-        {selectedIds.size > 0 && (
-          <div className="px-3 md:px-5 py-2.5 border-t border-line bg-ink flex items-center gap-2 md:gap-3.5 animate-slide-in-up">
-            <span className="text-sm font-medium text-paper">
-              {selectedIds.size} selected
-            </span>
-            <button
-              onClick={clearSelection}
-              className="text-xs text-paper/60 hover:text-paper transition-colors cursor-pointer"
-            >
-              Clear
-            </button>
-            <div className="ml-auto flex items-center gap-1.5">
-              <BBButton
-                size="sm"
-                variant="ghost"
-                className="text-paper/80 hover:text-paper hover:bg-white/10 gap-1.5"
-                onClick={() => setBulkMoveOpen(true)}
-              >
-                <Icon name="folder" size={13} /> Move
-              </BBButton>
-              <BBButton
-                size="sm"
-                variant="ghost"
-                className="text-paper/80 hover:text-paper hover:bg-white/10 gap-1.5"
-                onClick={handleBulkTrash}
-              >
-                <Icon name="trash" size={13} /> Trash
-              </BBButton>
-              <BBButton
-                size="sm"
-                variant="ghost"
-                className="text-paper/80 hover:text-paper hover:bg-white/10 gap-1.5"
-                onClick={handleBulkShare}
-              >
-                <Icon name="share" size={13} /> Share
-              </BBButton>
-              <BBButton
-                size="sm"
-                variant="amber"
-                className="gap-1.5"
-                onClick={handleBulkDownload}
-              >
-                <Icon name="download" size={13} /> Download
-              </BBButton>
-            </div>
-          </div>
-        )}
 
         {/* Status bar */}
         <div className="px-3 md:px-5 py-2 border-t border-line bg-paper-2 flex items-center gap-2 md:gap-3.5 text-[11px] text-ink-3">
@@ -1921,17 +1313,6 @@ export function Drive() {
         />
       )}
 
-      <ContextMenu
-        open={ctxMenu.open}
-        x={ctxMenu.x}
-        y={ctxMenu.y}
-        fileId={ctxMenu.fileId}
-        fileName={ctxMenu.fileName}
-        isFolder={ctxMenu.isFolder}
-        onClose={() => setCtxMenu((prev) => ({ ...prev, open: false }))}
-        onAction={handleContextAction}
-      />
-
       {moveFile && (
         <MoveModal
           open={moveFileId !== null}
@@ -1946,12 +1327,12 @@ export function Drive() {
         />
       )}
 
-      {bulkMoveOpen && selectedIds.size > 0 && (
+      {bulkMoveOpen && bulkMoveIds.length > 0 && (
         <MoveModal
           open={bulkMoveOpen}
-          onClose={() => setBulkMoveOpen(false)}
-          items={sortedFiles
-            .filter((f) => selectedIds.has(f.id))
+          onClose={() => { setBulkMoveOpen(false); setBulkMoveIds([]) }}
+          items={files
+            .filter((f) => bulkMoveIds.includes(f.id))
             .map((f) => ({
               id: f.id,
               name: displayName(f),

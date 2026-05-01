@@ -1,0 +1,776 @@
+import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react'
+import { BBCheckbox } from './bb-checkbox'
+import { BBChip } from './bb-chip'
+import { BBButton } from './bb-button'
+import { Icon } from './icons'
+import { FileIcon, getFileType } from './file-icon'
+import { ContextMenu } from './context-menu'
+import { FileRowSkeleton } from './skeleton'
+import { useKeys } from '../lib/key-context'
+import { decryptFilename, fromBase64 } from '../lib/crypto'
+import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
+import { modKey } from '../hooks/use-keyboard-shortcuts'
+import { formatBytes } from '../lib/format'
+import type { DriveFile } from '../lib/api'
+
+// ─── Sort types ─────────────────────────────────────
+
+type SortKey =
+  | 'name-asc' | 'name-desc'
+  | 'modified-desc' | 'modified-asc'
+  | 'size-desc' | 'size-asc'
+  | 'type-asc'
+
+const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: 'name-asc',      label: 'Name (A → Z)' },
+  { key: 'name-desc',     label: 'Name (Z → A)' },
+  { key: 'modified-desc', label: 'Modified (newest)' },
+  { key: 'modified-asc',  label: 'Modified (oldest)' },
+  { key: 'size-desc',     label: 'Size (largest)' },
+  { key: 'size-asc',      label: 'Size (smallest)' },
+  { key: 'type-asc',      label: 'Type' },
+]
+
+// ─── Helpers ─────────────────────────────────────────
+
+export function timeAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime()
+  const seconds = Math.floor(diff / 1000)
+  if (seconds < 60) return 'just now'
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 7) return `${days}d ago`
+  const weeks = Math.floor(days / 7)
+  return `${weeks}w ago`
+}
+
+function dateGroup(dateStr: string): string {
+  const date = new Date(dateStr)
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const yesterday = new Date(today)
+  yesterday.setDate(yesterday.getDate() - 1)
+  const weekAgo = new Date(today)
+  weekAgo.setDate(weekAgo.getDate() - 7)
+  const fileDay = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  if (fileDay >= today) return 'Today'
+  if (fileDay >= yesterday) return 'Yesterday'
+  if (fileDay >= weekAgo) return 'This week'
+  return 'Earlier'
+}
+
+// ─── Props ───────────────────────────────────────────
+
+export interface FileListProps {
+  files: DriveFile[]
+  loading: boolean
+  emptyState: ReactNode
+  onRefresh?: () => void
+  sortable?: boolean
+  selectable?: boolean
+  showDateGroups?: boolean
+
+  // Navigation
+  onNavigateFolder?: (folder: DriveFile) => void
+
+  // File selection (drives detail panel)
+  selectedFileId?: string | null
+  onSelectFile?: (file: DriveFile | null) => void
+
+  // Selection change for external keyboard shortcuts
+  onSelectionChange?: (ids: Set<string>) => void
+
+  // Decrypted name sync for dialog use in parent
+  onDecryptedNamesChange?: (names: Record<string, string>) => void
+
+  // Context menu / row action handler
+  onFileAction?: (action: string, file: DriveFile) => void
+
+  // Drag-and-drop to folder handler
+  onDropToFolder?: (draggedIds: string[], targetFolder: DriveFile) => Promise<void>
+
+  // Custom row actions (replaces the kebab button)
+  renderActions?: (file: DriveFile) => ReactNode
+
+  // Bulk action callbacks (showing bulk bar requires at least one non-undefined)
+  onBulkTrash?: (ids: string[]) => Promise<void>
+  onBulkMove?: (ids: string[]) => void
+  onBulkShare?: (ids: string[]) => void
+  onBulkDownload?: (ids: string[]) => Promise<void>
+
+  // Animation state driven by parent (for drive page micro-interactions)
+  trashingIds?: Set<string>
+  starPulseId?: string | null
+  recentlyUploadedIds?: Set<string>
+
+  // Pre-decrypted names override (for Shared page with custom key derivation)
+  externalDecryptedNames?: Record<string, string>
+}
+
+// ─── Component ───────────────────────────────────────
+
+export function FileList({
+  files,
+  loading,
+  emptyState,
+  sortable = true,
+  selectable = true,
+  showDateGroups = false,
+  onNavigateFolder,
+  selectedFileId,
+  onSelectFile,
+  onSelectionChange,
+  onDecryptedNamesChange,
+  onFileAction,
+  onDropToFolder,
+  renderActions,
+  onBulkTrash,
+  onBulkMove,
+  onBulkShare,
+  onBulkDownload,
+  trashingIds = new Set<string>(),
+  starPulseId = null,
+  recentlyUploadedIds = new Set<string>(),
+  externalDecryptedNames,
+}: FileListProps) {
+  const { getFileKey, isUnlocked } = useKeys()
+
+  // ─── Sort state ────────────────────────────────────
+  const [sortKey, setSortKey] = useState<SortKey>(() => {
+    try {
+      const raw = localStorage.getItem('bb_drive_sort')
+      if (raw) {
+        const parsed = JSON.parse(raw) as { key?: string }
+        if (parsed.key && SORT_OPTIONS.some((o) => o.key === parsed.key)) {
+          return parsed.key as SortKey
+        }
+      }
+    } catch { /* fall through */ }
+    return 'name-asc'
+  })
+  const [sortMenuOpen, setSortMenuOpen] = useState(false)
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('bb_drive_sort', JSON.stringify({ key: sortKey }))
+    } catch { /* ignore */ }
+  }, [sortKey])
+
+  // ─── Decrypted names ───────────────────────────────
+  const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    if (externalDecryptedNames !== undefined) {
+      setDecryptedNames(externalDecryptedNames)
+      return
+    }
+    if (!isUnlocked) {
+      setDecryptedNames({})
+      return
+    }
+    let cancelled = false
+    async function decryptAll() {
+      const names: Record<string, string> = {}
+      for (const file of files) {
+        if (cancelled) return
+        try {
+          const parsed = JSON.parse(file.name_encrypted) as { nonce: string; ciphertext: string }
+          const fileKey = await getFileKey(file.id)
+          names[file.id] = await decryptFilename(
+            fileKey,
+            fromBase64(parsed.nonce),
+            fromBase64(parsed.ciphertext),
+          )
+        } catch {
+          names[file.id] = file.name_encrypted
+        }
+      }
+      if (!cancelled) setDecryptedNames(names)
+    }
+    decryptAll()
+    return () => { cancelled = true }
+  }, [files, isUnlocked, getFileKey, externalDecryptedNames])
+
+  useEffect(() => {
+    onDecryptedNamesChange?.(decryptedNames)
+  }, [decryptedNames, onDecryptedNamesChange])
+
+  function displayName(file: DriveFile): string {
+    return decryptedNames[file.id] ?? file.name_encrypted
+  }
+
+  // ─── Thumbnails ────────────────────────────────────
+  const [thumbnails, setThumbnails] = useState<Record<string, string>>({})
+  const loadingThumbs = useRef(new Set<string>())
+  const thumbnailsRef = useRef(thumbnails)
+  useEffect(() => { thumbnailsRef.current = thumbnails }, [thumbnails])
+
+  const loadThumbnailRef = useRef<((fileId: string) => void) | null>(null)
+
+  const loadThumbnail = useCallback(async (fileId: string) => {
+    if (thumbnailsRef.current[fileId] || loadingThumbs.current.has(fileId)) return
+    loadingThumbs.current.add(fileId)
+    try {
+      const fileKey = await getFileKey(fileId)
+      const url = await fetchAndDecryptThumbnail(fileId, fileKey)
+      if (url) setThumbnails((prev) => ({ ...prev, [fileId]: url }))
+    } catch { /* ignore */ }
+  }, [getFileKey])
+
+  useEffect(() => {
+    loadThumbnailRef.current = loadThumbnail
+  }, [loadThumbnail])
+
+  const observerRef = useRef<IntersectionObserver | null>(null)
+  const thumbNodeRefs = useRef(new Map<string, HTMLElement>())
+
+  useEffect(() => {
+    if (!isUnlocked) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            const fileId = (entry.target as HTMLElement).dataset.fileId
+            if (fileId) loadThumbnailRef.current?.(fileId)
+          }
+        }
+      },
+      { threshold: 0.1, rootMargin: '100px' },
+    )
+    observerRef.current = observer
+    for (const el of thumbNodeRefs.current.values()) {
+      observer.observe(el)
+    }
+    return () => observer.disconnect()
+  }, [isUnlocked])
+
+  const setThumbRef = useCallback((fileId: string, el: HTMLElement | null) => {
+    if (el) {
+      thumbNodeRefs.current.set(fileId, el)
+      observerRef.current?.observe(el)
+    } else {
+      const existing = thumbNodeRefs.current.get(fileId)
+      if (existing) observerRef.current?.unobserve(existing)
+      thumbNodeRefs.current.delete(fileId)
+    }
+  }, [])
+
+  // ─── Selection ─────────────────────────────────────
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set<string>())
+  const lastClickedIdRef = useRef<string | null>(null)
+
+  const updateSelection = useCallback((next: Set<string>) => {
+    setSelectedIds(next)
+    onSelectionChange?.(next)
+  }, [onSelectionChange])
+
+  function toggleSelection(fileId: string) {
+    const next = new Set(selectedIds)
+    if (next.has(fileId)) next.delete(fileId)
+    else next.add(fileId)
+    updateSelection(next)
+    lastClickedIdRef.current = fileId
+  }
+
+  const clearSelection = useCallback(() => {
+    updateSelection(new Set<string>())
+    lastClickedIdRef.current = null
+  }, [updateSelection])
+
+  // ─── Context menu ──────────────────────────────────
+  const [ctxMenu, setCtxMenu] = useState<{
+    open: boolean; x: number; y: number; fileId: string; fileName: string; isFolder: boolean
+  }>({ open: false, x: 0, y: 0, fileId: '', fileName: '', isFolder: false })
+
+  // ─── Drag-and-drop ─────────────────────────────────
+  const [draggedFileId, setDraggedFileId] = useState<string | null>(null)
+  const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null)
+
+  function handleDragStart(e: React.DragEvent, file: DriveFile) {
+    const ids =
+      selectedIds.size > 1 && selectedIds.has(file.id)
+        ? Array.from(selectedIds)
+        : [file.id]
+    e.dataTransfer.setData('text/plain', JSON.stringify(ids))
+    e.dataTransfer.effectAllowed = 'move'
+    setDraggedFileId(file.id)
+  }
+
+  function handleDragEnd() {
+    setDraggedFileId(null)
+    setDragOverFolderId(null)
+  }
+
+  function handleDragOver(e: React.DragEvent, folder: DriveFile) {
+    if (!folder.is_folder) return
+    if (draggedFileId === folder.id) return
+    if (
+      selectedIds.size > 1 &&
+      selectedIds.has(draggedFileId ?? '') &&
+      selectedIds.has(folder.id)
+    ) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    setDragOverFolderId(folder.id)
+  }
+
+  function handleDragLeave(e: React.DragEvent, folderId: string) {
+    const relatedTarget = e.relatedTarget as HTMLElement | null
+    const currentTarget = e.currentTarget as HTMLElement
+    if (relatedTarget && currentTarget.contains(relatedTarget)) return
+    if (dragOverFolderId === folderId) setDragOverFolderId(null)
+  }
+
+  async function handleDrop(e: React.DragEvent, targetFolder: DriveFile) {
+    e.preventDefault()
+    setDragOverFolderId(null)
+    setDraggedFileId(null)
+    if (!targetFolder.is_folder || !onDropToFolder) return
+    let fileIds: string[]
+    try {
+      fileIds = JSON.parse(e.dataTransfer.getData('text/plain')) as string[]
+    } catch { return }
+    fileIds = fileIds.filter((id) => id !== targetFolder.id)
+    if (fileIds.length === 0) return
+    await onDropToFolder(fileIds, targetFolder)
+    clearSelection()
+  }
+
+  // ─── Sort ──────────────────────────────────────────
+  const sortedFiles = sortable
+    ? [...files].sort((a, b) => {
+        if (a.is_folder && !b.is_folder) return -1
+        if (!a.is_folder && b.is_folder) return 1
+        switch (sortKey) {
+          case 'name-asc':      return displayName(a).localeCompare(displayName(b))
+          case 'name-desc':     return displayName(b).localeCompare(displayName(a))
+          case 'modified-desc': return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+          case 'modified-asc':  return new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
+          case 'size-desc':     return b.size_bytes - a.size_bytes
+          case 'size-asc':      return a.size_bytes - b.size_bytes
+          case 'type-asc': {
+            const ta = (a.mime_type || displayName(a).split('.').pop() || '').toLowerCase()
+            const tb = (b.mime_type || displayName(b).split('.').pop() || '').toLowerCase()
+            if (ta !== tb) return ta.localeCompare(tb)
+            return displayName(a).localeCompare(displayName(b))
+          }
+        }
+      })
+    : files
+
+  const allSelected = sortedFiles.length > 0 && selectedIds.size === sortedFiles.length
+  const someSelected = selectedIds.size > 0 && selectedIds.size < sortedFiles.length
+
+  // ─── Row click handler ─────────────────────────────
+  function handleRowClick(file: DriveFile, e: React.MouseEvent) {
+    if (e.shiftKey && lastClickedIdRef.current) {
+      const ids = sortedFiles.map((f) => f.id)
+      const lastIdx = ids.indexOf(lastClickedIdRef.current)
+      const curIdx = ids.indexOf(file.id)
+      if (lastIdx !== -1 && curIdx !== -1) {
+        const start = Math.min(lastIdx, curIdx)
+        const end = Math.max(lastIdx, curIdx)
+        const next = new Set(selectedIds)
+        for (const id of ids.slice(start, end + 1)) next.add(id)
+        updateSelection(next)
+        return
+      }
+    }
+    if (e[modKey]) {
+      toggleSelection(file.id)
+      return
+    }
+    if (file.is_folder) {
+      onNavigateFolder?.(file)
+    } else {
+      onSelectFile?.(file)
+    }
+  }
+
+  function handleCheckboxClick(fileId: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    if (e.shiftKey && lastClickedIdRef.current) {
+      const ids = sortedFiles.map((f) => f.id)
+      const lastIdx = ids.indexOf(lastClickedIdRef.current)
+      const curIdx = ids.indexOf(fileId)
+      if (lastIdx !== -1 && curIdx !== -1) {
+        const start = Math.min(lastIdx, curIdx)
+        const end = Math.max(lastIdx, curIdx)
+        const next = new Set(selectedIds)
+        for (const id of ids.slice(start, end + 1)) next.add(id)
+        updateSelection(next)
+        lastClickedIdRef.current = fileId
+        return
+      }
+    }
+    toggleSelection(fileId)
+  }
+
+  // ─── Keyboard shortcuts: select all + escape ───────
+  useEffect(() => {
+    if (!selectable) return
+    function onKey(e: KeyboardEvent) {
+      if (e.target instanceof HTMLInputElement) return
+      if (e.target instanceof HTMLTextAreaElement) return
+      if (e[modKey] && e.key === 'a') {
+        e.preventDefault()
+        updateSelection(new Set(sortedFiles.map((f) => f.id)))
+      } else if (e.key === 'Escape' && selectedIds.size > 0) {
+        clearSelection()
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [selectable, sortedFiles, selectedIds, updateSelection, clearSelection])
+
+  // ─── Date grouping ─────────────────────────────────
+  const grouped: { label: string; files: DriveFile[] }[] | null = showDateGroups
+    ? (() => {
+        const order = ['Today', 'Yesterday', 'This week', 'Earlier']
+        const groups: Record<string, DriveFile[]> = {}
+        for (const file of sortedFiles) {
+          const label = dateGroup(file.updated_at)
+          if (!groups[label]) groups[label] = []
+          groups[label].push(file)
+        }
+        return order
+          .filter((label) => groups[label]?.length ?? 0 > 0)
+          .map((label) => ({ label, files: groups[label] }))
+      })()
+    : null
+
+  // ─── Row renderer ──────────────────────────────────
+  function renderRow(file: DriveFile) {
+    const name = displayName(file)
+    const fileType = getFileType(name, file.is_folder)
+    const isSelected = selectedIds.has(file.id)
+    const isDragTarget = file.is_folder && dragOverFolderId === file.id
+    const isDragging = draggedFileId === file.id
+    const isTrashing = trashingIds.has(file.id)
+    const isRecentUpload = recentlyUploadedIds.has(file.id)
+    const hasThumbnail = !!(file.has_thumbnail && isUnlocked)
+    const thumbUrl = thumbnails[file.id]
+
+    return (
+      <div
+        key={file.id}
+        draggable={!isTrashing}
+        onDragStart={(e) => handleDragStart(e, file)}
+        onDragEnd={handleDragEnd}
+        onDragOver={(e) => handleDragOver(e, file)}
+        onDragLeave={(e) => handleDragLeave(e, file.id)}
+        onDrop={(e) => handleDrop(e, file)}
+        className={[
+          'file-row group transition-colors duration-150 cursor-pointer grid gap-2.5 md:gap-[14px]',
+          'grid-cols-[20px_32px_1fr_40px] md:grid-cols-[20px_32px_1fr_110px_110px_100px_60px]',
+          'px-3 md:px-5 py-[11px]',
+          isDragTarget
+            ? 'file-row--drag-target bg-amber-bg ring-2 ring-amber ring-inset'
+            : isSelected
+              ? 'file-row--selected bg-amber-bg/50'
+              : selectedFileId === file.id
+                ? 'bg-amber-bg/30'
+                : 'hover:bg-paper-2',
+          isDragging ? 'opacity-40' : '',
+          isTrashing ? 'trash-slide-out' : '',
+          isRecentUpload ? 'upload-glow' : '',
+        ].filter(Boolean).join(' ')}
+        onClick={(e) => handleRowClick(file, e)}
+        onDoubleClick={() => {
+          if (!file.is_folder) onFileAction?.('download', file)
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          setCtxMenu({
+            open: true,
+            x: e.clientX,
+            y: e.clientY,
+            fileId: file.id,
+            fileName: name,
+            isFolder: file.is_folder,
+          })
+        }}
+      >
+        {/* Checkbox */}
+        <span
+          className={`flex items-center justify-center ${
+            selectable && isSelected ? '' : 'opacity-0 group-hover:opacity-100'
+          } transition-opacity`}
+          onClick={(e) => selectable && handleCheckboxClick(file.id, e)}
+        >
+          {selectable && <BBCheckbox checked={isSelected} onChange={() => {}} />}
+        </span>
+
+        {/* Icon or thumbnail */}
+        {hasThumbnail ? (
+          <div
+            ref={(el) => setThumbRef(file.id, el as HTMLElement | null)}
+            data-file-id={file.id}
+            className="w-8 h-8 rounded-md overflow-hidden shrink-0 self-center"
+          >
+            {thumbUrl ? (
+              <img src={thumbUrl} alt="" className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full bg-paper-3 flex items-center justify-center">
+                <FileIcon type={fileType} />
+              </div>
+            )}
+          </div>
+        ) : (
+          <FileIcon type={fileType} />
+        )}
+
+        {/* Name column */}
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5">
+            <span className="font-medium truncate">{name}</span>
+            {file.is_starred && (
+              <span className={`inline-flex text-amber-deep${starPulseId === file.id ? ' star-pulse' : ''}`}>
+                <Icon name="star" size={11} />
+              </span>
+            )}
+            {isUnlocked && (
+              <BBChip variant="amber">
+                <span className="flex items-center gap-1 text-[9.5px]">
+                  <Icon name="lock" size={9} /> E2EE
+                </span>
+              </BBChip>
+            )}
+          </div>
+          <div className="text-[11px] text-ink-3 mt-0.5 flex items-center gap-1.5 flex-wrap">
+            <span className="truncate">{file.mime_type || 'Folder'}</span>
+            {!file.is_folder && (
+              <>
+                <span className="md:hidden text-line-2">·</span>
+                <span className="md:hidden font-mono tabular-nums">{formatBytes(file.size_bytes)}</span>
+              </>
+            )}
+            <span className="md:hidden text-line-2">·</span>
+            <span className="md:hidden">{timeAgo(file.updated_at)}</span>
+          </div>
+        </div>
+
+        {/* Size */}
+        <span className="hidden md:inline font-mono text-[13px] text-ink-3 tabular-nums self-center">
+          {file.is_folder ? '--' : formatBytes(file.size_bytes)}
+        </span>
+
+        {/* Modified */}
+        <span className="hidden md:inline text-[13px] text-ink-3 self-center">
+          {timeAgo(file.updated_at)}
+        </span>
+
+        {/* Shared indicator */}
+        <div className="hidden md:block self-center">
+          <span className="text-[13px] text-ink-3">--</span>
+        </div>
+
+        {/* Row actions */}
+        <div className="flex justify-end self-center">
+          {renderActions ? (
+            renderActions(file)
+          ) : (
+            <BBButton
+              size="sm"
+              variant="ghost"
+              className="md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+              aria-label="File actions"
+              onClick={(e) => {
+                e.stopPropagation()
+                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                setCtxMenu({
+                  open: true,
+                  x: rect.left,
+                  y: rect.bottom + 4,
+                  fileId: file.id,
+                  fileName: name,
+                  isFolder: file.is_folder,
+                })
+              }}
+            >
+              <Icon name="more" size={14} />
+            </BBButton>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  const hasBulkBar = selectable && (onBulkTrash ?? onBulkMove ?? onBulkShare ?? onBulkDownload)
+
+  return (
+    <>
+      {/* Sort button + column headers */}
+      {sortable && (
+        <>
+          <div className="px-3 md:px-5 py-1.5 border-b border-line bg-paper-2 flex items-center justify-end relative">
+            <button
+              type="button"
+              onClick={() => setSortMenuOpen((v) => !v)}
+              className="flex items-center gap-1.5 px-2 py-1 text-[11px] text-ink-2 rounded hover:bg-paper hover:text-ink transition-colors"
+              aria-label={`Sort: ${SORT_OPTIONS.find((o) => o.key === sortKey)?.label ?? 'Sort'}`}
+              aria-haspopup="menu"
+              aria-expanded={sortMenuOpen}
+            >
+              <span className="text-ink-3">Sort:</span>
+              <span className="font-medium">{SORT_OPTIONS.find((o) => o.key === sortKey)?.label ?? 'Sort'}</span>
+              <Icon name="chevron-down" size={10} className="text-ink-3" />
+            </button>
+            {sortMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-30" onClick={() => setSortMenuOpen(false)} />
+                <div
+                  role="menu"
+                  className="absolute right-3 md:right-5 top-full mt-0.5 z-40 bg-paper border border-line-2 rounded-md shadow-2 py-1 min-w-[200px]"
+                >
+                  {SORT_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.key}
+                      role="menuitemradio"
+                      aria-checked={opt.key === sortKey}
+                      onClick={() => { setSortKey(opt.key); setSortMenuOpen(false) }}
+                      className={`w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-paper-2 transition-colors ${
+                        opt.key === sortKey ? 'text-ink font-medium' : 'text-ink-2'
+                      }`}
+                    >
+                      <span className="w-3 inline-flex">
+                        {opt.key === sortKey && <Icon name="check" size={10} />}
+                      </span>
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="px-3 md:px-5 py-2 border-b border-line bg-paper-2 grid gap-2.5 md:gap-[14px] grid-cols-[20px_32px_1fr_40px] md:grid-cols-[20px_32px_1fr_110px_110px_100px_60px]">
+            <span className="flex items-center justify-center">
+              {selectable && sortedFiles.length > 0 && (
+                <BBCheckbox
+                  checked={allSelected}
+                  indeterminate={someSelected}
+                  onChange={() => {
+                    if (allSelected) clearSelection()
+                    else updateSelection(new Set(sortedFiles.map((f) => f.id)))
+                  }}
+                />
+              )}
+            </span>
+            <span />
+            <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">Name</span>
+            <span className="hidden md:inline text-[10px] font-medium uppercase tracking-wider text-ink-3">Size</span>
+            <span className="hidden md:inline text-[10px] font-medium uppercase tracking-wider text-ink-3">Modified</span>
+            <span className="hidden md:inline text-[10px] font-medium uppercase tracking-wider text-ink-3">Shared</span>
+            <span />
+          </div>
+        </>
+      )}
+
+      {/* File list body */}
+      <div
+        className="flex-1 overflow-y-auto"
+        onClick={(e) => {
+          if (e.target === e.currentTarget && selectedIds.size > 0) clearSelection()
+        }}
+      >
+        {loading ? (
+          <div>{Array.from({ length: 8 }, (_, i) => <FileRowSkeleton key={i} />)}</div>
+        ) : sortedFiles.length === 0 ? (
+          emptyState
+        ) : grouped ? (
+          grouped.map(({ label, files: groupFiles }) => (
+            <div key={label}>
+              <div className="px-3 md:px-5 py-2 text-[11px] font-semibold text-ink-3 uppercase tracking-wider bg-paper-2 border-b border-line sticky top-0 z-10">
+                {label}
+              </div>
+              {groupFiles.map(renderRow)}
+            </div>
+          ))
+        ) : (
+          sortedFiles.map(renderRow)
+        )}
+      </div>
+
+      {/* Bulk action bar */}
+      {hasBulkBar && selectedIds.size > 0 && (
+        <div className="px-3 md:px-5 py-2.5 border-t border-line bg-ink flex items-center gap-2 md:gap-3.5 animate-slide-in-up">
+          <span className="text-sm font-medium text-paper">{selectedIds.size} selected</span>
+          <button
+            onClick={clearSelection}
+            className="text-xs text-paper/60 hover:text-paper transition-colors cursor-pointer"
+          >
+            Clear
+          </button>
+          <div className="ml-auto flex items-center gap-1.5">
+            {onBulkMove && (
+              <BBButton
+                size="sm"
+                variant="ghost"
+                className="text-paper/80 hover:text-paper hover:bg-white/10 gap-1.5"
+                onClick={() => onBulkMove(Array.from(selectedIds))}
+              >
+                <Icon name="folder" size={13} /> Move
+              </BBButton>
+            )}
+            {onBulkTrash && (
+              <BBButton
+                size="sm"
+                variant="ghost"
+                className="text-paper/80 hover:text-paper hover:bg-white/10 gap-1.5"
+                onClick={async () => {
+                  const ids = Array.from(selectedIds)
+                  await onBulkTrash(ids)
+                  clearSelection()
+                }}
+              >
+                <Icon name="trash" size={13} /> Trash
+              </BBButton>
+            )}
+            {onBulkShare && (
+              <BBButton
+                size="sm"
+                variant="ghost"
+                className="text-paper/80 hover:text-paper hover:bg-white/10 gap-1.5"
+                onClick={() => onBulkShare(Array.from(selectedIds))}
+              >
+                <Icon name="share" size={13} /> Share
+              </BBButton>
+            )}
+            {onBulkDownload && (
+              <BBButton
+                size="sm"
+                variant="amber"
+                className="gap-1.5"
+                onClick={async () => {
+                  const ids = Array.from(selectedIds)
+                  await onBulkDownload(ids)
+                }}
+              >
+                <Icon name="download" size={13} /> Download
+              </BBButton>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Context menu */}
+      <ContextMenu
+        open={ctxMenu.open}
+        x={ctxMenu.x}
+        y={ctxMenu.y}
+        fileId={ctxMenu.fileId}
+        fileName={ctxMenu.fileName}
+        isFolder={ctxMenu.isFolder}
+        onClose={() => setCtxMenu((prev) => ({ ...prev, open: false }))}
+        onAction={(action, fileId) => {
+          const file = files.find((f) => f.id === fileId)
+          if (file) onFileAction?.(action, file)
+        }}
+      />
+    </>
+  )
+}
