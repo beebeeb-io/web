@@ -171,6 +171,18 @@ export function Drive() {
     refreshUsage()
   }, [refreshUsage])
 
+  // Warn before leaving if uploads are still in flight
+  useEffect(() => {
+    const hasActive = uploads.some((u) => u.stage !== 'Done' && u.stage !== 'Error')
+    if (!hasActive) return
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [uploads])
+
   // Check for pending share invites on mount
   useEffect(() => {
     Promise.all([

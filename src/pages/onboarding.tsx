@@ -104,8 +104,8 @@ export function Onboarding() {
   const handlePasswordSubmit = useCallback(async () => {
     if (!masterKeyBytes || !email) return
 
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters.')
+    if (password.length < 12) {
+      setError('Password must be at least 12 characters.')
       return
     }
     if (password !== confirmPassword) {
@@ -273,7 +273,7 @@ export function Onboarding() {
                     <BBInput
                       label="Password"
                       type={showPassword ? 'text' : 'password'}
-                      placeholder="At least 8 characters"
+                      placeholder="At least 12 characters"
                       value={password}
                       onChange={(e) => { setPassword(e.currentTarget.value); setError('') }}
                       trailing={
@@ -348,7 +348,7 @@ export function Onboarding() {
                       variant="amber"
                       size="lg"
                       className="flex-1"
-                      disabled={password.length < 8 || confirmPassword.length === 0}
+                      disabled={password.length < 12 || confirmPassword.length === 0}
                       onClick={handlePasswordSubmit}
                     >
                       Create account

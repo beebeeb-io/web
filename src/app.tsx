@@ -53,6 +53,7 @@ import { SharedFolder } from './pages/shared-folder'
 import { PasskeySetup } from './pages/passkey-setup'
 import { DeleteAccount } from './pages/delete-account'
 import { NotFound } from './pages/errors/not-found'
+import { ServerError } from './pages/errors/server-error'
 import { ThemeProvider } from './lib/theme-context'
 import { DisplayProvider } from './lib/display-context'
 
@@ -405,6 +406,7 @@ export function App() {
             }
           />
           <Route path="/s/:token" element={<ShareViewPage />} />
+          <Route path="/500" element={<ServerError />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
         </DisplayProvider>

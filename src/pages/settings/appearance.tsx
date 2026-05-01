@@ -403,6 +403,22 @@ export function SettingsAppearance() {
           ))}
         </div>
       </SettingsRow>
+
+      {/* ─ About ─────────────────────────────────── */}
+      <SettingsRow label="About" hint="App version and operator">
+        <div className="space-y-2 text-[13px] text-ink-2">
+          <div className="flex items-center gap-2">
+            <span className="text-ink-3">Beebeeb for web</span>
+            <span className="font-mono text-[12px] text-ink-3 bg-paper-2 border border-line rounded px-1.5 py-px">
+              v{__APP_VERSION__}
+            </span>
+          </div>
+          <p className="text-[12.5px] text-ink-3 leading-relaxed">
+            Operated by Initlabs B.V. (KvK 95157565), Wijchen, Netherlands.
+            Made in Europe.
+          </p>
+        </div>
+      </SettingsRow>
     </SettingsShell>
   )
 }

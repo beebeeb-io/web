@@ -154,6 +154,7 @@ const MAX_LINES = 10_000
 export function TextPreview({ blob, language }: TextPreviewProps) {
   const [text, setText] = useState<string | null>(null)
   const [truncated, setTruncated] = useState(false)
+  const [htmlMode, setHtmlMode] = useState<'rendered' | 'source'>('rendered')
   const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -170,6 +171,7 @@ export function TextPreview({ blob, language }: TextPreviewProps) {
 
   if (text === null) return null
 
+  const isHtml = language === 'html'
   const lines = text.split('\n')
   const gutterWidth = String(lines.length).length
   const shouldColor = !!language
@@ -198,7 +200,47 @@ export function TextPreview({ blob, language }: TextPreviewProps) {
         boxShadow: '0 10px 40px rgba(0,0,0,0.2)',
       }}
     >
-      {/* Content */}
+      {/* HTML mode toggle */}
+      {isHtml && (
+        <div className="shrink-0 flex items-center justify-end gap-1 border-b border-line bg-paper-2 px-3 py-1.5">
+          <div className="flex gap-0.5 p-0.5 bg-paper rounded border border-line">
+            <button
+              type="button"
+              onClick={() => setHtmlMode('rendered')}
+              className={`px-2.5 py-1 text-[11px] rounded transition-colors ${
+                htmlMode === 'rendered'
+                  ? 'bg-paper-2 text-ink font-medium'
+                  : 'text-ink-3 hover:text-ink-2'
+              }`}
+            >
+              Rendered
+            </button>
+            <button
+              type="button"
+              onClick={() => setHtmlMode('source')}
+              className={`px-2.5 py-1 text-[11px] rounded transition-colors ${
+                htmlMode === 'source'
+                  ? 'bg-paper-2 text-ink font-medium'
+                  : 'text-ink-3 hover:text-ink-2'
+              }`}
+            >
+              Source
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isHtml && htmlMode === 'rendered' ? (
+        // Sandboxed iframe — no scripts, no same-origin, no top navigation.
+        // Content is the raw decrypted HTML.
+        <iframe
+          title="HTML preview"
+          srcDoc={text}
+          sandbox=""
+          className="w-full bg-paper"
+          style={{ minHeight: 480, height: '70vh', border: 0 }}
+        />
+      ) : (
       <div className="overflow-auto">
         <table className="w-full border-collapse">
           <tbody>
@@ -225,6 +267,7 @@ export function TextPreview({ blob, language }: TextPreviewProps) {
           </tbody>
         </table>
       </div>
+      )}
 
       {/* Truncation notice */}
       {truncated && (

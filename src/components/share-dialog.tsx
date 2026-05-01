@@ -9,6 +9,7 @@ import {
   createShare,
   createInvite,
   approveInvite,
+  revokeShare,
   type ShareInfo,
   type ShareOptions,
 } from '../lib/api'
@@ -446,6 +447,8 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
   const [mode, setMode] = useState<ShareMode>('link')
   const [expiryIdx, setExpiryIdx] = useState(1) // default: 24 hours
   const [maxOpensIdx, setMaxOpensIdx] = useState(1) // default: 3
+  const [passphrase, setPassphrase] = useState('')
+  const [showPassphrase, setShowPassphrase] = useState(false)
   const [loading, setLoading] = useState(false)
   const [shareResult, setShareResult] = useState<ShareInfo | null>(null)
   const [decryptionKey, setDecryptionKey] = useState<string>('')
@@ -473,6 +476,8 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       setMode('link')
       setExpiryIdx(1)
       setMaxOpensIdx(1)
+      setPassphrase('')
+      setShowPassphrase(false)
       setShareResult(null)
       setDecryptionKey('')
       setError(null)
@@ -492,9 +497,17 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       return
     }
 
+    const trimmedPassphrase = passphrase.trim()
+    if (trimmedPassphrase && trimmedPassphrase.length < 4) {
+      setError('Passphrase must be at least 4 characters.')
+      setLoading(false)
+      return
+    }
+
     const options: ShareOptions = {
       expires_in_hours: EXPIRY_OPTIONS[expiryIdx].hours,
       max_opens: MAX_OPENS_OPTIONS[maxOpensIdx].value,
+      ...(trimmedPassphrase ? { passphrase: trimmedPassphrase } : {}),
     }
 
     try {
@@ -511,7 +524,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
     } finally {
       setLoading(false)
     }
-  }, [fileId, expiryIdx, maxOpensIdx, isUnlocked, getFileKey])
+  }, [fileId, expiryIdx, maxOpensIdx, passphrase, isUnlocked, getFileKey])
 
   const copyToClipboard = useCallback(async (text: string, type: 'full-link' | 'split-link' | 'split-key') => {
     try {
@@ -601,20 +614,47 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
                   </button>
                 </div>
 
-                {/* Settings summary */}
-                <div className="flex items-center gap-3 mb-3 text-[11.5px] text-ink-3">
-                  <span className="flex items-center gap-1">
-                    <Icon name="clock" size={11} />
-                    {EXPIRY_OPTIONS[expiryIdx].hours
-                      ? `Expires in ${EXPIRY_OPTIONS[expiryIdx].label.toLowerCase()}`
-                      : 'No expiry'}
-                  </span>
-                  <span className="w-px h-3 bg-line-2" />
-                  <span>
-                    {MAX_OPENS_OPTIONS[maxOpensIdx].value
-                      ? `${MAX_OPENS_OPTIONS[maxOpensIdx].value} opens max`
-                      : 'Unlimited opens'}
-                  </span>
+                {/* Settings summary + edit affordance */}
+                <div className="flex items-start gap-3 mb-3 text-[11.5px] text-ink-3 flex-wrap">
+                  <div className="flex items-center gap-3 flex-wrap flex-1 min-w-0">
+                    <span className="flex items-center gap-1">
+                      <Icon name="clock" size={11} />
+                      {EXPIRY_OPTIONS[expiryIdx].hours
+                        ? `Expires in ${EXPIRY_OPTIONS[expiryIdx].label.toLowerCase()}`
+                        : 'No expiry'}
+                    </span>
+                    <span className="w-px h-3 bg-line-2" />
+                    <span>
+                      {MAX_OPENS_OPTIONS[maxOpensIdx].value
+                        ? `${MAX_OPENS_OPTIONS[maxOpensIdx].value} opens max`
+                        : 'Unlimited opens'}
+                    </span>
+                    {shareResult.has_passphrase && (
+                      <>
+                        <span className="w-px h-3 bg-line-2" />
+                        <span className="flex items-center gap-1">
+                          <Icon name="lock" size={11} />
+                          Passphrase required
+                        </span>
+                      </>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await revokeShare(shareResult.id)
+                      } catch { /* server may be unreachable; revert UI anyway */ }
+                      setShareResult(null)
+                      setDecryptionKey('')
+                      setCopied(null)
+                      setError(null)
+                    }}
+                    className="shrink-0 flex items-center gap-1 text-ink-2 hover:text-ink underline-offset-2 hover:underline transition-colors"
+                  >
+                    <Icon name="settings" size={11} />
+                    Edit settings
+                  </button>
                 </div>
 
                 {shareMode === 'full' ? (
@@ -701,7 +741,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
                 {mode === 'link' ? (
                   <>
                     {/* Expiry + Max opens dropdowns */}
-                    <div className="grid grid-cols-2 gap-3 mb-[18px]">
+                    <div className="grid grid-cols-2 gap-3 mb-[14px]">
                       <div>
                         <label className="block text-xs font-medium text-ink-2 mb-1.5">Expires</label>
                         <Dropdown
@@ -719,6 +759,38 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
                           onChange={setMaxOpensIdx}
                         />
                       </div>
+                    </div>
+
+                    {/* Optional passphrase */}
+                    <div className="mb-[18px]">
+                      <label htmlFor="share-passphrase" className="block text-xs font-medium text-ink-2 mb-1.5">
+                        Passphrase <span className="text-ink-3 font-normal">(optional)</span>
+                      </label>
+                      <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 transition-all hover:border-line-2 focus-within:border-line-2">
+                        <Icon name="lock" size={13} className="text-ink-3 shrink-0" />
+                        <input
+                          id="share-passphrase"
+                          type={showPassphrase ? 'text' : 'password'}
+                          value={passphrase}
+                          onChange={(e) => { setPassphrase(e.currentTarget.value); setError(null) }}
+                          placeholder="Add a passphrase recipients must enter"
+                          autoComplete="off"
+                          className="flex-1 bg-transparent text-[13px] text-ink outline-none placeholder:text-ink-4"
+                        />
+                        {passphrase && (
+                          <button
+                            type="button"
+                            onClick={() => setShowPassphrase((v) => !v)}
+                            className="text-ink-3 hover:text-ink-2 transition-colors shrink-0"
+                            aria-label={showPassphrase ? 'Hide passphrase' : 'Show passphrase'}
+                          >
+                            <Icon name={showPassphrase ? 'eye-off' : 'eye'} size={13} />
+                          </button>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-ink-3 mt-1">
+                        Recipients enter this before the file decrypts. Share it out-of-band.
+                      </p>
                     </div>
 
                     {error && (

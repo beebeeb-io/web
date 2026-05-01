@@ -130,12 +130,27 @@ function getKindLabel(mimeType: string, filename: string): string {
   return mimeType
 }
 
+// Image formats that no current desktop browser decodes natively.
+// These fall through to the "preview not available" fallback so the user
+// gets a download prompt instead of a silently broken <img>.
+const UNSUPPORTED_IMAGE_MIMES = new Set([
+  'image/heic',
+  'image/heif',
+  'image/heic-sequence',
+  'image/heif-sequence',
+])
+const UNSUPPORTED_IMAGE_EXTS = new Set(['heic', 'heif'])
+
 function pickRenderer(
   mimeType: string,
   blob: Blob,
   filename: string,
 ): React.ReactNode {
   if (mimeType.startsWith('image/')) {
+    const ext = getExtension(filename)
+    if (UNSUPPORTED_IMAGE_MIMES.has(mimeType) || UNSUPPORTED_IMAGE_EXTS.has(ext)) {
+      return null
+    }
     return <ImagePreview blob={blob} />
   }
   if (mimeType === 'application/pdf') {
