@@ -782,7 +782,7 @@ export function Drive() {
       location: locationPath || '/',
       cipher: isUnlocked ? 'AES-256-GCM' : undefined,
       keyId: isUnlocked ? file.id : undefined,
-      region: 'eu-central (Frankfurt)',
+      region: undefined,
     }
   }
 
