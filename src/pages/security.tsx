@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { DriveLayout } from '../components/drive-layout'
+import { SettingsShell } from '../components/settings-shell'
 import { Icon } from '../components/icons'
 import type { IconName } from '../components/icons'
 import { BBChip } from '../components/bb-chip'
@@ -94,7 +94,7 @@ export function Security() {
   }
 
   return (
-    <DriveLayout>
+    <SettingsShell activeSection="account">
           {/* Header */}
           <div className="flex items-center gap-3 px-6 py-3.5 border-b border-line">
             <div>
@@ -422,6 +422,6 @@ export function Security() {
             showToast({ icon: 'check', title: 'Password changed', description: 'All other sessions have been signed out' })
           }}
         />
-    </DriveLayout>
+    </SettingsShell>
   )
 }
