@@ -42,6 +42,7 @@ interface FileDetailsPanelProps {
   onMove?: () => void
   onStar?: () => void
   onTrash?: () => void
+  onVersionHistory?: () => void
   isStarred?: boolean
 }
 
@@ -108,6 +109,7 @@ export function FileDetailsPanel({
   onMove,
   onStar,
   onTrash,
+  onVersionHistory,
   isStarred = false,
 }: FileDetailsPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null)
@@ -215,37 +217,57 @@ export function FileDetailsPanel({
         {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto">
           {/* Who has access */}
-          {access.length > 0 && (
-            <div className="px-xl py-lg border-b border-line">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 mb-2.5">
-                Who has access
-              </div>
-              <div className="flex flex-col gap-2">
-                {access.map((p, i) => (
-                  <div key={i} className="flex items-center gap-2.5">
-                    <div
-                      className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-white text-[9.5px] font-semibold"
-                      style={{ background: accessColors[i % accessColors.length] }}
-                    >
-                      {p.initials}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[11.5px] font-medium text-ink truncate">{p.name}</div>
-                      <div className="text-[10px] text-ink-3">{p.role}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <BBButton
-                size="sm"
-                variant="ghost"
-                className="w-full justify-center mt-2.5 gap-1.5"
-                onClick={onShare}
-              >
-                <Icon name="plus" size={11} /> Add people
-              </BBButton>
+          <div className="px-xl py-lg border-b border-line">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 mb-2.5">
+              Who has access
             </div>
-          )}
+            {access.length > 0 ? (
+              <>
+                <div className="flex flex-col gap-2">
+                  {access.map((p, i) => (
+                    <div key={i} className="flex items-center gap-2.5">
+                      <div
+                        className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-white text-[9.5px] font-semibold"
+                        style={{ background: accessColors[i % accessColors.length] }}
+                      >
+                        {p.initials}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[11.5px] font-medium text-ink truncate">{p.name}</div>
+                        <div className="text-[10px] text-ink-3">{p.role}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <BBButton
+                  size="sm"
+                  variant="ghost"
+                  className="w-full justify-center mt-2.5 gap-1.5"
+                  onClick={onShare}
+                >
+                  <Icon name="plus" size={11} /> Add people
+                </BBButton>
+              </>
+            ) : (
+              <div className="flex items-center gap-2.5">
+                <div className="w-6 h-6 rounded-full bg-paper-2 border border-line flex items-center justify-center shrink-0">
+                  <Icon name="lock" size={10} className="text-ink-3" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[11.5px] font-medium text-ink">Only you</div>
+                  <div className="text-[10px] text-ink-3">Private — not shared</div>
+                </div>
+                <BBButton
+                  size="sm"
+                  variant="ghost"
+                  className="gap-1.5"
+                  onClick={onShare}
+                >
+                  <Icon name="share" size={10} /> Share
+                </BBButton>
+              </div>
+            )}
+          </div>
 
           {/* Details grid */}
           <div className="px-xl py-lg border-b border-line">
@@ -326,6 +348,11 @@ export function FileDetailsPanel({
           <BBButton size="sm" variant="ghost" className="gap-1.5" onClick={onMove}>
             <Icon name="folder" size={11} /> Move
           </BBButton>
+          {!file.isFolder && onVersionHistory && (
+            <BBButton size="sm" variant="ghost" className="gap-1.5" onClick={onVersionHistory}>
+              <Icon name="clock" size={11} /> Versions
+            </BBButton>
+          )}
           <BBButton size="sm" variant="ghost" className="gap-1.5 ml-auto text-red" onClick={onTrash}>
             <Icon name="trash" size={11} /> Trash
           </BBButton>

@@ -1680,6 +1680,12 @@ export function Drive() {
         onStar={() => selectedFile && handleToggleStar(selectedFile.id)}
         isStarred={selectedFile?.is_starred ?? false}
         onTrash={() => setSelectedFileId(null)}
+        onVersionHistory={() => {
+          if (selectedFile && !selectedFile.is_folder) {
+            setVersionFileId(selectedFile.id)
+            setSelectedFileId(null)
+          }
+        }}
       />
 
       {shareFile && (
