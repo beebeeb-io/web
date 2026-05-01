@@ -897,6 +897,60 @@ export async function removeMember(id: string): Promise<{ message: string }> {
   return request(`/api/v1/admin/members/${id}`, { method: 'DELETE' })
 }
 
+// ─── Admin user endpoints (platform-wide) ────────────────
+
+export interface AdminUser {
+  id: string
+  email: string
+  created_at: string
+  email_verified: boolean
+  plan: string
+  storage_used_bytes: number
+}
+
+export interface AdminUsersResponse {
+  users: AdminUser[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface AdminUserDetail {
+  id: string
+  email: string
+  email_verified: boolean
+  created_at: string
+  plan: string
+  billing_cycle: string | null
+  subscription_status: string | null
+  current_period_end: string | null
+  storage_bytes: number
+  file_count: number
+  share_count: number
+  session_count: number
+  last_login: string | null
+  workspaces: { id: string; name: string; role: string; joined_at: string }[]
+}
+
+export async function listAdminUsers(params?: {
+  search?: string
+  limit?: number
+  offset?: number
+}): Promise<AdminUsersResponse> {
+  const qs = new URLSearchParams()
+  if (params?.search) qs.set('search', params.search)
+  if (params?.limit) qs.set('limit', String(params.limit))
+  if (params?.offset != null) qs.set('offset', String(params.offset))
+  const q = qs.toString()
+  return request<AdminUsersResponse>(
+    `/api/v1/admin/users${q ? `?${q}` : ''}`,
+  )
+}
+
+export async function getAdminUserDetail(id: string): Promise<AdminUserDetail> {
+  return request<AdminUserDetail>(`/api/v1/admin/users/${id}`)
+}
+
 // ─── Admin storage pool endpoints ────────────────
 
 export interface StoragePool {
