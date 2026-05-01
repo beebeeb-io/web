@@ -34,14 +34,12 @@ const navItems: { path: string; icon: IconName; label: string }[] = [
   { path: '/trash', icon: 'trash', label: 'Trash' },
 ]
 
-function regionLabel(region: string): string {
-  const map: Record<string, string> = {
-    frankfurt: 'Frankfurt, DE',
-    falkenstein: 'Falkenstein, DE',
-    helsinki: 'Helsinki, FIN',
-    ede: 'Ede, NL · Beebeeb',
-  }
-  return map[region] ?? region
+const REGION_META: Record<string, { label: string; flag: string }> = {
+  auto: { label: 'Auto · EU', flag: '' },
+  falkenstein: { label: 'Falkenstein, DE', flag: '\u{1F1E9}\u{1F1EA}' },
+  helsinki: { label: 'Helsinki, FIN', flag: '\u{1F1EB}\u{1F1EE}' },
+  ede: { label: 'Ede, NL · Beebeeb', flag: '\u{1F1F3}\u{1F1F1}' },
+  frankfurt: { label: 'Frankfurt, DE', flag: '\u{1F1E9}\u{1F1EA}' },
 }
 
 function UserCard() {
@@ -155,11 +153,12 @@ function UserCard() {
 export function DriveLayout({ children }: { children: ReactNode }) {
   const location = useLocation()
   const { isUnlocked, getMasterKey } = useKeys()
-  const [sub, setSub] = useState<Subscription | null>(null)
+  const [_sub, setSub] = useState<Subscription | null>(null)
   const [planDetails, setPlanDetails] = useState<Plan | null>(null)
   const [sharedFolders, setSharedFolders] = useState<(ShareInvite & { decryptedName?: string })[]>([])
   const [pinnedIds, setPinnedIds] = useState<string[]>([])
   const [usage, setUsage] = useState<StorageUsage | null>(null)
+  const [storageRegion, setStorageRegion] = useState<string>('auto')
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   // Close sidebar on navigation (mobile)
@@ -182,6 +181,9 @@ export function DriveLayout({ children }: { children: ReactNode }) {
     getPreference<{ folder_ids: string[] }>('pinned_shared_folders')
       .then(pref => setPinnedIds(pref?.folder_ids ?? []))
       .catch((err) => console.error('[DriveLayout] Failed to load pinned folders:', err))
+    getPreference<{ pool_name: string }>('storage_region')
+      .then(pref => { if (pref?.pool_name) setStorageRegion(pref.pool_name) })
+      .catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -364,8 +366,12 @@ export function DriveLayout({ children }: { children: ReactNode }) {
             </Link>
           </div>
           <div className="mt-3 flex items-center gap-1.5 text-[10px] text-ink-3">
-            <Icon name="shield" size={11} className="text-amber-deep" />
-            <span className="font-mono">{regionLabel(sub?.region ?? 'frankfurt')}</span>
+            {REGION_META[storageRegion]?.flag ? (
+              <span className="text-[12px]">{REGION_META[storageRegion].flag}</span>
+            ) : (
+              <Icon name="shield" size={11} className="text-amber-deep" />
+            )}
+            <span className="font-mono">{REGION_META[storageRegion]?.label ?? storageRegion}</span>
           </div>
         </div>
 

@@ -43,8 +43,8 @@ export function SettingsAccount() {
   const [loadingUsage, setLoadingUsage] = useState(true)
 
   // Data residency state
-  const [selectedRegion, setSelectedRegion] = useState('frankfurt')
-  const [savedRegion, setSavedRegion] = useState('frankfurt')
+  const [selectedRegion, setSelectedRegion] = useState('auto')
+  const [savedRegion, setSavedRegion] = useState('auto')
   const [regionMode, setRegionMode] = useState<RegionMode>('preference')
   const [savedRegionMode, setSavedRegionMode] = useState<RegionMode>('preference')
   const [savingRegion, setSavingRegion] = useState(false)
@@ -244,7 +244,11 @@ export function SettingsAccount() {
                 key={region.id}
                 type="button"
                 disabled={!region.available}
-                onClick={() => region.available && setSelectedRegion(region.id)}
+                onClick={() => {
+                  if (!region.available) return
+                  setSelectedRegion(region.id)
+                  if (region.id === 'auto') setRegionMode('preference')
+                }}
                 className={`flex items-center gap-3 px-3.5 py-3 rounded-md border text-left transition-colors ${
                   isActive
                     ? 'border-amber-deep bg-amber-bg cursor-default'
@@ -289,31 +293,41 @@ export function SettingsAccount() {
         </div>
       </SettingsRow>
 
-      <SettingsRow
-        label="Storage mode"
-        hint={
-          regionMode === 'preference'
-            ? 'Store here when possible. If this region is full, overflow to another.'
-            : 'Only this region. Uploads may fail if capacity is limited.'
-        }
-      >
-        <div className="flex rounded-md border border-line overflow-hidden w-fit">
-          {(['preference', 'force'] as const).map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              onClick={() => setRegionMode(mode)}
-              className={`px-4 py-1.5 text-[12.5px] font-medium transition-colors ${
-                regionMode === mode
-                  ? 'bg-ink text-paper'
-                  : 'bg-paper text-ink-2 hover:bg-paper-2'
-              }`}
-            >
-              {mode === 'preference' ? 'Preference' : 'Force'}
-            </button>
-          ))}
-        </div>
-      </SettingsRow>
+      {selectedRegion !== 'auto' && (
+        <SettingsRow
+          label="Storage mode"
+          hint={
+            regionMode === 'preference'
+              ? 'Store here when possible. If this region is full, overflow to another.'
+              : 'Only this region. Uploads may fail if capacity is limited.'
+          }
+        >
+          <div className="flex items-center gap-3">
+            <div className="flex rounded-md border border-line overflow-hidden w-fit">
+              {(['preference', 'force'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setRegionMode(mode)}
+                  className={`px-4 py-1.5 text-[12.5px] font-medium transition-colors ${
+                    regionMode === mode
+                      ? 'bg-ink text-paper'
+                      : 'bg-paper text-ink-2 hover:bg-paper-2'
+                  }`}
+                >
+                  {mode === 'preference' ? 'Preference' : 'Force'}
+                </button>
+              ))}
+            </div>
+            {regionMode === 'force' && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium bg-amber-bg text-amber-deep border border-amber-deep/20">
+                <Icon name="eye" size={10} />
+                Capacity limited — uploads may be rejected when full
+              </span>
+            )}
+          </div>
+        </SettingsRow>
+      )}
 
       {hasRegionChanges && (
         <div className="flex justify-end px-7 py-4">
