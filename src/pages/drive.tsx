@@ -1757,7 +1757,20 @@ export function Drive() {
                           </BBChip>
                         )}
                       </div>
-                      <div className="text-[11px] text-ink-3 mt-0.5">{file.mime_type || 'Folder'}</div>
+                      <div className="text-[11px] text-ink-3 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                        <span className="truncate">{file.mime_type || 'Folder'}</span>
+                        {/* On mobile the size + modified columns are hidden,
+                            so fold their data into the filename subtitle —
+                            otherwise the user has no way to see it. */}
+                        {!file.is_folder && (
+                          <>
+                            <span className="md:hidden text-line-2">·</span>
+                            <span className="md:hidden font-mono tabular-nums">{formatBytes(file.size_bytes)}</span>
+                          </>
+                        )}
+                        <span className="md:hidden text-line-2">·</span>
+                        <span className="md:hidden">{timeAgo(file.updated_at)}</span>
+                      </div>
                     </div>
                     <span className="hidden md:inline font-mono text-[13px] text-ink-3 tabular-nums self-center">
                       {file.is_folder ? '--' : formatBytes(file.size_bytes)}
@@ -1772,7 +1785,11 @@ export function Drive() {
                       <BBButton
                         size="sm"
                         variant="ghost"
-                        className="opacity-0 group-hover:opacity-100 transition-opacity"
+                        // Touch devices can't hover, so the kebab needs to
+                        // be visible by default. On md+ it's the existing
+                        // hover-reveal so the row stays clean at idle.
+                        className="md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+                        aria-label="File actions"
                         onClick={(e) => {
                           e.stopPropagation()
                           const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
