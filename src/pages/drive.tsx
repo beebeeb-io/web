@@ -14,7 +14,6 @@ import { UploadProgress, type UploadItem } from '../components/upload-progress'
 import { NewFolderDialog } from '../components/new-folder-dialog'
 import { VersionHistory } from '../components/version-history'
 import { NotificationInbox, useNotifications } from '../components/notification-inbox'
-import { ShortcutsCheatsheet } from '../components/shortcuts-cheatsheet'
 import { WelcomeTour } from '../components/welcome-tour'
 import { getPreference, setPreference } from '../lib/api'
 import { useToast } from '../components/toast'
@@ -72,7 +71,6 @@ export function Drive() {
   const [moveFileId, setMoveFileId] = useState<string | null>(null)
   const [renameFileId, setRenameFileId] = useState<string | null>(null)
   const [versionFileId, setVersionFileId] = useState<string | null>(null)
-  const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [tourOpen, setTourOpen] = useState(false)
   const [tourCompleted, setTourCompleted] = useState<Set<string>>(new Set())
   const [pausedUploads, setPausedUploads] = useState<UploadState[]>([])
@@ -1013,26 +1011,29 @@ export function Drive() {
     onDownloadSelected: () => {
       if (externalSelectedIds.size > 0) handleBulkDownload(Array.from(externalSelectedIds))
     },
-    onSearch: () => navigate('/search'),
+    onSearch: () => {
+      const input = document.querySelector<HTMLInputElement>('[data-search-input]')
+      if (input) {
+        input.focus()
+        input.select()
+      } else {
+        navigate('/search')
+      }
+    },
+    // onShortcuts is wired globally in app.tsx (GlobalShortcuts).
+    onOpenSelected: () => {
+      // Prefer the active selection set; fall back to the inspector's pinned file.
+      const ids = externalSelectedIds.size > 0
+        ? Array.from(externalSelectedIds)
+        : selectedFileId ? [selectedFileId] : []
+      if (ids.length !== 1) return
+      const file = files.find((f) => f.id === ids[0])
+      if (!file) return
+      if (file.is_folder) handleFolderOpen(file)
+      else setSelectedFileId(file.id)
+    },
     onEscape: () => {}, // handled inside FileList
   })
-
-  // Open shortcuts cheatsheet with '?'
-  useEffect(() => {
-    function handleKey(e: KeyboardEvent) {
-      if (
-        e.key === '?' &&
-        !e.ctrlKey &&
-        !e.metaKey &&
-        !(e.target instanceof HTMLInputElement) &&
-        !(e.target instanceof HTMLTextAreaElement)
-      ) {
-        setShortcutsOpen(true)
-      }
-    }
-    document.addEventListener('keydown', handleKey)
-    return () => document.removeEventListener('keydown', handleKey)
-  }, [])
 
   // ─── Derived data ───────────────────────────────────
 
@@ -1063,6 +1064,7 @@ export function Drive() {
           >
             <Icon name="search" size={13} className="text-ink-4 shrink-0" />
             <input
+              data-search-input
               placeholder="Search files and folders..."
               className="flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-4"
             />
@@ -1355,11 +1357,6 @@ export function Drive() {
           onVersionRestored={fetchFiles}
         />
       )}
-
-      <ShortcutsCheatsheet
-        open={shortcutsOpen}
-        onClose={() => setShortcutsOpen(false)}
-      />
 
       <WelcomeTour
         open={tourOpen}

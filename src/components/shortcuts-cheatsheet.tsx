@@ -13,15 +13,17 @@ const groups = [
     label: 'Navigation',
     items: [
       ['Open command palette', `${modLabel} K`],
-      ['Search', `${modLabel} F`],
+      ['Focus search', '/'],
+      ['Search page', `${modLabel} F`],
       ['Show this cheatsheet', '?'],
     ],
   },
   {
     label: 'File actions',
     items: [
-      ['Upload', `${modLabel} U`],
-      ['New folder', `${modLabel} N`],
+      ['Upload', 'U'],
+      ['New folder', 'N'],
+      ['Open selection', 'Enter'],
       ['Download selection', `${modLabel} D`],
       ['Move to trash', 'Del'],
     ],

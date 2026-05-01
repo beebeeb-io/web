@@ -20,6 +20,7 @@ interface ShortcutActions {
   onTrashSelected?: () => void
   onDownloadSelected?: () => void
   onStarSelected?: () => void
+  onOpenSelected?: () => void
   onEscape?: () => void
 }
 
@@ -74,12 +75,18 @@ export function useKeyboardShortcuts(actions: ShortcutActions) {
         actions.onSearch?.()
         return
       }
-      // ? (Shift+/ on US layouts) is the conventional "show shortcuts" key
-      // — Gmail/GitHub/Slack all use it. Bare / also works as a backstop for
-      // layouts where ? requires AltGr or similar.
-      if (e.key === '?' || e.key === '/' || (mod && e.key === '/')) {
+      // Bare `/` focuses search (Gmail/Linear convention).
+      // `?` (Shift+/ on US layouts) opens the cheatsheet.
+      // Cmd+/ also opens the cheatsheet as a backstop for layouts where ?
+      // requires AltGr or similar.
+      if (e.key === '?' || (mod && e.key === '/')) {
         e.preventDefault()
         actions.onShortcuts?.()
+        return
+      }
+      if (e.key === '/' && !mod && !e.altKey) {
+        e.preventDefault()
+        actions.onSearch?.()
         return
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -96,6 +103,26 @@ export function useKeyboardShortcuts(actions: ShortcutActions) {
         e.preventDefault()
         actions.onStarSelected?.()
         return
+      }
+      // Bare-key power-user shortcuts. Only fire when no modifier is held so
+      // we don't clobber browser shortcuts or text input.
+      if (!mod && !e.altKey && !e.shiftKey) {
+        if (e.key.toLowerCase() === 'n') {
+          e.preventDefault()
+          actions.onNewFolder?.()
+          return
+        }
+        if (e.key.toLowerCase() === 'u') {
+          e.preventDefault()
+          actions.onUpload?.()
+          return
+        }
+        if (e.key === 'Enter') {
+          // Don't preventDefault — let buttons/links activate normally if focused.
+          // The handler should be a no-op when nothing is selected.
+          actions.onOpenSelected?.()
+          return
+        }
       }
     },
     [actions],
