@@ -23,6 +23,7 @@ import {
 import { decryptFolderKey, decryptChildFileKey } from '../lib/folder-share-crypto'
 import { decryptFilename, fromBase64 } from '../lib/crypto'
 import { QuotaWarning } from './quota-warning'
+import { QuickAccess } from './quick-access'
 import { formatStorageSI } from '../lib/format'
 
 const navItems: { path: string; icon: IconName; label: string }[] = [
@@ -310,12 +311,14 @@ export function DriveLayout({ children }: { children: ReactNode }) {
           })}
         </nav>
 
+        <QuickAccess />
+
         {sharedFolders.length > 0 && (
           <>
             <div className="mx-4 my-2.5 h-px bg-line" />
             <div className="px-4 py-1">
               <div className="text-[10px] font-medium uppercase tracking-wider text-ink-3 mb-1">
-                Shared with me
+                Pinned shares
               </div>
             </div>
             <nav aria-label="Shared folders" className="px-3 pb-1.5 overflow-y-auto max-h-[200px]">
