@@ -1176,9 +1176,14 @@ export async function getPreferences(): Promise<Record<string, unknown>> {
   return data.preferences
 }
 
-export async function getPreference<T = unknown>(key: string): Promise<T> {
-  const data = await request<{ value: T }>(`/api/v1/preferences/${key}`)
-  return data.value
+export async function getPreference<T = unknown>(key: string): Promise<T | null> {
+  try {
+    const data = await request<{ value: T }>(`/api/v1/preferences/${key}`)
+    return data.value
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null
+    throw err
+  }
 }
 
 export async function setPreference(key: string, value: unknown): Promise<void> {
