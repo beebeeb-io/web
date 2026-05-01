@@ -9,7 +9,7 @@ interface BBButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const variantClasses: Record<Variant, string> = {
-  amber: 'bg-amber text-ink hover:brightness-95 active:brightness-90',
+  amber: 'bg-amber text-[oklch(0.22_0.01_70)] hover:brightness-95 active:brightness-90',
   default: 'bg-paper text-ink border border-line hover:bg-paper-2 active:bg-paper-3',
   ghost: 'bg-transparent text-ink-2 hover:bg-paper-2 active:bg-paper-3',
   danger: 'bg-red text-white hover:brightness-95 active:brightness-90',
