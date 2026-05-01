@@ -14,14 +14,15 @@ interface DataRegion {
   id: string
   city: string
   country: string
+  flag: string
   provider: string
   available: boolean
 }
 
 const DATA_REGIONS: DataRegion[] = [
-  { id: 'falkenstein', city: 'Falkenstein', country: 'DE', provider: '', available: true },
-  { id: 'helsinki', city: 'Helsinki', country: 'FIN', provider: '', available: true },
-  { id: 'ede', city: 'Ede', country: 'NL', provider: 'Beebeeb', available: false },
+  { id: 'falkenstein', city: 'Falkenstein', country: 'DE', flag: '\u{1F1E9}\u{1F1EA}', provider: '', available: true },
+  { id: 'helsinki', city: 'Helsinki', country: 'FIN', flag: '\u{1F1EB}\u{1F1EE}', provider: '', available: true },
+  { id: 'ede', city: 'Ede', country: 'NL', flag: '\u{1F1F3}\u{1F1F1}', provider: 'Beebeeb', available: false },
 ]
 
 type RegionMode = 'preference' | 'force'
@@ -255,7 +256,7 @@ export function SettingsAccount() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className={`text-[13px] font-mono ${isActive ? 'font-semibold text-ink' : 'text-ink-2'}`}>
-                      {region.city}, {region.country}
+                      {region.city}, {region.flag} {region.country}
                     </span>
                     {region.provider && (
                       <span className="text-[11px] text-ink-4 font-mono">
