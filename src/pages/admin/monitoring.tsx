@@ -200,14 +200,14 @@ export function Monitoring() {
                   <div className="flex items-center gap-1">
                     <span className="text-[10px] text-ink-4">DB</span>
                     <span className="font-mono text-[11px] text-ink-2">
-                      {health.db_latency_ms.toFixed(1)}ms
+                      {health.db_latency_ms?.toFixed(1) ?? '--'}ms
                     </span>
                   </div>
                   <div className="h-4 w-px bg-line" />
                   <div className="flex items-center gap-1">
                     <span className="text-[10px] text-ink-4">Uptime</span>
                     <span className="font-mono text-[11px] text-ink-2">
-                      {formatUptime(health.uptime_seconds)}
+                      {health.uptime_seconds != null ? formatUptime(health.uptime_seconds) : '--'}
                     </span>
                   </div>
                   <div className="h-4 w-px bg-line" />

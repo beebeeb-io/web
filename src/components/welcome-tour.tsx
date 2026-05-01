@@ -80,9 +80,9 @@ export function WelcomeTour({
   const displayName = userName ?? 'there'
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 pointer-events-none">
       <div
-        className="bg-paper rounded-xl border border-line-2 shadow-3 overflow-hidden"
+        className="bg-paper rounded-xl border border-line-2 shadow-3 overflow-hidden pointer-events-auto"
         style={{ width: 680 }}
       >
         {/* Header */}
