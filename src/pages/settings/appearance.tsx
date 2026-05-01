@@ -322,12 +322,12 @@ export function SettingsAppearance() {
                 type="button"
                 disabled={!lang.available}
                 onClick={() => lang.available && i18n.changeLanguage(lang.code)}
-                className={`flex items-center gap-2.5 px-3 py-2.5 rounded-md border text-left transition-colors ${
+                className={`group/lang flex items-center gap-2.5 px-3 py-2.5 rounded-md border text-left transition-all duration-200 ${
                   isActive
                     ? 'border-amber-deep bg-amber-bg cursor-default'
                     : lang.available
                       ? 'border-line bg-paper hover:bg-paper-2 cursor-pointer'
-                      : 'border-line bg-paper-2 opacity-50 cursor-not-allowed'
+                      : 'border-line bg-paper-2 opacity-60 hover:opacity-100 hover:border-amber/40 hover:shadow-[0_0_20px_oklch(0.82_0.17_84_/_0.15)] cursor-default'
                 }`}
               >
                 <span className="font-mono text-[10px] text-ink-3 w-5">{lang.code}</span>
@@ -336,7 +336,7 @@ export function SettingsAppearance() {
                   <Icon name="check" size={12} className="text-amber-deep" />
                 )}
                 {!lang.available && (
-                  <BBChip>Coming soon</BBChip>
+                  <BBChip className="transition-colors duration-200 group-hover/lang:border-amber/40 group-hover/lang:text-amber-deep">Coming soon</BBChip>
                 )}
               </button>
             )
@@ -346,32 +346,34 @@ export function SettingsAppearance() {
 
       {/* ─ Region format ─────────────────────────── */}
       <SettingsRow label="Region format" hint="Affects dates, numbers, currency displays">
-        <div className="flex items-center gap-2 border rounded-md bg-paper px-3 py-2 border-line max-w-[280px]">
-          <input
-            value={region}
-            onChange={(e) => {
-              setRegion(e.target.value)
-              saveLocale({ region: e.target.value })
-            }}
-            className="flex-1 bg-transparent text-sm text-ink outline-none"
-          />
-          <Icon name="chevron-down" size={12} className="text-ink-3 shrink-0" />
-        </div>
+        <select
+          value={region}
+          onChange={(e) => {
+            setRegion(e.target.value)
+            saveLocale({ region: e.target.value })
+          }}
+          className="border rounded-md bg-paper px-3 py-2 border-line max-w-[280px] text-sm text-ink outline-none appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%237d7770%22%20stroke-width%3D%222.5%22%3E%3Cpath%20d%3D%22M6%209l6%206%206-6%22%2F%3E%3C%2Fsvg%3E')] bg-no-repeat bg-[right_10px_center] pr-8 cursor-pointer"
+        >
+          <option value="Europe · 24h · metric · €">Europe · 24h · metric · EUR</option>
+          <option value="Europe · 24h · metric · £">Europe · 24h · metric · GBP</option>
+          <option value="Europe · 24h · metric · CHF">Europe · 24h · metric · CHF</option>
+        </select>
       </SettingsRow>
 
       {/* ─ Timezone ──────────────────────────────── */}
       <SettingsRow label="Timezone" hint="Used for activity log and shared link expiry">
-        <div className="flex items-center gap-2 border rounded-md bg-paper px-3 py-2 border-line max-w-[280px]">
-          <input
-            value={timezone}
-            onChange={(e) => {
-              setTimezone(e.target.value)
-              saveLocale({ timezone: e.target.value })
-            }}
-            className="flex-1 bg-transparent text-sm text-ink outline-none"
-          />
-          <Icon name="chevron-down" size={12} className="text-ink-3 shrink-0" />
-        </div>
+        <select
+          value={timezone}
+          onChange={(e) => {
+            setTimezone(e.target.value)
+            saveLocale({ timezone: e.target.value })
+          }}
+          className="border rounded-md bg-paper px-3 py-2 border-line max-w-[280px] text-sm text-ink outline-none appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%237d7770%22%20stroke-width%3D%222.5%22%3E%3Cpath%20d%3D%22M6%209l6%206%206-6%22%2F%3E%3C%2Fsvg%3E')] bg-no-repeat bg-[right_10px_center] pr-8 cursor-pointer"
+        >
+          {Intl.supportedValuesOf('timeZone').filter(tz => tz.startsWith('Europe/')).map(tz => (
+            <option key={tz} value={tz}>{tz.replace('_', ' ')}</option>
+          ))}
+        </select>
       </SettingsRow>
 
       {/* ─ First day of week ─────────────────────── */}
