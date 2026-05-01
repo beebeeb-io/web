@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { BBLogo } from './bb-logo'
@@ -14,6 +14,7 @@ import {
   getFolderKeys,
   getPreference,
   setPreference,
+  getAdminStats,
   type Subscription,
   type Plan,
   type ShareInvite,
@@ -33,8 +34,8 @@ const navItems: { path: string; icon: IconName; label: string }[] = [
 ]
 
 function formatStorage(bytes: number): string {
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)} MB`
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+  if (bytes < 1_000_000_000) return `${(bytes / 1_000_000).toFixed(0)} MB`
+  return `${(bytes / 1_000_000_000).toFixed(0)} GB`
 }
 
 function regionLabel(region: string): string {
@@ -46,9 +47,116 @@ function regionLabel(region: string): string {
   return map[region] ?? region
 }
 
+function UserCard() {
+  const { user, logout } = useAuth()
+  const [open, setOpen] = useState(false)
+  const [isAdmin, setIsAdmin] = useState(false)
+  const wrapRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    getAdminStats().then(() => setIsAdmin(true)).catch(() => setIsAdmin(false))
+  }, [])
+
+  useEffect(() => {
+    if (!open) return
+    function onDown(e: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const email = user?.email ?? ''
+  const initial = email.trim().charAt(0).toUpperCase() || '?'
+
+  const itemClass =
+    'w-full flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] text-ink-2 hover:bg-paper-3/50 transition-colors text-left cursor-pointer'
+
+  return (
+    <div ref={wrapRef} className="relative px-3 pb-3 pt-2">
+      {open && (
+        <div
+          role="menu"
+          className="absolute bottom-full left-3 right-3 mb-1 rounded-md border border-line bg-paper-2 shadow-2 p-1"
+        >
+          <Link
+            to="/settings"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className={itemClass}
+          >
+            <Icon name="settings" size={13} className="shrink-0 text-ink-3" />
+            <span className="flex-1">Account</span>
+          </Link>
+          <Link
+            to="/billing"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className={itemClass}
+          >
+            <Icon name="cloud" size={13} className="shrink-0 text-ink-3" />
+            <span className="flex-1">Billing</span>
+          </Link>
+          {isAdmin && (
+            <Link
+              to="/admin"
+              role="menuitem"
+              onClick={() => setOpen(false)}
+              className={itemClass}
+            >
+              <Icon name="shield" size={13} className="shrink-0 text-ink-3" />
+              <span className="flex-1">Admin</span>
+            </Link>
+          )}
+          <div className="my-1 mx-1 h-px bg-line" />
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false)
+              logout()
+            }}
+            className={itemClass}
+          >
+            <Icon name="x" size={13} className="shrink-0 text-ink-3" />
+            <span className="flex-1">Log out</span>
+          </button>
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={`w-full flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] transition-colors cursor-pointer ${
+          open ? 'bg-paper-3' : 'hover:bg-paper-3/50'
+        }`}
+      >
+        <div className="size-6 shrink-0 rounded-full bg-amber-bg text-amber-deep flex items-center justify-center text-[11px] font-semibold font-mono">
+          {initial}
+        </div>
+        <span className="flex-1 truncate text-left text-ink-2">{email}</span>
+        <Icon
+          name="chevron-down"
+          size={11}
+          className={`shrink-0 text-ink-3 transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+    </div>
+  )
+}
+
 export function DriveLayout({ children }: { children: ReactNode }) {
   const location = useLocation()
-  const { logout } = useAuth()
   const { isUnlocked, getMasterKey } = useKeys()
   const [sub, setSub] = useState<Subscription | null>(null)
   const [planDetails, setPlanDetails] = useState<Plan | null>(null)
@@ -255,17 +363,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
           </div>
         </div>
 
-        <div className="px-3 pb-3">
-          <button
-            onClick={logout}
-            aria-label="Log out"
-            style={{ paddingTop: 'var(--sidebar-item-py, 7px)', paddingBottom: 'var(--sidebar-item-py, 7px)' }}
-            className="w-full flex items-center gap-2.5 px-2 rounded-md text-[13px] text-ink-3 hover:bg-paper-3/50 transition-colors text-left cursor-pointer"
-          >
-            <Icon name="x" size={13} className="shrink-0" />
-            Log out
-          </button>
-        </div>
+        <UserCard />
       </aside>
 
       <main id="main-content" className="flex-1 flex flex-col min-w-0" style={{ fontSize: 'var(--display-font-size, 15px)' }}>
