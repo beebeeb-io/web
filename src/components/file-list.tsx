@@ -325,6 +325,9 @@ export function FileList({
         ? Array.from(selectedIds)
         : [file.id]
     e.dataTransfer.setData('text/plain', JSON.stringify(ids))
+    if (file.is_folder && ids.length === 1) {
+      e.dataTransfer.setData('application/beebeeb-folder', file.id)
+    }
     e.dataTransfer.effectAllowed = 'move'
     setDraggedFileId(file.id)
   }

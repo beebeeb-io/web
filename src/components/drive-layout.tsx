@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { ReactNode, DragEvent } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { BBLogo } from './bb-logo'
 import { Icon } from './icons'
@@ -161,6 +161,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   const [usage, setUsage] = useState<StorageUsage | null>(null)
   const [storageRegion, setStorageRegion] = useState<string>('auto')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [quickAccessDragOver, setQuickAccessDragOver] = useState(false)
 
   // Close sidebar on navigation (mobile)
   useEffect(() => {
@@ -204,6 +205,33 @@ export function DriveLayout({ children }: { children: ReactNode }) {
       window.removeEventListener('beebeeb:region-changed', onRegionChanged)
     }
   }, [])
+
+  function handleQuickAccessDragOver(e: DragEvent<HTMLDivElement>) {
+    if (e.dataTransfer.types.includes('application/beebeeb-folder')) {
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'link'
+      setQuickAccessDragOver(true)
+    }
+  }
+
+  function handleQuickAccessDragLeave(e: DragEvent<HTMLDivElement>) {
+    const related = e.relatedTarget as Node | null
+    if (related && (e.currentTarget as HTMLElement).contains(related)) return
+    setQuickAccessDragOver(false)
+  }
+
+  async function handleQuickAccessDrop(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault()
+    setQuickAccessDragOver(false)
+    const folderId = e.dataTransfer.getData('application/beebeeb-folder')
+    if (!folderId) return
+    const pref = await getPreference<{ folder_ids: string[] }>('pinned_folders').catch(() => null)
+    const current = pref?.folder_ids ?? []
+    if (!current.includes(folderId)) {
+      await setPreference('pinned_folders', { folder_ids: [...current, folderId] }).catch(() => {})
+      window.dispatchEvent(new Event('beebeeb:pins-changed'))
+    }
+  }
 
   async function togglePin(folderId: string) {
     const newIds = pinnedIds.includes(folderId)
@@ -311,7 +339,19 @@ export function DriveLayout({ children }: { children: ReactNode }) {
           })}
         </nav>
 
-        <QuickAccess />
+        <div
+          onDragOver={handleQuickAccessDragOver}
+          onDragLeave={handleQuickAccessDragLeave}
+          onDrop={handleQuickAccessDrop}
+          className={quickAccessDragOver ? 'ring-1 ring-amber/40 rounded-md bg-amber-bg/20 mx-1' : ''}
+        >
+          <QuickAccess />
+          {quickAccessDragOver && (
+            <div className="px-4 pb-2 text-[11px] text-amber-deep text-center">
+              Drop to pin
+            </div>
+          )}
+        </div>
 
         {sharedFolders.length > 0 && (
           <>
