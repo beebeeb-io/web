@@ -486,7 +486,7 @@ export async function downloadFile(id: string): Promise<Blob> {
 
 export async function updateFile(
   fileId: string,
-  updates: { parent_id?: string; name_encrypted?: string },
+  updates: { parent_id?: string | null; name_encrypted?: string },
 ): Promise<DriveFile> {
   return request<DriveFile>(`/api/v1/files/${fileId}`, {
     method: 'PATCH',

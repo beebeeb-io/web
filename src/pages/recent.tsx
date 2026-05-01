@@ -209,7 +209,7 @@ export function Recent() {
   async function handleMoveConfirm(destinationId: string | null, _mode: 'move' | 'copy') {
     if (!moveFileId) return
     try {
-      await updateFile(moveFileId, { parent_id: destinationId ?? undefined })
+      await updateFile(moveFileId, { parent_id: destinationId })
       showToast({ icon: 'folder', title: 'File moved', description: 'Moved successfully.' })
       fetchFiles()
     } catch (err) {
