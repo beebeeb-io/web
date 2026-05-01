@@ -1219,13 +1219,13 @@ export function Drive() {
       <HiddenFolderInput />
       <HiddenResumeInput />
       {/* Top bar */}
-        <div className="px-5 py-2.5 border-b border-line flex items-center gap-3">
+        <div className="px-3 md:px-5 py-2.5 border-b border-line flex items-center gap-2 md:gap-3 flex-wrap md:flex-nowrap">
           {/* Breadcrumbs */}
           <Breadcrumb items={breadcrumbs} onNavigate={handleBreadcrumbNav} />
 
           {/* Search */}
           <form
-            className="ml-auto flex items-center gap-2 border border-line rounded-md bg-paper px-2.5 py-1.5 w-[260px]"
+            className="ml-auto flex items-center gap-2 border border-line rounded-md bg-paper px-2.5 py-1.5 w-full md:w-[260px] order-last md:order-none"
             onSubmit={(e) => {
               e.preventDefault()
               const input = e.currentTarget.querySelector('input')
@@ -1243,14 +1243,14 @@ export function Drive() {
           </form>
 
           {/* New + Upload */}
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 shrink-0">
             <BBButton size="sm" variant="amber" onClick={() => setFolderDialogOpen(true)} className="gap-1.5">
               <Icon name="plus" size={13} /> New
             </BBButton>
             <BBButton size="sm" onClick={browse} className="gap-1.5">
-              <Icon name="upload" size={13} /> Upload
+              <Icon name="upload" size={13} /> <span className="hidden sm:inline">Upload</span>
             </BBButton>
-            <BBButton size="sm" onClick={browseFolder} className="gap-1.5">
+            <BBButton size="sm" onClick={browseFolder} className="hidden sm:inline-flex gap-1.5">
               <Icon name="folder" size={13} /> Upload folder
             </BBButton>
           </div>
@@ -1449,7 +1449,7 @@ export function Drive() {
                     onDragOver={(e) => handleDragOver(e, file)}
                     onDragLeave={(e) => handleDragLeave(e, file.id)}
                     onDrop={(e) => handleDrop(e, file)}
-                    className={`group transition-colors cursor-pointer ${
+                    className={`group transition-colors cursor-pointer grid gap-2.5 md:gap-[14px] grid-cols-[20px_32px_1fr_40px] md:grid-cols-[20px_32px_1fr_110px_110px_100px_60px] px-3 md:px-5 py-[11px] ${
                       isDragTarget
                         ? 'bg-amber-bg ring-2 ring-amber ring-inset'
                         : isSelected
@@ -1458,12 +1458,6 @@ export function Drive() {
                             ? 'bg-amber-bg/30'
                             : 'hover:bg-paper-2'
                     } ${isDragging ? 'opacity-40' : ''}`}
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '20px 32px 1fr 110px 110px 100px 60px',
-                      gap: 14,
-                      padding: '11px 20px',
-                    }}
                     onClick={(e) => handleRowClick(file, e)}
                     onDoubleClick={() => {
                       if (!file.is_folder) handleFileDownload(file)
@@ -1505,13 +1499,13 @@ export function Drive() {
                       </div>
                       <div className="text-[11px] text-ink-3 mt-0.5">{file.mime_type || 'Folder'}</div>
                     </div>
-                    <span className="font-mono text-[13px] text-ink-3 tabular-nums self-center">
+                    <span className="hidden md:inline font-mono text-[13px] text-ink-3 tabular-nums self-center">
                       {file.is_folder ? '--' : formatBytes(file.size_bytes)}
                     </span>
-                    <span className="text-[13px] text-ink-3 self-center">
+                    <span className="hidden md:inline text-[13px] text-ink-3 self-center">
                       {timeAgo(file.updated_at)}
                     </span>
-                    <div className="self-center">
+                    <div className="hidden md:block self-center">
                       <span className="text-[13px] text-ink-3">--</span>
                     </div>
                     <div className="flex justify-end self-center">

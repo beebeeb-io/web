@@ -54,6 +54,12 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   const [sharedFolders, setSharedFolders] = useState<(ShareInvite & { decryptedName?: string })[]>([])
   const [pinnedIds, setPinnedIds] = useState<string[]>([])
   const [usage, setUsage] = useState<StorageUsage | null>(null)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+
+  // Close sidebar on navigation (mobile)
+  useEffect(() => {
+    setSidebarOpen(false)
+  }, [location.pathname])
 
   useEffect(() => {
     getSubscription().then(setSub).catch((err) => console.error('[DriveLayout] Failed to load subscription:', err))
@@ -130,9 +136,31 @@ export function DriveLayout({ children }: { children: ReactNode }) {
       <a href="#main-content" className="skip-to-content">
         Skip to main content
       </a>
-      <aside className="w-[220px] shrink-0 border-r border-line bg-paper-2 flex flex-col" aria-label="Sidebar">
-        <div className="px-4 pt-4 pb-3">
+
+      {/* Mobile sidebar backdrop */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/30 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 w-[220px] border-r border-line bg-paper-2 flex flex-col transition-transform duration-200 md:static md:translate-x-0 md:shrink-0 ${
+          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+        aria-label="Sidebar"
+      >
+        <div className="px-4 pt-4 pb-3 flex items-center justify-between">
           <BBLogo size={14} />
+          <button
+            onClick={() => setSidebarOpen(false)}
+            className="md:hidden p-1 text-ink-3 hover:text-ink transition-colors cursor-pointer"
+            aria-label="Close sidebar"
+          >
+            <Icon name="x" size={16} />
+          </button>
         </div>
 
         <nav aria-label="Main navigation" className="px-3 py-1.5">
@@ -237,6 +265,17 @@ export function DriveLayout({ children }: { children: ReactNode }) {
       </aside>
 
       <main id="main-content" className="flex-1 flex flex-col min-w-0">
+        {/* Mobile header with hamburger */}
+        <div className="md:hidden flex items-center gap-3 px-4 py-2.5 border-b border-line bg-paper-2">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="p-1 text-ink-2 hover:text-ink transition-colors cursor-pointer"
+            aria-label="Open sidebar"
+          >
+            <Icon name="menu" size={18} />
+          </button>
+          <BBLogo size={12} />
+        </div>
         {children}
       </main>
     </div>
