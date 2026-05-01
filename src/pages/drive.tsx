@@ -110,26 +110,13 @@ export function Drive() {
   const lastClickedIdRef = useRef<string | null>(null)
   const [bulkMoveOpen, setBulkMoveOpen] = useState(false)
 
-  const viewType = location.pathname === '/starred' ? 'starred'
-    : location.pathname === '/recent' ? 'recent'
-    : 'files'
-
-  const viewTitle = viewType === 'starred' ? 'Starred'
-    : viewType === 'recent' ? 'Recent'
-    : breadcrumbs[breadcrumbs.length - 1]?.name ?? 'All files'
-
   const currentParentId = breadcrumbs[breadcrumbs.length - 1]?.id ?? undefined
 
   const fetchFiles = useCallback(async () => {
     setLoading(true)
     try {
       const trashed = location.pathname === '/trash'
-      let data = await listFiles(currentParentId ?? undefined, trashed)
-      if (viewType === 'starred') {
-        data = data.filter((f) => f.is_starred)
-      } else if (viewType === 'recent') {
-        data = [...data].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
-      }
+      const data = await listFiles(currentParentId ?? undefined, trashed)
       setFiles(data)
       setSyncedAgo(0)
     } catch {
@@ -137,7 +124,7 @@ export function Drive() {
     } finally {
       setLoading(false)
     }
-  }, [currentParentId, location.pathname, viewType])
+  }, [currentParentId, location.pathname])
 
   useEffect(() => {
     fetchFiles()
@@ -858,11 +845,11 @@ export function Drive() {
 
   // ─── Multi-select helpers ──────────────────────────────
 
-  /** Clear selection whenever the folder / view changes. */
+  /** Clear selection whenever the folder changes. */
   useEffect(() => {
     setSelectedIds(new Set())
     lastClickedIdRef.current = null
-  }, [currentParentId, viewType])
+  }, [currentParentId])
 
   function toggleSelection(fileId: string) {
     setSelectedIds((prev) => {
@@ -1068,30 +1055,26 @@ export function Drive() {
       <HiddenResumeInput />
       {/* Top bar */}
         <div className="px-5 py-2.5 border-b border-line flex items-center gap-3">
-          {/* Breadcrumbs / view title */}
+          {/* Breadcrumbs */}
           <div className="flex items-center gap-1.5 text-sm">
-            {viewType !== 'files' ? (
-              <span className="font-semibold text-ink">{viewTitle}</span>
-            ) : (
-              breadcrumbs.map((crumb, i) => {
-                const isLast = i === breadcrumbs.length - 1
-                return (
-                  <span key={i} className="flex items-center gap-1.5">
-                    {i > 0 && <Icon name="chevron-right" size={12} className="text-ink-4" />}
-                    {isLast ? (
-                      <span className="font-semibold text-ink">{crumb.name}</span>
-                    ) : (
-                      <button
-                        onClick={() => handleBreadcrumbNav(i)}
-                        className="text-ink-3 hover:text-ink transition-colors"
-                      >
-                        {crumb.name}
-                      </button>
-                    )}
-                  </span>
-                )
-              })
-            )}
+            {breadcrumbs.map((crumb, i) => {
+              const isLast = i === breadcrumbs.length - 1
+              return (
+                <span key={i} className="flex items-center gap-1.5">
+                  {i > 0 && <Icon name="chevron-right" size={12} className="text-ink-4" />}
+                  {isLast ? (
+                    <span className="font-semibold text-ink">{crumb.name}</span>
+                  ) : (
+                    <button
+                      onClick={() => handleBreadcrumbNav(i)}
+                      className="text-ink-3 hover:text-ink transition-colors"
+                    >
+                      {crumb.name}
+                    </button>
+                  )}
+                </span>
+              )
+            })}
           </div>
 
           {/* Search */}
@@ -1281,58 +1264,22 @@ export function Drive() {
               </div>
             ) : sortedFiles.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center py-20">
-                {viewType === 'starred' ? (
-                  <>
-                    <div
-                      className="w-14 h-14 mb-4 rounded-2xl flex items-center justify-center"
-                      style={{
-                        background: 'var(--color-paper-2)',
-                        border: '1.5px dashed var(--color-line-2)',
-                      }}
-                    >
-                      <Icon name="star" size={24} className="text-amber-deep" />
-                    </div>
-                    <div className="text-[15px] font-semibold text-ink mb-1">No starred files</div>
-                    <div className="text-[13px] text-ink-3">
-                      Right-click any file and choose Star to pin it here
-                    </div>
-                  </>
-                ) : viewType === 'recent' ? (
-                  <>
-                    <div
-                      className="w-14 h-14 mb-4 rounded-2xl flex items-center justify-center"
-                      style={{
-                        background: 'var(--color-paper-2)',
-                        border: '1.5px dashed var(--color-line-2)',
-                      }}
-                    >
-                      <Icon name="clock" size={24} className="text-ink-3" />
-                    </div>
-                    <div className="text-[15px] font-semibold text-ink mb-1">No recent activity</div>
-                    <div className="text-[13px] text-ink-3">
-                      Files you open or edit will appear here
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div
-                      className="w-14 h-14 mb-4 rounded-2xl flex items-center justify-center"
-                      style={{
-                        background: 'var(--color-amber-bg)',
-                        border: '1.5px dashed var(--color-line-2)',
-                      }}
-                    >
-                      <Icon name="upload" size={24} className="text-amber-deep" />
-                    </div>
-                    <div className="text-[15px] font-semibold text-ink mb-1">Drop files to start</div>
-                    <div className="text-[13px] text-ink-3 mb-4">
-                      or use the Upload button above
-                    </div>
-                    <BBButton size="sm" onClick={browse}>
-                      Browse files
-                    </BBButton>
-                  </>
-                )}
+                <div
+                  className="w-14 h-14 mb-4 rounded-2xl flex items-center justify-center"
+                  style={{
+                    background: 'var(--color-amber-bg)',
+                    border: '1.5px dashed var(--color-line-2)',
+                  }}
+                >
+                  <Icon name="upload" size={24} className="text-amber-deep" />
+                </div>
+                <div className="text-[15px] font-semibold text-ink mb-1">Drop files to start</div>
+                <div className="text-[13px] text-ink-3 mb-4">
+                  or use the Upload button above
+                </div>
+                <BBButton size="sm" onClick={browse}>
+                  Browse files
+                </BBButton>
               </div>
             ) : (
               sortedFiles.map((file) => {
