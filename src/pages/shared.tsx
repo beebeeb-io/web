@@ -15,12 +15,14 @@ import { useToast } from '../components/toast'
 import {
   getSentInvites,
   getIncomingInvites,
+  getShareStats,
   cancelInvite,
   claimInvite,
   resendInvite,
   withdrawInvite,
   hideInvite,
   type ShareInvite,
+  type ShareStats,
 } from '../lib/api'
 import { useKeys } from '../lib/key-context'
 import { decryptFilename, decryptChunk, fromBase64, x25519SharedSecret, deriveShareKey, deriveX25519Private, zeroize } from '../lib/crypto'
@@ -69,6 +71,9 @@ export function Shared() {
   const [tab, setTab] = useState<TabId>('with-me')
   const [loading, setLoading] = useState(true)
 
+  // Share stats
+  const [stats, setStats] = useState<ShareStats | null>(null)
+
   // "With me" state — approved incoming invites
   const [withMeInvites, setWithMeInvites] = useState<ShareInvite[]>([])
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({})
@@ -109,9 +114,10 @@ export function Shared() {
   const fetchAll = useCallback(async () => {
     setLoading(true)
     try {
-      const [sent, incoming] = await Promise.all([
+      const [sent, incoming, shareStats] = await Promise.all([
         getSentInvites().catch(() => []),
         getIncomingInvites().catch(() => []),
+        getShareStats().catch(() => null),
       ])
 
       setWithMeInvites(incoming.filter((i) => i.status === 'approved'))
@@ -119,6 +125,7 @@ export function Shared() {
       setSentInvited(sent.filter((i) => i.status === 'invited'))
       setIncomingInvited(incoming.filter((i) => i.status === 'invited'))
       setIncomingClaimed(incoming.filter((i) => i.status === 'claimed'))
+      setStats(shareStats)
     } catch (err) {
       console.error('[Shared] Failed to load shared items:', err)
       showToast({ icon: 'x', title: 'Failed to load shared items', danger: true })
@@ -810,6 +817,21 @@ export function Shared() {
             Files shared with you and by you
           </p>
         </div>
+        {stats && (
+          <div className="flex items-center gap-1.5 ml-2">
+            <BBChip variant="default" className="text-[10px] gap-1">
+              <span className="font-mono">{stats.active_links}</span> active link{stats.active_links !== 1 ? 's' : ''}
+            </BBChip>
+            <span className="text-ink-4 text-[10px]">&middot;</span>
+            <BBChip variant={stats.pending_invites > 0 ? 'amber' : 'default'} className="text-[10px] gap-1">
+              <span className="font-mono">{stats.pending_invites}</span> pending invite{stats.pending_invites !== 1 ? 's' : ''}
+            </BBChip>
+            <span className="text-ink-4 text-[10px]">&middot;</span>
+            <BBChip variant="default" className="text-[10px] gap-1">
+              <span className="font-mono">{stats.total_downloads}</span> total download{stats.total_downloads !== 1 ? 's' : ''}
+            </BBChip>
+          </div>
+        )}
         <div className="ml-auto">
           <NotificationInbox
             notifications={notifications}

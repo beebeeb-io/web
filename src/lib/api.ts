@@ -750,6 +750,18 @@ export async function hideInvite(inviteId: string): Promise<void> {
   await request(`/api/v1/shares/invites/${inviteId}/hide`, { method: 'POST' })
 }
 
+// ─── Share stats ─────────────────────────────
+
+export interface ShareStats {
+  active_links: number
+  pending_invites: number
+  total_downloads: number
+}
+
+export async function getShareStats(): Promise<ShareStats> {
+  return request<ShareStats>('/api/v1/shares/stats')
+}
+
 // ─── Billing endpoints ─────────────────────────
 
 export interface Plan {
@@ -1600,6 +1612,21 @@ export async function listSessions(): Promise<{ sessions: Session[] }> {
 
 export async function revokeSession(id: string): Promise<void> {
   await request(`/api/v1/auth/sessions/${id}`, { method: 'DELETE' })
+}
+
+// ─── Admin impersonation ────────────────────────
+
+export interface ImpersonateResponse {
+  session_token: string
+  user_id: string
+  email: string
+}
+
+export async function adminImpersonate(userId: string): Promise<ImpersonateResponse> {
+  const data = await request<ImpersonateResponse>(`/api/v1/admin/impersonate/${userId}`, {
+    method: 'POST',
+  })
+  return data
 }
 
 // ─── Admin stats & health ────────────────────────
