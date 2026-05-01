@@ -292,6 +292,10 @@ export function SettingsAccount() {
             )
           })}
         </div>
+        <div className="text-[11px] text-ink-3 mt-3 leading-relaxed">
+          New uploads go to your selected region. Existing files stay where they are.
+          Need to migrate? <a href="mailto:support@beebeeb.io" className="text-amber-deep hover:underline">Contact us</a>.
+        </div>
       </SettingsRow>
 
       {selectedRegion !== 'auto' && (
