@@ -6,6 +6,7 @@ import { ImagePreview } from './image-preview'
 import { PdfPreview } from './pdf-preview'
 import { VideoPreview } from './video-preview'
 import { MarkdownPreview } from './markdown-preview'
+import { TextPreview } from './text-preview'
 import { BBButton } from '../bb-button'
 import { Icon } from '../icons'
 import { useKeys } from '../../lib/key-context'
@@ -26,7 +27,78 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
 }
 
-function getKindLabel(mimeType: string): string {
+/** Map file extensions to language names for syntax coloring */
+const EXT_LANGUAGE: Record<string, string> = {
+  // JavaScript / TypeScript
+  js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',
+  mjs: 'javascript', cjs: 'javascript',
+  // Systems
+  rs: 'rust', go: 'go', c: 'c', h: 'c', cpp: 'cpp', hpp: 'cpp',
+  // JVM
+  java: 'java', kt: 'kotlin', scala: 'scala',
+  // Scripting
+  py: 'python', rb: 'ruby', php: 'php', lua: 'lua', pl: 'perl', sh: 'shell',
+  bash: 'shell', zsh: 'shell', fish: 'shell',
+  // Web
+  html: 'html', htm: 'html', css: 'css', scss: 'css', less: 'css', svg: 'xml',
+  // Data / config
+  json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml', xml: 'xml',
+  sql: 'sql', graphql: 'graphql', gql: 'graphql',
+  // DevOps / config
+  dockerfile: 'docker', makefile: 'make', cmake: 'cmake',
+  tf: 'terraform', hcl: 'terraform',
+  // Other
+  swift: 'swift', dart: 'dart', r: 'r', ex: 'elixir', exs: 'elixir',
+  erl: 'erlang', hs: 'haskell', ml: 'ocaml', zig: 'zig', nim: 'nim',
+  v: 'v', vue: 'vue', svelte: 'svelte', astro: 'astro',
+}
+
+/** Extensions that should render as plain text (no syntax coloring) */
+const TEXT_EXTENSIONS = new Set([
+  'txt', 'log', 'csv', 'tsv', 'env', 'conf', 'ini', 'cfg', 'properties',
+  'editorconfig', 'gitignore', 'gitattributes', 'dockerignore', 'npmrc',
+  'nvmrc', 'prettierrc', 'eslintrc', 'babelrc',
+])
+
+/** MIME types that should render as text */
+const TEXT_MIME_TYPES = new Set([
+  'text/plain',
+  'text/csv',
+  'text/tab-separated-values',
+  'text/x-log',
+])
+
+/** MIME types that should render as code */
+const CODE_MIME_TYPES: Record<string, string> = {
+  'text/javascript': 'javascript',
+  'application/javascript': 'javascript',
+  'text/typescript': 'typescript',
+  'application/typescript': 'typescript',
+  'text/html': 'html',
+  'text/css': 'css',
+  'text/xml': 'xml',
+  'application/xml': 'xml',
+  'application/json': 'json',
+  'application/x-yaml': 'yaml',
+  'text/yaml': 'yaml',
+  'text/x-python': 'python',
+  'text/x-java-source': 'java',
+  'text/x-c': 'c',
+  'text/x-c++': 'cpp',
+  'text/x-rust': 'rust',
+  'text/x-go': 'go',
+  'text/x-shellscript': 'shell',
+  'application/sql': 'sql',
+  'application/toml': 'toml',
+}
+
+function getExtension(filename: string): string {
+  const dot = filename.lastIndexOf('.')
+  if (dot === -1) return ''
+  return filename.slice(dot + 1).toLowerCase()
+}
+
+function getKindLabel(mimeType: string, filename: string): string {
   if (mimeType.startsWith('image/')) {
     const sub = mimeType.split('/')[1]?.toUpperCase() ?? 'Image'
     return sub === 'JPEG' ? 'JPEG Image' : `${sub} Image`
@@ -37,13 +109,30 @@ function getKindLabel(mimeType: string): string {
     return `${sub} Video`
   }
   if (mimeType === 'text/markdown') return 'Markdown'
-  if (mimeType === 'text/plain') return 'Plain Text'
+
+  const ext = getExtension(filename)
+
+  if (TEXT_MIME_TYPES.has(mimeType) || TEXT_EXTENSIONS.has(ext)) {
+    if (ext === 'csv') return 'CSV File'
+    if (ext === 'tsv') return 'TSV File'
+    if (ext === 'log') return 'Log File'
+    if (ext === 'env') return 'Environment File'
+    if (ext === 'conf' || ext === 'ini' || ext === 'cfg') return 'Config File'
+    return 'Plain Text'
+  }
+
+  const lang = CODE_MIME_TYPES[mimeType] ?? EXT_LANGUAGE[ext]
+  if (lang) {
+    return `${lang.charAt(0).toUpperCase() + lang.slice(1)} Source`
+  }
+
   return mimeType
 }
 
 function pickRenderer(
   mimeType: string,
   blob: Blob,
+  filename: string,
 ): React.ReactNode {
   if (mimeType.startsWith('image/')) {
     return <ImagePreview blob={blob} />
@@ -54,9 +143,28 @@ function pickRenderer(
   if (mimeType.startsWith('video/')) {
     return <VideoPreview blob={blob} />
   }
-  if (mimeType === 'text/markdown' || mimeType === 'text/plain') {
+  if (mimeType === 'text/markdown') {
     return <MarkdownPreview blob={blob} />
   }
+
+  const ext = getExtension(filename)
+
+  // Code files — text preview with syntax coloring
+  const lang = CODE_MIME_TYPES[mimeType] ?? EXT_LANGUAGE[ext]
+  if (lang) {
+    return <TextPreview blob={blob} language={lang} />
+  }
+
+  // Plain text files
+  if (TEXT_MIME_TYPES.has(mimeType) || TEXT_EXTENSIONS.has(ext)) {
+    return <TextPreview blob={blob} />
+  }
+
+  // Markdown extension even if mime is wrong
+  if (ext === 'md' || ext === 'mdx') {
+    return <MarkdownPreview blob={blob} />
+  }
+
   return null
 }
 
@@ -116,8 +224,8 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose }:
   }, [file.id])
 
   const sizeStr = formatSize(file.size_bytes)
-  const kindLabel = getKindLabel(file.mime_type)
-  const renderer = blob ? pickRenderer(file.mime_type, blob) : null
+  const kindLabel = getKindLabel(file.mime_type, name)
+  const renderer = blob ? pickRenderer(file.mime_type, blob, name) : null
   const canPreview = renderer !== null
 
   function handleDownload() {
