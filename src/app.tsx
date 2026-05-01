@@ -36,6 +36,8 @@ import { Photos } from './pages/photos'
 import { ShareViewPage } from './pages/share-view'
 import { AuditLog } from './pages/admin/audit-log'
 import { AbuseReports } from './pages/admin/abuse-reports'
+import { ForgotPassword } from './pages/forgot-password'
+import { ResetPassword } from './pages/reset-password'
 import { SsoSetup } from './pages/admin/sso'
 import { DataExport } from './pages/admin/data-export'
 import { ApiTokens } from './pages/admin/api-tokens'
@@ -161,6 +163,22 @@ export function App() {
             element={
               <GuestRoute>
                 <Login />
+              </GuestRoute>
+            }
+          />
+          <Route
+            path="/forgot-password"
+            element={
+              <GuestRoute>
+                <ForgotPassword />
+              </GuestRoute>
+            }
+          />
+          <Route
+            path="/reset-password"
+            element={
+              <GuestRoute>
+                <ResetPassword />
               </GuestRoute>
             }
           />

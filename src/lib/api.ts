@@ -496,6 +496,30 @@ export async function changePassword(
   return data
 }
 
+export async function forgotPassword(
+  email: string,
+): Promise<{ message: string }> {
+  return request<{ message: string }>('/api/v1/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  })
+}
+
+export async function resetPassword(
+  token: string,
+  newPassword: string,
+): Promise<{ message: string; session_token: string; salt: string }> {
+  const data = await request<{ message: string; session_token: string; salt: string }>(
+    '/api/v1/auth/reset-password',
+    {
+      method: 'POST',
+      body: JSON.stringify({ token, new_password: newPassword }),
+    },
+  )
+  setToken(data.session_token)
+  return data
+}
+
 export async function deleteAccountPermanently(
   confirmation: string,
 ): Promise<{ message: string; shred_after: string }> {
