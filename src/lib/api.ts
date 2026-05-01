@@ -867,6 +867,7 @@ export interface Subscription {
   seats: number
   region: string
   status: string
+  is_mock?: boolean
   created_at: string | null
   current_period_end: string | null
 }
@@ -946,6 +947,18 @@ export interface PaymentMethod {
 
 export async function getPaymentMethod(): Promise<PaymentMethod> {
   return request<PaymentMethod>('/api/v1/billing/payment-method')
+}
+
+export async function cancelSubscription(): Promise<{ message: string; cancel_at?: string }> {
+  return request<{ message: string; cancel_at?: string }>('/api/v1/billing/cancel', { method: 'POST' })
+}
+
+export async function reactivateSubscription(): Promise<{ message: string }> {
+  return request<{ message: string }>('/api/v1/billing/reactivate', { method: 'POST' })
+}
+
+export async function createSetupIntent(): Promise<{ client_secret: string }> {
+  return request<{ client_secret: string }>('/api/v1/billing/setup-intent', { method: 'POST' })
 }
 
 // ─── Admin endpoints ──────────────────────────
