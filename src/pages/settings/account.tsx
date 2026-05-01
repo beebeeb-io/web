@@ -21,7 +21,7 @@ interface DataRegion {
 const DATA_REGIONS: DataRegion[] = [
   { id: 'frankfurt', city: 'Frankfurt', country: 'DE', provider: 'Hetzner', available: true },
   { id: 'helsinki', city: 'Helsinki', country: 'FIN', provider: 'Hetzner', available: true },
-  { id: 'ede', city: 'Ede', country: 'NL', provider: 'Coming soon', available: false },
+  { id: 'ede', city: 'Ede', country: 'NL', provider: 'Beebeeb', available: false },
 ]
 
 type RegionMode = 'preference' | 'force'
