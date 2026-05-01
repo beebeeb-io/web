@@ -348,6 +348,32 @@ export function FileList({
     }
     e.dataTransfer.effectAllowed = 'move'
     setDraggedFileId(file.id)
+
+    // Custom drag image: for multi-select, show a stacked card with a count
+    // badge instead of just the dragged row (which doesn't communicate that
+    // multiple items are moving). For single-item drags, the default ghost
+    // is fine — keep it.
+    if (ids.length > 1) {
+      const ghost = document.createElement('div')
+      ghost.style.position = 'absolute'
+      ghost.style.top = '-1000px'
+      ghost.style.left = '-1000px'
+      ghost.style.padding = '6px 12px 6px 14px'
+      ghost.style.background = 'oklch(0.99 0.01 84)'
+      ghost.style.color = 'oklch(0.20 0.02 60)'
+      ghost.style.border = '1px solid oklch(0.86 0.07 90)'
+      ghost.style.borderRadius = '8px'
+      ghost.style.boxShadow = '0 6px 16px rgba(0,0,0,0.18), 4px 4px 0 -1px oklch(0.99 0.01 84), 4px 4px 0 0 oklch(0.86 0.07 90)'
+      ghost.style.fontFamily = 'Inter, system-ui, sans-serif'
+      ghost.style.fontSize = '12px'
+      ghost.style.fontWeight = '500'
+      ghost.style.whiteSpace = 'nowrap'
+      ghost.textContent = `${ids.length} items`
+      document.body.appendChild(ghost)
+      e.dataTransfer.setDragImage(ghost, 12, 12)
+      // Browsers snapshot the image synchronously, so we can clean up next tick.
+      setTimeout(() => { ghost.remove() }, 0)
+    }
   }
 
   function handleDragEnd() {

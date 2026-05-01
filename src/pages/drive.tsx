@@ -26,6 +26,7 @@ import {
   toggleStar,
   updateFile,
   deleteFile,
+  getFile,
   getIncomingInvites,
   getPendingApprovals,
   listMyShares,
@@ -942,6 +943,32 @@ export function Drive() {
       showToast({ icon: 'x', title: 'Move failed', description: err instanceof Error ? err.message : 'Could not move files.', danger: true })
     }
   }
+
+  // Listen for sidebar pinned-folder drops dispatched from quick-access.tsx.
+  // Sidebar uses dnd-kit for sortable reordering, so it can't share file-list's
+  // native HTML5 dnd state — instead it fires a window event with file ids and
+  // a target folder id, and we look up the folder + run the same move flow.
+  useEffect(() => {
+    function onDrop(e: Event) {
+      const ce = e as CustomEvent<{ folderId: string; fileIds: string[] }>
+      const detail = ce.detail
+      if (!detail?.folderId || !Array.isArray(detail.fileIds)) return
+      const target = files.find((f) => f.id === detail.folderId)
+      if (target) {
+        handleDropToFolder(detail.fileIds, target)
+        return
+      }
+      // Pinned folder may not be in the current `files` list — fetch it.
+      getFile(detail.folderId)
+        .then((folder) => handleDropToFolder(detail.fileIds, folder))
+        .catch(() => {
+          showToast({ icon: 'x', title: 'Move failed', description: 'Could not load target folder.', danger: true })
+        })
+    }
+    window.addEventListener('beebeeb:drop-into-folder', onDrop)
+    return () => window.removeEventListener('beebeeb:drop-into-folder', onDrop)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [files])
 
   // ─── Bulk action handlers ────────────────────────────
 

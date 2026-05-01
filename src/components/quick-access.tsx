@@ -32,9 +32,58 @@ function SortablePinnedFolder({ folder, isActive, onUnpin }: {
 }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: folder.id })
   const style = { transform: CSS.Transform.toString(transform), transition }
+  const [dragOver, setDragOver] = useState(false)
+
+  // Native HTML5 drop target — accepts file ids dragged from the main file
+  // list. Sortable reordering uses pointer events (dnd-kit), so the two
+  // event streams don't collide.
+  function handleDragOver(e: React.DragEvent) {
+    if (!e.dataTransfer.types.includes('text/plain')) return
+    // Don't accept the folder itself (pinning self into self).
+    if (e.dataTransfer.types.includes('application/beebeeb-folder')) {
+      try {
+        // We can't read getData on dragover, so trust the move on drop.
+      } catch { /* ignore */ }
+    }
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    setDragOver(true)
+  }
+
+  function handleDragLeave(e: React.DragEvent) {
+    const related = e.relatedTarget as Node | null
+    if (related && (e.currentTarget as HTMLElement).contains(related)) return
+    setDragOver(false)
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault()
+    setDragOver(false)
+    let fileIds: string[]
+    try {
+      fileIds = JSON.parse(e.dataTransfer.getData('text/plain')) as string[]
+    } catch { return }
+    fileIds = fileIds.filter((id) => id !== folder.id)
+    if (fileIds.length === 0) return
+    window.dispatchEvent(
+      new CustomEvent('beebeeb:drop-into-folder', {
+        detail: { folderId: folder.id, fileIds },
+      }),
+    )
+  }
 
   return (
-    <div ref={setNodeRef} style={style} {...attributes} className="group relative">
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      className={`group relative rounded-md transition-shadow ${
+        dragOver ? 'ring-2 ring-amber ring-inset bg-amber-bg/50' : ''
+      }`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <Link
         to={`/?folder=${folder.id}`}
         {...listeners}
