@@ -292,10 +292,13 @@ export interface DriveFile {
 export async function listFiles(
   parentId?: string,
   trashed?: boolean,
+  options?: { starred?: boolean; recent?: boolean },
 ): Promise<DriveFile[]> {
   const params = new URLSearchParams()
   if (parentId) params.set('parent_id', parentId)
   if (trashed !== undefined) params.set('trashed', String(trashed))
+  if (options?.starred) params.set('starred', 'true')
+  if (options?.recent) params.set('recent', 'true')
   const qs = params.toString()
   const data = await request<{ files: DriveFile[] }>(`/api/v1/files${qs ? `?${qs}` : ''}`)
   return data.files

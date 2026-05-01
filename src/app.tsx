@@ -16,6 +16,8 @@ import { Signup } from './pages/signup'
 import { Login } from './pages/login'
 import { Onboarding } from './pages/onboarding'
 import { Drive } from './pages/drive'
+import { Starred } from './pages/starred'
+import { Recent } from './pages/recent'
 import { SettingsProfile } from './pages/settings/profile'
 import { SettingsDevices } from './pages/settings/devices'
 import { SettingsNotifications } from './pages/settings/notifications'
@@ -178,7 +180,7 @@ export function App() {
             path="/starred"
             element={
               <ProtectedRoute>
-                <Drive />
+                <Starred />
               </ProtectedRoute>
             }
           />
@@ -186,7 +188,7 @@ export function App() {
             path="/recent"
             element={
               <ProtectedRoute>
-                <Drive />
+                <Recent />
               </ProtectedRoute>
             }
           />
