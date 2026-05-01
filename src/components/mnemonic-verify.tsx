@@ -45,15 +45,16 @@ export function MnemonicVerify({ phrase, onVerified, onBack }: MnemonicVerifyPro
   }
 
   return (
-    <div className="space-y-lg">
-      <div>
-        <h2 className="text-lg font-semibold text-ink mb-1">Verify your recovery phrase</h2>
-        <p className="text-sm text-ink-3 leading-relaxed">
-          Enter the requested words to confirm you saved your phrase.
-        </p>
-      </div>
+    <div>
+      <p className="text-xs font-medium text-ink-2 mb-2.5">Verification</p>
+      <h1 className="text-xl font-semibold text-ink mb-1.5">
+        Confirm your recovery phrase
+      </h1>
+      <p className="text-sm text-ink-3 leading-relaxed mb-5">
+        Enter the requested words to confirm you saved your phrase.
+      </p>
 
-      <div className="space-y-md">
+      <div className="space-y-3.5 mb-5">
         {indices.map((wordIndex) => (
           <BBInput
             key={wordIndex}
@@ -68,14 +69,14 @@ export function MnemonicVerify({ phrase, onVerified, onBack }: MnemonicVerifyPro
       </div>
 
       {error && (
-        <p className="text-sm text-red">{error}</p>
+        <p className="text-xs text-red mb-3">{error}</p>
       )}
 
       <div className="flex items-center gap-3">
         <BBButton variant="ghost" onClick={onBack}>
           Back
         </BBButton>
-        <BBButton variant="amber" onClick={handleVerify}>
+        <BBButton variant="amber" size="lg" className="flex-1" onClick={handleVerify}>
           Verify
         </BBButton>
       </div>

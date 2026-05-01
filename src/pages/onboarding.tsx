@@ -43,10 +43,15 @@ function getPasswordStrength(pw: string): {
   label: string
   color: string
 } {
-  const len = pw.length
-  if (len < 8) return { level: 1, label: 'Weak', color: 'bg-red' }
-  if (len < 12) return { level: 2, label: 'Fair', color: 'bg-amber' }
-  if (len < 16) return { level: 3, label: 'Good', color: 'bg-green' }
+  let score = 0
+  if (pw.length >= 8) score++
+  if (pw.length >= 12) score++
+  if (/[A-Z]/.test(pw) && /[a-z]/.test(pw)) score++
+  if (/\d/.test(pw) || /[^A-Za-z0-9]/.test(pw)) score++
+
+  if (score <= 1) return { level: 1, label: 'Weak', color: 'bg-red' }
+  if (score === 2) return { level: 2, label: 'Fair', color: 'bg-amber' }
+  if (score === 3) return { level: 3, label: 'Good', color: 'bg-green' }
   return { level: 4, label: 'Strong', color: 'bg-green' }
 }
 
@@ -193,7 +198,9 @@ export function Onboarding() {
             <div className="p-8 border-r border-line">
               {step === 'display' && (
                 <>
-                  <p className="text-xs font-medium text-ink-2 mb-2.5">Recovery phrase</p>
+                  <p className="text-xs font-medium text-ink-2 mb-2.5">
+                    Recovery phrase &middot; {words.length} words
+                  </p>
                   <h1 className="text-xl font-semibold text-ink mb-1.5">
                     Your master key, in words.
                   </h1>
@@ -204,12 +211,12 @@ export function Onboarding() {
 
                   {words.length > 0 ? (
                     <>
-                      <div className="bg-paper-2 border border-line rounded-lg p-4.5 mb-4">
-                        <div className="grid grid-cols-3 gap-x-5 gap-y-2.5">
+                      <div className="bg-paper-2 border border-line rounded-lg p-4.5 mb-4 select-text">
+                        <div className="grid grid-cols-2 gap-x-7 gap-y-2.5">
                           {words.map((word, i) => (
                             <div key={i} className="flex items-baseline gap-2.5 pb-2 border-b border-dashed border-line">
-                              <span className="font-mono text-[11px] text-ink-4 w-4.5">{String(i + 1).padStart(2, '0')}</span>
-                              <span className="font-mono text-sm font-medium text-ink">{word}</span>
+                              <span className="font-mono text-[11px] text-ink-4 w-4.5 select-none">{String(i + 1).padStart(2, '0')}</span>
+                              <span className="font-mono text-sm font-medium text-ink cursor-text">{word}</span>
                             </div>
                           ))}
                         </div>
@@ -217,6 +224,20 @@ export function Onboarding() {
                       <div className="flex gap-2">
                         <BBButton size="sm" onClick={() => navigator.clipboard.writeText(phrase)}>
                           <Icon name="copy" size={14} className="mr-1.5" /> Copy
+                        </BBButton>
+                        <BBButton size="sm" onClick={() => {
+                          const blob = new Blob(
+                            [words.map((w, i) => `${String(i + 1).padStart(2, '0')}  ${w}`).join('\n')],
+                            { type: 'text/plain' },
+                          )
+                          const url = URL.createObjectURL(blob)
+                          const a = document.createElement('a')
+                          a.href = url
+                          a.download = 'beebeeb-recovery-phrase.txt'
+                          a.click()
+                          URL.revokeObjectURL(url)
+                        }}>
+                          <Icon name="download" size={14} className="mr-1.5" /> Download
                         </BBButton>
                       </div>
                     </>
