@@ -170,7 +170,8 @@ export function DriveLayout({ children }: { children: ReactNode }) {
               <Link
                 key={item.path}
                 to={item.path}
-                className={`w-full flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] transition-colors ${
+                style={{ paddingTop: 'var(--sidebar-item-py, 7px)', paddingBottom: 'var(--sidebar-item-py, 7px)' }}
+                className={`w-full flex items-center gap-2.5 px-2 rounded-md text-[13px] transition-colors ${
                   isActive
                     ? 'bg-paper-3 font-semibold text-ink'
                     : 'text-ink-2 hover:bg-paper-3/50'
@@ -198,7 +199,8 @@ export function DriveLayout({ children }: { children: ReactNode }) {
                   <Link
                     key={folder.id}
                     to={`/shared-folder/${folder.file_id}?invite=${folder.id}`}
-                    className={`group w-full flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] transition-colors ${
+                    style={{ paddingTop: 'var(--sidebar-item-py, 7px)', paddingBottom: 'var(--sidebar-item-py, 7px)' }}
+                    className={`group w-full flex items-center gap-2.5 px-2 rounded-md text-[13px] transition-colors ${
                       isActive
                         ? 'bg-paper-3 font-semibold text-ink'
                         : 'text-ink-2 hover:bg-paper-3/50'
@@ -256,7 +258,8 @@ export function DriveLayout({ children }: { children: ReactNode }) {
           <button
             onClick={logout}
             aria-label="Log out"
-            className="w-full flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] text-ink-3 hover:bg-paper-3/50 transition-colors text-left"
+            style={{ paddingTop: 'var(--sidebar-item-py, 7px)', paddingBottom: 'var(--sidebar-item-py, 7px)' }}
+            className="w-full flex items-center gap-2.5 px-2 rounded-md text-[13px] text-ink-3 hover:bg-paper-3/50 transition-colors text-left cursor-pointer"
           >
             <Icon name="x" size={13} className="shrink-0" />
             Log out
@@ -264,7 +267,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      <main id="main-content" className="flex-1 flex flex-col min-w-0">
+      <main id="main-content" className="flex-1 flex flex-col min-w-0" style={{ fontSize: 'var(--display-font-size, 15px)' }}>
         {/* Mobile header with hamburger */}
         <div className="md:hidden flex items-center gap-3 px-4 py-2.5 border-b border-line bg-paper-2">
           <button

@@ -53,6 +53,7 @@ import { PasskeySetup } from './pages/passkey-setup'
 import { DeleteAccount } from './pages/delete-account'
 import { NotFound } from './pages/errors/not-found'
 import { ThemeProvider } from './lib/theme-context'
+import { DisplayProvider } from './lib/display-context'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
@@ -137,6 +138,7 @@ export function App() {
         <KeyProvider>
         <WsProvider>
         <ToastProvider>
+        <DisplayProvider>
         <ApiErrorWiring />
         <OfflineBanner />
         <GlobalShortcuts />
@@ -442,6 +444,7 @@ export function App() {
           <Route path="/s/:token" element={<ShareViewPage />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
+        </DisplayProvider>
         </ToastProvider>
         </WsProvider>
         </KeyProvider>
