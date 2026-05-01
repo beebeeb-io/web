@@ -36,6 +36,7 @@ import { AdminUsers } from './pages/admin/users'
 import { AdminBilling } from './pages/admin/billing-overview'
 import { StoragePools } from './pages/admin/storage-pools'
 import { Monitoring } from './pages/admin/monitoring'
+import { AdminMigrations } from './pages/admin/migrations'
 import { TwoFactorSetup } from './pages/two-factor-setup'
 import { VerifyEmail } from './pages/verify-email'
 import { Migration } from './pages/migration'
@@ -346,6 +347,14 @@ export function App() {
             element={
               <ProtectedRoute>
                 <StoragePools />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/migrations"
+            element={
+              <ProtectedRoute>
+                <AdminMigrations />
               </ProtectedRoute>
             }
           />
