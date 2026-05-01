@@ -413,7 +413,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
             <span className={`font-mono tabular-nums ${storageWarning ? 'text-red' : ''}`}>
               {formatStorageSI(usedBytes)} / {storageLabel}
             </span>
-            <Link to="/billing" className="font-medium text-amber-deep hover:underline">
+            <Link to="/settings/billing" className="font-medium text-amber-deep hover:underline">
               Manage
             </Link>
           </div>

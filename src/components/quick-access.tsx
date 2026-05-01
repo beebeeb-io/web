@@ -34,9 +34,10 @@ function SortablePinnedFolder({ folder, isActive, onUnpin }: {
   const style = { transform: CSS.Transform.toString(transform), transition }
 
   return (
-    <div ref={setNodeRef} style={style} {...attributes} {...listeners} className="group relative">
+    <div ref={setNodeRef} style={style} {...attributes} className="group relative">
       <Link
         to={`/?folder=${folder.id}`}
+        {...listeners}
         className={`w-full flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] transition-colors ${
           isActive ? 'bg-paper-3 font-semibold text-ink' : 'text-ink-2 hover:bg-paper-3/50'
         }`}
@@ -45,8 +46,9 @@ function SortablePinnedFolder({ folder, isActive, onUnpin }: {
         <span className="flex-1 truncate">{folder.name}</span>
       </Link>
       <button
+        onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); onUnpin(folder.id) }}
-        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity text-ink-3 hover:text-ink"
+        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity text-ink-3 hover:text-ink z-10"
         title="Unpin"
       >
         <Icon name="x" size={10} />
