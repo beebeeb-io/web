@@ -52,6 +52,30 @@ import { useSearchIndex } from '../hooks/use-search-index'
 import { FileRowSkeleton } from '../components/skeleton'
 import { EmptyDrive } from '../components/empty-states/empty-drive'
 
+// ─── Sort options ───────────────────────────────────
+// Folders are always grouped before files; the chosen key only orders
+// within each group. localStorage key: 'bb_drive_sort'.
+
+type SortKey =
+  | 'name-asc' | 'name-desc'
+  | 'modified-desc' | 'modified-asc'
+  | 'size-desc' | 'size-asc'
+  | 'type-asc'
+
+const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: 'name-asc',     label: 'Name (A → Z)' },
+  { key: 'name-desc',    label: 'Name (Z → A)' },
+  { key: 'modified-desc', label: 'Modified (newest)' },
+  { key: 'modified-asc',  label: 'Modified (oldest)' },
+  { key: 'size-desc',    label: 'Size (largest)' },
+  { key: 'size-asc',     label: 'Size (smallest)' },
+  { key: 'type-asc',     label: 'Type' },
+]
+
+function sortLabel(key: SortKey): string {
+  return SORT_OPTIONS.find((o) => o.key === key)?.label ?? 'Sort'
+}
+
 // ─── Helpers ───────────────────────────────────────
 
 function formatBytes(bytes: number): string {
@@ -103,6 +127,19 @@ export function Drive() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [tourOpen, setTourOpen] = useState(false)
   const [tourCompleted, setTourCompleted] = useState<Set<string>>(new Set())
+  const [sortKey, setSortKey] = useState<SortKey>(() => {
+    try {
+      const raw = localStorage.getItem('bb_drive_sort')
+      if (raw) {
+        const parsed = JSON.parse(raw) as { key?: string }
+        if (parsed.key && SORT_OPTIONS.some((o) => o.key === parsed.key)) {
+          return parsed.key as SortKey
+        }
+      }
+    } catch { /* fall through to default */ }
+    return 'name-asc'
+  })
+  const [sortMenuOpen, setSortMenuOpen] = useState(false)
   const [ctxMenu, setCtxMenu] = useState<{
     open: boolean; x: number; y: number; fileId: string; fileName: string; isFolder: boolean
   }>({ open: false, x: 0, y: 0, fileId: '', fileName: '', isFolder: false })
@@ -1031,12 +1068,44 @@ export function Drive() {
   }
 
   // ─── Sorted file list (needed before selection helpers) ──
+  // Folders always come first, regardless of the chosen key — moving a
+  // folder into the middle of the file list looks broken even when the
+  // sort technically makes sense (e.g. by size).
   const sortedFiles = [...files].sort((a, b) => {
-    // Folders first
     if (a.is_folder && !b.is_folder) return -1
     if (!a.is_folder && b.is_folder) return 1
-    return displayName(a).localeCompare(displayName(b))
+
+    switch (sortKey) {
+      case 'name-asc':
+        return displayName(a).localeCompare(displayName(b))
+      case 'name-desc':
+        return displayName(b).localeCompare(displayName(a))
+      case 'modified-desc':
+        return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+      case 'modified-asc':
+        return new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
+      case 'size-desc':
+        return b.size_bytes - a.size_bytes
+      case 'size-asc':
+        return a.size_bytes - b.size_bytes
+      case 'type-asc': {
+        // Group by mime_type, fall back to extension, then by name within
+        // each group so similar files cluster.
+        const ta = (a.mime_type || displayName(a).split('.').pop() || '').toLowerCase()
+        const tb = (b.mime_type || displayName(b).split('.').pop() || '').toLowerCase()
+        if (ta !== tb) return ta.localeCompare(tb)
+        return displayName(a).localeCompare(displayName(b))
+      }
+    }
   })
+
+  // Persist the user's choice; localStorage write is cheap and keyed
+  // globally so it carries across folders within the same browser.
+  useEffect(() => {
+    try {
+      localStorage.setItem('bb_drive_sort', JSON.stringify({ key: sortKey }))
+    } catch { /* localStorage full or blocked — fine, in-memory is enough */ }
+  }, [sortKey])
 
   // ─── Multi-select helpers ──────────────────────────────
 
@@ -1498,7 +1567,53 @@ export function Drive() {
           </div>
         )}
 
-        {/* Column header */}
+        {/* Sort + column header */}
+        <div className="px-3 md:px-5 py-1.5 border-b border-line bg-paper-2 flex items-center justify-end relative">
+          <button
+            type="button"
+            onClick={() => setSortMenuOpen((v) => !v)}
+            className="flex items-center gap-1.5 px-2 py-1 text-[11px] text-ink-2 rounded hover:bg-paper hover:text-ink transition-colors"
+            aria-label={`Sort: ${sortLabel(sortKey)}`}
+            aria-haspopup="menu"
+            aria-expanded={sortMenuOpen}
+          >
+            <span className="text-ink-3">Sort:</span>
+            <span className="font-medium">{sortLabel(sortKey)}</span>
+            <Icon name="chevron-down" size={10} className="text-ink-3" />
+          </button>
+          {sortMenuOpen && (
+            <>
+              <div
+                className="fixed inset-0 z-30"
+                onClick={() => setSortMenuOpen(false)}
+              />
+              <div
+                role="menu"
+                className="absolute right-3 md:right-5 top-full mt-0.5 z-40 bg-paper border border-line-2 rounded-md shadow-2 py-1 min-w-[200px]"
+              >
+                {SORT_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.key}
+                    role="menuitemradio"
+                    aria-checked={opt.key === sortKey}
+                    onClick={() => {
+                      setSortKey(opt.key)
+                      setSortMenuOpen(false)
+                    }}
+                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-paper-2 transition-colors ${
+                      opt.key === sortKey ? 'text-ink font-medium' : 'text-ink-2'
+                    }`}
+                  >
+                    <span className="w-3 inline-flex">
+                      {opt.key === sortKey && <Icon name="check" size={10} />}
+                    </span>
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
         <div className="px-3 md:px-5 py-2 border-b border-line bg-paper-2 grid gap-2.5 md:gap-[14px] grid-cols-[20px_32px_1fr_40px] md:grid-cols-[20px_32px_1fr_110px_110px_100px_60px]">
           <span className="flex items-center justify-center">
             {sortedFiles.length > 0 && (
