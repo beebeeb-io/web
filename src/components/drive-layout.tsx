@@ -122,6 +122,8 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   const storageLabel = formatStorage(storageLimit)
   const usedBytes = usage?.used_bytes ?? 0
   const usedPct = storageLimit > 0 ? Math.min(100, (usedBytes / storageLimit) * 100) : 0
+  const storageWarning = usedPct > 90
+  const planName = usage?.plan_name ?? planDetails?.name ?? 'Free'
 
   return (
     <div className="h-screen flex overflow-hidden bg-paper">
@@ -196,18 +198,24 @@ export function DriveLayout({ children }: { children: ReactNode }) {
         <div className="mx-4 my-2.5 h-px bg-line" />
 
         <div className="mt-auto px-4 py-4 border-t border-line">
-          <div className="text-[10px] font-medium uppercase tracking-wider text-ink-3 mb-2">
-            Storage
+          <div className="flex items-baseline justify-between mb-2">
+            <div className="text-[10px] font-medium uppercase tracking-wider text-ink-3">
+              Storage
+            </div>
+            <span className="text-[10px] text-ink-3">{planName} plan</span>
           </div>
           <div className="h-[3px] w-full rounded-full bg-paper-3 overflow-hidden mb-1.5">
-            <div className="h-full rounded-full bg-amber" style={{ width: `${usedPct}%` }} />
+            <div
+              className={`h-full rounded-full ${storageWarning ? 'bg-red' : 'bg-amber'}`}
+              style={{ width: `${usedPct}%` }}
+            />
           </div>
           <div className="flex justify-between text-[11px]">
-            <span className="font-mono tabular-nums">
+            <span className={`font-mono tabular-nums ${storageWarning ? 'text-red' : ''}`}>
               {formatStorage(usedBytes)} / {storageLabel}
             </span>
             <Link to="/billing" className="font-medium text-amber-deep hover:underline">
-              Upgrade
+              Manage
             </Link>
           </div>
           <div className="mt-3 flex items-center gap-1.5 text-[10px] text-ink-3">
