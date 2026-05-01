@@ -1,3 +1,4 @@
+import QRCode from 'qrcode'
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AuthShell } from '../components/auth-shell'
@@ -11,7 +12,7 @@ export function TwoFactorSetup() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [secret, setSecret] = useState('')
-  const [qrUri, setQrUri] = useState('')
+  const [qrDataUrl, setQrDataUrl] = useState('')
   const [backupCodes, setBackupCodes] = useState<string[]>([])
 
   // 6-digit code input
@@ -22,10 +23,15 @@ export function TwoFactorSetup() {
 
   useEffect(() => {
     setup2fa()
-      .then((data) => {
+      .then(async (data) => {
         setSecret(data.secret)
-        setQrUri(data.qr_uri)
         setBackupCodes(data.backup_codes)
+        const dataUrl = await QRCode.toDataURL(data.qr_uri, {
+          width: 280,
+          margin: 1,
+          color: { dark: '#1a1816', light: '#ffffff' },
+        })
+        setQrDataUrl(dataUrl)
       })
       .catch((err) => {
         setError(err instanceof Error ? err.message : 'Failed to set up 2FA')
@@ -144,11 +150,11 @@ export function TwoFactorSetup() {
       totalSteps={3}
     >
       <div className="grid gap-4.5" style={{ gridTemplateColumns: '160px 1fr' }}>
-        {/* QR code */}
+        {/* QR code — generated locally so the secret never leaves the browser */}
         <div className="bg-paper p-2.5 border border-line-2 rounded-md flex items-center justify-center">
-          {qrUri ? (
+          {qrDataUrl ? (
             <img
-              src={`https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(qrUri)}`}
+              src={qrDataUrl}
               alt="Scan this QR code with your authenticator app"
               width={140}
               height={140}
