@@ -13,32 +13,24 @@ import type { FontSize, SidebarDensity } from '../../lib/display-context'
 
 function getTimezoneOptions(): { value: string; label: string }[] {
   const now = Date.now()
-  const seen = new Map<string, string>()
 
-  for (const tz of Intl.supportedValuesOf('timeZone')) {
-    const offset = new Intl.DateTimeFormat('en-GB', {
-      timeZone: tz,
-      timeZoneName: 'shortOffset',
-    }).formatToParts(now).find(p => p.type === 'timeZoneName')?.value ?? ''
-
-    if (!seen.has(offset)) {
-      seen.set(offset, tz)
-    }
+  const parseOffset = (o: string) => {
+    const m = o.match(/([+-])(\d+)(?::(\d+))?/)
+    if (!m) return 0
+    return (m[1] === '-' ? -1 : 1) * (parseInt(m[2]) * 60 + parseInt(m[3] ?? '0'))
   }
 
-  return Array.from(seen.entries())
-    .map(([offset, tz]) => {
-      const city = tz.split('/').pop()?.replace(/_/g, ' ') ?? tz
+  return Intl.supportedValuesOf('timeZone')
+    .filter(tz => tz.startsWith('Europe/'))
+    .map(tz => {
+      const offset = new Intl.DateTimeFormat('en-GB', {
+        timeZone: tz,
+        timeZoneName: 'shortOffset',
+      }).formatToParts(now).find(p => p.type === 'timeZoneName')?.value ?? ''
+      const city = tz.split('/').pop()!.replace(/_/g, ' ')
       return { value: tz, label: `${offset} — ${city}`, offset }
     })
-    .sort((a, b) => {
-      const parseOffset = (o: string) => {
-        const m = o.match(/([+-])(\d+)(?::(\d+))?/)
-        if (!m) return 0
-        return (m[1] === '-' ? -1 : 1) * (parseInt(m[2]) * 60 + parseInt(m[3] ?? '0'))
-      }
-      return parseOffset(a.offset) - parseOffset(b.offset)
-    })
+    .sort((a, b) => parseOffset(a.offset) - parseOffset(b.offset) || a.label.localeCompare(b.label))
 }
 
 // ─── Theme preview cards ────────────────────────────
