@@ -574,6 +574,31 @@ export async function deleteAccountPermanently(
   return data
 }
 
+export async function changeEmail(
+  newEmail: string,
+  password: string,
+): Promise<{ message: string }> {
+  return request<{ message: string }>('/api/v1/auth/account/email', {
+    method: 'PUT',
+    body: JSON.stringify({ new_email: newEmail, password }),
+  })
+}
+
+export interface AccountExport {
+  user_id: string
+  email: string
+  exported_at: string
+  preferences: Record<string, unknown>
+  files: unknown[]
+  shares: unknown[]
+}
+
+export async function exportAccountData(): Promise<AccountExport> {
+  return request<AccountExport>('/api/v1/auth/account/export', {
+    method: 'POST',
+  })
+}
+
 // ─── Share endpoints ────────────────────────────
 
 export interface ShareOptions {
