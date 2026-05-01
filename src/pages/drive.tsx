@@ -139,6 +139,19 @@ export function Drive() {
     fetchFiles()
   }, [fetchFiles])
 
+  // Deep-link into a folder when navigating from search results
+  useEffect(() => {
+    const state = location.state as { openFolderId?: string | null; openFolderName?: string } | null
+    if (state?.openFolderId) {
+      setBreadcrumbs([
+        { id: null, name: 'All files' },
+        { id: state.openFolderId, name: state.openFolderName ?? 'Folder' },
+      ])
+      // Clear location state so refreshing doesn't re-navigate
+      navigate(location.pathname, { replace: true, state: null })
+    }
+  }, [location.state, navigate, location.pathname])
+
   useEffect(() => {
     getPreference<{ seen: boolean }>('welcome_tour')
       .then((pref) => {

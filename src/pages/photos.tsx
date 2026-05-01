@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { BBButton } from '../components/bb-button'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '../components/icons'
@@ -6,6 +7,7 @@ import { listFiles, type DriveFile } from '../lib/api'
 import { useKeys } from '../lib/key-context'
 import { decryptFilename, fromBase64 } from '../lib/crypto'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
+import { EmptyPhotos } from '../components/empty-states/empty-photos'
 
 // ─── Constants ──────────────────────────────────
 
@@ -124,6 +126,7 @@ const DATE_RANGES = ['Last 7 days', 'Last 30 days', 'Last 3 months', 'All time']
 // ─── Photos page ────────────────────────────────
 
 export function Photos() {
+  const navigate = useNavigate()
   const { getFileKey, isUnlocked } = useKeys()
   const [activeTab, setActiveTab] = useState(0)
   const [dateRange, setDateRange] = useState<(typeof DATE_RANGES)[number]>('All time')
@@ -326,24 +329,10 @@ export function Photos() {
               </svg>
             </div>
           ) : groups.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-center py-20">
-              <div
-                className="w-14 h-14 mb-4 rounded-2xl flex items-center justify-center"
-                style={{
-                  background: 'var(--color-amber-bg)',
-                  border: '1.5px dashed var(--color-line-2)',
-                }}
-              >
-                <Icon name="image" size={24} className="text-amber-deep" />
-              </div>
-              <div className="text-[15px] font-semibold text-ink mb-1">No photos yet</div>
-              <div className="text-[13px] text-ink-3 mb-1">
-                Upload images from the Drive to see them here.
-              </div>
-              <div className="text-[11px] text-ink-4">
-                Supports JPG, PNG, GIF, WebP, HEIC, AVIF, and more.
-              </div>
-            </div>
+            <EmptyPhotos
+              onUpload={() => navigate('/')}
+              onGoToDrive={() => navigate('/')}
+            />
           ) : groups.map((group, gi) => (
             <div key={gi} className="mb-6">
               {/* Group header */}

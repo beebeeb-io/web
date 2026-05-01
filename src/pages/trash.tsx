@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { BBButton } from '../components/bb-button'
 import { BBCheckbox } from '../components/bb-checkbox'
 import { DriveLayout } from '../components/drive-layout'
@@ -9,6 +10,7 @@ import { useToast } from '../components/toast'
 import { useKeys } from '../lib/key-context'
 import { decryptFilename, fromBase64 } from '../lib/crypto'
 import { useWsEvent } from '../lib/ws-context'
+import { EmptyTrash } from '../components/empty-states/empty-trash'
 
 // ─── Helpers ─────────────────────────────────────
 
@@ -103,6 +105,7 @@ function ConfirmDeleteDialog({ open, count, onConfirm, onCancel }: ConfirmDelete
 // ─── Trash page ──────────────────────────────────
 
 export function Trash() {
+  const navigate = useNavigate()
   const { showToast } = useToast()
   const { getFileKey, isUnlocked } = useKeys()
   const [files, setFiles] = useState<(DriveFile & { was_in: string })[]>([])
@@ -323,21 +326,7 @@ export function Trash() {
               </svg>
             </div>
           ) : files.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-center py-20">
-              <div
-                className="w-14 h-14 mb-4 rounded-2xl flex items-center justify-center"
-                style={{
-                  background: 'var(--color-paper-2)',
-                  border: '1.5px dashed var(--color-line-2)',
-                }}
-              >
-                <Icon name="trash" size={24} className="text-ink-3" />
-              </div>
-              <div className="text-[15px] font-semibold text-ink mb-1">Trash is empty</div>
-              <div className="text-[13px] text-ink-3">
-                Deleted files will appear here for 30 days
-              </div>
-            </div>
+            <EmptyTrash onGoToDrive={() => navigate('/')} />
           ) : (
             files.map((file, i, arr) => {
               const days = daysUntilShred(file.updated_at)

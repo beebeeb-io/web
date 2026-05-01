@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { BBButton } from '../components/bb-button'
 import { BBCheckbox } from '../components/bb-checkbox'
 import { BBChip } from '../components/bb-chip'
@@ -27,6 +28,7 @@ import { encryptedDownload } from '../lib/encrypted-download'
 import { encryptedUpload } from '../lib/encrypted-upload'
 import { SharedRowSkeleton } from '../components/skeleton'
 import { useWsEvent } from '../lib/ws-context'
+import { EmptyShared } from '../components/empty-states/empty-shared'
 
 // ─── Helpers ───────────────────────────────────────
 
@@ -59,6 +61,7 @@ type TabId = 'with-me' | 'by-me' | 'pending'
 // ─── Component ───────────────────────────────────
 
 export function Shared() {
+  const navigate = useNavigate()
   const { isUnlocked, getMasterKey, getFileKey } = useKeys()
   const { showToast } = useToast()
   const { notifications, unreadCount, markRead, markAllRead } = useNotifications()
@@ -417,21 +420,6 @@ export function Shared() {
     </div>
   )
 
-  // ─── Empty state ──────────────────────────────
-
-  const EmptyState = ({ icon, title, description }: { icon: string; title: string; description: string }) => (
-    <div className="flex flex-col items-center justify-center h-full text-center py-20">
-      <div
-        className="w-14 h-14 mb-4 rounded-2xl flex items-center justify-center"
-        style={{ background: 'var(--color-amber-bg)', border: '1.5px dashed var(--color-line-2)' }}
-      >
-        <Icon name={icon as any} size={24} className="text-amber-deep" />
-      </div>
-      <div className="text-[15px] font-semibold text-ink mb-1">{title}</div>
-      <div className="text-[13px] text-ink-3">{description}</div>
-    </div>
-  )
-
   // ─── Section header (for pending tab) ─────────
 
   const SectionHeader = ({ title, count }: { title: string; count: number }) => (
@@ -451,11 +439,7 @@ export function Shared() {
     if (loading) return <LoadingSkeleton />
     if (withMeInvites.length === 0) {
       return (
-        <EmptyState
-          icon="share"
-          title="Nothing shared with you yet"
-          description="When someone shares a file with you, it will appear here"
-        />
+        <EmptyShared tab="with-me" onGoToDrive={() => navigate('/')} />
       )
     }
 
@@ -557,11 +541,7 @@ export function Shared() {
     if (loading) return <LoadingSkeleton />
     if (sentApproved.length === 0) {
       return (
-        <EmptyState
-          icon="upload"
-          title="No active shares"
-          description="Files you share with others will appear here once they accept"
-        />
+        <EmptyShared tab="by-me" onGoToDrive={() => navigate('/')} />
       )
     }
 
@@ -667,9 +647,7 @@ export function Shared() {
           <div className="px-5 py-4">
             <ShareApprove onUpdate={fetchAll} />
           </div>
-          <div className="px-5 py-12 text-center">
-            <div className="text-[13px] text-ink-3">No pending invites or requests</div>
-          </div>
+          <EmptyShared tab="pending" onGoToDrive={() => navigate('/')} />
         </div>
       )
     }

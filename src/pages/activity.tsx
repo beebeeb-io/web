@@ -1,9 +1,11 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Icon } from '../components/icons'
 import type { IconName } from '../components/icons'
 import { BBChip } from '../components/bb-chip'
 import { listActivity } from '../lib/api'
 import type { ActivityEvent } from '../lib/api'
+import { EmptyActivity } from '../components/empty-states/empty-activity'
 
 // ── Event type  → icon + dot color mapping ───────────────────────
 
@@ -91,6 +93,7 @@ function groupByDay(events: ActivityEvent[]): { label: string; events: ActivityE
 // ── Page component ───────────────────────────────────────────────
 
 export function Activity() {
+  const navigate = useNavigate()
   const [events, setEvents] = useState<ActivityEvent[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -161,21 +164,7 @@ export function Activity() {
             </svg>
           </div>
         ) : events.length === 0 ? (
-          <div className="flex flex-col items-center justify-center text-center py-16">
-            <div
-              className="w-14 h-14 mb-4 rounded-2xl flex items-center justify-center"
-              style={{
-                background: 'var(--color-paper-2)',
-                border: '1.5px dashed var(--color-line-2)',
-              }}
-            >
-              <Icon name="clock" size={24} className="text-ink-3" />
-            </div>
-            <div className="text-[15px] font-semibold text-ink mb-1">No activity yet</div>
-            <div className="text-[13px] text-ink-3">
-              Events will appear here as you use Beebeeb
-            </div>
-          </div>
+          <EmptyActivity onGoToDrive={() => navigate('/')} />
         ) : (
           days.map((day, di) => (
             <div key={day.label}>

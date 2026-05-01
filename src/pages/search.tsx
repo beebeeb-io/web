@@ -4,6 +4,8 @@ import { BBButton } from '../components/bb-button'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '../components/icons'
 import type { IconName } from '../components/icons'
+import { FileIcon, getFileType } from '../components/file-icon'
+import { EmptyState } from '../components/empty-states/empty-state'
 import { useKeys } from '../lib/key-context'
 import {
   fetchIndex,
@@ -35,13 +37,6 @@ function timeAgo(dateStr: string): string {
   if (days < 7) return `${days} day${days !== 1 ? 's' : ''} ago`
   const weeks = Math.floor(days / 7)
   return `${weeks}w ago`
-}
-
-function getIconForEntry(entry: SearchResult['entry']): IconName {
-  if (entry.type === 'folder') return 'folder'
-  const ext = entry.name.split('.').pop()?.toLowerCase() ?? ''
-  if (['jpg', 'jpeg', 'png', 'gif', 'heic', 'webp', 'svg'].includes(ext)) return 'image'
-  return 'file'
 }
 
 // ─── Filter types ────────────────────────────────
@@ -180,6 +175,7 @@ export function Search() {
               <Icon name="search" size={14} className="text-ink-3 shrink-0" />
               <input
                 ref={inputRef}
+                autoFocus
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search your vault..."
@@ -241,40 +237,37 @@ export function Search() {
         <div className="flex-1 overflow-y-auto">
           {!searched ? (
             /* Empty state: no search yet */
-            <div className="flex flex-col items-center justify-center h-full text-center py-20">
-              <div
-                className="w-14 h-14 mb-4 rounded-2xl flex items-center justify-center"
-                style={{
-                  background: 'var(--color-paper-2)',
-                  border: '1.5px dashed var(--color-line-2)',
-                }}
-              >
-                <Icon name="search" size={24} className="text-ink-3" />
-              </div>
-              <div className="text-[15px] font-semibold text-ink mb-1">Search your vault</div>
-              <div className="text-[13px] text-ink-3 max-w-[20rem]">
-                File names are searched client-side against your encrypted index. Content never leaves your device unencrypted.
-              </div>
-            </div>
+            <EmptyState
+              icon="search"
+              heading="Start typing to search your encrypted vault"
+              subtitle="File names are searched client-side against your encrypted index. Content never leaves your device unencrypted."
+              cta={{
+                label: 'Go to drive',
+                icon: 'folder',
+                onClick: () => navigate('/'),
+                variant: 'default',
+              }}
+              hint="Tip: press Cmd+K from anywhere to open search."
+            />
           ) : loading ? (
             <div className="px-5 py-12 text-center text-sm text-ink-3">Searching...</div>
           ) : filteredResults.length === 0 ? (
             /* Empty results */
-            <div className="flex flex-col items-center justify-center h-full text-center py-20">
-              <div
-                className="w-14 h-14 mb-4 rounded-2xl flex items-center justify-center"
-                style={{
-                  background: 'var(--color-paper-2)',
-                  border: '1.5px dashed var(--color-line-2)',
-                }}
-              >
-                <Icon name="search" size={24} className="text-ink-3" />
-              </div>
-              <div className="text-[15px] font-semibold text-ink mb-1">No results</div>
-              <div className="text-[13px] text-ink-3 max-w-[20rem]">
-                Nothing matched "{query}". Try a different term or check spelling.
-              </div>
-            </div>
+            <EmptyState
+              icon="search"
+              heading="No files match your search"
+              subtitle={`Nothing matched "${query}". We search file names on your device -- file contents stay encrypted on our servers. Try a different term or check your spelling.`}
+              cta={{
+                label: 'Clear search',
+                onClick: handleClear,
+                variant: 'default',
+              }}
+              secondaryCta={{
+                label: 'Check trash',
+                icon: 'trash',
+                onClick: () => navigate('/trash'),
+              }}
+            />
           ) : (
             <>
               {/* Results header */}
@@ -305,8 +298,8 @@ export function Search() {
 
               {/* File rows */}
               {filteredResults.map((result, i, arr) => {
-                const { id, entry, score } = result
-                const iconName = getIconForEntry(entry)
+                const { id, entry } = result
+                const fileType = getFileType(entry.name, entry.type === 'folder')
                 return (
                   <div
                     key={id}
@@ -320,30 +313,30 @@ export function Search() {
                       borderBottom: i < arr.length - 1 ? '1px solid var(--color-line)' : 'none',
                     }}
                     onClick={() => {
-                      if (entry.type === 'folder') {
-                        navigate(`/?folder=${id}`)
-                      }
+                      // Folders: navigate into the folder
+                      // Files: navigate to the parent folder so the file is visible
+                      const targetFolderId = entry.type === 'folder' ? id : entry.parent
+                      const targetFolderName = entry.type === 'folder' ? entry.name : (entry.path || 'All files')
+                      navigate('/', {
+                        state: {
+                          openFolderId: targetFolderId,
+                          openFolderName: targetFolderName,
+                        },
+                      })
                     }}
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
-                      <Icon
-                        name={iconName}
-                        size={14}
-                        className={iconName === 'folder' ? 'text-amber-deep' : 'text-ink-3'}
-                      />
+                      <FileIcon type={fileType} size={24} />
                       <span className="text-[13px] text-ink truncate">{entry.name}</span>
                       {entry.starred && (
                         <Icon name="star" size={10} className="text-amber-deep shrink-0" />
                       )}
-                      <span className="font-mono text-[9px] text-ink-4 shrink-0">
-                        {score}pt
-                      </span>
                     </div>
                     <span className="font-mono text-[11px] text-ink-3">{timeAgo(entry.modified)}</span>
                     <span className="font-mono text-[11px] text-ink-3">
                       {entry.type === 'folder' ? '--' : formatBytes(entry.size)}
                     </span>
-                    <span className="text-[11px] text-ink-3 truncate">{entry.path}</span>
+                    <span className="text-[11px] text-ink-3 truncate">{entry.path || '/'}</span>
                   </div>
                 )
               })}

@@ -22,6 +22,7 @@ import {
   type DriveFile,
 } from '../lib/api'
 import { useWsEvent } from '../lib/ws-context'
+import { EmptyStarred } from '../components/empty-states/empty-starred'
 
 // ─── Helpers ───────────────────────────────────────
 
@@ -432,22 +433,7 @@ export function Starred() {
             </svg>
           </div>
         ) : sortedFiles.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center py-20">
-            <div
-              className="w-14 h-14 mb-4 rounded-2xl flex items-center justify-center"
-              style={{
-                background: 'var(--color-paper-2)',
-                border: '1.5px dashed var(--color-line-2)',
-              }}
-            >
-              <Icon name="star" size={24} className="text-amber-deep" />
-            </div>
-            <div className="text-[15px] font-semibold text-ink mb-1">No starred files</div>
-            <div className="text-[13px] text-ink-3 max-w-[300px]">
-              Star files from the drive to find them quickly here.
-              Right-click any file and choose Star.
-            </div>
-          </div>
+          <EmptyStarred onGoToDrive={() => navigate('/')} />
         ) : (
           sortedFiles.map((file) => {
             const name = displayName(file)
