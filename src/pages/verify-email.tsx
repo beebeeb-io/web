@@ -10,7 +10,7 @@ import { useNavigate } from 'react-router-dom'
 import { AuthShell } from '../components/auth-shell'
 import { BBButton } from '../components/bb-button'
 import { useAuth } from '../lib/auth-context'
-import { verifyEmail, resendVerification } from '../lib/api'
+import { verifyEmail, resendVerification, ApiError } from '../lib/api'
 
 const CODE_LENGTH = 6
 const RESEND_SECONDS = 60
@@ -98,7 +98,7 @@ export function VerifyEmail() {
     try {
       const code = digits.join('')
       await verifyEmail(code)
-      navigate('/onboarding', { replace: true })
+      navigate('/', { replace: true })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Verification failed')
       // Clear digits so user can re-enter
@@ -115,8 +115,13 @@ export function VerifyEmail() {
       await resendVerification()
       setResendCountdown(RESEND_SECONDS)
       setError('')
-    } catch {
-      setError('Failed to resend verification email')
+    } catch (err) {
+      // 429 surfaces the server's rate-limit message ("Too many verification
+      // emails. Please try again later."). Anything else surfaces verbatim.
+      if (err instanceof ApiError && err.status === 429) {
+        setResendCountdown(RESEND_SECONDS)
+      }
+      setError(err instanceof Error ? err.message : 'Failed to resend verification email')
     }
   }
 
