@@ -1401,3 +1401,42 @@ export async function listSessions(): Promise<{ sessions: Session[] }> {
 export async function revokeSession(id: string): Promise<void> {
   await request(`/api/v1/auth/sessions/${id}`, { method: 'DELETE' })
 }
+
+// ─── Admin stats & health ────────────────────────
+
+export interface AdminStats {
+  users: {
+    total: number
+    active_7d: number
+    signups_today: number
+  }
+  files: {
+    total: number
+    storage_used_bytes: number
+    uploads_today: number
+  }
+  shares: {
+    active_shares: number
+    active_invites: number
+    created_today: number
+  }
+}
+
+export interface HealthResponse {
+  status: string
+  version: string
+  uptime_seconds: number
+  db_latency_ms: number
+}
+
+export async function getAdminStats(): Promise<AdminStats> {
+  return request<AdminStats>('/api/v1/admin/stats')
+}
+
+export async function getHealth(): Promise<HealthResponse> {
+  const res = await fetch(`${API_URL}/health`)
+  if (!res.ok) {
+    throw new ApiError(res.statusText, res.status)
+  }
+  return res.json() as Promise<HealthResponse>
+}

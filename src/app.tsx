@@ -35,6 +35,7 @@ import { Compliance } from './pages/admin/compliance'
 import { AdminUsers } from './pages/admin/users'
 import { AdminBilling } from './pages/admin/billing-overview'
 import { StoragePools } from './pages/admin/storage-pools'
+import { Monitoring } from './pages/admin/monitoring'
 import { TwoFactorSetup } from './pages/two-factor-setup'
 import { VerifyEmail } from './pages/verify-email'
 import { Migration } from './pages/migration'
@@ -280,7 +281,15 @@ export function App() {
             path="/admin"
             element={
               <ProtectedRoute>
-                <Navigate to="/admin/audit-log" replace />
+                <Navigate to="/admin/monitoring" replace />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/monitoring"
+            element={
+              <ProtectedRoute>
+                <Monitoring />
               </ProtectedRoute>
             }
           />

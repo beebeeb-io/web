@@ -13,6 +13,7 @@ type NavItem = {
 }
 
 const navItems: NavItem[] = [
+  { id: 'monitoring', label: 'Monitoring', icon: 'eye', href: '/admin/monitoring' },
   { id: 'users', label: 'Users', icon: 'users', href: '/admin/users' },
   { id: 'billing', label: 'Billing', icon: 'file', href: '/admin/billing' },
   { id: 'storage-pools', label: 'Storage pools', icon: 'cloud', href: '/admin/storage-pools' },
