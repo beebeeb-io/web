@@ -23,6 +23,7 @@ import { SettingsProfile } from './pages/settings/profile'
 import { SettingsDevices } from './pages/settings/devices'
 import { SettingsNotifications } from './pages/settings/notifications'
 import { SettingsLanguage } from './pages/settings/language'
+import { SettingsAppearance } from './pages/settings/appearance'
 import { SettingsStorage } from './pages/settings/storage'
 import { Security } from './pages/security'
 import { Trash } from './pages/trash'
@@ -51,6 +52,7 @@ import { SharedFolder } from './pages/shared-folder'
 import { PasskeySetup } from './pages/passkey-setup'
 import { DeleteAccount } from './pages/delete-account'
 import { NotFound } from './pages/errors/not-found'
+import { ThemeProvider } from './lib/theme-context'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
@@ -129,6 +131,7 @@ function GlobalShortcuts() {
 export function App() {
   return (
     <ErrorBoundary>
+    <ThemeProvider>
     <BrowserRouter>
       <AuthProvider>
         <KeyProvider>
@@ -231,6 +234,14 @@ export function App() {
             element={
               <ProtectedRoute>
                 <SettingsLanguage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/settings/appearance"
+            element={
+              <ProtectedRoute>
+                <SettingsAppearance />
               </ProtectedRoute>
             }
           />
@@ -436,6 +447,7 @@ export function App() {
         </KeyProvider>
       </AuthProvider>
     </BrowserRouter>
+    </ThemeProvider>
     </ErrorBoundary>
   )
 }
