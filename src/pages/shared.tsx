@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { BBButton } from '../components/bb-button'
-import { BBCheckbox } from '../components/bb-checkbox'
 import { BBChip } from '../components/bb-chip'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '../components/icons'
+import { FileList } from '../components/file-list'
 import { NotificationInbox, useNotifications } from '../components/notification-inbox'
 import { ShareActivity } from '../components/share-activity'
 import { ShareApprove } from '../components/share-approve'
@@ -23,6 +23,7 @@ import {
   hideInvite,
   type ShareInvite,
   type ShareStats,
+  type DriveFile,
 } from '../lib/api'
 import { useKeys } from '../lib/key-context'
 import { decryptFilename, decryptChunk, fromBase64, x25519SharedSecret, deriveShareKey, deriveX25519Private, zeroize } from '../lib/crypto'
@@ -31,7 +32,6 @@ import { encryptedUpload } from '../lib/encrypted-upload'
 import { SharedRowSkeleton } from '../components/skeleton'
 import { useWsEvent } from '../lib/ws-context'
 import { EmptyShared } from '../components/empty-states/empty-shared'
-import { formatBytes } from '../lib/format'
 
 // ─── Helpers ───────────────────────────────────────
 
@@ -58,11 +58,16 @@ type TabId = 'with-me' | 'by-me' | 'pending'
 
 export function Shared() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const { isUnlocked, getMasterKey, getFileKey } = useKeys()
   const { showToast } = useToast()
   const { notifications, unreadCount, markRead, markAllRead } = useNotifications()
 
-  const [tab, setTab] = useState<TabId>('with-me')
+  const [tab, setTab] = useState<TabId>(() => {
+    const p = searchParams.get('tab')
+    if (p === 'by-me' || p === 'pending') return p
+    return 'with-me'
+  })
   const [loading, setLoading] = useState(true)
 
   // Share stats
@@ -391,36 +396,6 @@ export function Shared() {
     }
   }, [withMeInvites, sentApproved, sentInvited, ctxMenu.x, ctxMenu.y, showToast, fetchAll, handleCancelInvite])
 
-  // ─── Multi-select helpers ─────────────────────
-
-  function toggleSelection(id: string) {
-    setSelectedIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-    lastClickedIdRef.current = id
-  }
-
-  function handleCheckboxClick(id: string, e: React.MouseEvent) {
-    e.stopPropagation()
-    toggleSelection(id)
-  }
-
-  function selectAllInTab() {
-    if (tab === 'with-me') {
-      const all = new Set(withMeInvites.map((i) => i.id))
-      setSelectedIds(selectedIds.size === all.size ? new Set() : all)
-    } else if (tab === 'by-me') {
-      const all = new Set(sentApproved.map((i) => i.id))
-      setSelectedIds(selectedIds.size === all.size ? new Set() : all)
-    } else {
-      const all = new Set([...sentInvited, ...incomingClaimed].map((i) => i.id))
-      setSelectedIds(selectedIds.size === all.size ? new Set() : all)
-    }
-  }
-
   async function handleBulkRevoke() {
     const ids = Array.from(selectedIds)
     if (!confirm(`Revoke access for ${ids.length} recipient${ids.length !== 1 ? 's' : ''}?`)) return
@@ -481,200 +456,91 @@ export function Shared() {
     </div>
   )
 
+  // ─── Map invite to DriveFile-like object ──────
+
+  function inviteToFile(invite: ShareInvite, subtitle: string): DriveFile {
+    return {
+      id: invite.id,
+      name_encrypted: invite.file_name_encrypted ?? 'Encrypted file',
+      mime_type: subtitle,
+      size_bytes: invite.size_bytes ?? 0,
+      is_folder: invite.is_folder ?? false,
+      parent_id: null,
+      chunk_count: invite.chunk_count ?? 1,
+      is_starred: false,
+      has_thumbnail: false,
+      created_at: invite.created_at,
+      updated_at: invite.approved_at ?? invite.created_at,
+    }
+  }
+
   // ─── Tab content: With me ─────────────────────
 
   const renderWithMe = () => {
-    if (loading) return <LoadingSkeleton />
-    if (withMeInvites.length === 0) {
-      return (
-        <EmptyShared tab="with-me" onGoToDrive={() => navigate('/')} />
-      )
-    }
-
+    const files = withMeInvites.map((i) =>
+      inviteToFile(i, i.sender_email ? `Shared by ${i.sender_email}` : 'Shared file'),
+    )
     return (
-      <>
-        {/* Column header */}
-        <div
-          className="px-[18px] py-2.5 border-b border-line bg-paper-2"
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '20px 32px 1.4fr 1fr 100px 80px',
-            gap: 14,
-          }}
-        >
-          <span className="flex items-center justify-center">
-            {withMeInvites.length > 0 && (
-              <BBCheckbox
-                checked={selectedIds.size === withMeInvites.length && withMeInvites.length > 0}
-                indeterminate={selectedIds.size > 0 && selectedIds.size < withMeInvites.length}
-                onChange={() => selectAllInTab()}
-              />
-            )}
-          </span>
-          <span />
-          <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">Name</span>
-          <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">From</span>
-          <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">Size</span>
-          <span />
-        </div>
-
-        {/* Items */}
-        <div className="flex-1 overflow-y-auto">
-          {withMeInvites.map((invite, i, arr) => {
-            const isFolder = invite.is_folder ?? false
-
-            return (
-              <div
-                key={invite.id}
-                className="group hover:bg-paper-2 transition-colors cursor-pointer"
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '20px 32px 1.4fr 1fr 100px 80px',
-                  gap: 14,
-                  padding: '11px 18px',
-                  borderBottom: i < arr.length - 1 ? '1px solid var(--color-line)' : 'none',
-                }}
-              >
-                <span
-                  className={`flex items-center justify-center ${
-                    selectedIds.has(invite.id) ? '' : 'opacity-0 group-hover:opacity-100'
-                  } transition-opacity`}
-                  onClick={(e) => handleCheckboxClick(invite.id, e)}
-                >
-                  <BBCheckbox checked={selectedIds.has(invite.id)} onChange={() => {}} />
-                </span>
-                <Icon
-                  name={isFolder ? 'folder' : 'file'}
-                  size={14}
-                  className={isFolder ? 'text-amber-deep self-center' : 'text-ink-2 self-center'}
-                />
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-[13px] font-medium truncate">{displayName(invite)}</span>
-                  <span className="text-[11px] text-ink-4 shrink-0">{timeAgo(invite.created_at)}</span>
-                </div>
-                <span className="font-mono text-[11.5px] self-center text-ink-2 truncate">
-                  {invite.sender_email ?? ''}
-                </span>
-                <span className="font-mono text-[11px] text-ink-3 self-center">
-                  {isFolder ? '--' : formatBytes(invite.size_bytes ?? 0)}
-                </span>
-                <div className="flex justify-end self-center">
-                  <BBButton
-                    size="sm"
-                    variant="ghost"
-                    className="opacity-0 group-hover:opacity-100 transition-opacity"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                      setCtxMenu({
-                        open: true, x: rect.left, y: rect.bottom + 4,
-                        inviteId: invite.id, tab: 'with-me', canReshare: invite.can_reshare ?? false,
-                      })
-                    }}
-                  >
-                    <Icon name="more" size={13} />
-                  </BBButton>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </>
+      <FileList
+        files={files}
+        loading={loading}
+        emptyState={<EmptyShared tab="with-me" onGoToDrive={() => navigate('/')} />}
+        sortable={false}
+        externalDecryptedNames={decryptedNames}
+        renderActions={(file) => (
+          <BBButton
+            size="sm"
+            variant="ghost"
+            className="md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+            onClick={(e) => {
+              e.stopPropagation()
+              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+              const inv = withMeInvites.find((i) => i.id === file.id)
+              setCtxMenu({
+                open: true, x: rect.left, y: rect.bottom + 4,
+                inviteId: file.id, tab: 'with-me', canReshare: inv?.can_reshare ?? false,
+              })
+            }}
+          >
+            <Icon name="more" size={13} />
+          </BBButton>
+        )}
+      />
     )
   }
 
   // ─── Tab content: By me ───────────────────────
 
   const renderByMe = () => {
-    if (loading) return <LoadingSkeleton />
-    if (sentApproved.length === 0) {
-      return (
-        <EmptyShared tab="by-me" onGoToDrive={() => navigate('/')} />
-      )
+    const files = sentApproved.map((i) =>
+      inviteToFile(i, i.recipient_email ? `Shared with ${i.recipient_email}` : 'Shared file'),
+    )
+    const byMeNames: Record<string, string> = {}
+    for (const i of sentApproved) {
+      byMeNames[i.id] = i.file_name_encrypted ?? 'Encrypted file'
     }
-
     return (
-      <>
-        {/* Column header */}
-        <div
-          className="px-[18px] py-2.5 border-b border-line bg-paper-2"
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '20px 32px 1.4fr 1fr 100px 80px',
-            gap: 14,
-          }}
-        >
-          <span className="flex items-center justify-center">
-            {sentApproved.length > 0 && (
-              <BBCheckbox
-                checked={selectedIds.size === sentApproved.length && sentApproved.length > 0}
-                indeterminate={selectedIds.size > 0 && selectedIds.size < sentApproved.length}
-                onChange={() => selectAllInTab()}
-              />
-            )}
-          </span>
-          <span />
-          <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">File</span>
-          <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">Shared with</span>
-          <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">Date</span>
-          <span />
-        </div>
-
-        {/* Items */}
-        <div className="flex-1 overflow-y-auto">
-          {sentApproved.map((invite, i, arr) => (
-            <div
-              key={invite.id}
-              className="group hover:bg-paper-2 transition-colors"
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '20px 32px 1.4fr 1fr 100px 80px',
-                gap: 14,
-                padding: '11px 18px',
-                borderBottom: i < arr.length - 1 ? '1px solid var(--color-line)' : 'none',
-              }}
-            >
-              <span
-                className={`flex items-center justify-center ${
-                  selectedIds.has(invite.id) ? '' : 'opacity-0 group-hover:opacity-100'
-                } transition-opacity`}
-                onClick={(e) => handleCheckboxClick(invite.id, e)}
-              >
-                <BBCheckbox checked={selectedIds.has(invite.id)} onChange={() => {}} />
-              </span>
-              <Icon name="file" size={14} className="text-ink-2 self-center" />
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="text-[13px] font-medium truncate">
-                  {invite.file_name_encrypted ?? 'Encrypted file'}
-                </span>
-              </div>
-              <span className="font-mono text-[11.5px] self-center text-ink-2 truncate">
-                {invite.recipient_email}
-              </span>
-              <span className="font-mono text-[11px] text-ink-3 self-center">
-                {invite.approved_at ? timeAgo(invite.approved_at) : timeAgo(invite.created_at)}
-              </span>
-              <div className="flex justify-end self-center">
-                <BBButton
-                  size="sm"
-                  variant="ghost"
-                  className="opacity-0 group-hover:opacity-100 transition-opacity"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                    setCtxMenu({
-                      open: true, x: rect.left, y: rect.bottom + 4,
-                      inviteId: invite.id, tab: 'by-me',
-                    })
-                  }}
-                >
-                  <Icon name="more" size={13} />
-                </BBButton>
-              </div>
-            </div>
-          ))}
-        </div>
-      </>
+      <FileList
+        files={files}
+        loading={loading}
+        emptyState={<EmptyShared tab="by-me" onGoToDrive={() => navigate('/')} />}
+        sortable={false}
+        externalDecryptedNames={byMeNames}
+        renderActions={(file) => (
+          <BBButton
+            size="sm"
+            variant="ghost"
+            className="md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+            onClick={(e) => {
+              e.stopPropagation()
+              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+              setCtxMenu({ open: true, x: rect.left, y: rect.bottom + 4, inviteId: file.id, tab: 'by-me' })
+            }}
+          >
+            <Icon name="more" size={13} />
+          </BBButton>
+        )}
+      />
     )
   }
 
