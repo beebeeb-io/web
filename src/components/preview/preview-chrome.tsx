@@ -11,6 +11,8 @@ interface PreviewChromeProps {
   rightRail?: ReactNode
   /** True once decryption finished — drives the trust line below the title. */
   decrypted?: boolean
+  /** Optional content rendered between the top bar and the body (e.g. version scrubber). */
+  belowTopBar?: ReactNode
 }
 
 export function PreviewChrome({
@@ -21,6 +23,7 @@ export function PreviewChrome({
   children,
   rightRail,
   decrypted = false,
+  belowTopBar,
 }: PreviewChromeProps) {
   const kindIcon = kind.startsWith('image') ? 'file' : 'file' as const
 
@@ -82,6 +85,8 @@ export function PreviewChrome({
           </button>
         </div>
       </div>
+
+      {belowTopBar}
 
       {/* Body */}
       <div className="flex min-h-0 flex-1">

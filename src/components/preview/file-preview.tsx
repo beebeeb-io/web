@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
-import { type DriveFile } from '../../lib/api'
-import { decryptToBlob } from '../../lib/encrypted-download'
+import { useCallback, useEffect, useState } from 'react'
+import { listVersions, restoreVersion, type DriveFile, type FileVersion } from '../../lib/api'
+import { decryptToBlob, decryptVersionToBlob } from '../../lib/encrypted-download'
 import { PreviewChrome } from './preview-chrome'
 import { InfoRail } from './info-rail'
+import { VersionScrubber } from './version-scrubber'
 import { ImagePreview } from './image-preview'
 import { PdfPreview } from './pdf-preview'
 import { VideoPreview } from './video-preview'
@@ -18,6 +19,8 @@ interface FilePreviewProps {
   /** Pre-decrypted filename. If not provided, component will attempt to decrypt. */
   decryptedName?: string
   onClose: () => void
+  /** Fires after a successful "Restore this version" so the parent can refresh listings. */
+  onVersionRestored?: () => void
 }
 
 function formatSize(bytes: number): string {
@@ -184,11 +187,21 @@ function pickRenderer(
   return null
 }
 
-export function FilePreview({ file, decryptedName: decryptedNameProp, onClose }: FilePreviewProps) {
+export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, onVersionRestored }: FilePreviewProps) {
   const { getFileKey, isUnlocked } = useKeys()
   const [blob, setBlob] = useState<Blob | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [localDecryptedName, setLocalDecryptedName] = useState<string | null>(null)
+
+  // Version state — only populated for files with > 1 version.
+  const [versions, setVersions] = useState<FileVersion[] | null>(null)
+  const [currentVersionNumber, setCurrentVersionNumber] = useState<number>(file.version_number ?? 1)
+  // null = viewing the live current version; otherwise a historical version id.
+  const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null)
+  const [versionLoading, setVersionLoading] = useState(false)
+  // Bumped on every successful blob swap so the canvas key changes and
+  // the renderer re-mounts with the decrypt-fade-in animation.
+  const [renderKey, setRenderKey] = useState(0)
 
   // Display name: use prop, then locally decrypted, then raw
   const name = decryptedNameProp ?? localDecryptedName ?? file.name_encrypted
@@ -218,28 +231,69 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose }:
     return () => { cancelled = true }
   }, [file.id, file.name_encrypted, decryptedNameProp, isUnlocked, getFileKey])
 
+  // Fetch the version list once per file (only if there's actually history).
+  useEffect(() => {
+    if (!isUnlocked) return
+    if ((file.version_number ?? 1) <= 1) {
+      setVersions(null)
+      return
+    }
+    let cancelled = false
+    listVersions(file.id)
+      .then((res) => {
+        if (cancelled) return
+        setVersions(res.versions)
+        setCurrentVersionNumber(res.current_version)
+      })
+      .catch(() => {
+        if (!cancelled) setVersions(null)
+      })
+    return () => { cancelled = true }
+  }, [file.id, file.version_number, isUnlocked])
+
+  // Load + decrypt content for the current selection (null = live version).
   useEffect(() => {
     let cancelled = false
     setBlob(null)
     setError(null)
-
     if (!isUnlocked) return
 
     async function loadAndDecrypt() {
       try {
         const fileKey = await getFileKey(file.id)
-        const { plaintext } = await decryptToBlob(
-          file.id,
-          fileKey,
-          file.name_encrypted,
-          file.mime_type,
-          file.chunk_count,
-          file.size_bytes,
-        )
-        if (!cancelled) setBlob(plaintext)
+        let plaintext: Blob
+        if (selectedVersionId === null) {
+          const res = await decryptToBlob(
+            file.id,
+            fileKey,
+            file.name_encrypted,
+            file.mime_type,
+            file.chunk_count,
+            file.size_bytes,
+          )
+          plaintext = res.plaintext
+        } else {
+          const v = versions?.find((x) => x.id === selectedVersionId)
+          if (!v) throw new Error('Version not found')
+          setVersionLoading(true)
+          plaintext = await decryptVersionToBlob(
+            file.id,
+            v.id,
+            fileKey,
+            file.mime_type,
+            v.chunk_count,
+            v.size_bytes,
+          )
+        }
+        if (!cancelled) {
+          setBlob(plaintext)
+          setRenderKey((k) => k + 1)
+        }
       } catch (err: unknown) {
         if (!cancelled)
           setError(err instanceof Error ? err.message : 'Failed to load file')
+      } finally {
+        if (!cancelled) setVersionLoading(false)
       }
     }
     loadAndDecrypt()
@@ -247,7 +301,23 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose }:
     return () => {
       cancelled = true
     }
-  }, [file.id, file.name_encrypted, file.mime_type, file.chunk_count, file.size_bytes, isUnlocked, getFileKey])
+  }, [file.id, file.name_encrypted, file.mime_type, file.chunk_count, file.size_bytes, isUnlocked, getFileKey, selectedVersionId, versions])
+
+  const handleRestore = useCallback(async () => {
+    if (selectedVersionId === null) return
+    if (!confirm('Restore this version? The current version becomes a previous one.')) return
+    try {
+      await restoreVersion(file.id, selectedVersionId)
+      // After restore: refetch versions, snap back to live.
+      const res = await listVersions(file.id)
+      setVersions(res.versions)
+      setCurrentVersionNumber(res.current_version)
+      setSelectedVersionId(null)
+      onVersionRestored?.()
+    } catch {
+      setError('Restore failed. The version may have been deleted.')
+    }
+  }, [file.id, selectedVersionId, onVersionRestored])
 
   const sizeStr = formatSize(file.size_bytes)
   const kindLabel = getKindLabel(file.mime_type, name)
@@ -273,6 +343,18 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose }:
       size={sizeStr}
       onClose={onClose}
       decrypted={!!blob}
+      belowTopBar={
+        versions && versions.length > 1 ? (
+          <VersionScrubber
+            versions={versions}
+            currentVersionNumber={currentVersionNumber}
+            selectedVersionId={selectedVersionId}
+            onSelect={setSelectedVersionId}
+            onRestore={handleRestore}
+            loading={versionLoading}
+          />
+        ) : undefined
+      }
       rightRail={
         <InfoRail
           filename={name}
@@ -317,8 +399,13 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose }:
         </div>
       )}
 
-      {/* Actual preview */}
-      {renderer}
+      {/* Actual preview — keyed on renderKey so each blob swap (initial
+          load, version switch) triggers a fresh fade-in animation. */}
+      {renderer && (
+        <div key={renderKey} className="decrypt-fade-in flex h-full w-full items-center justify-center">
+          {renderer}
+        </div>
+      )}
     </PreviewChrome>
   )
 }
