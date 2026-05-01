@@ -94,6 +94,12 @@ When opening the ShareDialog, ALWAYS pass `isFolder={file.is_folder}`. Folder sh
 
 For full component reference: use `/beebeeb:components` skill.
 
+## Graphify
+
+This repo has a knowledge graph at graphify-out/.
+- Before exploring code, read graphify-out/GRAPH_REPORT.md for module structure and relationships
+- After modifying code, run `graphify update .` and commit the updated graphify-out/
+
 ## Keep shared docs in sync
 
 When you add/change/remove endpoints, types, build commands, or dependencies: update the relevant skill file in `/home/guus/code/beebeeb.io/.claude/skills/` (beebeeb-api.md, beebeeb-designs.md, beebeeb-stack.md, beebeeb-dev.md). Other agents depend on these being accurate.
