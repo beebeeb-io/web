@@ -4,26 +4,7 @@ import { Icon } from '../components/icons'
 import { BBButton } from '../components/bb-button'
 import { BBInput } from '../components/bb-input'
 import { BBCheckbox } from '../components/bb-checkbox'
-import { clearToken, getToken, getApiUrl } from '../lib/api'
-
-async function deleteAccount(confirmation: string): Promise<{ shred_after: string }> {
-  const token = getToken()
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (token) headers['Authorization'] = `Bearer ${token}`
-
-  const res = await fetch(`${getApiUrl()}/api/v1/auth/account`, {
-    method: 'DELETE',
-    headers,
-    body: JSON.stringify({ confirmation }),
-  })
-
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error((body as { error?: string }).error ?? res.statusText)
-  }
-
-  return res.json() as Promise<{ shred_after: string }>
-}
+import { deleteAccountPermanently } from '../lib/api'
 
 const deletionItems: [string, string][] = [
   ['All files and versions', 'Encrypted blobs shredded from all regions'],
@@ -47,8 +28,7 @@ export function DeleteAccount() {
     setError(null)
 
     try {
-      await deleteAccount(confirmation)
-      clearToken()
+      await deleteAccountPermanently(confirmation)
       navigate('/login', { replace: true })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to delete account')
