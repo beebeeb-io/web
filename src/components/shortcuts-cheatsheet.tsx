@@ -5,17 +5,16 @@ interface ShortcutsCheatsheetProps {
   onClose: () => void
 }
 
+// Keep this list in sync with src/hooks/use-keyboard-shortcuts.ts —
+// don't list shortcuts here that aren't actually bound, otherwise users
+// press them and nothing happens.
 const groups = [
   {
     label: 'Navigation',
     items: [
       ['Open command palette', `${modLabel} K`],
-      ['Search', '/'],
-      ['Drive', 'G then D'],
-      ['Photos', 'G then P'],
-      ['Security', 'G then S'],
-      ['Team', 'G then T'],
-      ['Shortcuts (this)', '?'],
+      ['Search', `${modLabel} F`],
+      ['Show this cheatsheet', '?'],
     ],
   },
   {
@@ -23,27 +22,16 @@ const groups = [
     items: [
       ['Upload', `${modLabel} U`],
       ['New folder', `${modLabel} N`],
-      ['Quick preview', 'Space'],
-      ['Open', 'Enter'],
-      ['Download', `${modLabel} D`],
+      ['Download selection', `${modLabel} D`],
       ['Move to trash', 'Del'],
-      ['Rename', 'F2'],
     ],
   },
   {
     label: 'Selection',
     items: [
       ['Select all', `${modLabel} A`],
-      ['Extend selection', 'Shift ↑↓'],
-      ['Clear selection', 'Esc'],
-    ],
-  },
-  {
-    label: 'Sharing',
-    items: [
-      ['Create share link', 'S'],
-      ['Share with person', 'Shift S'],
-      ['Show details panel', `${modLabel} I`],
+      ['Star / unstar selection', `${modLabel} S`],
+      ['Close modal / clear', 'Esc'],
     ],
   },
 ]

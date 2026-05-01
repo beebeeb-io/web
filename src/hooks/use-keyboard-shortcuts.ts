@@ -74,7 +74,10 @@ export function useKeyboardShortcuts(actions: ShortcutActions) {
         actions.onSearch?.()
         return
       }
-      if (e.key === '/' || (mod && e.key === '/')) {
+      // ? (Shift+/ on US layouts) is the conventional "show shortcuts" key
+      // — Gmail/GitHub/Slack all use it. Bare / also works as a backstop for
+      // layouts where ? requires AltGr or similar.
+      if (e.key === '?' || e.key === '/' || (mod && e.key === '/')) {
         e.preventDefault()
         actions.onShortcuts?.()
         return
