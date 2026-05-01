@@ -8,6 +8,8 @@ import { useKeys } from '../lib/key-context'
 import { decryptFilename, fromBase64 } from '../lib/crypto'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { EmptyPhotos } from '../components/empty-states/empty-photos'
+import { FilePreview } from '../components/preview/file-preview'
+import { useFilePreview } from '../hooks/use-file-preview'
 
 // ─── Constants ──────────────────────────────────
 
@@ -128,6 +130,7 @@ const DATE_RANGES = ['Last 7 days', 'Last 30 days', 'Last 3 months', 'All time']
 export function Photos() {
   const navigate = useNavigate()
   const { getFileKey, isUnlocked } = useKeys()
+  const { previewFile, openPreview, closePreview } = useFilePreview()
   const [activeTab, setActiveTab] = useState(0)
   const [dateRange, setDateRange] = useState<(typeof DATE_RANGES)[number]>('All time')
   const [dateDropdownOpen, setDateDropdownOpen] = useState(false)
@@ -354,10 +357,14 @@ export function Photos() {
                   if (!thumbUrl && photo.hasThumbnail && isUnlocked) {
                     loadThumbnail(photo.id)
                   }
+                  const file = filteredFiles.find((f) => f.id === photo.id)
                   return (
-                    <div
+                    <button
+                      type="button"
                       key={photo.id}
-                      className="relative overflow-hidden rounded-sm cursor-pointer group/cell"
+                      onClick={() => file && openPreview(file)}
+                      aria-label={`Open ${photo.name}`}
+                      className="relative overflow-hidden rounded-sm cursor-pointer group/cell focus:outline-none focus:ring-2 focus:ring-amber"
                       style={{
                         aspectRatio: '1',
                         background: thumbUrl
@@ -424,7 +431,7 @@ export function Photos() {
                           <Icon name="users" size={9} className="text-white" />
                         </div>
                       )}
-                    </div>
+                    </button>
                   )
                 })}
               </div>
@@ -451,6 +458,14 @@ export function Photos() {
             GPS & device serial stripped before encryption
           </span>
         </div>
+
+        {previewFile && (
+          <FilePreview
+            file={previewFile}
+            decryptedName={decryptedNames[previewFile.id]}
+            onClose={closePreview}
+          />
+        )}
     </DriveLayout>
   )
 }
