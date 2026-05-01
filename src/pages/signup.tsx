@@ -31,6 +31,7 @@ export function Signup() {
       subtitle="Encrypted end-to-end before it leaves your device. We can't read any of it."
       step={1}
       totalSteps={4}
+      hideTrust
     >
       <form onSubmit={handleSubmit}>
         <BBInput

@@ -176,7 +176,7 @@ export function Login() {
   return (
     <AuthShell
       title="Welcome back"
-      subtitle="Log in to unlock your vault."
+      subtitle="Sign in to unlock your encrypted vault."
     >
       <form onSubmit={handleSubmit}>
         <BBInput
@@ -187,15 +187,21 @@ export function Login() {
           onChange={(e) => setEmail(e.currentTarget.value)}
           icon="mail"
           className="mb-3.5"
+          autoComplete="email"
           required
         />
 
+        {/* Password field with show/hide toggle and Forgot link */}
         <div className="mb-1.5">
           <div className="flex items-baseline mb-1.5">
             <label className="text-xs font-medium text-ink-2">Password</label>
-            <span className="ml-auto text-[11px] text-amber-deep cursor-pointer hover:underline">
+            <Link
+              to="/forgot-password"
+              className="ml-auto text-[11px] text-amber-deep hover:underline"
+              tabIndex={-1}
+            >
               Forgot?
-            </span>
+            </Link>
           </div>
           <div
             className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 transition-all focus-within:ring-2 focus-within:ring-amber/30 focus-within:border-amber-deep"
@@ -206,21 +212,27 @@ export function Login() {
               value={password}
               onChange={(e) => setPassword(e.currentTarget.value)}
               className="flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-4"
+              autoComplete="current-password"
               required
             />
             <button
               type="button"
-              className="text-ink-3 hover:text-ink-2 transition-colors"
+              className="password-toggle text-ink-3 hover:text-ink-2 p-0.5 rounded-sm"
               onClick={() => setShowPassword(!showPassword)}
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
               tabIndex={-1}
             >
-              <Icon name={showPassword ? 'eye-off' : 'eye'} size={16} />
+              <Icon name={showPassword ? 'eye-off' : 'eye'} size={15} />
             </button>
           </div>
         </div>
 
+        {/* Error message */}
         {error && (
-          <p className="text-xs text-red mb-3 mt-3">{error}</p>
+          <div className="flex items-start gap-2 mt-3 mb-3 px-3 py-2.5 rounded-md bg-red/5 border border-red/15">
+            <Icon name="shield" size={14} className="text-red shrink-0 mt-px" />
+            <p className="text-xs text-red leading-relaxed">{error}</p>
+          </div>
         )}
 
         <BBButton
@@ -230,27 +242,35 @@ export function Login() {
           className="w-full mt-3"
           disabled={submitting}
         >
-          {submitting ? 'Logging in...' : 'Log in'}
+          {submitting ? (
+            <span className="flex items-center gap-2">
+              <span className="inline-block w-3.5 h-3.5 border-2 border-ink/20 border-t-ink rounded-full animate-spin" />
+              Unlocking vault...
+            </span>
+          ) : (
+            'Log in'
+          )}
         </BBButton>
 
         {/* OR divider */}
-        <div className="flex items-center gap-2.5 my-5 text-[11px] text-ink-4">
+        <div className="flex items-center gap-3 my-5 text-[11px] text-ink-4 select-none">
           <div className="flex-1 h-px bg-line" />
-          <span>OR</span>
+          <span className="tracking-wider uppercase">or</span>
           <div className="flex-1 h-px bg-line" />
         </div>
 
-        <BBButton
+        {/* Passkey — first-class option with distinct styling */}
+        <button
           type="button"
-          variant="default"
-          size="md"
-          className="w-full gap-2"
+          className="w-full flex items-center justify-center gap-2.5 px-lg py-2.5 text-sm font-medium text-ink border border-line-2 rounded-lg bg-paper hover:bg-paper-2 active:bg-paper-3 transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-amber-deep focus-visible:ring-offset-2"
           onClick={handlePasskeyLogin}
           disabled={passkeyLoading}
         >
-          <Icon name="key" size={14} />
+          <span className="flex items-center justify-center w-6 h-6 rounded-md bg-amber-bg">
+            <Icon name="key" size={13} className="text-amber-deep" />
+          </span>
           {passkeyLoading ? 'Waiting for device...' : 'Sign in with passkey'}
-        </BBButton>
+        </button>
 
         <p className="text-xs text-ink-3 text-center mt-5">
           New to Beebeeb?{' '}
@@ -265,4 +285,3 @@ export function Login() {
     </AuthShell>
   )
 }
-

@@ -148,3 +148,155 @@ select:focus-visible {
   from { background-position: 0 0; }
   to   { background-position: 28px 49px; }
 }
+
+/* ─── Auth page animations ────────────────────────── */
+
+@keyframes auth-gradient-shift {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes auth-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes auth-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.auth-bg {
+  background:
+    radial-gradient(ellipse 80% 60% at 20% 40%, oklch(0.96 0.05 88 / 0.5), transparent),
+    radial-gradient(ellipse 60% 80% at 80% 60%, oklch(0.95 0.03 85 / 0.4), transparent),
+    radial-gradient(ellipse 90% 50% at 50% 80%, oklch(0.97 0.02 90 / 0.3), transparent);
+  background-size: 200% 200%;
+  animation: auth-gradient-shift 16s ease-in-out infinite;
+}
+
+.dark .auth-bg {
+  background:
+    radial-gradient(ellipse 80% 60% at 20% 40%, oklch(0.20 0.04 82 / 0.5), transparent),
+    radial-gradient(ellipse 60% 80% at 80% 60%, oklch(0.18 0.03 75 / 0.4), transparent),
+    radial-gradient(ellipse 90% 50% at 50% 80%, oklch(0.22 0.02 90 / 0.3), transparent);
+  background-size: 200% 200%;
+  animation: auth-gradient-shift 16s ease-in-out infinite;
+}
+
+.auth-card {
+  animation: auth-card-enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.auth-trust {
+  animation: auth-fade-in 0.6s ease-out 0.3s both;
+}
+
+/* Password toggle — satisfying micro-interaction */
+.password-toggle {
+  transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.15s ease;
+}
+.password-toggle:active {
+  transform: scale(0.85);
+}
+
+/* ─── Drive micro-interactions ───────────────────── */
+
+/* 1. File row hover: left-border slide-in */
+.file-row {
+  position: relative;
+}
+.file-row::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--color-amber);
+  transform: scaleY(0);
+  transition: transform 150ms ease;
+}
+.file-row:hover::before {
+  transform: scaleY(1);
+}
+/* Hide the left-border when selected or drag-target (amber bg already signals state) */
+.file-row.file-row--selected::before,
+.file-row.file-row--drag-target::before {
+  transform: scaleY(0) !important;
+}
+
+/* 2. File row selection: smooth background (handled via transition-colors, 150ms) */
+
+/* 3. Context menu: fade + scale entrance */
+@keyframes ctx-menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.ctx-menu-enter {
+  animation: ctx-menu-in 120ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* 4. Breadcrumb segment slide-in from right */
+@keyframes breadcrumb-enter {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.breadcrumb-enter {
+  animation: breadcrumb-enter 180ms ease-out both;
+}
+
+/* 5. Star toggle: amber pulse */
+@keyframes star-pulse {
+  0%   { transform: scale(1); filter: brightness(1); }
+  40%  { transform: scale(1.35); filter: brightness(1.3) drop-shadow(0 0 4px var(--color-amber)); }
+  100% { transform: scale(1); filter: brightness(1); }
+}
+.star-pulse {
+  animation: star-pulse 350ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* 6. Upload success: amber glow highlight that fades out */
+@keyframes upload-glow {
+  0%   { background-color: oklch(0.96 0.08 84 / 0.6); }
+  100% { background-color: transparent; }
+}
+.dark .upload-glow {
+  animation: upload-glow-dark 1s ease-out both;
+}
+.upload-glow {
+  animation: upload-glow 1s ease-out both;
+}
+@keyframes upload-glow-dark {
+  0%   { background-color: oklch(0.30 0.08 82 / 0.5); }
+  100% { background-color: transparent; }
+}
+
+/* 7. Trash action: file row slides out to the right */
+@keyframes trash-slide-out {
+  0%   { transform: translateX(0); opacity: 1; }
+  100% { transform: translateX(60px); opacity: 0; }
+}
+.trash-slide-out {
+  animation: trash-slide-out 200ms ease-in both;
+  pointer-events: none;
+}

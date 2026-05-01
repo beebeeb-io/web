@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { BBLogo } from './bb-logo'
+import { Icon } from './icons'
 
 interface AuthShellProps {
   title: string
@@ -7,6 +8,8 @@ interface AuthShellProps {
   step?: number
   totalSteps?: number
   children: ReactNode
+  /** Hide the trust footer (default: shown) */
+  hideTrust?: boolean
 }
 
 export function AuthShell({
@@ -15,19 +18,20 @@ export function AuthShell({
   step,
   totalSteps,
   children,
+  hideTrust,
 }: AuthShellProps) {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-paper p-xl">
-      <div className="w-full max-w-[28rem] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
+    <div className="auth-bg min-h-screen flex flex-col items-center justify-center bg-paper p-xl">
+      <div className="auth-card w-full max-w-[28rem] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
         {/* Header */}
         <div className="px-xl py-lg border-b border-line">
-          <BBLogo size={14} />
+          <BBLogo size={16} />
           {totalSteps != null && step != null && (
             <div className="flex gap-1 mt-3.5">
               {Array.from({ length: totalSteps }).map((_, i) => (
                 <div
                   key={i}
-                  className={`flex-1 h-[3px] rounded-full ${
+                  className={`flex-1 h-[3px] rounded-full transition-colors duration-300 ${
                     i < step ? 'bg-amber' : 'bg-paper-3'
                   }`}
                 />
@@ -38,7 +42,7 @@ export function AuthShell({
 
         {/* Content */}
         <div className="px-xl py-lg">
-          <h2 className="text-lg font-semibold text-ink mb-1.5">{title}</h2>
+          <h2 className="text-lg font-semibold text-ink mb-1">{title}</h2>
           {subtitle && (
             <p className="text-[13px] text-ink-3 leading-relaxed mb-5">
               {subtitle}
@@ -47,6 +51,18 @@ export function AuthShell({
           {children}
         </div>
       </div>
+
+      {/* Trust indicator — outside the card, below */}
+      {!hideTrust && (
+        <div className="auth-trust mt-6 flex items-center gap-1.5 text-[11px] text-ink-4">
+          <Icon name="shield" size={12} className="text-amber-deep" />
+          <span>End-to-end encrypted</span>
+          <span className="mx-0.5 text-line-2">·</span>
+          <span>EU servers</span>
+          <span className="mx-0.5 text-line-2">·</span>
+          <span>Zero-knowledge</span>
+        </div>
+      )}
     </div>
   )
 }
