@@ -3,6 +3,7 @@ import { Icon } from '../../components/icons'
 import { BBButton } from '../../components/bb-button'
 import { BBChip } from '../../components/bb-chip'
 import { AdminShell } from './admin-shell'
+import { formatStorageSI } from '../../lib/format'
 import {
   getSubscription,
   getPlans,
@@ -23,12 +24,6 @@ function formatDate(iso: string | null): string {
   })
 }
 
-function formatStorage(bytes: number): string {
-  if (bytes >= 1e12) return `${(bytes / 1e12).toFixed(1)} TB`
-  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`
-  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`
-  return `${bytes} B`
-}
 
 export function AdminBilling() {
   const [sub, setSub] = useState<Subscription | null>(null)
@@ -115,7 +110,7 @@ export function AdminBilling() {
                   <div>
                     <div className="text-[10px] text-ink-4">Storage</div>
                     <div className="font-mono text-sm font-semibold">
-                      {activePlan ? formatStorage(activePlan.storage_bytes) : '-'}
+                      {activePlan ? formatStorageSI(activePlan.storage_bytes) : '-'}
                     </div>
                   </div>
                   <div>
@@ -190,7 +185,7 @@ export function AdminBilling() {
                   </div>
                   <div className="rounded-xl bg-paper border border-line-2 p-3.5">
                     <div className="text-[10px] text-ink-4 mb-0.5">Storage used</div>
-                    <div className="font-mono text-lg font-bold">{formatStorage(stats.files.storage_used_bytes)}</div>
+                    <div className="font-mono text-lg font-bold">{formatStorageSI(stats.files.storage_used_bytes)}</div>
                     <div className="text-[10px] text-ink-3 mt-1">
                       across all users
                     </div>

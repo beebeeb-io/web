@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { Icon } from './icons'
 import type { IconName } from './icons'
 import { BBButton } from './bb-button'
+import { formatBytes } from '../lib/format'
 
 export interface FileDetailsMeta {
   id: string
@@ -44,14 +45,6 @@ interface FileDetailsPanelProps {
   onTrash?: () => void
   onVersionHistory?: () => void
   isStarred?: boolean
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
 }
 
 function typeLabel(ext: string, mime: string | null): string {

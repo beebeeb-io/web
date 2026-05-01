@@ -10,6 +10,7 @@ import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { EmptyPhotos } from '../components/empty-states/empty-photos'
 import { FilePreview } from '../components/preview/file-preview'
 import { useFilePreview } from '../hooks/use-file-preview'
+import { formatBytes } from '../lib/format'
 
 // ─── Constants ──────────────────────────────────
 
@@ -56,13 +57,6 @@ function isVideoFile(name: string, mimeType: string): boolean {
   return mimeType.startsWith('video/')
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
-}
 
 /** Group a flat list of photo items by date string. */
 function groupByDate(items: PhotoItem[], files: DriveFile[]): PhotoGroup[] {

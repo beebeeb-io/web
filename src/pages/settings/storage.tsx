@@ -4,6 +4,7 @@ import { Icon } from '../../components/icons'
 import { BBButton } from '../../components/bb-button'
 import { useToast } from '../../components/toast'
 import { getPreference, setPreference, getStorageUsage, type StorageUsage } from '../../lib/api'
+import { formatBytes } from '../../lib/format'
 
 interface StorageRegion {
   id: string
@@ -19,14 +20,6 @@ const regions: StorageRegion[] = [
   { id: 'paris', city: 'Paris', country: 'FR', provider: 'Scaleway', available: false },
 ]
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  if (bytes < 1024 * 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
-  return `${(bytes / (1024 * 1024 * 1024 * 1024)).toFixed(1)} TB`
-}
 
 export function SettingsStorage() {
   const { showToast } = useToast()

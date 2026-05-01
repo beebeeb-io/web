@@ -23,6 +23,7 @@ import {
 import { decryptFolderKey, decryptChildFileKey } from '../lib/folder-share-crypto'
 import { decryptFilename, fromBase64 } from '../lib/crypto'
 import { QuotaWarning } from './quota-warning'
+import { formatStorageSI } from '../lib/format'
 
 const navItems: { path: string; icon: IconName; label: string }[] = [
   { path: '/', icon: 'folder', label: 'All files' },
@@ -32,11 +33,6 @@ const navItems: { path: string; icon: IconName; label: string }[] = [
   { path: '/recent', icon: 'clock', label: 'Recent' },
   { path: '/trash', icon: 'trash', label: 'Trash' },
 ]
-
-function formatStorage(bytes: number): string {
-  if (bytes < 1_000_000_000) return `${(bytes / 1_000_000).toFixed(0)} MB`
-  return `${(bytes / 1_000_000_000).toFixed(0)} GB`
-}
 
 function regionLabel(region: string): string {
   const map: Record<string, string> = {
@@ -234,7 +230,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   }, [isUnlocked, getMasterKey])
 
   const storageLimit = usage?.plan_limit_bytes ?? planDetails?.storage_bytes ?? 5_368_709_120
-  const storageLabel = formatStorage(storageLimit)
+  const storageLabel = formatStorageSI(storageLimit)
   const usedBytes = usage?.used_bytes ?? 0
   const usedPct = storageLimit > 0 ? Math.min(100, (usedBytes / storageLimit) * 100) : 0
   const storageWarning = usedPct > 90
@@ -351,7 +347,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
           </div>
           <div className="flex justify-between text-[11px]">
             <span className={`font-mono tabular-nums ${storageWarning ? 'text-red' : ''}`}>
-              {formatStorage(usedBytes)} / {storageLabel}
+              {formatStorageSI(usedBytes)} / {storageLabel}
             </span>
             <Link to="/billing" className="font-medium text-amber-deep hover:underline">
               Manage

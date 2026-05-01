@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from './bb-button'
+import { formatBytes } from '../lib/format'
 import { BBChip } from './bb-chip'
 import { Icon } from './icons'
 import { FeedbackDialog } from './feedback-dialog'
@@ -54,13 +55,6 @@ const MAX_OPENS_OPTIONS: MaxOpensOption[] = [
   { label: 'Unlimited', value: null },
 ]
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
-}
 
 function Dropdown<T extends { label: string }>({
   options,

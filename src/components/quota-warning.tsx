@@ -1,14 +1,10 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Icon } from './icons'
+import { formatStorageSI } from '../lib/format'
 
 const DISMISS_KEY = 'bb_quota_warning_dismissed_at'
 const DISMISS_DURATION_MS = 24 * 60 * 60 * 1000 // 24 hours
-
-function formatStorage(bytes: number): string {
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)} MB`
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
-}
 
 interface QuotaWarningProps {
   usedBytes: number
@@ -69,8 +65,8 @@ export function QuotaWarning({ usedBytes, limitBytes }: QuotaWarningProps) {
             {isFull
               ? `Storage full. Upgrade your plan to continue uploading.`
               : isCritical
-                ? `Almost full -- ${formatStorage(usedBytes)} of ${formatStorage(limitBytes)} used. New uploads will be blocked when full.`
-                : `You've used ${formatStorage(usedBytes)} of ${formatStorage(limitBytes)}`}
+                ? `Almost full -- ${formatStorageSI(usedBytes)} of ${formatStorageSI(limitBytes)} used. New uploads will be blocked when full.`
+                : `You've used ${formatStorageSI(usedBytes)} of ${formatStorageSI(limitBytes)}`}
           </span>
         </div>
 

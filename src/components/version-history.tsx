@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { BBButton } from './bb-button'
+import { formatBytes } from '../lib/format'
 import { Icon } from './icons'
 import { useToast } from './toast'
 import {
@@ -18,12 +19,6 @@ interface VersionHistoryProps {
   onVersionRestored?: () => void
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
-}
 
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime()

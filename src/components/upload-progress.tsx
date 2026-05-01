@@ -1,4 +1,5 @@
 import { Icon } from './icons'
+import { formatBytes } from '../lib/format'
 
 export interface UploadItem {
   id: string
@@ -22,12 +23,6 @@ interface UploadProgressProps {
   onResume?: (id: string) => void
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
-}
 
 function formatSpeed(bytesPerSecond: number): string {
   if (bytesPerSecond < 1024) return `${bytesPerSecond.toFixed(0)} B/s`

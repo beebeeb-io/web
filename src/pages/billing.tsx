@@ -15,6 +15,7 @@ import {
   type Invoice,
   type StorageUsage,
 } from '../lib/api'
+import { formatStorageSI } from '../lib/format'
 
 /* ── Plan metadata ─────────────────────────────────────── */
 
@@ -43,26 +44,8 @@ function formatDate(iso: string | null): string {
   })
 }
 
-function formatStorage(gb: number): string {
-  if (gb >= 1000) return `${(gb / 1000).toFixed(gb >= 10000 ? 0 : 1)} TB`
-  return `${gb} GB`
-}
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
-  const val = bytes / Math.pow(1024, i)
-  return `${val < 10 ? val.toFixed(2) : val < 100 ? val.toFixed(1) : val.toFixed(0)} ${units[i]}`
-}
 
-function formatBytesShort(bytes: number): string {
-  if (bytes === 0) return '0'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
-  const val = bytes / Math.pow(1024, i)
-  return `${val < 10 ? val.toFixed(1) : val.toFixed(0)} ${units[i]}`
-}
 
 /* ── Animated progress bar ─────────────────────────────── */
 
@@ -144,13 +127,13 @@ function StorageBreakdownBar({
               style={{ background: seg.color }}
             />
             <span>{seg.label}</span>
-            <span className="font-mono text-ink-3">{formatBytesShort(seg.bytes)}</span>
+            <span className="font-mono text-ink-3">{formatStorageSI(seg.bytes)}</span>
           </div>
         ))}
         <div className="flex items-center gap-2 text-xs text-ink-3">
           <span className="w-2 h-2 rounded-full shrink-0 bg-paper-3" />
           <span>Available</span>
-          <span className="font-mono">{formatBytesShort(Math.max(0, totalBytes - totalUsed))}</span>
+          <span className="font-mono">{formatStorageSI(Math.max(0, totalBytes - totalUsed))}</span>
         </div>
       </div>
     </div>
@@ -342,8 +325,8 @@ export function Billing() {
               <div className="flex items-baseline justify-between mb-2">
                 <div className="text-[11px] text-ink-4 font-medium">Storage</div>
                 <div className="font-mono text-sm font-semibold">
-                  {formatBytes(usedBytes)}
-                  <span className="text-ink-3 font-normal"> / {formatStorage(totalStorageGB)}</span>
+                  {formatStorageSI(usedBytes)}
+                  <span className="text-ink-3 font-normal"> / {formatStorageSI(totalStorageGB * 1_000_000_000)}</span>
                 </div>
               </div>
               <AnimatedProgress percent={usedPercent} />
@@ -509,7 +492,7 @@ export function Billing() {
                       <span className="text-xs text-ink-3">/ month</span>
                     </div>
                     <div className="text-xs text-ink-3 mb-3">
-                      {formatStorage(p.storagePerSeat)} per seat
+                      {formatStorageSI(p.storagePerSeat * 1_000_000_000)} per seat
                       {p.minSeats > 1 ? ` · ${p.minSeats}+ seats` : ''}
                     </div>
                     <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-deep">

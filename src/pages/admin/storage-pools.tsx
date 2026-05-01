@@ -6,14 +6,8 @@ import { useToast } from '../../components/toast'
 import { AdminShell } from './admin-shell'
 import { listStoragePools, listMigrations, updateStoragePool, getPoolUsage } from '../../lib/api'
 import type { StoragePool, MigrationSummary, MigrationEntry, PoolUsageEntry } from '../../lib/api'
+import { formatBytes } from '../../lib/format'
 
-function formatBytes(bytes: number): string {
-  if (bytes >= 1e12) return `${(bytes / 1e12).toFixed(2)} TB`
-  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(2)} GB`
-  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(2)} MB`
-  if (bytes >= 1e3) return `${(bytes / 1e3).toFixed(2)} KB`
-  return `${bytes} B`
-}
 
 function formatDate(iso: string | null): string {
   if (!iso) return '-'

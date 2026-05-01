@@ -12,14 +12,8 @@ import {
   type ShareView as ShareViewData,
 } from '../lib/api'
 import { decryptFilename, decryptChunk, fromBase64, initCrypto } from '../lib/crypto'
+import { formatBytes } from '../lib/format'
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
-}
 
 function formatExpiry(expiresAt: string | null | undefined): string {
   if (!expiresAt) return 'Never'

@@ -11,16 +11,10 @@ import { useKeys } from '../lib/key-context'
 import { decryptFilename, fromBase64 } from '../lib/crypto'
 import { useWsEvent } from '../lib/ws-context'
 import { EmptyTrash } from '../components/empty-states/empty-trash'
+import { formatBytes } from '../lib/format'
 
 // ─── Helpers ─────────────────────────────────────
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '--'
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
-}
 
 function daysUntilShred(deletedAt: string): number {
   const deleted = new Date(deletedAt).getTime()

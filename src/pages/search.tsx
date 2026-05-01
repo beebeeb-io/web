@@ -7,6 +7,7 @@ import type { IconName } from '../components/icons'
 import { FileIcon, getFileType } from '../components/file-icon'
 import { EmptyState } from '../components/empty-states/empty-state'
 import { useKeys } from '../lib/key-context'
+import { formatBytes } from '../lib/format'
 import {
   fetchIndex,
   searchIndex,
@@ -17,13 +18,6 @@ import {
 
 // ─── Helpers ─────────────────────────────────────
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '--'
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
-}
 
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime()
