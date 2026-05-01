@@ -8,30 +8,7 @@ import { useDisplay } from '../../lib/display-context'
 import { getPreference, setPreference } from '../../lib/api'
 import type { ThemeMode } from '../../lib/theme-context'
 import type { FontSize, SidebarDensity } from '../../lib/display-context'
-
-// ─── Timezone helpers ───────────────────────────────
-
-function getTimezoneOptions(): { value: string; label: string }[] {
-  const now = Date.now()
-
-  const parseOffset = (o: string) => {
-    const m = o.match(/([+-])(\d+)(?::(\d+))?/)
-    if (!m) return 0
-    return (m[1] === '-' ? -1 : 1) * (parseInt(m[2]) * 60 + parseInt(m[3] ?? '0'))
-  }
-
-  return Intl.supportedValuesOf('timeZone')
-    .filter(tz => tz.startsWith('Europe/'))
-    .map(tz => {
-      const offset = new Intl.DateTimeFormat('en-GB', {
-        timeZone: tz,
-        timeZoneName: 'shortOffset',
-      }).formatToParts(now).find(p => p.type === 'timeZoneName')?.value ?? ''
-      const city = tz.split('/').pop()!.replace(/_/g, ' ')
-      return { value: tz, label: `${offset} — ${city}`, offset }
-    })
-    .sort((a, b) => parseOffset(a.offset) - parseOffset(b.offset) || a.label.localeCompare(b.label))
-}
+import { getTimezoneGroups } from '../../lib/timezones'
 
 // ─── Theme preview cards ────────────────────────────
 
@@ -394,8 +371,12 @@ export function SettingsAppearance() {
           }}
           className="border rounded-md bg-paper px-3 py-2 border-line max-w-[280px] text-sm text-ink outline-none appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%237d7770%22%20stroke-width%3D%222.5%22%3E%3Cpath%20d%3D%22M6%209l6%206%206-6%22%2F%3E%3C%2Fsvg%3E')] bg-no-repeat bg-[right_10px_center] pr-8 cursor-pointer"
         >
-          {getTimezoneOptions().map(tz => (
-            <option key={tz.value} value={tz.value}>{tz.label}</option>
+          {getTimezoneGroups().map(group => (
+            <optgroup key={group.region} label={group.region}>
+              {group.zones.map(tz => (
+                <option key={tz.value} value={tz.value}>{tz.label}</option>
+              ))}
+            </optgroup>
           ))}
         </select>
       </SettingsRow>
