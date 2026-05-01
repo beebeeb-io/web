@@ -255,7 +255,7 @@ export function SettingsAccount() {
                     ? 'border-amber-deep bg-amber-bg cursor-default'
                     : region.available
                       ? 'border-line bg-paper hover:bg-paper-2 cursor-pointer'
-                      : region.id === 'ede'
+                      : !region.available
                         ? 'border-line bg-paper-2 opacity-60 hover:opacity-100 hover:border-amber/40 hover:shadow-[0_0_20px_oklch(0.82_0.17_84_/_0.15)] cursor-default'
                         : 'border-line bg-paper-2 opacity-50 cursor-not-allowed'
                 }`}
@@ -291,9 +291,7 @@ export function SettingsAccount() {
                   <Icon name="check" size={12} className="text-amber-deep shrink-0" />
                 )}
                 {!region.available && (
-                  <span className={`text-[10px] font-medium uppercase tracking-wider shrink-0 transition-colors duration-200 ${
-                    region.id === 'ede' ? 'text-ink-4 group-hover/region:text-amber-deep' : 'text-ink-4'
-                  }`}>
+                  <span className="text-[10px] font-medium uppercase tracking-wider shrink-0 transition-colors duration-200 text-ink-4 group-hover/region:text-amber-deep">
                     Coming soon
                   </span>
                 )}
