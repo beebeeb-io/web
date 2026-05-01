@@ -36,9 +36,10 @@ const navItems: { path: string; icon: IconName; label: string }[] = [
 
 function regionLabel(region: string): string {
   const map: Record<string, string> = {
-    frankfurt: 'Frankfurt · Hetzner',
-    falkenstein: 'Falkenstein · Hetzner',
-    helsinki: 'Helsinki · Hetzner',
+    frankfurt: 'Frankfurt, DE',
+    falkenstein: 'Falkenstein, DE',
+    helsinki: 'Helsinki, FIN',
+    ede: 'Ede, NL · Beebeeb',
   }
   return map[region] ?? region
 }

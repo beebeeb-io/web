@@ -251,14 +251,15 @@ export function SettingsAccount() {
                       : 'border-line bg-paper-2 opacity-50 cursor-not-allowed'
                 }`}
               >
+                <Icon name="shield" size={13} className={isActive ? 'text-amber-deep shrink-0' : 'text-ink-3 shrink-0'} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className={`text-[13px] ${isActive ? 'font-semibold' : ''}`}>
-                      {region.city} {region.country}
+                    <span className={`text-[13px] font-mono ${isActive ? 'font-semibold text-ink' : 'text-ink-2'}`}>
+                      {region.city}, {region.country}
                     </span>
                     {region.provider && (
                       <span className="text-[11px] text-ink-4 font-mono">
-                        {region.provider}
+                        · {region.provider}
                       </span>
                     )}
                   </div>
