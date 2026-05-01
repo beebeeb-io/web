@@ -250,12 +250,14 @@ export function SettingsAccount() {
                   setSelectedRegion(region.id)
                   if (region.id === 'auto') setRegionMode('preference')
                 }}
-                className={`flex items-center gap-3 px-3.5 py-3 rounded-md border text-left transition-colors ${
+                className={`group/region flex items-center gap-3 px-3.5 py-3 rounded-md border text-left transition-all duration-200 ${
                   isActive
                     ? 'border-amber-deep bg-amber-bg cursor-default'
                     : region.available
                       ? 'border-line bg-paper hover:bg-paper-2 cursor-pointer'
-                      : 'border-line bg-paper-2 opacity-50 cursor-not-allowed'
+                      : region.id === 'ede'
+                        ? 'border-line bg-paper-2 opacity-60 hover:opacity-100 hover:border-amber/40 hover:shadow-[0_0_20px_oklch(0.82_0.17_84_/_0.15)] cursor-default'
+                        : 'border-line bg-paper-2 opacity-50 cursor-not-allowed'
                 }`}
               >
                 {region.flag ? (
@@ -279,12 +281,19 @@ export function SettingsAccount() {
                       Data is sharded across European data centers. No single location holds your complete vault.
                     </div>
                   )}
+                  {region.id === 'ede' && (
+                    <div className="text-[11px] text-ink-4 mt-0.5 leading-relaxed max-h-0 overflow-hidden opacity-0 group-hover/region:max-h-10 group-hover/region:opacity-100 transition-all duration-300">
+                      Our own data center. Built for Beebeeb. Zero third parties.
+                    </div>
+                  )}
                 </div>
                 {isActive && (
                   <Icon name="check" size={12} className="text-amber-deep shrink-0" />
                 )}
                 {!region.available && (
-                  <span className="text-[10px] font-medium text-ink-4 uppercase tracking-wider shrink-0">
+                  <span className={`text-[10px] font-medium uppercase tracking-wider shrink-0 transition-colors duration-200 ${
+                    region.id === 'ede' ? 'text-ink-4 group-hover/region:text-amber-deep' : 'text-ink-4'
+                  }`}>
                     Coming soon
                   </span>
                 )}
