@@ -946,6 +946,63 @@ export async function listMigrations(): Promise<{
   return request('/api/v1/admin/migrations')
 }
 
+export async function createStoragePool(params: {
+  name: string
+  display_name: string
+  provider: string
+  endpoint: string
+  bucket: string
+  region: string
+  access_key_id: string
+  secret_access_key: string
+  capacity_bytes?: number | null
+  is_default?: boolean
+}): Promise<StoragePool> {
+  return request<StoragePool>('/api/v1/admin/storage-pools', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
+export async function updateStoragePool(
+  id: string,
+  updates: {
+    display_name?: string
+    is_active?: boolean
+    is_default?: boolean
+    capacity_bytes?: number | null
+  },
+): Promise<StoragePool> {
+  return request<StoragePool>(`/api/v1/admin/storage-pools/${id}`, {
+    method: 'POST',
+    body: JSON.stringify(updates),
+  })
+}
+
+export interface PoolUsageEntry {
+  user_id: string
+  email: string
+  used_bytes: number
+  file_count: number
+}
+
+export async function getPoolUsage(id: string): Promise<{
+  pool_id: string
+  entries: PoolUsageEntry[]
+}> {
+  return request(`/api/v1/admin/storage-pools/${id}/usage`)
+}
+
+export async function migrateUser(
+  userId: string,
+  toPoolId: string,
+): Promise<{ message: string; migration_count: number }> {
+  return request(`/api/v1/admin/migrate-user/${userId}`, {
+    method: 'POST',
+    body: JSON.stringify({ to_pool_id: toPoolId }),
+  })
+}
+
 // ─── Folder sharing ──────────────────────────────
 
 export async function getFolderKeys(

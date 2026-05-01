@@ -2,9 +2,10 @@ import { useState, useEffect, useCallback } from 'react'
 import { Icon } from '../../components/icons'
 import { BBButton } from '../../components/bb-button'
 import { BBChip } from '../../components/bb-chip'
+import { useToast } from '../../components/toast'
 import { AdminShell } from './admin-shell'
-import { listStoragePools, listMigrations } from '../../lib/api'
-import type { StoragePool, MigrationSummary, MigrationEntry } from '../../lib/api'
+import { listStoragePools, listMigrations, updateStoragePool, getPoolUsage } from '../../lib/api'
+import type { StoragePool, MigrationSummary, MigrationEntry, PoolUsageEntry } from '../../lib/api'
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1e12) return `${(bytes / 1e12).toFixed(2)} TB`
@@ -59,12 +60,55 @@ function UsageBar({ used, capacity, className }: { used: number; capacity: numbe
   )
 }
 
+function PoolUsageDetail({ poolId }: { poolId: string }) {
+  const [entries, setEntries] = useState<PoolUsageEntry[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setLoading(true)
+    setError(null)
+    getPoolUsage(poolId)
+      .then(data => setEntries(data.entries))
+      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load usage'))
+      .finally(() => setLoading(false))
+  }, [poolId])
+
+  if (loading) {
+    return <div className="text-[10px] text-ink-3 py-2">Loading usage...</div>
+  }
+  if (error) {
+    return <div className="text-[10px] text-red py-2">{error}</div>
+  }
+  if (entries.length === 0) {
+    return <div className="text-[10px] text-ink-3 py-2">No users in this pool</div>
+  }
+
+  return (
+    <div className="mt-3 border-t border-line pt-3">
+      <div className="text-[10px] font-medium text-ink-3 uppercase tracking-wide mb-2">Per-user breakdown</div>
+      <div className="flex flex-col gap-1.5">
+        {entries.map(e => (
+          <div key={e.user_id} className="flex items-center gap-2 text-[11px]">
+            <span className="font-mono text-ink-2 truncate flex-1 min-w-0">{e.email}</span>
+            <span className="font-mono text-ink-3 shrink-0">{e.file_count} files</span>
+            <span className="font-mono text-ink shrink-0 w-[72px] text-right">{formatBytes(e.used_bytes)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function StoragePools() {
+  const { showToast } = useToast()
   const [pools, setPools] = useState<StoragePool[]>([])
   const [migrationSummary, setMigrationSummary] = useState<MigrationSummary | null>(null)
   const [recentMigrations, setRecentMigrations] = useState<MigrationEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [updatingPool, setUpdatingPool] = useState<string | null>(null)
+  const [expandedPool, setExpandedPool] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -87,6 +131,56 @@ export function StoragePools() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  async function handleToggleActive(pool: StoragePool) {
+    setUpdatingPool(pool.id)
+    try {
+      const updated = await updateStoragePool(pool.id, { is_active: !pool.is_active })
+      setPools(prev => prev.map(p => p.id === pool.id ? updated : p))
+      showToast({
+        icon: 'check',
+        title: `Pool ${updated.is_active ? 'activated' : 'deactivated'}`,
+        description: pool.display_name,
+      })
+    } catch (err) {
+      showToast({
+        icon: 'x',
+        title: 'Update failed',
+        description: err instanceof Error ? err.message : 'Could not update pool',
+        danger: true,
+      })
+    } finally {
+      setUpdatingPool(null)
+    }
+  }
+
+  async function handleSetDefault(pool: StoragePool) {
+    if (pool.is_default) return
+    setUpdatingPool(pool.id)
+    try {
+      const updated = await updateStoragePool(pool.id, { is_default: true })
+      // Clear is_default on all other pools, set on this one
+      setPools(prev => prev.map(p => {
+        if (p.id === pool.id) return updated
+        if (p.is_default) return { ...p, is_default: false }
+        return p
+      }))
+      showToast({
+        icon: 'check',
+        title: 'Default pool changed',
+        description: `${pool.display_name} is now the default pool`,
+      })
+    } catch (err) {
+      showToast({
+        icon: 'x',
+        title: 'Update failed',
+        description: err instanceof Error ? err.message : 'Could not set default pool',
+        danger: true,
+      })
+    } finally {
+      setUpdatingPool(null)
+    }
+  }
 
   const totalUsed = pools.reduce((sum, p) => sum + p.used_bytes, 0)
   const totalCapacity = pools.reduce((sum, p) => sum + (p.capacity_bytes ?? 0), 0)
@@ -126,68 +220,109 @@ export function StoragePools() {
           <>
             {/* Pool cards */}
             <div className="grid gap-3" style={{ gridTemplateColumns: pools.length > 1 ? '1fr 1fr' : '1fr' }}>
-              {pools.map(pool => (
-                <div key={pool.id} className="rounded-xl bg-paper border border-line-2 p-4">
-                  <div className="flex items-start gap-3 mb-3">
-                    <div
-                      className="w-[32px] h-[32px] rounded-lg shrink-0 flex items-center justify-center border"
-                      style={{
-                        background: pool.is_active ? 'var(--color-amber-bg)' : 'var(--color-paper-2)',
-                        borderColor: pool.is_active ? 'var(--color-amber-deep)' : 'var(--color-line-2)',
-                      }}
-                    >
-                      <Icon
-                        name="cloud"
-                        size={14}
-                        style={{ color: pool.is_active ? 'var(--color-amber-deep)' : 'var(--color-ink-4)' }}
-                      />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[13px] font-semibold">{pool.display_name}</span>
-                        {pool.is_default && <BBChip variant="amber" className="text-[9px]">Default</BBChip>}
-                        <BBChip variant={pool.is_active ? 'green' : 'default'} className="text-[9px]">
-                          {pool.is_active ? 'Active' : 'Inactive'}
-                        </BBChip>
+              {pools.map(pool => {
+                const isUpdating = updatingPool === pool.id
+                const isExpanded = expandedPool === pool.id
+                return (
+                  <div key={pool.id} className="rounded-xl bg-paper border border-line-2 p-4">
+                    <div className="flex items-start gap-3 mb-3">
+                      <div
+                        className="w-[32px] h-[32px] rounded-lg shrink-0 flex items-center justify-center border"
+                        style={{
+                          background: pool.is_active ? 'var(--color-amber-bg)' : 'var(--color-paper-2)',
+                          borderColor: pool.is_active ? 'var(--color-amber-deep)' : 'var(--color-line-2)',
+                        }}
+                      >
+                        <Icon
+                          name="cloud"
+                          size={14}
+                          style={{ color: pool.is_active ? 'var(--color-amber-deep)' : 'var(--color-ink-4)' }}
+                        />
                       </div>
-                      <div className="font-mono text-[10px] text-ink-3 mt-0.5">{pool.name}</div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[13px] font-semibold">{pool.display_name}</span>
+                          {pool.is_default && <BBChip variant="amber" className="text-[9px]">Default</BBChip>}
+                          <BBChip variant={pool.is_active ? 'green' : 'default'} className="text-[9px]">
+                            {pool.is_active ? 'Active' : 'Inactive'}
+                          </BBChip>
+                        </div>
+                        <div className="font-mono text-[10px] text-ink-3 mt-0.5">{pool.name}</div>
+                      </div>
                     </div>
-                  </div>
 
-                  {/* Details grid */}
-                  <div className="grid grid-cols-3 gap-2 mb-3">
-                    <div>
-                      <div className="text-[10px] text-ink-4">Provider</div>
-                      <div className="font-mono text-[11px] font-medium">{pool.provider}</div>
+                    {/* Details grid */}
+                    <div className="grid grid-cols-3 gap-2 mb-3">
+                      <div>
+                        <div className="text-[10px] text-ink-4">Provider</div>
+                        <div className="font-mono text-[11px] font-medium">{pool.provider}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-ink-4">Region</div>
+                        <div className="font-mono text-[11px] font-medium">{pool.region}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-ink-4">Bucket</div>
+                        <div className="font-mono text-[11px] font-medium truncate">{pool.bucket}</div>
+                      </div>
                     </div>
-                    <div>
-                      <div className="text-[10px] text-ink-4">Region</div>
-                      <div className="font-mono text-[11px] font-medium">{pool.region}</div>
-                    </div>
-                    <div>
-                      <div className="text-[10px] text-ink-4">Bucket</div>
-                      <div className="font-mono text-[11px] font-medium truncate">{pool.bucket}</div>
-                    </div>
-                  </div>
 
-                  {/* Usage */}
-                  <div className="mb-2">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-[10px] text-ink-4">Usage</span>
-                      <span className="font-mono text-[10px] text-ink-2">
-                        {formatBytes(pool.used_bytes)}
-                        {pool.capacity_bytes ? ` / ${formatBytes(pool.capacity_bytes)}` : ''}
-                      </span>
+                    {/* Usage */}
+                    <div className="mb-3">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] text-ink-4">Usage</span>
+                        <span className="font-mono text-[10px] text-ink-2">
+                          {formatBytes(pool.used_bytes)}
+                          {pool.capacity_bytes ? ` / ${formatBytes(pool.capacity_bytes)}` : ''}
+                        </span>
+                      </div>
+                      <UsageBar used={pool.used_bytes} capacity={pool.capacity_bytes} />
                     </div>
-                    <UsageBar used={pool.used_bytes} capacity={pool.capacity_bytes} />
-                  </div>
 
-                  {/* Endpoint */}
-                  <div className="p-2 bg-paper-2 border border-line rounded-md font-mono text-[10px] text-ink-3 break-all">
-                    {pool.endpoint}
+                    {/* Endpoint */}
+                    <div className="p-2 bg-paper-2 border border-line rounded-md font-mono text-[10px] text-ink-3 break-all mb-3">
+                      {pool.endpoint}
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex items-center gap-2 pt-1 border-t border-line">
+                      <BBButton
+                        size="sm"
+                        variant={pool.is_active ? 'ghost' : 'default'}
+                        disabled={isUpdating}
+                        onClick={() => handleToggleActive(pool)}
+                      >
+                        {isUpdating
+                          ? 'Updating...'
+                          : pool.is_active
+                            ? 'Deactivate'
+                            : 'Activate'}
+                      </BBButton>
+                      {!pool.is_default && (
+                        <BBButton
+                          size="sm"
+                          variant="ghost"
+                          disabled={isUpdating}
+                          onClick={() => handleSetDefault(pool)}
+                        >
+                          Set as default
+                        </BBButton>
+                      )}
+                      <BBButton
+                        size="sm"
+                        variant="ghost"
+                        className="ml-auto"
+                        onClick={() => setExpandedPool(isExpanded ? null : pool.id)}
+                      >
+                        {isExpanded ? 'Hide usage' : 'View usage'}
+                      </BBButton>
+                    </div>
+
+                    {/* Expandable per-user usage */}
+                    {isExpanded && <PoolUsageDetail poolId={pool.id} />}
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
 
             {/* Migration dashboard */}
