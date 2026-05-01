@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { BBButton } from '../components/bb-button'
+import { Breadcrumb } from '../components/breadcrumb'
 import { BBCheckbox } from '../components/bb-checkbox'
 import { BBChip } from '../components/bb-chip'
 import { DriveLayout } from '../components/drive-layout'
@@ -1152,26 +1153,7 @@ export function Drive() {
       {/* Top bar */}
         <div className="px-5 py-2.5 border-b border-line flex items-center gap-3">
           {/* Breadcrumbs */}
-          <div className="flex items-center gap-1.5 text-sm">
-            {breadcrumbs.map((crumb, i) => {
-              const isLast = i === breadcrumbs.length - 1
-              return (
-                <span key={i} className="flex items-center gap-1.5">
-                  {i > 0 && <Icon name="chevron-right" size={12} className="text-ink-4" />}
-                  {isLast ? (
-                    <span className="font-semibold text-ink">{crumb.name}</span>
-                  ) : (
-                    <button
-                      onClick={() => handleBreadcrumbNav(i)}
-                      className="text-ink-3 hover:text-ink transition-colors"
-                    >
-                      {crumb.name}
-                    </button>
-                  )}
-                </span>
-              )
-            })}
-          </div>
+          <Breadcrumb items={breadcrumbs} onNavigate={handleBreadcrumbNav} />
 
           {/* Search */}
           <form

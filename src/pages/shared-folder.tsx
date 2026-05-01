@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { BBButton } from '../components/bb-button'
+import { Breadcrumb, type BreadcrumbItem } from '../components/breadcrumb'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '../components/icons'
 import { SharedFolderBanner } from '../components/shared-folder-banner'
@@ -183,24 +184,14 @@ export function SharedFolder() {
       />
 
       {/* Breadcrumbs */}
-      <div className="px-5 py-2.5 border-b border-line flex items-center gap-1.5 text-[13px]">
-        <button
-          onClick={() => navigateToBreadcrumb(-1)}
-          className="text-amber-deep hover:underline cursor-pointer font-medium"
-        >
-          {invite ? (decryptedNames[folderId] ?? 'Shared folder') : 'Shared folder'}
-        </button>
-        {breadcrumbs.map((crumb, i) => (
-          <span key={crumb.id} className="flex items-center gap-1.5">
-            <Icon name="chevron-right" size={10} className="text-ink-3" />
-            <button
-              onClick={() => navigateToBreadcrumb(i)}
-              className={`cursor-pointer ${i === breadcrumbs.length - 1 ? 'text-ink font-medium' : 'text-amber-deep hover:underline'}`}
-            >
-              {crumb.name}
-            </button>
-          </span>
-        ))}
+      <div className="px-5 py-2.5 border-b border-line">
+        <Breadcrumb
+          items={[
+            { id: null, name: invite ? (decryptedNames[folderId!] ?? 'Shared folder') : 'Shared folder' },
+            ...breadcrumbs,
+          ] satisfies BreadcrumbItem[]}
+          onNavigate={(index) => navigateToBreadcrumb(index - 1)}
+        />
       </div>
 
       {loading ? (
