@@ -11,10 +11,12 @@ import {
   getInvoices,
   getStorageUsage,
   createPortalSession,
+  getPaymentMethod,
   getApiUrl,
   type Subscription,
   type Invoice,
   type StorageUsage,
+  type PaymentMethod,
 } from '../lib/api'
 import { formatStorageSI } from '../lib/format'
 import { StorageBreakdown, type StorageSegment } from '../components/storage-breakdown'
@@ -88,20 +90,23 @@ export function Billing() {
   const [upgradeOpen, setUpgradeOpen] = useState(false)
   const [upgradePlan, setUpgradePlan] = useState<string>('team')
   const [portalLoading, setPortalLoading] = useState(false)
+  const [payment, setPayment] = useState<PaymentMethod | null>(null)
   const showSuccess = searchParams.get('success') === 'true'
 
   const loadData = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const [subData, invData, storageData] = await Promise.all([
+      const [subData, invData, storageData, paymentData] = await Promise.all([
         getSubscription(),
         getInvoices(),
         getStorageUsage().catch(() => null),
+        getPaymentMethod().catch(() => null),
       ])
       setSub(subData)
       setInvoices(invData)
       setStorage(storageData)
+      setPayment(paymentData)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load billing data')
     } finally {
@@ -342,12 +347,6 @@ export function Billing() {
               <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-4">
                 Payment method
               </div>
-              {sub?.plan !== 'free' && (
-                <BBButton size="sm" variant="ghost" className="ml-auto">
-                  <Icon name="plus" size={11} className="mr-1" />
-                  Add
-                </BBButton>
-              )}
             </div>
 
             {sub?.plan === 'free' ? (
@@ -360,20 +359,58 @@ export function Billing() {
                   Upgrade to add a payment method and unlock more storage.
                 </div>
               </div>
-            ) : (
-              <div className="space-y-2">
+            ) : payment ? (
+              <div className="space-y-2 flex-1">
                 <div className="flex items-center gap-3 p-3 rounded-lg border border-line bg-paper-2">
-                  <div className="w-[36px] h-[24px] rounded bg-gradient-to-br from-blue-500 to-blue-400 text-white text-[9px] font-bold flex items-center justify-center tracking-wider">
-                    SEPA
+                  <div className="w-[36px] h-[24px] rounded bg-ink text-paper text-[9px] font-bold flex items-center justify-center tracking-wider uppercase shrink-0">
+                    {payment.type === 'sepa_debit' ? 'SEPA' : (payment.brand ?? payment.type).slice(0, 4)}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="font-mono text-xs font-medium truncate">
-                      NL** **** **** 4721
+                    <div className="font-mono text-xs font-medium">
+                      ···· {payment.last4 ?? payment.iban_last4}
+                      {payment.type === 'card' && payment.exp_month != null && payment.exp_year != null && (
+                        <span className="text-ink-3 font-normal ml-2">
+                          {payment.exp_month}/{String(payment.exp_year).slice(-2)}
+                        </span>
+                      )}
                     </div>
-                    <div className="text-[11px] text-ink-3">Direct debit</div>
+                    <div className="text-[11px] text-ink-3">
+                      {payment.type === 'sepa_debit'
+                        ? 'Direct debit'
+                        : payment.brand
+                          ? payment.brand.charAt(0).toUpperCase() + payment.brand.slice(1)
+                          : 'Card'}
+                    </div>
                   </div>
                   <BBChip variant="green">Default</BBChip>
                 </div>
+                <BBButton
+                  size="sm"
+                  variant="ghost"
+                  className="w-full"
+                  onClick={() => void handleManageBilling()}
+                  disabled={portalLoading}
+                >
+                  {portalLoading ? 'Redirecting...' : 'Update payment method'}
+                </BBButton>
+              </div>
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center text-center py-4">
+                <div className="w-10 h-10 rounded-xl bg-paper-2 border border-line flex items-center justify-center mb-3">
+                  <Icon name="file-text" size={16} className="text-ink-3" />
+                </div>
+                <div className="text-sm text-ink-3 mb-1">No payment method on file</div>
+                <div className="text-xs text-ink-4 mb-3">
+                  Add one to keep your subscription active.
+                </div>
+                <BBButton
+                  size="sm"
+                  variant="amber"
+                  onClick={() => void handleManageBilling()}
+                  disabled={portalLoading}
+                >
+                  {portalLoading ? 'Redirecting...' : 'Add payment method'}
+                </BBButton>
               </div>
             )}
           </div>

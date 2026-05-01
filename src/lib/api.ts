@@ -909,6 +909,20 @@ export async function createPortalSession(): Promise<{ url: string }> {
   })
 }
 
+export interface PaymentMethod {
+  type: string
+  brand?: string
+  last4?: string
+  exp_month?: number
+  exp_year?: number
+  iban_last4?: string
+  is_default: boolean
+}
+
+export async function getPaymentMethod(): Promise<PaymentMethod> {
+  return request<PaymentMethod>('/api/v1/billing/payment-method')
+}
+
 // ─── Admin endpoints ──────────────────────────
 
 export interface AuditEvent {
