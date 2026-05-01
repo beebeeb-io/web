@@ -271,26 +271,17 @@ export function Billing() {
               )}
             </div>
 
-            {/* Seats */}
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              {meta.minSeats > 1 && (
-                <div className="p-3 rounded-lg bg-paper-2 border border-line">
+            {/* Seats — only shown for multi-seat plans */}
+            {meta.minSeats > 1 && (
+              <div className="mb-4">
+                <div className="p-3 rounded-lg bg-paper-2 border border-line inline-block">
                   <div className="text-[11px] text-ink-4 mb-0.5">Seats</div>
                   <div className="font-mono text-[15px] font-semibold">
                     {sub?.seats ?? 1}
                   </div>
                 </div>
-              )}
-              <div className="p-3 rounded-lg bg-paper-2 border border-line">
-                <div className="text-[11px] text-ink-4 mb-0.5">Region</div>
-                <div className="text-[15px] font-semibold">
-                  {sub?.region === 'eu-fra' ? 'Frankfurt' :
-                   sub?.region === 'eu-ams' ? 'Amsterdam' :
-                   sub?.region === 'eu-par' ? 'Paris' :
-                   sub?.region ?? 'EU'}
-                </div>
               </div>
-            </div>
+            )}
 
             {/* Next billing */}
             {sub?.current_period_end && (
