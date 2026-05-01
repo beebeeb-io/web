@@ -20,6 +20,7 @@ interface DataRegion {
 }
 
 const DATA_REGIONS: DataRegion[] = [
+  { id: 'auto', city: 'Auto', country: 'EU', flag: '', provider: '', available: true },
   { id: 'falkenstein', city: 'Falkenstein', country: 'DE', flag: '\u{1F1E9}\u{1F1EA}', provider: '', available: true },
   { id: 'helsinki', city: 'Helsinki', country: 'FIN', flag: '\u{1F1EB}\u{1F1EE}', provider: '', available: true },
   { id: 'ede', city: 'Ede', country: 'NL', flag: '\u{1F1F3}\u{1F1F1}', provider: 'Beebeeb', available: false },
@@ -252,11 +253,15 @@ export function SettingsAccount() {
                       : 'border-line bg-paper-2 opacity-50 cursor-not-allowed'
                 }`}
               >
-                <Icon name="shield" size={13} className={isActive ? 'text-amber-deep shrink-0' : 'text-ink-3 shrink-0'} />
+                {region.flag ? (
+                  <span className="text-[16px] shrink-0">{region.flag}</span>
+                ) : (
+                  <Icon name="shield" size={15} className={isActive ? 'text-amber-deep shrink-0' : 'text-ink-3 shrink-0'} />
+                )}
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
                     <span className={`text-[13px] font-mono ${isActive ? 'font-semibold text-ink' : 'text-ink-2'}`}>
-                      {region.city}, {region.flag} {region.country}
+                      {region.city}{region.flag ? `, ${region.country}` : ''}
                     </span>
                     {region.provider && (
                       <span className="text-[11px] text-ink-4 font-mono">
@@ -264,6 +269,11 @@ export function SettingsAccount() {
                       </span>
                     )}
                   </div>
+                  {region.id === 'auto' && (
+                    <div className="text-[11px] text-ink-3 mt-0.5 leading-relaxed">
+                      Data is sharded across all available regions. No single data center holds your complete vault.
+                    </div>
+                  )}
                 </div>
                 {isActive && (
                   <Icon name="check" size={12} className="text-amber-deep shrink-0" />
