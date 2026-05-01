@@ -232,7 +232,7 @@ function InviteForm({
 
   const handleInvite = useCallback(async () => {
     const trimmed = email.trim().toLowerCase()
-    if (!trimmed || !trimmed.includes('@')) {
+    if (!trimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
       setError('Enter a valid email address.')
       return
     }
@@ -327,7 +327,7 @@ function InviteForm({
       setLoading(false)
       setProgress(null)
     }
-  }, [email, fileId, isFolder, onSuccess])
+  }, [email, fileId, isFolder, onSuccess, getMasterKey, getFileKey])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -449,10 +449,10 @@ function InviteSuccess({
       </div>
       <p className="text-sm font-medium text-ink mb-1">Invite sent</p>
       <p className="text-xs text-ink-3 mb-1">
-        Invite sent to <span className="font-mono text-ink-2">{email}</span>.
+        <span className="font-mono text-ink-2">{email}</span> will receive an email with instructions.
       </p>
       <p className="text-xs text-ink-3 mb-4">
-        They'll receive an email with instructions. You'll be notified when they accept.
+        You'll be notified when they accept.
       </p>
       <div className="flex items-center gap-1.5 justify-center text-[11.5px] text-ink-3 mb-4">
         <Icon name="shield" size={11} className="text-amber-deep" />
@@ -472,10 +472,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
   const [mode, setMode] = useState<ShareMode>('link')
   const [expiryIdx, setExpiryIdx] = useState(1) // default: 24 hours
   const [maxOpensIdx, setMaxOpensIdx] = useState(1) // default: 3
-  const [canView, setCanView] = useState(true)
   const [canDownload, setCanDownload] = useState(true)
-  const [canEdit, setCanEdit] = useState(false)
-  const [canReshare, setCanReshare] = useState(false)
   const [loading, setLoading] = useState(false)
   const [shareResult, setShareResult] = useState<ShareInfo | null>(null)
   const [decryptionKey, setDecryptionKey] = useState<string>('')
@@ -487,16 +484,23 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
 
   const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
 
+  // Close on Escape key
+  useEffect(() => {
+    if (!open) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [open, onClose])
+
   // Reset state when dialog opens
   useEffect(() => {
     if (open) {
       setMode('link')
       setExpiryIdx(1)
       setMaxOpensIdx(1)
-      setCanView(true)
       setCanDownload(true)
-      setCanEdit(false)
-      setCanReshare(false)
       setShareResult(null)
       setDecryptionKey('')
       setError(null)
@@ -544,7 +548,17 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       setCopied(type)
       setTimeout(() => setCopied(null), 2000)
     } catch {
-      // Fallback for older browsers
+      // Fallback: select text from a temporary textarea
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+      setCopied(type)
+      setTimeout(() => setCopied(null), 2000)
     }
   }, [])
 
@@ -558,13 +572,6 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
   const fullShareUrl = shareResult && decryptionKey
     ? `${shareUrl}#key=${encodeURIComponent(decryptionKey)}`
     : ''
-
-  const permToggles: [string, boolean, (v: boolean) => void, 'eye' | 'download' | 'file' | 'share'][] = [
-    ['Can view', canView, setCanView, 'eye'],
-    ['Can download', canDownload, setCanDownload, 'download'],
-    ['Can edit', canEdit, setCanEdit, 'file'],
-    ['Can re-share', canReshare, setCanReshare, 'share'],
-  ]
 
   return (
     <>
@@ -588,7 +595,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
           <div className="px-xl py-lg border-b border-line flex items-center gap-2.5">
             <Icon name="share" size={14} className="text-ink" />
             <span className="text-sm font-semibold text-ink">Send securely</span>
-            <BBChip>
+            <BBChip className="max-w-[220px] truncate shrink">
               {fileName} · {formatBytes(fileSize)}
             </BBChip>
             <button
@@ -623,6 +630,28 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
                   </button>
                 </div>
 
+                {/* Settings summary */}
+                <div className="flex items-center gap-3 mb-3 text-[11.5px] text-ink-3">
+                  <span className="flex items-center gap-1">
+                    <Icon name="clock" size={11} />
+                    {EXPIRY_OPTIONS[expiryIdx].hours
+                      ? `Expires in ${EXPIRY_OPTIONS[expiryIdx].label.toLowerCase()}`
+                      : 'No expiry'}
+                  </span>
+                  <span className="w-px h-3 bg-line-2" />
+                  <span>
+                    {MAX_OPENS_OPTIONS[maxOpensIdx].value
+                      ? `${MAX_OPENS_OPTIONS[maxOpensIdx].value} opens max`
+                      : 'Unlimited opens'}
+                  </span>
+                  {!canDownload && (
+                    <>
+                      <span className="w-px h-3 bg-line-2" />
+                      <span>View only</span>
+                    </>
+                  )}
+                </div>
+
                 {shareMode === 'full' ? (
                   <>
                     <label className="block text-xs font-medium text-ink-2 mb-1.5">Share link</label>
@@ -631,7 +660,8 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
                       <input
                         value={fullShareUrl}
                         readOnly
-                        className="flex-1 bg-transparent font-mono text-xs text-ink outline-none truncate"
+                        onFocus={(e) => e.target.select()}
+                        className="flex-1 bg-transparent font-mono text-xs text-ink outline-none truncate select-all"
                       />
                     </div>
                     <BBButton
@@ -656,7 +686,8 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
                       <input
                         value={shareUrl}
                         readOnly
-                        className="flex-1 bg-transparent font-mono text-xs text-ink outline-none truncate"
+                        onFocus={(e) => e.target.select()}
+                        className="flex-1 bg-transparent font-mono text-xs text-ink outline-none truncate select-all"
                       />
                       <BBButton size="sm" onClick={() => copyToClipboard(shareUrl, 'split-link')} className="shrink-0 gap-1">
                         <Icon name={copied === 'split-link' ? 'check' : 'copy'} size={11} />
@@ -674,7 +705,8 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
                       <input
                         value={decryptionKey}
                         readOnly
-                        className="flex-1 bg-transparent font-mono text-xs outline-none truncate"
+                        onFocus={(e) => e.target.select()}
+                        className="flex-1 bg-transparent font-mono text-xs outline-none truncate select-all"
                         style={{ color: 'oklch(0.35 0.1 72)', fontWeight: 500 }}
                       />
                       <BBButton size="sm" onClick={() => copyToClipboard(decryptionKey, 'split-key')} className="shrink-0 gap-1">
@@ -727,13 +759,16 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
                     {/* Permissions */}
                     <label className="block text-xs font-medium text-ink-2 mb-2.5">Permissions</label>
                     <div className="flex flex-col gap-2.5 mb-5">
-                      {permToggles.map(([label, on, setter, iconName]) => (
-                        <div key={label} className="flex items-center text-[13px]">
-                          <Icon name={iconName} size={13} className="text-ink-3" />
-                          <span className="ml-2.5 flex-1">{label}</span>
-                          <Toggle on={on} onChange={setter} />
-                        </div>
-                      ))}
+                      <div className="flex items-center text-[13px] opacity-50">
+                        <Icon name="eye" size={13} className="text-ink-4" />
+                        <span className="ml-2.5 flex-1 text-ink-3">Can view</span>
+                        <span className="text-[11px] text-ink-4">Always on</span>
+                      </div>
+                      <div className="flex items-center text-[13px]">
+                        <Icon name="download" size={13} className="text-ink-3" />
+                        <span className="ml-2.5 flex-1">Can download</span>
+                        <Toggle on={canDownload} onChange={setCanDownload} />
+                      </div>
                     </div>
 
                     {error && (
