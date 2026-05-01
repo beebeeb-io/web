@@ -11,6 +11,7 @@ import {
   getInvoices,
   getStorageUsage,
   createPortalSession,
+  getApiUrl,
   type Subscription,
   type Invoice,
   type StorageUsage,
@@ -511,7 +512,11 @@ export function Billing() {
             <span className="flex-1">
               All invoices are VAT-compliant (EU reverse charge). Signed DPA on file.
             </span>
-            <BBButton size="sm" variant="ghost">
+            <BBButton
+              size="sm"
+              variant="ghost"
+              onClick={() => window.open(`${getApiUrl()}/api/v1/legal/dpa`, '_blank')}
+            >
               Download DPA
             </BBButton>
           </div>
