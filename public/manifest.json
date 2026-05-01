@@ -1,0 +1,16 @@
+{
+  "name": "Beebeeb",
+  "short_name": "Beebeeb",
+  "description": "End-to-end encrypted cloud storage",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#f5b800",
+  "background_color": "#faf8f3",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
