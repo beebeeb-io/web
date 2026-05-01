@@ -1,8 +1,11 @@
-import type { ReactNode } from 'react'
+import { type ReactNode, useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import { SettingsShell, SettingsHeader, SettingsRow } from '../../components/settings-shell'
 import { Icon } from '../../components/icons'
+import { BBChip } from '../../components/bb-chip'
 import { useTheme } from '../../lib/theme-context'
 import { useDisplay } from '../../lib/display-context'
+import { getPreference, setPreference } from '../../lib/api'
 import type { ThemeMode } from '../../lib/theme-context'
 import type { FontSize, SidebarDensity } from '../../lib/display-context'
 
@@ -182,6 +185,25 @@ function DensityPreview({ density }: { density: SidebarDensity }) {
 
 // ─── Main page ──────────────────────────────────────
 
+// ─── Locale data ────────────────────────────────────
+
+interface Language {
+  name: string
+  code: string
+  available: boolean
+}
+
+const languages: Language[] = [
+  { name: 'English', code: 'en', available: true },
+  { name: 'Nederlands', code: 'nl', available: false },
+  { name: 'Deutsch', code: 'de', available: false },
+  { name: 'Français', code: 'fr', available: false },
+  { name: 'Italiano', code: 'it', available: false },
+  { name: 'Español', code: 'es', available: false },
+]
+
+// ─── Main page ──────────────────────────────────────
+
 const themeOptions: { id: ThemeMode; label: string }[] = [
   { id: 'light', label: 'Light' },
   { id: 'dark', label: 'Dark' },
@@ -200,9 +222,35 @@ const densityOptions: { id: SidebarDensity; label: string; description: string }
   { id: 'spacious', label: 'Spacious', description: 'More breathing room between items' },
 ]
 
+interface LocalePreference {
+  region?: string
+  timezone?: string
+  firstDay?: 'Sun' | 'Mon'
+}
+
 export function SettingsAppearance() {
   const { mode, setMode, resolved } = useTheme()
   const { fontSize, sidebarDensity, setFontSize, setSidebarDensity } = useDisplay()
+  const { i18n } = useTranslation()
+
+  const defaultTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const [region, setRegion] = useState('Europe · 24h · metric · €')
+  const [timezone, setTimezone] = useState(defaultTimezone)
+  const [firstDay, setFirstDay] = useState<'Sun' | 'Mon'>('Mon')
+
+  useEffect(() => {
+    getPreference<LocalePreference>('locale').then((pref) => {
+      if (!pref) return
+      if (pref.region) setRegion(pref.region)
+      if (pref.timezone) setTimezone(pref.timezone)
+      if (pref.firstDay) setFirstDay(pref.firstDay)
+    }).catch(() => {})
+  }, [])
+
+  function saveLocale(patch: Partial<LocalePreference>) {
+    const next = { region, timezone, firstDay, ...patch }
+    setPreference('locale', next).catch(() => {})
+  }
 
   return (
     <SettingsShell activeSection="appearance">
@@ -259,6 +307,92 @@ export function SettingsAppearance() {
               onClick={() => setSidebarDensity(option.id)}
               preview={<DensityPreview density={option.id} />}
             />
+          ))}
+        </div>
+      </SettingsRow>
+
+      {/* ─ Language ──────────────────────────────── */}
+      <SettingsRow label="Language" hint="More languages are on the way. Want to help translate? Get in touch.">
+        <div className="grid grid-cols-2 gap-1.5 max-w-[520px]">
+          {languages.map((lang) => {
+            const isActive = lang.code === i18n.language
+            return (
+              <button
+                key={lang.code}
+                type="button"
+                disabled={!lang.available}
+                onClick={() => lang.available && i18n.changeLanguage(lang.code)}
+                className={`flex items-center gap-2.5 px-3 py-2.5 rounded-md border text-left transition-colors ${
+                  isActive
+                    ? 'border-amber-deep bg-amber-bg cursor-default'
+                    : lang.available
+                      ? 'border-line bg-paper hover:bg-paper-2 cursor-pointer'
+                      : 'border-line bg-paper-2 opacity-50 cursor-not-allowed'
+                }`}
+              >
+                <span className="font-mono text-[10px] text-ink-3 w-5">{lang.code}</span>
+                <span className={`text-[13px] flex-1 ${isActive ? 'font-semibold' : ''}`}>{lang.name}</span>
+                {isActive && (
+                  <Icon name="check" size={12} className="text-amber-deep" />
+                )}
+                {!lang.available && (
+                  <BBChip>Coming soon</BBChip>
+                )}
+              </button>
+            )
+          })}
+        </div>
+      </SettingsRow>
+
+      {/* ─ Region format ─────────────────────────── */}
+      <SettingsRow label="Region format" hint="Affects dates, numbers, currency displays">
+        <div className="flex items-center gap-2 border rounded-md bg-paper px-3 py-2 border-line max-w-[280px]">
+          <input
+            value={region}
+            onChange={(e) => {
+              setRegion(e.target.value)
+              saveLocale({ region: e.target.value })
+            }}
+            className="flex-1 bg-transparent text-sm text-ink outline-none"
+          />
+          <Icon name="chevron-down" size={12} className="text-ink-3 shrink-0" />
+        </div>
+      </SettingsRow>
+
+      {/* ─ Timezone ──────────────────────────────── */}
+      <SettingsRow label="Timezone" hint="Used for activity log and shared link expiry">
+        <div className="flex items-center gap-2 border rounded-md bg-paper px-3 py-2 border-line max-w-[280px]">
+          <input
+            value={timezone}
+            onChange={(e) => {
+              setTimezone(e.target.value)
+              saveLocale({ timezone: e.target.value })
+            }}
+            className="flex-1 bg-transparent text-sm text-ink outline-none"
+          />
+          <Icon name="chevron-down" size={12} className="text-ink-3 shrink-0" />
+        </div>
+      </SettingsRow>
+
+      {/* ─ First day of week ─────────────────────── */}
+      <SettingsRow label="First day of week">
+        <div className="flex gap-1.5">
+          {(['Sun', 'Mon'] as const).map((day) => (
+            <button
+              key={day}
+              type="button"
+              onClick={() => {
+                setFirstDay(day)
+                saveLocale({ firstDay: day })
+              }}
+              className={`px-3.5 py-1.5 text-[12.5px] rounded-sm border cursor-pointer transition-colors ${
+                firstDay === day
+                  ? 'bg-ink text-paper border-ink'
+                  : 'bg-paper text-ink-2 border-line-2 hover:bg-paper-2'
+              }`}
+            >
+              {day}
+            </button>
           ))}
         </div>
       </SettingsRow>
