@@ -1,6 +1,5 @@
-import { useState, useRef, useCallback, type ReactNode } from 'react'
+import { useState, useRef, useCallback, useEffect, type ReactNode } from 'react'
 import { Icon } from './icons'
-import { BBButton } from './bb-button'
 
 // ─── Folder traversal helpers ─────────────────────
 
@@ -98,8 +97,19 @@ interface UploadZoneProps {
 
 export function UploadZone({ onFiles, onFolderFiles, children }: UploadZoneProps) {
   const [dragging, setDragging] = useState(false)
+  // Separate state to allow CSS exit transitions before unmounting
+  const [visible, setVisible] = useState(false)
   const dragCounter = useRef(0)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Sync dragging → visible with a small delay on exit for the fade-out
+  useEffect(() => {
+    if (dragging) {
+      setVisible(true)
+    } else {
+      const id = setTimeout(() => setVisible(false), 220)
+      return () => clearTimeout(id)
+    }
+  }, [dragging])
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -147,20 +157,6 @@ export function UploadZone({ onFiles, onFolderFiles, children }: UploadZoneProps
     [onFiles, onFolderFiles],
   )
 
-  const handleBrowse = useCallback(() => {
-    fileInputRef.current?.click()
-  }, [])
-
-  const handleInputChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = Array.from(e.target.files ?? [])
-      if (files.length > 0) onFiles(files)
-      // Reset so the same file can be selected again
-      e.target.value = ''
-    },
-    [onFiles],
-  )
-
   return (
     <div
       className="relative flex-1 min-h-0"
@@ -171,58 +167,100 @@ export function UploadZone({ onFiles, onFolderFiles, children }: UploadZoneProps
     >
       {children}
 
-      {/* Hidden file input */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        multiple
-        className="hidden"
-        onChange={handleInputChange}
-      />
-
-      {/* Drag overlay */}
-      {dragging && (
-        <div className="absolute inset-0 z-30 flex items-center justify-center bg-paper/90 backdrop-blur-sm">
-          {/* Honeycomb pattern overlay */}
+      {/* Drag overlay — always mounted while visible, uses opacity for smooth transitions */}
+      {visible && (
+        <div
+          className="absolute inset-0 z-30 flex items-center justify-center backdrop-blur-sm transition-all duration-200 ease-out"
+          style={{
+            opacity: dragging ? 1 : 0,
+            background: 'color-mix(in oklch, var(--color-paper) 92%, transparent)',
+          }}
+        >
+          {/* Animated dashed border inset */}
           <div
-            className="absolute inset-0 opacity-[0.08]"
+            className="absolute inset-3 rounded-xl pointer-events-none"
             style={{
-              backgroundImage: `url("data:image/svg+xml,%3Csvg width='28' height='49' viewBox='0 0 28 49' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill-rule='evenodd'%3E%3Cg fill='%23f5b800' fill-opacity='1'%3E%3Cpath d='M13.99 9.25l13 7.5v15l-13 7.5L1 31.75v-15l12.99-7.5zM3 17.9v12.7l10.99 6.34 11-6.35V17.9l-11-6.34L3 17.9z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
+              border: '2px dashed var(--color-amber)',
+              opacity: dragging ? 0.6 : 0,
+              transition: 'opacity 0.3s ease',
+              animation: dragging ? 'upload-border-pulse 2s ease-in-out infinite' : 'none',
             }}
           />
-          <div className="relative text-center">
+
+          {/* Honeycomb pattern overlay with drift animation */}
+          <div
+            className="absolute inset-0 rounded-xl overflow-hidden pointer-events-none"
+            style={{
+              opacity: dragging ? 0.07 : 0,
+              transition: 'opacity 0.4s ease',
+            }}
+          >
             <div
-              className="w-11 h-11 mx-auto mb-2.5 rounded-xl flex items-center justify-center"
+              className="absolute inset-0"
+              style={{
+                backgroundImage: `url("data:image/svg+xml,%3Csvg width='28' height='49' viewBox='0 0 28 49' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill-rule='evenodd'%3E%3Cg fill='%23f5b800' fill-opacity='1'%3E%3Cpath d='M13.99 9.25l13 7.5v15l-13 7.5L1 31.75v-15l12.99-7.5zM3 17.9v12.7l10.99 6.34 11-6.35V17.9l-11-6.34L3 17.9z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
+                animation: dragging ? 'upload-honeycomb-drift 12s linear infinite' : 'none',
+              }}
+            />
+          </div>
+
+          {/* Center content with staggered entrance */}
+          <div
+            className="relative text-center transition-all duration-300 ease-out"
+            style={{
+              opacity: dragging ? 1 : 0,
+              transform: dragging ? 'translateY(0) scale(1)' : 'translateY(8px) scale(0.96)',
+            }}
+          >
+            {/* Upload icon with glow */}
+            <div
+              className="w-12 h-12 mx-auto mb-3 rounded-xl flex items-center justify-center transition-transform duration-300 ease-out"
               style={{
                 background: 'var(--color-amber)',
-                boxShadow: '0 4px 14px -4px oklch(0.82 0.17 84 / 0.5), inset 0 1px 0 rgba(255,255,255,0.4)',
+                boxShadow: '0 6px 20px -4px oklch(0.82 0.17 84 / 0.45), inset 0 1px 0 rgba(255,255,255,0.35)',
+                transform: dragging ? 'scale(1)' : 'scale(0.8)',
+                animation: dragging ? 'upload-icon-bob 2.4s ease-in-out infinite' : 'none',
               }}
             >
-              <Icon name="arrow-up" size={20} className="text-ink" />
+              <Icon name="shield" size={20} className="text-ink" />
             </div>
-            <div className="text-[15px] font-semibold mb-1">Drop files or folders to encrypt</div>
-            <div className="font-mono text-[10.5px] text-ink-3">
+
+            <div
+              className="text-[15px] font-semibold mb-1 transition-all duration-300 delay-75"
+              style={{
+                opacity: dragging ? 1 : 0,
+                transform: dragging ? 'translateY(0)' : 'translateY(4px)',
+              }}
+            >
+              Drop to encrypt &amp; upload
+            </div>
+
+            <div
+              className="font-mono text-[10.5px] text-ink-3 transition-all duration-300 delay-100"
+              style={{
+                opacity: dragging ? 1 : 0,
+                transform: dragging ? 'translateY(0)' : 'translateY(4px)',
+              }}
+            >
               AES-256-GCM · chunked client-side · EU-only transit
             </div>
-            <BBButton
-              size="sm"
-              className="mt-3"
-              onClick={(e) => {
-                e.stopPropagation()
-                handleBrowse()
+
+            {/* Lock indicator */}
+            <div
+              className="flex items-center justify-center gap-1 mt-2 transition-all duration-300 delay-150"
+              style={{
+                opacity: dragging ? 0.5 : 0,
+                transform: dragging ? 'translateY(0)' : 'translateY(4px)',
               }}
             >
-              or browse...
-            </BBButton>
+              <Icon name="lock" size={10} className="text-ink-4" />
+              <span className="font-mono text-[9px] text-ink-4 tracking-wider uppercase">
+                Zero-knowledge encryption
+              </span>
+            </div>
           </div>
         </div>
       )}
-
-      {/* Expose browse trigger for external use */}
-      <button ref={(_el) => {
-        // Store the browse function as a data attribute for parent access
-        // This is a no-op render; parent uses onFiles callback
-      }} data-browse="" onClick={handleBrowse} className="hidden" />
     </div>
   )
 }
