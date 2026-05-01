@@ -191,8 +191,8 @@ export function Billing() {
   const priceDisplay = sub?.plan === 'free'
     ? null
     : sub?.billing_cycle === 'yearly'
-      ? `${meta.priceYearlySeat} / year per seat`
-      : `${meta.pricePerSeat} / month per seat`
+      ? `${meta.priceYearlySeat} / year${meta.minSeats > 1 ? ' per seat' : ''}`
+      : `${meta.pricePerSeat} / month${meta.minSeats > 1 ? ' per seat' : ''}`
 
   /* ── Render ────────────────────────────────────────── */
 
@@ -273,12 +273,14 @@ export function Billing() {
 
             {/* Seats */}
             <div className="grid grid-cols-2 gap-3 mb-4">
-              <div className="p-3 rounded-lg bg-paper-2 border border-line">
-                <div className="text-[11px] text-ink-4 mb-0.5">Seats</div>
-                <div className="font-mono text-[15px] font-semibold">
-                  {sub?.seats ?? 1}
+              {meta.minSeats > 1 && (
+                <div className="p-3 rounded-lg bg-paper-2 border border-line">
+                  <div className="text-[11px] text-ink-4 mb-0.5">Seats</div>
+                  <div className="font-mono text-[15px] font-semibold">
+                    {sub?.seats ?? 1}
+                  </div>
                 </div>
-              </div>
+              )}
               <div className="p-3 rounded-lg bg-paper-2 border border-line">
                 <div className="text-[11px] text-ink-4 mb-0.5">Region</div>
                 <div className="text-[15px] font-semibold">
@@ -426,8 +428,8 @@ export function Billing() {
                       <span className="text-xs text-ink-3">/ month</span>
                     </div>
                     <div className="text-xs text-ink-3 mb-3">
-                      {formatStorageSI(p.storagePerSeat * 1_000_000_000)} per seat
-                      {p.minSeats > 1 ? ` · ${p.minSeats}+ seats` : ''}
+                      {formatStorageSI(p.storagePerSeat * 1_000_000_000)}
+                      {p.minSeats > 1 ? ` per seat · ${p.minSeats}+ seats` : ''}
                     </div>
                     <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-deep">
                       {planId === 'business' ? 'Contact sales' : 'Start 14-day trial'}
