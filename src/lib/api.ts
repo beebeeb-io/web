@@ -699,8 +699,12 @@ export async function verifySharePassphrase(
   return res.json() as Promise<ShareView>
 }
 
-export async function downloadSharedFile(token: string): Promise<Blob> {
-  const res = await fetch(`${API_URL}/api/v1/shares/${token}/download`)
+export async function downloadSharedFile(token: string, passphrase?: string): Promise<Blob> {
+  const headers: HeadersInit = {}
+  if (passphrase) {
+    headers['X-Share-Passphrase'] = passphrase
+  }
+  const res = await fetch(`${API_URL}/api/v1/shares/${token}/download`, { headers })
   if (!res.ok) {
     throw new ApiError(res.statusText, res.status)
   }

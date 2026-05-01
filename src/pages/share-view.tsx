@@ -174,7 +174,7 @@ export function ShareViewPage() {
     setDownloading(true)
     setDownloadError(null)
     try {
-      const blob = await downloadSharedFile(token)
+      const blob = await downloadSharedFile(token, passphrase || undefined)
       const encrypted = new Uint8Array(await blob.arrayBuffer())
 
       // Decrypt: each chunk is nonce(12) + ciphertext
@@ -197,7 +197,7 @@ export function ShareViewPage() {
     } finally {
       setDownloading(false)
     }
-  }, [token, shareData, decryptedName])
+  }, [token, shareData, decryptedName, passphrase])
 
   // Honeycomb background pattern
   const honeycombBg = (
