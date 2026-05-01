@@ -27,6 +27,8 @@ const PARALLEL_UPLOADS = 4
 export interface UploadProgress {
   stage: 'Encrypting' | 'Uploading' | 'Done'
   progress: number
+  /** Total bytes uploaded so far (only set during 'Uploading' stage) */
+  bytesUploaded?: number
 }
 
 /**
@@ -50,6 +52,7 @@ export async function encryptedUpload(
   onProgress?: (p: UploadProgress) => void,
   resumeFileId?: string,
   sharedFolderContext?: SharedFolderUploadContext,
+  signal?: AbortSignal,
 ): Promise<DriveFile> {
   onProgress?.({ stage: 'Encrypting', progress: 0 })
 
@@ -138,20 +141,25 @@ export async function encryptedUpload(
   // ── Upload chunks ─────────────────────────────────
 
   let completedChunks = skipChunks.size
+  const chunkBytes = CHUNK_SIZE
 
   function reportProgress() {
     completedChunks++
+    const bytesUploaded = Math.min(completedChunks * chunkBytes, file.size)
     onProgress?.({
       stage: 'Uploading',
       progress: Math.round((completedChunks / totalChunks) * 95),
+      bytesUploaded,
     })
   }
 
   // Report initial progress for skipped chunks
   if (skipChunks.size > 0) {
+    const bytesUploaded = Math.min(skipChunks.size * chunkBytes, file.size)
     onProgress?.({
       stage: 'Uploading',
       progress: Math.round((skipChunks.size / totalChunks) * 95),
+      bytesUploaded,
     })
   }
 
@@ -176,6 +184,7 @@ export async function encryptedUpload(
   // Upload chunks with bounded concurrency
   const inflight = new Set<Promise<void>>()
   for (let i = 0; i < totalChunks; i++) {
+    if (signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError')
     if (skipChunks.has(i)) continue
 
     const p = encryptAndUpload(i)
@@ -187,6 +196,8 @@ export async function encryptedUpload(
     }
   }
   await Promise.all(inflight)
+
+  if (signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError')
 
   const fileMeta = await completeUpload(serverFileId)
 

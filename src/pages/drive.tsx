@@ -23,7 +23,7 @@ import { getPreference, setPreference } from '../lib/api'
 import { useToast } from '../components/toast'
 import { useWsEvent } from '../lib/ws-context'
 import { useKeys } from '../lib/key-context'
-import { modKey } from '../hooks/use-keyboard-shortcuts'
+import { modKey, useKeyboardShortcuts } from '../hooks/use-keyboard-shortcuts'
 import {
   listFiles,
   createFolder,
@@ -46,6 +46,7 @@ import {
 import { decryptFilename, encryptFilename, fromBase64, toBase64 } from '../lib/crypto'
 import { useSearchIndex } from '../hooks/use-search-index'
 import { FileRowSkeleton } from '../components/skeleton'
+import { EmptyDrive } from '../components/empty-states/empty-drive'
 
 // ─── Helpers ───────────────────────────────────────
 
@@ -88,6 +89,7 @@ export function Drive() {
   ])
   const [folderDialogOpen, setFolderDialogOpen] = useState(false)
   const [uploads, setUploads] = useState<UploadItem[]>([])
+  const uploadAbortRef = useRef<Map<string, AbortController>>(new Map())
   const [syncedAgo, setSyncedAgo] = useState(14)
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null)
   const [shareFileId, setShareFileId] = useState<string | null>(null)
@@ -143,16 +145,6 @@ export function Drive() {
         if (!pref?.seen) setTourOpen(true)
       })
       .catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === '?' && !e.ctrlKey && !e.metaKey && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLTextAreaElement)) {
-        setShortcutsOpen(true)
-      }
-    }
-    document.addEventListener('keydown', handleKey)
-    return () => document.removeEventListener('keydown', handleKey)
   }, [])
 
   // Check IndexedDB for paused uploads on mount
@@ -375,16 +367,29 @@ export function Drive() {
     const fileId = crypto.randomUUID()
     const fileKey = await getFileKey(fileId)
 
+    const abortController = new AbortController()
+    uploadAbortRef.current.set(uploadId, abortController)
+
     try {
+      let uploadStartedAt: number | undefined
       await encryptedUpload(file, fileId, fileKey, currentParentId, (p) => {
+        if (p.stage === 'Uploading' && !uploadStartedAt) {
+          uploadStartedAt = Date.now()
+        }
         setUploads((prev) =>
           prev.map((u) =>
             u.id === uploadId
-              ? { ...u, stage: p.stage, progress: p.progress }
+              ? {
+                  ...u,
+                  stage: p.stage,
+                  progress: p.progress,
+                  bytesUploaded: p.bytesUploaded,
+                  startedAt: uploadStartedAt,
+                }
               : u,
           ),
         )
-      })
+      }, undefined, undefined, abortController.signal)
 
       // Update the encrypted search index with the new file
       const pathPrefix = breadcrumbs.slice(1).map((b) => b.name).join('/')
@@ -401,11 +406,18 @@ export function Drive() {
       })
 
       setUploads((prev) => prev.filter((u) => u.id !== uploadId))
+      uploadAbortRef.current.delete(uploadId)
       // Remove from paused list if this was a resume
       setPausedUploads((prev) => prev.filter((u) => u.fileId !== fileId))
       showToast({ icon: 'check', title: 'Uploaded', description: file.name })
       fetchFiles()
     } catch (err) {
+      uploadAbortRef.current.delete(uploadId)
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        // Cancelled by user — silently remove from list
+        setUploads((prev) => prev.filter((u) => u.id !== uploadId))
+        return
+      }
       showToast({
         icon: 'upload',
         title: 'Upload failed',
@@ -695,6 +707,42 @@ export function Drive() {
 
   function clearDoneUploads() {
     setUploads((prev) => prev.filter((u) => u.stage !== 'Done'))
+  }
+
+  function handleCancelUpload(uploadId: string) {
+    const controller = uploadAbortRef.current.get(uploadId)
+    if (controller) {
+      controller.abort()
+    } else {
+      // For queued items not yet started, just remove them
+      setUploads((prev) => prev.filter((u) => u.id !== uploadId))
+    }
+  }
+
+  function handlePauseUpload(uploadId: string) {
+    const controller = uploadAbortRef.current.get(uploadId)
+    if (controller) {
+      controller.abort()
+      uploadAbortRef.current.delete(uploadId)
+    }
+    setUploads((prev) =>
+      prev.map((u) =>
+        u.id === uploadId ? { ...u, paused: true } : u,
+      ),
+    )
+  }
+
+  function handleResumeUpload(uploadId: string) {
+    // Remove paused state — the upload will restart from where the server left off
+    // via the resume detection in encryptedUpload
+    setUploads((prev) =>
+      prev.map((u) =>
+        u.id === uploadId ? { ...u, paused: false, stage: 'Queued' as const } : u,
+      ),
+    )
+    // Note: full resume requires re-picking the file, which we don't have access to here.
+    // For now, pausing marks the item visually. A true resume would need the File object cached.
+    showToast({ icon: 'upload', title: 'Upload paused', description: 'Drop the file again to resume.' })
   }
 
   // ─── File details panel helpers ───────────────────
@@ -1308,14 +1356,7 @@ export function Drive() {
         )}
 
         {/* Column header */}
-        <div
-          className="px-5 py-2 border-b border-line bg-paper-2"
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '20px 32px 1fr 110px 110px 100px 60px',
-            gap: 14,
-          }}
-        >
+        <div className="px-3 md:px-5 py-2 border-b border-line bg-paper-2 grid gap-2.5 md:gap-[14px] grid-cols-[20px_32px_1fr_40px] md:grid-cols-[20px_32px_1fr_110px_110px_100px_60px]">
           <span className="flex items-center justify-center">
             {sortedFiles.length > 0 && (
               <BBCheckbox
@@ -1327,9 +1368,9 @@ export function Drive() {
           </span>
           <span />
           <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">Name</span>
-          <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">Size</span>
-          <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">Modified</span>
-          <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">Shared</span>
+          <span className="hidden md:inline text-[10px] font-medium uppercase tracking-wider text-ink-3">Size</span>
+          <span className="hidden md:inline text-[10px] font-medium uppercase tracking-wider text-ink-3">Modified</span>
+          <span className="hidden md:inline text-[10px] font-medium uppercase tracking-wider text-ink-3">Shared</span>
           <span />
         </div>
 
@@ -1351,24 +1392,38 @@ export function Drive() {
                 ))}
               </div>
             ) : sortedFiles.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full text-center py-20">
-                <div
-                  className="w-14 h-14 mb-4 rounded-2xl flex items-center justify-center"
-                  style={{
-                    background: 'var(--color-amber-bg)',
-                    border: '1.5px dashed var(--color-line-2)',
-                  }}
-                >
-                  <Icon name="upload" size={24} className="text-amber-deep" />
+              currentParentId ? (
+                /* Subfolder is empty */
+                <div className="flex flex-col items-center justify-center h-full text-center py-20">
+                  <div
+                    className="w-14 h-14 mb-4 rounded-2xl flex items-center justify-center"
+                    style={{
+                      background: 'var(--color-amber-bg)',
+                      border: '1.5px dashed var(--color-line-2)',
+                    }}
+                  >
+                    <Icon name="folder" size={24} className="text-amber-deep" />
+                  </div>
+                  <h2 className="text-[15px] font-semibold text-ink mb-1.5">This folder is empty</h2>
+                  <p className="text-[13px] text-ink-3 max-w-[340px] leading-relaxed mb-5">
+                    Drag files here or use the buttons below to add content to this folder.
+                  </p>
+                  <div className="flex gap-2">
+                    <BBButton size="md" variant="amber" onClick={browse} className="gap-1.5">
+                      <Icon name="upload" size={13} /> Upload files
+                    </BBButton>
+                    <BBButton size="md" variant="ghost" onClick={() => setFolderDialogOpen(true)} className="gap-1.5">
+                      <Icon name="folder" size={13} /> New folder
+                    </BBButton>
+                  </div>
                 </div>
-                <div className="text-[15px] font-semibold text-ink mb-1">Drop files to start</div>
-                <div className="text-[13px] text-ink-3 mb-4">
-                  or use the Upload button above
-                </div>
-                <BBButton size="sm" onClick={browse}>
-                  Browse files
-                </BBButton>
-              </div>
+              ) : (
+                /* Root drive is empty — first-time experience */
+                <EmptyDrive
+                  onUpload={browse}
+                  onCreateFolder={() => setFolderDialogOpen(true)}
+                />
+              )
             ) : (
               sortedFiles.map((file) => {
                 const name = displayName(file)
@@ -1554,6 +1609,9 @@ export function Drive() {
       <UploadProgress
         items={uploads}
         onClose={clearDoneUploads}
+        onCancel={handleCancelUpload}
+        onPause={handlePauseUpload}
+        onResume={handleResumeUpload}
       />
 
       <FileDetailsPanel

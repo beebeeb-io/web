@@ -37,6 +37,9 @@ export type IconName =
   | 'image'
   | 'more'
   | 'arrow-up'
+  | 'pause'
+  | 'play'
+  | 'menu'
 
 interface IconProps extends SVGProps<SVGSVGElement> {
   name: IconName
@@ -109,6 +112,9 @@ const paths: Record<IconName, string> = {
     'M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zM8.5 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM21 15l-5-5L5 21',
   more: 'M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM19 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM5 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2z',
   'arrow-up': 'M12 19V5M5 12l7-7 7 7',
+  pause: 'M6 4h4v16H6zM14 4h4v16h-4z',
+  play: 'M5 3l14 9-14 9V3z',
+  menu: 'M3 12h18M3 6h18M3 18h18',
 }
 
 export function Icon({ name, size = 24, ...rest }: IconProps) {
