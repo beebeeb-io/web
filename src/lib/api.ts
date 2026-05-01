@@ -31,9 +31,11 @@ export function clearToken(): void {
 
 type ErrorNotifier = (message: string) => void
 type SessionExpiredHandler = () => void
+type ConnectionStatusHandler = (status: 'ok' | 'flaky') => void
 
 let notifyError: ErrorNotifier | null = null
 let onSessionExpired: SessionExpiredHandler | null = null
+let onConnectionStatus: ConnectionStatusHandler | null = null
 
 /** Register a callback to show a toast when the API is unreachable. */
 export function registerErrorNotifier(fn: ErrorNotifier): void {
@@ -43,6 +45,31 @@ export function registerErrorNotifier(fn: ErrorNotifier): void {
 /** Register a callback to handle 401 (token expired) globally. */
 export function registerSessionExpiredHandler(fn: SessionExpiredHandler): void {
   onSessionExpired = fn
+}
+
+/**
+ * Register a callback for connection-quality changes. Fires `flaky` after
+ * CONNECTION_FAILURE_THRESHOLD consecutive network failures while the browser
+ * still reports itself online, and `ok` after the next successful request.
+ */
+export function registerConnectionStatusHandler(fn: ConnectionStatusHandler): void {
+  onConnectionStatus = fn
+}
+
+const CONNECTION_FAILURE_THRESHOLD = 2
+const RETRY_DELAY_MS = 800
+
+let consecutiveFailures = 0
+let lastReported: 'ok' | 'flaky' = 'ok'
+
+function reportConnection(status: 'ok' | 'flaky'): void {
+  if (status === lastReported) return
+  lastReported = status
+  onConnectionStatus?.(status)
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 async function request<T>(
@@ -58,17 +85,30 @@ async function request<T>(
     headers['Authorization'] = `Bearer ${token}`
   }
 
+  // One retry on network failure with a short delay. Anything beyond that and
+  // we surface the error so the caller can decide. We don't retry HTTP error
+  // responses — those are deterministic, not transient.
   let res: Response
   try {
-    res = await fetch(`${API_URL}${path}`, {
-      ...options,
-      headers,
-    })
-  } catch (_err) {
-    const message = 'Could not reach the server. Check your connection and try again.'
-    notifyError?.(message)
-    throw new ApiError(message, 0)
+    res = await fetch(`${API_URL}${path}`, { ...options, headers })
+  } catch (_first) {
+    await delay(RETRY_DELAY_MS)
+    try {
+      res = await fetch(`${API_URL}${path}`, { ...options, headers })
+    } catch (_second) {
+      consecutiveFailures += 1
+      if (consecutiveFailures >= CONNECTION_FAILURE_THRESHOLD) {
+        reportConnection('flaky')
+      }
+      const message = 'Could not reach the server. Check your connection and try again.'
+      notifyError?.(message)
+      throw new ApiError(message, 0)
+    }
   }
+
+  // Got a response — connection is fine even if the response is an error.
+  consecutiveFailures = 0
+  reportConnection('ok')
 
   if (res.status === 401) {
     clearToken()
