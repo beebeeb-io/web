@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { Icon } from './icons'
 import type { IconName } from './icons'
+import { DriveLayout } from './drive-layout'
 
 type NavItem = {
   id: string
@@ -31,45 +32,44 @@ export function SettingsShell({ activeSection, children }: SettingsShellProps) {
   const location = useLocation()
 
   return (
-    <div className="min-h-screen flex items-start justify-center bg-paper p-xl pt-12">
-      <div
-        className="flex overflow-hidden border border-line-2 rounded-xl shadow-2 bg-paper"
-        style={{ width: 1040, minHeight: 620 }}
-      >
-        {/* Sidebar */}
-        <div className="w-[220px] shrink-0 bg-paper-2 border-r border-line flex flex-col">
-          <Link to="/" className="flex items-center gap-1.5 px-4 pt-3 pb-1 text-[11px] text-ink-3 hover:text-ink transition-colors">
-            <span className="rotate-180"><Icon name="chevron-right" size={10} /></span> Back to Drive
-          </Link>
-          <div className="flex items-center gap-2 px-4 pt-2 pb-2.5">
+    <DriveLayout>
+      <div className="flex-1 flex min-h-0">
+        {/* Settings sub-nav */}
+        <nav
+          aria-label="Settings"
+          className="w-[200px] shrink-0 border-r border-line bg-paper-2 px-3 py-4 overflow-y-auto"
+        >
+          <div className="flex items-center gap-2 px-2 pb-2.5">
             <Icon name="settings" size={13} className="text-ink-3" />
-            <span className="text-sm font-semibold text-ink">Settings</span>
+            <span className="text-[13px] font-semibold text-ink">Settings</span>
           </div>
-          <nav className="px-3 py-1.5">
-            {navItems.map((item) => {
-              const isActive = item.id === activeSection || location.pathname === item.href
-              return (
-                <Link
-                  key={item.id}
-                  to={item.href}
-                  className={`flex items-center gap-2.5 px-2.5 py-[7px] rounded-md text-[13px] transition-colors ${
-                    isActive
-                      ? 'bg-paper font-medium text-ink shadow-1'
-                      : 'text-ink-2 hover:bg-paper hover:text-ink'
-                  }`}
-                >
-                  <Icon name={item.icon} size={12} className={isActive ? 'text-ink' : 'text-ink-3'} />
-                  <span>{item.label}</span>
-                </Link>
-              )
-            })}
-          </nav>
-        </div>
+          {navItems.map((item) => {
+            const isActive = item.id === activeSection || location.pathname === item.href
+            return (
+              <Link
+                key={item.id}
+                to={item.href}
+                className={`flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] transition-colors ${
+                  isActive
+                    ? 'bg-paper-3 font-semibold text-ink'
+                    : 'text-ink-2 hover:bg-paper-3/50'
+                }`}
+              >
+                <Icon
+                  name={item.icon}
+                  size={12}
+                  className={`shrink-0 ${isActive ? 'text-ink' : 'text-ink-3'}`}
+                />
+                <span>{item.label}</span>
+              </Link>
+            )
+          })}
+        </nav>
 
         {/* Content */}
-        <div className="flex-1 min-w-0">{children}</div>
+        <div className="flex-1 min-w-0 overflow-y-auto">{children}</div>
       </div>
-    </div>
+    </DriveLayout>
   )
 }
 
