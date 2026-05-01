@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { BBButton } from '../components/bb-button'
 import { BBCheckbox } from '../components/bb-checkbox'
@@ -196,6 +196,53 @@ export function Shared() {
   function displayName(invite: ShareInvite): string {
     return decryptedNames[invite.id] ?? invite.file_name_encrypted ?? 'Encrypted file'
   }
+
+  // ─── Workspace suggestion ─────────────────────
+  // If the user has approved 3+ shares with the same recipient, suggest
+  // creating a team. Dismissals persist per-recipient so we don't keep
+  // pestering them after they say no.
+  const TEAM_SUGGESTION_THRESHOLD = 3
+  const TEAM_SUGGESTION_DISMISS_KEY = 'bb_team_suggest_dismissed'
+  const [dismissedRecipients, setDismissedRecipients] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(TEAM_SUGGESTION_DISMISS_KEY)
+      return new Set(raw ? (JSON.parse(raw) as string[]) : [])
+    } catch {
+      return new Set()
+    }
+  })
+
+  const teamSuggestion = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const invite of sentApproved) {
+      const email = invite.recipient_email
+      if (!email || dismissedRecipients.has(email)) continue
+      counts.set(email, (counts.get(email) ?? 0) + 1)
+    }
+    let topEmail: string | null = null
+    let topCount = 0
+    for (const [email, count] of counts) {
+      if (count > topCount) {
+        topEmail = email
+        topCount = count
+      }
+    }
+    if (!topEmail || topCount < TEAM_SUGGESTION_THRESHOLD) return null
+    return { recipientEmail: topEmail, shareCount: topCount }
+  }, [sentApproved, dismissedRecipients])
+
+  const dismissTeamSuggestion = useCallback((email: string) => {
+    setDismissedRecipients((prev) => {
+      const next = new Set(prev)
+      next.add(email)
+      try {
+        localStorage.setItem(TEAM_SUGGESTION_DISMISS_KEY, JSON.stringify([...next]))
+      } catch {
+        // localStorage full or blocked — dismissal stays for this session only
+      }
+      return next
+    })
+  }, [])
 
   // ─── Actions ──────────────────────────────────
 
@@ -886,6 +933,37 @@ export function Shared() {
           )
         })}
       </div>
+
+      {/* Smart workspace recommendation */}
+      {teamSuggestion && (
+        <div className="px-5 pt-3.5">
+          <div className="flex items-start gap-3 rounded-md border border-amber/30 bg-amber-bg px-3.5 py-3">
+            <Icon name="users" size={14} className="text-amber-deep shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-[13px] text-ink leading-snug">
+                You&apos;ve shared{' '}
+                <span className="font-mono text-[12px]">{teamSuggestion.shareCount}</span>{' '}
+                files with{' '}
+                <span className="font-medium">{teamSuggestion.recipientEmail}</span>.
+                A team workspace keeps shared files in one place and skips the per-file invite step.
+              </p>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <BBButton size="sm" variant="amber" onClick={() => navigate('/team')}>
+                Create a team
+              </BBButton>
+              <button
+                type="button"
+                onClick={() => dismissTeamSuggestion(teamSuggestion.recipientEmail)}
+                className="p-1 rounded text-ink-3 hover:text-ink hover:bg-paper-2 transition-colors"
+                aria-label="Dismiss suggestion"
+              >
+                <Icon name="x" size={12} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Tab content */}
       {tab === 'with-me' && renderWithMe()}
