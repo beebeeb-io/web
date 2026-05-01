@@ -195,6 +195,12 @@ export function Billing() {
                 >
                   Upgrade to Team
                 </BBButton>
+                <BBButton
+                  size="sm"
+                  onClick={() => openUpgrade('business')}
+                >
+                  Upgrade to Business
+                </BBButton>
               </div>
             )}
 

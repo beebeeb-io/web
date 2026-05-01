@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from './bb-button'
 import { BBChip } from './bb-chip'
@@ -35,12 +35,18 @@ export function UpgradeDialog({
   onClose,
   onSuccess,
 }: UpgradeDialogProps) {
-  const [seats, setSeats] = useState(Math.max(minSeats, 3))
+  const perSeat = planId !== 'personal'
+  const [seats, setSeats] = useState(perSeat ? Math.max(minSeats, 3) : 1)
   const [cycle, setCycle] = useState<BillingCycle>('yearly')
   const [region, setRegion] = useState<Region>('frankfurt')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
+
+  // Reset seats when plan changes (e.g. switching between Personal / Team / Business)
+  useEffect(() => {
+    setSeats(perSeat ? Math.max(minSeats, 3) : 1)
+  }, [planId, perSeat, minSeats])
 
   const monthlyTotal = seats * pricePerSeat
   const yearlyTotal = seats * priceYearlySeat
@@ -107,43 +113,47 @@ export function UpgradeDialog({
         </div>
 
         <div className="p-[22px]">
-          {/* Seats */}
-          <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-3 mb-2">
-            Seats
-          </div>
-          <div className="flex items-center gap-3 p-3.5 bg-paper-2 border border-line rounded-md mb-4">
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setSeats(Math.max(minSeats, seats - 1))}
-                aria-label="Remove seat"
-                className="w-7 h-7 rounded-md border border-line-2 bg-paper flex items-center justify-center hover:bg-paper-2 transition-colors"
-              >
-                <span className="text-ink-3 text-sm font-medium">-</span>
-              </button>
-              <span className="font-mono text-lg font-semibold min-w-[40px] text-center">
-                {seats}
-              </span>
-              <button
-                onClick={() => setSeats(seats + 1)}
-                aria-label="Add seat"
-                className="w-7 h-7 rounded-md border border-line-2 bg-paper flex items-center justify-center hover:bg-paper-2 transition-colors"
-              >
-                <Icon name="plus" size={11} className="text-ink-2" />
-              </button>
-            </div>
-            <div className="flex-1">
-              <div className="text-[12.5px] text-ink-2">
-                {seats} x EUR {pricePerSeat} ={' '}
-                <span className="font-mono font-semibold">
-                  EUR {monthlyTotal.toFixed(2)}
-                </span>{' '}
-                / mo
+          {/* Seats — hidden for non-per-seat plans (e.g. Personal) */}
+          {perSeat && (
+            <>
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-3 mb-2">
+                Seats
               </div>
-              <div className="text-[11px] text-ink-3">
-                {totalStorage} TB shared pool · add or remove any time
+              <div className="flex items-center gap-3 p-3.5 bg-paper-2 border border-line rounded-md mb-4">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setSeats(Math.max(minSeats, seats - 1))}
+                    aria-label="Remove seat"
+                    className="w-7 h-7 rounded-md border border-line-2 bg-paper flex items-center justify-center hover:bg-paper-2 transition-colors"
+                  >
+                    <span className="text-ink-3 text-sm font-medium">-</span>
+                  </button>
+                  <span className="font-mono text-lg font-semibold min-w-[40px] text-center">
+                    {seats}
+                  </span>
+                  <button
+                    onClick={() => setSeats(seats + 1)}
+                    aria-label="Add seat"
+                    className="w-7 h-7 rounded-md border border-line-2 bg-paper flex items-center justify-center hover:bg-paper-2 transition-colors"
+                  >
+                    <Icon name="plus" size={11} className="text-ink-2" />
+                  </button>
+                </div>
+                <div className="flex-1">
+                  <div className="text-[12.5px] text-ink-2">
+                    {seats} x EUR {pricePerSeat} ={' '}
+                    <span className="font-mono font-semibold">
+                      EUR {monthlyTotal.toFixed(2)}
+                    </span>{' '}
+                    / mo
+                  </div>
+                  <div className="text-[11px] text-ink-3">
+                    {totalStorage} TB shared pool · add or remove any time
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
+            </>
+          )}
 
           {/* Billing cycle */}
           <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-3 mb-2">
