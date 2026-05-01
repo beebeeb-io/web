@@ -102,6 +102,7 @@ export function Drive() {
   const [versionFileId, setVersionFileId] = useState<string | null>(null)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [tourOpen, setTourOpen] = useState(false)
+  const [tourCompleted, setTourCompleted] = useState<Set<string>>(new Set())
   const [ctxMenu, setCtxMenu] = useState<{
     open: boolean; x: number; y: number; fileId: string; fileName: string; isFolder: boolean
   }>({ open: false, x: 0, y: 0, fileId: '', fileName: '', isFolder: false })
@@ -165,8 +166,9 @@ export function Drive() {
   }, [location.state, navigate, location.pathname])
 
   useEffect(() => {
-    getPreference<{ seen: boolean }>('welcome_tour')
+    getPreference<{ seen?: boolean; completed?: string[] }>('welcome_tour')
       .then((pref) => {
+        if (pref?.completed?.length) setTourCompleted(new Set(pref.completed))
         if (!pref?.seen) setTourOpen(true)
       })
       .catch(() => {})
@@ -1861,9 +1863,25 @@ export function Drive() {
 
       <WelcomeTour
         open={tourOpen}
+        completedSteps={tourCompleted}
+        onCompleteStep={(title) => {
+          setTourCompleted((prev) => {
+            const next = new Set(prev)
+            next.add(title)
+            setPreference('welcome_tour', {
+              seen: false,
+              completed: [...next],
+            }).catch(() => {})
+            return next
+          })
+          setTourOpen(false)
+        }}
         onClose={() => {
           setTourOpen(false)
-          setPreference('welcome_tour', { seen: true }).catch(() => {})
+          setPreference('welcome_tour', {
+            seen: true,
+            completed: [...tourCompleted],
+          }).catch(() => {})
         }}
       />
     </DriveLayout>

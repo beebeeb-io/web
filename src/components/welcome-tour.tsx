@@ -16,6 +16,8 @@ interface TourStep {
 interface WelcomeTourProps {
   open: boolean
   onClose: () => void
+  /** Called when the user clicks Continue on a step — persist + close the tour */
+  onCompleteStep?: (title: string) => void
   userName?: string
   completedSteps?: Set<string>
 }
@@ -59,6 +61,7 @@ const ALL_STEPS: Omit<TourStep, 'done'>[] = [
 export function WelcomeTour({
   open,
   onClose,
+  onCompleteStep,
   userName,
   completedSteps = new Set(),
 }: WelcomeTourProps) {
@@ -158,7 +161,14 @@ export function WelcomeTour({
                     size="sm"
                     variant="amber"
                     onClick={() => {
-                      onClose()
+                      // Mark this step done so it stays checked when the
+                      // tour reopens — do this BEFORE navigating, since
+                      // some hrefs leave the drive page.
+                      if (onCompleteStep) {
+                        onCompleteStep(step.title)
+                      } else {
+                        onClose()
+                      }
                       navigate(step.href!)
                     }}
                   >
