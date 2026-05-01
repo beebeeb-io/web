@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { SettingsShell, SettingsHeader, SettingsRow } from '../../components/settings-shell'
 import { BBInput } from '../../components/bb-input'
 import { BBButton } from '../../components/bb-button'
@@ -6,7 +7,12 @@ import { BBToggle } from '../../components/bb-toggle'
 import { Icon } from '../../components/icons'
 import { useAuth } from '../../lib/auth-context'
 import { useToast } from '../../components/toast'
-import { getPreference, setPreference, getStorageUsage, type StorageUsage } from '../../lib/api'
+import {
+  getPreference, setPreference, getStorageUsage,
+  deleteAccountPermanently, changeEmail, exportAccountData,
+  clearToken,
+  type StorageUsage,
+} from '../../lib/api'
 import { StorageBreakdown } from '../../components/storage-breakdown'
 import { formatStorageSI } from '../../lib/format'
 
@@ -31,11 +37,12 @@ type RegionMode = 'preference' | 'force'
 export function SettingsAccount() {
   const { user } = useAuth()
   const { showToast } = useToast()
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const navigate = useNavigate()
 
   // Profile state
   const [displayName, setDisplayName] = useState('')
   const [publicProfile, setPublicProfile] = useState(false)
+  const [recoveryContact, setRecoveryContact] = useState('')
   const [savingProfile, setSavingProfile] = useState(false)
 
   // Storage state
@@ -49,8 +56,20 @@ export function SettingsAccount() {
   const [savedRegionMode, setSavedRegionMode] = useState<RegionMode>('preference')
   const [savingRegion, setSavingRegion] = useState(false)
 
-  // Danger zone state
+  // Change email state
+  const [showChangeEmail, setShowChangeEmail] = useState(false)
+  const [newEmail, setNewEmail] = useState('')
+  const [emailPassword, setEmailPassword] = useState('')
+  const [savingEmail, setSavingEmail] = useState(false)
+
+  // Export state
+  const [showExport, setShowExport] = useState(false)
+  const [exporting, setExporting] = useState(false)
+
+  // Delete account state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [deleteConfirmEmail, setDeleteConfirmEmail] = useState('')
+  const [deleting, setDeleting] = useState(false)
 
   const email = user?.email ?? ''
   const initials = email ? email.split('@')[0].slice(0, 2).toUpperCase() : '??'
@@ -59,12 +78,13 @@ export function SettingsAccount() {
     async function load() {
       try {
         const [pref, regionPref, usageData] = await Promise.all([
-          getPreference<{ display_name: string; public_profile: boolean }>('profile').catch(() => null),
+          getPreference<{ display_name?: string; public_profile?: boolean; recovery_contact?: string }>('profile').catch(() => null),
           getPreference<{ pool_name: string; mode: RegionMode }>('storage_region').catch(() => null),
           getStorageUsage().catch(() => null),
         ])
         if (pref?.display_name) setDisplayName(pref.display_name)
         if (pref?.public_profile) setPublicProfile(pref.public_profile)
+        if (pref?.recovery_contact) setRecoveryContact(pref.recovery_contact)
         if (regionPref?.pool_name) {
           setSelectedRegion(regionPref.pool_name)
           setSavedRegion(regionPref.pool_name)
@@ -86,14 +106,18 @@ export function SettingsAccount() {
   const handleSaveProfile = useCallback(async () => {
     setSavingProfile(true)
     try {
-      await setPreference('profile', { display_name: displayName, public_profile: publicProfile })
+      await setPreference('profile', {
+        display_name: displayName,
+        public_profile: publicProfile,
+        recovery_contact: recoveryContact,
+      })
       showToast({ icon: 'check', title: 'Profile saved' })
     } catch {
       showToast({ icon: 'x', title: 'Failed to save', danger: true })
     } finally {
       setSavingProfile(false)
     }
-  }, [displayName, publicProfile, showToast])
+  }, [displayName, publicProfile, recoveryContact, showToast])
 
   const hasRegionChanges = selectedRegion !== savedRegion || regionMode !== savedRegionMode
 
@@ -112,10 +136,52 @@ export function SettingsAccount() {
     }
   }, [selectedRegion, regionMode, showToast])
 
-  const handleFileSelected = useCallback(() => {
-    showToast({ icon: 'check', title: 'Avatar upload coming soon' })
-    if (fileInputRef.current) fileInputRef.current.value = ''
+  const handleChangeEmail = useCallback(async () => {
+    setSavingEmail(true)
+    try {
+      await changeEmail(newEmail, emailPassword)
+      showToast({ icon: 'check', title: 'Verification email sent', description: 'Check your inbox to confirm the new address.' })
+      setShowChangeEmail(false)
+      setNewEmail('')
+      setEmailPassword('')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to change email'
+      showToast({ icon: 'x', title: msg, danger: true })
+    } finally {
+      setSavingEmail(false)
+    }
+  }, [newEmail, emailPassword, showToast])
+
+  const handleExport = useCallback(async () => {
+    setExporting(true)
+    try {
+      const data = await exportAccountData()
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `beebeeb-export-${new Date().toISOString().slice(0, 10)}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+      showToast({ icon: 'check', title: 'Export downloaded' })
+    } catch {
+      showToast({ icon: 'x', title: 'Export failed', danger: true })
+    } finally {
+      setExporting(false)
+    }
   }, [showToast])
+
+  const handleDeleteAccount = useCallback(async () => {
+    setDeleting(true)
+    try {
+      await deleteAccountPermanently('DELETE')
+      clearToken()
+      navigate('/login')
+    } catch {
+      showToast({ icon: 'x', title: 'Deletion failed. Try again.', danger: true })
+      setDeleting(false)
+    }
+  }, [navigate, showToast])
 
   const storageSegments = usage
     ? [{ label: 'Used', bytes: usage.used_bytes, color: 'var(--color-amber)' }]
@@ -148,23 +214,12 @@ export function SettingsAccount() {
         />
       </SettingsRow>
 
-      <SettingsRow label="Avatar" hint="Stored encrypted. Shown only when you choose.">
-        <div className="flex items-center gap-3.5">
-          <div
-            className="w-14 h-14 rounded-full flex items-center justify-center text-paper text-[22px] font-semibold shrink-0"
-            style={{ background: 'linear-gradient(135deg, oklch(0.8 0.15 82), oklch(0.6 0.14 50))' }}
-          >
-            {initials}
-          </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={handleFileSelected}
-          />
-          <BBButton size="sm" onClick={() => fileInputRef.current?.click()}>Upload</BBButton>
-          <BBButton size="sm" variant="ghost">Remove</BBButton>
+      <SettingsRow label="Avatar" hint="Derived from your email. Avatar upload is not available in a zero-knowledge vault.">
+        <div
+          className="w-14 h-14 rounded-full flex items-center justify-center text-paper text-[22px] font-semibold shrink-0"
+          style={{ background: 'linear-gradient(135deg, oklch(0.8 0.15 82), oklch(0.6 0.14 50))' }}
+        >
+          {initials}
         </div>
       </SettingsRow>
 
@@ -181,7 +236,12 @@ export function SettingsAccount() {
         label="Recovery contact"
         hint="Optional. Notified (not given access) if your account is inactive for 180 days."
       >
-        <BBInput placeholder="email@example.com" className="max-w-[340px]" />
+        <BBInput
+          value={recoveryContact}
+          onChange={(e) => setRecoveryContact(e.target.value)}
+          placeholder="email@example.com"
+          className="max-w-[340px]"
+        />
       </SettingsRow>
 
       <SettingsRow label="Account created" hint="">
@@ -357,50 +417,110 @@ export function SettingsAccount() {
       </div>
 
       <div className="mx-7 mb-6 rounded-lg border border-red/20 bg-red/5 overflow-hidden">
+        {/* Change email */}
         <SettingsRow label="Change email" hint="Update the email address used to log in." danger>
-          <BBButton
-            size="sm"
-            variant="ghost"
-            onClick={() => showToast({ icon: 'x', title: 'Email change coming soon', danger: true })}
-          >
-            Change email
-          </BBButton>
-        </SettingsRow>
-
-        <SettingsRow label="Export data" hint="Download a copy of all your encrypted files and metadata." danger>
-          <BBButton
-            size="sm"
-            variant="ghost"
-            onClick={() => showToast({ icon: 'x', title: 'Data export coming soon', danger: true })}
-          >
-            Export data
-          </BBButton>
-        </SettingsRow>
-
-        <SettingsRow label="Delete account" hint="Permanently deletes your account and all data. We cannot recover this." danger>
-          {showDeleteConfirm ? (
-            <div className="flex items-center gap-2">
-              <span className="text-[12.5px] text-red">Are you sure?</span>
-              <BBButton
-                size="sm"
-                variant="danger"
-                onClick={() => {
-                  setShowDeleteConfirm(false)
-                  showToast({ icon: 'x', title: 'Account deletion coming soon', danger: true })
-                }}
-              >
-                Delete account
-              </BBButton>
-              <BBButton size="sm" variant="ghost" onClick={() => setShowDeleteConfirm(false)}>
-                Cancel
-              </BBButton>
+          {showChangeEmail ? (
+            <div className="flex flex-col gap-2 max-w-[360px]">
+              <BBInput
+                value={newEmail}
+                onChange={(e) => setNewEmail(e.target.value)}
+                placeholder="New email address"
+                type="email"
+              />
+              <BBInput
+                value={emailPassword}
+                onChange={(e) => setEmailPassword(e.target.value)}
+                placeholder="Current password"
+                type="password"
+              />
+              <div className="flex gap-2">
+                <BBButton
+                  size="sm"
+                  onClick={handleChangeEmail}
+                  disabled={savingEmail || !newEmail || !emailPassword}
+                >
+                  {savingEmail ? 'Sending...' : 'Send verification email'}
+                </BBButton>
+                <BBButton
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => { setShowChangeEmail(false); setNewEmail(''); setEmailPassword('') }}
+                >
+                  Cancel
+                </BBButton>
+              </div>
             </div>
           ) : (
-            <BBButton
-              size="sm"
-              variant="danger"
-              onClick={() => setShowDeleteConfirm(true)}
-            >
+            <BBButton size="sm" variant="ghost" onClick={() => setShowChangeEmail(true)}>
+              Change email
+            </BBButton>
+          )}
+        </SettingsRow>
+
+        {/* Export data */}
+        <SettingsRow label="Export data" hint="Download a copy of your account data and file metadata." danger>
+          {showExport ? (
+            <div className="flex flex-col gap-2 max-w-[360px]">
+              <div className="text-[12.5px] text-ink-2">
+                Downloads your preferences, shares, and file metadata as JSON. Art. 20 GDPR.
+              </div>
+              <div className="flex gap-2">
+                <BBButton
+                  size="sm"
+                  onClick={handleExport}
+                  disabled={exporting}
+                >
+                  <Icon name="download" size={12} className="mr-1.5" />
+                  {exporting ? 'Exporting...' : 'Download JSON'}
+                </BBButton>
+                <BBButton size="sm" variant="ghost" onClick={() => setShowExport(false)}>
+                  Cancel
+                </BBButton>
+              </div>
+            </div>
+          ) : (
+            <BBButton size="sm" variant="ghost" onClick={() => setShowExport(true)}>
+              Export data
+            </BBButton>
+          )}
+        </SettingsRow>
+
+        {/* Delete account */}
+        <SettingsRow
+          label="Delete account"
+          hint="Permanently destroys your encryption keys. All files become unreadable. This cannot be undone."
+          danger
+        >
+          {showDeleteConfirm ? (
+            <div className="flex flex-col gap-2 max-w-[360px]">
+              <div className="text-[12.5px] text-ink-2">
+                This permanently destroys your encryption keys. All files become unreadable. This cannot be undone.
+              </div>
+              <BBInput
+                value={deleteConfirmEmail}
+                onChange={(e) => setDeleteConfirmEmail(e.target.value)}
+                placeholder={`Type ${email} to confirm`}
+              />
+              <div className="flex gap-2">
+                <BBButton
+                  size="sm"
+                  variant="danger"
+                  onClick={handleDeleteAccount}
+                  disabled={deleting || deleteConfirmEmail !== email}
+                >
+                  {deleting ? 'Deleting...' : 'Delete my account'}
+                </BBButton>
+                <BBButton
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => { setShowDeleteConfirm(false); setDeleteConfirmEmail('') }}
+                >
+                  Cancel
+                </BBButton>
+              </div>
+            </div>
+          ) : (
+            <BBButton size="sm" variant="danger" onClick={() => setShowDeleteConfirm(true)}>
               Delete account
             </BBButton>
           )}
