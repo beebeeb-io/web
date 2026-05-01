@@ -19,6 +19,7 @@ const navItems: NavItem[] = [
   { id: 'storage-pools', label: 'Storage pools', icon: 'cloud', href: '/admin/storage-pools' },
   { id: 'migrations', label: 'Migrations', icon: 'arrow-up', href: '/admin/migrations' },
   { id: 'audit-log', label: 'Audit log', icon: 'shield', href: '/admin/audit-log' },
+  { id: 'abuse-reports', label: 'Abuse reports', icon: 'shield', href: '/admin/abuse-reports' },
   { id: 'compliance', label: 'Compliance', icon: 'check', href: '/admin/compliance' },
   { id: 'sso', label: 'SSO / SAML', icon: 'key', href: '/admin/sso' },
   { id: 'data-export', label: 'Data export', icon: 'download', href: '/admin/data-export' },

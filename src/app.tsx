@@ -35,6 +35,7 @@ import { Billing } from './pages/billing'
 import { Photos } from './pages/photos'
 import { ShareViewPage } from './pages/share-view'
 import { AuditLog } from './pages/admin/audit-log'
+import { AbuseReports } from './pages/admin/abuse-reports'
 import { SsoSetup } from './pages/admin/sso'
 import { DataExport } from './pages/admin/data-export'
 import { ApiTokens } from './pages/admin/api-tokens'
@@ -329,6 +330,14 @@ export function App() {
             element={
               <ProtectedRoute>
                 <AuditLog />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/abuse-reports"
+            element={
+              <ProtectedRoute>
+                <AbuseReports />
               </ProtectedRoute>
             }
           />

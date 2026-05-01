@@ -1687,3 +1687,44 @@ export async function reportShareLink(
 
   return res.json() as Promise<{ id: string }>
 }
+
+// ─── Admin abuse reports ────────────────────────
+
+export type AbuseReportStatus = 'pending' | 'reviewing' | 'actioned' | 'dismissed'
+
+export interface AbuseReport {
+  id: string
+  share_token: string
+  reporter_id: string | null
+  reporter_ip: string | null
+  reporter_email: string | null
+  reason: string
+  status: AbuseReportStatus
+  admin_notes: string | null
+  created_at: string
+  resolved_at: string | null
+}
+
+export async function listAbuseReports(params?: {
+  status?: AbuseReportStatus
+  limit?: number
+}): Promise<AbuseReport[]> {
+  const qs = new URLSearchParams()
+  if (params?.status) qs.set('status', params.status)
+  if (params?.limit != null) qs.set('limit', String(params.limit))
+  const q = qs.toString()
+  const data = await request<{ reports: AbuseReport[]; count: number }>(
+    `/api/v1/admin/reports${q ? `?${q}` : ''}`,
+  )
+  return data.reports
+}
+
+export async function updateAbuseReport(
+  id: string,
+  updates: { status: AbuseReportStatus; admin_notes?: string },
+): Promise<{ id: string; status: AbuseReportStatus; resolved_at: string | null; message: string }> {
+  return request(`/api/v1/admin/reports/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(updates),
+  })
+}
