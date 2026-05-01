@@ -325,6 +325,7 @@ export interface DriveFile {
   chunk_count: number
   is_starred?: boolean
   has_thumbnail?: boolean
+  version_number?: number
   created_at: string
   updated_at: string
 }

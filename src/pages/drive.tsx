@@ -320,17 +320,6 @@ export function Drive() {
 
   const { browse: browseResume, HiddenInput: HiddenResumeInput } = useBrowseFiles(handleResumeFile)
 
-  function resolveUniqueName(name: string): string {
-    const existing = new Set(Object.values(externalDecryptedNames))
-    if (!existing.has(name)) return name
-    const dot = name.lastIndexOf('.')
-    const base = dot > 0 ? name.slice(0, dot) : name
-    const ext = dot > 0 ? name.slice(dot) : ''
-    let n = 1
-    while (existing.has(`${base}_${n}${ext}`)) n++
-    return `${base}_${n}${ext}`
-  }
-
   function handleFilesSelected(selectedFiles: File[]) {
     // ─── Quota check ──────────────────────────────
     const remaining = getRemainingBytes(storageUsage?.used_bytes, storageUsage?.plan_limit_bytes)
@@ -348,15 +337,7 @@ export function Drive() {
       }
     }
 
-    const resolved = selectedFiles.map((f) => {
-      const uniqueName = resolveUniqueName(f.name)
-      if (uniqueName !== f.name) {
-        return new File([f], uniqueName, { type: f.type, lastModified: f.lastModified })
-      }
-      return f
-    })
-
-    const newUploads: UploadItem[] = resolved.map((f, i) => ({
+    const newUploads: UploadItem[] = selectedFiles.map((f, i) => ({
       id: `upload-${Date.now()}-${i}`,
       name: f.name,
       size: f.size,
@@ -365,7 +346,7 @@ export function Drive() {
     }))
     setUploads((prev) => [...prev, ...newUploads])
 
-    resolved.forEach((file, i) => {
+    selectedFiles.forEach((file, i) => {
       const uploadId = newUploads[i].id
       doEncryptedUpload(uploadId, file)
     })

@@ -572,6 +572,14 @@ export function FileList({
                 </span>
               </BBChip>
             )}
+            {!file.is_folder && (file.version_number ?? 1) > 1 && (
+              <span
+                className="font-mono text-[9.5px] text-ink-3 bg-paper-3 border border-line rounded px-1 py-px tabular-nums"
+                title={`Version ${file.version_number}`}
+              >
+                v{file.version_number}
+              </span>
+            )}
           </div>
           <div className="text-[11px] text-ink-3 mt-0.5 flex items-center gap-1.5 flex-wrap">
             <span className="truncate">{file.mime_type || 'Folder'}</span>
