@@ -904,7 +904,6 @@ export async function subscribe(params: {
   plan: string
   billing_cycle: string
   seats?: number
-  region: string
 }): Promise<Subscription> {
   return request<Subscription>('/api/v1/billing/subscribe', {
     method: 'POST',
@@ -921,7 +920,6 @@ export async function createCheckoutSession(params: {
   plan: string
   billing_cycle: string
   seats?: number
-  region: string
 }): Promise<{ url: string }> {
   return request<{ url: string }>('/api/v1/billing/checkout', {
     method: 'POST',

@@ -310,7 +310,6 @@ export function Pricing() {
       const { url } = await createCheckoutSession({
         plan: planId,
         billing_cycle: cycle,
-        region: 'frankfurt',
       })
       window.location.href = url
     } catch (err) {

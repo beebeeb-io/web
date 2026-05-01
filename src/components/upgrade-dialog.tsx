@@ -6,7 +6,6 @@ import { Icon } from './icons'
 import { createCheckoutSession, subscribe } from '../lib/api'
 
 type BillingCycle = 'monthly' | 'yearly'
-type Region = 'frankfurt' | 'amsterdam' | 'paris'
 
 interface UpgradeDialogProps {
   planId: string
@@ -18,12 +17,6 @@ interface UpgradeDialogProps {
   onClose: () => void
   onSuccess?: () => void
 }
-
-const regions: { id: Region; city: string; country: string; operator: string }[] = [
-  { id: 'frankfurt', city: 'Frankfurt', country: 'DE', operator: 'Hetzner' },
-  { id: 'amsterdam', city: 'Amsterdam', country: 'NL', operator: 'Leaseweb' },
-  { id: 'paris', city: 'Paris', country: 'FR', operator: 'Scaleway' },
-]
 
 export function UpgradeDialog({
   planId,
@@ -38,7 +31,6 @@ export function UpgradeDialog({
   const perSeat = planId !== 'personal'
   const [seats, setSeats] = useState(perSeat ? Math.max(minSeats, 3) : 1)
   const [cycle, setCycle] = useState<BillingCycle>('yearly')
-  const [region, setRegion] = useState<Region>('frankfurt')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
@@ -65,7 +57,6 @@ export function UpgradeDialog({
           plan: planId,
           billing_cycle: cycle,
           seats,
-          region,
         })
         window.location.href = url
         return
@@ -76,7 +67,6 @@ export function UpgradeDialog({
             plan: planId,
             billing_cycle: cycle,
             seats,
-            region,
           })
           onSuccess?.()
           onClose()
@@ -89,7 +79,7 @@ export function UpgradeDialog({
     } finally {
       setLoading(false)
     }
-  }, [planId, cycle, seats, region, onClose, onSuccess])
+  }, [planId, cycle, seats, onClose, onSuccess])
 
   if (!open) return null
 
@@ -213,29 +203,6 @@ export function UpgradeDialog({
                 EUR {yearlyTotal.toFixed(2)} / yr · EUR {monthlyEquiv.toFixed(2)} / mo equiv.
               </div>
             </button>
-          </div>
-
-          {/* Data residency */}
-          <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-3 mb-2">
-            Data residency
-          </div>
-          <div className="grid grid-cols-3 gap-2 mb-[18px]">
-            {regions.map((r) => (
-              <button
-                key={r.id}
-                onClick={() => setRegion(r.id)}
-                className={`p-2.5 rounded-md text-left transition-all ${
-                  region === r.id
-                    ? 'bg-paper border-[1.5px] border-ink'
-                    : 'bg-paper-2 border border-line hover:border-line-2'
-                }`}
-              >
-                <div className="text-[12.5px] font-semibold">
-                  {r.city} · {r.country}
-                </div>
-                <div className="font-mono text-[11px] text-ink-3">{r.operator}</div>
-              </button>
-            ))}
           </div>
 
           {/* Summary */}
