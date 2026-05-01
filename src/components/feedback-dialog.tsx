@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from './bb-button'
 import { Icon } from './icons'
 
@@ -22,6 +23,7 @@ export function FeedbackDialog({ open, onClose, defaultCategory }: FeedbackDialo
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
 
   // Reset state when dialog opens
   useEffect(() => {
@@ -78,6 +80,10 @@ export function FeedbackDialog({ open, onClose, defaultCategory }: FeedbackDialo
 
       {/* Dialog */}
       <div
+        ref={focusTrapRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Share feedback"
         onClick={(e) => e.stopPropagation()}
         className="relative w-full max-w-[440px] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden"
       >
@@ -87,6 +93,7 @@ export function FeedbackDialog({ open, onClose, defaultCategory }: FeedbackDialo
           <span className="text-sm font-semibold text-ink">Share feedback</span>
           <button
             onClick={onClose}
+            aria-label="Close"
             className="ml-auto text-ink-3 hover:text-ink transition-colors"
           >
             <Icon name="x" size={14} />

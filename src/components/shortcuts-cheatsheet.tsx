@@ -61,6 +61,9 @@ export function ShortcutsCheatsheet({ open, onClose }: ShortcutsCheatsheetProps)
 
       {/* Sheet */}
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Keyboard shortcuts"
         className="relative w-full max-w-[720px] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from './bb-button'
 import { BBChip } from './bb-chip'
 import { Icon } from './icons'
@@ -40,6 +41,7 @@ export function MoveModal({
   const [loading, setLoading] = useState(false)
   const [creatingFolder, setCreatingFolder] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
+  const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
 
   /** Get the display name for a folder (decrypted if available, raw otherwise). */
   function displayName(folder: FolderNode): string {
@@ -172,6 +174,10 @@ export function MoveModal({
 
       {/* Modal */}
       <div
+        ref={focusTrapRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${initialMode === 'move' ? 'Move' : 'Copy'} ${items.length} item${items.length !== 1 ? 's' : ''}`}
         onClick={(e) => e.stopPropagation()}
         className="relative w-full max-w-[520px] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden"
       >
@@ -188,6 +194,7 @@ export function MoveModal({
           </div>
           <button
             onClick={onClose}
+            aria-label="Close"
             className="w-7 h-7 rounded-md bg-paper-2 flex items-center justify-center text-ink-3 hover:text-ink transition-colors"
           >
             <Icon name="x" size={13} />

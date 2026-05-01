@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from './bb-button'
 import { BBChip } from './bb-chip'
 import { Icon } from './icons'
@@ -39,6 +40,7 @@ export function UpgradeDialog({
   const [region, setRegion] = useState<Region>('frankfurt')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
 
   const monthlyTotal = seats * pricePerSeat
   const yearlyTotal = seats * priceYearlySeat
@@ -94,12 +96,12 @@ export function UpgradeDialog({
       />
 
       {/* Dialog */}
-      <div className="relative w-[600px] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
+      <div ref={focusTrapRef} role="dialog" aria-modal="true" aria-label={`Upgrade to ${planName}`} className="relative w-[600px] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
         {/* Header */}
         <div className="flex items-center gap-2.5 px-[22px] py-3.5 border-b border-line">
           <h3 className="text-base font-bold">Upgrade to {planName}</h3>
           <BBChip variant="amber" className="ml-auto">14-day free trial</BBChip>
-          <button onClick={onClose} className="ml-2 text-ink-3 hover:text-ink transition-colors">
+          <button onClick={onClose} aria-label="Close" className="ml-2 text-ink-3 hover:text-ink transition-colors">
             <Icon name="x" size={16} />
           </button>
         </div>
@@ -113,6 +115,7 @@ export function UpgradeDialog({
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setSeats(Math.max(minSeats, seats - 1))}
+                aria-label="Remove seat"
                 className="w-7 h-7 rounded-md border border-line-2 bg-paper flex items-center justify-center hover:bg-paper-2 transition-colors"
               >
                 <span className="text-ink-3 text-sm font-medium">-</span>
@@ -122,6 +125,7 @@ export function UpgradeDialog({
               </span>
               <button
                 onClick={() => setSeats(seats + 1)}
+                aria-label="Add seat"
                 className="w-7 h-7 rounded-md border border-line-2 bg-paper flex items-center justify-center hover:bg-paper-2 transition-colors"
               >
                 <Icon name="plus" size={11} className="text-ink-2" />

@@ -2,14 +2,16 @@ interface BBToggleProps {
   on?: boolean
   onChange?: (on: boolean) => void
   disabled?: boolean
+  'aria-label'?: string
 }
 
-export function BBToggle({ on = false, onChange, disabled = false }: BBToggleProps) {
+export function BBToggle({ on = false, onChange, disabled = false, 'aria-label': ariaLabel }: BBToggleProps) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={on}
+      aria-label={ariaLabel}
       disabled={disabled}
       onClick={() => onChange?.(!on)}
       className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border transition-colors ${

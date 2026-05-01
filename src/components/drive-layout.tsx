@@ -125,12 +125,15 @@ export function DriveLayout({ children }: { children: ReactNode }) {
 
   return (
     <div className="h-screen flex overflow-hidden bg-paper">
-      <aside className="w-[220px] shrink-0 border-r border-line bg-paper-2 flex flex-col">
+      <a href="#main-content" className="skip-to-content">
+        Skip to main content
+      </a>
+      <aside className="w-[220px] shrink-0 border-r border-line bg-paper-2 flex flex-col" aria-label="Sidebar">
         <div className="px-4 pt-4 pb-3">
           <BBLogo size={14} />
         </div>
 
-        <nav className="px-3 py-1.5">
+        <nav aria-label="Main navigation" className="px-3 py-1.5">
           {navItems.map((item) => {
             const isActive = location.pathname === item.path
             return (
@@ -158,7 +161,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
                 Shared with me
               </div>
             </div>
-            <nav className="px-3 pb-1.5 overflow-y-auto max-h-[200px]">
+            <nav aria-label="Shared folders" className="px-3 pb-1.5 overflow-y-auto max-h-[200px]">
               {sharedFolders.map((folder) => {
                 const isActive = location.pathname === `/shared-folder/${folder.file_id}`
                 return (
@@ -179,6 +182,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
                       onClick={(e) => { e.preventDefault(); e.stopPropagation(); togglePin(folder.file_id) }}
                       className={`shrink-0 transition-opacity ${pinnedIds.includes(folder.file_id) ? 'opacity-100 text-amber-deep' : 'opacity-0 group-hover:opacity-100 text-ink-3 hover:text-ink'}`}
                       title={pinnedIds.includes(folder.file_id) ? 'Unpin from drive' : 'Pin to drive'}
+                      aria-label={pinnedIds.includes(folder.file_id) ? 'Unpin from drive' : 'Pin to drive'}
                     >
                       <Icon name="star" size={11} />
                     </button>
@@ -215,6 +219,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
         <div className="px-3 pb-3">
           <button
             onClick={logout}
+            aria-label="Log out"
             className="w-full flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] text-ink-3 hover:bg-paper-3/50 transition-colors text-left"
           >
             <Icon name="x" size={13} className="shrink-0" />
@@ -223,7 +228,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      <main className="flex-1 flex flex-col min-w-0">
+      <main id="main-content" className="flex-1 flex flex-col min-w-0">
         {children}
       </main>
     </div>

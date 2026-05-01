@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
+import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from './bb-button'
 import { BBInput } from './bb-input'
 import { Icon } from './icons'
@@ -58,6 +59,7 @@ export function ChangePasswordDialog({ open, onClose, onSuccess }: ChangePasswor
   const [confirmPw, setConfirmPw] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
 
   // Reset on open
   useEffect(() => {
@@ -105,6 +107,10 @@ export function ChangePasswordDialog({ open, onClose, onSuccess }: ChangePasswor
 
       {/* Dialog */}
       <div
+        ref={focusTrapRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Change password"
         onClick={(e) => e.stopPropagation()}
         className="relative w-full max-w-[440px] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden"
       >
@@ -115,6 +121,7 @@ export function ChangePasswordDialog({ open, onClose, onSuccess }: ChangePasswor
             <span className="text-sm font-semibold text-ink">Change password</span>
             <button
               onClick={onClose}
+              aria-label="Close"
               className="ml-auto text-ink-3 hover:text-ink transition-colors"
             >
               <Icon name="x" size={14} />

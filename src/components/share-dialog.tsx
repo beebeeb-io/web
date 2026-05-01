@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from './bb-button'
 import { BBChip } from './bb-chip'
 import { Icon } from './icons'
@@ -484,7 +485,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
   const [inviteDone, setInviteDone] = useState<string | null>(null)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
 
-  const dialogRef = useRef<HTMLDivElement>(null)
+  const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
 
   // Reset state when dialog opens
   useEffect(() => {
@@ -576,7 +577,10 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
 
         {/* Dialog */}
         <div
-          ref={dialogRef}
+          ref={focusTrapRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Send securely"
           onClick={(e) => e.stopPropagation()}
           className="relative w-full max-w-[500px] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden"
         >
@@ -589,6 +593,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
             </BBChip>
             <button
               onClick={onClose}
+              aria-label="Close"
               className="ml-auto text-ink-3 hover:text-ink transition-colors"
             >
               <Icon name="x" size={14} />

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from './bb-button'
 import { Icon } from './icons'
 
@@ -12,6 +13,7 @@ interface RenameDialogProps {
 export function RenameDialog({ open, onClose, currentName, onRename }: RenameDialogProps) {
   const [name, setName] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
+  const focusTrapRef = useFocusTrap<HTMLFormElement>(open)
 
   useEffect(() => {
     if (open) {
@@ -48,6 +50,10 @@ export function RenameDialog({ open, onClose, currentName, onRename }: RenameDia
 
       {/* Dialog */}
       <form
+        ref={focusTrapRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Rename"
         onSubmit={handleSubmit}
         onClick={(e) => e.stopPropagation()}
         className="relative w-full max-w-[24rem] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden"

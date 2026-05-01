@@ -73,6 +73,7 @@ export function ShareActivity({ open, inviteId, onClose }: ShareActivityProps) {
           </div>
           <button
             onClick={onClose}
+            aria-label="Close"
             className="p-1 text-ink-3 hover:text-ink cursor-pointer"
           >
             <Icon name="x" size={18} />

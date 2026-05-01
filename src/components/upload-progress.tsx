@@ -38,6 +38,7 @@ export function UploadProgress({ items, onClose }: UploadProgressProps) {
         </span>
         <button
           onClick={onClose}
+          aria-label="Close"
           className="p-0.5 text-ink-3 hover:text-ink transition-colors"
         >
           <Icon name="x" size={14} />

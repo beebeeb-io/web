@@ -30,7 +30,7 @@ export function BBButton({
 }: BBButtonProps) {
   return (
     <button
-      className={`inline-flex items-center justify-center font-medium transition-all cursor-pointer ${variantClasses[variant]} ${sizeClasses[size]} ${className}`}
+      className={`inline-flex items-center justify-center font-medium transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-amber-deep focus-visible:ring-offset-2 ${variantClasses[variant]} ${sizeClasses[size]} ${className}`}
       {...props}
     >
       {children}

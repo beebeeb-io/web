@@ -180,6 +180,7 @@ export function FileDetailsPanel({
             </div>
             <button
               onClick={onClose}
+              aria-label="Close"
               className="text-ink-3 hover:text-ink transition-colors shrink-0 mt-0.5"
             >
               <Icon name="x" size={14} />
@@ -196,13 +197,14 @@ export function FileDetailsPanel({
             >
               <Icon name="share" size={11} /> Share
             </BBButton>
-            <BBButton size="sm" variant="ghost" onClick={onDownload}>
+            <BBButton size="sm" variant="ghost" onClick={onDownload} aria-label="Download">
               <Icon name="download" size={11} />
             </BBButton>
             <BBButton
               size="sm"
               variant="ghost"
               onClick={onStar}
+              aria-label={isStarred ? 'Remove star' : 'Star'}
               className={isStarred ? 'text-amber-deep' : ''}
             >
               <Icon name="star" size={11} />

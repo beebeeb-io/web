@@ -93,6 +93,8 @@ export function ContextMenu({
   return (
     <div
       ref={menuRef}
+      role="menu"
+      aria-label="File actions"
       className="fixed z-[60] min-w-[220px] bg-paper border border-line-2 rounded-lg shadow-3 overflow-hidden py-1"
       style={{ left: x, top: y }}
     >
@@ -100,6 +102,7 @@ export function ContextMenu({
         <div key={item.id}>
           <button
             type="button"
+            role="menuitem"
             className={`w-full text-left flex items-center gap-2.5 px-3 py-[7px] text-[13px] transition-colors ${
               item.danger
                 ? 'text-red hover:bg-red/5'

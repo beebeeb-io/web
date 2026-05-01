@@ -124,6 +124,9 @@ export function VersionHistory({
       <div className="absolute inset-0 bg-ink/20" />
 
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Version history"
         onClick={(e) => e.stopPropagation()}
         className="relative w-full max-w-[540px] h-full bg-paper border-l border-line-2 shadow-3 overflow-hidden flex flex-col"
       >
@@ -137,6 +140,7 @@ export function VersionHistory({
           </div>
           <button
             onClick={onClose}
+            aria-label="Close"
             className="w-7 h-7 rounded-md bg-paper-2 flex items-center justify-center text-ink-3 hover:text-ink transition-colors"
           >
             <Icon name="x" size={13} />
