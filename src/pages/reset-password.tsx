@@ -1,5 +1,5 @@
 import { type FormEvent, useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { AuthShell } from '../components/auth-shell'
 import { BBButton } from '../components/bb-button'
 import { BBInput } from '../components/bb-input'
@@ -10,8 +10,7 @@ const MIN_PASSWORD_LENGTH = 12
 
 export function ResetPassword() {
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
-  const token = searchParams.get('token') ?? ''
+  const { token = '' } = useParams<{ token: string }>()
 
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')

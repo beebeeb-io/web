@@ -175,7 +175,7 @@ export function App() {
             }
           />
           <Route
-            path="/reset-password"
+            path="/reset/:token"
             element={
               <GuestRoute>
                 <ResetPassword />
