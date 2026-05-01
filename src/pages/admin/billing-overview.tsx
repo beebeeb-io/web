@@ -7,9 +7,11 @@ import {
   getSubscription,
   getPlans,
   getInvoices,
+  getAdminStats,
   type Subscription,
   type Plan,
   type Invoice,
+  type AdminStats,
 } from '../../lib/api'
 
 function formatDate(iso: string | null): string {
@@ -32,6 +34,7 @@ export function AdminBilling() {
   const [sub, setSub] = useState<Subscription | null>(null)
   const [plans, setPlans] = useState<Plan[]>([])
   const [invoices, setInvoices] = useState<Invoice[]>([])
+  const [stats, setStats] = useState<AdminStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -39,14 +42,16 @@ export function AdminBilling() {
     setLoading(true)
     setError(null)
     try {
-      const [subData, plansData, invData] = await Promise.all([
+      const [subData, plansData, invData, statsData] = await Promise.all([
         getSubscription(),
         getPlans(),
         getInvoices(),
+        getAdminStats(),
       ])
       setSub(subData)
       setPlans(plansData)
       setInvoices(invData)
+      setStats(statsData)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load billing data')
     } finally {
@@ -57,9 +62,6 @@ export function AdminBilling() {
   useEffect(() => { load() }, [load])
 
   const activePlan = plans.find(p => p.id === sub?.plan)
-
-  // Revenue stats need a dedicated admin endpoint — show placeholder
-  const hasRevenueEndpoint = false
 
   return (
     <AdminShell activeSection="billing">
@@ -165,13 +167,41 @@ export function AdminBilling() {
               </div>
             </div>
 
-            {/* Revenue stats placeholder */}
-            {!hasRevenueEndpoint && (
-              <div className="rounded-xl bg-paper-2 border border-line p-5 text-center">
-                <Icon name="file" size={16} className="text-ink-4 mx-auto mb-2" />
-                <div className="text-[13px] font-semibold text-ink-2 mb-1">Revenue analytics</div>
-                <div className="text-[11px] text-ink-3">
-                  MRR, churn, and revenue charts will appear here when the admin analytics endpoint is available.
+            {/* Platform stats */}
+            {stats && (
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 mb-2">
+                  Platform overview
+                </div>
+                <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+                  <div className="rounded-xl bg-paper border border-line-2 p-3.5">
+                    <div className="text-[10px] text-ink-4 mb-0.5">Total users</div>
+                    <div className="font-mono text-lg font-bold">{stats.users.total.toLocaleString()}</div>
+                    <div className="text-[10px] text-ink-3 mt-1">
+                      {stats.users.active_7d.toLocaleString()} active (7d)
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-paper border border-line-2 p-3.5">
+                    <div className="text-[10px] text-ink-4 mb-0.5">Total files</div>
+                    <div className="font-mono text-lg font-bold">{stats.files.total.toLocaleString()}</div>
+                    <div className="text-[10px] text-ink-3 mt-1">
+                      {stats.files.uploads_today.toLocaleString()} uploaded today
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-paper border border-line-2 p-3.5">
+                    <div className="text-[10px] text-ink-4 mb-0.5">Storage used</div>
+                    <div className="font-mono text-lg font-bold">{formatStorage(stats.files.storage_used_bytes)}</div>
+                    <div className="text-[10px] text-ink-3 mt-1">
+                      across all users
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-paper border border-line-2 p-3.5">
+                    <div className="text-[10px] text-ink-4 mb-0.5">Active shares</div>
+                    <div className="font-mono text-lg font-bold">{stats.shares.active_shares.toLocaleString()}</div>
+                    <div className="text-[10px] text-ink-3 mt-1">
+                      {stats.shares.active_invites.toLocaleString()} pending invites
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
