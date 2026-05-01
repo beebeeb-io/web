@@ -21,6 +21,7 @@ import {
   deleteFile,
   type DriveFile,
 } from '../lib/api'
+import { useWsEvent } from '../lib/ws-context'
 
 // ─── Helpers ───────────────────────────────────────
 
@@ -85,6 +86,14 @@ export function Starred() {
   useEffect(() => {
     fetchFiles()
   }, [fetchFiles])
+
+  // Real-time: refresh when star state changes or files are trashed/deleted
+  useWsEvent(
+    ['file.starred', 'file.trashed', 'file.deleted'],
+    useCallback(() => {
+      fetchFiles()
+    }, [fetchFiles]),
+  )
 
   // ─── Decrypt filenames ─────────────────────────────
 

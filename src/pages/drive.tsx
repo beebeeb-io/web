@@ -21,8 +21,7 @@ import { ShortcutsCheatsheet } from '../components/shortcuts-cheatsheet'
 import { WelcomeTour } from '../components/welcome-tour'
 import { getPreference, setPreference } from '../lib/api'
 import { useToast } from '../components/toast'
-import { useWebSocket } from '../hooks/use-websocket'
-import type { WsEvent } from '../hooks/use-websocket'
+import { useWsEvent } from '../lib/ws-context'
 import { useKeys } from '../lib/key-context'
 import { modKey } from '../hooks/use-keyboard-shortcuts'
 import {
@@ -188,34 +187,46 @@ export function Drive() {
   }, [])
 
   // Notifications
-  const { notifications, unreadCount, addNotification, markRead, markAllRead } = useNotifications()
+  const { notifications, unreadCount, markRead, markAllRead } = useNotifications()
   const { showToast } = useToast()
 
-  const handleWsEvent = useCallback((event: WsEvent) => {
-    const id = `${event.type}-${Date.now()}`
-    if (event.type === 'file.uploaded') {
-      // Just refresh the file list — the uploader's own progress UI handles feedback
+  // ─── Real-time WebSocket event handling ──────────
+
+  // File list changes: refresh on create, upload, delete, trash, restore, move, rename
+  useWsEvent(
+    ['file.created', 'file.uploaded', 'file.deleted', 'file.trashed', 'file.restored', 'file.moved', 'file.renamed', 'version.restored'],
+    useCallback(() => {
       fetchFiles()
-    } else if (event.type === 'share.opened') {
-      const data = event.data as { name_encrypted?: string; open_count?: number }
-      addNotification({
-        id,
-        type: event.type,
-        icon: 'share',
-        title: 'Share link opened',
-        description: `A file was viewed (${data.open_count ?? '?'} opens)`,
-        timestamp: event.timestamp,
-        read: false,
-      })
+    }, [fetchFiles]),
+  )
+
+  // Star toggled on another device or by a collaborator — update in-place
+  useWsEvent(
+    ['file.starred'],
+    useCallback((event) => {
+      const data = event.data as { file_id?: string; is_starred?: boolean }
+      if (data.file_id != null && data.is_starred != null) {
+        setFiles((prev) =>
+          prev.map((f) =>
+            f.id === data.file_id ? { ...f, is_starred: data.is_starred as boolean } : f,
+          ),
+        )
+      }
+    }, []),
+  )
+
+  // Share link opened — show toast
+  useWsEvent(
+    ['share.opened'],
+    useCallback((event) => {
+      const data = event.data as { open_count?: number }
       showToast({
         icon: 'share',
         title: 'Share link opened',
-        description: 'A file was viewed',
+        description: `A file was viewed (${data.open_count ?? '?'} opens)`,
       })
-    }
-  }, [addNotification, showToast, fetchFiles])
-
-  useWebSocket({ onEvent: handleWsEvent, enabled: true })
+    }, [showToast]),
+  )
 
   // Synced timer
   useEffect(() => {

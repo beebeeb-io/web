@@ -9,6 +9,7 @@ import {
   markAllNotificationsRead,
   type Notification as ApiNotification,
 } from '../lib/api'
+import { useWsEvent } from '../lib/ws-context'
 
 interface DisplayNotification {
   id: string
@@ -106,9 +107,39 @@ export function useNotifications() {
   }, [refresh])
 
   const addNotification = useCallback((n: DisplayNotification) => {
-    setNotifications((prev) => [n, ...prev])
+    setNotifications((prev) => {
+      // Avoid duplicates (e.g. if poll and WS event arrive close together)
+      if (prev.some((existing) => existing.id === n.id)) return prev
+      return [n, ...prev]
+    })
     if (!n.read) setUnreadCount((prev) => prev + 1)
   }, [])
+
+  // Listen for real-time notification.created events via WebSocket
+  useWsEvent(['notification.created'], useCallback((event) => {
+    const data = event.data as {
+      id?: string
+      type?: string
+      title?: string
+      body?: string
+    }
+    if (data.id && data.title) {
+      const notifType = data.type ?? 'general'
+      addNotification({
+        id: data.id,
+        type: notifType,
+        icon: notificationIcon(notifType),
+        title: data.title,
+        description: data.body ?? '',
+        timestamp: event.timestamp,
+        read: false,
+        danger: notifType === 'quota_critical',
+      })
+    } else {
+      // If the WS payload is minimal, do a full refresh to get the notification
+      refresh()
+    }
+  }, [addNotification, refresh]))
 
   const markRead = useCallback(async (id: string) => {
     try {

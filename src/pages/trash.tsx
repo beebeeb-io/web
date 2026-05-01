@@ -8,6 +8,7 @@ import { listFiles, restoreFile, permanentDeleteFile, type DriveFile } from '../
 import { useToast } from '../components/toast'
 import { useKeys } from '../lib/key-context'
 import { decryptFilename, fromBase64 } from '../lib/crypto'
+import { useWsEvent } from '../lib/ws-context'
 
 // ─── Helpers ─────────────────────────────────────
 
@@ -131,6 +132,14 @@ export function Trash() {
   useEffect(() => {
     fetchTrash()
   }, [fetchTrash])
+
+  // Real-time: refresh trash when files are trashed, restored, or permanently deleted
+  useWsEvent(
+    ['file.trashed', 'file.restored', 'file.deleted'],
+    useCallback(() => {
+      fetchTrash()
+    }, [fetchTrash]),
+  )
 
   // Decrypt file names when files or unlock state change
   useEffect(() => {

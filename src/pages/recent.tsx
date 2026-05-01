@@ -21,6 +21,7 @@ import {
   deleteFile,
   type DriveFile,
 } from '../lib/api'
+import { useWsEvent } from '../lib/ws-context'
 
 // ─── Helpers ───────────────────────────────────────
 
@@ -121,6 +122,14 @@ export function Recent() {
   useEffect(() => {
     fetchFiles()
   }, [fetchFiles])
+
+  // Real-time: refresh when files are created, uploaded, renamed, or deleted
+  useWsEvent(
+    ['file.created', 'file.uploaded', 'file.deleted', 'file.trashed', 'file.renamed', 'file.moved', 'version.restored'],
+    useCallback(() => {
+      fetchFiles()
+    }, [fetchFiles]),
+  )
 
   // ─── Decrypt filenames ─────────────────────────────
 

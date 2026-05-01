@@ -26,6 +26,7 @@ import { decryptFilename, decryptChunk, fromBase64, x25519SharedSecret, deriveSh
 import { encryptedDownload } from '../lib/encrypted-download'
 import { encryptedUpload } from '../lib/encrypted-upload'
 import { SharedRowSkeleton } from '../components/skeleton'
+import { useWsEvent } from '../lib/ws-context'
 
 // ─── Helpers ───────────────────────────────────────
 
@@ -126,6 +127,14 @@ export function Shared() {
   useEffect(() => {
     fetchAll()
   }, [fetchAll])
+
+  // Real-time: refresh share list when shares are created or revoked
+  useWsEvent(
+    ['share.created', 'share.revoked'],
+    useCallback(() => {
+      fetchAll()
+    }, [fetchAll]),
+  )
 
   // Clear selection on tab change
   useEffect(() => {
