@@ -35,7 +35,7 @@ const navItems: { path: string; icon: IconName; label: string }[] = [
 ]
 
 const REGION_META: Record<string, { label: string; flag: string }> = {
-  auto: { label: 'Auto · EU', flag: '' },
+  auto: { label: 'Europe', flag: '' },
   falkenstein: { label: 'Falkenstein, DE', flag: '\u{1F1E9}\u{1F1EA}' },
   helsinki: { label: 'Helsinki, FIN', flag: '\u{1F1EB}\u{1F1EE}' },
   ede: { label: 'Ede, NL · Beebeeb', flag: '\u{1F1F3}\u{1F1F1}' },
@@ -191,8 +191,17 @@ export function DriveLayout({ children }: { children: ReactNode }) {
       getStorageUsage().then(setUsage).catch(() => {})
       getSubscription().then(setSub).catch(() => {})
     }
+    function onRegionChanged() {
+      getPreference<{ pool_name: string }>('storage_region')
+        .then(pref => { if (pref?.pool_name) setStorageRegion(pref.pool_name) })
+        .catch(() => {})
+    }
     window.addEventListener('beebeeb:plan-changed', onPlanChanged)
-    return () => window.removeEventListener('beebeeb:plan-changed', onPlanChanged)
+    window.addEventListener('beebeeb:region-changed', onRegionChanged)
+    return () => {
+      window.removeEventListener('beebeeb:plan-changed', onPlanChanged)
+      window.removeEventListener('beebeeb:region-changed', onRegionChanged)
+    }
   }, [])
 
   async function togglePin(folderId: string) {

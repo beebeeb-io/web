@@ -20,7 +20,7 @@ interface DataRegion {
 }
 
 const DATA_REGIONS: DataRegion[] = [
-  { id: 'auto', city: 'Auto', country: 'EU', flag: '', provider: '', available: true },
+  { id: 'auto', city: 'Europe', country: '', flag: '', provider: '', available: true },
   { id: 'falkenstein', city: 'Falkenstein', country: 'DE', flag: '\u{1F1E9}\u{1F1EA}', provider: '', available: true },
   { id: 'helsinki', city: 'Helsinki', country: 'FIN', flag: '\u{1F1EB}\u{1F1EE}', provider: '', available: true },
   { id: 'ede', city: 'Ede', country: 'NL', flag: '\u{1F1F3}\u{1F1F1}', provider: 'Beebeeb', available: false },
@@ -103,6 +103,7 @@ export function SettingsAccount() {
       await setPreference('storage_region', { pool_name: selectedRegion, mode: regionMode })
       setSavedRegion(selectedRegion)
       setSavedRegionMode(regionMode)
+      window.dispatchEvent(new Event('beebeeb:region-changed'))
       showToast({ icon: 'check', title: 'Storage region saved' })
     } catch {
       showToast({ icon: 'x', title: 'Failed to save region', danger: true })
@@ -265,7 +266,7 @@ export function SettingsAccount() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">
                     <span className={`text-[13px] font-mono ${isActive ? 'font-semibold text-ink' : 'text-ink-2'}`}>
-                      {region.city}{region.flag ? `, ${region.country}` : ''}
+                      {region.city}{region.country ? `, ${region.country}` : ''}
                     </span>
                     {region.provider && (
                       <span className="text-[11px] text-ink-4 font-mono">
@@ -275,7 +276,7 @@ export function SettingsAccount() {
                   </div>
                   {region.id === 'auto' && (
                     <div className="text-[11px] text-ink-3 mt-0.5 leading-relaxed">
-                      Data is sharded across all available regions. No single data center holds your complete vault.
+                      Data is sharded across European data centers. No single location holds your complete vault.
                     </div>
                   )}
                 </div>
