@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { downloadFile, type DriveFile } from '../../lib/api'
+import { type DriveFile } from '../../lib/api'
+import { decryptToBlob } from '../../lib/encrypted-download'
 import { PreviewChrome } from './preview-chrome'
 import { InfoRail } from './info-rail'
 import { ImagePreview } from './image-preview'
@@ -207,21 +208,31 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose }:
     setBlob(null)
     setError(null)
 
-    downloadFile(file.id)
-      .then((b) => {
-        if (!cancelled) setBlob(b)
-      })
-      .catch((err: unknown) => {
+    if (!isUnlocked) return
+
+    async function loadAndDecrypt() {
+      try {
+        const fileKey = await getFileKey(file.id)
+        const { plaintext } = await decryptToBlob(
+          file.id,
+          fileKey,
+          file.name_encrypted,
+          file.mime_type,
+          file.chunk_count,
+          file.size_bytes,
+        )
+        if (!cancelled) setBlob(plaintext)
+      } catch (err: unknown) {
         if (!cancelled)
-          setError(
-            err instanceof Error ? err.message : 'Failed to load file',
-          )
-      })
+          setError(err instanceof Error ? err.message : 'Failed to load file')
+      }
+    }
+    loadAndDecrypt()
 
     return () => {
       cancelled = true
     }
-  }, [file.id])
+  }, [file.id, file.name_encrypted, file.mime_type, file.chunk_count, file.size_bytes, isUnlocked, getFileKey])
 
   const sizeStr = formatSize(file.size_bytes)
   const kindLabel = getKindLabel(file.mime_type, name)
