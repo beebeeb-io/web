@@ -1067,17 +1067,152 @@ export interface PasskeyInfo {
   created_at: string
 }
 
-export async function startPasskeyRegistration(): Promise<{
-  publicKey: PublicKeyCredentialCreationOptions
+// ─── WebAuthn base64url helpers ──────────────────
+
+/** Decode a base64url string to an ArrayBuffer. */
+export function base64urlToBuffer(base64url: string): ArrayBuffer {
+  // Restore standard base64 characters and padding
+  let base64 = base64url.replace(/-/g, '+').replace(/_/g, '/')
+  while (base64.length % 4 !== 0) base64 += '='
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i)
+  }
+  return bytes.buffer
+}
+
+/** Encode an ArrayBuffer to a base64url string (no padding). */
+export function bufferToBase64url(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+/**
+ * The server (webauthn-rs) serialises binary fields as base64url strings.
+ * The browser WebAuthn API expects ArrayBuffers. This converts the server's
+ * CreationChallengeResponse.publicKey into a browser-compatible object.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function serverOptsToCreateOptions(publicKey: any): PublicKeyCredentialCreationOptions {
+  const opts: PublicKeyCredentialCreationOptions = {
+    ...publicKey,
+    challenge: base64urlToBuffer(publicKey.challenge),
+    user: {
+      ...publicKey.user,
+      id: base64urlToBuffer(publicKey.user.id),
+    },
+  }
+  if (publicKey.excludeCredentials) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    opts.excludeCredentials = publicKey.excludeCredentials.map((cred: any) => ({
+      ...cred,
+      id: base64urlToBuffer(cred.id),
+    }))
+  }
+  return opts
+}
+
+/**
+ * The server (webauthn-rs) serialises binary fields as base64url strings.
+ * The browser WebAuthn API expects ArrayBuffers. This converts the server's
+ * RequestChallengeResponse.publicKey into a browser-compatible object.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function serverOptsToGetOptions(publicKey: any): PublicKeyCredentialRequestOptions {
+  const opts: PublicKeyCredentialRequestOptions = {
+    ...publicKey,
+    challenge: base64urlToBuffer(publicKey.challenge),
+  }
+  if (publicKey.allowCredentials) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    opts.allowCredentials = publicKey.allowCredentials.map((cred: any) => ({
+      ...cred,
+      id: base64urlToBuffer(cred.id),
+    }))
+  }
+  return opts
+}
+
+/**
+ * Convert a browser PublicKeyCredential (from navigator.credentials.create)
+ * into the JSON shape expected by webauthn-rs RegisterPublicKeyCredential.
+ */
+export function credentialToRegistrationJSON(credential: PublicKeyCredential): {
+  id: string
+  rawId: string
+  type: string
+  response: {
+    attestationObject: string
+    clientDataJSON: string
+  }
+  extensions: AuthenticationExtensionsClientOutputs
+} {
+  const response = credential.response as AuthenticatorAttestationResponse
+  return {
+    id: credential.id,
+    rawId: bufferToBase64url(credential.rawId),
+    type: credential.type,
+    response: {
+      attestationObject: bufferToBase64url(response.attestationObject),
+      clientDataJSON: bufferToBase64url(response.clientDataJSON),
+    },
+    extensions: credential.getClientExtensionResults(),
+  }
+}
+
+/**
+ * Convert a browser PublicKeyCredential (from navigator.credentials.get)
+ * into the JSON shape expected by webauthn-rs PublicKeyCredential.
+ */
+export function credentialToAuthenticationJSON(credential: PublicKeyCredential): {
+  id: string
+  rawId: string
+  type: string
+  response: {
+    authenticatorData: string
+    clientDataJSON: string
+    signature: string
+    userHandle: string | null
+  }
+  extensions: AuthenticationExtensionsClientOutputs
+} {
+  const response = credential.response as AuthenticatorAssertionResponse
+  return {
+    id: credential.id,
+    rawId: bufferToBase64url(credential.rawId),
+    type: credential.type,
+    response: {
+      authenticatorData: bufferToBase64url(response.authenticatorData),
+      clientDataJSON: bufferToBase64url(response.clientDataJSON),
+      signature: bufferToBase64url(response.signature),
+      userHandle: response.userHandle ? bufferToBase64url(response.userHandle) : null,
+    },
+    extensions: credential.getClientExtensionResults(),
+  }
+}
+
+// ─── Passkey registration endpoints ─────────────
+
+/** Raw server response — binary fields are base64url strings, not ArrayBuffers. */
+interface PasskeyRegisterStartResponse {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  publicKey: any
   reg_state: string
-}> {
-  return request('/api/v1/auth/passkey/register-start', {
+}
+
+export async function startPasskeyRegistration(): Promise<PasskeyRegisterStartResponse> {
+  return request<PasskeyRegisterStartResponse>('/api/v1/auth/passkey/register-start', {
     method: 'POST',
   })
 }
 
 export async function finishPasskeyRegistration(
-  credential: unknown,
+  credential: ReturnType<typeof credentialToRegistrationJSON>,
   regState: string,
   name?: string,
 ): Promise<PasskeyInfo> {
@@ -1087,19 +1222,25 @@ export async function finishPasskeyRegistration(
   })
 }
 
-export async function startPasskeyLogin(email: string): Promise<{
-  publicKey: PublicKeyCredentialRequestOptions
+// ─── Passkey login endpoints ─────────────────────
+
+/** Raw server response — binary fields are base64url strings, not ArrayBuffers. */
+interface PasskeyLoginStartResponse {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  publicKey: any
   auth_state: string
   user_id: string
-}> {
-  return request('/api/v1/auth/passkey/login-start', {
+}
+
+export async function startPasskeyLogin(email: string): Promise<PasskeyLoginStartResponse> {
+  return request<PasskeyLoginStartResponse>('/api/v1/auth/passkey/login-start', {
     method: 'POST',
     body: JSON.stringify({ email }),
   })
 }
 
 export async function finishPasskeyLogin(
-  credential: unknown,
+  credential: ReturnType<typeof credentialToAuthenticationJSON>,
   authState: string,
   userId: string,
 ): Promise<LoginResult> {
@@ -1112,6 +1253,8 @@ export async function finishPasskeyLogin(
   }
   return data
 }
+
+// ─── Passkey management endpoints ────────────────
 
 export async function listPasskeys(): Promise<PasskeyInfo[]> {
   const data = await request<{ passkeys: PasskeyInfo[] }>('/api/v1/auth/passkeys')

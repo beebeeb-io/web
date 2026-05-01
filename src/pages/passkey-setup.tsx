@@ -9,6 +9,8 @@ import {
   finishPasskeyRegistration,
   listPasskeys,
   deletePasskey,
+  serverOptsToCreateOptions,
+  credentialToRegistrationJSON,
   type PasskeyInfo,
 } from '../lib/api'
 
@@ -91,12 +93,16 @@ export function PasskeySetup() {
     setRegistering(true)
 
     try {
-      // Step 1: Get challenge from server
+      // Step 1: Get challenge from server (binary fields are base64url strings)
       const startRes = await startPasskeyRegistration()
 
-      // Step 2: Call WebAuthn API
+      // Step 2: Convert server options to browser-compatible format
+      // (base64url strings → ArrayBuffers for challenge, user.id, excludeCredentials[].id)
+      const createOptions = serverOptsToCreateOptions(startRes.publicKey)
+
+      // Step 3: Call WebAuthn API with converted options
       const credential = await navigator.credentials.create({
-        publicKey: startRes.publicKey,
+        publicKey: createOptions,
       }) as PublicKeyCredential | null
 
       if (!credential) {
@@ -105,18 +111,11 @@ export function PasskeySetup() {
         return
       }
 
-      // Step 3: Send credential back to server
-      const response = credential.response as AuthenticatorAttestationResponse
-      const credentialData = {
-        id: credential.id,
-        rawId: bufferToBase64url(credential.rawId),
-        type: credential.type,
-        response: {
-          attestationObject: bufferToBase64url(response.attestationObject),
-          clientDataJSON: bufferToBase64url(response.clientDataJSON),
-        },
-      }
+      // Step 4: Convert credential response to JSON for webauthn-rs
+      // (ArrayBuffers → base64url strings)
+      const credentialData = credentialToRegistrationJSON(credential)
 
+      // Step 5: Send to server to complete registration
       await finishPasskeyRegistration(credentialData, startRes.reg_state, device.name)
       setSuccess('Passkey created successfully')
       loadPasskeys()
@@ -242,13 +241,3 @@ export function PasskeySetup() {
   )
 }
 
-// ─── WebAuthn helpers ──────────────────────────────
-
-function bufferToBase64url(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer)
-  let binary = ''
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i])
-  }
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}

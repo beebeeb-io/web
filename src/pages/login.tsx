@@ -8,7 +8,7 @@ import { TwoFactorPrompt } from '../components/two-factor-prompt'
 import { DeviceProvision } from '../components/device-provision'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
-import { startPasskeyLogin, finishPasskeyLogin, getMe, setToken, hexToBytes, opaqueLoginStart as apiOpaqueLoginStart, opaqueLoginFinish as apiOpaqueLoginFinish } from '../lib/api'
+import { startPasskeyLogin, finishPasskeyLogin, getMe, setToken, hexToBytes, opaqueLoginStart as apiOpaqueLoginStart, opaqueLoginFinish as apiOpaqueLoginFinish, serverOptsToGetOptions, credentialToAuthenticationJSON } from '../lib/api'
 import { opaqueLoginStart, opaqueLoginFinish, toBase64, fromBase64 } from '../lib/crypto'
 
 export function Login() {
@@ -104,12 +104,15 @@ export function Login() {
 
     setPasskeyLoading(true)
     try {
-      // Step 1: Get challenge from server
+      // Step 1: Get challenge from server (binary fields are base64url strings)
       const startRes = await startPasskeyLogin(email)
 
-      // Step 2: Call WebAuthn API
+      // Step 2: Convert server options to browser-compatible format
+      const getOptions = serverOptsToGetOptions(startRes.publicKey)
+
+      // Step 3: Call WebAuthn API with converted options
       const credential = await navigator.credentials.get({
-        publicKey: startRes.publicKey,
+        publicKey: getOptions,
       }) as PublicKeyCredential | null
 
       if (!credential) {
@@ -118,19 +121,8 @@ export function Login() {
         return
       }
 
-      // Step 3: Send credential back to server
-      const response = credential.response as AuthenticatorAssertionResponse
-      const credentialData = {
-        id: credential.id,
-        rawId: bufferToBase64url(credential.rawId),
-        type: credential.type,
-        response: {
-          authenticatorData: bufferToBase64url(response.authenticatorData),
-          clientDataJSON: bufferToBase64url(response.clientDataJSON),
-          signature: bufferToBase64url(response.signature),
-          userHandle: response.userHandle ? bufferToBase64url(response.userHandle) : null,
-        },
-      }
+      // Step 4: Convert credential response to JSON for webauthn-rs
+      const credentialData = credentialToAuthenticationJSON(credential)
 
       const result = await finishPasskeyLogin(
         credentialData,
@@ -274,13 +266,3 @@ export function Login() {
   )
 }
 
-// ─── WebAuthn helpers ──────────────────────────────
-
-function bufferToBase64url(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer)
-  let binary = ''
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i])
-  }
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
