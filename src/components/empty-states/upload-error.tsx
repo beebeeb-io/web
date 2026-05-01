@@ -51,27 +51,12 @@ export function UploadError({
 
       <div className="px-5 py-3.5">
         {/* Warning banner */}
-        <div
-          className="flex items-start gap-2.5 p-3 mb-3.5 rounded-md"
-          style={{
-            background: 'oklch(0.98 0.02 25)',
-            border: '1px solid oklch(0.88 0.05 25)',
-          }}
-        >
-          <div
-            className="w-[22px] h-[22px] rounded-full shrink-0 flex items-center justify-center"
-            style={{
-              background: 'oklch(0.93 0.06 25)',
-              color: 'var(--color-red)',
-            }}
-          >
+        <div className="flex items-start gap-2.5 p-3 mb-3.5 rounded-md bg-red-bg border border-red-border">
+          <div className="w-[22px] h-[22px] rounded-full shrink-0 flex items-center justify-center bg-red/10 text-red">
             <Icon name="more" size={11} />
           </div>
           <div className="flex-1 min-w-0">
-            <div
-              className="text-[13px] font-semibold"
-              style={{ color: 'oklch(0.4 0.15 25)' }}
-            >
+            <div className="text-[13px] font-semibold text-red">
               Connection to {region} dropped
             </div>
             <div className="text-xs text-ink-2 mt-0.5 leading-relaxed">
@@ -86,13 +71,13 @@ export function UploadError({
           {files.map((f, i) => {
             const stageColor =
               f.tone === 'ok'
-                ? 'oklch(0.45 0.12 155)'
+                ? 'var(--color-green)'
                 : f.tone === 'warn'
                   ? 'var(--color-ink-3)'
                   : 'var(--color-red)'
             const barBg =
               f.tone === 'err'
-                ? 'oklch(0.85 0.1 25)'
+                ? 'var(--color-red)'
                 : f.tone === 'ok'
                   ? 'var(--color-ink)'
                   : 'var(--color-amber)'

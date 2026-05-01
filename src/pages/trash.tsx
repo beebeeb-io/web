@@ -77,9 +77,7 @@ function ConfirmDeleteDialog({ open, count, onConfirm, onCancel }: ConfirmDelete
           </div>
         </div>
         <div className="p-xl">
-          <div className="flex items-start gap-2.5 px-3 py-2.5 mb-lg rounded-md border"
-            style={{ background: 'oklch(0.99 0.008 25)', borderColor: 'oklch(0.88 0.05 25)' }}
-          >
+          <div className="flex items-start gap-2.5 px-3 py-2.5 mb-lg rounded-md border border-red-border bg-red-bg">
             <Icon name="shield" size={12} className="text-red mt-0.5 shrink-0" />
             <p className="text-[12px] text-ink-2 leading-relaxed">
               This will permanently delete {count} file{count !== 1 ? 's' : ''}. Your vault key{count !== 1 ? 's' : ''} for {count !== 1 ? 'these files' : 'this file'} will be destroyed. This cannot be undone.

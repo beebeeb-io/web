@@ -73,14 +73,7 @@ export function ForgotPhrase({
         {/* Hero */}
         <div className="px-7 pt-7 pb-5 bg-paper-2">
           <div className="flex gap-3.5 items-start">
-            <div
-              className="w-11 h-11 shrink-0 rounded-xl flex items-center justify-center"
-              style={{
-                background: 'oklch(0.98 0.02 25)',
-                border: '1px solid oklch(0.88 0.05 25)',
-                color: 'var(--color-red)',
-              }}
-            >
+            <div className="w-11 h-11 shrink-0 rounded-xl flex items-center justify-center bg-red-bg border border-red-border text-red">
               <Icon name="key" size={20} />
             </div>
             <div className="flex-1">
@@ -109,14 +102,7 @@ export function ForgotPhrase({
               key={i}
               className="flex gap-3 py-3 border-b border-line"
             >
-              <div
-                className="w-7 h-7 shrink-0 rounded-lg flex items-center justify-center"
-                style={{
-                  background: 'oklch(0.94 0.06 155)',
-                  color: 'oklch(0.45 0.12 155)',
-                  border: '1px solid oklch(0.85 0.09 155)',
-                }}
-              >
+              <div className="w-7 h-7 shrink-0 rounded-lg flex items-center justify-center bg-green-bg border border-green-border text-green">
                 <Icon name={opt.icon} size={13} />
               </div>
               <div className="flex-1">
@@ -142,19 +128,10 @@ export function ForgotPhrase({
           {children}
 
           {/* Dead-end: Start over */}
-          <div
-            className="mt-[18px] p-3.5 rounded-md"
-            style={{
-              background: 'oklch(0.99 0.008 25)',
-              border: '1px solid oklch(0.9 0.04 25)',
-            }}
-          >
+          <div className="mt-[18px] p-3.5 rounded-md bg-red-bg border border-red-border">
             <div className="flex items-center gap-2 mb-1.5">
-              <Icon name="trash" size={13} style={{ color: 'var(--color-red)' }} />
-              <span
-                className="text-[13px] font-semibold"
-                style={{ color: 'var(--color-red)' }}
-              >
+              <Icon name="trash" size={13} className="text-red" />
+              <span className="text-[13px] font-semibold text-red">
                 Start over
               </span>
             </div>

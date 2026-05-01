@@ -53,17 +53,8 @@ export function DeleteAccount() {
         {/* Body */}
         <div className="p-xl">
           {/* Warning banner */}
-          <div
-            className="px-3.5 py-3 rounded-lg border mb-lg"
-            style={{
-              background: 'oklch(0.97 0.02 25)',
-              borderColor: 'oklch(0.88 0.05 25)',
-            }}
-          >
-            <p
-              className="text-[12.5px] leading-relaxed"
-              style={{ color: 'oklch(0.35 0.12 25)' }}
-            >
+          <div className="px-3.5 py-3 rounded-lg border border-red-border bg-red-bg mb-lg">
+            <p className="text-[12.5px] leading-relaxed text-red">
               Within <strong>30 days</strong>, your encrypted blobs are permanently shredded
               from all regions. After that there is nothing to recover -- not for you, not for
               us, not for anyone with a court order.

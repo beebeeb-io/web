@@ -704,15 +704,13 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
                       <span className="text-xs font-medium text-ink-2">Decryption key</span>
                       <BBChip variant="amber">Send via a different channel</BBChip>
                     </div>
-                    <div className="flex items-center gap-2 border rounded-md px-3 py-2 mb-3"
-                      style={{ background: 'oklch(0.97 0.03 84)', borderColor: 'oklch(0.86 0.07 90)' }}>
+                    <div className="flex items-center gap-2 border border-amber-deep/40 bg-amber-bg rounded-md px-3 py-2 mb-3">
                       <Icon name="key" size={13} className="text-amber-deep shrink-0" />
                       <input
                         value={decryptionKey}
                         readOnly
                         onFocus={(e) => e.target.select()}
-                        className="flex-1 bg-transparent font-mono text-xs outline-none truncate select-all"
-                        style={{ color: 'oklch(0.35 0.1 72)', fontWeight: 500 }}
+                        className="flex-1 bg-transparent font-mono text-xs font-medium text-amber-deep outline-none truncate select-all"
                       />
                       <BBButton size="sm" onClick={() => copyToClipboard(decryptionKey, 'split-key')} className="shrink-0 gap-1">
                         <Icon name={copied === 'split-key' ? 'check' : 'copy'} size={11} />
