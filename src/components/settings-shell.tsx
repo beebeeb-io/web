@@ -12,15 +12,11 @@ type NavItem = {
 }
 
 const navItems: NavItem[] = [
-  { id: 'profile', label: 'Profile', icon: 'users', href: '/settings/profile' },
-  { id: 'account', label: 'Account & security', icon: 'shield', href: '/security' },
-  { id: 'devices', label: 'Devices', icon: 'cloud', href: '/settings/devices' },
+  { id: 'account', label: 'Account', icon: 'users', href: '/settings/account' },
+  { id: 'security', label: 'Security', icon: 'shield', href: '/settings/security' },
   { id: 'notifications', label: 'Notifications', icon: 'clock', href: '/settings/notifications' },
-  { id: 'language', label: 'Language & region', icon: 'settings', href: '/settings/language' },
+  { id: 'billing', label: 'Plan & billing', icon: 'file', href: '/settings/billing' },
   { id: 'appearance', label: 'Appearance', icon: 'star', href: '/settings/appearance' },
-  { id: 'storage', label: 'Storage & data', icon: 'folder', href: '/settings/storage' },
-  { id: 'billing', label: 'Plan & billing', icon: 'file', href: '/billing' },
-  { id: 'advanced', label: 'Advanced', icon: 'key', href: '/settings/profile' },
 ]
 
 interface SettingsShellProps {
