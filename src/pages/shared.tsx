@@ -25,6 +25,7 @@ import { useKeys } from '../lib/key-context'
 import { decryptFilename, decryptChunk, fromBase64, x25519SharedSecret, deriveShareKey, deriveX25519Private, zeroize } from '../lib/crypto'
 import { encryptedDownload } from '../lib/encrypted-download'
 import { encryptedUpload } from '../lib/encrypted-upload'
+import { SharedRowSkeleton } from '../components/skeleton'
 
 // ─── Helpers ───────────────────────────────────────
 
@@ -397,14 +398,13 @@ export function Shared() {
     }
   }
 
-  // ─── Spinner ──────────────────────────────────
+  // ─── Loading skeleton ──────────────────────────
 
-  const Spinner = () => (
-    <div className="flex items-center justify-center py-20">
-      <svg className="animate-spin h-6 w-6 text-amber" viewBox="0 0 24 24" fill="none">
-        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-      </svg>
+  const LoadingSkeleton = () => (
+    <div>
+      {Array.from({ length: 6 }, (_, i) => (
+        <SharedRowSkeleton key={i} />
+      ))}
     </div>
   )
 
@@ -439,7 +439,7 @@ export function Shared() {
   // ─── Tab content: With me ─────────────────────
 
   const renderWithMe = () => {
-    if (loading) return <Spinner />
+    if (loading) return <LoadingSkeleton />
     if (withMeInvites.length === 0) {
       return (
         <EmptyState
@@ -545,7 +545,7 @@ export function Shared() {
   // ─── Tab content: By me ───────────────────────
 
   const renderByMe = () => {
-    if (loading) return <Spinner />
+    if (loading) return <LoadingSkeleton />
     if (sentApproved.length === 0) {
       return (
         <EmptyState
@@ -644,7 +644,7 @@ export function Shared() {
   // ─── Tab content: Pending ─────────────────────
 
   const renderPending = () => {
-    if (loading) return <Spinner />
+    if (loading) return <LoadingSkeleton />
 
     const hasWaiting = sentInvited.length > 0
     const hasIncomingInvited = incomingInvited.length > 0
