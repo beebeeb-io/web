@@ -3814,7 +3814,7 @@
       "label": "SettingsShell()",
       "file_type": "code",
       "source_file": "src/components/settings-shell.tsx",
-      "source_location": "L30",
+      "source_location": "L31",
       "id": "components_settings_shell_settingsshell",
       "community": 96,
       "norm_label": "settingsshell()"
@@ -12762,7 +12762,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/components/settings-shell.tsx",
-      "source_location": "L30",
+      "source_location": "L31",
       "weight": 1.0,
       "_src": "src_components_settings_shell_tsx",
       "_tgt": "components_settings_shell_settingsshell",
