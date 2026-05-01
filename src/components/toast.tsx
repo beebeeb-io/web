@@ -12,6 +12,7 @@ export interface Toast {
   description?: string
   href?: string
   danger?: boolean
+  onUndo?: () => void
 }
 
 interface ToastState {
@@ -68,35 +69,61 @@ function ToastItem({
 }) {
   const [entering, setEntering] = useState(true)
   const [exiting, setExiting] = useState(false)
+  const hoveredRef = useRef(false)
+  const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const startExit = useCallback(() => {
+    setExiting(true)
+    setTimeout(() => onDismiss(toast.id), 200)
+  }, [toast.id, onDismiss])
+
+  const scheduleDismiss = useCallback(() => {
+    if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current)
+    dismissTimerRef.current = setTimeout(() => {
+      if (!hoveredRef.current) startExit()
+    }, AUTO_DISMISS_MS)
+  }, [startExit])
 
   useEffect(() => {
     // Trigger enter animation
     const enterTimer = requestAnimationFrame(() => setEntering(false))
-
-    // Auto-dismiss
-    const dismissTimer = setTimeout(() => {
-      setExiting(true)
-      setTimeout(() => onDismiss(toast.id), 200)
-    }, AUTO_DISMISS_MS)
+    scheduleDismiss()
 
     return () => {
       cancelAnimationFrame(enterTimer)
-      clearTimeout(dismissTimer)
+      if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current)
     }
-  }, [toast.id, onDismiss])
+  }, [scheduleDismiss])
+
+  const handleMouseEnter = () => {
+    hoveredRef.current = true
+    if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current)
+  }
+
+  const handleMouseLeave = () => {
+    hoveredRef.current = false
+    scheduleDismiss()
+  }
 
   const handleClick = () => {
     if (toast.href) {
       window.location.href = toast.href
     }
-    setExiting(true)
-    setTimeout(() => onDismiss(toast.id), 200)
+    startExit()
+  }
+
+  const handleUndo = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    toast.onUndo?.()
+    startExit()
   }
 
   return (
     <div
       role="alert"
       onClick={handleClick}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
       className={`pointer-events-auto w-[360px] bg-paper border border-line-2 rounded-lg overflow-hidden transition-all duration-200 ${
         toast.href ? 'cursor-pointer' : ''
       }`}
@@ -136,12 +163,21 @@ function ToastItem({
           )}
         </div>
 
+        {/* Undo button */}
+        {toast.onUndo && (
+          <button
+            onClick={handleUndo}
+            className="shrink-0 text-[11px] font-semibold text-amber-deep hover:text-amber transition-colors px-1.5 py-0.5 rounded hover:bg-amber-bg"
+          >
+            Undo
+          </button>
+        )}
+
         {/* Close button */}
         <button
           onClick={(e) => {
             e.stopPropagation()
-            setExiting(true)
-            setTimeout(() => onDismiss(toast.id), 200)
+            startExit()
           }}
           className="shrink-0 p-0.5 text-ink-4 hover:text-ink-2 transition-colors"
           aria-label="Dismiss"
