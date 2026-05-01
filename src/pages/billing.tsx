@@ -91,6 +91,7 @@ export function Billing() {
   const [upgradePlan, setUpgradePlan] = useState<string>('team')
   const [portalLoading, setPortalLoading] = useState(false)
   const [payment, setPayment] = useState<PaymentMethod | null>(null)
+  const [cancelConfirm, setCancelConfirm] = useState(false)
   const showSuccess = searchParams.get('success') === 'true'
 
   const loadData = useCallback(async () => {
@@ -139,6 +140,14 @@ export function Billing() {
 
   function dismissSuccess() {
     setSearchParams({}, { replace: true })
+  }
+
+  // TODO(rust-engineer): Replace with POST /api/v1/billing/cancel once implemented.
+  // That endpoint should call Stripe's cancel_at_period_end so cancellation is
+  // immediate without a portal redirect. The portal handles it for now.
+  async function handleCancelSubscription() {
+    setCancelConfirm(false)
+    void handleManageBilling()
   }
 
   async function handleManageBilling() {
@@ -339,6 +348,41 @@ export function Billing() {
                 </>
               )}
             </div>
+
+            {/* Cancel plan — paid plans only */}
+            {sub?.plan !== 'free' && (
+              cancelConfirm ? (
+                <div className="mt-3 p-3.5 bg-red/5 border border-red/20 rounded-lg">
+                  <div className="text-[12px] font-medium text-ink mb-1">Cancel your plan?</div>
+                  <div className="text-[11.5px] text-ink-3 mb-3 leading-relaxed">
+                    Your plan will remain active until {formatDate(sub?.current_period_end ?? null)}.
+                    After that, your account will be downgraded to Free.
+                  </div>
+                  <div className="flex gap-2">
+                    <BBButton size="sm" onClick={() => setCancelConfirm(false)}>
+                      Keep plan
+                    </BBButton>
+                    <BBButton
+                      size="sm"
+                      variant="danger"
+                      onClick={() => void handleCancelSubscription()}
+                      disabled={portalLoading}
+                    >
+                      {portalLoading ? 'Redirecting...' : 'Cancel plan'}
+                    </BBButton>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-3">
+                  <button
+                    className="text-[11.5px] text-ink-4 hover:text-red transition-colors"
+                    onClick={() => setCancelConfirm(true)}
+                  >
+                    Cancel plan
+                  </button>
+                </div>
+              )
+            )}
           </div>
 
           {/* Payment method */}
