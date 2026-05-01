@@ -22,7 +22,7 @@ export function PreviewChrome({
   const kindIcon = kind.startsWith('image') ? 'file' : 'file' as const
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-paper text-ink">
+    <div className="absolute inset-0 z-30 flex flex-col bg-paper text-ink">
       {/* Top bar — 48px */}
       <div className="flex h-12 shrink-0 items-center gap-3 border-b border-line bg-paper px-3.5">
         {/* Back button */}
