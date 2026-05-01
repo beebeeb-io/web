@@ -110,6 +110,10 @@ export function Drive() {
   const lastClickedIdRef = useRef<string | null>(null)
   const [bulkMoveOpen, setBulkMoveOpen] = useState(false)
 
+  // ─── Drag-and-drop state ────────────────────────────
+  const [draggedFileId, setDraggedFileId] = useState<string | null>(null)
+  const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null)
+
   const currentParentId = breadcrumbs[breadcrumbs.length - 1]?.id ?? undefined
 
   const fetchFiles = useCallback(async () => {
@@ -1016,6 +1020,95 @@ export function Drive() {
     }
   }
 
+  // ─── Drag-and-drop handlers ────────────────────────────
+
+  function handleDragStart(e: React.DragEvent, file: DriveFile) {
+    // If the dragged file is part of a multi-selection, drag all selected files
+    if (selectedIds.size > 1 && selectedIds.has(file.id)) {
+      e.dataTransfer.setData('text/plain', JSON.stringify(Array.from(selectedIds)))
+      e.dataTransfer.effectAllowed = 'move'
+    } else {
+      e.dataTransfer.setData('text/plain', JSON.stringify([file.id]))
+      e.dataTransfer.effectAllowed = 'move'
+    }
+    setDraggedFileId(file.id)
+  }
+
+  function handleDragEnd() {
+    setDraggedFileId(null)
+    setDragOverFolderId(null)
+  }
+
+  function handleDragOver(e: React.DragEvent, folder: DriveFile) {
+    if (!folder.is_folder) return
+    // Prevent dropping a folder onto itself
+    if (draggedFileId === folder.id) return
+    // Prevent dropping selected items onto a folder that is itself selected
+    if (selectedIds.size > 1 && selectedIds.has(draggedFileId ?? '') && selectedIds.has(folder.id)) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    setDragOverFolderId(folder.id)
+  }
+
+  function handleDragLeave(e: React.DragEvent, folderId: string) {
+    // Only clear if we're actually leaving the folder row (not entering a child element)
+    const relatedTarget = e.relatedTarget as HTMLElement | null
+    const currentTarget = e.currentTarget as HTMLElement
+    if (relatedTarget && currentTarget.contains(relatedTarget)) return
+    if (dragOverFolderId === folderId) {
+      setDragOverFolderId(null)
+    }
+  }
+
+  async function handleDrop(e: React.DragEvent, targetFolder: DriveFile) {
+    e.preventDefault()
+    setDragOverFolderId(null)
+    setDraggedFileId(null)
+
+    if (!targetFolder.is_folder) return
+
+    let fileIds: string[]
+    try {
+      fileIds = JSON.parse(e.dataTransfer.getData('text/plain')) as string[]
+    } catch {
+      return
+    }
+
+    // Filter out the target folder itself (can't drop a folder into itself)
+    fileIds = fileIds.filter((id) => id !== targetFolder.id)
+    if (fileIds.length === 0) return
+
+    const targetName = displayName(targetFolder)
+
+    try {
+      await Promise.all(
+        fileIds.map((id) => updateFile(id, { parent_id: targetFolder.id })),
+      )
+      if (fileIds.length === 1) {
+        const movedFile = files.find((f) => f.id === fileIds[0])
+        const movedName = movedFile ? displayName(movedFile) : 'File'
+        showToast({
+          icon: 'folder',
+          title: `Moved ${movedName} to ${targetName}`,
+        })
+      } else {
+        showToast({
+          icon: 'folder',
+          title: `Moved ${fileIds.length} items to ${targetName}`,
+        })
+      }
+      clearSelection()
+      fetchFiles()
+    } catch (err) {
+      showToast({
+        icon: 'x',
+        title: 'Move failed',
+        description: err instanceof Error ? err.message : 'Could not move files.',
+        danger: true,
+      })
+    }
+  }
+
   // ─── Keyboard shortcuts for selection ─────────────────
 
   useEffect(() => {
@@ -1288,16 +1381,26 @@ export function Drive() {
                 const name = displayName(file)
                 const fileType = getFileType(name, file.is_folder)
                 const isSelected = selectedIds.has(file.id)
+                const isDragTarget = file.is_folder && dragOverFolderId === file.id
+                const isDragging = draggedFileId === file.id
                 return (
                   <div
                     key={file.id}
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, file)}
+                    onDragEnd={handleDragEnd}
+                    onDragOver={(e) => handleDragOver(e, file)}
+                    onDragLeave={(e) => handleDragLeave(e, file.id)}
+                    onDrop={(e) => handleDrop(e, file)}
                     className={`group transition-colors cursor-pointer ${
-                      isSelected
-                        ? 'bg-amber-bg/50'
-                        : selectedFileId === file.id
-                          ? 'bg-amber-bg/30'
-                          : 'hover:bg-paper-2'
-                    }`}
+                      isDragTarget
+                        ? 'bg-amber-bg ring-2 ring-amber ring-inset'
+                        : isSelected
+                          ? 'bg-amber-bg/50'
+                          : selectedFileId === file.id
+                            ? 'bg-amber-bg/30'
+                            : 'hover:bg-paper-2'
+                    } ${isDragging ? 'opacity-40' : ''}`}
                     style={{
                       display: 'grid',
                       gridTemplateColumns: '20px 32px 1fr 110px 110px 100px 60px',
