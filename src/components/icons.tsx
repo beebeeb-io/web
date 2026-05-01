@@ -12,6 +12,14 @@ export type IconName =
   | 'upload'
   | 'folder'
   | 'file'
+  | 'file-text'
+  | 'file-spreadsheet'
+  | 'file-presentation'
+  | 'file-code'
+  | 'file-archive'
+  | 'file-audio'
+  | 'file-video'
+  | 'file-data'
   | 'users'
   | 'search'
   | 'plus'
@@ -55,6 +63,22 @@ const paths: Record<IconName, string> = {
     'M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z',
   file:
     'M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM13 2v7h7',
+  'file-text':
+    'M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM13 2v7h7M16 13H8M16 17H8M10 9H8',
+  'file-spreadsheet':
+    'M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM13 2v7h7M8 13h2v2H8zM14 13h2v2h-2zM8 17h2v2H8zM14 17h2v2h-2z',
+  'file-presentation':
+    'M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM13 2v7h7M8 13h8M8 17h5',
+  'file-code':
+    'M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM13 2v7h7M10 13l-2 2 2 2M14 13l2 2-2 2',
+  'file-archive':
+    'M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM13 2v7h7M10 2v2M12 4v2M10 6v2M12 8v2M10 10v2M12 12v4h-2v-4',
+  'file-audio':
+    'M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM13 2v7h7M11 15a2 2 0 1 1-4 0 2 2 0 0 1 4 0zM11 15v-4l4-1',
+  'file-video':
+    'M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM13 2v7h7M10 15l5-3-5-3v6z',
+  'file-data':
+    'M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM13 2v7h7M8 17v-2M12 17v-4M16 17v-3',
   users:
     'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75',
   search:
