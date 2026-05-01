@@ -370,9 +370,10 @@ export function SettingsAppearance() {
           }}
           className="border rounded-md bg-paper px-3 py-2 border-line max-w-[280px] text-sm text-ink outline-none appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%237d7770%22%20stroke-width%3D%222.5%22%3E%3Cpath%20d%3D%22M6%209l6%206%206-6%22%2F%3E%3C%2Fsvg%3E')] bg-no-repeat bg-[right_10px_center] pr-8 cursor-pointer"
         >
-          {Intl.supportedValuesOf('timeZone').filter(tz => tz.startsWith('Europe/')).map(tz => (
-            <option key={tz} value={tz}>{tz.replace('_', ' ')}</option>
-          ))}
+          <option value="WET">WET — UTC+0 (UK, Portugal, Iceland)</option>
+          <option value="CET">CET — UTC+1 (Central Europe)</option>
+          <option value="EET">EET — UTC+2 (Eastern Europe, Finland)</option>
+          <option value="Europe/Moscow">MSK — UTC+3 (Moscow)</option>
         </select>
       </SettingsRow>
 
