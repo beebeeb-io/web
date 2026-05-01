@@ -19,8 +19,8 @@ interface DataRegion {
 }
 
 const DATA_REGIONS: DataRegion[] = [
-  { id: 'frankfurt', city: 'Frankfurt', country: 'DE', provider: 'Hetzner', available: true },
-  { id: 'helsinki', city: 'Helsinki', country: 'FIN', provider: 'Hetzner', available: true },
+  { id: 'falkenstein', city: 'Falkenstein', country: 'DE', provider: '', available: true },
+  { id: 'helsinki', city: 'Helsinki', country: 'FIN', provider: '', available: true },
   { id: 'ede', city: 'Ede', country: 'NL', provider: 'Beebeeb', available: false },
 ]
 
@@ -256,9 +256,11 @@ export function SettingsAccount() {
                     <span className={`text-[13px] ${isActive ? 'font-semibold' : ''}`}>
                       {region.city} {region.country}
                     </span>
-                    <span className="text-[11px] text-ink-4 font-mono">
-                      {region.provider}
-                    </span>
+                    {region.provider && (
+                      <span className="text-[11px] text-ink-4 font-mono">
+                        {region.provider}
+                      </span>
+                    )}
                   </div>
                 </div>
                 {isActive && (
