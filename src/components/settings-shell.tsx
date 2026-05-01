@@ -17,7 +17,7 @@ const navItems: NavItem[] = [
   { id: 'notifications', label: 'Notifications', icon: 'clock', href: '/settings/notifications' },
   { id: 'language', label: 'Language & region', icon: 'settings', href: '/settings/language' },
   { id: 'appearance', label: 'Appearance', icon: 'star', href: '/settings/profile' },
-  { id: 'storage', label: 'Storage & data', icon: 'folder', href: '/settings/profile' },
+  { id: 'storage', label: 'Storage & data', icon: 'folder', href: '/settings/storage' },
   { id: 'billing', label: 'Plan & billing', icon: 'file', href: '/billing' },
   { id: 'advanced', label: 'Advanced', icon: 'key', href: '/settings/profile' },
 ]

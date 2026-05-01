@@ -20,6 +20,7 @@ import { SettingsProfile } from './pages/settings/profile'
 import { SettingsDevices } from './pages/settings/devices'
 import { SettingsNotifications } from './pages/settings/notifications'
 import { SettingsLanguage } from './pages/settings/language'
+import { SettingsStorage } from './pages/settings/storage'
 import { Security } from './pages/security'
 import { Trash } from './pages/trash'
 import { Search } from './pages/search'
@@ -226,6 +227,14 @@ export function App() {
             element={
               <ProtectedRoute>
                 <SettingsLanguage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/settings/storage"
+            element={
+              <ProtectedRoute>
+                <SettingsStorage />
               </ProtectedRoute>
             }
           />
