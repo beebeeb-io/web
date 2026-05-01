@@ -6,6 +6,7 @@ import { useToast } from '../../components/toast'
 import { AdminShell } from './admin-shell'
 import { listAdminUsers, getAdminUserDetail, inviteMember, removeMember } from '../../lib/api'
 import type { AdminUser, AdminUserDetail } from '../../lib/api'
+import { useImpersonation } from '../../lib/impersonation-context'
 
 const PAGE_SIZE = 50
 
@@ -190,6 +191,7 @@ function UserDetailPanel({
 
 export function AdminUsers() {
   const { showToast } = useToast()
+  const { startImpersonation } = useImpersonation()
   const [users, setUsers] = useState<AdminUser[]>([])
   const [total, setTotal] = useState(0)
   const [offset, setOffset] = useState(0)
@@ -200,6 +202,7 @@ export function AdminUsers() {
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviting, setInviting] = useState(false)
   const [showInvite, setShowInvite] = useState(false)
+  const [impersonating, setImpersonating] = useState<string | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const load = useCallback(async (searchTerm: string, pageOffset: number) => {
@@ -260,6 +263,17 @@ export function AdminUsers() {
       void load(search, offset)
     } catch (err) {
       showToast({ icon: 'x', title: 'Remove failed', description: err instanceof Error ? err.message : 'Could not remove user', danger: true })
+    }
+  }
+
+  async function handleImpersonate(id: string, email: string) {
+    if (!confirm(`Impersonate ${email}? You will be viewing the app as this user.`)) return
+    setImpersonating(id)
+    try {
+      await startImpersonation(id)
+    } catch (err) {
+      showToast({ icon: 'x', title: 'Impersonation failed', description: err instanceof Error ? err.message : 'Could not impersonate user', danger: true })
+      setImpersonating(null)
     }
   }
 
@@ -328,7 +342,7 @@ export function AdminUsers() {
       {/* Column headers */}
       <div
         className="grid px-5 py-2 text-[10px] font-mono uppercase tracking-wide text-ink-3 border-b border-line bg-paper-2"
-        style={{ gridTemplateColumns: '1fr 140px 80px 100px 80px 90px' }}
+        style={{ gridTemplateColumns: '1fr 140px 80px 100px 80px 180px' }}
       >
         <span>Email</span>
         <span>Joined</span>
@@ -363,7 +377,7 @@ export function AdminUsers() {
               <div key={u.id}>
                 <div
                   className="grid px-5 py-3 text-xs border-b border-line items-center hover:bg-paper-2 transition-colors"
-                  style={{ gridTemplateColumns: '1fr 140px 80px 100px 80px 90px' }}
+                  style={{ gridTemplateColumns: '1fr 140px 80px 100px 80px 180px' }}
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
                     <div
@@ -388,6 +402,15 @@ export function AdminUsers() {
                     </BBChip>
                   </span>
                   <div className="flex items-center justify-end gap-1">
+                    <BBButton
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleImpersonate(u.id, u.email)}
+                      disabled={impersonating === u.id}
+                    >
+                      <Icon name="eye" size={11} className="mr-1" />
+                      {impersonating === u.id ? 'Loading...' : 'Impersonate'}
+                    </BBButton>
                     <BBButton
                       size="sm"
                       variant="ghost"

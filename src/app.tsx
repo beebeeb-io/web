@@ -9,6 +9,8 @@ import { ErrorBoundary } from './components/error-boundary'
 import { WasmGuard } from './components/wasm-guard'
 import { VaultUnlock } from './components/vault-unlock'
 import { OfflineBanner } from './components/offline-banner'
+import { ImpersonationProvider } from './lib/impersonation-context'
+import { ImpersonationBanner } from './components/impersonation-banner'
 import { registerErrorNotifier, registerSessionExpiredHandler } from './lib/api'
 import { CommandPalette } from './components/command-palette'
 import { ShortcutsCheatsheet } from './components/shortcuts-cheatsheet'
@@ -134,12 +136,14 @@ export function App() {
     <ErrorBoundary>
     <ThemeProvider>
     <BrowserRouter>
+      <ImpersonationProvider>
       <AuthProvider>
         <KeyProvider>
         <WsProvider>
         <ToastProvider>
         <DisplayProvider>
         <ApiErrorWiring />
+        <ImpersonationBanner />
         <OfflineBanner />
         <GlobalShortcuts />
         <Routes>
@@ -449,6 +453,7 @@ export function App() {
         </WsProvider>
         </KeyProvider>
       </AuthProvider>
+      </ImpersonationProvider>
     </BrowserRouter>
     </ThemeProvider>
     </ErrorBoundary>
