@@ -1,12 +1,12 @@
 # Graph Report - web  (2026-05-01)
 
 ## Corpus Check
-- 184 files · ~175,865 words
+- 184 files · ~176,004 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 932 nodes · 1094 edges · 29 communities detected
-- Extraction: 84% EXTRACTED · 16% INFERRED · 0% AMBIGUOUS · INFERRED: 173 edges (avg confidence: 0.8)
+- 935 nodes · 1098 edges · 28 communities detected
+- Extraction: 84% EXTRACTED · 16% INFERRED · 0% AMBIGUOUS · INFERRED: 174 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Community Hubs (Navigation)
@@ -38,7 +38,6 @@
 - [[_COMMUNITY_Community 68|Community 68]]
 - [[_COMMUNITY_Community 70|Community 70]]
 - [[_COMMUNITY_Community 81|Community 81]]
-- [[_COMMUNITY_Community 82|Community 82]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `request()` - 76 edges
@@ -59,16 +58,16 @@
   design/hifi/ios-frame.jsx → src/components/share-activity.tsx
 - `Prompt()` --calls--> `handleCreateWorkspace()`  [INFERRED]
   design/hifi/hifi-cli.jsx → src/pages/team.tsx
-- `togglePin()` --calls--> `setPreference()`  [INFERRED]
+- `loadAndDecrypt()` --calls--> `decryptToBlob()`  [INFERRED]
+  src/components/preview/file-preview.tsx → src/lib/encrypted-download.ts
+- `handleQuickAccessDrop()` --calls--> `setPreference()`  [INFERRED]
   src/components/drive-layout.tsx → src/lib/api.ts
-- `handleTogglePin()` --calls--> `setPreference()`  [INFERRED]
-  src/components/file-list.tsx → src/lib/api.ts
 
 ## Communities
 
 ### Community 0 - "Community 0"
 Cohesion: 0.03
-Nodes (104): onPlanChanged(), acceptWorkspaceInvite(), addFolderKeys(), ApiError, approveInvite(), base64urlToBuffer(), bufferToBase64url(), cancelInvite() (+96 more)
+Nodes (103): onPlanChanged(), acceptWorkspaceInvite(), addFolderKeys(), ApiError, approveInvite(), base64urlToBuffer(), bufferToBase64url(), cancelInvite() (+95 more)
 
 ### Community 1 - "Community 1"
 Cohesion: 0.08
@@ -79,8 +78,8 @@ Cohesion: 0.06
 Nodes (30): checkDpaStatus(), handleUpload(), load(), handleDelete(), handleDownload(), handleRestore(), downloadFile(), downloadVersion() (+22 more)
 
 ### Community 3 - "Community 3"
-Cohesion: 0.07
-Nodes (11): handleInvite(), handleRemove(), onRegionChanged(), togglePin(), handleCheckboxClick(), handleRowClick(), handleTogglePin(), onPinChanged() (+3 more)
+Cohesion: 0.06
+Nodes (14): handleInvite(), handleRemove(), handleQuickAccessDrop(), onRegionChanged(), togglePin(), handleCheckboxClick(), handleRowClick(), handleTogglePin() (+6 more)
 
 ### Community 4 - "Community 4"
 Cohesion: 0.07
@@ -178,10 +177,6 @@ Nodes (1): handleExportJson()
 Cohesion: 1.0
 Nodes (2): formatBytes(), formatStorageSI()
 
-### Community 82 - "Community 82"
-Cohesion: 0.67
-Nodes (1): handleSelect()
-
 ## Knowledge Gaps
 - **Thin community `Community 8`** (14 nodes): `restoreFile()`, `ConfirmDeleteDialog()`, `daysUntilShred()`, `displayName()`, `executePermanentDelete()`, `getIconForName()`, `handleRestore()`, `handleRestoreAll()`, `requestDeleteSelected()`, `requestEmptyTrash()`, `requestPermanentDelete()`, `timeAgo()`, `toggleSelect()`, `trash.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
@@ -205,13 +200,11 @@ Nodes (1): handleSelect()
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 81`** (3 nodes): `formatBytes()`, `formatStorageSI()`, `format.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 82`** (3 nodes): `handleSelect()`, `yearlySavings()`, `pricing.tsx`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `request()` connect `Community 0` to `Community 2`, `Community 26`, `Community 5`?**
+- **Why does `request()` connect `Community 0` to `Community 3`, `Community 2`, `Community 26`, `Community 5`?**
   _High betweenness centrality (0.033) - this node is a cross-community bridge._
 - **Why does `getToken()` connect `Community 2` to `Community 0`, `Community 1`?**
   _High betweenness centrality (0.029) - this node is a cross-community bridge._
