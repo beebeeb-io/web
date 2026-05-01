@@ -85,7 +85,7 @@ function UserCard() {
           className="absolute bottom-full left-3 right-3 mb-1 rounded-md border border-line bg-paper-2 shadow-2 p-1"
         >
           <Link
-            to="/settings"
+            to="/settings/account"
             role="menuitem"
             onClick={() => setOpen(false)}
             className={itemClass}
@@ -94,7 +94,7 @@ function UserCard() {
             <span className="flex-1">Account</span>
           </Link>
           <Link
-            to="/billing"
+            to="/settings/billing"
             role="menuitem"
             onClick={() => setOpen(false)}
             className={itemClass}

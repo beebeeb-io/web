@@ -21,12 +21,9 @@ import { Onboarding } from './pages/onboarding'
 import { Drive } from './pages/drive'
 import { Starred } from './pages/starred'
 import { Recent } from './pages/recent'
-import { SettingsProfile } from './pages/settings/profile'
-import { SettingsDevices } from './pages/settings/devices'
+import { SettingsAccount } from './pages/settings/account'
 import { SettingsNotifications } from './pages/settings/notifications'
-import { SettingsLanguage } from './pages/settings/language'
 import { SettingsAppearance } from './pages/settings/appearance'
-import { SettingsStorage } from './pages/settings/storage'
 import { Security } from './pages/security'
 import { Trash } from './pages/trash'
 import { Search } from './pages/search'
@@ -47,7 +44,6 @@ import { AdminBilling } from './pages/admin/billing-overview'
 import { StoragePools } from './pages/admin/storage-pools'
 import { Monitoring } from './pages/admin/monitoring'
 import { AdminMigrations } from './pages/admin/migrations'
-import { TwoFactorSetup } from './pages/two-factor-setup'
 import { VerifyEmail } from './pages/verify-email'
 import { Migration } from './pages/migration'
 import { Team } from './pages/team'
@@ -222,78 +218,21 @@ export function App() {
               </ProtectedRoute>
             }
           />
-          <Route
-            path="/settings"
-            element={
-              <ProtectedRoute>
-                <Navigate to="/settings/profile" replace />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/settings/profile"
-            element={
-              <ProtectedRoute>
-                <SettingsProfile />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/settings/devices"
-            element={
-              <ProtectedRoute>
-                <SettingsDevices />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/settings/notifications"
-            element={
-              <ProtectedRoute>
-                <SettingsNotifications />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/settings/language"
-            element={
-              <ProtectedRoute>
-                <SettingsLanguage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/settings/appearance"
-            element={
-              <ProtectedRoute>
-                <SettingsAppearance />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/settings/storage"
-            element={
-              <ProtectedRoute>
-                <SettingsStorage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/settings/2fa"
-            element={
-              <ProtectedRoute>
-                <TwoFactorSetup />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/security"
-            element={
-              <ProtectedRoute>
-                <Security />
-              </ProtectedRoute>
-            }
-          />
+          {/* Settings — all under /settings/* */}
+          <Route path="/settings" element={<ProtectedRoute><Navigate to="/settings/account" replace /></ProtectedRoute>} />
+          <Route path="/settings/account" element={<ProtectedRoute><SettingsAccount /></ProtectedRoute>} />
+          <Route path="/settings/security" element={<ProtectedRoute><Security /></ProtectedRoute>} />
+          <Route path="/settings/notifications" element={<ProtectedRoute><SettingsNotifications /></ProtectedRoute>} />
+          <Route path="/settings/billing" element={<ProtectedRoute><Billing /></ProtectedRoute>} />
+          <Route path="/settings/appearance" element={<ProtectedRoute><SettingsAppearance /></ProtectedRoute>} />
+
+          {/* Redirects for old routes */}
+          <Route path="/settings/profile" element={<Navigate to="/settings/account" replace />} />
+          <Route path="/settings/storage" element={<Navigate to="/settings/account" replace />} />
+          <Route path="/settings/devices" element={<Navigate to="/settings/security" replace />} />
+          <Route path="/settings/language" element={<Navigate to="/settings/appearance" replace />} />
+          <Route path="/settings/2fa" element={<Navigate to="/settings/security" replace />} />
+          <Route path="/security" element={<Navigate to="/settings/security" replace />} />
           <Route
             path="/photos"
             element={
@@ -319,14 +258,7 @@ export function App() {
             }
           />
           <Route path="/pricing" element={<Pricing />} />
-          <Route
-            path="/billing"
-            element={
-              <ProtectedRoute>
-                <Billing />
-              </ProtectedRoute>
-            }
-          />
+          <Route path="/billing" element={<Navigate to="/settings/billing" replace />} />
           <Route
             path="/admin"
             element={
