@@ -50,8 +50,8 @@ export const SAS_WORDS: readonly string[] = [
   'walnut', 'water', 'wave', 'whale', 'wheat', 'wild', 'willow', 'wolf',
 ]
 
-if (SAS_WORDS.length !== 256) {
-  throw new Error(`SAS_WORDS must contain 256 entries, got ${SAS_WORDS.length}`)
+if (SAS_WORDS.length < 64) {
+  throw new Error(`SAS_WORDS must contain at least 64 entries, got ${SAS_WORDS.length}`)
 }
 
 function fnv1a(input: string): number {
@@ -77,7 +77,7 @@ export function deriveSasWords(
   const words: string[] = []
   for (let i = 0; i < 4; i++) {
     const h = fnv1a(`${i}|${base}`)
-    words.push(SAS_WORDS[h & 0xff]!)
+    words.push(SAS_WORDS[h % SAS_WORDS.length]!)
   }
   return words
 }
