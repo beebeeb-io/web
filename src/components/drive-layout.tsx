@@ -46,12 +46,7 @@ const REGION_META: Record<string, { label: string; flag: string }> = {
 function UserCard() {
   const { user, logout } = useAuth()
   const [open, setOpen] = useState(false)
-  const [isAdmin, setIsAdmin] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    getAdminStats().then(() => setIsAdmin(true)).catch(() => setIsAdmin(false))
-  }, [])
 
   useEffect(() => {
     if (!open) return
@@ -102,17 +97,6 @@ function UserCard() {
             <Icon name="cloud" size={13} className="shrink-0 text-ink-3" />
             <span className="flex-1">Billing</span>
           </Link>
-          {isAdmin && (
-            <Link
-              to="/admin"
-              role="menuitem"
-              onClick={() => setOpen(false)}
-              className={itemClass}
-            >
-              <Icon name="shield" size={13} className="shrink-0 text-ink-3" />
-              <span className="flex-1">Admin</span>
-            </Link>
-          )}
           <div className="my-1 mx-1 h-px bg-line" />
           <button
             type="button"
@@ -162,6 +146,11 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   const [storageRegion, setStorageRegion] = useState<string>('auto')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [quickAccessDragOver, setQuickAccessDragOver] = useState(false)
+  const [isAdmin, setIsAdmin] = useState(false)
+
+  useEffect(() => {
+    getAdminStats().then(() => setIsAdmin(true)).catch(() => setIsAdmin(false))
+  }, [])
 
   // Close sidebar on navigation (mobile)
   useEffect(() => {
@@ -426,6 +415,22 @@ export function DriveLayout({ children }: { children: ReactNode }) {
             <span className="font-mono">{REGION_META[storageRegion]?.label ?? storageRegion}</span>
           </div>
         </div>
+
+        {isAdmin && (
+          <div className="px-3 pt-2">
+            <Link
+              to="/admin"
+              className={`w-full flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] transition-colors ${
+                location.pathname.startsWith('/admin')
+                  ? 'bg-paper-3 font-semibold text-ink'
+                  : 'text-ink-2 hover:bg-paper-3/50'
+              }`}
+            >
+              <Icon name="shield" size={13} className="shrink-0" />
+              <span className="flex-1">Admin</span>
+            </Link>
+          </div>
+        )}
 
         <UserCard />
       </aside>

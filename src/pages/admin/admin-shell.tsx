@@ -2,14 +2,13 @@ import type { ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { Icon } from '../../components/icons'
 import type { IconName } from '../../components/icons'
-import { BBChip } from '../../components/bb-chip'
+import { DriveLayout } from '../../components/drive-layout'
 
 type NavItem = {
   id: string
   label: string
   icon: IconName
   href: string
-  badge?: string
 }
 
 const navItems: NavItem[] = [
@@ -36,74 +35,65 @@ export function AdminShell({ activeSection, children }: AdminShellProps) {
   const location = useLocation()
 
   return (
-    <div className="min-h-screen flex items-start justify-center bg-paper p-xl pt-12">
-      <div
-        className="flex overflow-hidden border border-line-2 rounded-xl shadow-2 bg-paper"
-        style={{ width: 1120, minHeight: 660 }}
-      >
-        {/* Sidebar */}
-        <div className="w-[220px] shrink-0 bg-paper-2 border-r border-line flex flex-col">
-          <div className="flex items-center gap-2 px-4 pt-4 pb-2.5">
+    <DriveLayout>
+      <div className="flex-1 flex min-h-0">
+        {/* Admin sub-nav */}
+        <nav
+          aria-label="Admin"
+          className="w-[200px] shrink-0 border-r border-line bg-paper-2 px-3 py-4 overflow-y-auto"
+        >
+          <div className="flex items-center gap-2 px-2 pb-2.5">
             <Icon name="shield" size={13} className="text-ink-3" />
-            <span className="text-sm font-semibold text-ink">Admin</span>
-            <BBChip variant="amber" className="ml-auto text-[9px]">Business</BBChip>
+            <span className="text-[13px] font-semibold text-ink">Admin</span>
           </div>
-          <nav className="px-3 py-1.5">
-            {navItems.map(item => {
-              const isActive = item.id === activeSection || location.pathname === item.href
-              return (
-                <Link
-                  key={item.id}
-                  to={item.href}
-                  className={`flex items-center gap-2.5 px-2.5 py-[7px] rounded-md text-[13px] transition-colors ${
-                    isActive
-                      ? 'bg-paper font-medium text-ink shadow-1'
-                      : 'text-ink-2 hover:bg-paper hover:text-ink'
-                  }`}
-                >
-                  <Icon name={item.icon} size={12} className={isActive ? 'text-ink' : 'text-ink-3'} />
-                  <span className="flex-1">{item.label}</span>
-                  {item.badge && (
-                    <span className="font-mono text-[10px] text-amber-deep">{item.badge}</span>
-                  )}
-                </Link>
-              )
-            })}
-          </nav>
-
-          <div className="mx-4 my-2.5 border-t border-line" />
-
-          <div className="px-3">
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 px-2.5 pb-2">
-              Workspace
-            </div>
-            <Link
-              to="/settings/profile"
-              className="flex items-center gap-2.5 px-2.5 py-[7px] rounded-md text-[13px] text-ink-2 hover:bg-paper hover:text-ink transition-colors"
-            >
-              <Icon name="settings" size={12} className="text-ink-3" />
-              <span>Settings</span>
-            </Link>
-            <Link
-              to="/security"
-              className="flex items-center gap-2.5 px-2.5 py-[7px] rounded-md text-[13px] text-ink-2 hover:bg-paper hover:text-ink transition-colors"
-            >
-              <Icon name="lock" size={12} className="text-ink-3" />
-              <span>Security</span>
-            </Link>
-          </div>
-
-          <div className="mt-auto p-4 border-t border-line">
-            <div className="flex items-center gap-2 text-[11px] text-ink-3">
-              <span className="inline-block w-2 h-2 rounded-full bg-green" />
-              <span className="font-mono">Frankfurt</span>
-            </div>
-          </div>
-        </div>
+          {navItems.map((item) => {
+            const isActive = item.id === activeSection || location.pathname === item.href
+            return (
+              <Link
+                key={item.id}
+                to={item.href}
+                className={`flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] transition-colors ${
+                  isActive
+                    ? 'bg-paper-3 font-semibold text-ink'
+                    : 'text-ink-2 hover:bg-paper-3/50'
+                }`}
+              >
+                <Icon
+                  name={item.icon}
+                  size={12}
+                  className={`shrink-0 ${isActive ? 'text-ink' : 'text-ink-3'}`}
+                />
+                <span>{item.label}</span>
+              </Link>
+            )
+          })}
+        </nav>
 
         {/* Content */}
-        <div className="flex-1 min-w-0 flex flex-col">{children}</div>
+        <div className="flex-1 min-w-0 overflow-y-auto flex flex-col">{children}</div>
       </div>
+    </DriveLayout>
+  )
+}
+
+/* Shared layout helpers — mirror SettingsShell so admin pages have consistent chrome */
+
+interface AdminHeaderProps {
+  title: string
+  subtitle?: string
+  actions?: ReactNode
+}
+
+export function AdminHeader({ title, subtitle, actions }: AdminHeaderProps) {
+  return (
+    <div className="px-7 pt-5 pb-4 border-b border-line flex items-start gap-4">
+      <div className="flex-1 min-w-0">
+        <h2 className="text-xl font-bold text-ink">{title}</h2>
+        {subtitle && (
+          <p className="text-[13px] text-ink-3 mt-0.5 leading-relaxed">{subtitle}</p>
+        )}
+      </div>
+      {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
     </div>
   )
 }
