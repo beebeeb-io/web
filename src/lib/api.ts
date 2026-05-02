@@ -575,6 +575,86 @@ export async function toggleStar(
   )
 }
 
+// ─── Sync engine (CRDT op log + SSE) ─────────────
+// Spec: docs/superpowers/specs/2026-05-02-crdt-sync-engine-design.md
+
+export interface SyncNode {
+  id: string
+  name_encrypted: string
+  parent_id: string | null
+  is_folder: boolean
+  size_bytes: number
+  mime_type: string | null
+  content_hash: string | null
+  version_number: number
+  has_thumbnail: boolean
+  storage_pool_id: string | null
+  is_trashed: boolean
+  is_starred: boolean
+  chunk_count?: number
+  created_at: string
+  updated_at: string
+}
+
+export interface SyncOp {
+  seq_id: number
+  op_type: string
+  client_op_id?: string
+  payload: Record<string, unknown>
+  device_id?: string
+  created_at: string
+}
+
+export interface SyncSnapshot {
+  seq_id: number
+  nodes: SyncNode[]
+}
+
+export interface SubmittedSyncOp {
+  client_op_id: string
+  op_type: string
+  payload: Record<string, unknown>
+  device_id?: string
+}
+
+export interface SyncOpsResult {
+  applied: { seq_id: number; client_op_id: string }[]
+  rejected: {
+    client_op_id: string
+    reason: string
+    winning_op?: { op_type: string; payload: Record<string, unknown> }
+  }[]
+}
+
+export interface StreamTokenResponse {
+  stream_token: string
+  expires_at: string
+}
+
+export async function getSnapshot(): Promise<SyncSnapshot> {
+  return request<SyncSnapshot>('/api/v1/sync/snapshot')
+}
+
+export async function getSyncOps(since: number): Promise<SyncOp[]> {
+  const data = await request<{ ops: SyncOp[] }>(
+    `/api/v1/sync/ops?since=${encodeURIComponent(String(since))}`,
+  )
+  return data.ops ?? []
+}
+
+export async function submitSyncOps(ops: SubmittedSyncOp[]): Promise<SyncOpsResult> {
+  return request<SyncOpsResult>('/api/v1/sync/ops', {
+    method: 'POST',
+    body: JSON.stringify({ ops }),
+  })
+}
+
+export async function getStreamToken(): Promise<StreamTokenResponse> {
+  return request<StreamTokenResponse>('/api/v1/sync/stream-token', {
+    method: 'POST',
+  })
+}
+
 // ─── Password / Account endpoints ───────────────
 
 export async function changePassword(

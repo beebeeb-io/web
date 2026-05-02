@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import { AuthProvider, useAuth } from './lib/auth-context'
 import { KeyProvider, useKeys } from './lib/key-context'
 import { WsProvider } from './lib/ws-context'
+import { SyncProvider } from './lib/sync-context'
 import { ToastProvider, useToast } from './components/toast'
 import { ErrorBoundary } from './components/error-boundary'
 import { WasmGuard } from './components/wasm-guard'
@@ -140,6 +141,7 @@ export function App() {
       <AuthProvider>
         <KeyProvider>
         <WsProvider>
+        <SyncProvider>
         <ToastProvider>
         <DisplayProvider>
         <ApiErrorWiring />
@@ -411,6 +413,7 @@ export function App() {
         </Routes>
         </DisplayProvider>
         </ToastProvider>
+        </SyncProvider>
         </WsProvider>
         </KeyProvider>
       </AuthProvider>

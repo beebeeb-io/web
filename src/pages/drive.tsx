@@ -20,6 +20,7 @@ import { OnboardingShareGuide } from '../components/onboarding-share-guide'
 import { getPreference, setPreference } from '../lib/api'
 import { useToast } from '../components/toast'
 import { useWsEvent } from '../lib/ws-context'
+import { useSync } from '../lib/sync-context'
 import { useKeys } from '../lib/key-context'
 import { useKeyboardShortcuts } from '../hooks/use-keyboard-shortcuts'
 import {
@@ -58,6 +59,7 @@ import { formatBytes } from '../lib/format'
 export function Drive() {
   const { getFileKey, isUnlocked, cryptoReady, cryptoError } = useKeys()
   const { indexFile, unindexFile } = useSearchIndex()
+  const sync = useSync()
   const location = useLocation()
   const navigate = useNavigate()
   const [files, setFiles] = useState<DriveFile[]>([])
@@ -111,8 +113,32 @@ export function Drive() {
     setLoading(true)
     try {
       const trashed = location.pathname === '/trash'
-      const data = await listFiles(currentParentId ?? undefined, trashed)
-      setFiles(data)
+      // Prefer the sync engine's in-memory tree once it has booted.
+      // The legacy /api/v1/files listing remains the fallback for users
+      // on a server that doesn't yet expose /sync/snapshot.
+      if (sync.ready) {
+        const nodes = sync
+          .children(currentParentId ?? null)
+          .filter((n) => Boolean(n.is_trashed) === trashed)
+          .map<DriveFile>((n) => ({
+            id: n.id,
+            name_encrypted: n.name_encrypted,
+            mime_type: n.mime_type ?? '',
+            size_bytes: n.size_bytes,
+            is_folder: n.is_folder,
+            parent_id: n.parent_id,
+            chunk_count: n.chunk_count ?? 1,
+            is_starred: n.is_starred,
+            has_thumbnail: n.has_thumbnail,
+            version_number: n.version_number,
+            created_at: n.created_at,
+            updated_at: n.updated_at,
+          }))
+        setFiles(nodes)
+      } else {
+        const data = await listFiles(currentParentId ?? undefined, trashed)
+        setFiles(data)
+      }
       setSyncedAgo(0)
     } catch (err) {
       console.error('[Drive] Failed to load files:', err)
@@ -121,11 +147,19 @@ export function Drive() {
     } finally {
       setLoading(false)
     }
-  }, [currentParentId, location.pathname])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentParentId, location.pathname, sync.ready])
 
   useEffect(() => {
     fetchFiles()
   }, [fetchFiles])
+
+  // Re-derive when the sync engine pushes ops affecting the visible folder.
+  useEffect(() => {
+    if (!sync.ready) return
+    fetchFiles()
+    // Run on every tree mutation surfaced by the sync context.
+  }, [sync.treeVersion, sync.ready, fetchFiles])
 
   // Deep-link into a folder when navigating from search results
   useEffect(() => {
