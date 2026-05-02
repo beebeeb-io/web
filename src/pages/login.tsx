@@ -178,7 +178,7 @@ export function Login() {
       title="Welcome back"
       subtitle="Sign in to unlock your encrypted vault."
     >
-      <form onSubmit={handleSubmit}>
+      <form onSubmit={handleSubmit} data-crypto-ready={cryptoReady ? 'true' : 'false'}>
         <BBInput
           label="Email"
           type="email"

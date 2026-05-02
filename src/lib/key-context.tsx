@@ -122,6 +122,12 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       })
   })
 
+  // Expose crypto readiness as a body data attribute so e2e tests / browser
+  // automation can wait for the WASM worker before interacting with auth forms.
+  useEffect(() => {
+    document.body.dataset.cryptoReady = cryptoReady ? 'true' : 'false'
+  }, [cryptoReady])
+
   const unlock = useCallback(async (password: string, salt: Uint8Array) => {
     const { masterKey } = await deriveKeys(password, salt)
     masterKeyRef.current = masterKey

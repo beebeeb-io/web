@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { envTestAccount, loginAndProvision } from './helpers/auth'
 
 /**
  * E2E tests for authentication flows.
@@ -67,6 +68,16 @@ test.describe('Authentication', () => {
 
     // Should redirect to login
     await expect(page).toHaveURL(/\/login/, { timeout: 5_000 })
+  })
+
+  test('full OPAQUE + DeviceProvision flow with seeded account', async ({ page }) => {
+    const account = envTestAccount()
+    test.skip(!account, 'Set BB_TEST_USER_* env vars to run this test (see .env.example)')
+
+    await loginAndProvision(page, account!)
+
+    // After provision, we should be on the drive
+    await expect(page).toHaveURL(/^\/(?:$|\?|#)/, { timeout: 10_000 })
   })
 
   test('404 page for unknown routes', async ({ page }) => {
