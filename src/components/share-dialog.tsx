@@ -34,6 +34,8 @@ interface ShareDialogProps {
   fileName: string
   fileSize: number
   isFolder?: boolean
+  /** Fires once a share link is successfully created. Used by the first-share onboarding tour. */
+  onShareCreated?: (info: { fileId: string; shareUrl: string }) => void
 }
 
 type ShareMode = 'link' | 'invite'
@@ -442,7 +444,7 @@ function InviteSuccess({
 
 // ─── Main dialog ─────────────────────────────────────
 
-export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolder }: ShareDialogProps) {
+export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolder, onShareCreated }: ShareDialogProps) {
   const { getFileKey, isUnlocked } = useKeys()
   const [mode, setMode] = useState<ShareMode>('link')
   const [expiryIdx, setExpiryIdx] = useState(1) // default: 24 hours
@@ -519,12 +521,16 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       const result = await createShare(fileId, options)
       setShareResult(result)
       setDecryptionKey(keyB64)
+      if (onShareCreated) {
+        const url = `${window.location.origin}/s/${result.token}#key=${encodeURIComponent(keyB64)}`
+        onShareCreated({ fileId, shareUrl: url })
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to create share link')
     } finally {
       setLoading(false)
     }
-  }, [fileId, expiryIdx, maxOpensIdx, passphrase, isUnlocked, getFileKey])
+  }, [fileId, expiryIdx, maxOpensIdx, passphrase, isUnlocked, getFileKey, onShareCreated])
 
   const copyToClipboard = useCallback(async (text: string, type: 'full-link' | 'split-link' | 'split-key') => {
     try {

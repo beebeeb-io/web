@@ -15,6 +15,7 @@ import { NewFolderDialog } from '../components/new-folder-dialog'
 import { VersionHistory } from '../components/version-history'
 import { NotificationInbox, useNotifications } from '../components/notification-inbox'
 import { WelcomeTour } from '../components/welcome-tour'
+import { OnboardingShareGuide } from '../components/onboarding-share-guide'
 import { getPreference, setPreference } from '../lib/api'
 import { useToast } from '../components/toast'
 import { useWsEvent } from '../lib/ws-context'
@@ -75,6 +76,11 @@ export function Drive() {
   const [tourOpen, setTourOpen] = useState(false)
   const [tourCompleted, setTourCompleted] = useState<Set<string>>(new Set())
   const [pausedUploads, setPausedUploads] = useState<UploadState[]>([])
+
+  // First-share onboarding signals — let the OnboardingShareGuide observe
+  // the file the user just uploaded and the share that gets created.
+  const [lastUploadedFileId, setLastUploadedFileId] = useState<string | null>(null)
+  const [onboardingShareUrl, setOnboardingShareUrl] = useState<string | null>(null)
 
   // ─── Pending shares state ────────────────────────────
   const [incomingInviteCount, setIncomingInviteCount] = useState(0)
@@ -421,6 +427,7 @@ export function Drive() {
       uploadAbortRef.current.delete(uploadId)
       // Remove from paused list if this was a resume
       setPausedUploads((prev) => prev.filter((u) => u.fileId !== fileId))
+      setLastUploadedFileId(fileId)
       showToast({ icon: 'check', title: 'Uploaded', description: file.name })
       // Refresh storage usage so quota warning updates
       refreshUsage()
@@ -1222,6 +1229,18 @@ export function Drive() {
           </div>
         )}
 
+        {/* First-share onboarding — nudge banner sits inline; the modal overlay floats. */}
+        {currentParentId === undefined && location.pathname === '/' && (
+          <OnboardingShareGuide
+            hasFiles={files.length > 0}
+            onPickFile={browse}
+            uploadedFileId={lastUploadedFileId}
+            onOpenShare={(id) => setShareFileId(id)}
+            shareCreated={onboardingShareUrl !== null}
+            shareUrl={onboardingShareUrl}
+          />
+        )}
+
         {/* File list with upload zone */}
         <UploadZone onFiles={handleFilesSelected} onFolderFiles={handleFolderFilesSelected}>
           <FileList
@@ -1332,6 +1351,13 @@ export function Drive() {
           fileName={displayName(shareFile)}
           fileSize={shareFile.size_bytes}
           isFolder={shareFile.is_folder}
+          onShareCreated={({ fileId, shareUrl }) => {
+            // Only feed the onboarding guide when the share is for the file
+            // it just walked the user through uploading.
+            if (fileId === lastUploadedFileId) {
+              setOnboardingShareUrl(shareUrl)
+            }
+          }}
         />
       )}
 
