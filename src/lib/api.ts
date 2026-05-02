@@ -136,6 +136,20 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Thrown by confirmAction when the server rejects the password during step-up
+ * re-auth. Distinct from ApiError(401) because a wrong password during step-up
+ * must NOT clear the user's session — they're still logged in, they just
+ * mistyped. Callers (ConfirmPasswordModal) catch this to show an inline error
+ * instead of bouncing the user to /login.
+ */
+export class IncorrectPasswordError extends Error {
+  constructor(message = 'Incorrect password.') {
+    super(message)
+    this.name = 'IncorrectPasswordError'
+  }
+}
+
 // ─── Auth endpoints ──────────────────────────────
 
 interface AuthSessionResponse {
@@ -264,13 +278,33 @@ export async function logout(): Promise<void> {
 export async function confirmAction(
   password: string,
 ): Promise<{ confirmation_token: string; expires_at: string }> {
-  return request<{ confirmation_token: string; expires_at: string }>(
-    '/api/v1/auth/confirm',
-    {
-      method: 'POST',
-      body: JSON.stringify({ password }),
-    },
-  )
+  // Direct fetch instead of request() — a 401 from /auth/confirm means the
+  // user mistyped their password during step-up, NOT that their session
+  // expired. Routing it through request() would clear the token and bounce
+  // them to /login on every wrong attempt.
+  const token = getToken()
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
+  const res = await fetch(`${API_URL}/api/v1/auth/confirm`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ password }),
+  })
+
+  if (res.status === 401) {
+    throw new IncorrectPasswordError()
+  }
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>
+    throw new ApiError(
+      (body.message ?? body.error ?? res.statusText) as string,
+      res.status,
+    )
+  }
+  return res.json() as Promise<{ confirmation_token: string; expires_at: string }>
 }
 
 export async function verifyEmail(

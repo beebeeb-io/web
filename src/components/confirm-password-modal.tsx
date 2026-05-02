@@ -3,7 +3,7 @@ import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from './bb-button'
 import { BBInput } from './bb-input'
 import { Icon } from './icons'
-import { confirmAction, ApiError } from '../lib/api'
+import { confirmAction, IncorrectPasswordError } from '../lib/api'
 
 interface ConfirmPasswordModalProps {
   open: boolean
@@ -49,7 +49,7 @@ export function ConfirmPasswordModal({
       const { confirmation_token } = await confirmAction(password)
       onConfirmed(confirmation_token, password)
     } catch (e) {
-      if (e instanceof ApiError && e.status === 401) {
+      if (e instanceof IncorrectPasswordError) {
         setError('Incorrect password.')
       } else {
         setError(e instanceof Error ? e.message : 'Could not confirm. Try again.')

@@ -3,7 +3,7 @@ import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from './bb-button'
 import { BBInput } from './bb-input'
 import { Icon } from './icons'
-import { changePassword as apiChangePassword, confirmAction, ApiError } from '../lib/api'
+import { changePassword as apiChangePassword, confirmAction, IncorrectPasswordError } from '../lib/api'
 
 interface ChangePasswordDialogProps {
   open: boolean
@@ -72,7 +72,7 @@ export function ChangePasswordDialog({ open, onClose, onSuccess }: ChangePasswor
       onSuccess?.(result.session_token)
       onClose()
     } catch (e) {
-      if (e instanceof ApiError && e.status === 401) {
+      if (e instanceof IncorrectPasswordError) {
         setError('Current password is incorrect.')
       } else {
         setError(e instanceof Error ? e.message : 'Failed to change password')
