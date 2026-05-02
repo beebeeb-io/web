@@ -1995,3 +1995,120 @@ export async function updateAbuseReport(
     body: JSON.stringify(updates),
   })
 }
+
+// ─── Constellation peer transfer ────────────────────
+//
+// Receiver-side endpoints for the Constellation transfer flow. These run
+// without an active Beebeeb session — anyone with a 6-digit code (or
+// session_id) can join, derive a SAS code with the sender, and download.
+// Bearer auth is intentionally omitted; the per-session `download_token`
+// returned at join time authenticates subsequent calls.
+//
+// Sender-side endpoints (init / approve / upload / cancel) live elsewhere
+// — only Beebeeb users initiate transfers, and the web client is receive-
+// only for v1.
+
+export interface JoinTransferResponse {
+  /** Sender's ephemeral X25519 public key, base64. */
+  sender_pk: string
+  /** One-time token the receiver presents on status / blob / ack. */
+  download_token: string
+}
+
+/**
+ * POST /api/v1/transfer/{session_id}/join — receiver joins a known session.
+ * Used when the receiver has the session_id directly (e.g. from a scanned
+ * constellation). For 6-digit code entry, use joinTransferByCode.
+ */
+export async function joinTransfer(
+  sessionId: string,
+  receiverPk: string,
+): Promise<JoinTransferResponse> {
+  const res = await fetch(`${API_URL}/api/v1/transfer/${sessionId}/join`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ receiver_pk: receiverPk }),
+  })
+  if (!res.ok) throw new ApiError(await readError(res), res.status)
+  return res.json() as Promise<JoinTransferResponse>
+}
+
+/**
+ * POST /api/v1/transfer/join-by-code — receiver joins by the 6-digit
+ * fallback code shown on the sender's screen. The server resolves the
+ * code to an active session and returns the same shape as joinTransfer
+ * with the resolved session_id added.
+ */
+export async function joinTransferByCode(
+  code: string,
+  receiverPk: string,
+): Promise<JoinTransferResponse & { session_id: string }> {
+  const res = await fetch(`${API_URL}/api/v1/transfer/join-by-code`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fallback_code: code, receiver_pk: receiverPk }),
+  })
+  if (!res.ok) throw new ApiError(await readError(res), res.status)
+  return res.json() as Promise<JoinTransferResponse & { session_id: string }>
+}
+
+export interface TransferStatus {
+  status: 'waiting' | 'joined' | 'approved' | 'ready' | 'downloaded' | 'complete' | 'cancelled' | 'expired'
+  receiver_pk?: string
+  blob_size?: number
+  /** Encrypted (with transfer_key) filename hint, base64. */
+  file_name_hint?: string
+}
+
+/**
+ * GET /api/v1/transfer/{id}/status — receiver polls for sender approval +
+ * upload completion. Authenticated with the per-session download_token.
+ */
+export async function getTransferStatus(
+  sessionId: string,
+  token: string,
+): Promise<TransferStatus> {
+  const res = await fetch(`${API_URL}/api/v1/transfer/${sessionId}/status`, {
+    method: 'GET',
+    headers: { 'X-Transfer-Token': token },
+  })
+  if (!res.ok) throw new ApiError(await readError(res), res.status)
+  return res.json() as Promise<TransferStatus>
+}
+
+/**
+ * GET /api/v1/transfer/{id}/blob — receiver downloads the encrypted blob.
+ * Returns the raw bytes as a Blob (nonce-prefixed AES-GCM ciphertext).
+ */
+export async function downloadTransferBlob(
+  sessionId: string,
+  token: string,
+): Promise<Blob> {
+  const res = await fetch(`${API_URL}/api/v1/transfer/${sessionId}/blob`, {
+    method: 'GET',
+    headers: { 'X-Transfer-Token': token },
+  })
+  if (!res.ok) throw new ApiError(await readError(res), res.status)
+  return res.blob()
+}
+
+/**
+ * POST /api/v1/transfer/{id}/ack — receiver confirms successful decrypt.
+ * Triggers server-side blob deletion and marks the session complete.
+ */
+export async function ackTransfer(sessionId: string, token: string): Promise<void> {
+  const res = await fetch(`${API_URL}/api/v1/transfer/${sessionId}/ack`, {
+    method: 'POST',
+    headers: { 'X-Transfer-Token': token, 'Content-Type': 'application/json' },
+  })
+  if (!res.ok) throw new ApiError(await readError(res), res.status)
+}
+
+async function readError(res: Response): Promise<string> {
+  try {
+    const body = await res.json()
+    return body.error ?? body.message ?? res.statusText
+  } catch {
+    return res.statusText
+  }
+}
