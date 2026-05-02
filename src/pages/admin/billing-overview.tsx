@@ -192,7 +192,7 @@ export function AdminBilling() {
                   </div>
                   <div className="rounded-xl bg-paper border border-line-2 p-3.5">
                     <div className="text-[10px] text-ink-4 mb-0.5">Active shares</div>
-                    <div className="font-mono text-lg font-bold">{stats.shares.active_shares.toLocaleString()}</div>
+                    <div className="font-mono text-lg font-bold">{stats.shares.active_links.toLocaleString()}</div>
                     <div className="text-[10px] text-ink-3 mt-1">
                       {stats.shares.active_invites.toLocaleString()} pending invites
                     </div>

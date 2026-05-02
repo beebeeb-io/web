@@ -1945,7 +1945,7 @@ export interface AdminStats {
     uploads_today: number
   }
   shares: {
-    active_shares: number
+    active_links: number
     active_invites: number
     created_today: number
   }

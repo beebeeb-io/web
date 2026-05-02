@@ -268,7 +268,7 @@ export function Monitoring() {
                   <div className="grid grid-cols-3 gap-3">
                     <StatCard
                       label="Active shares"
-                      value={stats.shares.active_shares.toLocaleString()}
+                      value={stats.shares.active_links.toLocaleString()}
                     />
                     <StatCard
                       label="Active invites"
