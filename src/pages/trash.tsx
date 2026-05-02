@@ -5,7 +5,7 @@ import { BBCheckbox } from '../components/bb-checkbox'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '../components/icons'
 import type { IconName } from '../components/icons'
-import { listFiles, restoreFile, permanentDeleteFile, ApiError, type DriveFile } from '../lib/api'
+import { listFiles, restoreFile, permanentDeleteFile, confirmAction, ApiError, type DriveFile } from '../lib/api'
 import { useToast } from '../components/toast'
 import { useKeys } from '../lib/key-context'
 import { TrashRowSkeleton } from '../components/skeleton'
@@ -114,6 +114,9 @@ export function Trash() {
     open: false,
     fileIds: [],
   })
+  const [deleteProgress, setDeleteProgress] = useState<{ current: number; total: number } | null>(
+    null,
+  )
 
   // Fetch trashed files from API
   const fetchTrash = useCallback(async () => {
@@ -229,36 +232,75 @@ export function Trash() {
     setPwPrompt({ open: true, fileIds: ids })
   }
 
-  /** Step 2 — fire deletes with the step-up confirmation token. */
-  const performPermanentDelete = async (token: string) => {
+  /**
+   * Step 2 — fire deletes sequentially, minting a fresh single-use confirmation
+   * token for each file from the verified password. Confirmation tokens are
+   * single-use server-side, so a parallel Promise.all with one token would
+   * succeed only for the first request and 403 the rest.
+   */
+  const performPermanentDelete = async (initialToken: string, password: string) => {
     const ids = pwPrompt.fileIds
     setPwPrompt({ open: false, fileIds: [] })
+    if (ids.length === 0) return
+
+    setDeleteProgress({ current: 0, total: ids.length })
     setLoading(true)
-    try {
-      await Promise.all(ids.map((id) => permanentDeleteFile(id, token)))
-      setFiles((prev) => prev.filter((f) => !ids.includes(f.id)))
-      setSelected((prev) => {
-        const next = new Set(prev)
-        ids.forEach((id) => next.delete(id))
-        return next
-      })
+
+    const succeededIds: string[] = []
+    const failures: { id: string; message: string }[] = []
+    let token: string | null = initialToken
+
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i]
+      setDeleteProgress({ current: i + 1, total: ids.length })
+
+      try {
+        if (token === null) {
+          const fresh = await confirmAction(password)
+          token = fresh.confirmation_token
+        }
+        await permanentDeleteFile(id, token)
+        succeededIds.push(id)
+      } catch (err) {
+        const message =
+          err instanceof ApiError && err.status === 403
+            ? 'Re-authentication expired'
+            : err instanceof Error
+              ? err.message
+              : 'Unknown error'
+        failures.push({ id, message })
+      } finally {
+        token = null
+      }
+    }
+
+    setDeleteProgress(null)
+
+    const succeededSet = new Set(succeededIds)
+    setFiles((prev) => prev.filter((f) => !succeededSet.has(f.id)))
+    setSelected((prev) => {
+      const next = new Set(prev)
+      succeededSet.forEach((id) => next.delete(id))
+      return next
+    })
+
+    if (failures.length === 0) {
       showToast({
         icon: 'trash',
-        title: `Permanently deleted ${ids.length} file${ids.length !== 1 ? 's' : ''}`,
+        title: `Permanently deleted ${succeededIds.length} file${succeededIds.length !== 1 ? 's' : ''}`,
         description: 'Vault keys destroyed. Data is unrecoverable.',
       })
-    } catch (err) {
-      const description =
-        err instanceof ApiError && err.status === 403
-          ? 'Re-authentication expired. Try again.'
-          : err instanceof Error
-            ? err.message
-            : 'Some files could not be deleted'
-      showToast({ icon: 'x', title: 'Delete failed', description, danger: true })
+    } else {
+      showToast({
+        icon: 'x',
+        title: `Deleted ${succeededIds.length} of ${ids.length}`,
+        description: `${failures.length} file${failures.length !== 1 ? 's' : ''} could not be deleted: ${failures[0].message}`,
+        danger: true,
+      })
       fetchTrash()
-    } finally {
-      setLoading(false)
     }
+
+    setLoading(false)
   }
 
   const handleRestoreAll = async () => {
@@ -413,13 +455,22 @@ export function Trash() {
 
         {/* Status bar */}
         <div className="px-5 py-2 border-t border-line bg-paper-2 flex items-center gap-3.5 text-[11px] text-ink-3">
-          <span className="font-mono">{files.length} item{files.length !== 1 ? 's' : ''} in trash</span>
-          <span>--</span>
-          <span className="flex items-center gap-1.5">
-            <Icon name="shield" size={12} className="text-amber-deep" />
-            Encrypted at rest -- AES-256-GCM
-          </span>
-          {selected.size > 0 && (
+          {deleteProgress ? (
+            <span className="font-mono text-red flex items-center gap-1.5">
+              <Icon name="trash" size={12} className="text-red" />
+              Deleting {deleteProgress.current} of {deleteProgress.total}…
+            </span>
+          ) : (
+            <>
+              <span className="font-mono">{files.length} item{files.length !== 1 ? 's' : ''} in trash</span>
+              <span>--</span>
+              <span className="flex items-center gap-1.5">
+                <Icon name="shield" size={12} className="text-amber-deep" />
+                Encrypted at rest -- AES-256-GCM
+              </span>
+            </>
+          )}
+          {selected.size > 0 && !deleteProgress && (
             <span className="ml-auto flex items-center gap-2">
               <span className="font-mono">{selected.size} selected</span>
               <BBButton

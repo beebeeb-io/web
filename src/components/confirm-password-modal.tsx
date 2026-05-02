@@ -10,8 +10,13 @@ interface ConfirmPasswordModalProps {
   title?: string
   description?: string
   confirmLabel?: string
-  /** Called with the short-lived confirmation token after successful re-auth. */
-  onConfirmed: (token: string) => void
+  /**
+   * Called with the short-lived confirmation token after successful re-auth.
+   * The verified password is also provided so callers that need to perform
+   * multiple destructive operations can mint additional single-use tokens
+   * via confirmAction(password) without re-prompting the user.
+   */
+  onConfirmed: (token: string, password: string) => void
   onCancel: () => void
 }
 
@@ -42,7 +47,7 @@ export function ConfirmPasswordModal({
     setError(null)
     try {
       const { confirmation_token } = await confirmAction(password)
-      onConfirmed(confirmation_token)
+      onConfirmed(confirmation_token, password)
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
         setError('Incorrect password.')
