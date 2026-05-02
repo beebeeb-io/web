@@ -311,7 +311,7 @@ export function Monitoring() {
       <div className="flex items-center gap-2 px-5 py-2.5 border-t border-line bg-paper-2 text-[11px] text-ink-3 mt-auto">
         <Icon name="clock" size={11} className="text-ink-3" />
         <span>Auto-refresh every 30 seconds</span>
-        <span className="ml-auto font-mono text-[10px]">Stored in Frankfurt. Hetzner.</span>
+        <span className="ml-auto font-mono text-[10px]">Stored in Falkenstein. Hetzner.</span>
       </div>
     </AdminShell>
   )

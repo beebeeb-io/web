@@ -174,7 +174,7 @@ export function AdminWaitlist() {
       {/* Footer */}
       <div className="flex items-center gap-2 px-5 py-2.5 border-t border-line bg-paper-2 text-[11px] text-ink-3 mt-auto">
         <Icon name="shield" size={11} className="text-ink-3" />
-        <span>Waitlist data is stored in Frankfurt. Hetzner.</span>
+        <span>Waitlist data is stored in Falkenstein. Hetzner.</span>
         <span className="ml-auto font-mono">
           Sorted by most recent first
         </span>

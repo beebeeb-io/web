@@ -80,7 +80,7 @@ export function Signup() {
         {/* Footer */}
         <div className="border-t border-line mt-4.5 pt-3.5 flex items-center gap-2 text-[11px] text-ink-3">
           <Icon name="shield" size={14} className="text-amber-deep shrink-0" />
-          <span>Stored in Frankfurt · Hetzner · under EU jurisdiction</span>
+          <span>Stored in Falkenstein. Hetzner. Under EU jurisdiction.</span>
         </div>
       </form>
     </AuthShell>

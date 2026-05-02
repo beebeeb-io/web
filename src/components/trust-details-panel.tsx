@@ -61,7 +61,7 @@ export function TrustDetailsPanel({
 
   if (!open || !file) return null
 
-  const city = file.city ?? 'Frankfurt'
+  const city = file.city ?? 'Falkenstein'
   const region = file.region ?? 'Europe'
   const provider = file.provider ?? 'Hetzner'
   const cipher = file.cipher ?? 'AES-256-GCM'

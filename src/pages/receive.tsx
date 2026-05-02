@@ -260,7 +260,7 @@ export function Receive() {
       <footer className="px-5 pb-8 pt-4 text-center">
         <p className="text-[11px] text-white/40 mb-6 flex items-center justify-center gap-1.5">
           <Icon name="shield" size={11} className="text-amber" />
-          Encrypted relay via Frankfurt. File deleted after pickup.
+          Encrypted relay via Falkenstein. File deleted after pickup.
         </p>
         <a
           href="https://beebeeb.io"

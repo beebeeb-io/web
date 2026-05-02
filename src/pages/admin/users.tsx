@@ -439,7 +439,7 @@ export function AdminUsers() {
       {/* Pagination footer */}
       <div className="flex items-center gap-2 px-5 py-2.5 border-t border-line bg-paper-2 text-[11px] text-ink-3 mt-auto">
         <Icon name="shield" size={11} className="text-ink-3" />
-        <span>User data is stored in Frankfurt. Hetzner.</span>
+        <span>User data is stored in Falkenstein. Hetzner.</span>
 
         {totalPages > 1 && (
           <div className="ml-auto flex items-center gap-2">

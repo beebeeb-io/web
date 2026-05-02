@@ -19,7 +19,7 @@ interface UploadErrorProps {
 }
 
 export function UploadError({
-  region = 'Frankfurt',
+  region = 'Falkenstein',
   files,
   onResume,
   onCancel,

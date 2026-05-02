@@ -27,7 +27,7 @@ interface UploadProgressProps {
   defaultCity?: string
 }
 
-const DEFAULT_CITY = 'Frankfurt'
+const DEFAULT_CITY = 'Falkenstein'
 
 function formatSpeed(bytesPerSecond: number): string {
   if (bytesPerSecond < 1024) return `${bytesPerSecond.toFixed(0)} B/s`

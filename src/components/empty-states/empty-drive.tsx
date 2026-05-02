@@ -58,7 +58,7 @@ export function EmptyDrive({ userName, onUpload, onCreateFolder }: EmptyDrivePro
             [
               ['shield', 'Encrypted', 'Before it leaves your device'],
               ['users', 'Share safely', 'Keys separate from links'],
-              ['cloud', 'Stored in EU', 'Frankfurt · Amsterdam · Paris'],
+              ['cloud', 'Stored in EU', 'Falkenstein · Helsinki · Ede'],
             ] as const
           ).map(([ico, title, sub]) => (
             <div key={ico} className="flex gap-2 items-start text-left">

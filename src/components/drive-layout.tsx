@@ -37,10 +37,10 @@ const navItems: { path: string; icon: IconName; label: string }[] = [
 
 const REGION_META: Record<string, { label: string; flag: string }> = {
   auto: { label: 'Europe', flag: '' },
-  falkenstein: { label: 'Falkenstein, DE', flag: '\u{1F1E9}\u{1F1EA}' },
-  helsinki: { label: 'Helsinki, FIN', flag: '\u{1F1EB}\u{1F1EE}' },
-  ede: { label: 'Ede, NL · Beebeeb', flag: '\u{1F1F3}\u{1F1F1}' },
-  frankfurt: { label: 'Frankfurt, DE', flag: '\u{1F1E9}\u{1F1EA}' },
+  falkenstein: { label: 'Falkenstein, DE · Hetzner', flag: '' },
+  helsinki: { label: 'Helsinki, FIN · Hetzner', flag: '' },
+  ede: { label: 'Ede, NL · Beebeeb', flag: '' },
+  nuremberg: { label: 'Nuremberg, DE · Hetzner', flag: '' },
 }
 
 function UserCard() {

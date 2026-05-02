@@ -112,7 +112,7 @@ export interface FileListProps {
   externalDecryptedNames?: Record<string, string>
 
   // Trust details: clicking the lock icon opens this callback's panel.
-  // City defaults to "Frankfurt" — use whatever the file's storage pool returns when wired.
+  // City defaults to "Falkenstein" — use whatever the file's storage pool returns when wired.
   onShowTrustDetails?: (file: DriveFile) => void
   encryptionCity?: string
 }
@@ -143,7 +143,7 @@ export function FileList({
   recentlyUploadedIds = new Set<string>(),
   externalDecryptedNames,
   onShowTrustDetails,
-  encryptionCity = 'Frankfurt',
+  encryptionCity = 'Falkenstein',
 }: FileListProps) {
   const { getFileKey, isUnlocked } = useKeys()
 

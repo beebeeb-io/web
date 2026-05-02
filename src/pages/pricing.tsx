@@ -132,7 +132,7 @@ const faqItems: FaqItem[] = [
   },
   {
     q: 'Where exactly is my data stored?',
-    a: 'You choose your region at signup: Frankfurt (Hetzner), Amsterdam (Leaseweb), or Paris (Scaleway). Your data never leaves that region. All operators are EU-incorporated with no US subsidiaries.',
+    a: 'You choose your region at signup: Falkenstein (Hetzner), Helsinki (Hetzner), or Ede (coming soon). All EU. Your data never leaves that region. All operators are EU-incorporated with no US subsidiaries.',
   },
   {
     q: 'Do you support SEPA, cards, and invoicing?',
