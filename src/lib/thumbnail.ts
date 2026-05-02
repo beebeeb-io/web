@@ -1,4 +1,4 @@
-import { getToken, getApiUrl } from './api'
+import { getToken, getApiUrl, uploadThumbnail } from './api'
 
 const THUMB_SIZE = 256
 const THUMB_QUALITY = 0.7
@@ -63,16 +63,7 @@ export async function encryptAndUploadThumbnail(
   encrypted.set(nonce, 0)
   encrypted.set(new Uint8Array(ciphertext), 12)
 
-  const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/thumbnail`, {
-    method: 'PUT',
-    headers: {
-      Authorization: `Bearer ${getToken()}`,
-      'Content-Type': 'application/octet-stream',
-    },
-    body: encrypted,
-  })
-
-  if (!res.ok) throw new Error('thumbnail upload failed')
+  await uploadThumbnail(fileId, new Blob([encrypted]))
 }
 
 export async function fetchAndDecryptThumbnail(

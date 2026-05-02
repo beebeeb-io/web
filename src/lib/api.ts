@@ -575,6 +575,28 @@ export async function toggleStar(
   )
 }
 
+/**
+ * Upload a thumbnail blob for a file. Server caps payloads at 512KB.
+ * Callers in the encrypted upload path encrypt the blob with the file
+ * key before calling this — the server never sees thumbnail plaintext.
+ */
+export async function uploadThumbnail(fileId: string, blob: Blob): Promise<void> {
+  const token = getToken()
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/octet-stream',
+  }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
+  const res = await fetch(`${API_URL}/api/v1/files/${fileId}/thumbnail`, {
+    method: 'PUT',
+    headers,
+    body: blob,
+  })
+  if (!res.ok) {
+    throw new ApiError(res.statusText, res.status)
+  }
+}
+
 // ─── Sync engine (CRDT op log + SSE) ─────────────
 // Spec: docs/superpowers/specs/2026-05-02-crdt-sync-engine-design.md
 
