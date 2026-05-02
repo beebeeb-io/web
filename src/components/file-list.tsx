@@ -110,6 +110,11 @@ export interface FileListProps {
 
   // Pre-decrypted names override (for Shared page with custom key derivation)
   externalDecryptedNames?: Record<string, string>
+
+  // Trust details: clicking the lock icon opens this callback's panel.
+  // City defaults to "Frankfurt" — use whatever the file's storage pool returns when wired.
+  onShowTrustDetails?: (file: DriveFile) => void
+  encryptionCity?: string
 }
 
 // ─── Component ───────────────────────────────────────
@@ -137,6 +142,8 @@ export function FileList({
   starPulseId = null,
   recentlyUploadedIds = new Set<string>(),
   externalDecryptedNames,
+  onShowTrustDetails,
+  encryptionCity = 'Frankfurt',
 }: FileListProps) {
   const { getFileKey, isUnlocked } = useKeys()
 
@@ -610,13 +617,28 @@ export function FileList({
               </span>
             )}
             {isUnlocked && (
-              <span className={decryptPulseId === file.id ? 'decrypt-pulse inline-flex' : 'inline-flex'}>
-                <BBChip variant="amber">
-                  <span className="flex items-center gap-1 text-[9.5px]">
-                    <Icon name="lock" size={9} /> E2EE
-                  </span>
-                </BBChip>
-              </span>
+              onShowTrustDetails && !file.is_folder ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onShowTrustDetails(file)
+                  }}
+                  aria-label="Encryption details"
+                  className={`inline-flex items-center justify-center w-[18px] h-[18px] rounded-full text-amber-deep hover:bg-amber-bg transition-colors cursor-pointer ${decryptPulseId === file.id ? 'decrypt-pulse' : ''}`}
+                  title="View encryption details"
+                >
+                  <Icon name="lock" size={11} />
+                </button>
+              ) : (
+                <span className={decryptPulseId === file.id ? 'decrypt-pulse inline-flex' : 'inline-flex'}>
+                  <BBChip variant="amber">
+                    <span className="flex items-center gap-1 text-[9.5px]">
+                      <Icon name="lock" size={9} /> E2EE
+                    </span>
+                  </BBChip>
+                </span>
+              )
             )}
             {!file.is_folder && (file.version_number ?? 1) > 1 && (
               <span
@@ -638,6 +660,11 @@ export function FileList({
             <span className="md:hidden text-line-2">·</span>
             <span className="md:hidden">{timeAgo(file.updated_at)}</span>
           </div>
+          {!file.is_folder && (
+            <div className="font-mono text-[10.5px] text-ink-3 mt-0.5 truncate tabular-nums">
+              AES-256-GCM · Europe · {encryptionCity}
+            </div>
+          )}
         </div>
 
         {/* Size */}

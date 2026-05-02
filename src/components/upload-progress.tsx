@@ -13,6 +13,8 @@ export interface UploadItem {
   startedAt?: number
   /** Whether this upload is paused */
   paused?: boolean
+  /** City where the ciphertext is stored — used in stage labels */
+  storageCity?: string
 }
 
 interface UploadProgressProps {
@@ -21,8 +23,11 @@ interface UploadProgressProps {
   onCancel?: (id: string) => void
   onPause?: (id: string) => void
   onResume?: (id: string) => void
+  /** Default city when an item has no `storageCity` set yet */
+  defaultCity?: string
 }
 
+const DEFAULT_CITY = 'Frankfurt'
 
 function formatSpeed(bytesPerSecond: number): string {
   if (bytesPerSecond < 1024) return `${bytesPerSecond.toFixed(0)} B/s`
@@ -56,7 +61,35 @@ function computeEta(item: UploadItem, speed: number): number {
   return remaining / speed
 }
 
-export function UploadProgress({ items, onClose, onCancel, onPause, onResume }: UploadProgressProps) {
+type PipelineStage = 'encrypt' | 'upload' | 'confirm'
+
+function pipelineStage(item: UploadItem): PipelineStage {
+  if (item.stage === 'Done') return 'confirm'
+  if (item.stage === 'Uploading') return 'upload'
+  // Queued + Encrypting + Error all sit in the encrypt slot
+  return 'encrypt'
+}
+
+function stageLabel(item: UploadItem, city: string): string {
+  if (item.paused) return 'Paused'
+  switch (pipelineStage(item)) {
+    case 'encrypt':
+      return 'Encrypting on your device...'
+    case 'upload':
+      return `Uploading ciphertext to ${city}`
+    case 'confirm':
+      return `Stored in Europe · ${city} · Key stayed on your device`
+  }
+}
+
+export function UploadProgress({
+  items,
+  onClose,
+  onCancel,
+  onPause,
+  onResume,
+  defaultCity = DEFAULT_CITY,
+}: UploadProgressProps) {
   if (items.length === 0) return null
 
   const totalBytes = items.reduce((s, i) => s + i.size, 0)
@@ -93,25 +126,28 @@ export function UploadProgress({ items, onClose, onCancel, onPause, onResume }: 
       )}
 
       {/* File list */}
-      <div className="px-5 py-3.5 flex flex-col gap-3 max-h-[280px] overflow-y-auto">
+      <div className="px-5 py-3.5 flex flex-col gap-3.5 max-h-[340px] overflow-y-auto">
         {items.map((item) => {
           const speed = computeSpeed(item)
           const eta = computeEta(item, speed)
           const isActive = item.stage === 'Uploading' || item.stage === 'Encrypting'
           const isDone = item.stage === 'Done'
+          const stage = pipelineStage(item)
+          const city = item.storageCity ?? defaultCity
 
           return (
             <div key={item.id}>
               <div className="flex items-center gap-2 mb-1">
                 {/* File icon / done checkmark */}
                 <div
-                  className="w-[18px] h-[18px] shrink-0 rounded-[5px] border border-line flex items-center justify-center"
+                  className={`w-[18px] h-[18px] shrink-0 rounded-[5px] flex items-center justify-center ${isDone ? 'decrypt-pulse' : ''}`}
                   style={{
-                    background: isDone ? 'oklch(0.94 0.06 155)' : 'var(--color-paper-2)',
+                    background: isDone ? 'var(--color-amber-bg)' : 'var(--color-paper-2)',
+                    border: isDone ? '1px solid var(--color-amber)' : '1px solid var(--color-line)',
                   }}
                 >
                   {isDone ? (
-                    <Icon name="check" size={11} style={{ color: 'oklch(0.45 0.12 155)' }} />
+                    <Icon name="check" size={11} className="text-amber-deep" />
                   ) : (
                     <Icon name="file" size={10} className="text-ink-3" />
                   )}
@@ -120,12 +156,12 @@ export function UploadProgress({ items, onClose, onCancel, onPause, onResume }: 
                 {/* File name */}
                 <span className="text-[12.5px] font-medium truncate">{item.name}</span>
 
-                {/* Stage + percentage */}
+                {/* Percentage */}
                 <span
-                  className="font-mono text-[10.5px] font-medium ml-auto shrink-0"
+                  className="font-mono text-[10.5px] font-medium ml-auto shrink-0 tabular-nums"
                   style={{
                     color: isDone
-                      ? 'oklch(0.45 0.12 155)'
+                      ? 'var(--color-amber-deep)'
                       : item.paused
                         ? 'var(--color-ink-4)'
                         : item.stage === 'Queued'
@@ -133,7 +169,7 @@ export function UploadProgress({ items, onClose, onCancel, onPause, onResume }: 
                           : 'var(--color-amber-deep)',
                   }}
                 >
-                  {item.paused ? 'Paused' : item.stage} · {item.progress}%
+                  {item.progress}%
                 </span>
 
                 {/* Pause/Resume button */}
@@ -159,9 +195,54 @@ export function UploadProgress({ items, onClose, onCancel, onPause, onResume }: 
                 )}
               </div>
 
+              {/* Stage label */}
+              <div
+                className="ml-[26px] mb-1.5 text-[11px] truncate"
+                style={{
+                  color:
+                    stage === 'encrypt'
+                      ? 'var(--color-amber-deep)'
+                      : stage === 'confirm'
+                        ? 'var(--color-amber-deep)'
+                        : 'var(--color-ink-3)',
+                }}
+              >
+                {stageLabel(item, city)}
+              </div>
+
+              {/* 3-stage pipeline bar */}
+              <div className="ml-[26px] flex items-center gap-1.5">
+                <StageBar
+                  stage="encrypt"
+                  current={stage}
+                  // Encrypt fills as soon as we leave the encrypt slot
+                  filled={stage !== 'encrypt' || (item.stage === 'Encrypting' && item.progress > 0)}
+                  amber
+                />
+                <StageBar
+                  stage="upload"
+                  current={stage}
+                  // Upload fills proportionally to upload progress
+                  progress={
+                    stage === 'upload'
+                      ? Math.max(0, Math.min(100, item.progress))
+                      : stage === 'confirm'
+                        ? 100
+                        : 0
+                  }
+                />
+                <StageBar
+                  stage="confirm"
+                  current={stage}
+                  filled={stage === 'confirm'}
+                  amber
+                  flash={stage === 'confirm'}
+                />
+              </div>
+
               {/* Speed + ETA row */}
               {item.stage === 'Uploading' && !isDone && !item.paused && speed > 0 && (
-                <div className="flex items-center gap-2 mb-1 ml-[26px]">
+                <div className="flex items-center gap-2 mt-1.5 ml-[26px]">
                   <span className="font-mono text-[10px] text-ink-4">
                     {formatSpeed(speed)}
                   </span>
@@ -170,21 +251,6 @@ export function UploadProgress({ items, onClose, onCancel, onPause, onResume }: 
                   </span>
                 </div>
               )}
-
-              {/* Progress bar */}
-              <div className="h-[3px] w-full rounded-full bg-paper-3 overflow-hidden">
-                <div
-                  className="h-full rounded-full transition-all duration-300"
-                  style={{
-                    width: `${item.progress}%`,
-                    background: isDone
-                      ? 'oklch(0.45 0.12 155)'
-                      : item.paused
-                        ? 'var(--color-ink-4)'
-                        : 'var(--color-amber)',
-                  }}
-                />
-              </div>
             </div>
           )
         })}
@@ -197,6 +263,47 @@ export function UploadProgress({ items, onClose, onCancel, onPause, onResume }: 
           Keys stay on your device — never on our servers.
         </span>
       </div>
+    </div>
+  )
+}
+
+interface StageBarProps {
+  stage: PipelineStage
+  current: PipelineStage
+  /** Either fully on (true) or use `progress` for partial fill */
+  filled?: boolean
+  /** Optional 0..100 partial fill */
+  progress?: number
+  /** Use amber rather than neutral fill */
+  amber?: boolean
+  /** Brief amber pulse animation when reaching this stage */
+  flash?: boolean
+}
+
+const ORDER: Record<PipelineStage, number> = { encrypt: 0, upload: 1, confirm: 2 }
+
+function StageBar({ stage, current, filled, progress, amber, flash }: StageBarProps) {
+  const isPast = ORDER[stage] < ORDER[current]
+  const fill =
+    progress !== undefined
+      ? progress
+      : (filled || isPast)
+        ? 100
+        : 0
+
+  const color = amber || isPast ? 'var(--color-amber)' : 'var(--color-ink-3)'
+
+  return (
+    <div
+      className={`h-[3px] flex-1 rounded-full bg-paper-3 overflow-hidden ${flash ? 'decrypt-pulse' : ''}`}
+    >
+      <div
+        className="h-full rounded-full transition-all duration-300"
+        style={{
+          width: `${fill}%`,
+          background: color,
+        }}
+      />
     </div>
   )
 }

@@ -6,6 +6,7 @@ import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '../components/icons'
 import { FileList } from '../components/file-list'
 import { FileDetailsPanel, type FileDetailsMeta } from '../components/file-details-panel'
+import { TrustDetailsPanel, type TrustFile } from '../components/trust-details-panel'
 import { ShareDialog } from '../components/share-dialog'
 import { MoveModal } from '../components/move-modal'
 import { RenameDialog } from '../components/rename-dialog'
@@ -73,6 +74,7 @@ export function Drive() {
   const [moveFileId, setMoveFileId] = useState<string | null>(null)
   const [renameFileId, setRenameFileId] = useState<string | null>(null)
   const [versionFileId, setVersionFileId] = useState<string | null>(null)
+  const [trustFileId, setTrustFileId] = useState<string | null>(null)
   const [tourOpen, setTourOpen] = useState(false)
   const [tourCompleted, setTourCompleted] = useState<Set<string>>(new Set())
   const [pausedUploads, setPausedUploads] = useState<UploadState[]>([])
@@ -1286,6 +1288,7 @@ export function Drive() {
             trashingIds={trashingIds}
             starPulseId={starPulseId}
             recentlyUploadedIds={recentlyUploaded}
+            onShowTrustDetails={(file) => setTrustFileId(file.id)}
           />
         </UploadZone>
 
@@ -1341,6 +1344,26 @@ export function Drive() {
             setSelectedFileId(null)
           }
         }}
+      />
+
+      <TrustDetailsPanel
+        open={trustFileId !== null}
+        onClose={() => setTrustFileId(null)}
+        file={(() => {
+          const f = files.find((x) => x.id === trustFileId)
+          if (!f) return null
+          const trust: TrustFile = {
+            id: f.id,
+            name: displayName(f),
+            sizeBytes: f.size_bytes,
+            createdAt: f.created_at,
+            cipher: 'AES-256-GCM',
+            region: 'Europe',
+            city: 'Frankfurt',
+            provider: 'Hetzner',
+          }
+          return trust
+        })()}
       />
 
       {shareFile && (
