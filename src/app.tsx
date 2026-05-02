@@ -41,6 +41,7 @@ import { DataExport } from './pages/admin/data-export'
 import { ApiTokens } from './pages/admin/api-tokens'
 import { Compliance } from './pages/admin/compliance'
 import { AdminUsers } from './pages/admin/users'
+import { AdminWaitlist } from './pages/admin/waitlist'
 import { AdminBilling } from './pages/admin/billing-overview'
 import { StoragePools } from './pages/admin/storage-pools'
 import { Monitoring } from './pages/admin/monitoring'
@@ -324,6 +325,14 @@ export function App() {
             element={
               <ProtectedRoute>
                 <AdminUsers />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/waitlist"
+            element={
+              <ProtectedRoute>
+                <AdminWaitlist />
               </ProtectedRoute>
             }
           />

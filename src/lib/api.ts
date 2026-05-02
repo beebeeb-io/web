@@ -1243,6 +1243,23 @@ export async function getAdminUserDetail(id: string): Promise<AdminUserDetail> {
   return request<AdminUserDetail>(`/api/v1/admin/users/${id}`)
 }
 
+// ─── Admin waitlist ──────────────────────────────
+
+export interface WaitlistEntry {
+  email: string
+  source: string
+  created_at: string
+}
+
+export interface WaitlistResponse {
+  count: number
+  entries: WaitlistEntry[]
+}
+
+export async function getWaitlist(): Promise<WaitlistResponse> {
+  return request<WaitlistResponse>('/api/v1/admin/waitlist')
+}
+
 // ─── Admin storage pool endpoints ────────────────
 
 export interface StoragePool {
