@@ -254,6 +254,25 @@ export async function logout(): Promise<void> {
   }
 }
 
+// ─── Step-up re-auth ────────────────────────────────
+
+/**
+ * Exchange the user's password for a short-lived confirmation token.
+ * Pass that token via the X-Confirm-Token header on destructive endpoints
+ * (permanent delete, change password, delete account).
+ */
+export async function confirmAction(
+  password: string,
+): Promise<{ confirmation_token: string; expires_at: string }> {
+  return request<{ confirmation_token: string; expires_at: string }>(
+    '/api/v1/auth/confirm',
+    {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    },
+  )
+}
+
 export async function verifyEmail(
   code: string,
 ): Promise<{ message: string }> {
@@ -503,8 +522,14 @@ export async function restoreFile(id: string): Promise<void> {
   await request<void>(`/api/v1/files/${id}/restore`, { method: 'POST' })
 }
 
-export async function permanentDeleteFile(id: string): Promise<void> {
-  await request<void>(`/api/v1/files/${id}/permanent`, { method: 'DELETE' })
+export async function permanentDeleteFile(
+  id: string,
+  confirmToken?: string,
+): Promise<void> {
+  await request<void>(`/api/v1/files/${id}/permanent`, {
+    method: 'DELETE',
+    headers: confirmToken ? { 'X-Confirm-Token': confirmToken } : undefined,
+  })
 }
 
 export async function toggleStar(
@@ -521,6 +546,7 @@ export async function toggleStar(
 export async function changePassword(
   currentPassword: string,
   newPassword: string,
+  confirmToken?: string,
 ): Promise<{ message: string; salt: string; session_token: string }> {
   const data = await request<{
     message: string
@@ -528,6 +554,7 @@ export async function changePassword(
     session_token: string
   }>('/api/v1/auth/change-password', {
     method: 'POST',
+    headers: confirmToken ? { 'X-Confirm-Token': confirmToken } : undefined,
     body: JSON.stringify({
       current_password: currentPassword,
       new_password: newPassword,
@@ -563,11 +590,13 @@ export async function resetPassword(
 
 export async function deleteAccountPermanently(
   confirmation: string,
+  confirmToken?: string,
 ): Promise<{ message: string; shred_after: string }> {
   const data = await request<{ message: string; shred_after: string }>(
     '/api/v1/auth/account',
     {
       method: 'DELETE',
+      headers: confirmToken ? { 'X-Confirm-Token': confirmToken } : undefined,
       body: JSON.stringify({ confirmation }),
     },
   )

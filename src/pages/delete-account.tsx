@@ -4,7 +4,8 @@ import { Icon } from '../components/icons'
 import { BBButton } from '../components/bb-button'
 import { BBInput } from '../components/bb-input'
 import { BBCheckbox } from '../components/bb-checkbox'
-import { deleteAccountPermanently } from '../lib/api'
+import { ConfirmPasswordModal } from '../components/confirm-password-modal'
+import { deleteAccountPermanently, ApiError } from '../lib/api'
 
 const deletionItems: [string, string][] = [
   ['All files and versions', 'Encrypted blobs shredded from all regions'],
@@ -19,25 +20,46 @@ export function DeleteAccount() {
   const [understood, setUnderstood] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [pwPromptOpen, setPwPromptOpen] = useState(false)
 
   const canDelete = confirmation === 'DELETE' && understood && !loading
 
-  const handleDelete = useCallback(async () => {
+  const handleDelete = useCallback(() => {
     if (!canDelete) return
-    setLoading(true)
     setError(null)
+    setPwPromptOpen(true)
+  }, [canDelete])
 
-    try {
-      await deleteAccountPermanently(confirmation)
-      navigate('/login', { replace: true })
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to delete account')
-      setLoading(false)
-    }
-  }, [canDelete, confirmation, navigate])
+  const performDelete = useCallback(
+    async (token: string) => {
+      setPwPromptOpen(false)
+      setLoading(true)
+      setError(null)
+      try {
+        await deleteAccountPermanently(confirmation, token)
+        navigate('/login', { replace: true })
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 403) {
+          setError('Re-authentication expired. Try again.')
+        } else {
+          setError(e instanceof Error ? e.message : 'Failed to delete account')
+        }
+        setLoading(false)
+      }
+    },
+    [confirmation, navigate],
+  )
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-paper p-xl">
+      <ConfirmPasswordModal
+        open={pwPromptOpen}
+        title="Confirm account deletion"
+        description="Re-enter your password to permanently delete your account. This cannot be undone."
+        confirmLabel="Delete account"
+        onConfirmed={performDelete}
+        onCancel={() => setPwPromptOpen(false)}
+      />
       <div className="w-full max-w-[480px] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
         {/* Header */}
         <div className="px-xl py-lg border-b border-line">

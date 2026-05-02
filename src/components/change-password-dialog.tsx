@@ -3,6 +3,7 @@ import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from './bb-button'
 import { BBInput } from './bb-input'
 import { Icon } from './icons'
+import { changePassword as apiChangePassword, confirmAction, ApiError } from '../lib/api'
 
 interface ChangePasswordDialogProps {
   open: boolean
@@ -28,29 +29,6 @@ function evaluateStrength(pw: string): PasswordStrength {
   const colors = ['var(--color-red)', 'oklch(0.65 0.14 55)', 'oklch(0.55 0.12 155)', 'oklch(0.45 0.12 155)']
   const idx = Math.min(score, 3)
   return { score: score + 1, label: labels[idx], color: colors[idx] }
-}
-
-async function changePassword(
-  currentPassword: string,
-  newPassword: string,
-): Promise<{ session_token: string; salt: string }> {
-  const { getToken, getApiUrl } = await import('../lib/api')
-  const token = getToken()
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (token) headers['Authorization'] = `Bearer ${token}`
-
-  const res = await fetch(`${getApiUrl()}/api/v1/auth/change-password`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
-  })
-
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error((body as { error?: string }).error ?? res.statusText)
-  }
-
-  return res.json() as Promise<{ session_token: string; salt: string }>
 }
 
 export function ChangePasswordDialog({ open, onClose, onSuccess }: ChangePasswordDialogProps) {
@@ -86,13 +64,19 @@ export function ChangePasswordDialog({ open, onClose, onSuccess }: ChangePasswor
     setError(null)
 
     try {
-      const result = await changePassword(currentPw, newPw)
-      // Update session token
-      localStorage.setItem('bb_session', result.session_token)
+      // Step-up re-auth: exchange current password for a confirmation token,
+      // then send it on the change-password call. setToken() inside
+      // apiChangePassword keeps us logged in on this device.
+      const { confirmation_token } = await confirmAction(currentPw)
+      const result = await apiChangePassword(currentPw, newPw, confirmation_token)
       onSuccess?.(result.session_token)
       onClose()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to change password')
+      if (e instanceof ApiError && e.status === 401) {
+        setError('Current password is incorrect.')
+      } else {
+        setError(e instanceof Error ? e.message : 'Failed to change password')
+      }
     } finally {
       setLoading(false)
     }

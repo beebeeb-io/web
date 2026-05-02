@@ -5,13 +5,14 @@ import { BBCheckbox } from '../components/bb-checkbox'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '../components/icons'
 import type { IconName } from '../components/icons'
-import { listFiles, restoreFile, permanentDeleteFile, type DriveFile } from '../lib/api'
+import { listFiles, restoreFile, permanentDeleteFile, ApiError, type DriveFile } from '../lib/api'
 import { useToast } from '../components/toast'
 import { useKeys } from '../lib/key-context'
 import { TrashRowSkeleton } from '../components/skeleton'
 import { decryptFilename, fromBase64 } from '../lib/crypto'
 import { useWsEvent } from '../lib/ws-context'
 import { EmptyTrash } from '../components/empty-states/empty-trash'
+import { ConfirmPasswordModal } from '../components/confirm-password-modal'
 import { formatBytes } from '../lib/format'
 
 // ─── Helpers ─────────────────────────────────────
@@ -109,6 +110,10 @@ export function Trash() {
     open: boolean
     fileIds: string[]
   }>({ open: false, fileIds: [] })
+  const [pwPrompt, setPwPrompt] = useState<{ open: boolean; fileIds: string[] }>({
+    open: false,
+    fileIds: [],
+  })
 
   // Fetch trashed files from API
   const fetchTrash = useCallback(async () => {
@@ -216,13 +221,21 @@ export function Trash() {
     setConfirmDialog({ open: true, fileIds: Array.from(selected) })
   }
 
-  /** Execute permanent deletion after confirmation. */
-  const executePermanentDelete = async () => {
+  /** Step 1 — confirm intent, then prompt for password to step up. */
+  const executePermanentDelete = () => {
     const ids = confirmDialog.fileIds
     setConfirmDialog({ open: false, fileIds: [] })
+    if (ids.length === 0) return
+    setPwPrompt({ open: true, fileIds: ids })
+  }
+
+  /** Step 2 — fire deletes with the step-up confirmation token. */
+  const performPermanentDelete = async (token: string) => {
+    const ids = pwPrompt.fileIds
+    setPwPrompt({ open: false, fileIds: [] })
     setLoading(true)
     try {
-      await Promise.all(ids.map((id) => permanentDeleteFile(id)))
+      await Promise.all(ids.map((id) => permanentDeleteFile(id, token)))
       setFiles((prev) => prev.filter((f) => !ids.includes(f.id)))
       setSelected((prev) => {
         const next = new Set(prev)
@@ -235,7 +248,13 @@ export function Trash() {
         description: 'Vault keys destroyed. Data is unrecoverable.',
       })
     } catch (err) {
-      showToast({ icon: 'x', title: 'Delete failed', description: err instanceof Error ? err.message : 'Some files could not be deleted', danger: true })
+      const description =
+        err instanceof ApiError && err.status === 403
+          ? 'Re-authentication expired. Try again.'
+          : err instanceof Error
+            ? err.message
+            : 'Some files could not be deleted'
+      showToast({ icon: 'x', title: 'Delete failed', description, danger: true })
       fetchTrash()
     } finally {
       setLoading(false)
@@ -265,6 +284,16 @@ export function Trash() {
           count={confirmDialog.fileIds.length}
           onConfirm={executePermanentDelete}
           onCancel={() => setConfirmDialog({ open: false, fileIds: [] })}
+        />
+
+        {/* Step-up re-auth prompt */}
+        <ConfirmPasswordModal
+          open={pwPrompt.open}
+          title="Confirm permanent delete"
+          description="Re-enter your password to permanently delete. This cannot be undone."
+          confirmLabel="Delete permanently"
+          onConfirmed={performPermanentDelete}
+          onCancel={() => setPwPrompt({ open: false, fileIds: [] })}
         />
 
         {/* Header */}

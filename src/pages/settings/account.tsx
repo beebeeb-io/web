@@ -11,10 +11,11 @@ import { RecentActivity } from '../../components/recent-activity'
 import {
   getPreference, setPreference, getStorageUsage,
   deleteAccountPermanently, changeEmail, exportAccountData,
-  clearToken,
+  clearToken, ApiError,
   type StorageUsage,
 } from '../../lib/api'
 import { StorageBreakdown } from '../../components/storage-breakdown'
+import { ConfirmPasswordModal } from '../../components/confirm-password-modal'
 import { formatStorageSI } from '../../lib/format'
 
 interface DataRegion {
@@ -71,6 +72,7 @@ export function SettingsAccount() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleteConfirmEmail, setDeleteConfirmEmail] = useState('')
   const [deleting, setDeleting] = useState(false)
+  const [pwPromptOpen, setPwPromptOpen] = useState(false)
 
   const email = user?.email ?? ''
   const initials = email ? email.split('@')[0].slice(0, 2).toUpperCase() : '??'
@@ -172,17 +174,32 @@ export function SettingsAccount() {
     }
   }, [showToast])
 
-  const handleDeleteAccount = useCallback(async () => {
-    setDeleting(true)
-    try {
-      await deleteAccountPermanently('DELETE')
-      clearToken()
-      navigate('/login')
-    } catch {
-      showToast({ icon: 'x', title: 'Deletion failed. Try again.', danger: true })
-      setDeleting(false)
-    }
-  }, [navigate, showToast])
+  const handleDeleteAccount = useCallback(() => {
+    setPwPromptOpen(true)
+  }, [])
+
+  const performDeleteAccount = useCallback(
+    async (token: string) => {
+      setPwPromptOpen(false)
+      setDeleting(true)
+      try {
+        await deleteAccountPermanently('DELETE', token)
+        clearToken()
+        navigate('/login')
+      } catch (e) {
+        const description =
+          e instanceof ApiError && e.status === 403 ? 'Re-authentication expired. Try again.' : undefined
+        showToast({
+          icon: 'x',
+          title: 'Deletion failed. Try again.',
+          description,
+          danger: true,
+        })
+        setDeleting(false)
+      }
+    },
+    [navigate, showToast],
+  )
 
   const storageSegments = usage
     ? [{ label: 'Used', bytes: usage.used_bytes, color: 'var(--color-amber)' }]
@@ -190,6 +207,14 @@ export function SettingsAccount() {
 
   return (
     <SettingsShell activeSection="account">
+      <ConfirmPasswordModal
+        open={pwPromptOpen}
+        title="Confirm account deletion"
+        description="Re-enter your password to permanently delete your account. This cannot be undone."
+        confirmLabel="Delete account"
+        onConfirmed={performDeleteAccount}
+        onCancel={() => setPwPromptOpen(false)}
+      />
       <SettingsHeader
         title="Account"
         subtitle="Your profile, storage, and account settings."
