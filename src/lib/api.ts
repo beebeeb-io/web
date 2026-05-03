@@ -1951,15 +1951,31 @@ export interface AdminStats {
   }
 }
 
+export interface HealthWorkerItem {
+  interval_secs: number
+  last_run: string | null
+  seconds_ago?: number | null
+  status: string
+}
+
 export interface HealthResponse {
   status: string
   version: string
   uptime_seconds: number
-  db_latency_ms: number
+  db: string
+  blob_store?: string
+  db_pool?: { active: number; idle: number; max: number; size: number }
+  checks: {
+    database: { status: string; latency_ms: number }
+    blob_store: { status: string; pools: number }
+  }
   background_workers?: {
     any_stale: boolean
-    [key: string]: unknown
+    count: number
+    items: Record<string, HealthWorkerItem>
   }
+  websocket_connections?: number
+  process_memory?: { rss_kb: number; rss_mb: number } | null
 }
 
 export async function getAdminStats(): Promise<AdminStats> {
