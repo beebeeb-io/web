@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback } from 'react'
 import { Icon } from '../../components/icons'
 import { BBButton } from '../../components/bb-button'
 import { BBChip } from '../../components/bb-chip'
+import { KpiCard } from '../../components/admin/kpi-card'
 import { AdminShell } from './admin-shell'
-import { formatStorageSI } from '../../lib/format'
 import {
   getSubscription,
   getPlans,
@@ -24,6 +24,24 @@ function formatDate(iso: string | null): string {
   })
 }
 
+interface PlanSegment {
+  id: 'free' | 'personal' | 'team' | 'business'
+  label: string
+  count: number
+  pct: number
+  className: string
+}
+
+function buildSegments(totalUsers: number, subscribers: { personal: number; team: number; business: number }): PlanSegment[] {
+  const free = Math.max(0, totalUsers - subscribers.personal - subscribers.team - subscribers.business)
+  const safe = totalUsers > 0 ? totalUsers : 1
+  return [
+    { id: 'free', label: 'Free', count: free, pct: (free / safe) * 100, className: 'bg-ink-3' },
+    { id: 'personal', label: 'Personal', count: subscribers.personal, pct: (subscribers.personal / safe) * 100, className: 'bg-amber' },
+    { id: 'team', label: 'Team', count: subscribers.team, pct: (subscribers.team / safe) * 100, className: 'bg-green' },
+    { id: 'business', label: 'Business', count: subscribers.business, pct: (subscribers.business / safe) * 100, className: 'bg-amber-deep' },
+  ]
+}
 
 export function AdminBilling() {
   const [sub, setSub] = useState<Subscription | null>(null)
@@ -56,7 +74,17 @@ export function AdminBilling() {
 
   useEffect(() => { load() }, [load])
 
-  const activePlan = plans.find(p => p.id === sub?.plan)
+  // Subscriber breakdown — currently no aggregate plan data is available from
+  // the server, so we treat all users as free until a real per-plan count
+  // endpoint exists. Counts default to 0 for now.
+  const totalUsers = stats?.users.total ?? 0
+  const subscribers = { personal: 0, team: 0, business: 0 }
+  const totalSubscribers = subscribers.personal + subscribers.team + subscribers.business
+  const freeUsers = Math.max(0, totalUsers - totalSubscribers)
+  const conversionRate = totalUsers > 0
+    ? `${((totalSubscribers / totalUsers) * 100).toFixed(1)}%`
+    : '0%'
+  const segments = buildSegments(totalUsers, subscribers)
 
   return (
     <AdminShell activeSection="billing">
@@ -87,119 +115,86 @@ export function AdminBilling() {
           </div>
         ) : (
           <>
-            {/* Plan + Subscription cards */}
-            <div className="grid gap-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
-              {/* Current subscription */}
-              <div className="rounded-xl bg-paper border border-line-2 p-4">
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 mb-2">
-                  Current subscription
-                </div>
-                <div className="flex items-baseline gap-2.5 mb-3">
-                  <span className="text-xl font-bold">{activePlan?.name ?? sub?.plan ?? 'Free'}</span>
-                  {sub?.billing_cycle && sub.plan !== 'free' && (
-                    <BBChip variant={sub.billing_cycle === 'yearly' ? 'amber' : 'default'}>
-                      {sub.billing_cycle === 'yearly' ? 'Yearly' : 'Monthly'}
-                    </BBChip>
-                  )}
-                </div>
-                <div className="grid grid-cols-3 gap-3">
-                  <div>
-                    <div className="text-[10px] text-ink-4">Seats</div>
-                    <div className="font-mono text-sm font-semibold">{sub?.seats ?? 1}</div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] text-ink-4">Storage</div>
-                    <div className="font-mono text-sm font-semibold">
-                      {activePlan ? formatStorageSI(activePlan.storage_bytes) : '-'}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] text-ink-4">Region</div>
-                    <div className="font-mono text-sm font-semibold">{sub?.region ?? '-'}</div>
-                  </div>
-                </div>
-                {sub?.current_period_end && (
-                  <div className="flex items-center gap-2 mt-3 p-2 bg-paper-2 border border-line rounded-md text-[11px]">
-                    <Icon name="clock" size={11} className="text-ink-3" />
-                    <span>Renews <strong>{formatDate(sub.current_period_end)}</strong></span>
-                  </div>
-                )}
-              </div>
+            {/* KPI row */}
+            <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+              <KpiCard
+                label="MRR"
+                value={0}
+                format="currency"
+                sub={totalSubscribers > 0 ? `${totalSubscribers} paying` : 'No paying customers yet'}
+              />
+              <KpiCard
+                label="Subscribers"
+                value={totalSubscribers}
+                sub={`of ${totalUsers.toLocaleString()} total`}
+              />
+              <KpiCard
+                label="Free users"
+                value={freeUsers}
+                sub={totalUsers > 0
+                  ? `${((freeUsers / totalUsers) * 100).toFixed(0)}% of total`
+                  : 'No users yet'}
+              />
+              <KpiCard
+                label="Conversion"
+                value={conversionRate}
+                sub="Free → paid"
+              />
+            </div>
 
-              {/* Plan price details */}
-              <div className="rounded-xl bg-paper border border-line-2 p-4">
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 mb-2">
-                  Pricing
+            {/* Plan distribution */}
+            <div className="rounded-xl bg-paper border border-line-2 p-4">
+              <div className="flex items-baseline justify-between mb-3">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3">
+                  Plan distribution
                 </div>
-                {activePlan ? (
-                  <>
-                    <div className="flex items-baseline gap-1.5 mb-3">
-                      <span className="text-2xl font-bold font-mono">
-                        EUR {sub?.billing_cycle === 'yearly'
-                          ? activePlan.price_yearly_eur.toFixed(2)
-                          : activePlan.price_eur.toFixed(2)
-                        }
+                <div className="font-mono text-[10px] text-ink-4">
+                  {totalUsers.toLocaleString()} users
+                </div>
+              </div>
+              <div className="flex h-2.5 w-full rounded-full overflow-hidden bg-paper-3">
+                {segments.map(seg => (
+                  seg.pct > 0 && (
+                    <div
+                      key={seg.id}
+                      className={seg.className}
+                      style={{ width: `${seg.pct}%` }}
+                      title={`${seg.label}: ${seg.count} (${seg.pct.toFixed(1)}%)`}
+                    />
+                  )
+                ))}
+              </div>
+              <div className="grid gap-2 mt-3" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+                {segments.map(seg => (
+                  <div key={seg.id} className="flex items-center gap-1.5">
+                    <span className={`w-2 h-2 rounded-sm ${seg.className} shrink-0`} />
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-[11px] text-ink-2 truncate">{seg.label}</span>
+                      <span className="font-mono text-[10px] text-ink-4">
+                        {seg.count.toLocaleString()} · {seg.pct.toFixed(1)}%
                       </span>
-                      <span className="text-xs text-ink-3">
-                        / {activePlan.per_seat ? 'seat / ' : ''}{sub?.billing_cycle === 'yearly' ? 'year' : 'month'}
-                      </span>
                     </div>
-                    <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 mb-1.5">
-                      Plan features
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      {activePlan.features.map((f, i) => (
-                        <div key={i} className="flex items-center gap-1.5 text-[11px] text-ink-2">
-                          <Icon name="check" size={10} className="text-green shrink-0" />
-                          <span>{f}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                ) : (
-                  <div className="text-sm text-ink-3">Free tier -- no charges</div>
-                )}
+                  </div>
+                ))}
               </div>
             </div>
 
-            {/* Platform stats */}
-            {stats && (
-              <div>
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 mb-2">
-                  Platform overview
+            {/* Revenue placeholder */}
+            <div className="rounded-xl bg-paper border border-line-2 p-4">
+              <div className="flex items-baseline justify-between mb-3">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3">
+                  Revenue
                 </div>
-                <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
-                  <div className="rounded-xl bg-paper border border-line-2 p-3.5">
-                    <div className="text-[10px] text-ink-4 mb-0.5">Total users</div>
-                    <div className="font-mono text-lg font-bold">{stats.users.total.toLocaleString()}</div>
-                    <div className="text-[10px] text-ink-3 mt-1">
-                      {stats.users.active_7d.toLocaleString()} active (7d)
-                    </div>
-                  </div>
-                  <div className="rounded-xl bg-paper border border-line-2 p-3.5">
-                    <div className="text-[10px] text-ink-4 mb-0.5">Total files</div>
-                    <div className="font-mono text-lg font-bold">{stats.files.total.toLocaleString()}</div>
-                    <div className="text-[10px] text-ink-3 mt-1">
-                      {stats.files.uploads_today.toLocaleString()} uploaded today
-                    </div>
-                  </div>
-                  <div className="rounded-xl bg-paper border border-line-2 p-3.5">
-                    <div className="text-[10px] text-ink-4 mb-0.5">Storage used</div>
-                    <div className="font-mono text-lg font-bold">{formatStorageSI(stats.files.storage_used_bytes)}</div>
-                    <div className="text-[10px] text-ink-3 mt-1">
-                      across all users
-                    </div>
-                  </div>
-                  <div className="rounded-xl bg-paper border border-line-2 p-3.5">
-                    <div className="text-[10px] text-ink-4 mb-0.5">Active shares</div>
-                    <div className="font-mono text-lg font-bold">{stats.shares.active_links.toLocaleString()}</div>
-                    <div className="text-[10px] text-ink-3 mt-1">
-                      {stats.shares.active_invites.toLocaleString()} pending invites
-                    </div>
-                  </div>
+                <span className="font-mono text-[10px] text-ink-4">Last 30 days</span>
+              </div>
+              <div className="flex flex-col items-center justify-center gap-2 h-40 rounded-lg border border-dashed border-line-2 bg-paper-2">
+                <Icon name="lock" size={16} className="text-ink-3" />
+                <div className="text-xs text-ink-2 font-medium">Connect Stripe to see revenue data</div>
+                <div className="text-[11px] text-ink-3">
+                  MRR, churn, and lifetime value will appear here once Stripe is wired up.
                 </div>
               </div>
-            )}
+            </div>
 
             {/* Available plans */}
             {plans.length > 0 && (
