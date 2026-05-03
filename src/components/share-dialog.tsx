@@ -235,28 +235,31 @@ function InviteForm({
         const encOwnerFK = await encryptOwnerFolderKey(masterKey, fileId, folderKey)
 
         setProgress('Creating invite...')
+        // The recipient-encrypted folder key is set later by the approve endpoint
+        // (which writes to the encrypted_file_key column for both file and folder shares).
+        // We can only encrypt for the recipient once their public key is known — either
+        // immediately on auto-claim below, or when the sender approves after the
+        // recipient signs up and claims.
         const result = await createInvite(fileId, trimmed, {
           is_folder_share: true,
-          encrypted_folder_key: '', // placeholder — filled after auto-claim
+          encrypted_folder_key: '',
           encrypted_owner_folder_key: toBase64(encOwnerFK),
           folder_keys: folderKeys,
         })
 
-        // Auto-approve with folder key encryption for recipient
+        // Auto-approve when the recipient already has an account and the server
+        // auto-claimed: encrypt the folder key for their pubkey and call approve.
         if (result.recipient_public_key && result.status === 'claimed') {
           try {
             const recipientPubKey = fromBase64(result.recipient_public_key)
             const encFolderKey = await encryptFolderKeyForRecipient(
               masterKey, recipientPubKey, fileId, folderKey,
             )
-            // Update the invite with the encrypted folder key and approve
             const { patchInvite } = await import('../lib/api')
             await patchInvite(result.invite_id, {})
-            // For folder shares, approval = setting encrypted_folder_key
-            // We need a dedicated endpoint for this — for now, reuse approve with the folder key
             await approveInvite(result.invite_id, toBase64(encFolderKey))
           } catch {
-            // Approval failed — invite is still claimed, sender can approve later
+            // Approval failed — invite stays claimed, sender can retry approval later.
           }
         }
 
