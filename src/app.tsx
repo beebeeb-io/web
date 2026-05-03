@@ -32,20 +32,14 @@ import { Pricing } from './pages/pricing'
 import { Billing } from './pages/billing'
 import { Photos } from './pages/photos'
 import { ShareViewPage } from './pages/share-view'
-import { AuditLog } from './pages/admin/audit-log'
-import { AbuseReports } from './pages/admin/abuse-reports'
 import { ForgotPassword } from './pages/forgot-password'
 import { ResetPassword } from './pages/reset-password'
-import { SsoSetup } from './pages/admin/sso'
-import { DataExport } from './pages/admin/data-export'
-import { ApiTokens } from './pages/admin/api-tokens'
 import { Compliance } from './pages/admin/compliance'
 import { AdminUsers } from './pages/admin/users'
-import { AdminWaitlist } from './pages/admin/waitlist'
 import { AdminBilling } from './pages/admin/billing-overview'
-import { StoragePools } from './pages/admin/storage-pools'
-import { Monitoring } from './pages/admin/monitoring'
-import { AdminMigrations } from './pages/admin/migrations'
+import { Dashboard } from './pages/admin/dashboard'
+import { Infrastructure } from './pages/admin/infrastructure'
+import { Security as AdminSecurity } from './pages/admin/security'
 import { VerifyEmail } from './pages/verify-email'
 import { Migration } from './pages/migration'
 import { Team } from './pages/team'
@@ -264,110 +258,21 @@ export function App() {
           />
           <Route path="/pricing" element={<Pricing />} />
           <Route path="/billing" element={<Navigate to="/settings/billing" replace />} />
-          <Route
-            path="/admin"
-            element={
-              <ProtectedRoute>
-                <Navigate to="/admin/monitoring" replace />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/admin/monitoring"
-            element={
-              <ProtectedRoute>
-                <Monitoring />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/admin/audit-log"
-            element={
-              <ProtectedRoute>
-                <AuditLog />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/admin/abuse-reports"
-            element={
-              <ProtectedRoute>
-                <AbuseReports />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/admin/sso"
-            element={
-              <ProtectedRoute>
-                <SsoSetup />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/admin/data-export"
-            element={
-              <ProtectedRoute>
-                <DataExport />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/admin/api-tokens"
-            element={
-              <ProtectedRoute>
-                <ApiTokens />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/admin/users"
-            element={
-              <ProtectedRoute>
-                <AdminUsers />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/admin/waitlist"
-            element={
-              <ProtectedRoute>
-                <AdminWaitlist />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/admin/billing"
-            element={
-              <ProtectedRoute>
-                <AdminBilling />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/admin/storage-pools"
-            element={
-              <ProtectedRoute>
-                <StoragePools />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/admin/migrations"
-            element={
-              <ProtectedRoute>
-                <AdminMigrations />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/admin/compliance"
-            element={
-              <ProtectedRoute>
-                <Compliance />
-              </ProtectedRoute>
-            }
-          />
+          <Route path="/admin" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+          <Route path="/admin/users" element={<ProtectedRoute><AdminUsers /></ProtectedRoute>} />
+          <Route path="/admin/infrastructure" element={<ProtectedRoute><Infrastructure /></ProtectedRoute>} />
+          <Route path="/admin/security" element={<ProtectedRoute><AdminSecurity /></ProtectedRoute>} />
+          <Route path="/admin/billing" element={<ProtectedRoute><AdminBilling /></ProtectedRoute>} />
+          <Route path="/admin/compliance" element={<ProtectedRoute><Compliance /></ProtectedRoute>} />
+          <Route path="/admin/monitoring" element={<Navigate to="/admin" replace />} />
+          <Route path="/admin/audit-log" element={<Navigate to="/admin/security" replace />} />
+          <Route path="/admin/storage-pools" element={<Navigate to="/admin/infrastructure" replace />} />
+          <Route path="/admin/migrations" element={<Navigate to="/admin/infrastructure" replace />} />
+          <Route path="/admin/abuse-reports" element={<Navigate to="/admin/security" replace />} />
+          <Route path="/admin/waitlist" element={<Navigate to="/admin/users" replace />} />
+          <Route path="/admin/sso" element={<Navigate to="/admin" replace />} />
+          <Route path="/admin/data-export" element={<Navigate to="/admin" replace />} />
+          <Route path="/admin/api-tokens" element={<Navigate to="/admin" replace />} />
           <Route
             path="/migration"
             element={
