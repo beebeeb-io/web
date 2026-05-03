@@ -268,6 +268,14 @@ export function UploadZone({ onFiles, onFolderFiles, children }: UploadZoneProps
 // Separate browse button for toolbar use
 export function useBrowseFiles(onFiles: (files: File[]) => void) {
   const inputRef = useRef<HTMLInputElement>(null)
+  // Stabilize the callback via a ref so HiddenInput doesn't get a new
+  // function identity on every parent render — otherwise React unmounts
+  // and remounts the <input>, detaching it from any open file picker
+  // before the change event can fire.
+  const onFilesRef = useRef(onFiles)
+  useEffect(() => {
+    onFilesRef.current = onFiles
+  }, [onFiles])
 
   const browse = useCallback(() => {
     inputRef.current?.click()
@@ -276,10 +284,10 @@ export function useBrowseFiles(onFiles: (files: File[]) => void) {
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = Array.from(e.target.files ?? [])
-      if (files.length > 0) onFiles(files)
+      if (files.length > 0) onFilesRef.current(files)
       e.target.value = ''
     },
-    [onFiles],
+    [],
   )
 
   const HiddenInput = useCallback(
@@ -301,6 +309,10 @@ export function useBrowseFiles(onFiles: (files: File[]) => void) {
 // Browse folders via hidden input with webkitdirectory
 export function useBrowseFolders(onFolderFiles: (files: FolderFile[]) => void) {
   const inputRef = useRef<HTMLInputElement>(null)
+  const onFolderFilesRef = useRef(onFolderFiles)
+  useEffect(() => {
+    onFolderFilesRef.current = onFolderFiles
+  }, [onFolderFiles])
 
   const browseFolder = useCallback(() => {
     inputRef.current?.click()
@@ -317,10 +329,10 @@ export function useBrowseFolders(onFolderFiles: (files: FolderFile[]) => void) {
         relativePath: f.webkitRelativePath || f.name,
       }))
 
-      onFolderFiles(folderFiles)
+      onFolderFilesRef.current(folderFiles)
       e.target.value = ''
     },
-    [onFolderFiles],
+    [],
   )
 
   const HiddenFolderInput = useCallback(
