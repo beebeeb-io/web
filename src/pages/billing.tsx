@@ -394,6 +394,14 @@ export function Billing() {
       />
 
       <div className="p-7 space-y-6">
+        {/* Demo mode banner — Stripe is not connected, subscription is simulated */}
+        {sub?.is_mock && (
+          <div className="px-4 py-3 rounded-lg border border-amber/30 bg-amber-bg text-[13px] text-ink-2">
+            <span className="font-semibold text-amber-deep">Demo mode</span>
+            {' '}— Stripe billing is not connected. This subscription is simulated and has no real charges.
+          </div>
+        )}
+
         {/* Success banner after Stripe checkout */}
         {showSuccess && (
           <div className="flex items-center gap-3 p-3.5 bg-green/10 border border-green/30 rounded-lg text-sm">

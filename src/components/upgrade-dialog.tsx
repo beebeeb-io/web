@@ -3,7 +3,8 @@ import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from './bb-button'
 import { BBChip } from './bb-chip'
 import { Icon } from './icons'
-import { createCheckoutSession, subscribe } from '../lib/api'
+import { useToast } from './toast'
+import { createCheckoutSession } from '../lib/api'
 
 type BillingCycle = 'monthly' | 'yearly'
 
@@ -15,6 +16,7 @@ interface UpgradeDialogProps {
   minSeats: number
   open: boolean
   onClose: () => void
+  /** Reserved for future non-redirect upgrade flows. Stripe checkout redirects, so this is currently unused. */
   onSuccess?: () => void
 }
 
@@ -26,7 +28,6 @@ export function UpgradeDialog({
   minSeats,
   open,
   onClose,
-  onSuccess,
 }: UpgradeDialogProps) {
   const perSeat = planId !== 'personal'
   const [seats, setSeats] = useState(perSeat ? Math.max(minSeats, 3) : 1)
@@ -34,6 +35,7 @@ export function UpgradeDialog({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
+  const { showToast } = useToast()
 
   // Reset seats when plan changes (e.g. switching between Personal / Team / Business)
   useEffect(() => {
@@ -51,35 +53,28 @@ export function UpgradeDialog({
     setLoading(true)
     setError(null)
     try {
-      // Try Stripe checkout first; fall back to mock subscribe if Stripe is not configured
-      try {
-        const { url } = await createCheckoutSession({
-          plan: planId,
-          billing_cycle: cycle,
-          seats,
+      const { url } = await createCheckoutSession({
+        plan: planId,
+        billing_cycle: cycle,
+        seats,
+      })
+      window.location.href = url
+    } catch (checkoutErr) {
+      if (checkoutErr instanceof Error && 'status' in checkoutErr && (checkoutErr as { status: number }).status === 400) {
+        showToast({
+          icon: 'x',
+          title: 'Billing not configured',
+          description: 'Stripe integration is pending. Contact support to upgrade.',
+          danger: true,
         })
-        window.location.href = url
+        onClose()
         return
-      } catch (checkoutErr) {
-        // If Stripe isn't configured (400), fall back to mock billing
-        if (checkoutErr instanceof Error && 'status' in checkoutErr && (checkoutErr as { status: number }).status === 400) {
-          await subscribe({
-            plan: planId,
-            billing_cycle: cycle,
-            seats,
-          })
-          onSuccess?.()
-          onClose()
-          return
-        }
-        throw checkoutErr
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong')
+      setError(checkoutErr instanceof Error ? checkoutErr.message : 'Something went wrong')
     } finally {
       setLoading(false)
     }
-  }, [planId, cycle, seats, onClose, onSuccess])
+  }, [planId, cycle, seats, onClose, showToast])
 
   if (!open) return null
 
