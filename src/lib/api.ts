@@ -2178,6 +2178,13 @@ export async function decommissionPool(
   })
 }
 
+export async function reconcileUsage(): Promise<{
+  pools_corrected: number
+  total_drift_bytes: number
+}> {
+  return request('/api/v1/admin/reconcile-usage', { method: 'POST' })
+}
+
 // ─── Admin: CSP reports ────────────────────────────────
 
 export interface CspReport {
