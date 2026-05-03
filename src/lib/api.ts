@@ -1956,6 +1956,10 @@ export interface HealthResponse {
   version: string
   uptime_seconds: number
   db_latency_ms: number
+  background_workers?: {
+    any_stale: boolean
+    [key: string]: unknown
+  }
 }
 
 export async function getAdminStats(): Promise<AdminStats> {
@@ -2150,4 +2154,75 @@ async function readError(res: Response): Promise<string> {
   } catch {
     return res.statusText
   }
+}
+
+// ─── Admin: pool migration ─────────────────────────────
+
+export async function migrateAllPool(
+  poolId: string,
+  targetPoolId: string,
+): Promise<{ migrations_queued: number }> {
+  return request(`/api/v1/admin/storage-pools/${poolId}/migrate-all`, {
+    method: 'POST',
+    body: JSON.stringify({ target_pool_id: targetPoolId }),
+  })
+}
+
+export async function decommissionPool(
+  poolId: string,
+  targetPoolId: string,
+): Promise<{ pool_id: string; status: string; migrations_queued: number }> {
+  return request(`/api/v1/admin/storage-pools/${poolId}/decommission`, {
+    method: 'POST',
+    body: JSON.stringify({ target_pool_id: targetPoolId }),
+  })
+}
+
+// ─── Admin: CSP reports ────────────────────────────────
+
+export interface CspReport {
+  id: string
+  document_uri: string | null
+  violated_directive: string | null
+  blocked_uri: string | null
+  source_file: string | null
+  line_number: number | null
+  created_at: string
+}
+
+export async function listCspReports(params?: {
+  limit?: number
+  offset?: number
+}): Promise<{ reports: CspReport[]; total: number }> {
+  const q = new URLSearchParams()
+  if (params?.limit) q.set('limit', String(params.limit))
+  if (params?.offset) q.set('offset', String(params.offset))
+  const qs = q.toString()
+  return request(`/api/v1/admin/csp-reports${qs ? `?${qs}` : ''}`)
+}
+
+// ─── Admin: user login IPs ────────────────────────────
+
+export interface LoginIp {
+  ip: string
+  first_seen: string
+  last_seen: string
+}
+
+export async function getUserLoginIps(userId: string): Promise<{ ips: LoginIp[] }> {
+  return request(`/api/v1/admin/users/${userId}/login-ips`)
+}
+
+// ─── Admin: growth data ───────────────────────────────
+
+export interface GrowthDataPoint {
+  date: string
+  value: number
+}
+
+export async function getAdminGrowthData(
+  metric: 'signups' | 'storage' | 'shares',
+  days: number = 30,
+): Promise<{ data: GrowthDataPoint[] }> {
+  return request(`/api/v1/admin/stats/growth?metric=${metric}&days=${days}`)
 }
