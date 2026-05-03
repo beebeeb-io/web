@@ -335,6 +335,7 @@ export function Infrastructure() {
     | (HealthResponse & {
         websocket_connections?: number
         blob_store?: { status?: string; pool_count?: number }
+        checks?: { database?: { latency_ms?: number; status?: string } }
       })
     | null
   const isHealthy = health?.status === 'ok' || health?.status === 'healthy'
@@ -926,9 +927,11 @@ export function Infrastructure() {
               <div className="rounded-lg border border-line bg-paper p-3">
                 <div className="text-[10px] text-ink-4 uppercase tracking-wide mb-1">Database</div>
                 <div className="font-mono text-[12px] text-ink">
-                  {health?.db_latency_ms != null
-                    ? `${health.db_latency_ms.toFixed(1)} ms`
-                    : '--'}
+                  {healthAny?.checks?.database
+                    ? `${healthAny.checks.database.status ?? 'ok'} · ${healthAny.checks.database.latency_ms ?? 0} ms`
+                    : health?.db_latency_ms != null
+                      ? `${health.db_latency_ms} ms`
+                      : '--'}
                 </div>
               </div>
               <div className="rounded-lg border border-line bg-paper p-3">

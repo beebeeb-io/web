@@ -183,9 +183,9 @@ export function AdminUsers() {
               : 'border-transparent text-ink-3 hover:text-ink-2'
           }`}
         >
-          Waitlist
-          <span className="ml-1.5 font-mono text-[10px] text-ink-3">
-            {waitlist.length.toLocaleString()}
+          Waitlist{' '}
+          <span className="font-mono text-[10px] text-ink-3">
+            {waitlist.length}
           </span>
         </button>
       </div>
