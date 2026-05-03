@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { Icon } from '../../components/icons'
 import type { IconName } from '../../components/icons'
 import { DriveLayout } from '../../components/drive-layout'
+import { HealthBadge } from '../../components/admin/health-badge'
 
 type NavItem = {
   id: string
@@ -12,18 +13,12 @@ type NavItem = {
 }
 
 const navItems: NavItem[] = [
-  { id: 'monitoring', label: 'Monitoring', icon: 'eye', href: '/admin/monitoring' },
+  { id: 'dashboard', label: 'Dashboard', icon: 'eye', href: '/admin' },
   { id: 'users', label: 'Users', icon: 'users', href: '/admin/users' },
-  { id: 'waitlist', label: 'Waitlist', icon: 'mail', href: '/admin/waitlist' },
+  { id: 'infrastructure', label: 'Infrastructure', icon: 'cloud', href: '/admin/infrastructure' },
+  { id: 'security', label: 'Security', icon: 'shield', href: '/admin/security' },
   { id: 'billing', label: 'Billing', icon: 'file', href: '/admin/billing' },
-  { id: 'storage-pools', label: 'Storage pools', icon: 'cloud', href: '/admin/storage-pools' },
-  { id: 'migrations', label: 'Migrations', icon: 'arrow-up', href: '/admin/migrations' },
-  { id: 'audit-log', label: 'Audit log', icon: 'shield', href: '/admin/audit-log' },
-  { id: 'abuse-reports', label: 'Abuse reports', icon: 'shield', href: '/admin/abuse-reports' },
   { id: 'compliance', label: 'Compliance', icon: 'check', href: '/admin/compliance' },
-  { id: 'sso', label: 'SSO / SAML', icon: 'key', href: '/admin/sso' },
-  { id: 'data-export', label: 'Data export', icon: 'download', href: '/admin/data-export' },
-  { id: 'api-tokens', label: 'API tokens', icon: 'link', href: '/admin/api-tokens' },
 ]
 
 interface AdminShellProps {
@@ -45,6 +40,7 @@ export function AdminShell({ activeSection, children }: AdminShellProps) {
           <div className="flex items-center gap-2 px-2 pb-2.5">
             <Icon name="shield" size={13} className="text-ink-3" />
             <span className="text-[13px] font-semibold text-ink">Admin</span>
+            <HealthBadge />
           </div>
           {navItems.map((item) => {
             const isActive = item.id === activeSection || location.pathname === item.href
