@@ -44,7 +44,8 @@ function formatTime(iso: string): string {
   })
 }
 
-function eventColor(ev: string): string {
+function eventColor(ev: string | null | undefined): string {
+  if (!ev) return 'var(--color-ink-2)'
   if (ev.startsWith('auth')) return 'var(--color-amber-deep)'
   if (ev.startsWith('key')) return 'oklch(0.55 0.15 30)'
   return 'var(--color-ink-2)'
