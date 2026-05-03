@@ -14,7 +14,7 @@ export function EmptyDrive({ userName, onUpload, onCreateFolder }: EmptyDrivePro
     <div className="flex-1 flex items-center justify-center relative py-12">
       {/* Honeycomb pattern */}
       <div
-        className="absolute inset-0 opacity-[0.06]"
+        className="absolute inset-0 opacity-[0.03]"
         style={{ backgroundImage: honeycombBg }}
       />
 
