@@ -30,3 +30,10 @@ FROM nginx:1.27-alpine AS runner
 COPY repos/web/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /app/dist /usr/share/nginx/html
 EXPOSE 80
+
+# Healthcheck must hit 127.0.0.1 explicitly — `localhost` resolves to ::1 first
+# in busybox getaddrinfo, but our nginx config only listens on IPv4 (`listen 80;`).
+# Using `localhost` produces 295+ failed checks at boot in prod even though
+# real users reach the site fine via Caddy → IPv4 docker network. See task 0009.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:80/ >/dev/null || exit 1
