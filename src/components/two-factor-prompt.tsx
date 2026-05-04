@@ -150,9 +150,6 @@ export function TwoFactorPrompt({
 
   return (
     <div>
-      <h3 className="text-base font-semibold text-ink mb-1.5">
-        Two-factor authentication
-      </h3>
       <p className="text-[13px] text-ink-3 leading-relaxed mb-5">
         Enter the 6-digit code from your authenticator app.
       </p>
