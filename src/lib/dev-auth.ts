@@ -1,0 +1,125 @@
+/**
+ * Dev-mode auto-auth bypass.
+ *
+ * ONLY active when `import.meta.env.DEV` is true (Vite dev server).
+ * Vite constant-folds all `import.meta.env.DEV` checks in production builds,
+ * so this code path is dead in prod and Rollup tree-shakes it.
+ *
+ * Flow:
+ *   1. POST /dev/auto-login → server returns session_token + master_key_bytes_base64
+ *   2. Store session_token in localStorage (same slot as real auth)
+ *   3. Populate sessionStorage with session-encrypted master key (same format as
+ *      key-context.tsx cacheKey()) — KeyProvider reads this on startup to mark the
+ *      vault as unlocked without needing a password prompt
+ *
+ * Gracefully degrades: if the endpoint 404s, is unreachable, or times out, the
+ * function returns false and the normal login flow runs as usual.
+ *
+ * Server-side: rust-engineer implements POST /dev/auto-login (debug builds only,
+ * gated by cfg!(debug_assertions)). Response shape:
+ *   { session_token: string, master_key_bytes_base64: string, email: string, role: string }
+ */
+
+const DEV_SESSION_FLAG = 'bb_dev_authed'
+const DEV_EMAIL = 'dev@beebeeb.dev'
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+
+interface DevAutoLoginResponse {
+  session_token: string
+  master_key_bytes_base64: string
+  email: string
+  role: string
+}
+
+/**
+ * Attempt dev auto-auth. Returns true if a session was injected.
+ *
+ * Idempotent: if localStorage already has a session token, or if the
+ * endpoint is unavailable, returns false without touching any state.
+ */
+export async function devAutoAuth(): Promise<boolean> {
+  // Not in dev mode — should never be called, but guard defensively.
+  if (!import.meta.env.DEV) return false
+
+  // If both the session token AND the session-cached master key exist, the
+  // vault is already unlocked for this tab — nothing to do.
+  const hasCachedKey =
+    !!sessionStorage.getItem('bb_sk') &&
+    !!sessionStorage.getItem('bb_iv') &&
+    !!sessionStorage.getItem('bb_mk')
+  if (localStorage.getItem('bb_session') && hasCachedKey) return false
+  // Note: no rate-limit on retry — if the server was transiently unavailable
+  // (e.g. cargo-watch rebuilding), we want to try again on the next page load.
+
+  try {
+    const res = await fetch(`${API_URL}/dev/auto-login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: DEV_EMAIL }),
+      signal: AbortSignal.timeout(3000),
+    })
+
+    if (!res.ok) {
+      // Endpoint might not exist yet (404) or server isn't running — skip silently.
+      sessionStorage.setItem(DEV_SESSION_FLAG, 'unavailable')
+      return false
+    }
+
+    const data = await res.json() as DevAutoLoginResponse
+
+    // 1. Session token
+    localStorage.setItem('bb_session', data.session_token)
+
+    // 2. Decode master key from URL-safe base64 (server uses URL_SAFE_NO_PAD).
+    //    atob() only handles standard base64 — convert `-` → `+` and `_` → `/`.
+    const b64Standard = data.master_key_bytes_base64
+      .replace(/-/g, '+')
+      .replace(/_/g, '/')
+    const masterKeyBytes = Uint8Array.from(atob(b64Standard), (c) => c.charCodeAt(0))
+
+    // 3. Session-encrypt the master key and store in sessionStorage — matching the
+    //    exact format used by key-context.tsx cacheKey(). KeyProvider's
+    //    restoreCachedKey() will find it on startup and call setIsUnlocked(true).
+    const sessionKey = crypto.getRandomValues(new Uint8Array(32))
+    const iv = crypto.getRandomValues(new Uint8Array(12))
+    const ck = await crypto.subtle.importKey(
+      'raw',
+      sessionKey.buffer as ArrayBuffer,
+      'AES-GCM',
+      false,
+      ['encrypt'],
+    )
+    const ct = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      ck,
+      masterKeyBytes.buffer as ArrayBuffer,
+    )
+    sessionStorage.setItem('bb_sk', btoa(String.fromCharCode(...sessionKey)))
+    sessionStorage.setItem('bb_iv', btoa(String.fromCharCode(...iv)))
+    sessionStorage.setItem('bb_mk', btoa(String.fromCharCode(...new Uint8Array(ct))))
+
+    // 4. Record success so DevBanner knows what email/role to display.
+    sessionStorage.setItem(
+      DEV_SESSION_FLAG,
+      JSON.stringify({ email: data.email ?? DEV_EMAIL, role: data.role ?? 'superadmin' }),
+    )
+
+    return true
+  } catch {
+    // Network failure, timeout, etc. — fall through to normal login.
+    sessionStorage.setItem(DEV_SESSION_FLAG, 'unavailable')
+    return false
+  }
+}
+
+/** Returns the email+role if this session was auto-authenticated by dev bypass. */
+export function getDevAuthInfo(): { email: string; role: string } | null {
+  if (!import.meta.env.DEV) return null
+  const raw = sessionStorage.getItem(DEV_SESSION_FLAG)
+  if (!raw || raw === 'unavailable') return null
+  try {
+    return JSON.parse(raw) as { email: string; role: string }
+  } catch {
+    return null
+  }
+}

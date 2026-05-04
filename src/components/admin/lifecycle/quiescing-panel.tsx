@@ -74,7 +74,7 @@ export function QuiescingPanel({
   })
 
   return (
-    <div className="max-w-2xl">
+    <div>
       {/* Status banner */}
       <div
         className="flex items-center gap-2.5 px-4 py-3 rounded-lg mb-5"

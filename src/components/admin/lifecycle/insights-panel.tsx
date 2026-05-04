@@ -66,7 +66,7 @@ export function InsightsPanel({
   const targetName = targetPool?.display_name || targetPool?.name || 'the target pool'
 
   return (
-    <div className="max-w-2xl">
+    <div>
       {/* Section header */}
       <p className="text-xs font-medium text-ink-3 uppercase tracking-wider mb-3">
         Pool usage

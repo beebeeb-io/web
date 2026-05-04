@@ -12,6 +12,7 @@ import { VaultUnlock } from './components/vault-unlock'
 import { OfflineBanner } from './components/offline-banner'
 import { ImpersonationProvider } from './lib/impersonation-context'
 import { ImpersonationBanner } from './components/impersonation-banner'
+import { DevAuthGate } from './components/dev-auth-gate'
 import { registerErrorNotifier, registerSessionExpiredHandler } from './lib/api'
 import { CommandPalette } from './components/command-palette'
 import { ShortcutsCheatsheet } from './components/shortcuts-cheatsheet'
@@ -135,6 +136,7 @@ export function App() {
     <ThemeProvider>
     <BrowserRouter>
       <ImpersonationProvider>
+      <DevAuthGate>
       <AuthProvider>
         <KeyProvider>
         <WsProvider>
@@ -335,6 +337,7 @@ export function App() {
         </WsProvider>
         </KeyProvider>
       </AuthProvider>
+      </DevAuthGate>
       </ImpersonationProvider>
     </BrowserRouter>
     </ThemeProvider>

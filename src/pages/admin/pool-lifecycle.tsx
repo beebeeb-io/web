@@ -178,44 +178,40 @@ export function PoolLifecycle() {
     }
   }
 
+  // Build the subtitle: breadcrumb + pool mono name
+  const subtitle = pool
+    ? `${pool.name}${pool.is_default ? ' · default' : ''}`
+    : undefined
+
   return (
     <AdminShell activeSection="infrastructure">
-      <div className="flex flex-col flex-1 min-h-0">
-        {/* Page header */}
-        <div className="px-7 pt-5 pb-4 border-b border-line">
-          {/* Breadcrumb */}
-          <Link
-            to="/admin/infrastructure"
-            className="inline-flex items-center gap-1 text-xs text-ink-3 hover:text-ink-2 transition-colors mb-3"
-          >
-            <Icon name="chevron-right" size={12} className="rotate-180" />
-            Infrastructure
-          </Link>
-
-          <div className="flex items-start gap-3">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2.5 flex-wrap">
-                <h2 className="text-xl font-bold text-ink truncate">
-                  {pool?.display_name ?? pool?.name ?? 'Pool lifecycle'}
-                </h2>
-                {!loading && pool && <PhaseBadge phase={phase} />}
-              </div>
-              {pool && (
-                <p className="text-[13px] text-ink-3 mt-0.5 font-mono">
-                  {pool.name}
-                  {pool.is_default && (
-                    <span className="ml-2 text-[11px] text-ink-4">(default)</span>
-                  )}
-                </p>
-              )}
+      {/* Header — matches the AdminHeader pattern from infrastructure.tsx */}
+      <div className="px-7 pt-5 pb-4 border-b border-line">
+        <Link
+          to="/admin/infrastructure"
+          className="inline-flex items-center gap-1 text-xs text-ink-3 hover:text-ink-2 transition-colors mb-3"
+        >
+          <Icon name="chevron-right" size={12} className="rotate-180" />
+          Infrastructure
+        </Link>
+        <div className="flex items-center gap-3">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <h2 className="text-xl font-bold text-ink">
+                {pool?.display_name ?? pool?.name ?? 'Pool lifecycle'}
+              </h2>
+              {!loading && pool && <PhaseBadge phase={phase} />}
             </div>
+            {subtitle && (
+              <p className="font-mono text-[12px] text-ink-3 mt-0.5">{subtitle}</p>
+            )}
           </div>
         </div>
+      </div>
 
-        {/* Wizard content */}
-        <div className="flex-1 overflow-y-auto px-7 py-6">
-          {renderPanel()}
-        </div>
+      {/* Wizard content — same flex-1 overflow-y-auto pattern as infrastructure.tsx */}
+      <div className="flex-1 overflow-y-auto px-7 py-6">
+        {renderPanel()}
       </div>
     </AdminShell>
   )

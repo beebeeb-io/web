@@ -105,7 +105,7 @@ export function DrainedPanel({
   }
 
   return (
-    <div className="max-w-2xl">
+    <div>
       {/* Status banner */}
       <div className="rounded-lg border border-line bg-paper overflow-hidden mb-5">
         <div className="flex items-center gap-2 px-4 py-2.5 border-b border-line">

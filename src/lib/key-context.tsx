@@ -107,12 +107,18 @@ export function KeyProvider({ children }: { children: ReactNode }) {
         setCryptoLoading(false)
         const exists = await hasVault()
         setVaultExists(exists)
-        setVaultChecked(true)
+        // Restore the session-encrypted key BEFORE setting vaultChecked=true.
+        // ProtectedRoute guards on vaultChecked; if we set it before the
+        // restore completes, there's a window where vaultChecked=true but
+        // isUnlocked=false → ProtectedRoute sends users to /login even though
+        // their cached key is about to be found. Setting vaultChecked last
+        // ensures ProtectedRoute only renders once both states are stable.
         const cached = await restoreCachedKey()
         if (cached) {
           masterKeyRef.current = cached
           setIsUnlocked(true)
         }
+        setVaultChecked(true)
       })
       .catch((err) => {
         setCryptoError(

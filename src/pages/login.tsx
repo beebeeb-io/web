@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, useState, useCallback } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { AuthShell } from '../components/auth-shell'
 import { BBButton } from '../components/bb-button'
@@ -8,6 +8,7 @@ import { TwoFactorPrompt } from '../components/two-factor-prompt'
 import { DeviceProvision } from '../components/device-provision'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
+import { devAutoAuth } from '../lib/dev-auth'
 import { startPasskeyLogin, finishPasskeyLogin, getMe, setToken, hexToBytes, opaqueLoginStart as apiOpaqueLoginStart, opaqueLoginFinish as apiOpaqueLoginFinish, serverOptsToGetOptions, credentialToAuthenticationJSON } from '../lib/api'
 import { opaqueLoginStart, opaqueLoginFinish, toBase64, fromBase64 } from '../lib/crypto'
 
@@ -25,6 +26,18 @@ export function Login() {
   // 2FA state
   const [partialToken, setPartialToken] = useState<string | null>(null)
   const [passkeyLoading, setPasskeyLoading] = useState(false)
+  const [devLoading, setDevLoading] = useState(false)
+
+  const handleDevSkip = useCallback(async () => {
+    if (!import.meta.env.DEV) return
+    setDevLoading(true)
+    const ok = await devAutoAuth()
+    if (ok) {
+      navigate('/')
+    } else {
+      setDevLoading(false)
+    }
+  }, [navigate])
 
   // Device provisioning state — shown when OPAQUE auth succeeds but no vault exists on this device
   const [needsProvision, setNeedsProvision] = useState(false)
@@ -271,6 +284,22 @@ export function Login() {
           </span>
           {passkeyLoading ? 'Waiting for device...' : 'Sign in with passkey'}
         </button>
+
+        {/* Dev-mode bypass — only rendered when Vite DEV flag is true (tree-shaken in prod) */}
+        {import.meta.env.DEV && (
+          <button
+            type="button"
+            onClick={handleDevSkip}
+            disabled={devLoading}
+            className="w-full mt-3 flex items-center justify-center gap-1.5 py-2 text-xs font-mono text-ink-3 hover:text-ink-2 border border-dashed border-line rounded-lg transition-colors disabled:opacity-50"
+          >
+            {devLoading ? (
+              <><span className="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" /> authenticating…</>
+            ) : (
+              <>⚡ Skip to app (dev auto-login)</>
+            )}
+          </button>
+        )}
 
         <p className="text-xs text-ink-3 text-center mt-5">
           New to Beebeeb?{' '}

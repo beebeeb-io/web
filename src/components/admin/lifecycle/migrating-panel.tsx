@@ -78,7 +78,7 @@ export function MigratingPanel({
   const pct = runProgress ? Math.round(runProgress.phase_progress * 100) : 0
 
   return (
-    <div className="max-w-2xl">
+    <div>
       {/* Progress section */}
       <p className="text-xs font-medium text-ink-3 uppercase tracking-wider mb-3">
         Migration progress
