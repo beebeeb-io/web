@@ -111,9 +111,16 @@ async function request<T>(
   reportConnection('ok')
 
   if (res.status === 401) {
-    clearToken()
-    onSessionExpired?.()
-    throw new ApiError('Session expired', 401)
+    // Only treat 401 as "session expired" when this request was authenticated
+    // (had a stored token). For unauthenticated requests — e.g. wrong-password
+    // login attempts — fall through to the body-surfacing branch below so the
+    // user sees the actual server error message instead of misleading copy
+    // suggesting their session timed out. See task 0010.
+    if (token) {
+      clearToken()
+      onSessionExpired?.()
+      throw new ApiError('Session expired', 401)
+    }
   }
 
   if (!res.ok) {
