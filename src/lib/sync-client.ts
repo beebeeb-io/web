@@ -179,6 +179,13 @@ export class SyncClient {
           for (const op of ops) {
             this.applyRemoteOp(op)
           }
+          // If catch-up returned no ops and tree is empty (page refresh
+          // cleared in-memory state but lastSeq persisted), reload the
+          // full snapshot so we don't show an empty drive.
+          if (this.tree.size === 0) {
+            const snap = await getSnapshot()
+            this.applySnapshot(snap)
+          }
         } catch (err) {
           // Catch-up failed — fall back to full snapshot to recover.
           console.warn('[SyncClient] catch-up failed, fetching snapshot', err)
