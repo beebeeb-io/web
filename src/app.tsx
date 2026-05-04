@@ -35,6 +35,7 @@ import { Photos } from './pages/photos'
 import { ShareViewPage } from './pages/share-view'
 import { ForgotPassword } from './pages/forgot-password'
 import { ResetPassword } from './pages/reset-password'
+import { RecoverWithPhrase } from './pages/recover-with-phrase'
 import { Compliance } from './pages/admin/compliance'
 import { AdminUsers } from './pages/admin/users'
 import { AdminBilling } from './pages/admin/billing-overview'
@@ -192,6 +193,14 @@ export function App() {
             element={
               <GuestRoute>
                 <ResetPassword />
+              </GuestRoute>
+            }
+          />
+          <Route
+            path="/recover-with-phrase"
+            element={
+              <GuestRoute>
+                <RecoverWithPhrase />
               </GuestRoute>
             }
           />

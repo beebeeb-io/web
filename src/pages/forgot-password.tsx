@@ -1,90 +1,165 @@
-import { type FormEvent, useState } from 'react'
-import { Link } from 'react-router-dom'
+/**
+ * Trouble signing in? — Recovery path chooser.
+ *
+ * OPAQUE users cannot use a traditional email password-reset link: the reset
+ * would overwrite the OPAQUE password file but leave the vault master key
+ * intact, making the vault permanently unreadable. This page routes users to
+ * the correct recovery path based on what they have access to.
+ *
+ * The old email-reset flow is intentionally not offered here. It's disabled
+ * at the route level for any user with OPAQUE credentials.
+ */
+
+import { Link, useNavigate } from 'react-router-dom'
 import { AuthShell } from '../components/auth-shell'
-import { BBButton } from '../components/bb-button'
-import { BBInput } from '../components/bb-input'
-import { Icon } from '../components/icons'
-import { forgotPassword } from '../lib/api'
+import { Icon, type IconName } from '../components/icons'
+
+interface OptionCardProps {
+  icon: IconName
+  title: string
+  description: string
+  cta: string
+  ctaVariant?: 'amber' | 'default' | 'ghost'
+  onClick?: () => void
+  disabled?: boolean
+  badge?: string
+}
+
+function OptionCard({ icon, title, description, cta, ctaVariant = 'default', onClick, disabled, badge }: OptionCardProps) {
+  return (
+    <div
+      className={`relative rounded-lg border p-4 transition-colors ${
+        disabled
+          ? 'border-line bg-paper-2 opacity-60'
+          : 'border-line bg-paper hover:border-line-2'
+      }`}
+    >
+      {badge && (
+        <span className="absolute top-3 right-3 px-1.5 py-0.5 bg-paper-3 border border-line rounded text-[10px] font-medium text-ink-3 uppercase tracking-wide">
+          {badge}
+        </span>
+      )}
+      <div className="flex items-start gap-3 mb-3">
+        <div className="w-8 h-8 rounded-md bg-paper-2 border border-line flex items-center justify-center shrink-0">
+          <Icon name={icon} size={15} className="text-ink-2" />
+        </div>
+        <div>
+          <div className="text-[13px] font-semibold text-ink mb-0.5">{title}</div>
+          <div className="text-[12px] text-ink-3 leading-relaxed">{description}</div>
+        </div>
+      </div>
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        className={`w-full text-[12.5px] font-medium py-1.5 px-3 rounded-md border transition-colors ${
+          ctaVariant === 'amber'
+            ? 'bg-amber text-[oklch(0.22_0.01_70)] border-transparent hover:brightness-95'
+            : ctaVariant === 'ghost'
+            ? 'bg-transparent border-line text-ink-3 cursor-default'
+            : 'bg-paper-2 border-line text-ink-2 hover:bg-paper-3'
+        }`}
+      >
+        {cta}
+      </button>
+    </div>
+  )
+}
 
 export function ForgotPassword() {
-  const [email, setEmail] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-  const [submitted, setSubmitted] = useState(false)
-  const [error, setError] = useState('')
+  const navigate = useNavigate()
+  const [showNoRecovery, setShowNoRecovery] = React.useState(false)
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault()
-    if (!email.trim() || submitting) return
-    setError('')
-    setSubmitting(true)
-    try {
-      await forgotPassword(email.trim())
-      // Server returns the same response whether the address exists or not
-      // — that's deliberate, so the UI must mirror it. Always show success.
-      setSubmitted(true)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not send reset email')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  if (submitted) {
+  if (showNoRecovery) {
     return (
       <AuthShell
-        title="Check your inbox"
-        subtitle="If an account exists for that address, we just sent a reset link. The link expires in 1 hour."
+        title="We cannot recover your account"
+        hideTrust
       >
-        <div className="flex items-start gap-2.5 p-3 mb-5 bg-amber-bg border border-amber/20 rounded-md">
-          <Icon name="shield" size={14} className="text-amber-deep shrink-0 mt-0.5" />
-          <p className="text-xs text-ink-2 leading-relaxed">
-            We can&apos;t tell you whether the email is registered — that would
-            leak which accounts exist. If you don&apos;t receive a link, the
-            address probably isn&apos;t on file.
+        <div className="space-y-4">
+          <div className="flex items-start gap-2.5 p-3 rounded-md bg-paper-2 border border-line">
+            <Icon name="shield" size={14} className="text-ink-3 shrink-0 mt-0.5" />
+            <p className="text-[12.5px] text-ink-2 leading-relaxed">
+              Beebeeb is zero-knowledge by architecture. We never see your password
+              or encryption keys. Without your recovery phrase or a logged-in device,
+              we have no way to restore access to your vault.
+            </p>
+          </div>
+
+          <p className="text-[12.5px] text-ink-2 leading-relaxed">
+            Your files are encrypted with keys only you hold. Even under a court
+            order, we could not hand over your data in readable form.
           </p>
+
+          <p className="text-[12.5px] text-ink-3 leading-relaxed">
+            To prevent this in future, save your recovery phrase somewhere safe
+            (password manager, printed copy in a fireproof location).
+          </p>
+
+          <div className="pt-2 space-y-2">
+            <a
+              href="https://docs.beebeeb.io/recovery"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 text-[12.5px] text-amber-deep hover:underline underline-offset-2"
+            >
+              <Icon name="link" size={12} />
+              Recovery guide — preventing this in future
+            </a>
+            <Link
+              to="/settings/delete-account"
+              className="flex items-center gap-1.5 text-[12.5px] text-ink-3 hover:text-ink-2 transition-colors"
+            >
+              <Icon name="trash" size={12} />
+              Delete account and start fresh
+            </Link>
+          </div>
+
+          <button
+            onClick={() => setShowNoRecovery(false)}
+            className="text-[12px] text-ink-3 hover:text-ink-2 transition-colors mt-1"
+          >
+            ← Back to recovery options
+          </button>
         </div>
-        <Link to="/login">
-          <BBButton variant="default" size="lg" className="w-full justify-center">
-            Back to sign in
-          </BBButton>
-        </Link>
       </AuthShell>
     )
   }
 
   return (
     <AuthShell
-      title="Reset your password"
-      subtitle="Enter the email you signed up with. We&rsquo;ll send a one-time link."
+      title="Trouble signing in?"
+      subtitle="Choose the recovery option that applies to you."
     >
-      <form onSubmit={handleSubmit}>
-        <label className="block text-xs font-medium text-ink-2 mb-1.5">
-          Email
-        </label>
-        <BBInput
-          type="email"
-          autoComplete="email"
-          autoFocus
-          required
-          placeholder="you@example.com"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
+      <div className="space-y-3">
+        <OptionCard
+          icon="key"
+          title="I have my recovery phrase"
+          description="The 12-word phrase shown during account setup. Use it to set a new password."
+          cta="Recover with phrase →"
+          ctaVariant="amber"
+          onClick={() => navigate('/recover-with-phrase')}
         />
 
-        {error && <p className="text-xs text-red mt-3">{error}</p>}
+        <OptionCard
+          icon="cloud"
+          title="I have another device logged in"
+          description="Approve access from a device where you're already signed in — no phrase needed."
+          cta="Coming soon"
+          ctaVariant="ghost"
+          disabled
+          badge="Soon"
+        />
 
-        <BBButton
-          type="submit"
-          variant="amber"
-          size="lg"
-          className="w-full mt-4"
-          disabled={submitting || !email.trim()}
-        >
-          {submitting ? 'Sending...' : 'Send reset link'}
-        </BBButton>
-      </form>
+        <OptionCard
+          icon="x"
+          title="I have neither"
+          description="We'll explain what this means for your data and your options."
+          cta="Show my options"
+          onClick={() => setShowNoRecovery(true)}
+        />
+      </div>
 
-      <div className="text-center mt-4">
+      <div className="text-center mt-5">
         <Link to="/login" className="text-[12px] text-ink-3 hover:text-ink-2 transition-colors">
           Back to sign in
         </Link>
@@ -92,3 +167,6 @@ export function ForgotPassword() {
     </AuthShell>
   )
 }
+
+// React import needed for useState
+import React from 'react'

@@ -253,6 +253,61 @@ export async function opaqueLoginFinish(
   return data
 }
 
+// ─── Recovery-phrase auth endpoints (server task 0034) ────────────────────
+// These endpoints don't exist yet. Returns null on 404 so the UI can show a
+// "service unavailable" message rather than crashing.
+
+/**
+ * POST /api/v1/auth/recover-with-phrase-start
+ *
+ * Client sends: email + recovery_check (HMAC-SHA256 of master_key over
+ * "beebeeb-recovery-check", base64-encoded). Server verifies the check
+ * matches the stored value, then initiates an OPAQUE re-registration and
+ * returns a short-lived recovery_token plus the OPAQUE server message for
+ * the client to complete registration.
+ */
+export async function recoverWithPhraseStart(
+  email: string,
+  recoveryCheck: string,
+): Promise<{ recovery_token: string; opaque_server_message: string } | null> {
+  try {
+    return await request<{ recovery_token: string; opaque_server_message: string }>(
+      '/api/v1/auth/recover-with-phrase-start',
+      { method: 'POST', body: JSON.stringify({ email, recovery_check: recoveryCheck }) },
+    )
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null
+    throw err
+  }
+}
+
+/**
+ * POST /api/v1/auth/recover-with-phrase-finalize
+ *
+ * Client sends the OPAQUE upload message (output of opaqueRegistrationFinish)
+ * plus the recovery_token obtained from the start endpoint. Server finalises
+ * the OPAQUE password file update and returns a fresh session token.
+ */
+export async function recoverWithPhraseFinalize(
+  email: string,
+  recoveryToken: string,
+  opaqueClientMessage: string,
+): Promise<{ session_token: string; user_id: string }> {
+  const data = await request<{ session_token: string; user_id: string }>(
+    '/api/v1/auth/recover-with-phrase-finalize',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        email,
+        recovery_token: recoveryToken,
+        client_message: opaqueClientMessage,
+      }),
+    },
+  )
+  setToken(data.session_token)
+  return data
+}
+
 export async function login(
   email: string,
   password: string,
