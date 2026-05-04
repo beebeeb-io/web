@@ -267,21 +267,40 @@ function TotpSection() {
   }
 
   if (step === 'backup') {
+    const copyBackupCodes = () => {
+      const text = backupCodes.map((c, i) => `${String(i + 1).padStart(2, '0')}. ${c}`).join('\n')
+      const full = `Beebeeb — 2FA Backup Codes\n${'─'.repeat(30)}\n\n${text}\n\nEach code can only be used once.\nGenerated: ${new Date().toISOString()}`
+      navigator.clipboard.writeText(full)
+      showToast({ icon: 'check', title: 'Backup codes copied to clipboard' })
+    }
+
     return (
       <SettingsRow
         label="Two-factor authentication"
         hint="Save these backup codes. They won't be shown again."
       >
         <div className="flex flex-col gap-3 max-w-[420px]">
-          <div className="grid grid-cols-2 gap-1 p-3 bg-paper-2 border border-line rounded-md font-mono text-sm">
-            {backupCodes.map((c, i) => (
-              <span key={i} className="text-ink">{c}</span>
-            ))}
+          <div className="p-4 bg-paper-2 border border-line rounded-lg">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+              {backupCodes.map((c, i) => (
+                <div key={i} className="flex items-baseline gap-2">
+                  <span className="font-mono text-[10px] text-ink-4 w-4 text-right select-none">{i + 1}.</span>
+                  <span className="font-mono text-[14px] font-medium text-ink tracking-wide">{c}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 pt-3 border-t border-line flex items-center gap-2">
+              <BBButton size="sm" variant="ghost" onClick={copyBackupCodes} className="gap-1.5">
+                <Icon name="link" size={11} />
+                Copy all codes
+              </BBButton>
+            </div>
           </div>
-          <div className="text-[11px] text-ink-3">
-            Store these somewhere safe. Each code works once if you lose access to your authenticator.
+          <div className="text-[11px] text-ink-3 leading-relaxed">
+            Store these somewhere safe — a password manager or printed copy.
+            Each code works once if you lose access to your authenticator app.
           </div>
-          <BBButton size="sm" onClick={handleBackupDone}>I've saved these codes</BBButton>
+          <BBButton size="sm" variant="amber" onClick={handleBackupDone}>I've saved these codes</BBButton>
         </div>
       </SettingsRow>
     )
