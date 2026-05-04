@@ -21,18 +21,17 @@ test.describe('Authentication', () => {
     await page.goto('/signup')
     await expect(page).toHaveURL(/\/signup/)
 
-    // Fill signup form
+    // /signup is email + consent only — the password is collected on the
+    // /onboarding password step, after the recovery-phrase screens. This
+    // test was originally written for an older single-page signup flow;
+    // updating it here to match the current shape (closes 0011).
     await page.getByLabel(/email/i).fill(email)
-    await page.getByLabel(/password/i).first().fill('test-password-12chars!')
-
-    // If there's a confirm password field, fill it too
-    const confirmField = page.getByLabel(/confirm/i)
-    if (await confirmField.isVisible()) {
-      await confirmField.fill('test-password-12chars!')
-    }
+    await page
+      .getByRole('checkbox', { name: /Beebeeb cannot recover/i })
+      .click()
 
     // Submit
-    await page.getByRole('button', { name: /sign up|create account|get started/i }).click()
+    await page.getByRole('button', { name: /^continue$/i }).click()
 
     // Should redirect to onboarding (recovery phrase screen)
     await expect(page).toHaveURL(/\/onboarding/, { timeout: 10_000 })
@@ -41,8 +40,11 @@ test.describe('Authentication', () => {
   test('login flow: fill form, submit, redirected to /', async ({ page }) => {
     const email = uniqueEmail()
 
-    // First, create the account via the API directly
-    const signupResp = await page.request.post('http://localhost:3001/api/v1/auth/signup', {
+    // First, create the account via the API directly. Use 127.0.0.1 rather
+    // than `localhost` because Playwright's request context resolves to ::1
+    // first and the dev API binds to IPv4 only — the browser's fetch falls
+    // back via happy-eyeballs but apiRequestContext does not.
+    const signupResp = await page.request.post('http://127.0.0.1:3001/api/v1/auth/signup', {
       data: { email, password: 'test-password-12chars!' },
     })
     expect(signupResp.ok()).toBeTruthy()
@@ -51,10 +53,17 @@ test.describe('Authentication', () => {
     await page.goto('/login')
     await expect(page).toHaveURL(/\/login/)
 
+    // Selector note: getByLabel(/password/i) also matches the show/hide
+    // password toggle button (aria-label "Show password") and gets
+    // .first() depending on DOM order. Target the input by placeholder
+    // instead — this matches the same pattern used by the 0010 regression
+    // test below (closes 0011).
     await page.getByLabel(/email/i).fill(email)
-    await page.getByLabel(/password/i).first().fill('test-password-12chars!')
+    await page.getByPlaceholder('Your password').fill('test-password-12chars!')
 
-    await page.getByRole('button', { name: /log in|sign in/i }).click()
+    // The page also has a "Sign in with passkey" button; pick the submit
+    // one explicitly.
+    await page.getByRole('button', { name: 'Log in', exact: true }).click()
 
     // Should redirect to the drive (root page)
     await expect(page).toHaveURL(/^\/$|\/$/,{ timeout: 10_000 })
