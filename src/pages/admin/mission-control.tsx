@@ -21,6 +21,7 @@ import { Icon } from '../../components/icons'
 import {
   getLifecycleRun,
   getLifecycleRunFiles,
+  getLifecycleRunEvents,
   abortLifecycleRun,
   retryFile,
   listStoragePools,
@@ -74,6 +75,7 @@ const POLL_INTERVAL_MS = 2_000
 
 interface WsSnapshot {
   type: 'snapshot'
+  id?: number
   run: LifecycleRun
   files_done: number
   files_failed: number
@@ -82,6 +84,7 @@ interface WsSnapshot {
 }
 interface WsFileStarted {
   type: 'file_started'
+  id?: number
   file_id: string
   size_bytes: number
   chunks: number
@@ -89,6 +92,7 @@ interface WsFileStarted {
 }
 interface WsFileProgress {
   type: 'file_progress'
+  id?: number
   file_id: string
   chunks_copied: number
   bytes_copied: number
@@ -96,6 +100,7 @@ interface WsFileProgress {
 }
 interface WsFileDone {
   type: 'file_done'
+  id?: number
   file_id: string
   duration_ms: number
   bytes_copied: number
@@ -103,18 +108,21 @@ interface WsFileDone {
 }
 interface WsFileFailed {
   type: 'file_failed'
+  id?: number
   file_id: string
   error: string
   at: string
 }
 interface WsThroughputSample {
   type: 'throughput_sample'
+  id?: number
   bytes_per_sec: number
   files_per_sec: number
   at: string
 }
 interface WsPhaseChanged {
   type: 'phase_changed'
+  id?: number
   from: string
   to: string
   at: string
@@ -208,6 +216,10 @@ export function MissionControl() {
   // Per-file state accumulated from WS events, used to populate ErrorPanel.
   const filesMapRef = useRef<Map<string, RunFileEntry>>(new Map())
 
+  // Highest event id received (from WS messages or history backfill).
+  // Appended as &since_id=N on WS reconnect so the server replays missed events.
+  const lastEventIdRef = useRef<number>(0)
+
   // navigateRef for stable closure inside WS handler
   const navigateRef = useRef(navigate)
   useEffect(() => { navigateRef.current = navigate }, [navigate])
@@ -242,6 +254,13 @@ export function MissionControl() {
 
   function clearReconnectTimer() {
     if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null }
+  }
+
+  /** Advance the since_id cursor when the server includes an event id. */
+  function advanceEventId(id: number | undefined) {
+    if (id !== undefined && id > lastEventIdRef.current) {
+      lastEventIdRef.current = id
+    }
   }
 
   // ── Polling fallback ─────────────────────────────────────────────────────
@@ -293,6 +312,133 @@ export function MissionControl() {
     }
   }
 
+  // ── History backfill ──────────────────────────────────────────────────────
+
+  /**
+   * Fetch persisted event history on initial mount and replay it into local
+   * state (stream log, throughput chart, file map).  Sets lastEventIdRef to
+   * the highest id so the first WS connect (or reconnect) can request only
+   * events that happened after the last one we've already seen.
+   *
+   * Fails silently with a 404 — the server endpoint (task 0033 Phase 1) is
+   * not live yet; callers fall through to WS + polling as usual.
+   */
+  const fetchHistory = useCallback(async () => {
+    if (!poolId || !runId) return
+    let result: Awaited<ReturnType<typeof getLifecycleRunEvents>>
+    try {
+      result = await getLifecycleRunEvents(poolId, runId, undefined, 1000)
+    } catch {
+      // 404 = server endpoint not yet deployed; any other error = transient.
+      // Either way, the WS / polling path covers live data.
+      return
+    }
+
+    if (!result.events.length) return
+
+    const newStreamEvents: typeof streamEvents = []
+    const newSamples: ThroughputSample[] = []
+
+    for (const ev of result.events) {
+      // Advance cursor
+      advanceEventId(ev.id)
+
+      switch (ev.type) {
+        case 'file_started': {
+          if (!ev.file_id) break
+          filesMapRef.current.set(ev.file_id, {
+            file_id: ev.file_id,
+            name_encrypted: '',
+            size_bytes: ev.size_bytes ?? 0,
+            status: 'copying',
+            error: null,
+            started_at: ev.at,
+            completed_at: null,
+          })
+          newStreamEvents.push({
+            type: 'file_started',
+            file_id: ev.file_id,
+            size_bytes: ev.size_bytes,
+            at: ev.at,
+          })
+          break
+        }
+        case 'file_done': {
+          if (!ev.file_id) break
+          const existing = filesMapRef.current.get(ev.file_id)
+          filesMapRef.current.set(ev.file_id, {
+            ...(existing ?? { file_id: ev.file_id, name_encrypted: '', size_bytes: 0, error: null, started_at: null }),
+            status: 'done',
+            completed_at: ev.at,
+          })
+          newStreamEvents.push({
+            type: 'file_done',
+            file_id: ev.file_id,
+            bytes_copied: ev.bytes_copied,
+            duration_ms: ev.duration_ms,
+            at: ev.at,
+          })
+          break
+        }
+        case 'file_failed': {
+          if (!ev.file_id) break
+          const existing = filesMapRef.current.get(ev.file_id)
+          filesMapRef.current.set(ev.file_id, {
+            ...(existing ?? { file_id: ev.file_id, name_encrypted: '', size_bytes: 0, started_at: null, completed_at: null }),
+            status: 'failed',
+            error: ev.error ?? null,
+            completed_at: ev.at,
+          })
+          newStreamEvents.push({
+            type: 'file_failed',
+            file_id: ev.file_id,
+            error: ev.error,
+            at: ev.at,
+          })
+          break
+        }
+        case 'file_progress': {
+          if (!ev.file_id) break
+          newStreamEvents.push({
+            type: 'file_progress',
+            file_id: ev.file_id,
+            bytes_copied: ev.bytes_copied,
+            at: ev.at,
+          })
+          break
+        }
+        case 'throughput_sample': {
+          if (ev.bytes_per_sec !== undefined && ev.files_per_sec !== undefined) {
+            newSamples.push({
+              bytes_per_sec: ev.bytes_per_sec,
+              files_per_sec: ev.files_per_sec,
+              at: ev.at,
+            })
+          }
+          break
+        }
+        // snapshot and phase_changed are not replayed from history —
+        // the WS snapshot covers current state on connect.
+      }
+    }
+
+    // Batch all state updates from history
+    if (newStreamEvents.length > 0) {
+      setStreamEvents((prev) =>
+        [...prev, ...newStreamEvents].slice(-MAX_STREAM_EVENTS)
+      )
+    }
+    if (newSamples.length > 0) {
+      setThroughputSamples((prev) =>
+        [...prev, ...newSamples].slice(-THROUGHPUT_WINDOW_SAMPLES)
+      )
+    }
+    if (filesMapRef.current.size > 0) {
+      syncFilesFromMap()
+    }
+    setLastUpdated(new Date())
+  }, [poolId, runId]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── WebSocket ─────────────────────────────────────────────────────────────
 
   const openWebSocket = useCallback(() => {
@@ -302,7 +448,12 @@ export function MissionControl() {
 
     // Build ws(s):// URL from the http(s):// API base.
     const base = getApiUrl().replace(/^http(s)?:\/\//, 'ws$1://')
-    const url = `${base}/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}/ws?token=${encodeURIComponent(token)}`
+    const wsParams = new URLSearchParams({ token })
+    // On reconnect: replay events missed during the disconnect window.
+    if (lastEventIdRef.current > 0) {
+      wsParams.set('since_id', String(lastEventIdRef.current))
+    }
+    const url = `${base}/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}/ws?${wsParams}`
 
     const ws = new WebSocket(url)
     wsRef.current = ws
@@ -323,6 +474,7 @@ export function MissionControl() {
 
       switch (msg.type) {
         case 'snapshot': {
+          advanceEventId(msg.id)
           const c = wsCountsRef.current
           c.run = msg.run
           c.files_done = msg.files_done
@@ -343,6 +495,7 @@ export function MissionControl() {
         }
 
         case 'file_started': {
+          advanceEventId(msg.id)
           const entry: RunFileEntry = {
             file_id: msg.file_id,
             name_encrypted: '',
@@ -365,6 +518,7 @@ export function MissionControl() {
         }
 
         case 'file_progress': {
+          advanceEventId(msg.id)
           const existing = filesMapRef.current.get(msg.file_id)
           if (existing) filesMapRef.current.set(msg.file_id, { ...existing, status: 'copying' })
           const event: MigrationFileEvent = {
@@ -378,6 +532,7 @@ export function MissionControl() {
         }
 
         case 'file_done': {
+          advanceEventId(msg.id)
           const c = wsCountsRef.current
           c.files_done += 1
           c.files_pending = Math.max(0, c.files_pending - 1)
@@ -401,6 +556,7 @@ export function MissionControl() {
         }
 
         case 'file_failed': {
+          advanceEventId(msg.id)
           const c = wsCountsRef.current
           c.files_failed += 1
           c.files_pending = Math.max(0, c.files_pending - 1)
@@ -424,6 +580,7 @@ export function MissionControl() {
         }
 
         case 'throughput_sample': {
+          advanceEventId(msg.id)
           const c = wsCountsRef.current
           c.throughput_bps = msg.bytes_per_sec
           c.files_per_sec = msg.files_per_sec
@@ -444,6 +601,7 @@ export function MissionControl() {
         }
 
         case 'phase_changed': {
+          advanceEventId(msg.id)
           const c = wsCountsRef.current
           if (c.run) {
             c.run = { ...c.run, current_phase: msg.to as LifecycleRun['current_phase'] }
@@ -476,6 +634,13 @@ export function MissionControl() {
   }, [poolId, runId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Effects ───────────────────────────────────────────────────────────────
+
+  // Fetch event history on mount for backfill + to seed lastEventIdRef before
+  // the WS connects. Fires concurrently with openWebSocket — history populates
+  // the stream log while the WS is still in the handshake phase.
+  useEffect(() => {
+    void fetchHistory()
+  }, [fetchHistory])
 
   // Open WS on mount; clean up on unmount.
   useEffect(() => {

@@ -2385,6 +2385,57 @@ export async function getLifecycleRunFiles(
   return request(`/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}/files`)
 }
 
+/**
+ * A single persisted migration event row, as returned by the events history
+ * endpoint. Shape mirrors the WebSocket MigrationEvent variants plus an
+ * auto-increment `id` used for replay (since_id cursor).
+ *
+ * All variant-specific fields are optional — use `type` to discriminate.
+ */
+export interface LifecycleRunEvent {
+  /** DB sequence number — used as the since_id cursor for WS reconnect replay. */
+  id: number
+  type: string
+  at: string
+  // file event fields
+  file_id?: string
+  size_bytes?: number
+  chunks?: number
+  bytes_copied?: number
+  chunks_copied?: number
+  duration_ms?: number
+  error?: string
+  // throughput_sample fields
+  bytes_per_sec?: number
+  files_per_sec?: number
+  // phase_changed fields
+  from?: string
+  to?: string
+}
+
+/**
+ * GET /api/v1/admin/pools/:poolId/lifecycle/runs/:runId/events
+ *
+ * Returns persisted migration events for history backfill and event replay.
+ * Supports cursor-based pagination via `since_id` (exclusive lower bound on
+ * the event id column). Ordered by id ASC.
+ *
+ * NOTE: This endpoint is implemented in server task 0033 Phase 1. Until that
+ * commit lands the endpoint returns 404 — callers must handle that gracefully.
+ */
+export async function getLifecycleRunEvents(
+  poolId: string,
+  runId: string,
+  sinceId?: number,
+  limit = 1000,
+): Promise<{ events: LifecycleRunEvent[]; has_more: boolean }> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (sinceId !== undefined) params.set('since_id', String(sinceId))
+  return request(
+    `/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}/events?${params}`,
+  )
+}
+
 /** GET /api/v1/admin/pools/:poolId/insights */
 export async function getPoolInsights(poolId: string): Promise<PoolInsights> {
   return request<PoolInsights>(`/api/v1/admin/pools/${poolId}/insights`)
