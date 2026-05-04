@@ -70,6 +70,9 @@ export function Drive() {
   const [folderDialogOpen, setFolderDialogOpen] = useState(false)
   const [uploads, setUploads] = useState<UploadItem[]>([])
   const uploadAbortRef = useRef<Map<string, AbortController>>(new Map())
+  // Cache the File object per upload-id so we can re-invoke the encrypted
+  // upload pipeline when the user clicks Retry on a failed item.
+  const uploadFilesRef = useRef<Map<string, File>>(new Map())
   const [syncedAgo, setSyncedAgo] = useState(14)
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null)
   const [shareFileId, setShareFileId] = useState<string | null>(null)
@@ -401,6 +404,7 @@ export function Drive() {
 
     selectedFiles.forEach((file, i) => {
       const uploadId = newUploads[i].id
+      uploadFilesRef.current.set(uploadId, file)
       doEncryptedUpload(uploadId, file)
     })
   }
@@ -414,6 +418,7 @@ export function Drive() {
         danger: true,
       })
       setUploads((prev) => prev.filter((u) => u.id !== uploadId))
+      uploadFilesRef.current.delete(uploadId)
       return
     }
 
@@ -461,6 +466,7 @@ export function Drive() {
 
       setUploads((prev) => prev.filter((u) => u.id !== uploadId))
       uploadAbortRef.current.delete(uploadId)
+      uploadFilesRef.current.delete(uploadId)
       // Remove from paused list if this was a resume
       setPausedUploads((prev) => prev.filter((u) => u.fileId !== fileId))
       setLastUploadedFileId(fileId)
@@ -480,24 +486,57 @@ export function Drive() {
     } catch (err) {
       uploadAbortRef.current.delete(uploadId)
       if (err instanceof DOMException && err.name === 'AbortError') {
-        // Cancelled by user — silently remove from list
+        // Cancelled by user — silently remove from list, drop the cached File
         setUploads((prev) => prev.filter((u) => u.id !== uploadId))
+        uploadFilesRef.current.delete(uploadId)
         return
       }
+      const errorMessage = err instanceof Error ? err.message : 'Something went wrong'
       showToast({
         icon: 'upload',
         title: 'Upload failed',
-        description: err instanceof Error ? err.message : 'Something went wrong',
+        description: errorMessage,
         danger: true,
       })
+      // Mark the card as Error so the user sees it failed and can hit Retry.
+      // Keep the cached File in uploadFilesRef so handleRetryUpload can re-run
+      // the encrypted-upload pipeline without the user re-picking the file.
       setUploads((prev) =>
         prev.map((u) =>
           u.id === uploadId
-            ? { ...u, stage: 'Queued' as const, progress: 0 }
+            ? { ...u, stage: 'Error' as const, progress: 0, errorMessage }
             : u,
         ),
       )
     }
+  }
+
+  function handleRetryUpload(uploadId: string) {
+    const file = uploadFilesRef.current.get(uploadId)
+    if (!file) {
+      // Cached File was lost (e.g. page reload between failure and retry click).
+      // Just drop the stale card — the user will need to re-pick the file.
+      setUploads((prev) => prev.filter((u) => u.id !== uploadId))
+      return
+    }
+    // Reset the card to Queued so the existing UI re-engages (prevents a flash
+    // of "Uploaded 0%" if doEncryptedUpload's progress callback hasn't fired
+    // yet by the time the user looks at the card).
+    setUploads((prev) =>
+      prev.map((u) =>
+        u.id === uploadId
+          ? {
+              ...u,
+              stage: 'Queued' as const,
+              progress: 0,
+              bytesUploaded: undefined,
+              startedAt: undefined,
+              errorMessage: undefined,
+            }
+          : u,
+      ),
+    )
+    void doEncryptedUpload(uploadId, file)
   }
 
   async function handleFolderFilesSelected(folderFiles: FolderFile[]) {
@@ -661,16 +700,20 @@ export function Drive() {
       refreshUsage()
       fetchFiles()
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Something went wrong'
       showToast({
         icon: 'upload',
         title: 'Folder upload failed',
-        description: err instanceof Error ? err.message : 'Something went wrong',
+        description: errorMessage,
         danger: true,
       })
+      // Folder uploads don't support per-file retry yet (we'd need to remember
+      // which subfile failed and how far it got). Surface as Error so the user
+      // sees it failed; the dismiss (×) button removes the card.
       setUploads((prev) =>
         prev.map((u) =>
           u.id === foldUploadId
-            ? { ...u, stage: 'Queued' as const, progress: 0 }
+            ? { ...u, stage: 'Error' as const, progress: 0, errorMessage }
             : u,
         ),
       )
@@ -758,7 +801,15 @@ export function Drive() {
   }
 
   function clearDoneUploads() {
-    setUploads((prev) => prev.filter((u) => u.stage !== 'Done'))
+    setUploads((prev) => {
+      // Drop cached File objects for any cards being removed (Done + Error).
+      for (const u of prev) {
+        if (u.stage === 'Done' || u.stage === 'Error') {
+          uploadFilesRef.current.delete(u.id)
+        }
+      }
+      return prev.filter((u) => u.stage !== 'Done')
+    })
   }
 
   function handleCancelUpload(uploadId: string) {
@@ -766,9 +817,11 @@ export function Drive() {
     if (controller) {
       controller.abort()
     } else {
-      // For queued items not yet started, just remove them
+      // For queued/error items not currently in flight, remove the card and
+      // drop the cached File — there's nothing to cancel via signal.
       setUploads((prev) => prev.filter((u) => u.id !== uploadId))
     }
+    uploadFilesRef.current.delete(uploadId)
   }
 
   function handlePauseUpload(uploadId: string) {
@@ -1356,6 +1409,7 @@ export function Drive() {
         onCancel={handleCancelUpload}
         onPause={handlePauseUpload}
         onResume={handleResumeUpload}
+        onRetry={handleRetryUpload}
       />
 
       <FileDetailsPanel

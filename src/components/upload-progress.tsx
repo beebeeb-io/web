@@ -15,6 +15,8 @@ export interface UploadItem {
   paused?: boolean
   /** City where the ciphertext is stored — used in stage labels */
   storageCity?: string
+  /** Human-readable failure reason — surfaced when stage === 'Error' */
+  errorMessage?: string
 }
 
 interface UploadProgressProps {
@@ -23,6 +25,8 @@ interface UploadProgressProps {
   onCancel?: (id: string) => void
   onPause?: (id: string) => void
   onResume?: (id: string) => void
+  /** Retry a failed upload — only invoked for items in stage='Error' */
+  onRetry?: (id: string) => void
   /** Default city when an item has no `storageCity` set yet */
   defaultCity?: string
 }
@@ -66,12 +70,17 @@ type PipelineStage = 'encrypt' | 'upload' | 'confirm'
 function pipelineStage(item: UploadItem): PipelineStage {
   if (item.stage === 'Done') return 'confirm'
   if (item.stage === 'Uploading') return 'upload'
-  // Queued + Encrypting + Error all sit in the encrypt slot
+  // Queued + Encrypting + Error all sit in the encrypt slot for the meter,
+  // but stageLabel() reads item.stage directly so Error gets distinct copy.
   return 'encrypt'
 }
 
 function stageLabel(item: UploadItem, city: string): string {
   if (item.paused) return 'Paused'
+  if (item.stage === 'Error') {
+    return item.errorMessage ?? "Couldn't reach the server. Retry?"
+  }
+  if (item.stage === 'Queued') return 'Queued'
   switch (pipelineStage(item)) {
     case 'encrypt':
       return 'Encrypting on your device...'
@@ -88,6 +97,7 @@ export function UploadProgress({
   onCancel,
   onPause,
   onResume,
+  onRetry,
   defaultCity = DEFAULT_CITY,
 }: UploadProgressProps) {
   if (items.length === 0) return null
@@ -132,22 +142,33 @@ export function UploadProgress({
           const eta = computeEta(item, speed)
           const isActive = item.stage === 'Uploading' || item.stage === 'Encrypting'
           const isDone = item.stage === 'Done'
+          const isError = item.stage === 'Error'
           const stage = pipelineStage(item)
           const city = item.storageCity ?? defaultCity
 
           return (
             <div key={item.id}>
               <div className="flex items-center gap-2 mb-1">
-                {/* File icon / done checkmark */}
+                {/* File icon / done checkmark / error mark */}
                 <div
                   className={`w-[18px] h-[18px] shrink-0 rounded-[5px] flex items-center justify-center ${isDone ? 'decrypt-pulse' : ''}`}
                   style={{
-                    background: isDone ? 'var(--color-amber-bg)' : 'var(--color-paper-2)',
-                    border: isDone ? '1px solid var(--color-amber)' : '1px solid var(--color-line)',
+                    background: isDone
+                      ? 'var(--color-amber-bg)'
+                      : isError
+                        ? 'color-mix(in oklch, var(--color-red) 12%, var(--color-paper))'
+                        : 'var(--color-paper-2)',
+                    border: isDone
+                      ? '1px solid var(--color-amber)'
+                      : isError
+                        ? '1px solid var(--color-red)'
+                        : '1px solid var(--color-line)',
                   }}
                 >
                   {isDone ? (
                     <Icon name="check" size={11} className="text-amber-deep" />
+                  ) : isError ? (
+                    <Icon name="x" size={11} className="text-red" />
                   ) : (
                     <Icon name="file" size={10} className="text-ink-3" />
                   )}
@@ -156,24 +177,44 @@ export function UploadProgress({
                 {/* File name */}
                 <span className="text-[12.5px] font-medium truncate">{item.name}</span>
 
-                {/* Percentage */}
-                <span
-                  className="font-mono text-[10.5px] font-medium ml-auto shrink-0 tabular-nums"
-                  style={{
-                    color: isDone
-                      ? 'var(--color-amber-deep)'
-                      : item.paused
-                        ? 'var(--color-ink-4)'
-                        : item.stage === 'Queued'
+                {/* Percentage / Failed badge */}
+                {isError ? (
+                  <span
+                    className="font-mono text-[10.5px] font-medium ml-auto shrink-0 tabular-nums uppercase tracking-wider text-red"
+                  >
+                    Failed
+                  </span>
+                ) : (
+                  <span
+                    className="font-mono text-[10.5px] font-medium ml-auto shrink-0 tabular-nums"
+                    style={{
+                      color: isDone
+                        ? 'var(--color-amber-deep)'
+                        : item.paused
                           ? 'var(--color-ink-4)'
-                          : 'var(--color-amber-deep)',
-                  }}
-                >
-                  {item.progress}%
-                </span>
+                          : item.stage === 'Queued'
+                            ? 'var(--color-ink-4)'
+                            : 'var(--color-amber-deep)',
+                    }}
+                  >
+                    {item.progress}%
+                  </span>
+                )}
+
+                {/* Retry button (only on Error) */}
+                {isError && onRetry && (
+                  <button
+                    onClick={() => onRetry(item.id)}
+                    aria-label="Retry upload"
+                    title="Retry upload"
+                    className="text-[10.5px] font-medium uppercase tracking-wider text-ink-3 hover:text-amber-deep transition-colors shrink-0"
+                  >
+                    Retry
+                  </button>
+                )}
 
                 {/* Pause/Resume button */}
-                {isActive && !isDone && onPause && onResume && (
+                {isActive && !isDone && !isError && onPause && onResume && (
                   <button
                     onClick={() => item.paused ? onResume(item.id) : onPause(item.id)}
                     aria-label={item.paused ? 'Resume upload' : 'Pause upload'}
@@ -183,11 +224,11 @@ export function UploadProgress({
                   </button>
                 )}
 
-                {/* Cancel button */}
+                {/* Cancel / Dismiss button */}
                 {!isDone && onCancel && (
                   <button
                     onClick={() => onCancel(item.id)}
-                    aria-label="Cancel upload"
+                    aria-label={isError ? 'Dismiss failed upload' : 'Cancel upload'}
                     className="p-0.5 text-ink-3 hover:text-red transition-colors shrink-0"
                   >
                     <Icon name="x" size={12} />
@@ -195,12 +236,13 @@ export function UploadProgress({
                 )}
               </div>
 
-              {/* Stage label */}
+              {/* Stage label (red on Error, amber-deep on encrypt/confirm) */}
               <div
                 className="ml-[26px] mb-1.5 text-[11px] truncate"
                 style={{
-                  color:
-                    stage === 'encrypt'
+                  color: isError
+                    ? 'var(--color-red)'
+                    : stage === 'encrypt'
                       ? 'var(--color-amber-deep)'
                       : stage === 'confirm'
                         ? 'var(--color-amber-deep)'

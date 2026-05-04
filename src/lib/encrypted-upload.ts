@@ -13,7 +13,7 @@ import {
   encryptFilename,
   toBase64,
 } from './crypto'
-import { initUpload, uploadChunk, completeUpload, getUploadStatus } from './api'
+import { initUpload, uploadChunk, completeUpload, getUploadStatus, ApiError } from './api'
 import type { DriveFile } from './api'
 import {
   computeFingerprint,
@@ -23,6 +23,38 @@ import {
 } from './upload-resume'
 
 const PARALLEL_UPLOADS = 4
+
+/**
+ * Long-form retry delay for transient network failures, layered on top of
+ * the 800ms retry already inside `api.ts request()`. Together they give an
+ * upload three chances spaced ~3.8s apart — enough to ride out a typical
+ * cargo-watch / API restart window without surfacing the blip to the user.
+ */
+const NETWORK_RETRY_DELAY_MS = 3000
+
+/**
+ * Wrap a network call so a network-class failure (`ApiError(_, status === 0)`,
+ * i.e. `fetch` itself threw before getting any response) gets one extra retry
+ * after a longer delay. HTTP errors (4xx/5xx) bubble immediately — those are
+ * deterministic, not transient.
+ *
+ * Honours an optional AbortSignal: if the user cancels during the delay window
+ * we throw an AbortError instead of retrying.
+ */
+async function withNetworkRetry<T>(
+  fn: () => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  try {
+    return await fn()
+  } catch (err) {
+    const isNetwork = err instanceof ApiError && err.status === 0
+    if (!isNetwork || signal?.aborted) throw err
+    await new Promise<void>((resolve) => setTimeout(resolve, NETWORK_RETRY_DELAY_MS))
+    if (signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError')
+    return await fn()
+  }
+}
 
 export interface UploadProgress {
   stage: 'Encrypting' | 'Uploading' | 'Done'
@@ -77,14 +109,14 @@ export async function encryptedUpload(
     } catch {
       // Status check failed — server record may be gone, start fresh
       skipChunks = new Set()
-      const { file_id } = await initUpload({
+      const { file_id } = await withNetworkRetry(() => initUpload({
         file_id: fileId,
         name_encrypted: nameEncrypted,
         mime_type: file.type || 'application/octet-stream',
         size_bytes: file.size,
         chunk_count: totalChunks,
         parent_id: parentId ?? null,
-      })
+      }), signal)
       serverFileId = file_id
     }
   } else {
@@ -103,26 +135,26 @@ export async function encryptedUpload(
       } catch {
         // Server doesn't know about it anymore — start fresh
         await removeUploadState(existing.fileId)
-        const { file_id } = await initUpload({
+        const { file_id } = await withNetworkRetry(() => initUpload({
           file_id: fileId,
           name_encrypted: nameEncrypted,
           mime_type: file.type || 'application/octet-stream',
           size_bytes: file.size,
           chunk_count: totalChunks,
           parent_id: parentId ?? null,
-        })
+        }), signal)
         serverFileId = file_id
       }
     } else {
       // No prior upload — start fresh
-      const { file_id } = await initUpload({
+      const { file_id } = await withNetworkRetry(() => initUpload({
         file_id: fileId,
         name_encrypted: nameEncrypted,
         mime_type: file.type || 'application/octet-stream',
         size_bytes: file.size,
         chunk_count: totalChunks,
         parent_id: parentId ?? null,
-      })
+      }), signal)
       serverFileId = file_id
     }
 
@@ -177,7 +209,7 @@ export async function encryptedUpload(
     combined.set(encrypted.nonce, 0)
     combined.set(encrypted.ciphertext, encrypted.nonce.length)
 
-    await uploadChunk(serverFileId, index, combined)
+    await withNetworkRetry(() => uploadChunk(serverFileId, index, combined), signal)
     reportProgress()
   }
 

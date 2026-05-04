@@ -416,40 +416,11 @@ export async function createFolder(
   })
 }
 
-export async function uploadFile(
-  file: File,
-  parentId?: string,
-): Promise<DriveFile> {
-  const token = getToken()
-  const metadata = JSON.stringify({
-    name_encrypted: file.name,
-    mime_type: file.type || 'application/octet-stream',
-    size: file.size,
-    parent_id: parentId ?? null,
-  })
-
-  const form = new FormData()
-  form.append('metadata', new Blob([metadata], { type: 'application/json' }))
-  form.append('chunk_0', file)
-
-  const res = await fetch(`${API_URL}/api/v1/files/upload`, {
-    method: 'POST',
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-    body: form,
-  })
-
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
-    throw new ApiError(
-      (body.message ?? body.error ?? res.statusText) as string,
-      res.status,
-    )
-  }
-
-  return res.json() as Promise<DriveFile>
-}
-
 // ─── Chunked upload endpoints ────────────────────
+// (The legacy single-shot `uploadFile` was removed in task 0027. It sent the
+// metadata field as `size` while the server expected `size_bytes`, so it
+// would have 400'd if anyone called it — but nothing did. The chunked
+// init+chunks+complete flow below is the one wired into encrypted-upload.ts.)
 
 export async function initUpload(metadata: {
   file_id?: string
