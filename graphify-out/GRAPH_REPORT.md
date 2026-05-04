@@ -1,11 +1,11 @@
 # Graph Report - web  (2026-05-04)
 
 ## Corpus Check
-- 198 files · ~988,193 words
+- 199 files · ~989,054 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1967 nodes · 3930 edges · 31 communities detected
+- 1970 nodes · 3932 edges · 30 communities detected
 - Extraction: 93% EXTRACTED · 7% INFERRED · 0% AMBIGUOUS · INFERRED: 287 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
@@ -36,9 +36,8 @@
 - [[_COMMUNITY_Community 49|Community 49]]
 - [[_COMMUNITY_Community 55|Community 55]]
 - [[_COMMUNITY_Community 56|Community 56]]
-- [[_COMMUNITY_Community 64|Community 64]]
-- [[_COMMUNITY_Community 67|Community 67]]
-- [[_COMMUNITY_Community 77|Community 77]]
+- [[_COMMUNITY_Community 65|Community 65]]
+- [[_COMMUNITY_Community 68|Community 68]]
 - [[_COMMUNITY_Community 84|Community 84]]
 - [[_COMMUNITY_Community 86|Community 86]]
 
@@ -70,67 +69,67 @@
 
 ### Community 0 - "Community 0"
 Cohesion: 0.01
-Nodes (329): _2(), $3(), _7(), a2(), a3(), a4(), a8(), AA() (+321 more)
+Nodes (315): _2(), $3(), _7(), _8(), a3(), a4(), a8(), AA() (+307 more)
 
 ### Community 1 - "Community 1"
 Cohesion: 0.01
-Nodes (166): formatBytes(), handleCreatePool(), handleDecommission(), handleMigrateAll(), handleReconcile(), saveEdit(), applyAbuseDecision(), handleExport() (+158 more)
+Nodes (182): checkDpaStatus(), handleUpload(), formatBytes(), handleCreatePool(), handleDecommission(), handleMigrateAll(), handleReconcile(), saveEdit() (+174 more)
 
 ### Community 2 - "Community 2"
-Cohesion: 0.03
-Nodes (88): checkDpaStatus(), handleUpload(), load(), load(), decryptAll(), decryptAll(), handleNewFolder(), handleDownloadCiphertext() (+80 more)
+Cohesion: 0.05
+Nodes (88): $(), a(), B(), C(), D(), E(), ee(), f() (+80 more)
 
 ### Community 3 - "Community 3"
 Cohesion: 0.04
-Nodes (64): $_(), _5, A5(), addPostProcessor(), AF(), aj, aT(), bt() (+56 more)
+Nodes (64): decryptAll(), decryptAll(), handleNewFolder(), deleteFile(), listFiles(), updateFile(), computeRecoveryCheck(), decryptChunk() (+56 more)
 
 ### Community 4 - "Community 4"
-Cohesion: 0.06
-Nodes (75): $(), a(), B(), C(), D(), E(), ee(), f() (+67 more)
+Cohesion: 0.04
+Nodes (71): $_(), _5, A5(), AF(), aj, aT(), bt(), bw() (+63 more)
 
 ### Community 5 - "Community 5"
-Cohesion: 0.05
-Nodes (25): ab(), bo(), cj(), Fo(), gj(), handle(), hb(), Ie() (+17 more)
+Cohesion: 0.04
+Nodes (31): ab(), addPostProcessor(), bo(), cj(), fj, FN(), Fo(), gj() (+23 more)
 
 ### Community 6 - "Community 6"
 Cohesion: 0.04
-Nodes (75): AS(), av(), b3(), BE(), bs(), bv(), constructor(), cv() (+67 more)
+Nodes (81): AS(), av(), BE(), bs(), bv(), constructor(), cv(), dv() (+73 more)
 
 ### Community 7 - "Community 7"
-Cohesion: 0.06
-Nodes (20): _0(), _8(), bB(), EB(), ej(), Ex(), gB(), iv() (+12 more)
+Cohesion: 0.05
+Nodes (35): _0(), a2(), ap(), b2(), bB(), cm(), EB(), ej() (+27 more)
 
 ### Community 8 - "Community 8"
-Cohesion: 0.06
-Nodes (32): a(), bN(), cp, hA(), j8(), k4(), kA, lx() (+24 more)
-
-### Community 9 - "Community 9"
 Cohesion: 0.07
 Nodes (11): notificationIcon(), toDisplay(), useNotifications(), useToast(), useKeyboardShortcuts(), useSearchIndex(), useWebSocket(), useWsEvent() (+3 more)
 
-### Community 10 - "Community 10"
+### Community 9 - "Community 9"
 Cohesion: 0.14
 Nodes (8): getSyncOps(), submitSyncOps(), getDeviceId(), payloadToNode(), saveLastSeq(), savePendingOps(), SyncClient, uuid()
 
-### Community 11 - "Community 11"
-Cohesion: 0.08
-Nodes (6): restoreFile(), commitQuery(), handleSubmit(), loadRecent(), saveRecent(), handleRestore()
+### Community 10 - "Community 10"
+Cohesion: 0.09
+Nodes (12): load(), createEmptyIndex(), decryptIndex(), deriveIndexKey(), encryptIndex(), fetchIndex(), saveIndex(), commitQuery() (+4 more)
 
-### Community 12 - "Community 12"
+### Community 11 - "Community 11"
 Cohesion: 0.08
 Nodes (9): If(), Prompt(), removeWorkspaceMember(), updateMemberRole(), handleCreateWorkspace(), handleInvite(), handleRemove(), handleRoleChange() (+1 more)
 
-### Community 13 - "Community 13"
+### Community 12 - "Community 12"
 Cohesion: 0.19
 Nodes (9): bF(), dz(), ew(), fF(), Mx(), Nf(), qT(), tp() (+1 more)
 
-### Community 14 - "Community 14"
+### Community 13 - "Community 13"
 Cohesion: 0.11
 Nodes (3): Row(), AndroidKeyboard(), IOSKeyboard()
 
-### Community 15 - "Community 15"
+### Community 14 - "Community 14"
 Cohesion: 0.19
 Nodes (13): A(), C(), d(), F(), H(), I(), j(), p() (+5 more)
+
+### Community 15 - "Community 15"
+Cohesion: 0.14
+Nodes (2): restoreFile(), handleRestore()
 
 ### Community 17 - "Community 17"
 Cohesion: 0.18
@@ -157,12 +156,12 @@ Cohesion: 0.33
 Nodes (1): ErrorBoundary
 
 ### Community 48 - "Community 48"
-Cohesion: 0.33
-Nodes (3): NewFolderDialog(), RenameDialog(), useFocusTrap()
-
-### Community 49 - "Community 49"
 Cohesion: 0.73
 Nodes (5): colorKeywords(), colorLine(), colorTokens(), esc(), isInsideString()
+
+### Community 49 - "Community 49"
+Cohesion: 0.33
+Nodes (3): NewFolderDialog(), RenameDialog(), useFocusTrap()
 
 ### Community 55 - "Community 55"
 Cohesion: 0.4
@@ -172,17 +171,13 @@ Nodes (2): ImpersonationBanner(), useImpersonation()
 Cohesion: 0.5
 Nodes (2): dayLabel(), groupByDay()
 
-### Community 64 - "Community 64"
+### Community 65 - "Community 65"
 Cohesion: 0.83
 Nodes (3): extractDroppedItems(), processEntries(), readDirectoryEntry()
 
-### Community 67 - "Community 67"
+### Community 68 - "Community 68"
 Cohesion: 0.83
 Nodes (3): getMenuItems(), getPendingItems(), SharedContextMenu()
-
-### Community 77 - "Community 77"
-Cohesion: 0.67
-Nodes (1): wA
 
 ### Community 84 - "Community 84"
 Cohesion: 1.0
@@ -193,6 +188,8 @@ Cohesion: 1.0
 Nodes (2): formatBytes(), formatStorageSI()
 
 ## Knowledge Gaps
+- **Thin community `Community 15`** (14 nodes): `restoreFile()`, `ConfirmDeleteDialog()`, `daysUntilShred()`, `displayName()`, `executePermanentDelete()`, `getIconForName()`, `handleRestore()`, `handleRestoreAll()`, `requestDeleteSelected()`, `requestEmptyTrash()`, `requestPermanentDelete()`, `timeAgo()`, `toggleSelect()`, `trash.tsx`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 34`** (8 nodes): `computeEta()`, `computeSpeed()`, `formatBytes()`, `formatEta()`, `formatSpeed()`, `pipelineStage()`, `stageLabel()`, `upload-progress.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 47`** (6 nodes): `ErrorBoundary`, `.componentDidCatch()`, `.constructor()`, `.getDerivedStateFromError()`, `.render()`, `error-boundary.tsx`
@@ -200,8 +197,6 @@ Nodes (2): formatBytes(), formatStorageSI()
 - **Thin community `Community 55`** (5 nodes): `ImpersonationBanner()`, `ImpersonationProvider()`, `useImpersonation()`, `impersonation-banner.tsx`, `impersonation-context.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 56`** (5 nodes): `dayLabel()`, `groupByDay()`, `metaFor()`, `timeLabel()`, `activity.tsx`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 77`** (3 nodes): `wA`, `.constructor()`, `.setup()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 84`** (3 nodes): `deriveSasWords()`, `fnv1a()`, `sas-words.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
@@ -211,10 +206,10 @@ Nodes (2): formatBytes(), formatStorageSI()
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `If()` connect `Community 12` to `Community 0`, `Community 6`?**
-  _High betweenness centrality (0.211) - this node is a cross-community bridge._
-- **Why does `handleCreateWorkspace()` connect `Community 12` to `Community 1`?**
-  _High betweenness centrality (0.078) - this node is a cross-community bridge._
+- **Why does `If()` connect `Community 11` to `Community 0`, `Community 6`?**
+  _High betweenness centrality (0.224) - this node is a cross-community bridge._
+- **Why does `handleCreateWorkspace()` connect `Community 11` to `Community 1`?**
+  _High betweenness centrality (0.083) - this node is a cross-community bridge._
 - **Are the 8 inferred relationships involving `Z6()` (e.g. with `V()` and `H()`) actually correct?**
   _`Z6()` has 8 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 12 inferred relationships involving `f()` (e.g. with `X6()` and `J6()`) actually correct?**
@@ -224,4 +219,4 @@ _Questions this graph is uniquely positioned to answer:_
 - **Should `Community 1` be split into smaller, more focused modules?**
   _Cohesion score 0.01 - nodes in this community are weakly interconnected._
 - **Should `Community 2` be split into smaller, more focused modules?**
-  _Cohesion score 0.03 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.05 - nodes in this community are weakly interconnected._

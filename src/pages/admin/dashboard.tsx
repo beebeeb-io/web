@@ -6,13 +6,18 @@ import { KpiCard } from '../../components/admin/kpi-card'
 import { GrowthChart } from '../../components/admin/growth-chart'
 import { getAdminStats, getHealth, listAuditLog, getAdminGrowthData } from '../../lib/api'
 import type { AdminStats, HealthResponse, AuditEvent } from '../../lib/api'
+import { formatBytes } from '../../lib/format'
 
 const POLL_INTERVAL = 30_000
 
+// Growth-chart tabs. Labels say what is actually plotted — previously the
+// "Storage" tab was a count of files-per-day in disguise (server SQL used
+// COUNT not SUM). Server now returns bytes-added-per-day for "storage", so
+// labels can finally be honest. See task 0021.
 const TABS = [
-  { key: 'signups', label: 'Signups' },
-  { key: 'storage', label: 'Storage' },
-  { key: 'shares', label: 'Shares' },
+  { key: 'signups', label: 'New users' },
+  { key: 'storage', label: 'Storage growth' },
+  { key: 'shares', label: 'New shares' },
 ] as const
 
 const RANGES = [
@@ -22,6 +27,23 @@ const RANGES = [
 ] as const
 
 type GrowthMetric = 'signups' | 'storage' | 'shares'
+
+/** Per-metric tooltip phrasing — units + natural language. */
+function tooltipFormatterFor(metric: GrowthMetric): (value: number) => string {
+  switch (metric) {
+    case 'storage':
+      return (v) => `${formatBytes(v)} added`
+    case 'signups':
+      return (v) => `${v.toLocaleString()} new ${v === 1 ? 'user' : 'users'}`
+    case 'shares':
+      return (v) => `${v.toLocaleString()} ${v === 1 ? 'share' : 'shares'} created`
+  }
+}
+
+/** Per-metric y-axis tick formatter. */
+function axisFormatterFor(metric: GrowthMetric): (value: number) => string {
+  return metric === 'storage' ? formatBytes : (v) => v.toLocaleString()
+}
 
 function formatTime(iso: string): string {
   const d = new Date(iso)
@@ -211,6 +233,8 @@ export function Dashboard() {
               ranges={RANGES as unknown as { key: string; label: string }[]}
               activeRange={activeRange}
               onRangeChange={setActiveRange}
+              formatTooltip={tooltipFormatterFor(activeTab)}
+              formatAxis={axisFormatterFor(activeTab)}
             />
 
             {/* Recent activity */}
