@@ -253,6 +253,50 @@ export async function opaqueLoginFinish(
   return data
 }
 
+// ─── OPAQUE migration for existing (legacy) accounts ─────────────────────
+// These endpoints require a valid Bearer session and allow a user who is
+// currently authenticated via legacy Argon2id to silently enroll in OPAQUE.
+// Called fire-and-forget after a successful legacy login; failure is safe to
+// ignore — the account stays on legacy until the next successful migration.
+
+/**
+ * POST /api/v1/opaque/register-start-existing
+ *
+ * Initiates OPAQUE registration for a session that was authenticated via the
+ * legacy password path. The caller must already have a valid Bearer token.
+ * Returns the server-side OPAQUE message needed to complete registration.
+ */
+export async function opaqueRegisterStartExisting(
+  clientMessage: string,
+): Promise<{ server_message: string }> {
+  return request('/api/v1/opaque/register-start-existing', {
+    method: 'POST',
+    body: JSON.stringify({ client_message: clientMessage }),
+  })
+}
+
+/**
+ * POST /api/v1/opaque/register-finish-existing
+ *
+ * Completes OPAQUE enrollment for an existing session. Persists the OPAQUE
+ * password file alongside the recovery_check and x25519 public key so the
+ * account can use OPAQUE on next login.
+ */
+export async function opaqueRegisterFinishExisting(
+  clientMessage: string,
+  recoveryCheck: string,
+  x25519PublicKey: string,
+): Promise<{ migrated: true }> {
+  return request('/api/v1/opaque/register-finish-existing', {
+    method: 'POST',
+    body: JSON.stringify({
+      client_message: clientMessage,
+      recovery_check: recoveryCheck,
+      x25519_public_key: x25519PublicKey,
+    }),
+  })
+}
+
 // ─── Recovery-phrase auth endpoints (server task 0034) ────────────────────
 // These endpoints don't exist yet. Returns null on 404 so the UI can show a
 // "service unavailable" message rather than crashing.
