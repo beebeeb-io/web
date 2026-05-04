@@ -22,7 +22,7 @@ import { useToast } from '../components/toast'
 import { useWsEvent } from '../lib/ws-context'
 import { useSync } from '../lib/sync-context'
 import { useKeys } from '../lib/key-context'
-import { useKeyboardShortcuts } from '../hooks/use-keyboard-shortcuts'
+import { useKeyboardShortcuts, isMac } from '../hooks/use-keyboard-shortcuts'
 import {
   listFiles,
   createFolder,
@@ -73,6 +73,7 @@ export function Drive() {
   // Cache the File object per upload-id so we can re-invoke the encrypted
   // upload pipeline when the user clicks Retry on a failed item.
   const uploadFilesRef = useRef<Map<string, File>>(new Map())
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const [syncedAgo, setSyncedAgo] = useState(14)
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null)
   const [shareFileId, setShareFileId] = useState<string | null>(null)
@@ -1135,10 +1136,9 @@ export function Drive() {
       if (externalSelectedIds.size > 0) handleBulkDownload(Array.from(externalSelectedIds))
     },
     onSearch: () => {
-      const input = document.querySelector<HTMLInputElement>('[data-search-input]')
-      if (input) {
-        input.focus()
-        input.select()
+      if (searchInputRef.current) {
+        searchInputRef.current.focus()
+        searchInputRef.current.select()
       } else {
         navigate('/search')
       }
@@ -1157,6 +1157,29 @@ export function Drive() {
     },
     onEscape: () => {}, // handled inside FileList
   })
+
+  // Cmd-K / Ctrl-K focuses the inline search bar. Uses capture phase so it
+  // fires before the global GlobalShortcuts handler (which would open the
+  // command palette), and stopPropagation prevents that from also triggering.
+  useEffect(() => {
+    function handleSearchKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement
+      // Don't hijack while the user is already typing somewhere else.
+      if (
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) &&
+        target !== searchInputRef.current
+      ) return
+      const mod = isMac ? e.metaKey : e.ctrlKey
+      if (mod && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        e.stopPropagation()
+        searchInputRef.current?.focus()
+        searchInputRef.current?.select()
+      }
+    }
+    document.addEventListener('keydown', handleSearchKey, { capture: true })
+    return () => document.removeEventListener('keydown', handleSearchKey, { capture: true })
+  }, [])
 
   // ─── Derived data ───────────────────────────────────
 
@@ -1178,21 +1201,22 @@ export function Drive() {
 
           {/* Search */}
           <form
-            className="ml-auto flex items-center gap-2 border border-line rounded-md bg-paper px-2.5 py-1.5 w-full md:w-[260px] order-last md:order-none"
+            className="ml-auto flex items-center gap-2 border border-line rounded-md bg-paper px-2.5 py-1 w-full md:w-[260px] order-last md:order-none"
             onSubmit={(e) => {
               e.preventDefault()
-              const input = e.currentTarget.querySelector('input')
-              if (input?.value.trim()) navigate(`/search?q=${encodeURIComponent(input.value.trim())}`)
+              if (searchInputRef.current?.value.trim())
+                navigate(`/search?q=${encodeURIComponent(searchInputRef.current.value.trim())}`)
             }}
           >
             <Icon name="search" size={13} className="text-ink-4 shrink-0" />
             <input
+              ref={searchInputRef}
               data-search-input
               placeholder="Search files and folders..."
               className="flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-4"
             />
             <kbd className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-mono text-ink-4 bg-paper-2 border border-line rounded">
-              <span>⌘</span>K
+              {isMac ? <><span>⌘</span>K</> : 'Ctrl+K'}
             </kbd>
           </form>
 
