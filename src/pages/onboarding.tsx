@@ -162,10 +162,10 @@ export function Onboarding() {
   const stepNumber = STEP_NUMBER[step]
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-paper p-xl">
+    <div className="min-h-screen flex items-center justify-center bg-paper px-4 py-6 sm:p-xl">
       <div className="w-full max-w-[820px] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
         {/* Header */}
-        <div className="flex items-center gap-4 px-xl py-lg border-b border-line">
+        <div className="flex items-center gap-4 px-5 py-4 sm:px-xl sm:py-lg border-b border-line">
           <BBLogo size={15} />
           <div className="ml-auto flex items-center gap-1.5">
             {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
@@ -193,9 +193,9 @@ export function Onboarding() {
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-[1.2fr_1fr]">
+          <div className="grid grid-cols-1 md:grid-cols-[1.2fr_1fr]">
             {/* Left panel */}
-            <div className="p-8 border-r border-line">
+            <div className="p-5 sm:p-8 md:border-r border-line">
               {step === 'display' && (
                 <>
                   <p className="text-xs font-medium text-ink-2 mb-2.5">
@@ -212,7 +212,7 @@ export function Onboarding() {
                   {words.length > 0 ? (
                     <>
                       <div className="bg-paper-2 border border-line rounded-lg p-4.5 mb-4 select-text">
-                        <div className="grid grid-cols-2 gap-x-7 gap-y-2.5">
+                        <div className="grid grid-cols-2 sm:grid-cols-2 gap-x-4 sm:gap-x-7 gap-y-2.5">
                           {words.map((word, i) => (
                             <div key={i} className="flex items-baseline gap-2.5 pb-2 border-b border-dashed border-line">
                               <span className="font-mono text-[11px] text-ink-4 w-4.5 select-none">{String(i + 1).padStart(2, '0')}</span>
@@ -359,7 +359,7 @@ export function Onboarding() {
             </div>
 
             {/* Right panel — context */}
-            <div className="p-8 bg-paper-2 flex flex-col">
+            <div className="p-5 sm:p-8 bg-paper-2 flex flex-col border-t md:border-t-0 border-line">
               <p className="text-xs font-medium text-ink-2 mb-2.5">Why this matters</p>
               <h2 className="text-base font-semibold text-ink mb-5">
                 True zero-knowledge means we can't reach in — and neither can anyone else.

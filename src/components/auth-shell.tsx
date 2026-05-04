@@ -21,10 +21,10 @@ export function AuthShell({
   hideTrust,
 }: AuthShellProps) {
   return (
-    <div className="auth-bg min-h-screen flex flex-col items-center justify-center bg-paper p-xl">
+    <div className="auth-bg min-h-screen flex flex-col items-center justify-center bg-paper px-4 py-6 sm:p-xl">
       <div className="auth-card w-full max-w-[28rem] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
         {/* Header */}
-        <div className="px-xl py-lg border-b border-line">
+        <div className="px-5 py-4 sm:px-xl sm:py-lg border-b border-line">
           <BBLogo size={16} />
           {totalSteps != null && step != null && (
             <div className="flex gap-1 mt-3.5">
@@ -41,7 +41,7 @@ export function AuthShell({
         </div>
 
         {/* Content */}
-        <div className="px-xl py-lg">
+        <div className="px-5 py-4 sm:px-xl sm:py-lg">
           <h2 className="text-lg font-semibold text-ink mb-1">{title}</h2>
           {subtitle && (
             <p className="text-[13px] text-ink-3 leading-relaxed mb-5">
