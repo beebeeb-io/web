@@ -24,6 +24,7 @@ import {
   type PoolInsights,
 } from '../../lib/api'
 import { InsightsPanel } from '../../components/admin/lifecycle/insights-panel'
+import { QuiescingPanel } from '../../components/admin/lifecycle/quiescing-panel'
 
 // ─── Phase badge ─────────────────────────────────────────────────────────────
 
@@ -80,20 +81,6 @@ function PhaseBadge({ phase }: { phase: LifecyclePhase }) {
 
 // ─── Placeholder panels (replaced by Tasks 4–6) ───────────────────────────
 
-function QuiescingPanelPlaceholder({ run }: { run: LifecycleRun | null }) {
-  return (
-    <div className="p-6 border border-dashed border-amber rounded-lg text-center">
-      <p className="text-sm font-medium text-ink-2 mb-1">Quiescing panel</p>
-      <p className="text-xs text-ink-4 font-mono">phase: quiescing</p>
-      {run && (
-        <p className="text-xs text-ink-3 mt-2">
-          Run: <span className="font-mono">{run.id.slice(0, 8)}</span>
-        </p>
-      )}
-      <p className="text-xs text-ink-4 mt-1">QuiescingPanel component — Task 4</p>
-    </div>
-  )
-}
 
 function MigratingPanelPlaceholder({ run }: { run: LifecycleRun | null }) {
   return (
@@ -164,10 +151,9 @@ export function PoolLifecycle() {
       const currentPhase = inProgress?.current_phase ?? 'active'
       setPhase(currentPhase)
 
-      // 3. Fetch insights only for active pools (the insights endpoint returns
-      //    data about files still on the source — only meaningful before a run
-      //    starts and potentially during migration; always valid for active).
-      if (currentPhase === 'active') {
+      // 3. Fetch insights for active + quiescing phases — shows what's still
+      //    on the source pool, useful as a pre-migration sanity check.
+      if (currentPhase === 'active' || currentPhase === 'quiescing') {
         const poolInsights = await getPoolInsights(poolId)
         setInsights(poolInsights)
       }
@@ -227,7 +213,20 @@ export function PoolLifecycle() {
           />
         )
       case 'quiescing':
-        return <QuiescingPanelPlaceholder run={activeRun} />
+        if (!activeRun) return <p className="text-sm text-ink-3">No active run found.</p>
+        return (
+          <QuiescingPanel
+            poolId={poolId!}
+            run={activeRun}
+            insights={insights}
+            targetPoolName={
+              allPools.find((p) => p.id === activeRun.target_pool_id)?.display_name
+              ?? allPools.find((p) => p.id === activeRun.target_pool_id)?.name
+              ?? activeRun.target_pool_id
+            }
+            onPhaseChanged={load}
+          />
+        )
       case 'migrating':
         return <MigratingPanelPlaceholder run={activeRun} />
       case 'drained':
