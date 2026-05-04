@@ -204,10 +204,14 @@ export async function signup(
 export async function opaqueRegisterStart(
   email: string,
   clientMessage: string,
+  /** Cloudflare Turnstile token — omitted when not available (dev mode / fail-open). */
+  cfTurnstileResponse?: string | null,
 ): Promise<{ server_message: string }> {
+  const body: Record<string, unknown> = { email, client_message: clientMessage }
+  if (cfTurnstileResponse) body.cf_turnstile_response = cfTurnstileResponse
   return request('/api/v1/opaque/register-start', {
     method: 'POST',
-    body: JSON.stringify({ email, client_message: clientMessage }),
+    body: JSON.stringify(body),
   })
 }
 
