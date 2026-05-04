@@ -12,6 +12,22 @@ import { formatBytes } from '../../../lib/format'
 import { startLifecycleRun, type PoolInsights, type StoragePool } from '../../../lib/api'
 import { ConfirmationModal } from './confirmation-modal'
 
+// ─── Speed presets ────────────────────────────────────────────────────────────
+
+type SpeedPreset = 'ssd' | 'gbit' | 'cross' | 'custom'
+
+interface Preset {
+  label: string
+  mbps: number
+}
+
+const SPEED_PRESETS: Record<SpeedPreset, Preset> = {
+  ssd:    { label: 'Same DC — SSD (50 MB/s)', mbps: 50 },
+  gbit:   { label: 'Same DC — 1 Gbit (125 MB/s)', mbps: 125 },
+  cross:  { label: 'Cross-region (25 MB/s)', mbps: 25 },
+  custom: { label: 'Custom…', mbps: 50 },
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function formatMigrationTime(seconds: number): string {
@@ -20,6 +36,12 @@ function formatMigrationTime(seconds: number): string {
   const m = Math.ceil((seconds % 3600) / 60)
   if (h > 0) return `${h}h ${m}m`
   return `${m}m`
+}
+
+function computeEta(bytes: number, mbps: number): string {
+  if (bytes === 0) return '< 1 min'
+  const seconds = Math.ceil(bytes / (mbps * 1_000_000))
+  return formatMigrationTime(seconds)
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -45,6 +67,18 @@ export function InsightsPanel({
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Speed preset for client-side ETA calculation.
+  // Default: conservative SSD bottleneck (50 MB/s) rather than peak network.
+  const [speedPreset, setSpeedPreset] = useState<SpeedPreset>('ssd')
+  const [customMbps, setCustomMbps] = useState<string>('50')
+
+  const effectiveMbps =
+    speedPreset === 'custom'
+      ? Math.max(1, parseFloat(customMbps) || 50)
+      : SPEED_PRESETS[speedPreset].mbps
+
+  const etaDisplay = computeEta(insights.used_bytes, effectiveMbps)
 
   async function handleBeginDecommissionConfirmed() {
     if (!targetPoolId) return
@@ -97,13 +131,42 @@ export function InsightsPanel({
             </div>
           )}
         </div>
+        {/* ETA card — client-side calculation with speed selector */}
         <div className="rounded-lg border border-line bg-paper p-3 min-w-0">
           <div className="text-[10px] text-ink-4 uppercase tracking-wide mb-1">Est. migration</div>
-          <div className="font-mono text-lg font-bold text-ink leading-tight">
-            {formatMigrationTime(insights.estimated_migration_seconds)}
+          <div className="font-mono text-lg font-bold text-ink leading-tight mb-2">
+            {etaDisplay}
           </div>
+          {/* Speed selector */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-ink-4 shrink-0">Speed</span>
+            <select
+              value={speedPreset}
+              onChange={(e) => setSpeedPreset(e.target.value as SpeedPreset)}
+              className="flex-1 bg-paper-2 border border-line rounded px-1.5 py-0.5 text-[10px] font-mono text-ink focus:outline-none focus:ring-1 focus:ring-amber/40 min-w-0"
+            >
+              {(Object.entries(SPEED_PRESETS) as [SpeedPreset, Preset][]).map(
+                ([key, p]) => (
+                  <option key={key} value={key}>{p.label}</option>
+                ),
+              )}
+            </select>
+          </div>
+          {speedPreset === 'custom' && (
+            <div className="flex items-center gap-1 mt-1.5">
+              <input
+                type="number"
+                min="1"
+                value={customMbps}
+                onChange={(e) => setCustomMbps(e.target.value)}
+                className="w-16 bg-paper-2 border border-line rounded px-1.5 py-0.5 text-[10px] font-mono text-ink focus:outline-none focus:ring-1 focus:ring-amber/40"
+                placeholder="50"
+              />
+              <span className="text-[10px] text-ink-4">MB/s</span>
+            </div>
+          )}
           {insights.in_flight_uploads_count > 0 && (
-            <div className="font-mono text-[10px] text-amber-deep mt-0.5">
+            <div className="font-mono text-[10px] text-amber-deep mt-1">
               {insights.in_flight_uploads_count} uploads in flight
             </div>
           )}
