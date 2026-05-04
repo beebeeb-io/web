@@ -13,6 +13,7 @@ import {
   type LifecycleRun,
   type RunProgress,
 } from '../../../lib/api'
+import { ConfirmationModal } from './confirmation-modal'
 
 function formatMigrationTime(seconds: number): string {
   if (seconds <= 0 || !isFinite(seconds)) return '—'
@@ -38,6 +39,7 @@ export function MigratingPanel({
 }: MigratingPanelProps) {
   const [runProgress, setRunProgress] = useState<RunProgress | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [pauseModalOpen, setPauseModalOpen] = useState(false)
   const [pausing, setPausing] = useState(false)
   const [pauseError, setPauseError] = useState<string | null>(null)
 
@@ -60,9 +62,7 @@ export function MigratingPanel({
     return () => clearInterval(id)
   }, [poolId, run.id, onPhaseChanged])
 
-  async function handlePause() {
-    const ok = window.confirm(`Pause migration to ${targetPoolName}?\n\nThe pool returns to quiescing — read-only, uploads still route to ${targetPoolName}. Resume by clicking 'Begin migration' again.`)
-    if (!ok) return
+  async function handlePauseConfirmed() {
     setPauseError(null)
     setPausing(true)
     try {
@@ -72,6 +72,7 @@ export function MigratingPanel({
       setPauseError(err instanceof Error ? err.message : 'Pause failed.')
     } finally {
       setPausing(false)
+      setPauseModalOpen(false)
     }
   }
 
@@ -80,9 +81,7 @@ export function MigratingPanel({
   return (
     <div>
       {/* Progress section */}
-      <p className="text-xs font-medium text-ink-3 uppercase tracking-wider mb-3">
-        Migration progress
-      </p>
+      <p className="text-xs font-medium text-ink-3 uppercase tracking-wider mb-3">Migration progress</p>
 
       {loadError && !runProgress && (
         <p className="text-xs text-red mb-3">{loadError}</p>
@@ -139,11 +138,7 @@ export function MigratingPanel({
           </div>
           <div className="rounded-lg border border-line bg-paper p-3 min-w-0">
             <div className="text-[10px] text-ink-4 uppercase tracking-wide mb-1">Failed</div>
-            <div
-              className={`font-mono text-lg font-bold leading-tight ${
-                runProgress.files_failed > 0 ? 'text-amber-deep' : 'text-ink'
-              }`}
-            >
+            <div className={`font-mono text-lg font-bold leading-tight ${runProgress.files_failed > 0 ? 'text-amber-deep' : 'text-ink'}`}>
               {runProgress.files_failed.toLocaleString()}
             </div>
             {runProgress.files_failed > 0 && (
@@ -157,15 +152,30 @@ export function MigratingPanel({
       {pauseError && <p className="text-xs text-red mb-3">{pauseError}</p>}
 
       {/* CTA */}
-      <BBButton variant="ghost" disabled={pausing} onClick={handlePause}>
-        {pausing ? (
-          <><span className="inline-block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />Pausing…</>
-        ) : 'Pause migration'}
+      <BBButton variant="ghost" disabled={pausing} onClick={() => setPauseModalOpen(true)}>
+        Pause migration
       </BBButton>
 
       <p className="text-[11px] text-ink-4 mt-4">
         Updates every 5 seconds. Pausing reverts to quiescing — resume by clicking "Begin migration".
       </p>
+
+      {/* Pause confirmation modal */}
+      <ConfirmationModal
+        open={pauseModalOpen}
+        title="Pause migration?"
+        description={
+          <>
+            <p>Migration will stop and the pool will return to quiescing — read-only, uploads still route to <strong>{targetPoolName}</strong>.</p>
+            <p className="mt-2">Resume by clicking "Begin migration" from the quiescing panel.</p>
+          </>
+        }
+        confirmLabel="Pause migration"
+        variant="warning"
+        onConfirm={handlePauseConfirmed}
+        onCancel={() => { setPauseModalOpen(false); setPauseError(null) }}
+        loading={pausing}
+      />
     </div>
   )
 }

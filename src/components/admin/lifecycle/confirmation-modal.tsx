@@ -13,8 +13,12 @@ interface ConfirmationModalProps {
   open: boolean
   title: string
   description: string | ReactNode
-  /** The string the user must type exactly to enable the confirm button. */
-  confirmationText: string
+  /**
+   * When provided: user must type this string exactly before the confirm
+   * button enables. Use for destructive terminal actions (delete pool).
+   * When omitted: no text input shown, confirm button is immediately enabled.
+   */
+  confirmationText?: string
   confirmLabel: string
   variant: 'danger' | 'warning'
   onConfirm: () => void
@@ -47,7 +51,8 @@ export function ConfirmationModal({
 
   if (!open) return null
 
-  const confirmed = typed === confirmationText
+  // No confirmationText = no type-to-confirm required (non-terminal actions).
+  const confirmed = confirmationText ? typed === confirmationText : true
   const btnVariant = variant === 'danger' ? 'danger' : 'amber'
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -89,29 +94,31 @@ export function ConfirmationModal({
             <div className="text-sm text-ink-2 leading-relaxed">{description}</div>
           )}
 
-          {/* Confirmation input */}
-          <div>
-            <label className="block text-xs font-medium text-ink-2 mb-1.5">
-              Type{' '}
-              <span className="font-mono font-semibold text-ink px-1 py-0.5 bg-paper-2 rounded">
-                {confirmationText}
-              </span>{' '}
-              to confirm
-            </label>
-            <input
-              ref={inputRef}
-              value={typed}
-              onChange={(e) => setTyped(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && confirmed && !loading) onConfirm()
-              }}
-              disabled={loading}
-              className="w-full bg-paper border border-line rounded-md px-3 py-2 text-sm text-ink font-mono focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber-deep disabled:opacity-50"
-              placeholder={confirmationText}
-              autoComplete="off"
-              spellCheck={false}
-            />
-          </div>
+          {/* Type-to-confirm input — only shown when confirmationText is set */}
+          {confirmationText && (
+            <div>
+              <label className="block text-xs font-medium text-ink-2 mb-1.5">
+                Type{' '}
+                <span className="font-mono font-semibold text-ink px-1 py-0.5 bg-paper-2 rounded">
+                  {confirmationText}
+                </span>{' '}
+                to confirm
+              </label>
+              <input
+                ref={inputRef}
+                value={typed}
+                onChange={(e) => setTyped(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && confirmed && !loading) onConfirm()
+                }}
+                disabled={loading}
+                className="w-full bg-paper border border-line rounded-md px-3 py-2 text-sm text-ink font-mono focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber-deep disabled:opacity-50"
+                placeholder={confirmationText}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
+          )}
         </div>
 
         {/* Footer */}
