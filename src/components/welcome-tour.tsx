@@ -1,60 +1,64 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Icon } from './icons'
 import type { IconName } from './icons'
 import { BBButton } from './bb-button'
-import { BBChip } from './bb-chip'
 import { BBLogo } from './bb-logo'
 
 interface TourStep {
+  id: string
   title: string
   description: string
   icon: IconName
   done: boolean
   href?: string
+  action?: string
 }
 
 interface WelcomeTourProps {
   open: boolean
   onClose: () => void
-  /** Called when the user clicks Continue on a step — persist + close the tour */
-  onCompleteStep?: (title: string) => void
+  onCompleteStep?: (id: string) => void
   userName?: string
   completedSteps?: Set<string>
+  onUpload?: () => void
 }
 
 const ALL_STEPS: Omit<TourStep, 'done'>[] = [
   {
-    title: 'Your recovery phrase',
-    description:
-      'This is the only key to your vault. We saved it encrypted — you should print a copy.',
-    icon: 'key',
-    href: '/security',
-  },
-  {
-    title: 'Add a second device',
-    description:
-      'Install the desktop app or iOS app so you can work anywhere.',
-    icon: 'cloud',
-  },
-  {
+    id: 'upload',
     title: 'Upload your first file',
     description:
-      'Drag one in, or drop a folder. Encryption happens on your laptop.',
+      'Drag a file into the drive, or click here. Everything is encrypted on your device before it leaves.',
     icon: 'upload',
-    href: '/',
+    action: 'Upload a file',
   },
   {
-    title: 'Invite a person',
+    id: 'security',
+    title: 'Set up two-factor auth',
     description:
-      'Keys exchange happens between your devices, not through our servers.',
-    icon: 'users',
-    href: '/team',
+      'Add an extra layer of protection with TOTP or a passkey. Takes 30 seconds.',
+    icon: 'shield',
+    href: '/security',
+    action: 'Set up 2FA',
   },
   {
-    title: 'Turn on passkey',
-    description: "Faster sign-in with your device's biometrics.",
-    icon: 'shield',
-    href: '/settings/2fa',
+    id: 'share',
+    title: 'Share something securely',
+    description:
+      'Create an encrypted share link. You control expiry, download limits, and passphrase.',
+    icon: 'link',
+    href: '/',
+    action: 'Go to drive',
+  },
+  {
+    id: 'device',
+    title: 'Add a second device',
+    description:
+      'Install the iOS app or desktop client. Your encryption keys sync securely between devices.',
+    icon: 'cloud',
+    href: '/settings/devices',
+    action: 'See devices',
   },
 ]
 
@@ -64,116 +68,127 @@ export function WelcomeTour({
   onCompleteStep,
   userName,
   completedSteps = new Set(),
+  onUpload,
 }: WelcomeTourProps) {
   const navigate = useNavigate()
+  const [activeId, setActiveId] = useState<string | null>(null)
 
   if (!open) return null
 
   const steps: TourStep[] = ALL_STEPS.map((s) => ({
     ...s,
-    done: completedSteps.has(s.title),
+    done: completedSteps.has(s.id),
   }))
 
   const doneCount = steps.filter((s) => s.done).length
-  const activeIndex = steps.findIndex((s) => !s.done)
+  const firstIncomplete = steps.find((s) => !s.done)
+  const expandedId = activeId ?? firstIncomplete?.id ?? steps[0].id
 
   const displayName = userName ?? 'there'
+  const allDone = doneCount === steps.length
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 pointer-events-none">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30">
       <div
-        className="bg-paper rounded-xl border border-line-2 shadow-3 overflow-hidden pointer-events-auto"
-        style={{ width: 680 }}
+        className="bg-paper rounded-xl border border-line-2 shadow-3 overflow-hidden w-full max-w-[520px] mx-4"
       >
         {/* Header */}
-        <div className="flex items-center gap-2.5 px-5 py-4 border-b border-line">
-          <BBLogo size={14} />
-          <span className="text-sm font-semibold text-ink">
-            Welcome, {displayName}
-          </span>
-          <BBChip variant="amber" className="ml-auto">
-            {doneCount} of {steps.length} done
-          </BBChip>
+        <div className="px-5 py-4 border-b border-line">
+          <div className="flex items-center gap-2.5 mb-3">
+            <BBLogo size={14} />
+            <span className="text-[15px] font-semibold text-ink">
+              Welcome, {displayName}
+            </span>
+          </div>
+          <p className="text-[13px] text-ink-3 leading-relaxed">
+            {allDone
+              ? 'All set — your vault is ready to go.'
+              : 'A few things to get the most out of your encrypted vault.'}
+          </p>
+          {/* Progress bar */}
+          <div className="flex items-center gap-2 mt-3">
+            <div className="flex-1 h-1.5 rounded-full bg-paper-3 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-amber transition-all duration-500"
+                style={{ width: `${(doneCount / steps.length) * 100}%` }}
+              />
+            </div>
+            <span className="text-[11px] font-mono text-ink-3 shrink-0">
+              {doneCount}/{steps.length}
+            </span>
+          </div>
         </div>
 
-        {/* Steps */}
-        <div className="py-2">
-          {steps.map((step, i) => {
-            const isActive = i === activeIndex
+        {/* Steps — accordion style */}
+        <div className="py-1.5">
+          {steps.map((step) => {
+            const isExpanded = step.id === expandedId
             return (
-              <div
-                key={step.title}
-                className="flex items-start gap-3.5 px-5 py-3 transition-colors"
-                style={{
-                  background: isActive
-                    ? 'var(--color-amber-bg)'
-                    : 'transparent',
-                  borderLeft: isActive
-                    ? '3px solid var(--color-amber-deep)'
-                    : '3px solid transparent',
-                }}
-              >
-                {/* Step number / checkmark */}
-                <div
-                  className="w-[22px] h-[22px] rounded-full flex items-center justify-center text-[11px] font-bold shrink-0 mt-0.5"
-                  style={{
-                    background: step.done
-                      ? 'oklch(0.72 0.16 155)'
-                      : isActive
-                        ? 'var(--color-amber-deep)'
-                        : 'var(--color-paper-2)',
-                    color:
-                      step.done || isActive
+              <div key={step.id}>
+                {/* Step header — clickable */}
+                <button
+                  className="w-full flex items-center gap-3 px-5 py-2.5 text-left transition-colors hover:bg-paper-2/50"
+                  onClick={() => setActiveId(step.id === activeId ? null : step.id)}
+                >
+                  <div
+                    className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 transition-all"
+                    style={{
+                      background: step.done
+                        ? 'oklch(0.72 0.16 155)'
+                        : isExpanded
+                          ? 'var(--color-amber)'
+                          : 'var(--color-paper-3)',
+                      color: step.done || isExpanded
                         ? 'var(--color-paper)'
                         : 'var(--color-ink-3)',
-                    border:
-                      step.done || isActive
-                        ? 'none'
-                        : '1px solid var(--color-line-2)',
-                  }}
-                >
-                  {step.done ? (
-                    <Icon name="check" size={11} />
-                  ) : (
-                    i + 1
-                  )}
-                </div>
-
-                {/* Content */}
-                <div className="flex-1 min-w-0">
-                  <div
-                    className={`text-[13.5px] font-semibold leading-snug ${
-                      step.done
-                        ? 'text-ink-3 line-through'
-                        : 'text-ink'
+                    }}
+                  >
+                    {step.done ? (
+                      <Icon name="check" size={12} />
+                    ) : (
+                      <Icon name={step.icon} size={12} />
+                    )}
+                  </div>
+                  <span
+                    className={`flex-1 text-[13px] font-medium ${
+                      step.done ? 'text-ink-3 line-through' : 'text-ink'
                     }`}
                   >
                     {step.title}
-                  </div>
-                  <div className="text-[12.5px] text-ink-2 mt-0.5 leading-relaxed">
-                    {step.description}
-                  </div>
-                </div>
+                  </span>
+                  <Icon
+                    name="arrow-up"
+                    size={10}
+                    className={`text-ink-4 transition-transform ${isExpanded ? '' : 'rotate-180'}`}
+                  />
+                </button>
 
-                {/* Action button for active step */}
-                {isActive && step.href && (
-                  <BBButton
-                    size="sm"
-                    variant="amber"
-                    onClick={() => {
-                      // Mark this step done so it stays checked when the
-                      // tour reopens — do this BEFORE navigating, since
-                      // some hrefs leave the drive page.
-                      if (onCompleteStep) {
-                        onCompleteStep(step.title)
-                      } else {
-                        onClose()
-                      }
-                      navigate(step.href!)
-                    }}
-                  >
-                    Continue
-                  </BBButton>
+                {/* Expanded content */}
+                {isExpanded && !step.done && (
+                  <div className="px-5 pb-3 pl-14">
+                    <p className="text-[12.5px] text-ink-2 leading-relaxed mb-3">
+                      {step.description}
+                    </p>
+                    <BBButton
+                      size="sm"
+                      variant="amber"
+                      onClick={() => {
+                        if (step.id === 'upload' && onUpload) {
+                          onUpload()
+                          onCompleteStep?.(step.id)
+                          onClose()
+                        } else if (step.href) {
+                          onCompleteStep?.(step.id)
+                          navigate(step.href)
+                          onClose()
+                        }
+                      }}
+                      className="gap-1.5"
+                    >
+                      <Icon name={step.icon} size={11} />
+                      {step.action ?? 'Continue'}
+                    </BBButton>
+                  </div>
                 )}
               </div>
             )
@@ -181,9 +196,9 @@ export function WelcomeTour({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center gap-2.5 px-5 py-3 border-t border-line bg-paper-2">
-          <span className="text-[11px] text-ink-3">
-            Skip for now — you can find this in Settings anytime
+        <div className="flex items-center px-5 py-3 border-t border-line bg-paper-2">
+          <span className="text-[11px] text-ink-4">
+            Find this in Settings anytime
           </span>
           <BBButton
             size="sm"
@@ -191,7 +206,7 @@ export function WelcomeTour({
             className="ml-auto"
             onClick={onClose}
           >
-            Dismiss tour
+            {allDone ? 'Close' : 'Skip for now'}
           </BBButton>
         </div>
       </div>
