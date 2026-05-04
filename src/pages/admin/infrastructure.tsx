@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import { AdminShell, AdminHeader } from './admin-shell'
 import { Icon } from '../../components/icons'
 import { BBButton } from '../../components/bb-button'
 import { BBChip } from '../../components/bb-chip'
 import { useToast } from '../../components/toast'
 import { formatBytes } from '../../lib/format'
+import { PhaseBadge } from '../../components/admin/lifecycle/phase-badge'
 import {
   listStoragePools,
   createStoragePool,
@@ -12,8 +14,6 @@ import {
   listMigrations,
   getHealth,
   getAdminStats,
-  migrateAllPool,
-  decommissionPool,
   reconcileUsage,
   type StoragePool,
   type MigrationSummary,
@@ -141,9 +141,6 @@ export function Infrastructure() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [updatingPool, setUpdatingPool] = useState<string | null>(null)
-  const [migrateTarget, setMigrateTarget] = useState<Record<string, string>>({})
-  const [decomTarget, setDecomTarget] = useState<Record<string, string>>({})
-  const [confirmingDecom, setConfirmingDecom] = useState<string | null>(null)
   const [reconciling, setReconciling] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
   const [createForm, setCreateForm] =
@@ -183,58 +180,6 @@ export function Infrastructure() {
   useEffect(() => {
     void load()
   }, [load])
-
-  async function handleMigrateAll(pool: StoragePool) {
-    const target = migrateTarget[pool.id]
-    if (!target) {
-      showToast({ icon: 'x', title: 'Pick a target pool first', danger: true })
-      return
-    }
-    setUpdatingPool(pool.id)
-    try {
-      const res = await migrateAllPool(pool.id, target)
-      showToast({
-        icon: 'arrow-up',
-        title: `Migration queued`,
-        description: `${res.migrations_queued} files from ${pool.display_name}`,
-      })
-      await load()
-    } catch (err) {
-      showToast({
-        icon: 'x',
-        title: 'Migration failed',
-        description: err instanceof Error ? err.message : undefined,
-        danger: true,
-      })
-    } finally {
-      setUpdatingPool(null)
-    }
-  }
-
-  async function handleDecommission(pool: StoragePool) {
-    const target = decomTarget[pool.id]
-    if (!target) return
-    setUpdatingPool(pool.id)
-    try {
-      const res = await decommissionPool(pool.id, target)
-      showToast({
-        icon: 'check',
-        title: `Pool decommissioned`,
-        description: `${res.migrations_queued} migrations queued, pool set to read-only`,
-      })
-      setConfirmingDecom(null)
-      await load()
-    } catch (err) {
-      showToast({
-        icon: 'x',
-        title: 'Decommission failed',
-        description: err instanceof Error ? err.message : undefined,
-        danger: true,
-      })
-    } finally {
-      setUpdatingPool(null)
-    }
-  }
 
   async function handleReconcile() {
     setReconciling(true)
@@ -515,9 +460,7 @@ export function Infrastructure() {
               >
                 {pools.map(pool => {
                   const isUpdating = updatingPool === pool.id
-                  const targetOptions = pools.filter(p => p.id !== pool.id && p.is_active)
                   const isEditing = editingPool === pool.id
-                  const isConfirmingDecom = confirmingDecom === pool.id
                   const healthOk =
                     pool.is_active && (pool.usage_pct ?? 0) < 95
                   return (
@@ -548,7 +491,7 @@ export function Infrastructure() {
                           />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-[13px] font-semibold">
                               {pool.display_name}
                             </span>
@@ -566,12 +509,11 @@ export function Infrastructure() {
                                 Default
                               </BBChip>
                             )}
-                            <BBChip
-                              variant={pool.is_active ? 'green' : 'default'}
+                            {/* Lifecycle phase badge */}
+                            <PhaseBadge
+                              phase={pool.lifecycle_phase ?? 'active'}
                               className="text-[9px]"
-                            >
-                              {pool.is_active ? 'Active' : 'Inactive'}
-                            </BBChip>
+                            />
                           </div>
                           <div className="font-mono text-[10px] text-ink-3 mt-0.5">
                             {pool.name}
@@ -662,87 +604,18 @@ export function Infrastructure() {
                         {pool.endpoint}
                       </div>
 
-                      {/* Migrate / Decommission controls */}
-                      {targetOptions.length > 0 && (
-                        <div className="rounded-lg bg-paper-2 border border-line p-2.5 mb-3 space-y-2">
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] uppercase text-ink-4 w-[80px]">Migrate all</span>
-                            <select
-                              className="flex-1 border border-line-2 rounded-md px-2 py-1 text-xs font-mono bg-paper"
-                              value={migrateTarget[pool.id] ?? ''}
-                              onChange={e =>
-                                setMigrateTarget({ ...migrateTarget, [pool.id]: e.target.value })
-                              }
-                            >
-                              <option value="">Select target pool…</option>
-                              {targetOptions.map(p => (
-                                <option key={p.id} value={p.id}>
-                                  {p.display_name}
-                                </option>
-                              ))}
-                            </select>
-                            <BBButton
-                              size="sm"
-                              variant="default"
-                              onClick={() => handleMigrateAll(pool)}
-                              disabled={isUpdating || !migrateTarget[pool.id]}
-                            >
-                              Migrate
-                            </BBButton>
-                          </div>
-
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] uppercase text-ink-4 w-[80px]">Decommission</span>
-                            <select
-                              className="flex-1 border border-line-2 rounded-md px-2 py-1 text-xs font-mono bg-paper"
-                              value={decomTarget[pool.id] ?? ''}
-                              onChange={e =>
-                                setDecomTarget({ ...decomTarget, [pool.id]: e.target.value })
-                              }
-                            >
-                              <option value="">Select target pool…</option>
-                              {targetOptions.map(p => (
-                                <option key={p.id} value={p.id}>
-                                  {p.display_name}
-                                </option>
-                              ))}
-                            </select>
-                            <BBButton
-                              size="sm"
-                              variant="danger"
-                              onClick={() => setConfirmingDecom(pool.id)}
-                              disabled={isUpdating || !decomTarget[pool.id]}
-                            >
-                              Decommission
-                            </BBButton>
-                          </div>
-
-                          {isConfirmingDecom && (
-                            <div className="rounded-md bg-paper border border-red/40 p-2.5">
-                              <div className="text-[12px] text-ink mb-2 leading-snug">
-                                This will set the pool to read-only and migrate all files to the target pool. Continue?
-                              </div>
-                              <div className="flex justify-end gap-2">
-                                <BBButton
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => setConfirmingDecom(null)}
-                                >
-                                  Cancel
-                                </BBButton>
-                                <BBButton
-                                  size="sm"
-                                  variant="danger"
-                                  onClick={() => handleDecommission(pool)}
-                                  disabled={isUpdating}
-                                >
-                                  {isUpdating ? 'Working...' : 'Confirm decommission'}
-                                </BBButton>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
+                      {/* Lifecycle wizard link — replaces old migrate/decommission controls */}
+                      <div className="mb-3">
+                        <Link
+                          to={`/admin/infrastructure/pools/${pool.id}`}
+                          className="inline-flex items-center gap-1 text-xs font-medium text-ink-2 hover:text-ink transition-colors"
+                        >
+                          {(pool.lifecycle_phase ?? 'active') === 'active'
+                            ? 'Manage'
+                            : 'View progress'}
+                          <Icon name="chevron-right" size={12} />
+                        </Link>
+                      </div>
 
                       <div className="flex items-center gap-2 pt-1 border-t border-line">
                         <BBButton size="sm" variant="ghost" onClick={() => startEdit(pool)}>

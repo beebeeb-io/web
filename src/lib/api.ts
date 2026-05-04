@@ -1256,6 +1256,10 @@ export interface StoragePool {
   used_bytes: number
   usage_pct: number | null
   created_at: string
+  /** Lifecycle phase — omitted by the legacy /admin/storage-pools endpoint
+   *  (admin.rs does not yet return this column). Defaults to 'active' when
+   *  absent. Will be non-optional once the endpoint is updated in Task 8. */
+  lifecycle_phase?: LifecyclePhase
 }
 
 export interface MigrationSummary {
