@@ -4,7 +4,8 @@
 // /activity; this is the at-a-glance digest.
 
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+// Link import removed when /activity route was hidden (spec TBD)
+// import { Link } from 'react-router-dom'
 import { Icon } from './icons'
 import type { IconName } from './icons'
 import { SkeletonLine } from './skeleton'
@@ -74,12 +75,16 @@ export function RecentActivity({ limit = 5 }: RecentActivityProps) {
       <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
         <Icon name="clock" size={12} className="text-ink-3" />
         <span className="text-[12px] font-medium text-ink-2">Recent activity</span>
+        {/* "See all" link to /activity hidden until the Activity page is
+            routed and shows real data — it currently resolves to NotFound.
+            Hidden until Activity (spec TBD) ships.
         <Link
           to="/activity"
           className="ml-auto text-[11.5px] text-ink-3 hover:text-ink-2 transition-colors underline-offset-2 hover:underline"
         >
           See all
         </Link>
+        */}
       </div>
 
       {events === null && !error && (
