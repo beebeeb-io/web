@@ -432,16 +432,11 @@ export function Photos() {
           ))}
         </div>
 
-        {/* Auto-backup status bar */}
+        {/* Status bar */}
         <div className="px-5 py-2 border-t border-line bg-paper-2 flex items-center gap-3.5 text-[11px] text-ink-3">
           <span className="flex items-center gap-1.5">
-            <Icon name="upload" size={12} className="text-ink-3" />
-            Auto-backup: 3 new -- on Wi-Fi -- 68%
-          </span>
-          <span>--</span>
-          <span className="flex items-center gap-1.5">
             <Icon name="shield" size={12} className="text-amber-deep" />
-            All photos E2E encrypted -- EXIF stripped on upload
+            All photos E2E encrypted · EXIF stripped on upload
           </span>
           <span
             className="ml-auto flex items-center gap-1.5 font-mono text-[10px]"
