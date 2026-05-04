@@ -80,15 +80,24 @@ export function ShareViewPage() {
     }
   }
 
-  // Check for key in fragment on mount
+  // Re-evaluate the key fragment whenever the token changes (navigating between
+  // share links in the same tab should not carry over a previous share's key).
   useEffect(() => {
-    if (getKeyFromFragment()) {
-      setKeyAvailable(true)
-    }
-  }, [])
+    setKeyAvailable(!!getKeyFromFragment())
+  }, [token])
 
   useEffect(() => {
     if (!token) return
+    // Reset all share-specific state immediately so we never show stale data
+    // from a previous share (e.g. a passphrase form from share A briefly
+    // appearing while share B — which is open — is loading).
+    setShareData(null)
+    setDecryptedName(null)
+    setError(null)
+    setPassphrase('')
+    setVerifyError(null)
+    setDownloadError(null)
+    setUnlockError(null)
     setLoading(true)
     getShare(token)
       .then((data) => {
@@ -275,8 +284,9 @@ export function ShareViewPage() {
     )
   }
 
-  // Passphrase required
-  if (shareData?.requires_passphrase) {
+  // Passphrase required — explicit boolean check so open shares (where the
+  // server omits this field entirely) never accidentally trigger the form.
+  if (shareData?.requires_passphrase === true) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-paper relative overflow-hidden">
         {honeycombBg}
