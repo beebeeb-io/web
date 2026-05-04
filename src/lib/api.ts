@@ -1218,6 +1218,8 @@ export interface AdminUserDetail {
   id: string
   email: string
   email_verified: boolean
+  /** Top-level account role. Server adds this in `7be299a` for task 0018. */
+  role: 'user' | 'admin' | 'superadmin'
   created_at: string
   plan: string
   billing_cycle: string | null
@@ -1936,6 +1938,28 @@ export async function adminImpersonate(userId: string): Promise<ImpersonateRespo
     method: 'POST',
   })
   return data
+}
+
+// ─── Admin role management (superadmin-only on server) ──────────
+
+export interface RoleChangeResponse {
+  message: string
+  user_id: string
+  role: 'user' | 'admin' | 'superadmin'
+}
+
+/** Promote a user to admin. Server requires superadmin auth. */
+export async function adminPromote(userId: string): Promise<RoleChangeResponse> {
+  return request<RoleChangeResponse>(`/api/v1/admin/promote/${userId}`, {
+    method: 'POST',
+  })
+}
+
+/** Demote an admin back to regular user. Server requires superadmin auth. */
+export async function adminDemote(userId: string): Promise<RoleChangeResponse> {
+  return request<RoleChangeResponse>(`/api/v1/admin/demote/${userId}`, {
+    method: 'POST',
+  })
 }
 
 // ─── Admin stats & health ────────────────────────

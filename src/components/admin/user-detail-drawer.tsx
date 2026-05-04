@@ -9,8 +9,9 @@ import {
   getUserLoginIps,
   listStoragePools,
   listAuditLog,
-  adminImpersonate,
   migrateUser,
+  adminPromote,
+  adminDemote,
 } from '../../lib/api'
 import type {
   AdminUserDetail,
@@ -19,6 +20,8 @@ import type {
   AuditEvent,
 } from '../../lib/api'
 import { formatBytes } from '../../lib/format'
+import { useImpersonation } from '../../lib/impersonation-context'
+import { useAuth } from '../../lib/auth-context'
 
 type TabKey = 'storage' | 'security' | 'billing' | 'activity'
 
@@ -53,6 +56,8 @@ function planLabel(plan: string): string {
 
 export function UserDetailDrawer({ userId, onClose }: UserDetailDrawerProps) {
   const { showToast } = useToast()
+  const { startImpersonation } = useImpersonation()
+  const { user: currentUser } = useAuth()
   const [detail, setDetail] = useState<AdminUserDetail | null>(null)
   const [pools, setPools] = useState<StoragePool[]>([])
   const [loginIps, setLoginIps] = useState<LoginIp[]>([])
@@ -63,6 +68,26 @@ export function UserDetailDrawer({ userId, onClose }: UserDetailDrawerProps) {
   const [migrateOpen, setMigrateOpen] = useState(false)
   const [migrating, setMigrating] = useState(false)
   const [impersonating, setImpersonating] = useState(false)
+  const [roleChanging, setRoleChanging] = useState(false)
+
+  // True if this drawer is open for the currently-logged-in admin's own user
+  // record. Used to hide self-targeting role-change actions (server also
+  // rejects with 400 — this is just defense-in-depth so the dead button isn't
+  // shown).
+  const isSelf = !!currentUser && currentUser.user_id === userId
+
+  // Reload user detail without re-fetching pools/loginIps. Used after a
+  // successful role change so the role chip + button label reflect the
+  // updated state without flickering the rest of the drawer.
+  const reloadDetail = useCallback(async () => {
+    try {
+      const d = await getAdminUserDetail(userId)
+      setDetail(d)
+    } catch {
+      // Non-fatal — the action succeeded server-side; the chip just won't
+      // update until the user reopens the drawer.
+    }
+  }, [userId])
 
   useEffect(() => {
     let cancelled = false
@@ -117,15 +142,16 @@ export function UserDetailDrawer({ userId, onClose }: UserDetailDrawerProps) {
 
   const handleImpersonate = useCallback(async () => {
     if (!detail) return
+    if (isSelf) return // server rejects, but don't even attempt
     if (!confirm(`Impersonate ${detail.email}? You will be viewing the app as this user.`)) return
     setImpersonating(true)
     try {
-      const res = await adminImpersonate(userId)
-      showToast({
-        icon: 'eye',
-        title: 'Impersonation token issued',
-        description: res.session_token.slice(0, 24) + '…',
-      })
+      // startImpersonation swaps the auth token, stashes the admin token in
+      // sessionStorage, and force-reloads to '/'. So the success path here
+      // never returns — control transfers to a fresh page load as the target
+      // user. We only fall through to the catch when the API call itself
+      // fails (e.g. server 400, network error).
+      await startImpersonation(userId)
     } catch (err) {
       showToast({
         icon: 'x',
@@ -133,10 +159,65 @@ export function UserDetailDrawer({ userId, onClose }: UserDetailDrawerProps) {
         description: err instanceof Error ? err.message : 'Could not impersonate',
         danger: true,
       })
-    } finally {
       setImpersonating(false)
     }
-  }, [detail, userId, showToast])
+  }, [detail, userId, isSelf, startImpersonation, showToast])
+
+  const handlePromote = useCallback(async () => {
+    if (!detail) return
+    if (isSelf) return
+    if (!confirm(
+      `Promote ${detail.email} to admin? They will gain access to /admin/* and ` +
+      `can perform admin actions on this workspace.`,
+    )) return
+    setRoleChanging(true)
+    try {
+      await adminPromote(userId)
+      showToast({
+        icon: 'shield',
+        title: 'Promoted to admin',
+        description: detail.email,
+      })
+      await reloadDetail()
+    } catch (err) {
+      showToast({
+        icon: 'x',
+        title: 'Promote failed',
+        description: err instanceof Error ? err.message : 'Could not promote user',
+        danger: true,
+      })
+    } finally {
+      setRoleChanging(false)
+    }
+  }, [detail, userId, isSelf, reloadDetail, showToast])
+
+  const handleDemote = useCallback(async () => {
+    if (!detail) return
+    if (isSelf) return
+    if (!confirm(
+      `Demote ${detail.email} from admin to regular user? They will lose ` +
+      `access to /admin/* immediately.`,
+    )) return
+    setRoleChanging(true)
+    try {
+      await adminDemote(userId)
+      showToast({
+        icon: 'shield',
+        title: 'Demoted to user',
+        description: detail.email,
+      })
+      await reloadDetail()
+    } catch (err) {
+      showToast({
+        icon: 'x',
+        title: 'Demote failed',
+        description: err instanceof Error ? err.message : 'Could not demote user',
+        danger: true,
+      })
+    } finally {
+      setRoleChanging(false)
+    }
+  }, [detail, userId, isSelf, reloadDetail, showToast])
 
   const handleMigrate = useCallback(
     async (toPoolId: string) => {
@@ -226,6 +307,13 @@ export function UserDetailDrawer({ userId, onClose }: UserDetailDrawerProps) {
                     <BBChip variant={detail.email_verified ? 'green' : 'default'}>
                       {detail.email_verified ? 'Verified' : 'Pending'}
                     </BBChip>
+                    {detail.role !== 'user' && (
+                      <BBChip
+                        variant={detail.role === 'superadmin' ? 'amber' : 'default'}
+                      >
+                        {detail.role === 'superadmin' ? 'Superadmin' : 'Admin'}
+                      </BBChip>
+                    )}
                   </div>
                   <div className="mt-2 text-[11px] text-ink-3 font-mono">
                     Joined {formatDate(detail.created_at)}
@@ -243,15 +331,49 @@ export function UserDetailDrawer({ userId, onClose }: UserDetailDrawerProps) {
                   size="sm"
                   variant="amber"
                   onClick={handleImpersonate}
-                  disabled={impersonating}
+                  disabled={impersonating || isSelf}
+                  title={isSelf ? 'Cannot impersonate yourself' : undefined}
                 >
                   <Icon name="eye" size={11} className="mr-1.5" />
                   {impersonating ? 'Loading…' : 'Impersonate'}
                 </BBButton>
-                <BBButton size="sm" variant="ghost" disabled>
-                  <Icon name="shield" size={11} className="mr-1.5" />
-                  Promote
-                </BBButton>
+
+                {/* Role-change button: shape depends on the target's current role.
+                    Superadmin is intentionally not changeable from this surface
+                    (server also rejects). Hidden when looking at our own row. */}
+                {!isSelf && detail.role === 'user' && (
+                  <BBButton
+                    size="sm"
+                    variant="ghost"
+                    onClick={handlePromote}
+                    disabled={roleChanging}
+                  >
+                    <Icon name="shield" size={11} className="mr-1.5" />
+                    {roleChanging ? 'Promoting…' : 'Promote to admin'}
+                  </BBButton>
+                )}
+                {!isSelf && detail.role === 'admin' && (
+                  <BBButton
+                    size="sm"
+                    variant="ghost"
+                    onClick={handleDemote}
+                    disabled={roleChanging}
+                  >
+                    <Icon name="shield" size={11} className="mr-1.5" />
+                    {roleChanging ? 'Demoting…' : 'Demote to user'}
+                  </BBButton>
+                )}
+                {!isSelf && detail.role === 'superadmin' && (
+                  <BBButton
+                    size="sm"
+                    variant="ghost"
+                    disabled
+                    title="Superadmin role cannot be changed from this surface"
+                  >
+                    <Icon name="shield" size={11} className="mr-1.5" />
+                    Superadmin
+                  </BBButton>
+                )}
               </div>
             </div>
 
