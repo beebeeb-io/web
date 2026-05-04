@@ -1,9 +1,8 @@
 /**
  * Insights panel — Phase 1 of the pool decommission wizard.
  *
- * Renders when the pool's lifecycle_phase is 'active'. Shows storage facts
- * about the pool, an estimated migration time, a target pool selector, and
- * the "Begin decommission" CTA that kicks off the lifecycle run.
+ * Renders when the pool's lifecycle_phase is 'active'. Shows a 2×2 KPI grid
+ * of pool stats, a target pool selector, and the "Begin decommission" CTA.
  */
 
 import { useState } from 'react'
@@ -15,48 +14,21 @@ import { ConfirmationModal } from './confirmation-modal'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/** Format seconds as "~Xh Ym", "~Ym", or "< 1 min". */
 function formatMigrationTime(seconds: number): string {
   if (seconds < 60) return '< 1 min'
   const h = Math.floor(seconds / 3600)
   const m = Math.ceil((seconds % 3600) / 60)
-  if (h > 0) return `~${h}h ${m}m`
-  return `~${m}m`
-}
-
-// ─── Stat row ─────────────────────────────────────────────────────────────────
-
-function Stat({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string
-  value: string | number
-  mono?: boolean
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4 py-2.5 border-b border-line last:border-0">
-      <span className="text-sm text-ink-2">{label}</span>
-      <span
-        className={`text-sm font-medium text-ink ${mono ? 'font-mono tabular-nums' : ''}`}
-      >
-        {value}
-      </span>
-    </div>
-  )
+  if (h > 0) return `${h}h ${m}m`
+  return `${m}m`
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 interface InsightsPanelProps {
   poolId: string
-  /** Short name (storage_pools.name) used as the confirmation text. */
   poolName: string
   insights: PoolInsights
-  /** All currently-active pools excluding this one — candidates for migration target. */
   otherActivePools: StoragePool[]
-  /** Called after a run is successfully started so the parent re-fetches. */
   onRunStarted: () => void
 }
 
@@ -91,99 +63,103 @@ export function InsightsPanel({
 
   const canStart = !!targetPoolId && !submitting && otherActivePools.length > 0
   const targetPool = otherActivePools.find((p) => p.id === targetPoolId)
-  const targetName = targetPool?.display_name ?? targetPool?.name ?? 'the target pool'
+  const targetName = targetPool?.display_name || targetPool?.name || 'the target pool'
 
   return (
-    <div className="max-w-xl">
-      {/* Heading */}
-      <h3 className="text-base font-semibold text-ink mb-0.5">
-        Pool insights
-      </h3>
-      <p className="text-sm text-ink-3 mb-5">
-        Review what is stored here before starting decommission.
-        Migration runs in the background — you can abort until it completes.
+    <div className="max-w-2xl">
+      {/* Section header */}
+      <p className="text-xs font-medium text-ink-3 uppercase tracking-wider mb-3">
+        Pool usage
       </p>
 
-      {/* Stats card */}
-      <div className="bg-paper-2 border border-line rounded-lg px-4 py-1 mb-5">
-        <Stat
-          label="Storage used"
-          value={`${formatBytes(insights.used_bytes)} · ${insights.files_count.toLocaleString()} file${insights.files_count !== 1 ? 's' : ''}`}
-          mono
-        />
-        <Stat
-          label="Users with files"
-          value={`${insights.users_with_files_count.toLocaleString()} total`}
-          mono
-        />
-        <Stat
-          label="Currently active users"
-          value={insights.currently_active_users_count.toLocaleString()}
-          mono
-        />
-        {insights.in_flight_uploads_count > 0 && (
-          <Stat
-            label="In-flight uploads"
-            value={insights.in_flight_uploads_count.toLocaleString()}
-            mono
-          />
-        )}
-        <Stat
-          label="Estimated migration time"
-          value={formatMigrationTime(insights.estimated_migration_seconds)}
-          mono
-        />
+      {/* 2×2 KPI grid */}
+      <div className="grid grid-cols-2 gap-3 mb-6">
+        <div className="rounded-lg border border-line bg-paper p-3 min-w-0">
+          <div className="text-[10px] text-ink-4 uppercase tracking-wide mb-1">Storage used</div>
+          <div className="font-mono text-lg font-bold text-ink leading-tight">
+            {formatBytes(insights.used_bytes)}
+          </div>
+        </div>
+        <div className="rounded-lg border border-line bg-paper p-3 min-w-0">
+          <div className="text-[10px] text-ink-4 uppercase tracking-wide mb-1">Files</div>
+          <div className="font-mono text-lg font-bold text-ink leading-tight">
+            {insights.files_count.toLocaleString()}
+          </div>
+        </div>
+        <div className="rounded-lg border border-line bg-paper p-3 min-w-0">
+          <div className="text-[10px] text-ink-4 uppercase tracking-wide mb-1">Users with files</div>
+          <div className="font-mono text-lg font-bold text-ink leading-tight">
+            {insights.users_with_files_count.toLocaleString()}
+          </div>
+          {insights.currently_active_users_count > 0 && (
+            <div className="font-mono text-[10px] text-ink-3 mt-0.5">
+              {insights.currently_active_users_count} active now
+            </div>
+          )}
+        </div>
+        <div className="rounded-lg border border-line bg-paper p-3 min-w-0">
+          <div className="text-[10px] text-ink-4 uppercase tracking-wide mb-1">Est. migration</div>
+          <div className="font-mono text-lg font-bold text-ink leading-tight">
+            {formatMigrationTime(insights.estimated_migration_seconds)}
+          </div>
+          {insights.in_flight_uploads_count > 0 && (
+            <div className="font-mono text-[10px] text-amber-deep mt-0.5">
+              {insights.in_flight_uploads_count} uploads in flight
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Target pool selector */}
-      <div className="mb-5">
-        <label className="block text-xs font-medium text-ink-2 mb-1.5">
-          Migrate to
-        </label>
-        {otherActivePools.length === 0 ? (
-          <p className="text-sm text-red">
-            No other active pool available. Add a target pool before decommissioning.
-          </p>
-        ) : (
-          <select
-            value={targetPoolId}
-            onChange={(e) => setTargetPoolId(e.target.value)}
-            disabled={submitting}
-            className="w-full bg-paper border border-line rounded-md px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber-deep disabled:opacity-50"
-          >
-            {otherActivePools.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.display_name || p.name} — {formatBytes(p.used_bytes)} used
-              </option>
-            ))}
-          </select>
-        )}
+      <div className="rounded-lg border border-line bg-paper overflow-hidden mb-5">
+        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-line">
+          <Icon name="cloud" size={12} className="text-ink-2" />
+          <span className="text-[12px] font-semibold text-ink">Migration target</span>
+        </div>
+        <div className="px-4 py-4">
+          {otherActivePools.length === 0 ? (
+            <p className="text-sm text-red">
+              No other active pool available. Add a target pool before decommissioning.
+            </p>
+          ) : (
+            <>
+              <label className="block text-xs font-medium text-ink-2 mb-1.5">
+                Migrate all files to
+              </label>
+              <select
+                value={targetPoolId}
+                onChange={(e) => setTargetPoolId(e.target.value)}
+                disabled={submitting}
+                className="w-full bg-paper border border-line rounded-md px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber-deep disabled:opacity-50"
+              >
+                {otherActivePools.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.display_name || p.name} — {formatBytes(p.used_bytes)} used
+                  </option>
+                ))}
+              </select>
+              <p className="text-[11px] text-ink-4 mt-1.5">
+                New uploads will route here immediately once quiescing starts.
+              </p>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Error */}
-      {error && (
-        <p className="text-xs text-red mb-3">{error}</p>
-      )}
+      {error && <p className="text-xs text-red mb-3">{error}</p>}
 
       {/* CTA */}
-      <div className="flex items-center gap-3">
-        <BBButton
-          variant="amber"
-          size="lg"
-          disabled={!canStart}
-          onClick={() => setConfirmOpen(true)}
-        >
-          Begin decommission
-          <Icon name="chevron-right" size={14} className="ml-1.5" />
-        </BBButton>
-      </div>
-
-      {/* Fine print */}
-      <p className="text-xs text-ink-4 mt-4 leading-relaxed">
-        The pool becomes read-only as soon as you proceed.
-        New uploads route to the target immediately.
-        Files migrate in the background — you can abort at any time before migration completes.
-      </p>
+      <BBButton
+        variant="amber"
+        size="lg"
+        className="w-full"
+        disabled={!canStart}
+        onClick={() => setConfirmOpen(true)}
+      >
+        Begin decommission
+        <Icon name="chevron-right" size={14} className="ml-1.5" />
+      </BBButton>
 
       {/* Confirmation modal */}
       <ConfirmationModal
@@ -213,7 +189,6 @@ export function InsightsPanel({
         }}
         loading={submitting}
       />
-      {error && <p className="text-xs text-red mt-2">{error}</p>}
     </div>
   )
 }

@@ -1,14 +1,11 @@
 /**
  * Migrating panel — Phase 3 of the pool decommission wizard.
  *
- * Renders when lifecycle_phase === 'migrating'. Polls getLifecycleRun every
- * 5 s for live progress and auto-advances to the drained panel when the run
- * completes (current_phase transitions away from 'migrating').
+ * Polls getLifecycleRun every 5 s. Auto-advances to drained panel when done.
  */
 
 import { useEffect, useState } from 'react'
 import { BBButton } from '../../bb-button'
-import { Icon } from '../../icons'
 import { formatBytes } from '../../../lib/format'
 import {
   getLifecycleRun,
@@ -17,19 +14,14 @@ import {
   type RunProgress,
 } from '../../../lib/api'
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-/** Format seconds as "~Xh Ym", "~Ym", or "< 1 min". Shared with InsightsPanel. */
 function formatMigrationTime(seconds: number): string {
   if (seconds <= 0 || !isFinite(seconds)) return '—'
   if (seconds < 60) return '< 1 min'
   const h = Math.floor(seconds / 3600)
   const m = Math.ceil((seconds % 3600) / 60)
-  if (h > 0) return `~${h}h ${m}m`
-  return `~${m}m`
+  if (h > 0) return `${h}h ${m}m`
+  return `${m}m`
 }
-
-// ─── Component ────────────────────────────────────────────────────────────────
 
 interface MigratingPanelProps {
   poolId: string
@@ -49,46 +41,27 @@ export function MigratingPanel({
   const [pausing, setPausing] = useState(false)
   const [pauseError, setPauseError] = useState<string | null>(null)
 
-  // Initial fetch on mount so progress shows immediately rather than after
-  // the first 5 s tick.
   useEffect(() => {
     getLifecycleRun(poolId, run.id)
-      .then((progress) => {
-        setRunProgress(progress)
-        if (progress.run.current_phase !== 'migrating') {
-          onPhaseChanged()
-        }
-      })
-      .catch((err) => {
-        setLoadError(err instanceof Error ? err.message : 'Failed to fetch progress.')
-      })
+      .then((p) => { setRunProgress(p); if (p.run.current_phase !== 'migrating') onPhaseChanged() })
+      .catch((e) => setLoadError(e instanceof Error ? e.message : 'Failed to fetch progress.'))
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [poolId, run.id])
 
-  // Poll every 5 s for live progress.
   useEffect(() => {
-    const interval = setInterval(async () => {
+    const id = setInterval(async () => {
       try {
-        const progress = await getLifecycleRun(poolId, run.id)
-        setRunProgress(progress)
+        const p = await getLifecycleRun(poolId, run.id)
+        setRunProgress(p)
         setLoadError(null)
-        if (progress.run.current_phase !== 'migrating') {
-          onPhaseChanged() // auto-advanced to drained (or aborted to quiescing)
-        }
-      } catch (err) {
-        // Don't surface transient poll errors — just log and wait for next tick.
-        console.warn('[MigratingPanel] poll failed:', err)
-      }
+        if (p.run.current_phase !== 'migrating') onPhaseChanged()
+      } catch { /* transient — wait for next tick */ }
     }, 5000)
-    return () => clearInterval(interval)
+    return () => clearInterval(id)
   }, [poolId, run.id, onPhaseChanged])
 
   async function handlePause() {
-    const ok = window.confirm(
-      `Pause migration to ${targetPoolName}?\n\n` +
-        `The pool will return to quiescing — read-only, uploads still route to ` +
-        `${targetPoolName}. You can resume by clicking 'Begin migration' again.`,
-    )
+    const ok = window.confirm(`Pause migration to ${targetPoolName}?\n\nThe pool returns to quiescing — read-only, uploads still route to ${targetPoolName}. Resume by clicking 'Begin migration' again.`)
     if (!ok) return
     setPauseError(null)
     setPausing(true)
@@ -105,88 +78,78 @@ export function MigratingPanel({
   const pct = runProgress ? Math.round(runProgress.phase_progress * 100) : 0
 
   return (
-    <div className="max-w-xl">
-      {/* Heading */}
-      <div className="flex items-center gap-2 mb-1">
-        <h3 className="text-base font-semibold text-ink">Migrating</h3>
-        <Icon name="chevron-right" size={14} className="text-ink-3" />
-        <span className="text-base font-semibold text-ink">{targetPoolName}</span>
-      </div>
-      <p className="text-sm text-ink-3 mb-5">
-        Files are being copied in the background. This page updates every 5 seconds.
+    <div className="max-w-2xl">
+      {/* Progress section */}
+      <p className="text-xs font-medium text-ink-3 uppercase tracking-wider mb-3">
+        Migration progress
       </p>
 
       {loadError && !runProgress && (
         <p className="text-xs text-red mb-3">{loadError}</p>
       )}
 
-      {/* Progress bar */}
-      <div className="mb-4">
-        <div className="flex items-baseline justify-between mb-1.5 gap-2">
-          <span className="text-sm font-medium text-ink">
+      {/* Progress bar card */}
+      <div className="rounded-lg border border-line bg-paper overflow-hidden mb-4">
+        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-line">
+          <span className="text-[12px] font-semibold text-ink flex-1">
             {runProgress
               ? `${runProgress.files_migrated.toLocaleString()} / ${runProgress.files_total.toLocaleString()} files`
               : 'Loading…'}
           </span>
-          <span className="font-mono text-sm font-medium text-amber-deep tabular-nums">
-            {pct}%
-          </span>
+          <span className="font-mono text-sm font-bold text-amber-deep tabular-nums">{pct}%</span>
         </div>
-        <div className="h-2.5 rounded-full bg-paper-3 overflow-hidden">
-          <div
-            className="h-full rounded-full transition-all duration-700 ease-out"
-            style={{
-              width: `${pct}%`,
-              background: 'var(--color-amber)',
-            }}
-          />
+        <div className="px-4 py-3">
+          <div className="h-2 rounded-full bg-paper-3 overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all duration-700 ease-out"
+              style={{ width: `${pct}%`, background: 'var(--color-amber)' }}
+            />
+          </div>
+          <div className="flex items-center justify-between mt-1.5">
+            <span className="text-[10px] text-ink-4">
+              To <span className="font-medium">{targetPoolName}</span>
+            </span>
+            <span className="font-mono text-[10px] text-ink-4 tabular-nums">
+              {runProgress ? `${runProgress.files_pending.toLocaleString()} pending` : '—'}
+            </span>
+          </div>
         </div>
       </div>
 
-      {/* Stats grid */}
+      {/* 2×2 KPI grid */}
       {runProgress && (
-        <div className="bg-paper-2 border border-line rounded-lg px-4 py-1 mb-5">
-          <div className="flex items-center justify-between gap-4 py-2.5 border-b border-line">
-            <span className="text-sm text-ink-2">ETA</span>
-            <span className="text-sm font-medium font-mono tabular-nums text-ink">
+        <div className="grid grid-cols-2 gap-3 mb-5">
+          <div className="rounded-lg border border-line bg-paper p-3 min-w-0">
+            <div className="text-[10px] text-ink-4 uppercase tracking-wide mb-1">ETA</div>
+            <div className="font-mono text-lg font-bold text-ink leading-tight">
               {formatMigrationTime(runProgress.eta_seconds)}
-            </span>
+            </div>
           </div>
-          <div className="flex items-center justify-between gap-4 py-2.5 border-b border-line">
-            <span className="text-sm text-ink-2">Throughput</span>
-            <span className="text-sm font-medium font-mono tabular-nums text-ink">
+          <div className="rounded-lg border border-line bg-paper p-3 min-w-0">
+            <div className="text-[10px] text-ink-4 uppercase tracking-wide mb-1">Throughput</div>
+            <div className="font-mono text-lg font-bold text-ink leading-tight">
               {formatBytes(runProgress.throughput_bytes_per_sec)}/s
-            </span>
+            </div>
           </div>
-          <div className="flex items-center justify-between gap-4 py-2.5 border-b border-line">
-            <span className="text-sm text-ink-2">Pending</span>
-            <span className="text-sm font-medium font-mono tabular-nums text-ink">
-              {runProgress.files_pending.toLocaleString()}
-            </span>
-          </div>
-          <div className="flex items-center justify-between gap-4 py-2.5">
-            <span className="text-sm text-ink-2">Migrated</span>
-            <span className="text-sm font-medium font-mono tabular-nums text-ink">
+          <div className="rounded-lg border border-line bg-paper p-3 min-w-0">
+            <div className="text-[10px] text-ink-4 uppercase tracking-wide mb-1">Migrated</div>
+            <div className="font-mono text-lg font-bold text-ink leading-tight">
               {runProgress.files_migrated.toLocaleString()}
-            </span>
+            </div>
           </div>
-        </div>
-      )}
-
-      {/* Failure warning — only when files have failed */}
-      {runProgress && runProgress.files_failed > 0 && (
-        <div
-          className="flex items-start gap-2.5 px-3 py-2.5 rounded-md mb-4"
-          style={{
-            background: 'var(--color-amber-bg)',
-            border: '1px solid var(--color-amber)',
-          }}
-        >
-          <Icon name="shield" size={14} className="text-amber-deep shrink-0 mt-0.5" />
-          <p className="text-xs text-ink-2">
-            <span className="font-semibold font-mono">{runProgress.files_failed.toLocaleString()}</span>{' '}
-            file{runProgress.files_failed !== 1 ? 's' : ''} failed — the worker will retry automatically.
-          </p>
+          <div className="rounded-lg border border-line bg-paper p-3 min-w-0">
+            <div className="text-[10px] text-ink-4 uppercase tracking-wide mb-1">Failed</div>
+            <div
+              className={`font-mono text-lg font-bold leading-tight ${
+                runProgress.files_failed > 0 ? 'text-amber-deep' : 'text-ink'
+              }`}
+            >
+              {runProgress.files_failed.toLocaleString()}
+            </div>
+            {runProgress.files_failed > 0 && (
+              <div className="font-mono text-[10px] text-amber-deep mt-0.5">will retry</div>
+            )}
+          </div>
         </div>
       )}
 
@@ -196,18 +159,12 @@ export function MigratingPanel({
       {/* CTA */}
       <BBButton variant="ghost" disabled={pausing} onClick={handlePause}>
         {pausing ? (
-          <>
-            <span className="inline-block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />
-            Pausing…
-          </>
-        ) : (
-          'Pause migration'
-        )}
+          <><span className="inline-block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />Pausing…</>
+        ) : 'Pause migration'}
       </BBButton>
 
-      <p className="text-xs text-ink-4 mt-4 leading-relaxed">
-        Pausing returns the pool to quiescing — uploads still route to {targetPoolName}.
-        Resume by clicking "Begin migration" from the quiescing panel.
+      <p className="text-[11px] text-ink-4 mt-4">
+        Updates every 5 seconds. Pausing reverts to quiescing — resume by clicking "Begin migration".
       </p>
     </div>
   )

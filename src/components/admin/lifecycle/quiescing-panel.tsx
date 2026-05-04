@@ -1,9 +1,8 @@
 /**
  * Quiescing panel — Phase 2 of the pool decommission wizard.
  *
- * Renders when lifecycle_phase === 'quiescing'. The pool is read-only;
- * new uploads route to the target. Admin can either abort (revert to active)
- * or advance (begin migration).
+ * Pool is read-only; new uploads route to the target. Admin can abort
+ * (revert to active) or advance (begin migration).
  */
 
 import { useState } from 'react'
@@ -21,7 +20,6 @@ interface QuiescingPanelProps {
   poolId: string
   run: LifecycleRun
   insights: PoolInsights | null
-  /** display_name (or name) of the target pool — resolved by parent. */
   targetPoolName: string
   onPhaseChanged: () => void
 }
@@ -38,9 +36,7 @@ export function QuiescingPanel({
 
   async function handleAbort() {
     const ok = window.confirm(
-      `Abort decommission?\n\n` +
-        `The pool will return to active and accept new uploads again.\n` +
-        `Files written to ${targetPoolName} during this quiescing window will stay there.`,
+      `Abort decommission?\n\nThe pool returns to active immediately. Files written to ${targetPoolName} during quiescing stay there.`,
     )
     if (!ok) return
     setError(null)
@@ -57,10 +53,7 @@ export function QuiescingPanel({
 
   async function handleAdvance() {
     const ok = window.confirm(
-      `Begin migrating files to ${targetPoolName}?\n\n` +
-        `${insights?.files_count.toLocaleString() ?? '?'} ` +
-        `file${insights?.files_count !== 1 ? 's' : ''} will be copied in the background. ` +
-        `You can pause migration at any time.`,
+      `Begin migrating ${insights?.files_count.toLocaleString() ?? '?'} files to ${targetPoolName}?\n\nYou can pause at any time.`,
     )
     if (!ok) return
     setError(null)
@@ -76,43 +69,54 @@ export function QuiescingPanel({
   }
 
   const busy = submitting !== null
+  const startedAt = new Date(run.started_at).toLocaleString('en-GB', {
+    day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+  })
 
   return (
-    <div className="max-w-xl">
-      {/* Heading */}
-      <div className="flex items-center gap-2 mb-1">
-        <h3 className="text-base font-semibold text-ink">Quiescing</h3>
-        <Icon name="chevron-right" size={14} className="text-ink-3" />
-        <span className="text-base font-semibold text-ink">{targetPoolName}</span>
+    <div className="max-w-2xl">
+      {/* Status banner */}
+      <div
+        className="flex items-center gap-2.5 px-4 py-3 rounded-lg mb-5"
+        style={{
+          background: 'var(--color-amber-bg)',
+          border: '1px solid var(--color-amber)',
+        }}
+      >
+        <Icon name="lock" size={14} className="text-amber-deep shrink-0" />
+        <p className="text-sm font-medium" style={{ color: 'var(--color-amber-deep)' }}>
+          This pool is read-only. New uploads route to <strong>{targetPoolName}</strong>.
+        </p>
       </div>
-      <p className="text-sm text-ink-3 mb-5">
-        This pool is read-only. New uploads are routed to {targetPoolName}.
-      </p>
 
-      {/* Stats */}
-      <div className="bg-paper-2 border border-line rounded-lg px-4 py-1 mb-5">
-        <div className="flex items-center justify-between gap-4 py-2.5 border-b border-line">
-          <span className="text-sm text-ink-2">Files still on this pool</span>
-          <span className="text-sm font-medium font-mono tabular-nums text-ink">
+      {/* 2×2 KPI grid */}
+      <p className="text-xs font-medium text-ink-3 uppercase tracking-wider mb-3">
+        Current state
+      </p>
+      <div className="grid grid-cols-2 gap-3 mb-6">
+        <div className="rounded-lg border border-line bg-paper p-3 min-w-0">
+          <div className="text-[10px] text-ink-4 uppercase tracking-wide mb-1">Files remaining</div>
+          <div className="font-mono text-lg font-bold text-ink leading-tight">
             {insights?.files_count.toLocaleString() ?? '—'}
-          </span>
+          </div>
         </div>
-        <div className="flex items-center justify-between gap-4 py-2.5 border-b border-line">
-          <span className="text-sm text-ink-2">Storage used</span>
-          <span className="text-sm font-medium font-mono tabular-nums text-ink">
+        <div className="rounded-lg border border-line bg-paper p-3 min-w-0">
+          <div className="text-[10px] text-ink-4 uppercase tracking-wide mb-1">Storage used</div>
+          <div className="font-mono text-lg font-bold text-ink leading-tight">
             {insights ? formatBytes(insights.used_bytes) : '—'}
-          </span>
+          </div>
         </div>
-        <div className="flex items-center justify-between gap-4 py-2.5">
-          <span className="text-sm text-ink-2">Run started</span>
-          <span className="text-sm font-medium font-mono tabular-nums text-ink">
-            {new Date(run.started_at).toLocaleString('en-GB', {
-              day: 'numeric',
-              month: 'short',
-              hour: '2-digit',
-              minute: '2-digit',
-            })}
-          </span>
+        <div className="rounded-lg border border-line bg-paper p-3 min-w-0">
+          <div className="text-[10px] text-ink-4 uppercase tracking-wide mb-1">Target pool</div>
+          <div className="text-sm font-semibold text-ink leading-tight truncate">
+            {targetPoolName}
+          </div>
+        </div>
+        <div className="rounded-lg border border-line bg-paper p-3 min-w-0">
+          <div className="text-[10px] text-ink-4 uppercase tracking-wide mb-1">Quiescing since</div>
+          <div className="font-mono text-sm font-medium text-ink leading-tight">
+            {startedAt}
+          </div>
         </div>
       </div>
 
@@ -120,8 +124,7 @@ export function QuiescingPanel({
       {error && <p className="text-xs text-red mb-3">{error}</p>}
 
       {/* CTAs */}
-      <div className="flex items-center gap-3 flex-wrap">
-        {/* Abort — secondary, destructive */}
+      <div className="flex items-center gap-3">
         <BBButton
           variant="ghost"
           disabled={busy}
@@ -129,16 +132,10 @@ export function QuiescingPanel({
           className="text-red border-red hover:bg-red/5"
         >
           {submitting === 'abort' ? (
-            <>
-              <span className="inline-block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />
-              Aborting…
-            </>
-          ) : (
-            'Abort decommission'
-          )}
+            <><span className="inline-block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />Aborting…</>
+          ) : 'Abort decommission'}
         </BBButton>
 
-        {/* Advance — primary, amber */}
         <BBButton
           variant="amber"
           size="lg"
@@ -146,22 +143,15 @@ export function QuiescingPanel({
           onClick={handleAdvance}
         >
           {submitting === 'advance' ? (
-            <>
-              <span className="inline-block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />
-              Starting migration…
-            </>
+            <><span className="inline-block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />Starting…</>
           ) : (
-            <>
-              Begin migration
-              <Icon name="chevron-right" size={14} className="ml-1.5" />
-            </>
+            <>Begin migration<Icon name="chevron-right" size={14} className="ml-1.5" /></>
           )}
         </BBButton>
       </div>
 
-      <p className="text-xs text-ink-4 mt-4 leading-relaxed">
-        Aborting reverts the pool to active immediately.
-        Files written to {targetPoolName} during quiescing stay there — they are not reversed automatically.
+      <p className="text-[11px] text-ink-4 mt-4 leading-relaxed">
+        Aborting reverts the pool to active immediately. Files written to {targetPoolName} during quiescing are not reversed automatically.
       </p>
     </div>
   )
