@@ -30,6 +30,14 @@ import {
   type ConnectionStatus,
 } from '../../components/admin/mission-control/connection-indicator'
 import { PhaseBadge } from '../../components/admin/lifecycle/phase-badge'
+import {
+  ThroughputChart,
+  type ThroughputSample,
+} from '../../components/admin/mission-control/throughput-chart'
+import { ProgressTimeline } from '../../components/admin/mission-control/progress-timeline'
+
+/** Rolling window for throughput samples (last 5 minutes). */
+const THROUGHPUT_WINDOW_SAMPLES = 150 // 150 × 2 s = 5 min
 
 const POLL_INTERVAL_MS = 2_000
 
@@ -44,6 +52,9 @@ export function MissionControl() {
     useState<ConnectionStatus>('polling')
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
+
+  // Throughput samples accumulator — rolling buffer for ThroughputChart.
+  const [throughputSamples, setThroughputSamples] = useState<ThroughputSample[]>([])
 
   // Pause modal state
   const [pausing, setPausing] = useState(false)
@@ -60,9 +71,25 @@ export function MissionControl() {
       ])
       setProgress(p)
       setFiles(f.files)
-      setLastUpdated(new Date())
+      const now = new Date()
+      setLastUpdated(now)
       setConnectionStatus('polling')
       setLoadError(null)
+
+      // Append a throughput sample to the rolling buffer.
+      const newSample: ThroughputSample = {
+        bytes_per_sec: p.throughput_bytes_per_sec,
+        files_per_sec: p.files_migrated / Math.max(1,
+          (now.getTime() - new Date(p.run.started_at).getTime()) / 1000
+        ),
+        at: now.toISOString(),
+      }
+      setThroughputSamples((prev) => {
+        const next = [...prev, newSample]
+        return next.length > THROUGHPUT_WINDOW_SAMPLES
+          ? next.slice(next.length - THROUGHPUT_WINDOW_SAMPLES)
+          : next
+      })
 
       // Auto-navigate away if migration completed/aborted
       if (p.run.current_phase !== 'migrating') {
@@ -214,12 +241,40 @@ export function MissionControl() {
               )}
             </div>
 
-            {/* Throughput chart placeholder — chart-engineer */}
-            <div className="rounded-lg border border-line border-dashed bg-paper-2 px-4 py-8 flex items-center justify-center">
-              <p className="text-[11px] text-ink-4 text-center">
-                Throughput chart — coming soon (014a WebSocket)
-              </p>
-            </div>
+            {/* Throughput chart (chart-engineer, ebf5152) */}
+            <ThroughputChart
+              samples={throughputSamples}
+              errors={files
+                .filter((f) => f.status === 'failed' && f.started_at)
+                .map((f) => ({ at: f.started_at! }))}
+            />
+
+            {/* Progress timeline (chart-engineer, ebf5152) */}
+            <ProgressTimeline
+              progress={progress?.phase_progress ?? 0}
+              errors={files
+                .filter((f) => f.status === 'failed' && f.started_at)
+                .map((f) => ({ at: f.started_at!, file_id: f.file_id }))}
+              phases={
+                progress
+                  ? [
+                      {
+                        from: 'quiescing',
+                        to: 'migrating',
+                        at: progress.run.started_at,
+                      },
+                    ]
+                  : []
+              }
+              totalFiles={progress?.files_total ?? 0}
+              filesDone={progress?.files_migrated ?? 0}
+              startedAt={progress?.run.started_at}
+              endedAt={
+                progress?.run.outcome !== 'in_progress'
+                  ? (progress?.run.terminated_at ?? undefined)
+                  : undefined
+              }
+            />
           </div>
 
           {/* Sidebar (~30%) */}
