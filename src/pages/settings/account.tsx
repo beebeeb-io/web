@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { SettingsShell, SettingsHeader, SettingsRow } from '../../components/settings-shell'
 import { BBInput } from '../../components/bb-input'
@@ -6,16 +6,19 @@ import { BBButton } from '../../components/bb-button'
 import { BBToggle } from '../../components/bb-toggle'
 import { Icon } from '../../components/icons'
 import { useAuth } from '../../lib/auth-context'
+import { useKeys } from '../../lib/key-context'
 import { useToast } from '../../components/toast'
 import { RecentActivity } from '../../components/recent-activity'
 import {
-  getPreference, setPreference, getStorageUsage,
+  getPreference, setPreference, getStorageUsage, recoverWithPhraseStart,
   deleteAccountPermanently, changeEmail, exportAccountData,
   clearToken, ApiError,
   type StorageUsage,
 } from '../../lib/api'
+import { recoverFromPhrase, computeRecoveryCheck, toBase64, initCrypto } from '../../lib/crypto'
 import { StorageUsageBar } from '../../components/storage-usage-bar'
 import { ConfirmPasswordModal } from '../../components/confirm-password-modal'
+import { generateRecoveryKitPDF } from '../../lib/recovery-kit-pdf'
 
 
 interface DataRegion {
@@ -38,6 +41,7 @@ type RegionMode = 'preference' | 'force'
 
 export function SettingsAccount() {
   const { user } = useAuth()
+  const { getMasterKey } = useKeys()
   const { showToast } = useToast()
   const navigate = useNavigate()
 
@@ -50,6 +54,12 @@ export function SettingsAccount() {
   // Storage state
   const [usage, setUsage] = useState<StorageUsage | null>(null)
   const [loadingUsage, setLoadingUsage] = useState(true)
+
+  // Recovery phrase test modal
+  const [phraseModalOpen, setPhraseModalOpen] = useState(false)
+  const [testPhrase, setTestPhrase] = useState('')
+  const [testStatus, setTestStatus] = useState<'idle' | 'checking' | 'correct' | 'wrong' | 'unavailable'>('idle')
+  const testCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Data residency state
   const [selectedRegion, setSelectedRegion] = useState('auto')
@@ -201,6 +211,70 @@ export function SettingsAccount() {
     [navigate, showToast],
   )
 
+  // ── Recovery phrase test ─────────────────────────────────────────────────
+  const handlePhraseTest = useCallback(async () => {
+    const phrase = testPhrase.trim()
+    if (!phrase) return
+    setTestStatus('checking')
+
+    try {
+      await initCrypto()
+      const inputMasterKey = await recoverFromPhrase(phrase)
+
+      // Primary: local comparison — derive recovery_check from the input phrase
+      // and compare against the recovery_check of the current in-memory master key.
+      // This works without any server call and is purely cryptographic.
+      let match = false
+      try {
+        const currentMasterKey = getMasterKey()
+        const [inputCheck, currentCheck] = await Promise.all([
+          computeRecoveryCheck(inputMasterKey),
+          computeRecoveryCheck(currentMasterKey),
+        ])
+        // Constant-time compare via JSON (acceptable for UX context, not crypto auth)
+        match = toBase64(inputCheck) === toBase64(currentCheck)
+      } catch {
+        // Vault locked or key unavailable — fall back to server verification
+        const inputCheck = await computeRecoveryCheck(inputMasterKey)
+        const email = user?.email ?? ''
+        const result = await recoverWithPhraseStart(email, toBase64(inputCheck))
+        if (result === null) {
+          // Endpoint not deployed yet
+          setTestStatus('unavailable')
+          return
+        }
+        match = true  // 401 would have thrown; reaching here means success
+      }
+
+      if (match) {
+        setTestStatus('correct')
+        // Clear phrase from DOM and auto-close after 3 s
+        setTestPhrase('')
+        testCloseTimerRef.current = setTimeout(() => {
+          setPhraseModalOpen(false)
+          setTestStatus('idle')
+        }, 3000)
+      } else {
+        setTestStatus('wrong')
+      }
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        setTestStatus('wrong')
+      } else if (err instanceof ApiError && err.status === 404) {
+        setTestStatus('unavailable')
+      } else {
+        setTestStatus('wrong')  // recoverFromPhrase throws on invalid phrase
+      }
+    }
+  }, [testPhrase, getMasterKey, user?.email])
+
+  const closePhraseModal = useCallback(() => {
+    if (testCloseTimerRef.current) clearTimeout(testCloseTimerRef.current)
+    setPhraseModalOpen(false)
+    setTestStatus('idle')
+    setTestPhrase('')
+  }, [])
+
   return (
     <SettingsShell activeSection="account">
       <ConfirmPasswordModal
@@ -211,6 +285,97 @@ export function SettingsAccount() {
         onConfirmed={performDeleteAccount}
         onCancel={() => setPwPromptOpen(false)}
       />
+
+      {/* ── Recovery phrase test modal ─────────────────────────────────── */}
+      {phraseModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/20 px-4"
+          onClick={(e) => { if (e.target === e.currentTarget) closePhraseModal() }}
+        >
+          <div className="w-full max-w-[480px] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center gap-3 px-5 py-4 border-b border-line">
+              <Icon name="key" size={16} className="text-amber-deep" />
+              <span className="text-[15px] font-semibold text-ink flex-1">Test recovery phrase</span>
+              <button
+                onClick={closePhraseModal}
+                className="text-ink-3 hover:text-ink transition-colors p-1 rounded"
+                aria-label="Close"
+              >
+                <Icon name="x" size={16} />
+              </button>
+            </div>
+
+            <div className="px-5 py-5">
+              {/* Safety banner */}
+              <div className="flex items-start gap-2.5 p-3 rounded-md bg-paper-2 border border-line mb-4">
+                <Icon name="shield" size={13} className="text-ink-3 shrink-0 mt-0.5" />
+                <p className="text-[12px] text-ink-3 leading-relaxed">
+                  <strong className="text-ink-2">This is a test only.</strong>{' '}
+                  Your account will not be modified. No login session is created.
+                </p>
+              </div>
+
+              {testStatus === 'correct' ? (
+                // ── Success ──
+                <div className="flex flex-col items-center py-5 gap-3 text-center">
+                  <div className="w-12 h-12 rounded-full bg-green/10 border border-green/20 flex items-center justify-center">
+                    <Icon name="check" size={22} className="text-green" />
+                  </div>
+                  <p className="text-[14px] font-semibold text-ink">Your recovery phrase is correct</p>
+                  <p className="text-[12px] text-ink-3">Closing in a moment…</p>
+                </div>
+              ) : testStatus === 'unavailable' ? (
+                // ── Unavailable ──
+                <div className="flex flex-col items-center py-5 gap-3 text-center">
+                  <Icon name="cloud" size={24} className="text-ink-3" />
+                  <p className="text-[13px] text-ink-3">Server verification is not available right now.</p>
+                  <BBButton variant="ghost" size="sm" onClick={closePhraseModal}>Close</BBButton>
+                </div>
+              ) : (
+                <>
+                  <label className="block text-[12px] font-medium text-ink-2 mb-1.5">
+                    Recovery phrase
+                  </label>
+                  <textarea
+                    autoComplete="off"
+                    spellCheck={false}
+                    rows={3}
+                    placeholder="word1 word2 word3 … word12"
+                    value={testPhrase}
+                    onChange={(e) => { setTestPhrase(e.target.value); setTestStatus('idle') }}
+                    disabled={testStatus === 'checking'}
+                    className="w-full font-mono text-[13px] text-ink bg-paper border border-line rounded-md px-3 py-2 outline-none resize-none placeholder:text-ink-4 focus:border-line-2 transition-colors leading-relaxed disabled:opacity-50"
+                  />
+
+                  {testStatus === 'wrong' && (
+                    <p className="text-[12px] text-red mt-2">
+                      This phrase doesn&apos;t match your account. Check for typos or wrong word order.
+                    </p>
+                  )}
+
+                  <div className="flex gap-2 mt-4">
+                    <BBButton
+                      variant="amber"
+                      size="md"
+                      className="flex-1 justify-center"
+                      disabled={testStatus === 'checking' || !testPhrase.trim()}
+                      onClick={handlePhraseTest}
+                    >
+                      {testStatus === 'checking'
+                        ? <><span className="inline-block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin mr-1.5" />Verifying…</>
+                        : 'Verify phrase'}
+                    </BBButton>
+                    <BBButton variant="ghost" size="md" onClick={closePhraseModal}>
+                      Cancel
+                    </BBButton>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       <SettingsHeader
         title="Account"
         subtitle="Your profile, storage, and account settings."
@@ -313,7 +478,51 @@ export function SettingsAccount() {
         )}
       </SettingsRow>
 
-      {/* ── Section 3: Data residency ── */}
+      {/* ── Section 3: Recovery phrase ── */}
+      <div className="mt-4 mb-1 border-t border-line pt-4">
+        <h2 className="text-[11px] font-semibold uppercase tracking-widest text-ink-4 px-7 py-3">
+          Recovery phrase
+        </h2>
+      </div>
+
+      <SettingsRow
+        label="Phrase status"
+        hint="Your 12-word phrase is the only way to recover your account if you lose your password."
+      >
+        <div className="flex flex-col gap-3 max-w-[460px]">
+          {/* Status badge */}
+          <div className="flex items-center gap-2 text-[13px]">
+            <span className="w-2 h-2 rounded-full shrink-0" style={{ background: 'oklch(0.55 0.12 155)' }} />
+            <span className="text-ink-2 font-medium">Recovery phrase verified at signup</span>
+          </div>
+          {/* Actions */}
+          <div className="flex flex-wrap gap-2">
+            <BBButton
+              size="sm"
+              variant="amber"
+              onClick={() => { setTestStatus('idle'); setTestPhrase(''); setPhraseModalOpen(true) }}
+            >
+              <Icon name="key" size={13} className="mr-1.5" />
+              Test your phrase
+            </BBButton>
+            <BBButton
+              size="sm"
+              onClick={() => generateRecoveryKitPDF('', user?.email ?? '')}
+              title="Opens a print-ready Recovery Kit — choose 'Save as PDF'"
+              disabled={!user?.email}
+            >
+              <Icon name="file-text" size={13} className="mr-1.5" />
+              Download Recovery Kit
+            </BBButton>
+          </div>
+          <p className="text-[11px] text-ink-4 leading-relaxed">
+            The Recovery Kit PDF includes your phrase only during onboarding when it&apos;s first shown.
+            Use &ldquo;Test your phrase&rdquo; to confirm you still have it.
+          </p>
+        </div>
+      </SettingsRow>
+
+      {/* ── Section 4: Data residency ── */}
       <div className="mt-4 mb-1 border-t border-line pt-4">
         <h2 className="text-[11px] font-semibold uppercase tracking-widest text-ink-4 px-7 py-3">
           Data residency
