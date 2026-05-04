@@ -12,6 +12,7 @@ import {
   opaqueRegisterFinish,
   ApiError,
 } from '../lib/api'
+import { generateRecoveryKitPDF } from '../lib/recovery-kit-pdf'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
 import {
@@ -306,7 +307,7 @@ export function Onboarding() {
                           ))}
                         </div>
                       </div>
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-2">
                         <BBButton size="sm" onClick={() => navigator.clipboard.writeText(phrase)}>
                           <Icon name="copy" size={14} className="mr-1.5" /> Copy
                         </BBButton>
@@ -322,7 +323,15 @@ export function Onboarding() {
                           a.click()
                           URL.revokeObjectURL(url)
                         }}>
-                          <Icon name="download" size={14} className="mr-1.5" /> Download
+                          <Icon name="download" size={14} className="mr-1.5" /> Download .txt
+                        </BBButton>
+                        <BBButton
+                          size="sm"
+                          variant="amber"
+                          onClick={() => generateRecoveryKitPDF(phrase, email)}
+                          title="Opens a print-ready page — choose 'Save as PDF' in the print dialog"
+                        >
+                          <Icon name="file-text" size={14} className="mr-1.5" /> Recovery Kit PDF
                         </BBButton>
                       </div>
                     </>
