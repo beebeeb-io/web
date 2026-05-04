@@ -40,6 +40,7 @@ import { AdminBilling } from './pages/admin/billing-overview'
 import { Dashboard } from './pages/admin/dashboard'
 import { Infrastructure } from './pages/admin/infrastructure'
 import { Security as AdminSecurity } from './pages/admin/security'
+import { PoolLifecycle } from './pages/admin/pool-lifecycle'
 import { VerifyEmail } from './pages/verify-email'
 import { Migration } from './pages/migration'
 import { Team } from './pages/team'
@@ -261,6 +262,7 @@ export function App() {
           <Route path="/admin" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
           <Route path="/admin/users" element={<ProtectedRoute><AdminUsers /></ProtectedRoute>} />
           <Route path="/admin/infrastructure" element={<ProtectedRoute><Infrastructure /></ProtectedRoute>} />
+          <Route path="/admin/infrastructure/pools/:poolId" element={<ProtectedRoute><PoolLifecycle /></ProtectedRoute>} />
           <Route path="/admin/security" element={<ProtectedRoute><AdminSecurity /></ProtectedRoute>} />
           <Route path="/admin/billing" element={<ProtectedRoute><AdminBilling /></ProtectedRoute>} />
           <Route path="/admin/compliance" element={<ProtectedRoute><Compliance /></ProtectedRoute>} />
