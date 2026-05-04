@@ -2283,3 +2283,229 @@ export async function getAdminGrowthData(
 ): Promise<{ data: GrowthDataPoint[] }> {
   return request(`/api/v1/admin/stats/growth?metric=${metric}&days=${days}`)
 }
+
+// ─── Storage pool lifecycle wizard (spec 011) ─────────────────────────────
+//
+// All endpoints are mounted at `/api/v1/admin/pools/:poolId/…` and gated on
+// `SuperAdminUser` server-side. The existing Bearer token in localStorage
+// carries that auth automatically via the `request()` helper.
+
+export type LifecyclePhase =
+  | 'active'
+  | 'quiescing'
+  | 'migrating'
+  | 'drained'
+  | 'deleted'
+
+export type LifecycleOutcome =
+  | 'in_progress'
+  | 'aborted'
+  | 'reverse_migrated'
+  | 'archived'
+  | 'completed_deleted'
+
+export interface LifecycleRun {
+  id: string
+  pool_id: string
+  target_pool_id: string
+  started_by: string
+  started_at: string
+  current_phase: LifecyclePhase
+  outcome: LifecycleOutcome
+  terminated_at: string | null
+}
+
+/** Live stats for an active pool shown in the Phase 1 insights panel. */
+export interface PoolInsights {
+  used_bytes: number
+  files_count: number
+  users_with_files_count: number
+  currently_active_users_count: number
+  in_flight_uploads_count: number
+  /** Rough estimate based on recent migration throughput; falls back to a
+   *  static 50 MB/s baseline when no history data is available. */
+  estimated_migration_seconds: number
+}
+
+/** Progress snapshot polled every 5 s during the migrating phase. */
+export interface RunProgress {
+  run: LifecycleRun
+  /** 0..1 fraction of files migrated for this run. */
+  phase_progress: number
+  throughput_bytes_per_sec: number
+  files_total: number
+  files_migrated: number
+  files_failed: number
+  files_pending: number
+  /** Remaining seconds at current throughput; 0 when complete. */
+  eta_seconds: number
+}
+
+/** GET /api/v1/admin/pools/:poolId/insights */
+export async function getPoolInsights(poolId: string): Promise<PoolInsights> {
+  return request<PoolInsights>(`/api/v1/admin/pools/${poolId}/insights`)
+}
+
+/** POST /api/v1/admin/pools/:poolId/lifecycle/runs
+ *
+ *  Transitions pool active → quiescing and creates the run record. */
+export async function startLifecycleRun(
+  poolId: string,
+  targetPoolId: string,
+): Promise<{ run: LifecycleRun; pool_lifecycle_phase: LifecyclePhase }> {
+  return request(`/api/v1/admin/pools/${poolId}/lifecycle/runs`, {
+    method: 'POST',
+    body: JSON.stringify({ target_pool_id: targetPoolId }),
+  })
+}
+
+/** GET /api/v1/admin/pools/:poolId/lifecycle/runs/:runId
+ *
+ *  Returns the run with live progress counters. Poll this every 5 s during
+ *  the migrating phase. */
+export async function getLifecycleRun(
+  poolId: string,
+  runId: string,
+): Promise<RunProgress> {
+  return request<RunProgress>(
+    `/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}`,
+  )
+}
+
+/** GET /api/v1/admin/pools/:poolId/lifecycle/runs
+ *
+ *  Full history for this pool (capped at 100 rows, newest first). */
+export async function listLifecycleRuns(
+  poolId: string,
+): Promise<{ runs: LifecycleRun[] }> {
+  return request(`/api/v1/admin/pools/${poolId}/lifecycle/runs`)
+}
+
+/** POST …/advance — quiescing → migrating.
+ *
+ *  `expectedPhase` is an optimistic-concurrency check: the server rejects
+ *  with 409 if the pool has moved on since the client last polled. */
+export async function advanceLifecycleRun(
+  poolId: string,
+  runId: string,
+  expectedPhase: LifecyclePhase,
+): Promise<{ current_phase: LifecyclePhase }> {
+  return request(`/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}/advance`, {
+    method: 'POST',
+    body: JSON.stringify({ expected_phase: expectedPhase }),
+  })
+}
+
+/** POST …/abort — quiescing → active (full abort) OR migrating → quiescing (pause).
+ *
+ *  When `reverseOrphanedWrites` is true (only meaningful for quiescing abort),
+ *  the server seeds reverse migration rows so files written to the target
+ *  during the quiescing window are moved back to the source. */
+export async function abortLifecycleRun(
+  poolId: string,
+  runId: string,
+  expectedPhase: LifecyclePhase,
+  reverseOrphanedWrites: boolean,
+): Promise<{
+  current_phase: LifecyclePhase
+  outcome: LifecycleOutcome
+  orphaned_writes_count: number
+  cancelled_migrations_count: number
+}> {
+  return request(`/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}/abort`, {
+    method: 'POST',
+    body: JSON.stringify({
+      expected_phase: expectedPhase,
+      reverse_orphaned_writes: reverseOrphanedWrites,
+    }),
+  })
+}
+
+/** POST …/reverse-migrate — drained → migrating (target → source direction). */
+export async function reverseMigrateRun(
+  poolId: string,
+  runId: string,
+): Promise<{ current_phase: LifecyclePhase }> {
+  return request(
+    `/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}/reverse-migrate`,
+    { method: 'POST', body: JSON.stringify({}) },
+  )
+}
+
+/** POST …/archive — drained (outcome=in_progress) → drained (outcome=archived).
+ *
+ *  The pool remains empty and accepts no new writes, but the row is kept for
+ *  audit purposes. `reactivateRun` can undo this. */
+export async function archiveRun(
+  poolId: string,
+  runId: string,
+): Promise<{ current_phase: LifecyclePhase; outcome: LifecycleOutcome }> {
+  return request(
+    `/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}/archive`,
+    { method: 'POST', body: JSON.stringify({}) },
+  )
+}
+
+/** POST …/reactivate — drained (outcome=archived) → active.
+ *
+ *  Clears the run binding and brings the pool back into the write rotation. */
+export async function reactivateRun(
+  poolId: string,
+  runId: string,
+): Promise<{ current_phase: LifecyclePhase }> {
+  return request(
+    `/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}/reactivate`,
+    { method: 'POST', body: JSON.stringify({}) },
+  )
+}
+
+/** POST …/delete-pool — terminal: tombstones the pool row (phase=deleted).
+ *
+ *  `confirmationName` must exactly match `storage_pools.name`.
+ *  After this call the pool is gone from write routing; the row stays for FK
+ *  integrity. */
+export async function deletePool(
+  poolId: string,
+  runId: string,
+  confirmationName: string,
+): Promise<{
+  current_phase: LifecyclePhase
+  pool_name: string
+  deletion_outcome: string
+}> {
+  return request(
+    `/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}/delete-pool`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        expected_phase: 'drained' as LifecyclePhase,
+        confirmation_pool_name: confirmationName,
+      }),
+    },
+  )
+}
+
+/** POST …/force-drain — escape hatch: hard-deletes stuck files so migration
+ *  can complete.
+ *
+ *  `confirmationName` must match `storage_pools.name`.
+ *  `fileIds` must be UUIDs of files currently on the source pool.
+ *  Files are deleted permanently — no recovery path. */
+export async function forceDrainRun(
+  poolId: string,
+  runId: string,
+  confirmationName: string,
+  fileIds: string[],
+): Promise<{ files_deleted: number; advanced_to_drained: boolean }> {
+  return request(
+    `/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}/force-drain`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        expected_phase: 'migrating' as LifecyclePhase,
+        confirmation_pool_name: confirmationName,
+        file_ids: fileIds,
+      }),
+    },
+  )
+}
