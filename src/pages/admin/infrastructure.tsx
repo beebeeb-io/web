@@ -30,6 +30,31 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'health', label: 'Health' },
 ]
 
+// ─── Capacity helpers ─────────────────────────────────────────────────────────
+
+type CapacityUnit = 'GB' | 'TB' | 'PB'
+const CAPACITY_DIVISORS: Record<CapacityUnit, number> = { GB: 1e9, TB: 1e12, PB: 1e15 }
+
+function bytesToHuman(bytes: number | null): { value: string; unit: CapacityUnit } {
+  if (!bytes) return { value: '', unit: 'TB' }
+  for (const unit of ['PB', 'TB', 'GB'] as CapacityUnit[]) {
+    const v = bytes / CAPACITY_DIVISORS[unit]
+    if (v >= 1) {
+      const rounded = Math.round(v * 100) / 100
+      return { value: String(rounded), unit }
+    }
+  }
+  return { value: String(bytes / 1e9), unit: 'GB' }
+}
+
+function humanToBytes(value: string, unit: CapacityUnit): number | null {
+  const n = parseFloat(value)
+  if (!value.trim() || isNaN(n)) return null
+  return Math.round(n * CAPACITY_DIVISORS[unit])
+}
+
+// ─── Date helpers ─────────────────────────────────────────────────────────────
+
 function formatDate(iso: string | null): string {
   if (!iso) return '-'
   return new Date(iso).toLocaleString('en-GB', {
@@ -149,9 +174,12 @@ export function Infrastructure() {
   const [editingPool, setEditingPool] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState<{
     display_name: string
-    capacity_bytes: string
+    /** Human-readable numeric value (e.g. "100"). Empty string = unlimited. */
+    capacity_value: string
+    /** Unit for capacity_value. */
+    capacity_unit: 'GB' | 'TB' | 'PB'
     is_active: boolean
-  }>({ display_name: '', capacity_bytes: '', is_active: true })
+  }>({ display_name: '', capacity_value: '', capacity_unit: 'TB', is_active: true })
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -239,9 +267,11 @@ export function Infrastructure() {
 
   function startEdit(pool: StoragePool) {
     setEditingPool(pool.id)
+    const { value, unit } = bytesToHuman(pool.capacity_bytes)
     setEditDraft({
       display_name: pool.display_name,
-      capacity_bytes: pool.capacity_bytes != null ? String(pool.capacity_bytes) : '',
+      capacity_value: value,
+      capacity_unit: unit,
       is_active: pool.is_active,
     })
   }
@@ -249,8 +279,7 @@ export function Infrastructure() {
   async function saveEdit(pool: StoragePool) {
     setUpdatingPool(pool.id)
     try {
-      const capacity =
-        editDraft.capacity_bytes.trim() === '' ? null : Number(editDraft.capacity_bytes)
+      const capacity = humanToBytes(editDraft.capacity_value, editDraft.capacity_unit)
       const updated = await updateStoragePool(pool.id, {
         display_name: editDraft.display_name,
         capacity_bytes: capacity,
@@ -550,7 +579,7 @@ export function Infrastructure() {
                       {isEditing ? (
                         <div className="rounded-lg bg-paper-2 border border-line p-3 space-y-2 mb-3">
                           <label className="flex flex-col gap-1">
-                            <span className="text-[10px] uppercase text-ink-4">Display name</span>
+                            <span className="text-xs font-medium text-ink-2">Display name</span>
                             <input
                               className="border border-line-2 rounded-md px-2 py-1.5 text-xs bg-paper"
                               value={editDraft.display_name}
@@ -559,17 +588,34 @@ export function Infrastructure() {
                               }
                             />
                           </label>
-                          <label className="flex flex-col gap-1">
-                            <span className="text-[10px] uppercase text-ink-4">Capacity bytes (blank = unlimited)</span>
-                            <input
-                              type="number"
-                              className="border border-line-2 rounded-md px-2 py-1.5 text-xs font-mono bg-paper"
-                              value={editDraft.capacity_bytes}
-                              onChange={e =>
-                                setEditDraft({ ...editDraft, capacity_bytes: e.target.value })
-                              }
-                            />
-                          </label>
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs font-medium text-ink-2">Capacity</span>
+                            <div className="flex gap-1.5">
+                              <input
+                                type="number"
+                                min="0"
+                                step="any"
+                                className="flex-1 border border-line-2 rounded-md px-2 py-1.5 text-xs font-mono bg-paper min-w-0"
+                                value={editDraft.capacity_value}
+                                placeholder="e.g. 100"
+                                onChange={e =>
+                                  setEditDraft({ ...editDraft, capacity_value: e.target.value })
+                                }
+                              />
+                              <select
+                                className="border border-line-2 rounded-md px-2 py-1.5 text-xs font-mono bg-paper"
+                                value={editDraft.capacity_unit}
+                                onChange={e =>
+                                  setEditDraft({ ...editDraft, capacity_unit: e.target.value as 'GB' | 'TB' | 'PB' })
+                                }
+                              >
+                                <option value="GB">GB</option>
+                                <option value="TB">TB</option>
+                                <option value="PB">PB</option>
+                              </select>
+                            </div>
+                            <span className="text-[10px] text-ink-4">Leave blank for unlimited</span>
+                          </div>
                           <label className="flex items-center gap-2 text-[12px]">
                             <input
                               type="checkbox"
