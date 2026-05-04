@@ -2357,6 +2357,23 @@ export interface RunFileEntry {
   completed_at: string | null
 }
 
+/**
+ * POST /api/v1/admin/pools/:poolId/lifecycle/runs/:runId/files/:fileId/retry
+ *
+ * Resets a failed file_migration row to 'pending' so the worker picks it up
+ * again. No-op if the file is already done/pending/copying.
+ */
+export async function retryFile(
+  poolId: string,
+  runId: string,
+  fileId: string,
+): Promise<{ status: string }> {
+  return request(
+    `/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}/files/${fileId}/retry`,
+    { method: 'POST', body: JSON.stringify({}) },
+  )
+}
+
 /** GET /api/v1/admin/pools/:poolId/lifecycle/runs/:runId/files
  *
  *  Returns the 20 most recent file_migrations for the run, newest first.

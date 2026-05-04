@@ -5,7 +5,9 @@
  */
 
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { BBButton } from '../../bb-button'
+import { Icon } from '../../icons'
 import { formatBytes } from '../../../lib/format'
 import {
   getLifecycleRun,
@@ -211,9 +213,19 @@ export function MigratingPanel({
         Pause migration
       </BBButton>
 
-      <p className="text-[11px] text-ink-4 mt-4">
+      <p className="text-[11px] text-ink-4 mt-4 mb-4">
         Updates every 5 seconds. Pausing reverts to quiescing — resume by clicking "Begin migration".
       </p>
+
+      {/* Mission Control deep-link */}
+      <Link
+        to={`/admin/infrastructure/pools/${poolId}/runs/${run.id}/monitor`}
+        className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-deep hover:underline"
+      >
+        <Icon name="eye" size={13} />
+        Open Mission Control
+        <Icon name="chevron-right" size={12} />
+      </Link>
 
       {/* Pause confirmation modal */}
       <ConfirmationModal
