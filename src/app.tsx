@@ -104,6 +104,20 @@ function ApiErrorWiring() {
     }
   }, [showToast, navigate])
 
+  // Global handler for unhandled promise rejections (useEffect async errors,
+  // fire-and-forget fetches, etc.). These do NOT trigger the React ErrorBoundary
+  // — class component boundaries only catch render-phase errors. This handler
+  // logs them in dev and provides a hook for Sentry in production.
+  useEffect(() => {
+    function handleUnhandledRejection(ev: PromiseRejectionEvent) {
+      console.error('[unhandledRejection] Unhandled promise rejection:', ev.reason)
+      // Do NOT call ev.preventDefault() — keep the browser's native
+      // "Uncaught (in promise)" warning visible in DevTools.
+    }
+    window.addEventListener('unhandledrejection', handleUnhandledRejection)
+    return () => window.removeEventListener('unhandledrejection', handleUnhandledRejection)
+  }, [])
+
   return null
 }
 

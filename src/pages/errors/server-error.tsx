@@ -54,13 +54,19 @@ export function ServerError({
           </div>
         )}
 
-        <div className="mt-xl flex gap-sm justify-center">
+        <div className="mt-xl flex flex-wrap gap-sm justify-center">
           <BBButton
             variant="amber"
             size="lg"
             onClick={() => window.location.reload()}
           >
             Try again
+          </BBButton>
+          <BBButton
+            size="lg"
+            onClick={() => { window.location.href = '/' }}
+          >
+            Go home
           </BBButton>
           <a
             href={statusUrl}
