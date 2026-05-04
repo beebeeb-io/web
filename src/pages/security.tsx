@@ -23,89 +23,21 @@ import QRCode from 'qrcode'
 /* ── Recovery phrase ────────────────────────────── */
 
 function RecoveryPhraseSection() {
-  const { getMasterKey, isUnlocked } = useKeys()
-  const { showToast } = useToast()
-  const [phrase, setPhrase] = useState<string[] | null>(null)
-  const [hideTimer, setHideTimer] = useState<ReturnType<typeof setTimeout> | null>(null)
-
-  const handleView = useCallback(() => {
-    if (!isUnlocked) {
-      showToast({ icon: 'lock', title: 'Vault locked', description: 'Unlock your vault to view the recovery phrase.' })
-      return
-    }
-    try {
-      const key = getMasterKey()
-      // Display key bytes as BIP39-style hex words (12 groups of 2 bytes each = 24 hex chars)
-      const hex = Array.from(key).map((b) => b.toString(16).padStart(2, '0')).join('')
-      const words: string[] = []
-      for (let i = 0; i < 24; i += 2) words.push(hex.slice(i, i + 2))
-      setPhrase(words)
-      if (hideTimer) clearTimeout(hideTimer)
-      const t = setTimeout(() => setPhrase(null), 30_000)
-      setHideTimer(t)
-    } catch {
-      showToast({ icon: 'x', title: 'Could not read recovery phrase', danger: true })
-    }
-  }, [getMasterKey, isUnlocked, showToast, hideTimer])
-
-  const handleDownload = useCallback(() => {
-    if (!isUnlocked) {
-      showToast({ icon: 'lock', title: 'Vault locked', description: 'Unlock your vault to download the recovery phrase.' })
-      return
-    }
-    try {
-      const key = getMasterKey()
-      const hex = Array.from(key).map((b) => b.toString(16).padStart(2, '0')).join('')
-      const words: string[] = []
-      for (let i = 0; i < 24; i += 2) words.push(hex.slice(i, i + 2))
-      const content = [
-        'BEEBEEB RECOVERY PHRASE',
-        'Keep this safe. Do not share it. We cannot recover it.',
-        '',
-        words.join(' '),
-        '',
-        `Generated: ${new Date().toISOString()}`,
-      ].join('\n')
-      const blob = new Blob([content], { type: 'text/plain' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = 'beebeeb-recovery-phrase.txt'
-      a.click()
-      URL.revokeObjectURL(url)
-    } catch {
-      showToast({ icon: 'x', title: 'Could not generate download', danger: true })
-    }
-  }, [getMasterKey, isUnlocked, showToast])
-
   return (
     <SettingsRow
       label="Recovery phrase"
-      hint="This is the only key to your vault. If you lose it, we can't help."
+      hint="Your 12-word recovery phrase was shown once during signup. We cannot display it again."
     >
-      <div className="flex flex-col gap-3">
-        <div className="flex gap-2">
-          <BBButton size="sm" onClick={handleView}>
-            <Icon name="eye" size={12} className="mr-1.5" />
-            View phrase
-          </BBButton>
-          <BBButton size="sm" variant="ghost" onClick={handleDownload}>
-            <Icon name="download" size={12} className="mr-1.5" />
-            Download
-          </BBButton>
-        </div>
-        {phrase && (
-          <div className="flex flex-wrap gap-1.5 p-3 bg-paper-2 border border-line rounded-md max-w-[420px]">
-            {phrase.map((w, i) => (
-              <span key={i} className="font-mono text-xs text-ink bg-paper border border-line rounded px-1.5 py-0.5">
-                {i + 1}. {w}
-              </span>
-            ))}
-            <div className="w-full text-[11px] text-ink-3 mt-1">
-              Auto-hidden in 30 seconds. Do not share.
-            </div>
-          </div>
-        )}
+      <div className="flex flex-col gap-2">
+        <p className="text-[12.5px] text-ink-2 leading-relaxed max-w-[420px]">
+          If you saved your recovery phrase during account creation, keep it stored
+          safely. It is the only way to recover your vault if you lose access to all
+          your devices.
+        </p>
+        <p className="text-[12.5px] text-ink-3 leading-relaxed max-w-[420px]">
+          We cannot retrieve, reset, or regenerate your recovery phrase.
+          This is by design — zero-knowledge means only you have access.
+        </p>
       </div>
     </SettingsRow>
   )
