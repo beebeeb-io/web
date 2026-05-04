@@ -8,22 +8,22 @@
  * lifecycle run (if one exists); pools with no active run are implicitly
  * 'active'. The existing /admin/storage-pools endpoint does not yet include
  * `lifecycle_phase`, so we fetch it from the runs list.
- *
- * Panel components are stubbed for Tasks 3–6.
  */
 
 import { useEffect, useState, useCallback } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { AdminShell } from './admin-shell'
 import { Icon } from '../../components/icons'
-import { formatBytes } from '../../lib/format'
 import {
   listStoragePools,
   listLifecycleRuns,
+  getPoolInsights,
   type StoragePool,
   type LifecyclePhase,
   type LifecycleRun,
+  type PoolInsights,
 } from '../../lib/api'
+import { InsightsPanel } from '../../components/admin/lifecycle/insights-panel'
 
 // ─── Phase badge ─────────────────────────────────────────────────────────────
 
@@ -78,18 +78,7 @@ function PhaseBadge({ phase }: { phase: LifecyclePhase }) {
   )
 }
 
-// ─── Placeholder panels (replaced by Tasks 3–6) ───────────────────────────
-
-function ActivePanelPlaceholder({ pool }: { pool: StoragePool }) {
-  return (
-    <div className="p-6 border border-dashed border-line rounded-lg text-center">
-      <p className="text-sm font-medium text-ink-2 mb-1">Insights panel</p>
-      <p className="text-xs text-ink-4 font-mono">phase: active</p>
-      <p className="text-xs text-ink-3 mt-2">{formatBytes(pool.used_bytes)} stored</p>
-      <p className="text-xs text-ink-4 mt-1">InsightsPanel component — Task 3</p>
-    </div>
-  )
-}
+// ─── Placeholder panels (replaced by Tasks 4–6) ───────────────────────────
 
 function QuiescingPanelPlaceholder({ run }: { run: LifecycleRun | null }) {
   return (
@@ -142,9 +131,12 @@ export function PoolLifecycle() {
   const { poolId } = useParams<{ poolId: string }>()
 
   const [pool, setPool] = useState<StoragePool | null>(null)
+  const [allPools, setAllPools] = useState<StoragePool[]>([])
   const [activeRun, setActiveRun] = useState<LifecycleRun | null>(null)
   // Phase is derived from the in-progress run; defaults to 'active' when none.
   const [phase, setPhase] = useState<LifecyclePhase>('active')
+  // Insights fetched only when phase === 'active'.
+  const [insights, setInsights] = useState<PoolInsights | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -153,7 +145,8 @@ export function PoolLifecycle() {
     setLoading(true)
     setError(null)
     try {
-      // 1. Fetch pool details from the existing list endpoint.
+      // 1. Fetch all pools — need both the current pool's details AND the list
+      //    of other active pools for the target dropdown.
       const pools = await listStoragePools()
       const found = pools.find((p) => p.id === poolId) ?? null
       if (!found) {
@@ -162,16 +155,22 @@ export function PoolLifecycle() {
         return
       }
       setPool(found)
+      setAllPools(pools)
 
-      // 2. Fetch the lifecycle run history to determine current phase.
-      //    The in-progress run (outcome='in_progress') is the canonical source
-      //    of truth for phase because the existing /admin/storage-pools endpoint
-      //    doesn't yet return lifecycle_phase. If no in-progress run, the pool
-      //    is active.
+      // 2. Derive current lifecycle phase from the in-progress run.
       const { runs } = await listLifecycleRuns(poolId)
       const inProgress = runs.find((r) => r.outcome === 'in_progress') ?? null
       setActiveRun(inProgress)
-      setPhase(inProgress?.current_phase ?? 'active')
+      const currentPhase = inProgress?.current_phase ?? 'active'
+      setPhase(currentPhase)
+
+      // 3. Fetch insights only for active pools (the insights endpoint returns
+      //    data about files still on the source — only meaningful before a run
+      //    starts and potentially during migration; always valid for active).
+      if (currentPhase === 'active') {
+        const poolInsights = await getPoolInsights(poolId)
+        setInsights(poolInsights)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load pool data.')
     } finally {
@@ -208,7 +207,25 @@ export function PoolLifecycle() {
     }
     switch (phase) {
       case 'active':
-        return <ActivePanelPlaceholder pool={pool} />
+        if (!insights) {
+          // Insights still loading (fetched after phase check)
+          return (
+            <div className="flex items-center gap-2 text-sm text-ink-3 py-12 justify-center">
+              <div className="w-4 h-4 border-2 border-amber border-t-transparent rounded-full animate-spin" />
+              Loading pool insights…
+            </div>
+          )
+        }
+        return (
+          <InsightsPanel
+            poolId={poolId!}
+            insights={insights}
+            otherActivePools={allPools.filter(
+              (p) => p.id !== poolId && p.is_active,
+            )}
+            onRunStarted={load}
+          />
+        )
       case 'quiescing':
         return <QuiescingPanelPlaceholder run={activeRun} />
       case 'migrating':
