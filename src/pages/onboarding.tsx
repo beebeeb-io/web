@@ -38,21 +38,79 @@ const BULLET_POINTS = [
   { icon: 'shield' as const, title: "You're the only custodian", desc: 'No backdoors, no master keys, no exceptions.' },
 ]
 
-function getPasswordStrength(pw: string): {
-  level: number
+type PasswordFeedback = {
+  level: 1 | 2 | 3 | 4
   label: string
-  color: string
-} {
-  let score = 0
-  if (pw.length >= 8) score++
-  if (pw.length >= 12) score++
-  if (/[A-Z]/.test(pw) && /[a-z]/.test(pw)) score++
-  if (/\d/.test(pw) || /[^A-Za-z0-9]/.test(pw)) score++
+  meterColor: string
+  message: string
+  messageTone: 'red' | 'ink-3' | 'green'
+  meetsMinimum: boolean
+}
 
-  if (score <= 1) return { level: 1, label: 'Weak', color: 'bg-red' }
-  if (score === 2) return { level: 2, label: 'Fair', color: 'bg-amber' }
-  if (score === 3) return { level: 3, label: 'Good', color: 'bg-green' }
-  return { level: 4, label: 'Strong', color: 'bg-green' }
+const MIN_PASSWORD_LENGTH = 12
+
+function evaluatePassword(pw: string): PasswordFeedback {
+  if (pw.length === 0) {
+    return {
+      level: 1,
+      label: '',
+      meterColor: 'bg-paper-3',
+      message: '',
+      messageTone: 'ink-3',
+      meetsMinimum: false,
+    }
+  }
+
+  const hasMixedCase = /[A-Z]/.test(pw) && /[a-z]/.test(pw)
+  const hasNumOrSym = /\d/.test(pw) || /[^A-Za-z0-9]/.test(pw)
+
+  if (pw.length < MIN_PASSWORD_LENGTH) {
+    const remaining = MIN_PASSWORD_LENGTH - pw.length
+    return {
+      level: 1,
+      label: 'Too short',
+      meterColor: 'bg-red',
+      message: `Needs at least ${MIN_PASSWORD_LENGTH} characters — ${remaining} more to go.`,
+      messageTone: 'red',
+      meetsMinimum: false,
+    }
+  }
+
+  // length >= MIN_PASSWORD_LENGTH
+  let score = 2
+  if (hasMixedCase) score++
+  if (hasNumOrSym) score++
+
+  if (score === 2) {
+    return {
+      level: 2,
+      label: 'Fair',
+      meterColor: 'bg-amber',
+      message: 'Mix in upper- and lowercase plus a number or symbol to make it stronger.',
+      messageTone: 'ink-3',
+      meetsMinimum: true,
+    }
+  }
+  if (score === 3) {
+    return {
+      level: 3,
+      label: 'Good',
+      meterColor: 'bg-green',
+      message: !hasMixedCase
+        ? 'Mix in upper- and lowercase to make it stronger.'
+        : 'Add a number or symbol to make it stronger.',
+      messageTone: 'ink-3',
+      meetsMinimum: true,
+    }
+  }
+  return {
+    level: 4,
+    label: 'Strong',
+    meterColor: 'bg-green',
+    message: 'Strong.',
+    messageTone: 'green',
+    meetsMinimum: true,
+  }
 }
 
 export function Onboarding() {
@@ -85,7 +143,15 @@ export function Onboarding() {
   const [error, setError] = useState('')
   const [processingStatus, setProcessingStatus] = useState('')
 
-  const strength = getPasswordStrength(password)
+  const strength = evaluatePassword(password)
+  const passwordsMatch =
+    password.length > 0 && confirmPassword.length > 0 && password === confirmPassword
+  const passwordsMismatch = confirmPassword.length > 0 && password !== confirmPassword
+  const messageToneClass: Record<PasswordFeedback['messageTone'], string> = {
+    red: 'text-red',
+    'ink-3': 'text-ink-3',
+    green: 'text-green',
+  }
 
   // Generate mnemonic on mount
   const generated = useRef(false)
@@ -104,8 +170,8 @@ export function Onboarding() {
   const handlePasswordSubmit = useCallback(async () => {
     if (!masterKeyBytes || !email) return
 
-    if (password.length < 12) {
-      setError('Password must be at least 12 characters.')
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`)
       return
     }
     if (password !== confirmPassword) {
@@ -293,26 +359,34 @@ export function Onboarding() {
                     />
                   </div>
 
-                  {/* Strength meter */}
+                  {/* Strength meter + live feedback */}
                   {password.length > 0 && (
-                    <div className="mb-3.5">
+                    <div className="mb-3.5" data-testid="password-strength">
                       <div className="flex gap-1 mt-2">
                         {[1, 2, 3, 4].map((i) => (
                           <div
                             key={i}
                             className={`flex-1 h-[3px] rounded-full ${
-                              i <= strength.level ? strength.color : 'bg-paper-3'
+                              i <= strength.level ? strength.meterColor : 'bg-paper-3'
                             }`}
                           />
                         ))}
                       </div>
-                      <p className="text-xs mt-1 text-ink-3">
-                        {strength.label} — {password.length} chars
-                      </p>
+                      <div className="flex items-baseline justify-between mt-1.5 gap-3">
+                        <p
+                          className={`text-xs ${messageToneClass[strength.messageTone]}`}
+                          data-testid="password-strength-message"
+                        >
+                          {strength.message}
+                        </p>
+                        <p className="text-[11px] text-ink-4 font-mono shrink-0">
+                          {password.length} / {MIN_PASSWORD_LENGTH}
+                        </p>
+                      </div>
                     </div>
                   )}
 
-                  <div className="mb-3.5">
+                  <div className="mb-1.5">
                     <BBInput
                       label="Confirm password"
                       type={showConfirmPassword ? 'text' : 'password'}
@@ -336,6 +410,26 @@ export function Onboarding() {
                     />
                   </div>
 
+                  {/* Live confirm-match feedback */}
+                  <div className="mb-3.5 min-h-[16px]">
+                    {passwordsMismatch && (
+                      <p
+                        className="text-xs text-red"
+                        data-testid="confirm-mismatch"
+                      >
+                        Doesn&apos;t match yet.
+                      </p>
+                    )}
+                    {passwordsMatch && strength.meetsMinimum && (
+                      <p
+                        className="text-xs text-green"
+                        data-testid="confirm-match"
+                      >
+                        Match.
+                      </p>
+                    )}
+                  </div>
+
                   {error && (
                     <p className="text-xs text-red mb-3">{error}</p>
                   )}
@@ -348,7 +442,7 @@ export function Onboarding() {
                       variant="amber"
                       size="lg"
                       className="flex-1"
-                      disabled={password.length < 12 || confirmPassword.length === 0}
+                      disabled={!strength.meetsMinimum || !passwordsMatch}
                       onClick={handlePasswordSubmit}
                     >
                       Create account
