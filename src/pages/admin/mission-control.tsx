@@ -17,6 +17,7 @@ import {
   getLifecycleRun,
   getLifecycleRunFiles,
   abortLifecycleRun,
+  retryFile,
   listStoragePools,
   type RunProgress,
   type RunFileEntry,
@@ -35,6 +36,54 @@ import {
   type ThroughputSample,
 } from '../../components/admin/mission-control/throughput-chart'
 import { ProgressTimeline } from '../../components/admin/mission-control/progress-timeline'
+import {
+  FileLogToggle,
+  type FileLogMode,
+} from '../../components/admin/mission-control/file-log-toggle'
+import type {
+  MigrationFileEntry,
+  MigrationFileEvent,
+} from '../../components/admin/mission-control/types'
+
+// ─── Adapters ──────────────────────────────────────────────────────────────
+
+/** Convert a polled RunFileEntry snapshot into a MigrationFileEntry for the Table view. */
+function toTableEntry(f: RunFileEntry): MigrationFileEntry {
+  const validStatuses = new Set(['pending', 'copying', 'verifying', 'done', 'failed', 'cancelled'])
+  return {
+    file_id: f.file_id,
+    status: validStatuses.has(f.status) ? (f.status as MigrationFileEntry['status']) : 'pending',
+    size_bytes: f.size_bytes,
+    started_at: f.started_at ?? null,
+    completed_at: f.completed_at ?? null,
+    error: f.error,
+    bytes_copied: 0, // not in polling snapshot; real value comes via WS (014a)
+  }
+}
+
+/** Convert a polled RunFileEntry snapshot into a MigrationFileEvent for the Stream view. */
+function toStreamEvent(f: RunFileEntry): MigrationFileEvent {
+  type EventType = MigrationFileEvent['type']
+  const typeMap: Record<string, EventType> = {
+    done: 'file_done',
+    failed: 'file_failed',
+    copying: 'file_progress',
+    verifying: 'file_progress',
+    pending: 'file_started',
+  }
+  const durationMs =
+    f.started_at && f.completed_at
+      ? Math.max(0, new Date(f.completed_at).getTime() - new Date(f.started_at).getTime())
+      : undefined
+  return {
+    type: typeMap[f.status] ?? 'file_started',
+    file_id: f.file_id,
+    size_bytes: f.size_bytes,
+    at: f.completed_at ?? f.started_at ?? new Date().toISOString(),
+    duration_ms: durationMs,
+    error: f.error ?? undefined,
+  }
+}
 
 /** Rolling window for throughput samples (last 5 minutes). */
 const THROUGHPUT_WINDOW_SAMPLES = 150 // 150 × 2 s = 5 min
@@ -55,6 +104,10 @@ export function MissionControl() {
 
   // Throughput samples accumulator — rolling buffer for ThroughputChart.
   const [throughputSamples, setThroughputSamples] = useState<ThroughputSample[]>([])
+
+  // File log view state
+  const [fileLogMode, setFileLogMode] = useState<FileLogMode>('stream')
+  const [autoScroll, setAutoScroll] = useState(true)
 
   // Pause modal state
   const [pausing, setPausing] = useState(false)
@@ -139,8 +192,18 @@ export function MissionControl() {
     }
   }
 
+  async function handleRetry(fileId: string) {
+    if (!poolId || !runId) return
+    await retryFile(poolId, runId, fileId)
+    void fetchAll()
+  }
+
   const poolDisplayName = pool?.display_name || pool?.name || poolId
   const phase = progress?.run.current_phase ?? 'migrating'
+
+  // Derive typed shapes for the file-log components from the polled snapshot.
+  const tableEntries: MigrationFileEntry[] = files.map(toTableEntry)
+  const streamEvents: MigrationFileEvent[] = files.map(toStreamEvent)
 
   return (
     <AdminShell activeSection="infrastructure">
@@ -198,48 +261,21 @@ export function MissionControl() {
         <div className="flex gap-5 px-7 py-5 min-h-full">
           {/* Main column (~70%) */}
           <div className="flex flex-col gap-5 min-w-0" style={{ flex: '7 1 0%' }}>
-            {/* File log placeholder — will be replaced by ui-engineer's component */}
-            <div className="rounded-lg border border-line bg-paper overflow-hidden">
-              <div className="flex items-center gap-2 px-4 py-2.5 border-b border-line">
-                <span className="text-[12px] font-semibold text-ink flex-1">File log</span>
-                <span className="font-mono text-[10px] text-ink-4">
-                  {files.length} recent
-                </span>
-              </div>
-              {files.length === 0 ? (
-                <div className="px-4 py-8 text-center">
-                  <p className="text-[11px] text-ink-4">Waiting for migration worker…</p>
-                </div>
-              ) : (
-                <div className="divide-y divide-line">
-                  {files.map((f) => {
-                    const statusColors: Record<string, string> = {
-                      done:      'oklch(0.55 0.12 155)',
-                      copying:   'var(--color-amber-deep)',
-                      verifying: 'var(--color-amber-deep)',
-                      pending:   'var(--color-ink-4)',
-                      failed:    'var(--color-red)',
-                    }
-                    return (
-                      <div key={f.file_id} className="flex items-center gap-3 px-4 py-2">
-                        <span
-                          className="font-mono text-[10px] font-medium uppercase w-16 shrink-0"
-                          style={{ color: statusColors[f.status] ?? 'var(--color-ink-4)' }}
-                        >
-                          {f.status}
-                        </span>
-                        <span className="font-mono text-[10px] text-ink-3 flex-1 truncate min-w-0">
-                          {f.file_id.slice(0, 12)}…
-                        </span>
-                        <span className="font-mono text-[10px] text-ink-4 shrink-0">
-                          {Math.round(f.size_bytes / 1024).toLocaleString()} KB
-                        </span>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
+            {/* File log — stream (terminal) + table (structured) toggle */}
+            <FileLogToggle
+              mode={fileLogMode}
+              onModeChange={setFileLogMode}
+              streamProps={{
+                events: streamEvents,
+                autoScroll,
+                onToggleAutoScroll: () => setAutoScroll((v) => !v),
+                targetPoolName: pool?.display_name ?? pool?.name,
+              }}
+              tableProps={{
+                files: tableEntries,
+                onRetry: handleRetry,
+              }}
+            />
 
             {/* Throughput chart (chart-engineer, ebf5152) */}
             <ThroughputChart
