@@ -1039,6 +1039,30 @@ export async function getStorageUsage(): Promise<StorageUsage> {
   return request<StorageUsage>('/api/v1/files/usage')
 }
 
+/**
+ * GET /api/v1/billing/usage
+ *
+ * Returns authoritative storage quota from the billing subsystem.
+ * Implemented in server task 0033. Returns null instead of throwing
+ * when the endpoint is not yet deployed (404), so callers can fall back
+ * to getStorageUsage() without crashing.
+ */
+export interface BillingUsage {
+  used_bytes: number
+  quota_bytes: number
+  /** Server-computed percentage 0–100. */
+  percentage: number
+}
+
+export async function fetchUsage(): Promise<BillingUsage | null> {
+  try {
+    return await request<BillingUsage>('/api/v1/billing/usage')
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null
+    throw err
+  }
+}
+
 export async function getPlans(): Promise<Plan[]> {
   const data = await request<{ plans: Plan[] }>('/api/v1/billing/plans')
   return data.plans

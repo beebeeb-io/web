@@ -10,6 +10,7 @@ import {
   getSubscription,
   getPlans,
   getStorageUsage,
+  fetchUsage,
   getIncomingInvites,
   getFolderKeys,
   getPreference,
@@ -19,12 +20,14 @@ import {
   type Plan,
   type ShareInvite,
   type StorageUsage,
+  type BillingUsage,
 } from '../lib/api'
+import { StorageUsageBar } from './storage-usage-bar'
 import { decryptFolderKey, decryptChildFileKey } from '../lib/folder-share-crypto'
 import { decryptFilename, fromBase64 } from '../lib/crypto'
 import { QuotaWarning } from './quota-warning'
 import { QuickAccess } from './quick-access'
-import { formatStorageSI } from '../lib/format'
+// formatStorageSI used via StorageUsageBar; kept for potential direct use
 
 const navItems: { path: string; icon: IconName; label: string }[] = [
   { path: '/', icon: 'folder', label: 'All files' },
@@ -143,6 +146,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   const [sharedFolders, setSharedFolders] = useState<(ShareInvite & { decryptedName?: string })[]>([])
   const [pinnedIds, setPinnedIds] = useState<string[]>([])
   const [usage, setUsage] = useState<StorageUsage | null>(null)
+  const [billingUsage, setBillingUsage] = useState<BillingUsage | null>(null)
   const [storageRegion, setStorageRegion] = useState<string>('auto')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [quickAccessDragOver, setQuickAccessDragOver] = useState(false)
@@ -160,6 +164,8 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   useEffect(() => {
     getSubscription().then(setSub).catch((err) => console.error('[DriveLayout] Failed to load subscription:', err))
     getStorageUsage().then(setUsage).catch((err) => console.error('[DriveLayout] Failed to load storage usage:', err))
+    // Try the billing usage endpoint; null = not yet deployed (404), fall back to getStorageUsage data.
+    fetchUsage().then((b) => { if (b) setBillingUsage(b) }).catch(() => {})
     getPlans().then((plans) => {
       getSubscription().then((s) => {
         const match = plans.find((p) => p.id === s.plan)
@@ -269,10 +275,9 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   }, [isUnlocked, getMasterKey])
 
   const storageLimit = usage?.plan_limit_bytes ?? planDetails?.storage_bytes ?? 5_368_709_120
-  const storageLabel = formatStorageSI(storageLimit)
-  const usedBytes = usage?.used_bytes ?? 0
-  const usedPct = storageLimit > 0 ? Math.min(100, (usedBytes / storageLimit) * 100) : 0
-  const storageWarning = usedPct > 90
+  // Prefer billing usage endpoint (when live); fall back to files/usage.
+  const resolvedUsedBytes  = billingUsage?.used_bytes  ?? usage?.used_bytes  ?? 0
+  const resolvedQuotaBytes = billingUsage?.quota_bytes ?? storageLimit
   const planName = usage?.plan_name ?? planDetails?.name ?? 'Free'
 
   return (
@@ -392,20 +397,11 @@ export function DriveLayout({ children }: { children: ReactNode }) {
             </div>
             <span className="text-[10px] text-ink-3">{planName} plan</span>
           </div>
-          <div className="h-[3px] w-full rounded-full bg-paper-3 overflow-hidden mb-1.5">
-            <div
-              className={`h-full rounded-full ${storageWarning ? 'bg-red' : 'bg-amber'}`}
-              style={{ width: `${usedPct}%` }}
-            />
-          </div>
-          <div className="flex justify-between text-[11px]">
-            <span className={`font-mono tabular-nums ${storageWarning ? 'text-red' : ''}`}>
-              {formatStorageSI(usedBytes)} / {storageLabel}
-            </span>
-            <Link to="/settings/billing" className="font-medium text-amber-deep hover:underline">
-              Manage
-            </Link>
-          </div>
+          <StorageUsageBar
+            usedBytes={resolvedUsedBytes}
+            quotaBytes={resolvedQuotaBytes}
+            compact
+          />
           <div className="mt-3 flex items-center gap-1.5 text-[10px] text-ink-3">
             {REGION_META[storageRegion]?.flag ? (
               <span className="text-[12px]">{REGION_META[storageRegion].flag}</span>

@@ -14,9 +14,9 @@ import {
   clearToken, ApiError,
   type StorageUsage,
 } from '../../lib/api'
-import { StorageBreakdown } from '../../components/storage-breakdown'
+import { StorageUsageBar } from '../../components/storage-usage-bar'
 import { ConfirmPasswordModal } from '../../components/confirm-password-modal'
-import { formatStorageSI } from '../../lib/format'
+
 
 interface DataRegion {
   id: string
@@ -201,10 +201,6 @@ export function SettingsAccount() {
     [navigate, showToast],
   )
 
-  const storageSegments = usage
-    ? [{ label: 'Used', bytes: usage.used_bytes, color: 'var(--color-amber)' }]
-    : []
-
   return (
     <SettingsShell activeSection="account">
       <ConfirmPasswordModal
@@ -306,16 +302,11 @@ export function SettingsAccount() {
           </div>
         ) : usage ? (
           <div className="max-w-[460px] w-full">
-            <div className="flex items-baseline justify-between mb-3">
-              <span className="text-sm font-semibold text-ink">
-                {formatStorageSI(usage.used_bytes)}
-              </span>
-              <span className="text-[12px] text-ink-3">
-                of {formatStorageSI(usage.plan_limit_bytes)}
-              </span>
-            </div>
-            <StorageBreakdown segments={storageSegments} totalBytes={usage.plan_limit_bytes} />
-            <div className="text-[11px] text-ink-4 mt-2 font-mono">{usage.plan_name}</div>
+            <StorageUsageBar
+              usedBytes={usage.used_bytes}
+              quotaBytes={usage.plan_limit_bytes}
+              planName={usage.plan_name}
+            />
           </div>
         ) : (
           <span className="text-[12.5px] text-ink-3">Could not load usage data.</span>
