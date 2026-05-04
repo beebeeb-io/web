@@ -25,6 +25,7 @@ import {
 } from '../../lib/api'
 import { InsightsPanel } from '../../components/admin/lifecycle/insights-panel'
 import { QuiescingPanel } from '../../components/admin/lifecycle/quiescing-panel'
+import { MigratingPanel } from '../../components/admin/lifecycle/migrating-panel'
 
 // ─── Phase badge ─────────────────────────────────────────────────────────────
 
@@ -82,20 +83,6 @@ function PhaseBadge({ phase }: { phase: LifecyclePhase }) {
 // ─── Placeholder panels (replaced by Tasks 4–6) ───────────────────────────
 
 
-function MigratingPanelPlaceholder({ run }: { run: LifecycleRun | null }) {
-  return (
-    <div className="p-6 border border-dashed border-amber rounded-lg text-center">
-      <p className="text-sm font-medium text-ink-2 mb-1">Migrating panel</p>
-      <p className="text-xs text-ink-4 font-mono">phase: migrating</p>
-      {run && (
-        <p className="text-xs text-ink-3 mt-2">
-          Run: <span className="font-mono">{run.id.slice(0, 8)}</span>
-        </p>
-      )}
-      <p className="text-xs text-ink-4 mt-1">MigratingPanel component — Task 5</p>
-    </div>
-  )
-}
 
 function DrainedPanelPlaceholder({ run }: { run: LifecycleRun | null }) {
   return (
@@ -228,7 +215,19 @@ export function PoolLifecycle() {
           />
         )
       case 'migrating':
-        return <MigratingPanelPlaceholder run={activeRun} />
+        if (!activeRun) return <p className="text-sm text-ink-3">No active run found.</p>
+        return (
+          <MigratingPanel
+            poolId={poolId!}
+            run={activeRun}
+            targetPoolName={
+              allPools.find((p) => p.id === activeRun.target_pool_id)?.display_name
+              ?? allPools.find((p) => p.id === activeRun.target_pool_id)?.name
+              ?? activeRun.target_pool_id
+            }
+            onPhaseChanged={load}
+          />
+        )
       case 'drained':
       case 'deleted':
         return <DrainedPanelPlaceholder run={activeRun} />
