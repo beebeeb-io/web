@@ -6,6 +6,11 @@
  * container scrolls to keep the newest event visible. Toggling the pause
  * button preserves the current scroll position so an operator can inspect
  * earlier events without fighting the auto-scroll.
+ *
+ * Each row is a CSS grid so every column has a guaranteed fixed width:
+ *   TIME(8ch) · STATUS(7ch) · FILE_ID(9ch) · SIZE(8ch↔) · DUR(6ch↔) · REST
+ * Numeric columns are right-aligned with tabular-nums. The REST column uses
+ * a nested flex row for the optional target arrow + error message.
  */
 
 import { useEffect, useRef } from 'react'
@@ -24,18 +29,29 @@ interface FileLogStreamProps {
 type LineStatus = 'copying' | 'done' | 'failed' | 'pending'
 
 const STATUS_COLOR: Record<LineStatus, string> = {
-  done: '#4ade80',
-  failed: '#f87171',
-  copying: '#fbbf24', // amber, distinct from the brand-amber so it pops on dark
+  done:    '#4ade80',
+  failed:  '#f87171',
+  copying: '#fbbf24',
   pending: '#9ca3af',
 }
 
 const STATUS_LABEL: Record<LineStatus, string> = {
-  done: 'DONE',
-  failed: 'FAIL',
+  done:    'DONE',
+  failed:  'FAIL',
   copying: 'COPY',
   pending: 'WAIT',
 }
+
+// Grid column template — every row uses this so columns line up across rows.
+// ch units are relative to the "0" glyph of the current font (JetBrains Mono
+// 11.5 px ≈ 6.9 px / char).
+//   8ch  = HH:MM:SS timestamp
+//   7ch  = ● DONE  status badge (bullet + space + 4-char label)
+//   9ch  = 8-char hex file ID prefix
+//   8ch  = right-aligned size  (up to "999.9 MB")
+//   6ch  = right-aligned duration (up to "99m59s")
+//   1fr  = target arrow + error message (fills remaining width)
+const ROW_GRID = '8ch 7ch 9ch 8ch 6ch 1fr'
 
 function statusFromEvent(type: MigrationFileEventType): LineStatus {
   switch (type) {
@@ -59,10 +75,10 @@ function formatClockTime(iso: string): string {
 }
 
 function formatDurationMs(ms: number | undefined): string {
-  if (ms === undefined || !Number.isFinite(ms) || ms < 0) return '   —  '
-  if (ms < 1000) return `${ms.toString().padStart(4, ' ')}ms`
+  if (ms === undefined || !Number.isFinite(ms) || ms < 0) return '—'
+  if (ms < 1000) return `${ms}ms`
   const s = ms / 1000
-  if (s < 60) return `${s.toFixed(1).padStart(5, ' ')}s`
+  if (s < 60) return `${s.toFixed(1)}s`
   const m = Math.floor(s / 60)
   const rem = Math.floor(s % 60)
   return `${m}m${String(rem).padStart(2, '0')}s`
@@ -72,10 +88,6 @@ function eventSize(ev: MigrationFileEvent): number | undefined {
   if (ev.size_bytes !== undefined) return ev.size_bytes
   if (ev.bytes_copied !== undefined) return ev.bytes_copied
   return undefined
-}
-
-function eventDuration(ev: MigrationFileEvent): number | undefined {
-  return ev.duration_ms
 }
 
 export function FileLogStream({
@@ -90,7 +102,6 @@ export function FileLogStream({
     if (!autoScroll) return
     const el = scrollRef.current
     if (!el) return
-    // Scroll to bottom on every event arrival when auto-scroll is enabled.
     el.scrollTop = el.scrollHeight
   }, [events, autoScroll])
 
@@ -124,7 +135,7 @@ export function FileLogStream({
       {/* Log body */}
       <div
         ref={scrollRef}
-        className="font-mono text-[11.5px] leading-[1.55] text-[#cbd5e1] px-3 py-2 overflow-y-auto"
+        className="font-mono text-[11.5px] leading-[1.6] text-[#cbd5e1] px-3 py-2 overflow-y-auto"
         style={{ maxHeight: 480 }}
       >
         {events.length === 0 ? (
@@ -133,51 +144,81 @@ export function FileLogStream({
           </div>
         ) : (
           events.map((ev, i) => {
-            const status = statusFromEvent(ev.type)
-            const color = STATUS_COLOR[status]
-            const size = eventSize(ev)
-            const duration = eventDuration(ev)
+            const status   = statusFromEvent(ev.type)
+            const color    = STATUS_COLOR[status]
+            const size     = eventSize(ev)
+            const duration = ev.duration_ms
+
             return (
               <div
                 key={`${ev.file_id}-${ev.type}-${ev.at}-${i}`}
-                className="flex items-baseline gap-3 whitespace-nowrap"
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: ROW_GRID,
+                  columnGap: '0.75ch',
+                  alignItems: 'baseline',
+                  whiteSpace: 'nowrap',
+                }}
               >
-                <span className="text-[#6b7280] tabular-nums shrink-0">
+                {/* HH:MM:SS */}
+                <span style={{ color: '#6b7280' }} className="tabular-nums">
                   {formatClockTime(ev.at)}
                 </span>
-                <span
-                  className="shrink-0 tabular-nums"
-                  style={{ color, width: '3.5ch' }}
-                  aria-label={status}
-                >
+
+                {/* ● STATUS — bullet + 4-char label in one fixed cell */}
+                <span style={{ color, fontWeight: 500 }} aria-label={status}>
                   ● {STATUS_LABEL[status]}
                 </span>
-                <span className="text-[#e2e8f0] shrink-0">
+
+                {/* File ID prefix (8 hex chars) */}
+                <span style={{ color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {ev.file_id.slice(0, 8)}
                 </span>
-                <span className="text-[#94a3b8] tabular-nums shrink-0" style={{ width: '8ch' }}>
-                  {size !== undefined ? formatBytes(size) : '       —'}
+
+                {/* Size — right-aligned */}
+                <span
+                  style={{ color: '#94a3b8', textAlign: 'right' }}
+                  className="tabular-nums"
+                >
+                  {size !== undefined ? formatBytes(size) : '—'}
                 </span>
-                <span className="text-[#94a3b8] tabular-nums shrink-0" style={{ width: '7ch' }}>
+
+                {/* Duration — right-aligned */}
+                <span
+                  style={{ color: '#94a3b8', textAlign: 'right' }}
+                  className="tabular-nums"
+                >
                   {formatDurationMs(duration)}
                 </span>
-                {targetPoolName ? (
-                  <span className="text-[#64748b] shrink-0">
-                    → {targetPoolName}
-                  </span>
-                ) : null}
-                {ev.error ? (
-                  <span className="text-[#fca5a5] truncate min-w-0">
-                    {ev.error}
-                  </span>
-                ) : null}
+
+                {/* REST: optional target arrow + optional error message */}
+                <span style={{ display: 'flex', columnGap: '1ch', overflow: 'hidden', minWidth: 0 }}>
+                  {targetPoolName && (
+                    <span style={{ color: '#64748b', flexShrink: 0 }}>
+                      → {targetPoolName}
+                    </span>
+                  )}
+                  {ev.error && (
+                    <span
+                      style={{
+                        color: '#fca5a5',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        minWidth: 0,
+                      }}
+                    >
+                      {ev.error}
+                    </span>
+                  )}
+                </span>
               </div>
             )
           })
         )}
       </div>
 
-      {/* Footer status — only visible when paused, prompts the user to re-enable. */}
+      {/* Footer — visible only when paused */}
       {!autoScroll && events.length > 0 && (
         <button
           type="button"
