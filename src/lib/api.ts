@@ -2345,6 +2345,29 @@ export interface RunProgress {
   eta_seconds: number
 }
 
+/** Single file_migrations row returned by getLifecycleRunFiles. */
+export interface RunFileEntry {
+  file_id: string
+  /** Encrypted filename — UI shows truncated UUID or raw ciphertext; not decryptable in admin context. */
+  name_encrypted: string
+  size_bytes: number
+  status: 'pending' | 'copying' | 'verifying' | 'done' | 'failed' | string
+  error: string | null
+  started_at: string | null
+  completed_at: string | null
+}
+
+/** GET /api/v1/admin/pools/:poolId/lifecycle/runs/:runId/files
+ *
+ *  Returns the 20 most recent file_migrations for the run, newest first.
+ *  Used by the migrating panel's "Recent files" list. */
+export async function getLifecycleRunFiles(
+  poolId: string,
+  runId: string,
+): Promise<{ files: RunFileEntry[]; total: number }> {
+  return request(`/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}/files`)
+}
+
 /** GET /api/v1/admin/pools/:poolId/insights */
 export async function getPoolInsights(poolId: string): Promise<PoolInsights> {
   return request<PoolInsights>(`/api/v1/admin/pools/${poolId}/insights`)

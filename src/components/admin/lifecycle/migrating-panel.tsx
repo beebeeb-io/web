@@ -9,11 +9,21 @@ import { BBButton } from '../../bb-button'
 import { formatBytes } from '../../../lib/format'
 import {
   getLifecycleRun,
+  getLifecycleRunFiles,
   abortLifecycleRun,
   type LifecycleRun,
   type RunProgress,
+  type RunFileEntry,
 } from '../../../lib/api'
 import { ConfirmationModal } from './confirmation-modal'
+
+const FILE_STATUS_COLORS: Record<string, string> = {
+  done:      'oklch(0.55 0.12 155)',   // green
+  copying:   'var(--color-amber-deep)',
+  verifying: 'var(--color-amber-deep)',
+  pending:   'var(--color-ink-4)',
+  failed:    'var(--color-red)',
+}
 
 function formatMigrationTime(seconds: number): string {
   if (seconds <= 0 || !isFinite(seconds)) return '—'
@@ -38,23 +48,33 @@ export function MigratingPanel({
   onPhaseChanged,
 }: MigratingPanelProps) {
   const [runProgress, setRunProgress] = useState<RunProgress | null>(null)
+  const [recentFiles, setRecentFiles] = useState<RunFileEntry[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
   const [pauseModalOpen, setPauseModalOpen] = useState(false)
   const [pausing, setPausing] = useState(false)
   const [pauseError, setPauseError] = useState<string | null>(null)
 
   useEffect(() => {
-    getLifecycleRun(poolId, run.id)
-      .then((p) => { setRunProgress(p); if (p.run.current_phase !== 'migrating') onPhaseChanged() })
-      .catch((e) => setLoadError(e instanceof Error ? e.message : 'Failed to fetch progress.'))
+    Promise.all([
+      getLifecycleRun(poolId, run.id),
+      getLifecycleRunFiles(poolId, run.id).catch(() => ({ files: [], total: 0 })),
+    ]).then(([p, f]) => {
+      setRunProgress(p)
+      setRecentFiles(f.files)
+      if (p.run.current_phase !== 'migrating') onPhaseChanged()
+    }).catch((e) => setLoadError(e instanceof Error ? e.message : 'Failed to fetch progress.'))
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [poolId, run.id])
 
   useEffect(() => {
     const id = setInterval(async () => {
       try {
-        const p = await getLifecycleRun(poolId, run.id)
+        const [p, f] = await Promise.all([
+          getLifecycleRun(poolId, run.id),
+          getLifecycleRunFiles(poolId, run.id).catch(() => ({ files: [], total: 0 })),
+        ])
         setRunProgress(p)
+        setRecentFiles(f.files)
         setLoadError(null)
         if (p.run.current_phase !== 'migrating') onPhaseChanged()
       } catch { /* transient — wait for next tick */ }
@@ -147,6 +167,41 @@ export function MigratingPanel({
           </div>
         </div>
       )}
+
+      {/* Recent files list */}
+      {recentFiles.length > 0 && (
+        <div className="rounded-lg border border-line bg-paper overflow-hidden mb-5">
+          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-line">
+            <span className="text-[12px] font-semibold text-ink flex-1">Recent files</span>
+            <span className="font-mono text-[10px] text-ink-4">last {recentFiles.length}</span>
+          </div>
+          <div className="divide-y divide-line">
+            {recentFiles.map((f) => (
+              <div key={f.file_id} className="flex items-center gap-3 px-4 py-2.5">
+                <span
+                  className="font-mono text-[10px] font-medium uppercase tracking-wider shrink-0 w-14"
+                  style={{ color: FILE_STATUS_COLORS[f.status] ?? 'var(--color-ink-4)' }}
+                >
+                  {f.status}
+                </span>
+                <span className="font-mono text-[10px] text-ink-3 flex-1 truncate min-w-0">
+                  {f.file_id.slice(0, 8)}…
+                </span>
+                <span className="font-mono text-[10px] text-ink-4 shrink-0">
+                  {formatBytes(f.size_bytes)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Throughput chart placeholder */}
+      <div className="rounded-lg border border-line border-dashed bg-paper-2 px-4 py-5 flex items-center justify-center mb-5">
+        <p className="text-[11px] text-ink-4 text-center">
+          Throughput over time — coming soon
+        </p>
+      </div>
 
       {/* Pause error */}
       {pauseError && <p className="text-xs text-red mb-3">{pauseError}</p>}
