@@ -12,12 +12,14 @@ import {
   migrateUser,
   adminPromote,
   adminDemote,
+  getUserStorage,
 } from '../../lib/api'
 import type {
   AdminUserDetail,
   LoginIp,
   StoragePool,
   AuditEvent,
+  UserStorageBreakdown,
 } from '../../lib/api'
 import { formatBytes } from '../../lib/format'
 import { useImpersonation } from '../../lib/impersonation-context'
@@ -60,6 +62,7 @@ export function UserDetailDrawer({ userId, onClose }: UserDetailDrawerProps) {
   const { user: currentUser } = useAuth()
   const [detail, setDetail] = useState<AdminUserDetail | null>(null)
   const [pools, setPools] = useState<StoragePool[]>([])
+  const [userStorage, setUserStorage] = useState<UserStorageBreakdown | null>(null)
   const [loginIps, setLoginIps] = useState<LoginIp[]>([])
   const [activity, setActivity] = useState<AuditEvent[] | null>(null)
   const [loading, setLoading] = useState(true)
@@ -93,16 +96,23 @@ export function UserDetailDrawer({ userId, onClose }: UserDetailDrawerProps) {
     let cancelled = false
     setLoading(true)
     setError(null)
+    // user-storage feeds the migrate-destination dropdown's source-pool
+    // exclusion. It's tolerated to fail (e.g. user has 0 files) — we just
+    // treat the result as no-source-pools and fall through to the existing
+    // "all active pools" behaviour, which won't pick a current source
+    // because there is none.
     Promise.all([
       getAdminUserDetail(userId),
       listStoragePools(),
       getUserLoginIps(userId),
+      getUserStorage(userId).catch(() => null),
     ])
-      .then(([d, p, ips]) => {
+      .then(([d, p, ips, us]) => {
         if (cancelled) return
         setDetail(d)
         setPools(p)
         setLoginIps(ips.ips)
+        setUserStorage(us)
       })
       .catch(err => {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load user')
@@ -420,6 +430,7 @@ export function UserDetailDrawer({ userId, onClose }: UserDetailDrawerProps) {
                 <StorageTab
                   detail={detail}
                   pools={pools}
+                  userStorage={userStorage}
                   migrateOpen={migrateOpen}
                   setMigrateOpen={setMigrateOpen}
                   migrating={migrating}
@@ -444,6 +455,7 @@ export function UserDetailDrawer({ userId, onClose }: UserDetailDrawerProps) {
 function StorageTab({
   detail,
   pools,
+  userStorage,
   migrateOpen,
   setMigrateOpen,
   migrating,
@@ -451,6 +463,7 @@ function StorageTab({
 }: {
   detail: AdminUserDetail
   pools: StoragePool[]
+  userStorage: UserStorageBreakdown | null
   migrateOpen: boolean
   setMigrateOpen: (open: boolean) => void
   migrating: boolean
@@ -458,6 +471,15 @@ function StorageTab({
 }) {
   const totalBytes = detail.storage_bytes
   const activePools = pools.filter(p => p.is_active)
+
+  // Source-pool exclusion for the migrate-destination dropdown. The server's
+  // /admin/user-storage endpoint only returns pools where the user actually
+  // has at least one file (HAVING COUNT > 0), so this set is exactly the
+  // user's current sources. We exclude all of them so the admin can't pick
+  // a no-op destination — and so a user with files spanning multiple pools
+  // still sees a coherent dropdown. See task 0019.
+  const sourcePoolIds = new Set(userStorage?.pools.map(p => p.pool_id) ?? [])
+  const destinationPools = activePools.filter(p => !sourcePoolIds.has(p.id))
 
   return (
     <div className="px-5 py-4 space-y-4">
@@ -519,21 +541,29 @@ function StorageTab({
             <div className="text-[11px] text-ink-2 mb-2">
               Migrate all files to:
             </div>
-            <div className="space-y-1.5">
-              {activePools.map(pool => (
-                <button
-                  key={pool.id}
-                  onClick={() => onMigrate(pool.id)}
-                  disabled={migrating}
-                  className="w-full text-left px-2.5 py-2 rounded-sm text-xs bg-paper border border-line hover:bg-amber-bg hover:border-amber/30 transition-colors disabled:opacity-50"
-                >
-                  <div className="font-semibold text-ink">{pool.display_name}</div>
-                  <div className="text-[10px] text-ink-3 font-mono">
-                    {pool.region} · {pool.provider}
-                  </div>
-                </button>
-              ))}
-            </div>
+            {destinationPools.length === 0 ? (
+              <div className="rounded-sm border border-line bg-paper px-3 py-3 text-[11px] text-ink-3 leading-relaxed">
+                No alternate destinations available. The user's files already
+                live on the only active pool — add another active storage pool
+                first.
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {destinationPools.map(pool => (
+                  <button
+                    key={pool.id}
+                    onClick={() => onMigrate(pool.id)}
+                    disabled={migrating}
+                    className="w-full text-left px-2.5 py-2 rounded-sm text-xs bg-paper border border-line hover:bg-amber-bg hover:border-amber/30 transition-colors disabled:opacity-50"
+                  >
+                    <div className="font-semibold text-ink">{pool.display_name}</div>
+                    <div className="text-[10px] text-ink-3 font-mono">
+                      {pool.region} · {pool.provider}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
             <BBButton
               size="sm"
               variant="ghost"

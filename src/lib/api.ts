@@ -1370,12 +1370,44 @@ export async function getPoolUsage(id: string): Promise<{
 
 export async function migrateUser(
   userId: string,
-  toPoolId: string,
+  targetPoolId: string,
 ): Promise<{ message: string; migration_count: number }> {
+  // Body field is `target_pool_id` to match the server contract (sister
+  // handlers `migrate_all_pool` + `decommission_pool` use the same name).
+  // The previous `to_pool_id` was silently discarded by the server before
+  // task 0019's backend fix (e0ffae0). See task 0019 for details.
   return request(`/api/v1/admin/migrate-user/${userId}`, {
     method: 'POST',
-    body: JSON.stringify({ to_pool_id: toPoolId }),
+    body: JSON.stringify({ target_pool_id: targetPoolId }),
   })
+}
+
+// ─── Admin: per-user storage breakdown ────────────────
+
+export interface UserStoragePoolEntry {
+  pool_id: string
+  pool_name: string
+  file_count: number
+  total_bytes: number
+}
+
+export interface UserStorageBreakdown {
+  user_id: string
+  /** Pools where the user has at least one non-trashed, non-folder file. */
+  pools: UserStoragePoolEntry[]
+  total_files: number
+  total_bytes: number
+  plan_name: string
+  plan_limit_bytes: number
+}
+
+/**
+ * Per-pool breakdown of a user's storage. Used by the admin user-detail
+ * drawer to filter the migrate-destination dropdown — pools that already
+ * appear in `pools[]` are sources, not valid destinations.
+ */
+export async function getUserStorage(userId: string): Promise<UserStorageBreakdown> {
+  return request<UserStorageBreakdown>(`/api/v1/admin/user-storage/${userId}`)
 }
 
 // ─── Folder sharing ──────────────────────────────
