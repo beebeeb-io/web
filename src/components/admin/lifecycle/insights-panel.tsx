@@ -11,6 +11,7 @@ import { BBButton } from '../../bb-button'
 import { Icon } from '../../icons'
 import { formatBytes } from '../../../lib/format'
 import { startLifecycleRun, type PoolInsights, type StoragePool } from '../../../lib/api'
+import { ConfirmationModal } from './confirmation-modal'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -50,6 +51,8 @@ function Stat({
 
 interface InsightsPanelProps {
   poolId: string
+  /** Short name (storage_pools.name) used as the confirmation text. */
+  poolName: string
   insights: PoolInsights
   /** All currently-active pools excluding this one — candidates for migration target. */
   otherActivePools: StoragePool[]
@@ -59,6 +62,7 @@ interface InsightsPanelProps {
 
 export function InsightsPanel({
   poolId,
+  poolName,
   insights,
   otherActivePools,
   onRunStarted,
@@ -66,31 +70,17 @@ export function InsightsPanel({
   const [targetPoolId, setTargetPoolId] = useState<string>(
     otherActivePools[0]?.id ?? '',
   )
+  const [confirmOpen, setConfirmOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  async function handleBeginDecommission() {
+  async function handleBeginDecommissionConfirmed() {
     if (!targetPoolId) return
-
-    const target = otherActivePools.find((p) => p.id === targetPoolId)
-    const targetName = target?.display_name ?? target?.name ?? 'the target pool'
-
-    // TODO(task-7): replace window.confirm with the shared ConfirmationModal.
-    const ok = window.confirm(
-      `Start decommissioning this pool?\n\n` +
-        `${insights.files_count.toLocaleString()} file${insights.files_count !== 1 ? 's' : ''} ` +
-        `across ${insights.users_with_files_count.toLocaleString()} ` +
-        `user${insights.users_with_files_count !== 1 ? 's' : ''} will be migrated ` +
-        `to ${targetName}.\n\n` +
-        `The pool will become read-only immediately. ` +
-        `You can abort at any point until migration completes.`,
-    )
-    if (!ok) return
-
     setError(null)
     setSubmitting(true)
     try {
       await startLifecycleRun(poolId, targetPoolId)
+      setConfirmOpen(false)
       onRunStarted()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start decommission run.')
@@ -99,7 +89,9 @@ export function InsightsPanel({
     }
   }
 
-  const canStart = !!targetPoolId && !submitting
+  const canStart = !!targetPoolId && !submitting && otherActivePools.length > 0
+  const targetPool = otherActivePools.find((p) => p.id === targetPoolId)
+  const targetName = targetPool?.display_name ?? targetPool?.name ?? 'the target pool'
 
   return (
     <div className="max-w-xl">
@@ -178,20 +170,11 @@ export function InsightsPanel({
         <BBButton
           variant="amber"
           size="lg"
-          disabled={!canStart || otherActivePools.length === 0}
-          onClick={handleBeginDecommission}
+          disabled={!canStart}
+          onClick={() => setConfirmOpen(true)}
         >
-          {submitting ? (
-            <>
-              <span className="inline-block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />
-              Starting…
-            </>
-          ) : (
-            <>
-              Begin decommission
-              <Icon name="chevron-right" size={14} className="ml-1.5" />
-            </>
-          )}
+          Begin decommission
+          <Icon name="chevron-right" size={14} className="ml-1.5" />
         </BBButton>
       </div>
 
@@ -201,6 +184,36 @@ export function InsightsPanel({
         New uploads route to the target immediately.
         Files migrate in the background — you can abort at any time before migration completes.
       </p>
+
+      {/* Confirmation modal */}
+      <ConfirmationModal
+        open={confirmOpen}
+        title="Begin decommission?"
+        description={
+          <>
+            <p>
+              <span className="font-mono font-semibold">{insights.files_count.toLocaleString()}</span>{' '}
+              file{insights.files_count !== 1 ? 's' : ''} across{' '}
+              <span className="font-mono font-semibold">{insights.users_with_files_count.toLocaleString()}</span>{' '}
+              user{insights.users_with_files_count !== 1 ? 's' : ''} will be migrated to{' '}
+              <span className="font-semibold">{targetName}</span>.
+            </p>
+            <p className="mt-2">
+              The pool becomes read-only immediately. You can abort at any point before migration completes.
+            </p>
+          </>
+        }
+        confirmationText={poolName}
+        confirmLabel="Start decommission"
+        variant="warning"
+        onConfirm={handleBeginDecommissionConfirmed}
+        onCancel={() => {
+          setConfirmOpen(false)
+          setError(null)
+        }}
+        loading={submitting}
+      />
+      {error && <p className="text-xs text-red mt-2">{error}</p>}
     </div>
   )
 }

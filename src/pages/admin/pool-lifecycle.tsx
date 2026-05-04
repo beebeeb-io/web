@@ -26,6 +26,7 @@ import {
 import { InsightsPanel } from '../../components/admin/lifecycle/insights-panel'
 import { QuiescingPanel } from '../../components/admin/lifecycle/quiescing-panel'
 import { MigratingPanel } from '../../components/admin/lifecycle/migrating-panel'
+import { DrainedPanel } from '../../components/admin/lifecycle/drained-panel'
 
 // ─── Phase badge ─────────────────────────────────────────────────────────────
 
@@ -84,20 +85,6 @@ function PhaseBadge({ phase }: { phase: LifecyclePhase }) {
 
 
 
-function DrainedPanelPlaceholder({ run }: { run: LifecycleRun | null }) {
-  return (
-    <div className="p-6 border border-dashed border-red rounded-lg text-center">
-      <p className="text-sm font-medium text-ink-2 mb-1">Drained panel</p>
-      <p className="text-xs text-ink-4 font-mono">phase: drained</p>
-      {run && (
-        <p className="text-xs text-ink-3 mt-2">
-          Run: <span className="font-mono">{run.id.slice(0, 8)}</span>
-        </p>
-      )}
-      <p className="text-xs text-ink-4 mt-1">DrainedPanel component — Task 6</p>
-    </div>
-  )
-}
 
 // ─── Wizard page ──────────────────────────────────────────────────────────────
 
@@ -192,6 +179,7 @@ export function PoolLifecycle() {
         return (
           <InsightsPanel
             poolId={poolId!}
+            poolName={pool.name}
             insights={insights}
             otherActivePools={allPools.filter(
               (p) => p.id !== poolId && p.is_active,
@@ -230,7 +218,20 @@ export function PoolLifecycle() {
         )
       case 'drained':
       case 'deleted':
-        return <DrainedPanelPlaceholder run={activeRun} />
+        if (!activeRun) return <p className="text-sm text-ink-3">No run record found.</p>
+        return (
+          <DrainedPanel
+            poolId={poolId!}
+            pool={pool}
+            run={activeRun}
+            targetPoolName={
+              allPools.find((p) => p.id === activeRun.target_pool_id)?.display_name
+              ?? allPools.find((p) => p.id === activeRun.target_pool_id)?.name
+              ?? activeRun.target_pool_id
+            }
+            onPhaseChanged={load}
+          />
+        )
     }
   }
 
