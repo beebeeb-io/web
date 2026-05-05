@@ -1,162 +1,192 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
+import { Icon } from '../icons'
 
 interface TextPreviewProps {
   blob: Blob
   /** Optional language hint for syntax coloring (e.g. 'rust', 'typescript') */
   language?: string
+  /** Optional filename for the header badge */
+  filename?: string
 }
 
-// ─── Lightweight syntax coloring ────────────────────────────
-// No heavy library — just regex-based token coloring for common patterns.
-// Safety: all raw text is HTML-escaped via esc() before any markup is added.
-// Only hardcoded <span class="..."> tags are inserted around escaped content.
+// ─── Shiki token types ────────────────────────────────────────────────────────
+
+interface ShikiToken {
+  content: string
+  color?: string
+  fontStyle?: number // bit flags: 1=italic, 2=bold, 4=underline
+}
+
+interface ShikiResult {
+  lines: ShikiToken[][]
+  bg: string
+  fg: string
+}
+
+const SHIKI_THEME = 'github-dark'
+const MAX_LINES = 500
+
+// ─── Shiki loader (lazy, cached singleton per session) ────────────────────────
+
+let shikiPromise: Promise<typeof import('shiki/bundle/web')> | null = null
+
+function loadShiki() {
+  if (!shikiPromise) {
+    shikiPromise = import('shiki/bundle/web')
+  }
+  return shikiPromise
+}
+
+// ─── Normalise language names to Shiki IDs ────────────────────────────────────
+// Most names from file-preview.tsx match Shiki IDs but a handful need mapping.
+
+const LANG_MAP: Record<string, string> = {
+  shell: 'bash',
+  docker: 'dockerfile',
+  make: 'makefile',
+  terraform: 'hcl',
+}
+
+function toShikiLang(lang: string): string {
+  return LANG_MAP[lang] ?? lang
+}
+
+// ─── Fallback regex colorizer (instant, used while Shiki loads) ──────────────
+// Safety: all user content is HTML-escaped via esc() before any markup is added.
 
 const KEYWORD_PATTERN =
   /\b(abstract|as|async|await|break|case|catch|class|const|continue|debugger|default|delete|do|else|enum|export|extends|false|finally|fn|for|from|function|if|impl|import|in|instanceof|interface|let|loop|match|mod|mut|new|null|of|package|private|protected|pub|public|ref|return|self|static|struct|super|switch|this|throw|trait|true|try|type|typeof|undefined|use|var|void|where|while|with|yield)\b/g
-
-const COMMENT_LINE_PATTERN = /^(\s*)(\/\/.*|#.*)$/
-
-function colorLine(line: string, inBlock: boolean): { html: string; inBlock: boolean } {
-  // If we're inside a block comment
-  if (inBlock) {
-    const endIdx = line.indexOf('*/')
-    if (endIdx === -1) {
-      return { html: `<span class="text-ink-3 italic">${esc(line)}</span>`, inBlock: true }
-    }
-    const commentPart = line.slice(0, endIdx + 2)
-    const rest = line.slice(endIdx + 2)
-    const restResult = colorLine(rest, false)
-    return {
-      html: `<span class="text-ink-3 italic">${esc(commentPart)}</span>${restResult.html}`,
-      inBlock: restResult.inBlock,
-    }
-  }
-
-  // Check for block comment start
-  const blockStart = line.indexOf('/*')
-  if (blockStart !== -1) {
-    const before = line.slice(0, blockStart)
-    const after = line.slice(blockStart)
-    const blockEnd = after.indexOf('*/', 2)
-    if (blockEnd !== -1) {
-      // Block comment starts and ends on same line
-      const commentPart = after.slice(0, blockEnd + 2)
-      const rest = after.slice(blockEnd + 2)
-      const beforeHtml = colorTokens(before)
-      const restResult = colorLine(rest, false)
-      return {
-        html: `${beforeHtml}<span class="text-ink-3 italic">${esc(commentPart)}</span>${restResult.html}`,
-        inBlock: restResult.inBlock,
-      }
-    }
-    // Block comment starts but doesn't end on this line
-    const beforeHtml = colorTokens(before)
-    return {
-      html: `${beforeHtml}<span class="text-ink-3 italic">${esc(after)}</span>`,
-      inBlock: true,
-    }
-  }
-
-  // Check for line comments (// or #)
-  const lineCommentMatch = line.match(COMMENT_LINE_PATTERN)
-  if (lineCommentMatch) {
-    const indent = lineCommentMatch[1]
-    const comment = lineCommentMatch[2]
-    return { html: `${esc(indent)}<span class="text-ink-3 italic">${esc(comment)}</span>`, inBlock: false }
-  }
-
-  // Check for // comment after code
-  const inlineComment = line.indexOf('//')
-  if (inlineComment > 0 && !isInsideString(line, inlineComment)) {
-    const code = line.slice(0, inlineComment)
-    const comment = line.slice(inlineComment)
-    return {
-      html: `${colorTokens(code)}<span class="text-ink-3 italic">${esc(comment)}</span>`,
-      inBlock: false,
-    }
-  }
-
-  return { html: colorTokens(line), inBlock: false }
-}
-
-/** Rough check — is position inside a single or double quoted string? */
-function isInsideString(line: string, pos: number): boolean {
-  let inSingle = false
-  let inDouble = false
-  for (let i = 0; i < pos; i++) {
-    const ch = line[i]
-    const prev = i > 0 ? line[i - 1] : ''
-    if (ch === "'" && prev !== '\\' && !inDouble) inSingle = !inSingle
-    if (ch === '"' && prev !== '\\' && !inSingle) inDouble = !inDouble
-  }
-  return inSingle || inDouble
-}
-
-function colorTokens(text: string): string {
-  if (!text) return ''
-
-  // Split by strings first, then colorize keywords in non-string parts
-  const parts: string[] = []
-  let current = ''
-  let inStr: string | null = null
-
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]
-    const prev = i > 0 ? text[i - 1] : ''
-
-    if (inStr) {
-      current += ch
-      if (ch === inStr && prev !== '\\') {
-        parts.push(`<span class="text-green">${esc(current)}</span>`)
-        current = ''
-        inStr = null
-      }
-    } else if (ch === '"' || ch === "'" || ch === '`') {
-      if (current) {
-        parts.push(colorKeywords(current))
-        current = ''
-      }
-      current += ch
-      inStr = ch
-    } else {
-      current += ch
-    }
-  }
-
-  // Remaining text
-  if (current) {
-    if (inStr) {
-      parts.push(`<span class="text-green">${esc(current)}</span>`)
-    } else {
-      parts.push(colorKeywords(current))
-    }
-  }
-
-  return parts.join('')
-}
-
-function colorKeywords(text: string): string {
-  // Color numbers
-  let result = esc(text)
-  result = result.replace(KEYWORD_PATTERN, '<span class="text-amber-deep font-medium">$1</span>')
-  result = result.replace(/\b(\d+(?:\.\d+)?)\b/g, '<span class="text-amber">$1</span>')
-  return result
-}
 
 function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-// ─── Component ──────────────────────────────────────────────
+function colorKeywords(text: string): string {
+  let result = esc(text)
+  result = result.replace(KEYWORD_PATTERN, '<span style="color:#e06c75;font-weight:500">$1</span>')
+  result = result.replace(/\b(\d+(?:\.\d+)?)\b/g, '<span style="color:#d19a66">$1</span>')
+  return result
+}
 
-const MAX_LINES = 10_000
+function colorTokensFallback(text: string): string {
+  if (!text) return ''
+  const parts: string[] = []
+  let current = ''
+  let inStr: string | null = null
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    const prev = i > 0 ? text[i - 1] : ''
+    if (inStr) {
+      current += ch
+      if (ch === inStr && prev !== '\\') {
+        parts.push(`<span style="color:#98c379">${esc(current)}</span>`)
+        current = ''
+        inStr = null
+      }
+    } else if (ch === '"' || ch === "'" || ch === '`') {
+      if (current) { parts.push(colorKeywords(current)); current = '' }
+      current += ch; inStr = ch
+    } else {
+      current += ch
+    }
+  }
+  if (current) {
+    parts.push(inStr ? `<span style="color:#98c379">${esc(current)}</span>` : colorKeywords(current))
+  }
+  return parts.join('')
+}
 
-export function TextPreview({ blob, language }: TextPreviewProps) {
+function colorLineFallback(line: string, inBlock: boolean): { html: string; inBlock: boolean } {
+  if (inBlock) {
+    const end = line.indexOf('*/')
+    if (end === -1) return { html: `<span style="color:#7f848e;font-style:italic">${esc(line)}</span>`, inBlock: true }
+    return {
+      html: `<span style="color:#7f848e;font-style:italic">${esc(line.slice(0, end + 2))}</span>${colorLineFallback(line.slice(end + 2), false).html}`,
+      inBlock: false,
+    }
+  }
+  const blockStart = line.indexOf('/*')
+  if (blockStart !== -1) {
+    const after = line.slice(blockStart)
+    const blockEnd = after.indexOf('*/', 2)
+    if (blockEnd !== -1) {
+      return {
+        html: `${colorTokensFallback(line.slice(0, blockStart))}<span style="color:#7f848e;font-style:italic">${esc(after.slice(0, blockEnd + 2))}</span>${colorLineFallback(after.slice(blockEnd + 2), false).html}`,
+        inBlock: false,
+      }
+    }
+    return {
+      html: `${colorTokensFallback(line.slice(0, blockStart))}<span style="color:#7f848e;font-style:italic">${esc(after)}</span>`,
+      inBlock: true,
+    }
+  }
+  const inlineIdx = line.indexOf('//')
+  if (inlineIdx > 0) {
+    return {
+      html: `${colorTokensFallback(line.slice(0, inlineIdx))}<span style="color:#7f848e;font-style:italic">${esc(line.slice(inlineIdx))}</span>`,
+      inBlock: false,
+    }
+  }
+  const hashIdx = line.match(/^(\s*)(#.*)$/)
+  if (hashIdx) {
+    return {
+      html: `${esc(hashIdx[1])}<span style="color:#7f848e;font-style:italic">${esc(hashIdx[2])}</span>`,
+      inBlock: false,
+    }
+  }
+  return { html: colorTokensFallback(line), inBlock: false }
+}
+
+// ─── Render helpers ───────────────────────────────────────────────────────────
+
+function tokenStyle(t: ShikiToken): React.CSSProperties {
+  const style: React.CSSProperties = {}
+  if (t.color) style.color = t.color
+  if (t.fontStyle) {
+    if (t.fontStyle & 1) style.fontStyle = 'italic'
+    if (t.fontStyle & 2) style.fontWeight = 'bold'
+    if (t.fontStyle & 4) style.textDecoration = 'underline'
+  }
+  return style
+}
+
+// ─── Language display label ───────────────────────────────────────────────────
+
+const LANG_LABEL: Record<string, string> = {
+  typescript: 'TypeScript', javascript: 'JavaScript', tsx: 'TSX', jsx: 'JSX',
+  rust: 'Rust', go: 'Go', python: 'Python', ruby: 'Ruby', java: 'Java',
+  kotlin: 'Kotlin', swift: 'Swift', cpp: 'C++', c: 'C', php: 'PHP',
+  bash: 'Shell', shell: 'Shell', powershell: 'PowerShell',
+  html: 'HTML', css: 'CSS', scss: 'SCSS', json: 'JSON', yaml: 'YAML',
+  toml: 'TOML', xml: 'XML', sql: 'SQL', markdown: 'Markdown',
+  dockerfile: 'Dockerfile', makefile: 'Makefile', hcl: 'HCL',
+  graphql: 'GraphQL', vue: 'Vue', svelte: 'Svelte',
+}
+
+function langLabel(lang: string): string {
+  return LANG_LABEL[lang] ?? LANG_LABEL[toShikiLang(lang)] ?? lang.charAt(0).toUpperCase() + lang.slice(1)
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
+export function TextPreview({ blob, language, filename }: TextPreviewProps) {
   const [text, setText] = useState<string | null>(null)
   const [truncated, setTruncated] = useState(false)
-  const [htmlMode, setHtmlMode] = useState<'rendered' | 'source'>('rendered')
-  const containerRef = useRef<HTMLDivElement>(null)
 
+  // Shiki highlighted result
+  const [shiki, setShiki] = useState<ShikiResult | null>(null)
+  const [shikiLoading, setShikiLoading] = useState(false)
+
+  // UI state
+  const [htmlMode, setHtmlMode] = useState<'rendered' | 'source'>('rendered')
+  const [copied, setCopied] = useState(false)
+  const [wrap, setWrap] = useState(false)
+  const copyTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const isCode = !!language
+  const isHtml = language === 'html'
+
+  // ── Load text ──────────────────────────────────────────────────────────────
   useEffect(() => {
     blob.text().then((raw) => {
       const lines = raw.split('\n')
@@ -169,70 +199,182 @@ export function TextPreview({ blob, language }: TextPreviewProps) {
     })
   }, [blob])
 
+  // ── Load Shiki when text is ready and we have a language ──────────────────
+  useEffect(() => {
+    if (!language || !text) return
+    const shikiLang = toShikiLang(language)
+    let cancelled = false
+    setShikiLoading(true)
+    loadShiki()
+      .then(async (shikiMod) => {
+        const result = await shikiMod.codeToTokens(text, {
+          lang: shikiLang as Parameters<typeof shikiMod.codeToTokens>[1]['lang'],
+          theme: SHIKI_THEME,
+        })
+        if (!cancelled) {
+          setShiki({
+            lines: result.tokens as ShikiToken[][],
+            bg: result.bg ?? '#0d1117',
+            fg: result.fg ?? '#e6edf3',
+          })
+        }
+      })
+      .catch(() => {
+        // Shiki failed (unsupported language, etc.) — regex fallback stays visible
+      })
+      .finally(() => {
+        if (!cancelled) setShikiLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [language, text])
+
+  // ── Copy handler ──────────────────────────────────────────────────────────
+  const handleCopy = useCallback(async () => {
+    if (!text) return
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      if (copyTimeout.current) clearTimeout(copyTimeout.current)
+      copyTimeout.current = setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Clipboard unavailable
+    }
+  }, [text])
+
   if (text === null) return null
 
-  const isHtml = language === 'html'
   const lines = text.split('\n')
   const gutterWidth = String(lines.length).length
-  const shouldColor = !!language
 
-  // Build colored HTML if language is set.
-  // Safety note: all user content is escaped via esc() before any HTML spans
-  // are constructed. Only hardcoded Tailwind class spans are injected.
-  let coloredLines: string[] | null = null
-  if (shouldColor) {
-    coloredLines = []
+  // Fallback regex lines (used while Shiki loads or on failure)
+  let fallbackLines: string[] | null = null
+  if (isCode && !shiki) {
+    fallbackLines = []
     let inBlock = false
     for (const line of lines) {
-      const result = colorLine(line, inBlock)
-      coloredLines.push(result.html)
+      const result = colorLineFallback(line, inBlock)
+      fallbackLines.push(result.html)
       inBlock = result.inBlock
     }
   }
 
+  // ── Dark code theme context ────────────────────────────────────────────────
+  const bg = shiki?.bg ?? (isCode ? '#0d1117' : undefined)
+  const fg = shiki?.fg ?? (isCode ? '#c9d1d9' : undefined)
+
+  // ── Toolbar ───────────────────────────────────────────────────────────────
+  const toolbar = (
+    <div
+      className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-b"
+      style={isCode ? {
+        backgroundColor: bg ? `color-mix(in srgb, ${bg} 80%, #ffffff0a)` : '#161b22',
+        borderColor: '#30363d',
+      } : undefined}
+    >
+      {/* Language badge / filename */}
+      <div className="flex items-center gap-1.5 flex-1 min-w-0">
+        {filename && (
+          <span
+            className="text-[11px] font-mono truncate"
+            style={isCode ? { color: '#8b949e' } : { color: 'var(--color-ink-3)' }}
+          >
+            {filename}
+          </span>
+        )}
+        {language && (
+          <span
+            className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded border"
+            style={isCode ? {
+              color: '#58a6ff',
+              backgroundColor: '#1f2937',
+              borderColor: '#30363d',
+            } : undefined}
+          >
+            {langLabel(language)}
+          </span>
+        )}
+        {shikiLoading && (
+          <svg className="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none"
+            style={{ color: '#58a6ff' }}>
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+        )}
+      </div>
+
+      {/* HTML mode toggle */}
+      {isHtml && (
+        <div className="flex gap-0.5 p-0.5 bg-paper rounded border border-line">
+          {(['rendered', 'source'] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => setHtmlMode(mode)}
+              className={`px-2.5 py-1 text-[11px] rounded transition-colors ${
+                htmlMode === mode
+                  ? 'bg-paper-2 text-ink font-medium'
+                  : 'text-ink-3 hover:text-ink-2'
+              }`}
+            >
+              {mode.charAt(0).toUpperCase() + mode.slice(1)}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Wrap toggle */}
+      {isCode && !(isHtml && htmlMode === 'rendered') && (
+        <button
+          type="button"
+          title={wrap ? 'Disable line wrap' : 'Enable line wrap'}
+          onClick={() => setWrap(v => !v)}
+          className="flex items-center gap-1 text-[11px] px-2 py-1 rounded transition-colors"
+          style={wrap
+            ? { color: '#58a6ff', backgroundColor: '#1f2937' }
+            : { color: '#8b949e' }
+          }
+        >
+          <Icon name="link" size={11} />
+          Wrap
+        </button>
+      )}
+
+      {/* Copy button */}
+      {text && !(isHtml && htmlMode === 'rendered') && (
+        <button
+          type="button"
+          title="Copy code"
+          onClick={handleCopy}
+          className="flex items-center gap-1 text-[11px] px-2 py-1 rounded transition-colors shrink-0"
+          style={copied
+            ? { color: '#3fb950', backgroundColor: '#1f2937' }
+            : isCode
+              ? { color: '#8b949e' }
+              : { color: 'var(--color-ink-3)' }
+          }
+        >
+          <Icon name={copied ? 'check' : 'copy'} size={11} />
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      )}
+    </div>
+  )
+
   return (
     <div
-      ref={containerRef}
-      className="flex w-full flex-col overflow-hidden rounded-md bg-paper"
+      className="flex w-full flex-col overflow-hidden rounded-md"
       style={{
         maxWidth: 860,
         maxHeight: '92%',
         boxShadow: '0 10px 40px rgba(0,0,0,0.2)',
+        backgroundColor: bg ?? 'var(--color-paper)',
+        color: fg,
       }}
     >
-      {/* HTML mode toggle */}
-      {isHtml && (
-        <div className="shrink-0 flex items-center justify-end gap-1 border-b border-line bg-paper-2 px-3 py-1.5">
-          <div className="flex gap-0.5 p-0.5 bg-paper rounded border border-line">
-            <button
-              type="button"
-              onClick={() => setHtmlMode('rendered')}
-              className={`px-2.5 py-1 text-[11px] rounded transition-colors ${
-                htmlMode === 'rendered'
-                  ? 'bg-paper-2 text-ink font-medium'
-                  : 'text-ink-3 hover:text-ink-2'
-              }`}
-            >
-              Rendered
-            </button>
-            <button
-              type="button"
-              onClick={() => setHtmlMode('source')}
-              className={`px-2.5 py-1 text-[11px] rounded transition-colors ${
-                htmlMode === 'source'
-                  ? 'bg-paper-2 text-ink font-medium'
-                  : 'text-ink-3 hover:text-ink-2'
-              }`}
-            >
-              Source
-            </button>
-          </div>
-        </div>
-      )}
+      {toolbar}
 
+      {/* HTML rendered view — sandboxed iframe */}
       {isHtml && htmlMode === 'rendered' ? (
-        // Sandboxed iframe — no scripts, no same-origin, no top navigation.
-        // Content is the raw decrypted HTML.
         <iframe
           title="HTML preview"
           srcDoc={text}
@@ -241,38 +383,74 @@ export function TextPreview({ blob, language }: TextPreviewProps) {
           style={{ minHeight: 480, height: '70vh', border: 0 }}
         />
       ) : (
-      <div className="overflow-auto">
-        <table className="w-full border-collapse">
-          <tbody>
-            {lines.map((line, i) => (
-              <tr key={i} className="hover:bg-paper-2/50">
-                <td
-                  className="select-none border-r border-line px-3 text-right align-top font-mono text-[11px] leading-[1.7] text-ink-4"
-                  style={{ minWidth: gutterWidth * 8 + 24 }}
+        <div className="overflow-auto flex-1">
+          <table className="w-full border-collapse">
+            <tbody>
+              {lines.map((line, i) => (
+                <tr
+                  key={i}
+                  className="group"
+                  style={{ backgroundColor: 'transparent' }}
                 >
-                  {i + 1}
-                </td>
-                <td className="px-4 align-top font-mono text-[12px] leading-[1.7] text-ink-2">
-                  {coloredLines ? (
-                    <span
-                      className="whitespace-pre"
-                      dangerouslySetInnerHTML={{ __html: coloredLines[i] || '' }}
-                    />
-                  ) : (
-                    <span className="whitespace-pre">{line || '​'}</span>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+                  {/* Line number gutter */}
+                  <td
+                    className="select-none text-right align-top font-mono text-[11px] leading-[1.7] px-3"
+                    style={{
+                      minWidth: gutterWidth * 8 + 24,
+                      color: isCode ? '#484f58' : 'var(--color-ink-4)',
+                      borderRight: `1px solid ${isCode ? '#21262d' : 'var(--color-line)'}`,
+                      userSelect: 'none',
+                    }}
+                  >
+                    {i + 1}
+                  </td>
+
+                  {/* Code content */}
+                  <td
+                    className="px-4 align-top font-mono text-[12px] leading-[1.7]"
+                    style={{ color: fg }}
+                  >
+                    {shiki ? (
+                      // Shiki tokens — proper per-token color spans
+                      <span
+                        className={wrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}
+                      >
+                        {shiki.lines[i]?.map((token, j) => (
+                          <span key={j} style={tokenStyle(token)}>
+                            {token.content}
+                          </span>
+                        )) ?? ''}
+                      </span>
+                    ) : fallbackLines ? (
+                      // Regex fallback (instant, while Shiki loads)
+                      <span
+                        className={wrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}
+                        dangerouslySetInnerHTML={{ __html: fallbackLines[i] || '' }}
+                      />
+                    ) : (
+                      // Plain text
+                      <span className={wrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}>
+                        {line || '​'}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {/* Truncation notice */}
       {truncated && (
-        <div className="shrink-0 border-t border-line bg-paper-2 px-4 py-2 text-center font-mono text-[11px] text-ink-3">
-          Showing first {MAX_LINES.toLocaleString()} lines. Download the file to see the rest.
+        <div
+          className="shrink-0 px-4 py-2 text-center font-mono text-[11px]"
+          style={isCode
+            ? { borderTop: '1px solid #21262d', backgroundColor: '#161b22', color: '#8b949e' }
+            : { borderTop: '1px solid var(--color-line)', backgroundColor: 'var(--color-paper-2)', color: 'var(--color-ink-3)' }
+          }
+        >
+          Showing first {MAX_LINES.toLocaleString()} lines — download the file for the full version.
         </div>
       )}
     </div>

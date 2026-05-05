@@ -171,12 +171,12 @@ function pickRenderer(
   // Code files — text preview with syntax coloring
   const lang = CODE_MIME_TYPES[mimeType] ?? EXT_LANGUAGE[ext]
   if (lang) {
-    return <TextPreview blob={blob} language={lang} />
+    return <TextPreview blob={blob} language={lang} filename={filename} />
   }
 
   // Plain text files
   if (TEXT_MIME_TYPES.has(mimeType) || TEXT_EXTENSIONS.has(ext)) {
-    return <TextPreview blob={blob} />
+    return <TextPreview blob={blob} filename={filename} />
   }
 
   // Markdown extension even if mime is wrong
