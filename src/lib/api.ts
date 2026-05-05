@@ -3036,3 +3036,27 @@ export async function forceDrainRun(
     },
   )
 }
+
+// ─── Google Drive import proxy ────────────────────────────────────────────────
+
+/** Exchange a Google OAuth code for tokens via our server proxy. */
+export async function googleTokenExchange(
+  code: string,
+  codeVerifier: string,
+  redirectUri: string,
+): Promise<{ access_token: string; refresh_token: string; email?: string }> {
+  return request('/api/v1/import/google/token-exchange', {
+    method: 'POST',
+    body: JSON.stringify({ code, code_verifier: codeVerifier, redirect_uri: redirectUri }),
+  })
+}
+
+/** Refresh a Google access token via our server proxy. */
+export async function googleTokenRefresh(
+  refreshToken: string,
+): Promise<{ access_token: string }> {
+  return request('/api/v1/import/google/refresh', {
+    method: 'POST',
+    body: JSON.stringify({ refresh_token: refreshToken }),
+  })
+}

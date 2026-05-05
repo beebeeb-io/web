@@ -30,6 +30,7 @@ import { SettingsDeveloper } from './pages/settings/developer'
 import { SettingsReferrals } from './pages/settings/referrals'
 import { SettingsImport } from './pages/settings/import'
 import { DropboxCallback } from './pages/settings/import/dropbox-callback'
+import { GoogleCallback } from './pages/settings/import/google-callback'
 import { Security } from './pages/security'
 import { Trash } from './pages/trash'
 import { Search } from './pages/search'
@@ -263,6 +264,7 @@ export function App() {
           <Route path="/settings/referrals" element={<ProtectedRoute><SettingsReferrals /></ProtectedRoute>} />
           <Route path="/settings/import" element={<ProtectedRoute><SettingsImport /></ProtectedRoute>} />
           <Route path="/settings/import/dropbox/callback" element={<ProtectedRoute><DropboxCallback /></ProtectedRoute>} />
+          <Route path="/settings/import/google/callback" element={<ProtectedRoute><GoogleCallback /></ProtectedRoute>} />
 
           {/* Redirects for old routes */}
           <Route path="/settings/profile" element={<Navigate to="/settings/account" replace />} />
