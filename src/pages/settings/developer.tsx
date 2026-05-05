@@ -16,9 +16,16 @@ import {
   listTokens,
   createToken,
   revokeToken,
+  listWebhooks,
+  createWebhook,
+  deleteWebhook,
+  testWebhook,
+  enableWebhook,
   ApiError,
   type PersonalAccessToken,
   type CreateTokenResponse,
+  type Webhook,
+  type CreateWebhookResponse,
 } from '../../lib/api'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -112,6 +119,479 @@ function NewTokenBox({ result, onDismiss }: { result: CreateTokenResponse; onDis
           <Icon name="x" size={14} />
         </button>
       </div>
+    </div>
+  )
+}
+
+// ─── Webhook constants ────────────────────────────────────────────────────────
+
+const WEBHOOK_EVENTS = [
+  { id: 'file.uploaded',          label: 'file.uploaded',         description: 'A file is uploaded' },
+  { id: 'file.deleted',           label: 'file.deleted',          description: 'A file is deleted' },
+  { id: 'share.created',          label: 'share.created',         description: 'A share link is created' },
+  { id: 'share.opened',           label: 'share.opened',          description: 'A share link is opened' },
+  { id: 'share.expired',          label: 'share.expired',         description: 'A share link expires' },
+  { id: 'account.quota_warning',  label: 'account.quota_warning', description: 'Storage quota exceeds 80%' },
+]
+
+// ─── NewWebhookSecretBox ──────────────────────────────────────────────────────
+
+function NewWebhookSecretBox({
+  result,
+  onDismiss,
+}: {
+  result: CreateWebhookResponse
+  onDismiss: () => void
+}) {
+  const [copied, setCopied] = useState(false)
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  async function handleCopy() {
+    await navigator.clipboard.writeText(result.secret)
+    setCopied(true)
+    if (copyTimer.current) clearTimeout(copyTimer.current)
+    copyTimer.current = setTimeout(() => setCopied(false), 2500)
+  }
+
+  return (
+    <div className="rounded-xl border border-amber/40 bg-amber-bg overflow-hidden">
+      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-amber/20">
+        <Icon name="shield" size={13} className="text-amber-deep shrink-0" />
+        <span className="text-[13px] font-semibold text-ink">Webhook created — save the signing secret now</span>
+        <span className="ml-auto text-[11px] text-amber-deep font-medium">
+          This is shown once and cannot be retrieved again.
+        </span>
+      </div>
+      <div className="px-4 py-3 space-y-2">
+        <div>
+          <div className="text-[11px] text-ink-4 font-medium uppercase tracking-wider mb-1">Signing secret</div>
+          <div className="flex items-center gap-3">
+            <code className="flex-1 font-mono text-[12px] text-ink-2 bg-paper/60 border border-line rounded-md px-3 py-2 truncate select-all">
+              {result.secret}
+            </code>
+            <BBButton
+              size="sm"
+              variant={copied ? 'default' : 'amber'}
+              onClick={() => void handleCopy()}
+              className="shrink-0 gap-1.5"
+            >
+              <Icon name={copied ? 'check' : 'copy'} size={12} />
+              {copied ? 'Copied!' : 'Copy'}
+            </BBButton>
+            <button
+              type="button"
+              onClick={onDismiss}
+              className="text-ink-3 hover:text-ink transition-colors p-1 cursor-pointer"
+              aria-label="Dismiss"
+            >
+              <Icon name="x" size={14} />
+            </button>
+          </div>
+        </div>
+        <p className="text-[11.5px] text-ink-3">
+          Use this secret to verify webhook payloads: each POST includes an
+          <code className="font-mono text-[10.5px] bg-paper border border-line px-1 rounded mx-0.5">X-Beebeeb-Signature</code>
+          header. Endpoint: <span className="font-mono text-[11px] text-ink-2 break-all">{result.url}</span>
+        </p>
+      </div>
+    </div>
+  )
+}
+
+// ─── WebhooksSection ──────────────────────────────────────────────────────────
+
+function WebhooksSection() {
+  const { showToast } = useToast()
+
+  const [hooks, setHooks] = useState<Webhook[]>([])
+  const [loading, setLoading] = useState(true)
+  const [endpointMissing, setEndpointMissing] = useState(false)
+
+  // Form state
+  const [formOpen, setFormOpen] = useState(false)
+  const [formUrl, setFormUrl] = useState('')
+  const [formEvents, setFormEvents] = useState<Set<string>>(
+    new Set(['file.uploaded', 'file.deleted', 'share.created'])
+  )
+  const [creating, setCreating] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [newSecret, setNewSecret] = useState<CreateWebhookResponse | null>(null)
+
+  // Per-webhook action state
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [testingId, setTestingId] = useState<string | null>(null)
+  const [testResults, setTestResults] = useState<Map<string, { success: boolean; status_code?: number }>>(new Map())
+  const [enablingId, setEnablingId] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const data = await listWebhooks()
+      setHooks(data)
+      setEndpointMissing(false)
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) setEndpointMissing(true)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { void load() }, [load])
+
+  function toggleEvent(id: string) {
+    setFormEvents(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault()
+    if (!formUrl.trim()) { setFormError('URL is required.'); return }
+    if (!formUrl.startsWith('https://')) { setFormError('URL must start with https://'); return }
+    if (formEvents.size === 0) { setFormError('Select at least one event.'); return }
+    setFormError(null)
+    setCreating(true)
+    try {
+      const result = await createWebhook(formUrl.trim(), Array.from(formEvents))
+      setNewSecret(result)
+      setHooks(prev => [{
+        id: result.id,
+        url: result.url,
+        events: result.events,
+        is_active: result.is_active,
+        last_triggered_at: null,
+        failure_count: 0,
+        created_at: new Date().toISOString(),
+      }, ...prev])
+      setFormUrl('')
+      setFormEvents(new Set(['file.uploaded', 'file.deleted', 'share.created']))
+      setFormOpen(false)
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Could not create webhook.')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  async function handleDelete(id: string) {
+    setDeletingId(id)
+    setConfirmDeleteId(null)
+    try {
+      await deleteWebhook(id)
+      setHooks(prev => prev.filter(h => h.id !== id))
+      showToast({ icon: 'check', title: 'Webhook deleted' })
+    } catch (err) {
+      showToast({ icon: 'x', title: 'Could not delete webhook', description: err instanceof Error ? err.message : undefined, danger: true })
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  async function handleTest(hook: Webhook) {
+    setTestingId(hook.id)
+    setTestResults(prev => { const m = new Map(prev); m.delete(hook.id); return m })
+    try {
+      const res = await testWebhook(hook.id)
+      setTestResults(prev => new Map([...prev, [hook.id, res]]))
+    } catch (err) {
+      setTestResults(prev => new Map([...prev, [hook.id, { success: false, status_code: undefined }]]))
+      showToast({ icon: 'x', title: 'Test request failed', description: err instanceof Error ? err.message : undefined, danger: true })
+    } finally {
+      setTestingId(null)
+    }
+  }
+
+  async function handleEnable(hook: Webhook) {
+    setEnablingId(hook.id)
+    try {
+      const updated = await enableWebhook(hook.id)
+      setHooks(prev => prev.map(h => h.id === updated.id ? updated : h))
+      showToast({ icon: 'check', title: 'Webhook re-enabled' })
+    } catch (err) {
+      // Endpoint may not support re-enable yet — fall back to delete + recreate hint
+      showToast({ icon: 'x', title: 'Could not re-enable', description: err instanceof Error ? err.message : 'Try deleting and recreating the webhook.', danger: true })
+    } finally {
+      setEnablingId(null)
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* ── Endpoint missing ── */}
+      {endpointMissing && (
+        <div className="flex items-start gap-3 p-4 rounded-xl border border-line bg-paper-2 text-[13px] text-ink-3">
+          <Icon name="cloud" size={15} className="text-ink-3 shrink-0 mt-0.5" />
+          <div>
+            <div className="font-medium text-ink mb-0.5">Webhooks coming soon</div>
+            The{' '}
+            <code className="font-mono text-[11.5px] bg-paper border border-line px-1 rounded">/api/v1/webhooks</code>
+            {' '}endpoint is being deployed. Once live, you can receive real-time event notifications on your server.
+          </div>
+        </div>
+      )}
+
+      {/* ── New webhook secret box ── */}
+      {newSecret && (
+        <NewWebhookSecretBox result={newSecret} onDismiss={() => setNewSecret(null)} />
+      )}
+
+      {/* ── Webhook list ── */}
+      {!endpointMissing && (
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-[11px] font-semibold uppercase tracking-widest text-ink-4">
+              Webhooks
+            </span>
+            {!formOpen && (
+              <BBButton size="sm" variant="amber" onClick={() => setFormOpen(true)} className="gap-1.5">
+                <Icon name="plus" size={12} />
+                Add webhook
+              </BBButton>
+            )}
+          </div>
+
+          {loading ? (
+            <div className="flex items-center justify-center py-8">
+              <svg className="animate-spin h-5 w-5 text-amber" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"/>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+              </svg>
+            </div>
+          ) : hooks.length === 0 ? (
+            <div className="rounded-xl border border-line bg-paper-2 py-10 px-6 text-center">
+              <div className="w-10 h-10 mx-auto mb-3 rounded-xl bg-paper border border-line flex items-center justify-center">
+                <Icon name="link" size={16} className="text-ink-3" />
+              </div>
+              <div className="text-[13.5px] font-medium text-ink mb-1">No webhooks yet</div>
+              <div className="text-[12.5px] text-ink-3 mb-4 max-w-[340px] mx-auto">
+                Receive real-time notifications when events happen in your account — file uploads, share links opened, quota warnings, and more.
+              </div>
+              <BBButton size="sm" variant="amber" onClick={() => setFormOpen(true)} className="gap-1.5">
+                <Icon name="plus" size={12} />
+                Add your first webhook
+              </BBButton>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-line overflow-hidden">
+              {/* Table header */}
+              <div
+                className="grid gap-4 px-5 py-2.5 bg-paper-2 border-b border-line text-[11px] font-semibold uppercase tracking-wider text-ink-4"
+                style={{ gridTemplateColumns: '2fr 2fr 1fr 100px' }}
+              >
+                <span>URL</span>
+                <span>Events</span>
+                <span>Last triggered</span>
+                <span />
+              </div>
+
+              {hooks.map((hook) => {
+                const testResult = testResults.get(hook.id)
+                return (
+                  <div key={hook.id} className="border-b border-line last:border-b-0">
+                    <div
+                      className="grid gap-4 px-5 py-3 items-start hover:bg-paper-2/40 transition-colors"
+                      style={{ gridTemplateColumns: '2fr 2fr 1fr 100px' }}
+                    >
+                      {/* URL + status */}
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono text-[12px] text-ink truncate max-w-[220px]" title={hook.url}>
+                            {hook.url.replace(/^https?:\/\//, '').slice(0, 40)}
+                            {hook.url.length > 50 ? '…' : ''}
+                          </span>
+                          {!hook.is_active && (
+                            <BBChip variant="amber" className="text-[9.5px] shrink-0">
+                              Auto-disabled
+                            </BBChip>
+                          )}
+                        </div>
+                        {hook.failure_count > 0 && (
+                          <div className="text-[11px] text-ink-4 mt-0.5">
+                            {hook.failure_count} failure{hook.failure_count !== 1 ? 's' : ''}
+                          </div>
+                        )}
+                        {/* Re-enable option for disabled webhooks */}
+                        {!hook.is_active && (
+                          <button
+                            type="button"
+                            onClick={() => void handleEnable(hook)}
+                            disabled={enablingId === hook.id}
+                            className="text-[11px] text-amber-deep hover:underline cursor-pointer mt-0.5 disabled:opacity-50"
+                          >
+                            {enablingId === hook.id ? 'Re-enabling…' : 'Re-enable →'}
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Events */}
+                      <div className="flex flex-wrap gap-1">
+                        {hook.events.map(ev => (
+                          <span
+                            key={ev}
+                            className="inline-block font-mono text-[10px] px-1.5 py-0.5 rounded bg-paper-2 border border-line text-ink-3"
+                          >
+                            {ev}
+                          </span>
+                        ))}
+                      </div>
+
+                      {/* Last triggered */}
+                      <div className="text-[12px] text-ink-3">
+                        {hook.last_triggered_at
+                          ? formatRelative(hook.last_triggered_at)
+                          : <span className="text-ink-4">Never</span>}
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex items-center gap-1.5 justify-end flex-wrap">
+                        {/* Test button */}
+                        <button
+                          type="button"
+                          disabled={testingId === hook.id}
+                          onClick={() => void handleTest(hook)}
+                          className="text-[12px] text-ink-3 hover:text-ink transition-colors cursor-pointer disabled:opacity-40 px-1 py-0.5"
+                          title="Send a test event"
+                        >
+                          {testingId === hook.id ? (
+                            <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"/>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                            </svg>
+                          ) : (
+                            <Icon name="upload" size={13} />
+                          )}
+                        </button>
+
+                        {/* Confirm delete */}
+                        {confirmDeleteId === hook.id ? (
+                          <div className="flex items-center gap-1">
+                            <BBButton size="sm" variant="danger" disabled={deletingId === hook.id}
+                              onClick={() => void handleDelete(hook.id)}>
+                              {deletingId === hook.id ? '…' : 'Delete'}
+                            </BBButton>
+                            <button type="button" onClick={() => setConfirmDeleteId(null)}
+                              className="text-[11px] text-ink-3 hover:text-ink cursor-pointer">
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <BBButton size="sm" variant="ghost" className="text-red/70 hover:text-red"
+                            onClick={() => setConfirmDeleteId(hook.id)}>
+                            Delete
+                          </BBButton>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Inline test result */}
+                    {testResult && (
+                      <div
+                        className={`flex items-center gap-2 px-5 py-2 border-t text-[12px] ${
+                          testResult.success
+                            ? 'border-green/20 bg-green/5 text-green'
+                            : 'border-red/20 bg-red/5 text-red'
+                        }`}
+                      >
+                        <Icon name={testResult.success ? 'check' : 'x'} size={12} className="shrink-0" />
+                        {testResult.success
+                          ? `Test delivered successfully${testResult.status_code ? ` (HTTP ${testResult.status_code})` : ''}`
+                          : `Delivery failed${testResult.status_code ? ` — server responded HTTP ${testResult.status_code}` : ' — could not connect'}`
+                        }
+                        <button
+                          type="button"
+                          onClick={() => setTestResults(prev => { const m = new Map(prev); m.delete(hook.id); return m })}
+                          className="ml-auto text-current opacity-50 hover:opacity-100 cursor-pointer"
+                        >
+                          <Icon name="x" size={10} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Add webhook form ── */}
+      {formOpen && !endpointMissing && (
+        <div className="rounded-xl border border-line bg-paper overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-line bg-paper-2">
+            <span className="text-[13px] font-semibold text-ink">New webhook</span>
+            <button
+              type="button"
+              onClick={() => { setFormOpen(false); setFormError(null) }}
+              className="text-ink-3 hover:text-ink transition-colors cursor-pointer"
+              aria-label="Close"
+            >
+              <Icon name="x" size={14} />
+            </button>
+          </div>
+
+          <form onSubmit={(e) => void handleCreate(e)} className="px-5 py-5 space-y-5">
+            {/* URL */}
+            <div>
+              <label className="block text-[12.5px] font-medium text-ink mb-1.5">
+                Endpoint URL <span className="text-red">*</span>
+              </label>
+              <input
+                type="url"
+                value={formUrl}
+                onChange={e => setFormUrl(e.target.value)}
+                placeholder="https://your-server.com/webhooks/beebeeb"
+                className="w-full max-w-[520px] h-9 px-3 border border-line rounded-md bg-paper text-[13px] text-ink placeholder:text-ink-4 focus:outline-none focus:border-amber-deep focus:ring-2 focus:ring-amber/20 transition-colors font-mono"
+              />
+              <div className="text-[11px] text-ink-4 mt-1">Must start with https://</div>
+            </div>
+
+            {/* Events */}
+            <div>
+              <div className="text-[12.5px] font-medium text-ink mb-2">Events to subscribe</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {WEBHOOK_EVENTS.map(ev => (
+                  <label
+                    key={ev.id}
+                    className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                      formEvents.has(ev.id)
+                        ? 'border-amber/40 bg-amber-bg'
+                        : 'border-line bg-paper-2 hover:border-line-2'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={formEvents.has(ev.id)}
+                      onChange={() => toggleEvent(ev.id)}
+                      className="mt-0.5 accent-amber-deep shrink-0"
+                    />
+                    <div>
+                      <div className="font-mono text-[11.5px] font-medium text-ink">{ev.label}</div>
+                      <div className="text-[11px] text-ink-3 mt-0.5">{ev.description}</div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {formError && <p className="text-[12px] text-red">{formError}</p>}
+
+            <div className="flex items-center gap-3 pt-1">
+              <BBButton type="submit" variant="amber" size="md" disabled={creating} className="gap-1.5">
+                <Icon name="link" size={13} />
+                {creating ? 'Creating…' : 'Create webhook'}
+              </BBButton>
+              <BBButton type="button" size="md" variant="ghost"
+                onClick={() => { setFormOpen(false); setFormError(null) }}>
+                Cancel
+              </BBButton>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   )
 }
@@ -449,6 +929,17 @@ export function SettingsDeveloper() {
             </form>
           </div>
         )}
+
+        {/* ── Webhooks ── */}
+        <div className="border-t border-line pt-6">
+          <div className="mb-5">
+            <div className="text-[15px] font-semibold text-ink mb-1">Webhooks</div>
+            <div className="text-[13px] text-ink-3">
+              Receive real-time HTTP POST notifications when events happen in your account.
+            </div>
+          </div>
+          <WebhooksSection />
+        </div>
 
         {/* ── Footer note ── */}
         <div className="text-[12px] text-ink-4 flex items-start gap-2 pt-2">

@@ -1367,6 +1367,69 @@ export async function revokeToken(id: string): Promise<void> {
   await request(`/api/v1/tokens/${id}`, { method: 'DELETE' })
 }
 
+// ─── Webhooks ─────────────────────────────────────────────────────────────────
+
+export interface Webhook {
+  id: string
+  url: string
+  events: string[]
+  is_active: boolean
+  last_triggered_at: string | null
+  failure_count: number
+  created_at: string
+}
+
+export interface CreateWebhookResponse {
+  id: string
+  url: string
+  /** Signing secret — returned once on creation, never again. */
+  secret: string
+  events: string[]
+  is_active: boolean
+}
+
+/** List all webhooks. Returns [] on 404 (endpoint not yet deployed). */
+export async function listWebhooks(): Promise<Webhook[]> {
+  try {
+    const data = await request<{ webhooks: Webhook[] }>('/api/v1/webhooks')
+    return data.webhooks
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return []
+    throw err
+  }
+}
+
+/** Create a webhook. Returns the config including the signing secret (shown once). */
+export async function createWebhook(
+  url: string,
+  events: string[],
+): Promise<CreateWebhookResponse> {
+  return request<CreateWebhookResponse>('/api/v1/webhooks', {
+    method: 'POST',
+    body: JSON.stringify({ url, events }),
+  })
+}
+
+/** Delete / revoke a webhook. */
+export async function deleteWebhook(id: string): Promise<void> {
+  await request(`/api/v1/webhooks/${id}`, { method: 'DELETE' })
+}
+
+/** Send a test event to the webhook endpoint. */
+export async function testWebhook(
+  id: string,
+): Promise<{ success: boolean; status_code?: number }> {
+  return request<{ success: boolean; status_code?: number }>(
+    `/api/v1/webhooks/${id}/test`,
+    { method: 'POST' },
+  )
+}
+
+/** Re-enable a disabled webhook (clears failure count, sets is_active = true). */
+export async function enableWebhook(id: string): Promise<Webhook> {
+  return request<Webhook>(`/api/v1/webhooks/${id}/enable`, { method: 'POST' })
+}
+
 // ─── Admin endpoints ──────────────────────────
 
 export interface AuditEvent {
