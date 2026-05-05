@@ -137,9 +137,12 @@ interface CreatePoolFormData {
   endpoint: string
   bucket: string
   region: string
+  city: string
+  continent: string
   access_key_id: string
   secret_access_key: string
-  capacity_bytes: string
+  capacity_value: string
+  capacity_unit: CapacityUnit
 }
 
 const EMPTY_POOL_FORM: CreatePoolFormData = {
@@ -149,9 +152,12 @@ const EMPTY_POOL_FORM: CreatePoolFormData = {
   endpoint: '',
   bucket: '',
   region: '',
+  city: '',
+  continent: 'europe',
   access_key_id: '',
   secret_access_key: '',
-  capacity_bytes: '',
+  capacity_value: '',
+  capacity_unit: 'TB',
 }
 
 export function Infrastructure() {
@@ -174,12 +180,13 @@ export function Infrastructure() {
   const [editingPool, setEditingPool] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState<{
     display_name: string
+    city: string
     /** Human-readable numeric value (e.g. "100"). Empty string = unlimited. */
     capacity_value: string
     /** Unit for capacity_value. */
     capacity_unit: 'GB' | 'TB' | 'PB'
     is_active: boolean
-  }>({ display_name: '', capacity_value: '', capacity_unit: 'TB', is_active: true })
+  }>({ display_name: '', city: '', capacity_value: '', capacity_unit: 'TB', is_active: true })
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -235,9 +242,7 @@ export function Infrastructure() {
     e.preventDefault()
     setCreating(true)
     try {
-      const capacity = createForm.capacity_bytes.trim()
-        ? Number(createForm.capacity_bytes)
-        : null
+      const capacity = humanToBytes(createForm.capacity_value, createForm.capacity_unit)
       const created = await createStoragePool({
         name: createForm.name,
         display_name: createForm.display_name,
@@ -245,6 +250,8 @@ export function Infrastructure() {
         endpoint: createForm.endpoint,
         bucket: createForm.bucket,
         region: createForm.region,
+        city: createForm.city || undefined,
+        continent: createForm.continent || undefined,
         access_key_id: createForm.access_key_id,
         secret_access_key: createForm.secret_access_key,
         capacity_bytes: capacity,
@@ -270,6 +277,7 @@ export function Infrastructure() {
     const { value, unit } = bytesToHuman(pool.capacity_bytes)
     setEditDraft({
       display_name: pool.display_name,
+      city: pool.city ?? '',
       capacity_value: value,
       capacity_unit: unit,
       is_active: pool.is_active,
@@ -279,9 +287,14 @@ export function Infrastructure() {
   async function saveEdit(pool: StoragePool) {
     setUpdatingPool(pool.id)
     try {
-      const capacity = humanToBytes(editDraft.capacity_value, editDraft.capacity_unit)
+      // Capacity: empty = unchanged (pass existing), set = new value, -1 sentinel = clear to unlimited
+      const capacityFromForm = humanToBytes(editDraft.capacity_value, editDraft.capacity_unit)
+      const capacity = editDraft.capacity_value.trim() === '' && pool.capacity_bytes !== null
+        ? -1  // sentinel: clear to unlimited
+        : capacityFromForm
       const updated = await updateStoragePool(pool.id, {
         display_name: editDraft.display_name,
+        city: editDraft.city || undefined,
         capacity_bytes: capacity,
         is_active: editDraft.is_active,
       })
@@ -375,91 +388,175 @@ export function Infrastructure() {
             {showCreate && (
               <form
                 onSubmit={handleCreatePool}
-                className="rounded-xl border border-line-2 bg-paper p-4 grid grid-cols-2 gap-3"
+                className="rounded-xl border border-amber/40 bg-paper p-5 grid grid-cols-2 gap-x-4 gap-y-3"
               >
+                <div className="col-span-2 flex items-center gap-2 pb-1 border-b border-line mb-1">
+                  <Icon name="plus" size={13} className="text-amber-deep" />
+                  <span className="text-[12px] font-semibold text-ink">New storage pool</span>
+                </div>
+
+                {/* Name */}
                 <label className="flex flex-col gap-1">
-                  <span className="text-[10px] uppercase text-ink-4">Name (machine)</span>
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-3">Name</span>
                   <input
                     required
+                    placeholder="e.g. s03, eu-fra-2"
                     className="border border-line-2 rounded-md px-2 py-1.5 text-xs font-mono bg-paper"
                     value={createForm.name}
                     onChange={e => setCreateForm({ ...createForm, name: e.target.value })}
                   />
+                  <span className="text-[10px] text-ink-4">Internal identifier — used in env-var key names</span>
                 </label>
+
+                {/* Display name */}
                 <label className="flex flex-col gap-1">
-                  <span className="text-[10px] uppercase text-ink-4">Display name</span>
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-3">Display name</span>
                   <input
                     required
+                    placeholder="e.g. Hetzner Falkenstein"
                     className="border border-line-2 rounded-md px-2 py-1.5 text-xs bg-paper"
                     value={createForm.display_name}
                     onChange={e => setCreateForm({ ...createForm, display_name: e.target.value })}
                   />
+                  <span className="text-[10px] text-ink-4">User-facing label shown in the UI</span>
                 </label>
+
+                {/* Provider */}
                 <label className="flex flex-col gap-1">
-                  <span className="text-[10px] uppercase text-ink-4">Provider</span>
-                  <input
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-3">Provider</span>
+                  <select
                     required
                     className="border border-line-2 rounded-md px-2 py-1.5 text-xs font-mono bg-paper"
                     value={createForm.provider}
                     onChange={e => setCreateForm({ ...createForm, provider: e.target.value })}
-                  />
+                  >
+                    <option value="s3">s3</option>
+                    <option value="local">local</option>
+                  </select>
+                  <span className="text-[10px] text-ink-4">s3 = S3-compatible object storage · local = filesystem</span>
                 </label>
+
+                {/* Region */}
                 <label className="flex flex-col gap-1">
-                  <span className="text-[10px] uppercase text-ink-4">Region</span>
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-3">Region</span>
                   <input
                     required
+                    placeholder="e.g. fsn1"
                     className="border border-line-2 rounded-md px-2 py-1.5 text-xs font-mono bg-paper"
                     value={createForm.region}
                     onChange={e => setCreateForm({ ...createForm, region: e.target.value })}
                   />
+                  <span className="text-[10px] text-ink-4">Provider region code (used in storage_location)</span>
                 </label>
+
+                {/* Endpoint */}
                 <label className="flex flex-col gap-1 col-span-2">
-                  <span className="text-[10px] uppercase text-ink-4">Endpoint</span>
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-3">Endpoint</span>
                   <input
                     required
+                    placeholder="https://fsn1.your-objectstorage.com"
                     className="border border-line-2 rounded-md px-2 py-1.5 text-xs font-mono bg-paper"
                     value={createForm.endpoint}
                     onChange={e => setCreateForm({ ...createForm, endpoint: e.target.value })}
                   />
+                  <span className="text-[10px] text-ink-4">S3-compatible endpoint URL (leave blank for AWS default)</span>
                 </label>
+
+                {/* Bucket */}
                 <label className="flex flex-col gap-1">
-                  <span className="text-[10px] uppercase text-ink-4">Bucket</span>
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-3">Bucket</span>
                   <input
                     required
+                    placeholder="e.g. beebeeb-s03"
                     className="border border-line-2 rounded-md px-2 py-1.5 text-xs font-mono bg-paper"
                     value={createForm.bucket}
                     onChange={e => setCreateForm({ ...createForm, bucket: e.target.value })}
                   />
+                  <span className="text-[10px] text-ink-4">Bucket name (must already exist)</span>
                 </label>
+
+                {/* Capacity */}
+                <div className="flex flex-col gap-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-3">Capacity</span>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      placeholder="e.g. 100"
+                      className="flex-1 border border-line-2 rounded-md px-2 py-1.5 text-xs font-mono bg-paper min-w-0"
+                      value={createForm.capacity_value}
+                      onChange={e => setCreateForm({ ...createForm, capacity_value: e.target.value })}
+                    />
+                    <select
+                      className="border border-line-2 rounded-md px-2 py-1.5 text-xs font-mono bg-paper"
+                      value={createForm.capacity_unit}
+                      onChange={e => setCreateForm({ ...createForm, capacity_unit: e.target.value as CapacityUnit })}
+                    >
+                      <option value="GB">GB</option>
+                      <option value="TB">TB</option>
+                      <option value="PB">PB</option>
+                    </select>
+                  </div>
+                  <span className="text-[10px] text-ink-4">Leave blank for unlimited</span>
+                </div>
+
+                {/* City */}
                 <label className="flex flex-col gap-1">
-                  <span className="text-[10px] uppercase text-ink-4">Capacity bytes (optional)</span>
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-3">City</span>
                   <input
-                    type="number"
-                    className="border border-line-2 rounded-md px-2 py-1.5 text-xs font-mono bg-paper"
-                    value={createForm.capacity_bytes}
-                    onChange={e => setCreateForm({ ...createForm, capacity_bytes: e.target.value })}
+                    placeholder="e.g. Falkenstein"
+                    className="border border-line-2 rounded-md px-2 py-1.5 text-xs bg-paper"
+                    value={createForm.city}
+                    onChange={e => setCreateForm({ ...createForm, city: e.target.value })}
                   />
+                  <span className="text-[10px] text-ink-4">DC city shown in file storage badges</span>
                 </label>
+
+                {/* Continent */}
                 <label className="flex flex-col gap-1">
-                  <span className="text-[10px] uppercase text-ink-4">Access key ID</span>
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-3">Continent</span>
+                  <select
+                    className="border border-line-2 rounded-md px-2 py-1.5 text-xs font-mono bg-paper"
+                    value={createForm.continent}
+                    onChange={e => setCreateForm({ ...createForm, continent: e.target.value })}
+                  >
+                    <option value="europe">europe</option>
+                    <option value="north-america">north-america</option>
+                    <option value="asia">asia</option>
+                    <option value="australia">australia</option>
+                    <option value="south-america">south-america</option>
+                    <option value="africa">africa</option>
+                  </select>
+                  <span className="text-[10px] text-ink-4">Jurisdiction region for data-residency display</span>
+                </label>
+
+                {/* Credentials */}
+                <label className="flex flex-col gap-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-3">Access key ID</span>
                   <input
                     required
+                    autoComplete="off"
                     className="border border-line-2 rounded-md px-2 py-1.5 text-xs font-mono bg-paper"
                     value={createForm.access_key_id}
                     onChange={e => setCreateForm({ ...createForm, access_key_id: e.target.value })}
                   />
+                  <span className="text-[10px] text-ink-4">Stored in env as STORAGE_POOL_&lt;NAME&gt;_ACCESS_KEY</span>
                 </label>
                 <label className="flex flex-col gap-1">
-                  <span className="text-[10px] uppercase text-ink-4">Secret access key</span>
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-3">Secret access key</span>
                   <input
                     required
                     type="password"
+                    autoComplete="new-password"
                     className="border border-line-2 rounded-md px-2 py-1.5 text-xs font-mono bg-paper"
                     value={createForm.secret_access_key}
                     onChange={e => setCreateForm({ ...createForm, secret_access_key: e.target.value })}
                   />
+                  <span className="text-[10px] text-ink-4">Stored in env as STORAGE_POOL_&lt;NAME&gt;_SECRET_KEY</span>
                 </label>
-                <div className="col-span-2 flex justify-end gap-2 pt-1">
+
+                <div className="col-span-2 flex justify-end gap-2 pt-2 border-t border-line mt-1">
                   <BBButton
                     type="button"
                     size="sm"
@@ -550,7 +647,7 @@ export function Infrastructure() {
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-3 gap-2 mb-3">
+                      <div className="grid grid-cols-4 gap-2 mb-3">
                         <div>
                           <div className="text-[10px] text-ink-4">Provider</div>
                           <div className="font-mono text-[11px] font-medium">{pool.provider}</div>
@@ -558,6 +655,10 @@ export function Infrastructure() {
                         <div>
                           <div className="text-[10px] text-ink-4">Region</div>
                           <div className="font-mono text-[11px] font-medium">{pool.region}</div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] text-ink-4">City</div>
+                          <div className="text-[11px] font-medium">{pool.city ?? '—'}</div>
                         </div>
                         <div>
                           <div className="text-[10px] text-ink-4">Bucket</div>
@@ -585,6 +686,17 @@ export function Infrastructure() {
                               value={editDraft.display_name}
                               onChange={e =>
                                 setEditDraft({ ...editDraft, display_name: e.target.value })
+                              }
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1">
+                            <span className="text-xs font-medium text-ink-2">City</span>
+                            <input
+                              className="border border-line-2 rounded-md px-2 py-1.5 text-xs bg-paper"
+                              placeholder="e.g. Falkenstein"
+                              value={editDraft.city}
+                              onChange={e =>
+                                setEditDraft({ ...editDraft, city: e.target.value })
                               }
                             />
                           </label>

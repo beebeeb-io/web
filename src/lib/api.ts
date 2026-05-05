@@ -1636,6 +1636,10 @@ export interface StoragePool {
   endpoint: string
   bucket: string
   region: string
+  /** Human-readable city name shown in region badges (e.g. "Falkenstein") */
+  city?: string | null
+  /** Continent slug for data-residency display (e.g. "europe") */
+  continent?: string | null
   display_name: string
   is_default: boolean
   is_active: boolean
@@ -1643,9 +1647,6 @@ export interface StoragePool {
   used_bytes: number
   usage_pct: number | null
   created_at: string
-  /** Lifecycle phase — omitted by the legacy /admin/storage-pools endpoint
-   *  (admin.rs does not yet return this column). Defaults to 'active' when
-   *  absent. Will be non-optional once the endpoint is updated in Task 8. */
   lifecycle_phase?: LifecyclePhase
 }
 
@@ -1690,6 +1691,8 @@ export async function createStoragePool(params: {
   endpoint: string
   bucket: string
   region: string
+  city?: string
+  continent?: string
   access_key_id: string
   secret_access_key: string
   capacity_bytes?: number | null
@@ -1705,8 +1708,10 @@ export async function updateStoragePool(
   id: string,
   updates: {
     display_name?: string
+    city?: string
     is_active?: boolean
     is_default?: boolean
+    /** Pass -1 to clear the capacity limit (set to unlimited). */
     capacity_bytes?: number | null
   },
 ): Promise<StoragePool> {
