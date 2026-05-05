@@ -27,7 +27,7 @@ export function Starred() {
 
   const [files, setFiles] = useState<DriveFile[]>([])
   const [loading, setLoading] = useState(true)
-  const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({})
+  const [decryptedNames, setDecryptedNames] = useState<Record<string, string | null>>({})
 
   // Dialog state
   const [shareFileId, setShareFileId] = useState<string | null>(null)

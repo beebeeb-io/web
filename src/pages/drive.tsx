@@ -108,7 +108,7 @@ export function Drive() {
 
   // ─── External selection + decrypted names (for keyboard shortcuts + dialogs) ─
   const [externalSelectedIds, setExternalSelectedIds] = useState<Set<string>>(new Set())
-  const [externalDecryptedNames, setExternalDecryptedNames] = useState<Record<string, string>>({})
+  const [externalDecryptedNames, setExternalDecryptedNames] = useState<Record<string, string | null>>({})
 
   // ─── Storage quota state ─────────────────────────
   const [storageUsage, setStorageUsage] = useState<StorageUsage | null>(null)
@@ -116,6 +116,10 @@ export function Drive() {
   const currentParentId = breadcrumbs[breadcrumbs.length - 1]?.id ?? undefined
 
   const fetchFiles = useCallback(async () => {
+    // Guard: never fetch (and therefore never trigger decryption) until the vault
+    // is unlocked. The sync engine and API can return data at any time but the
+    // FileList cannot decrypt filenames without the master key.
+    if (!isUnlocked) return
     setLoading(true)
     try {
       const trashed = location.pathname === '/trash'
@@ -154,7 +158,7 @@ export function Drive() {
       setLoading(false)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentParentId, location.pathname, sync.ready])
+  }, [currentParentId, location.pathname, sync.ready, isUnlocked])
 
   useEffect(() => {
     fetchFiles()
@@ -748,7 +752,9 @@ export function Drive() {
   }
 
   function displayName(file: DriveFile): string {
-    return externalDecryptedNames[file.id] ?? file.name_encrypted
+    const cached = externalDecryptedNames[file.id]
+    if (cached === undefined) return '' // pending — caller should not use this until truthy
+    return cached ?? 'Encrypted file'   // null = failed
   }
 
   async function handleCreateFolder(name: string) {
@@ -795,7 +801,7 @@ export function Drive() {
   function handleFolderOpen(folder: DriveFile) {
     setBreadcrumbs((prev) => [
       ...prev,
-      { id: folder.id, name: externalDecryptedNames[folder.id] ?? folder.name_encrypted },
+      { id: folder.id, name: externalDecryptedNames[folder.id] ?? 'Folder' },
     ])
   }
 

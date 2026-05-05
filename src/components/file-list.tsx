@@ -86,7 +86,7 @@ export interface FileListProps {
   onSelectionChange?: (ids: Set<string>) => void
 
   // Decrypted name sync for dialog use in parent
-  onDecryptedNamesChange?: (names: Record<string, string>) => void
+  onDecryptedNamesChange?: (names: Record<string, string | null>) => void
 
   // Context menu / row action handler
   onFileAction?: (action: string, file: DriveFile) => void
@@ -172,7 +172,15 @@ export function FileList({
   }, [sortKey])
 
   // ─── Decrypted names ───────────────────────────────
-  const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({})
+  //
+  // `decryptedNames[id]` semantics:
+  //   undefined  →  not yet decrypted (show skeleton in UI)
+  //   string     →  successfully decrypted name
+  //   null       →  decryption failed (show "Encrypted file" placeholder)
+  //
+  // NEVER fall back to `file.name_encrypted` — that exposes raw JSON ciphertext
+  // to users and is the bug this fix addresses.
+  const [decryptedNames, setDecryptedNames] = useState<Record<string, string | null>>({})
 
   useEffect(() => {
     if (externalDecryptedNames !== undefined) {
@@ -183,9 +191,13 @@ export function FileList({
       setDecryptedNames({})
       return
     }
+    if (files.length === 0) {
+      setDecryptedNames({})
+      return
+    }
     let cancelled = false
     async function decryptAll() {
-      const names: Record<string, string> = {}
+      const names: Record<string, string | null> = {}
       for (const file of files) {
         if (cancelled) return
         try {
@@ -197,10 +209,15 @@ export function FileList({
             fromBase64(parsed.ciphertext),
           )
         } catch {
-          names[file.id] = file.name_encrypted
+          // Decryption failed — use a clear placeholder, never raw ciphertext.
+          // Common causes: vault locked between renders, key derivation error,
+          // malformed ciphertext. In all cases, "Encrypted file" is correct UX.
+          names[file.id] = null
         }
       }
-      if (!cancelled) setDecryptedNames(names)
+      if (!cancelled) {
+        setDecryptedNames(names)
+      }
     }
     decryptAll()
     return () => { cancelled = true }
@@ -210,8 +227,21 @@ export function FileList({
     onDecryptedNamesChange?.(decryptedNames)
   }, [decryptedNames, onDecryptedNamesChange])
 
-  function displayName(file: DriveFile): string {
-    return decryptedNames[file.id] ?? file.name_encrypted
+  /**
+   * Returns the display name for a file.
+   *
+   * - `undefined` in decryptedNames → decryption pending → returns null (caller shows skeleton)
+   * - `null` in decryptedNames      → decryption failed  → returns "Encrypted file"
+   * - `string` in decryptedNames    → success            → returns the name
+   *
+   * NEVER returns raw ciphertext JSON. The caller is responsible for rendering
+   * a skeleton when this returns null.
+   */
+  function displayName(file: DriveFile): string | null {
+    const cached = decryptedNames[file.id]
+    if (cached === undefined) return null      // pending — caller shows skeleton
+    if (cached === null) return 'Encrypted file' // failed
+    return cached                               // success
   }
 
   // ─── Thumbnails ────────────────────────────────────
@@ -427,22 +457,28 @@ export function FileList({
   }
 
   // ─── Sort ──────────────────────────────────────────
+  // safeName(): like displayName() but returns '' while decryption is pending,
+  // so sort comparators never receive null.
+  function safeName(file: DriveFile): string {
+    return displayName(file) ?? ''
+  }
+
   const sortedFiles = sortable
     ? [...files].sort((a, b) => {
         if (a.is_folder && !b.is_folder) return -1
         if (!a.is_folder && b.is_folder) return 1
         switch (sortKey) {
-          case 'name-asc':      return displayName(a).localeCompare(displayName(b))
-          case 'name-desc':     return displayName(b).localeCompare(displayName(a))
+          case 'name-asc':      return safeName(a).localeCompare(safeName(b))
+          case 'name-desc':     return safeName(b).localeCompare(safeName(a))
           case 'modified-desc': return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
           case 'modified-asc':  return new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
           case 'size-desc':     return b.size_bytes - a.size_bytes
           case 'size-asc':      return a.size_bytes - b.size_bytes
           case 'type-asc': {
-            const ta = (a.mime_type || displayName(a).split('.').pop() || '').toLowerCase()
-            const tb = (b.mime_type || displayName(b).split('.').pop() || '').toLowerCase()
+            const ta = (a.mime_type || safeName(a).split('.').pop() || '').toLowerCase()
+            const tb = (b.mime_type || safeName(b).split('.').pop() || '').toLowerCase()
             if (ta !== tb) return ta.localeCompare(tb)
-            return displayName(a).localeCompare(displayName(b))
+            return safeName(a).localeCompare(safeName(b))
           }
         }
       })
@@ -531,8 +567,9 @@ export function FileList({
 
   // ─── Row renderer ──────────────────────────────────
   function renderRow(file: DriveFile) {
+    // null = decryption still running for this file — show skeleton in name cell
     const name = displayName(file)
-    const fileType = getFileType(name, file.is_folder)
+    const fileType = getFileType(name ?? '', file.is_folder)
     const isSelected = selectedIds.has(file.id)
     const isDragTarget = file.is_folder && dragOverFolderId === file.id
     const isDragging = draggedFileId === file.id
@@ -549,8 +586,8 @@ export function FileList({
         role="row"
         aria-label={
           file.is_folder
-            ? `${name}, folder`
-            : `${name}, ${formatBytes(file.size_bytes)}, ${timeAgo(file.updated_at)}`
+            ? `${name ?? 'Folder'}, folder`
+            : `${name ?? 'Encrypted file'}, ${formatBytes(file.size_bytes)}, ${timeAgo(file.updated_at)}`
         }
         aria-selected={isSelected || undefined}
         onDragStart={(e) => handleDragStart(e, file)}
@@ -585,7 +622,7 @@ export function FileList({
             x: e.clientX,
             y: e.clientY,
             fileId: file.id,
-            fileName: name,
+            fileName: name ?? 'Encrypted file',
             isFolder: file.is_folder,
             versionNumber: file.version_number ?? 1,
           })
@@ -611,7 +648,7 @@ export function FileList({
               x: rect.left + 8,
               y: rect.bottom + 2,
               fileId: file.id,
-              fileName: name,
+              fileName: name ?? 'Encrypted file',
               isFolder: file.is_folder,
               versionNumber: file.version_number ?? 1,
             })
@@ -659,7 +696,14 @@ export function FileList({
         {/* Name column */}
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
-            <span className="font-medium truncate">{name}</span>
+            {name !== null
+              ? <span className="font-medium truncate">{name}</span>
+              : <span
+                  className="inline-block rounded bg-paper-3 animate-pulse shrink-0"
+                  style={{ width: `${Math.max(60, (file.id.charCodeAt(0) % 80) + 60)}px`, height: '12px' }}
+                  aria-label="Loading…"
+                />
+            }
             {file.is_starred && (
               <span className={`inline-flex text-amber-deep${starPulseId === file.id ? ' star-pulse' : ''}`}>
                 <Icon name="star" size={11} />
@@ -749,7 +793,7 @@ export function FileList({
                   x: rect.left,
                   y: rect.bottom + 4,
                   fileId: file.id,
-                  fileName: name,
+                  fileName: name ?? 'Encrypted file',
                   isFolder: file.is_folder,
                   versionNumber: file.version_number ?? 1,
                 })

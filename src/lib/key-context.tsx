@@ -99,13 +99,26 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     sessionStorage.removeItem('bb_mk')
   }, [])
 
-  // Initialize WASM on mount + check if vault exists + restore cached key
-  useState(() => {
+  // Initialize WASM on mount + check if vault exists + restore cached key.
+  //
+  // useEffect (not useState) — side effects must not run during render.
+  // The previous useState(() => { async }) pattern ran twice in React StrictMode
+  // (both renders call the initializer) and initiated WASM loading during
+  // render phase, which is incorrect. useEffect runs once after first commit.
+  //
+  // Order matters: masterKeyRef.current is set BEFORE setIsUnlocked(true) and
+  // setVaultChecked(true) are batched into a single re-render (React 18).
+  // By the time ProtectedRoute re-renders, the ref holds the key AND both
+  // flags are true, eliminating the race window between them.
+  useEffect(() => {
+    let cancelled = false
     initCrypto()
       .then(async () => {
+        if (cancelled) return
         setCryptoReady(true)
         setCryptoLoading(false)
         const exists = await hasVault()
+        if (cancelled) return
         setVaultExists(exists)
         // Restore the session-encrypted key BEFORE setting vaultChecked=true.
         // ProtectedRoute guards on vaultChecked; if we set it before the
@@ -114,6 +127,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
         // their cached key is about to be found. Setting vaultChecked last
         // ensures ProtectedRoute only renders once both states are stable.
         const cached = await restoreCachedKey()
+        if (cancelled) return
         if (cached) {
           masterKeyRef.current = cached
           setIsUnlocked(true)
@@ -121,12 +135,15 @@ export function KeyProvider({ children }: { children: ReactNode }) {
         setVaultChecked(true)
       })
       .catch((err) => {
+        if (cancelled) return
         setCryptoError(
           err instanceof Error ? err.message : 'Failed to load encryption module',
         )
         setCryptoLoading(false)
       })
-  })
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // intentionally empty — runs once on mount only
 
   // Expose crypto readiness as a body data attribute so e2e tests / browser
   // automation can wait for the WASM worker before interacting with auth forms.
