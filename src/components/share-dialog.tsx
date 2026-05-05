@@ -452,8 +452,8 @@ function InviteSuccess({
 export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolder, onShareCreated }: ShareDialogProps) {
   const { getFileKey, isUnlocked } = useKeys()
   const [mode, setMode] = useState<ShareMode>('link')
-  const [expiryIdx, setExpiryIdx] = useState(1) // default: 24 hours
-  const [maxOpensIdx, setMaxOpensIdx] = useState(1) // default: 3
+  const [expiryIdx, setExpiryIdx] = useState(2)  // default: 7 days (spec 024 §1.8)
+  const [maxOpensIdx, setMaxOpensIdx] = useState(4) // default: Unlimited (spec 024 §1.8)
   const [passphrase, setPassphrase] = useState('')
   const [showPassphrase, setShowPassphrase] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -465,6 +465,8 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
   const [inviteDone, setInviteDone] = useState<string | null>(null)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [doubleEncrypted, setDoubleEncrypted] = useState(false)
+  // Spec 024 §1.8: URL is generated immediately on modal open — no "click to generate" step.
+  const [autoGenPending, setAutoGenPending] = useState(false)
 
   const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
 
@@ -478,12 +480,12 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [open, onClose])
 
-  // Reset state when dialog opens
+  // Reset state when dialog opens, then queue auto-generation of the link
   useEffect(() => {
     if (open) {
       setMode('link')
-      setExpiryIdx(1)
-      setMaxOpensIdx(1)
+      setExpiryIdx(2)   // 7 days
+      setMaxOpensIdx(4) // unlimited
       setPassphrase('')
       setShowPassphrase(false)
       setShareResult(null)
@@ -493,6 +495,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       setInviteDone(null)
       setFeedbackOpen(false)
       setDoubleEncrypted(false)
+      setAutoGenPending(true) // trigger auto-generate after state resets
     }
   }, [open])
 
@@ -563,6 +566,15 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       setLoading(false)
     }
   }, [fileId, expiryIdx, maxOpensIdx, passphrase, isUnlocked, getFileKey, onShareCreated, doubleEncrypted])
+
+  // Auto-generate link when dialog opens (spec 024 §1.8: URL appears immediately on open).
+  // Runs once the state reset from the open-effect has settled AND the vault is unlocked.
+  useEffect(() => {
+    if (autoGenPending && isUnlocked && mode === 'link' && !shareResult && !loading) {
+      setAutoGenPending(false)
+      void handleGenerate()
+    }
+  }, [autoGenPending, isUnlocked, mode, shareResult, loading, handleGenerate])
 
   const copyToClipboard = useCallback(async (text: string, type: 'full-link' | 'split-link' | 'split-key') => {
     try {

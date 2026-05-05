@@ -75,6 +75,8 @@ export interface FileListProps {
   sortable?: boolean
   selectable?: boolean
   showDateGroups?: boolean
+  /** Inline upload cards rendered at the top of the scrollable area (spec 024 §4). */
+  uploadCards?: ReactNode
 
   // Navigation
   onNavigateFolder?: (folder: DriveFile) => void
@@ -152,6 +154,7 @@ export function FileList({
   externalDecryptedNames,
   onShowTrustDetails,
   encryptionCity = 'Falkenstein',
+  uploadCards,
 }: FileListProps) {
   const { getFileKey, isUnlocked } = useKeys()
 
@@ -945,6 +948,8 @@ export function FileList({
           if (e.target === e.currentTarget && selectedIds.size > 0) clearSelection()
         }}
       >
+        {/* Inline upload cards — rendered at top of scroll area (spec 024 §4) */}
+        {uploadCards}
         {loading ? (
           <div>{Array.from({ length: 8 }, (_, i) => <FileRowSkeleton key={i} />)}</div>
         ) : sortedFiles.length === 0 ? (

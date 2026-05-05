@@ -95,6 +95,32 @@ function GuestRoute({ children }: { children: ReactNode }) {
   return <>{children}</>
 }
 
+/**
+ * Handles ?onboarding=force (spec 024 §3.1) and ?reset-onboarding=true.
+ * Both reset the onboarding localStorage state to 'welcome_file' so the flow
+ * can be re-triggered without a fresh signup. Production-safe (local UX only).
+ */
+function OnboardingResetHandler() {
+  const navigate = useNavigate()
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const forceOnboarding = params.get('onboarding') === 'force' || params.get('reset-onboarding') === 'true'
+    if (forceOnboarding) {
+      try {
+        localStorage.setItem('beebeeb_onboarding_state', JSON.stringify({ step: 'welcome_file' }))
+      } catch {
+        // localStorage may be unavailable — ignore
+      }
+      // Strip the query param and reload
+      params.delete('onboarding')
+      params.delete('reset-onboarding')
+      const newSearch = params.toString()
+      navigate({ search: newSearch ? `?${newSearch}` : '' }, { replace: true })
+    }
+  }, [navigate])
+  return null
+}
+
 /** Wire API error hooks into the toast + routing system. */
 function ApiErrorWiring() {
   const { showToast } = useToast()
@@ -172,6 +198,7 @@ export function App() {
           Skip to main content
         </a>
         <ApiErrorWiring />
+        <OnboardingResetHandler />
         <ImpersonationBanner />
         <OfflineBanner />
         <GlobalShortcuts />

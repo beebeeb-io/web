@@ -11,7 +11,8 @@ import { ShareDialog } from '../components/share-dialog'
 import { MoveModal } from '../components/move-modal'
 import { RenameDialog } from '../components/rename-dialog'
 import { UploadZone, useBrowseFiles, useBrowseFolders, type FolderFile } from '../components/upload-zone'
-import { UploadProgress, type UploadItem } from '../components/upload-progress'
+import type { UploadItem } from '../components/upload-progress'
+import { UploadCards } from '../components/upload-progress-card'
 import { NewFolderDialog } from '../components/new-folder-dialog'
 import { VersionHistory } from '../components/version-history'
 import { DuplicateFileDialog, getUniqueName, type ConflictItem } from '../components/duplicate-file-dialog'
@@ -930,18 +931,6 @@ export function Drive() {
     setBreadcrumbs((prev) => prev.slice(0, index + 1))
   }
 
-  function clearDoneUploads() {
-    setUploads((prev) => {
-      // Drop cached File objects for any cards being removed (Done + Error).
-      for (const u of prev) {
-        if (u.stage === 'Done' || u.stage === 'Error') {
-          uploadFilesRef.current.delete(u.id)
-        }
-      }
-      return prev.filter((u) => u.stage !== 'Done')
-    })
-  }
-
   function handleCancelUpload(uploadId: string) {
     const controller = uploadAbortRef.current.get(uploadId)
     if (controller) {
@@ -952,32 +941,6 @@ export function Drive() {
       setUploads((prev) => prev.filter((u) => u.id !== uploadId))
     }
     uploadFilesRef.current.delete(uploadId)
-  }
-
-  function handlePauseUpload(uploadId: string) {
-    const controller = uploadAbortRef.current.get(uploadId)
-    if (controller) {
-      controller.abort()
-      uploadAbortRef.current.delete(uploadId)
-    }
-    setUploads((prev) =>
-      prev.map((u) =>
-        u.id === uploadId ? { ...u, paused: true } : u,
-      ),
-    )
-  }
-
-  function handleResumeUpload(uploadId: string) {
-    // Remove paused state — the upload will restart from where the server left off
-    // via the resume detection in encryptedUpload
-    setUploads((prev) =>
-      prev.map((u) =>
-        u.id === uploadId ? { ...u, paused: false, stage: 'Queued' as const } : u,
-      ),
-    )
-    // Note: full resume requires re-picking the file, which we don't have access to here.
-    // For now, pausing marks the item visually. A true resume would need the File object cached.
-    showToast({ icon: 'upload', title: 'Upload paused', description: 'Drop the file again to resume.' })
   }
 
   // ─── File details panel helpers ───────────────────
@@ -1589,6 +1552,13 @@ export function Drive() {
             starPulseId={starPulseId}
             recentlyUploadedIds={recentlyUploaded}
             onShowTrustDetails={(file) => setTrustFileId(file.id)}
+            uploadCards={
+              <UploadCards
+                uploads={uploads}
+                onCancel={handleCancelUpload}
+                onRetry={handleRetryUpload}
+              />
+            }
           />
         </UploadZone>
         </div>
@@ -1626,14 +1596,10 @@ export function Drive() {
         onCancel={handleConflictCancel}
       />
 
-      <UploadProgress
-        items={uploads}
-        onClose={clearDoneUploads}
-        onCancel={handleCancelUpload}
-        onPause={handlePauseUpload}
-        onResume={handleResumeUpload}
-        onRetry={handleRetryUpload}
-      />
+      {/* Upload progress — inline cards inside the file list (spec 024 §4).
+          The floating UploadProgress panel is replaced by UploadCards rendered
+          via the FileList uploadCards prop. Paused-upload summary is still shown
+          in the status bar (see below). */}
 
       <FileDetailsPanel
         open={selectedFile !== null}
