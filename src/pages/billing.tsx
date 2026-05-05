@@ -47,14 +47,18 @@ const planMeta: Record<string, {
   label: string
   pricePerSeat: number
   priceYearlySeat: number
+  /** Storage in GB (for display only — used with formatStorageSI) */
   storagePerSeat: number
   minSeats: number
   tagline: string
 }> = {
-  free:     { label: 'Free',     pricePerSeat: 0,  priceYearlySeat: 0,   storagePerSeat: 20,   minSeats: 1, tagline: 'Get started with encrypted storage' },
-  personal: { label: 'Personal', pricePerSeat: 5,  priceYearlySeat: 48,  storagePerSeat: 2000, minSeats: 1, tagline: '2 TB of truly private storage' },
-  team:     { label: 'Team',     pricePerSeat: 6,  priceYearlySeat: 58,  storagePerSeat: 2000, minSeats: 3, tagline: 'Encrypted collaboration for teams' },
-  business: { label: 'Business', pricePerSeat: 12, priceYearlySeat: 115, storagePerSeat: 5000, minSeats: 3, tagline: 'Compliance-ready for regulated industries' },
+  free:         { label: 'Free',         pricePerSeat: 0,      priceYearlySeat: 0,       storagePerSeat: 5,     minSeats: 1, tagline: 'Get started with encrypted storage' },
+  personal:     { label: 'Personal',     pricePerSeat: 8.99,   priceYearlySeat: 86.30,   storagePerSeat: 1000,  minSeats: 1, tagline: '1 TB of truly private storage' },
+  pro:          { label: 'Pro',          pricePerSeat: 39.95,  priceYearlySeat: 383.52,  storagePerSeat: 5000,  minSeats: 1, tagline: '5 TB for power users and creators' },
+  data_hoarder: { label: 'Data Hoarder', pricePerSeat: 139.80, priceYearlySeat: 1342.08, storagePerSeat: 20000, minSeats: 1, tagline: '20 TB — lowest per-TB price' },
+  // Legacy plan IDs kept for users on old subscriptions
+  team:         { label: 'Team',         pricePerSeat: 6,      priceYearlySeat: 58,      storagePerSeat: 2000,  minSeats: 1, tagline: 'Legacy team plan' },
+  business:     { label: 'Business',     pricePerSeat: 12,     priceYearlySeat: 115,     storagePerSeat: 5000,  minSeats: 1, tagline: 'Legacy business plan' },
 }
 
 /* ── Helpers ────────────────────────────────────────────── */
@@ -146,7 +150,7 @@ export function Billing() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [upgradeOpen, setUpgradeOpen] = useState(false)
-  const [upgradePlan, setUpgradePlan] = useState<string>('team')
+  const [upgradePlan, setUpgradePlan] = useState<string>('pro')
   const [portalLoading, setPortalLoading] = useState(false)
   const [payment, setPayment] = useState<PaymentMethod | null>(null)
   const [cancelConfirm, setCancelConfirm] = useState(false)
@@ -369,8 +373,8 @@ export function Billing() {
 
   const nextPlan =
     effectivePlan === 'free' ? 'personal' :
-    effectivePlan === 'personal' ? 'team' :
-    effectivePlan === 'team' ? 'business' : 'business'
+    effectivePlan === 'personal' ? 'pro' :
+    effectivePlan === 'pro' ? 'data_hoarder' : 'data_hoarder'
 
   const priceDisplay = effectivePlan === 'free'
     ? null
@@ -404,14 +408,6 @@ export function Billing() {
       />
 
       <div className="p-7 space-y-6">
-        {/* Demo mode banner — Stripe is not connected, subscription is simulated */}
-        {sub?.is_mock && (
-          <div className="px-4 py-3 rounded-lg border border-amber/30 bg-amber-bg text-[13px] text-ink-2">
-            <span className="font-semibold text-amber-deep">Demo mode</span>
-            {' '}— Stripe billing is not connected. This subscription is simulated and has no real charges.
-          </div>
-        )}
-
         {/* Success banner after Stripe checkout */}
         {showSuccess && (
           <div className="flex items-center gap-3 p-3.5 bg-green/10 border border-green/30 rounded-lg text-sm">
@@ -540,9 +536,9 @@ export function Billing() {
                   </BBButton>
                   <BBButton
                     size="md"
-                    onClick={() => openUpgrade('team')}
+                    onClick={() => openUpgrade('pro')}
                   >
-                    Explore Team
+                    Explore Pro
                   </BBButton>
                 </>
               ) : (
@@ -710,11 +706,11 @@ export function Billing() {
                 Unlock more
               </div>
               <div className="text-sm text-ink-2">
-                All paid plans include 2 TB+ encrypted storage, photo library, and EU data residency.
+                All paid plans include encrypted storage, photo library, and EU data residency.
               </div>
             </div>
             <div className="grid grid-cols-3 divide-x divide-line">
-              {(['personal', 'team', 'business'] as const).map((planId) => {
+              {(['personal', 'pro', 'data_hoarder'] as const).map((planId) => {
                 const p = planMeta[planId]
                 return (
                   <button
@@ -726,15 +722,16 @@ export function Billing() {
                       {p.label}
                     </div>
                     <div className="flex items-baseline gap-1 mb-2">
-                      <span className="font-mono text-lg font-bold">EUR {p.pricePerSeat}</span>
+                      <span className="font-mono text-lg font-bold">
+                        EUR {p.pricePerSeat % 1 === 0 ? p.pricePerSeat : p.pricePerSeat.toFixed(2)}
+                      </span>
                       <span className="text-xs text-ink-3">/ month</span>
                     </div>
                     <div className="text-xs text-ink-3 mb-3">
                       {formatStorageSI(p.storagePerSeat * 1_000_000_000)}
-                      {p.minSeats > 1 ? ` per seat · ${p.minSeats}+ seats` : ''}
                     </div>
                     <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-deep">
-                      {planId === 'business' ? 'Contact sales' : 'Start 14-day trial'}
+                      Start 14-day trial
                       <Icon name="chevron-right" size={10} />
                     </span>
                   </button>
@@ -896,10 +893,10 @@ export function Billing() {
       {/* Upgrade dialog */}
       <UpgradeDialog
         planId={upgradePlan}
-        planName={planMeta[upgradePlan]?.label ?? 'Team'}
-        pricePerSeat={planMeta[upgradePlan]?.pricePerSeat ?? 6}
-        priceYearlySeat={planMeta[upgradePlan]?.priceYearlySeat ?? 58}
-        minSeats={planMeta[upgradePlan]?.minSeats ?? 3}
+        planName={planMeta[upgradePlan]?.label ?? 'Pro'}
+        pricePerSeat={planMeta[upgradePlan]?.pricePerSeat ?? 39.95}
+        priceYearlySeat={planMeta[upgradePlan]?.priceYearlySeat ?? 383.52}
+        minSeats={planMeta[upgradePlan]?.minSeats ?? 1}
         open={upgradeOpen}
         onClose={() => setUpgradeOpen(false)}
         onSuccess={() => {
