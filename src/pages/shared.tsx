@@ -16,6 +16,8 @@ import {
   getSentInvites,
   getIncomingInvites,
   getShareStats,
+  listMyShares,
+  revokeShare,
   cancelInvite,
   claimInvite,
   resendInvite,
@@ -24,9 +26,10 @@ import {
   type ShareInvite,
   type ShareStats,
   type DriveFile,
+  type MyShare,
 } from '../lib/api'
 import { useKeys } from '../lib/key-context'
-import { decryptFilename, decryptChunk, fromBase64, x25519SharedSecret, deriveShareKey, deriveX25519Private, zeroize } from '../lib/crypto'
+import { decryptFilename, decryptFileMetadata, decryptChunk, fromBase64, x25519SharedSecret, deriveShareKey, deriveX25519Private, zeroize } from '../lib/crypto'
 import { encryptedDownload } from '../lib/encrypted-download'
 import { encryptedUpload } from '../lib/encrypted-upload'
 import { SharedRowSkeleton } from '../components/skeleton'
@@ -80,6 +83,13 @@ export function Shared() {
   // "By me" state — approved sent invites
   const [sentApproved, setSentApproved] = useState<ShareInvite[]>([])
 
+  // Direct share links (from share-dialog, not invite flow)
+  const [myShareLinks, setMyShareLinks] = useState<MyShare[]>([])
+  const [shareLinksDecryptedNames, setShareLinksDecryptedNames] = useState<Record<string, string>>({})
+  // Which share link has its insights panel expanded
+  const [expandedShareId, setExpandedShareId] = useState<string | null>(null)
+  const [revokingShareId, setRevokingShareId] = useState<string | null>(null)
+
   // "Pending" state
   const [sentInvited, setSentInvited] = useState<ShareInvite[]>([])
   const [incomingInvited, setIncomingInvited] = useState<ShareInvite[]>([])
@@ -113,11 +123,13 @@ export function Shared() {
   const fetchAll = useCallback(async () => {
     setLoading(true)
     try {
-      const [sent, incoming, shareStats] = await Promise.all([
+      const [sent, incoming, shareStats, shareLinks] = await Promise.all([
         getSentInvites().catch(() => []),
         getIncomingInvites().catch(() => []),
         getShareStats().catch(() => null),
+        listMyShares().catch(() => []),
       ])
+      setMyShareLinks(shareLinks.filter((s) => !s.revoked))
 
       setWithMeInvites(incoming.filter((i) => i.status === 'approved'))
       setSentApproved(sent.filter((i) => i.status === 'approved'))
@@ -136,6 +148,28 @@ export function Shared() {
   useEffect(() => {
     fetchAll()
   }, [fetchAll])
+
+  // Decrypt file names for share links when vault is unlocked
+  useEffect(() => {
+    if (!isUnlocked || myShareLinks.length === 0) return
+    let cancelled = false
+    async function decryptNames() {
+      const names: Record<string, string> = {}
+      for (const share of myShareLinks) {
+        if (cancelled) return
+        try {
+          const fileKey = await getFileKey(share.file_id)
+          const { name } = await decryptFileMetadata(fileKey, share.file.name_encrypted)
+          names[share.id] = name
+        } catch {
+          names[share.id] = 'Encrypted file'
+        }
+      }
+      if (!cancelled) setShareLinksDecryptedNames(names)
+    }
+    decryptNames()
+    return () => { cancelled = true }
+  }, [myShareLinks, isUnlocked, getFileKey])
 
   // Real-time: refresh share list when shares are created or revoked
   useWsEvent(
@@ -506,6 +540,44 @@ export function Shared() {
 
   // ─── Tab content: By me ───────────────────────
 
+  async function handleRevokeShareLink(shareId: string) {
+    setRevokingShareId(shareId)
+    try {
+      await revokeShare(shareId)
+      setMyShareLinks((prev) => prev.filter((s) => s.id !== shareId))
+      setExpandedShareId(null)
+      showToast({ icon: 'check', title: 'Share link revoked' })
+    } catch (err) {
+      showToast({ icon: 'x', title: 'Failed to revoke', description: err instanceof Error ? err.message : undefined, danger: true })
+    } finally {
+      setRevokingShareId(null)
+    }
+  }
+
+  function copyShareLink(url: string) {
+    navigator.clipboard.writeText(url).catch(() => {
+      const ta = document.createElement('textarea')
+      ta.value = url
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+    })
+    showToast({ icon: 'check', title: 'Link copied' })
+  }
+
+  function formatExpiry(iso: string | null): string {
+    if (!iso) return 'No expiry'
+    const d = new Date(iso)
+    if (d < new Date()) return 'Expired'
+    const days = Math.floor((d.getTime() - Date.now()) / 86_400_000)
+    if (days === 0) return 'Expires today'
+    if (days === 1) return 'Expires tomorrow'
+    return `Expires in ${days}d`
+  }
+
   const renderByMe = () => {
     const files = sentApproved.map((i) =>
       inviteToFile(i, i.recipient_email ? `Shared with ${i.recipient_email}` : 'Shared file'),
@@ -515,7 +587,110 @@ export function Shared() {
       byMeNames[i.id] = i.file_name_encrypted ?? 'Encrypted file'
     }
     return (
-      <FileList
+      <div className="flex-1 flex flex-col overflow-y-auto">
+        {/* ── Share links section ─────────────────────────── */}
+        {myShareLinks.length > 0 && (
+          <div className="border-b border-line">
+            <div className="px-5 py-2.5 bg-paper-2 flex items-center gap-2">
+              <Icon name="link" size={12} className="text-ink-3" />
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">
+                Share links
+              </span>
+              <BBChip className="text-[9px]">{myShareLinks.length}</BBChip>
+            </div>
+            <div className="divide-y divide-line">
+              {myShareLinks.map((share) => {
+                const name = shareLinksDecryptedNames[share.id] ?? 'Encrypted file'
+                const isExpanded = expandedShareId === share.id
+                return (
+                  <div key={share.id} className="border-b border-line last:border-b-0">
+                    {/* Link row */}
+                    <button
+                      type="button"
+                      onClick={() => setExpandedShareId(isExpanded ? null : share.id)}
+                      className="w-full flex items-center gap-3 px-5 py-3 text-left hover:bg-paper-2 transition-colors"
+                    >
+                      <div className="w-7 h-7 rounded-lg bg-amber-bg border border-amber/20 flex items-center justify-center shrink-0">
+                        <Icon name="link" size={12} className="text-amber-deep" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[13px] font-medium text-ink truncate">{name}</div>
+                        <div className="flex items-center gap-2 text-[11px] text-ink-3 mt-0.5">
+                          <span>{share.open_count ?? 0} opens</span>
+                          {share.max_opens && <><span>·</span><span>/ {share.max_opens} max</span></>}
+                          <span>·</span>
+                          <span>{formatExpiry(share.expires_at)}</span>
+                          {share.has_passphrase && <><span>·</span><span className="text-amber-deep">Passphrase</span></>}
+                        </div>
+                      </div>
+                      <Icon
+                        name="chevron-down"
+                        size={13}
+                        className={`shrink-0 text-ink-3 transition-transform duration-150 ${isExpanded ? 'rotate-180' : ''}`}
+                      />
+                    </button>
+
+                    {/* Insights panel */}
+                    {isExpanded && (
+                      <div className="px-5 pb-4 pt-2 bg-paper-2 border-t border-line">
+                        {/* URL row */}
+                        <div className="flex items-center gap-2 mb-3">
+                          <span className="font-mono text-[11px] text-ink-2 truncate flex-1 min-w-0 bg-paper border border-line rounded px-2 py-1.5">
+                            {share.url}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => copyShareLink(share.url)}
+                            className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-paper border border-line text-[12px] font-medium text-ink hover:bg-paper-3 transition-colors cursor-pointer"
+                          >
+                            <Icon name="copy" size={12} />
+                            Copy link
+                          </button>
+                        </div>
+
+                        {/* KPI row */}
+                        <div className="grid grid-cols-3 gap-2 mb-3">
+                          <div className="rounded-lg bg-paper border border-line p-2.5">
+                            <div className="text-[10px] text-ink-4 mb-0.5">Opens</div>
+                            <div className="font-mono text-[13px] font-semibold">
+                              {share.open_count ?? 0}
+                              {share.max_opens ? ` / ${share.max_opens}` : ''}
+                            </div>
+                          </div>
+                          <div className="rounded-lg bg-paper border border-line p-2.5">
+                            <div className="text-[10px] text-ink-4 mb-0.5">Expiry</div>
+                            <div className="text-[12px] font-medium">{formatExpiry(share.expires_at)}</div>
+                          </div>
+                          <div className="rounded-lg bg-paper border border-line p-2.5">
+                            <div className="text-[10px] text-ink-4 mb-0.5">Created</div>
+                            <div className="text-[12px]">{timeAgo(share.created_at)}</div>
+                          </div>
+                        </div>
+
+                        {/* Revoke */}
+                        <div className="flex justify-end">
+                          <BBButton
+                            size="sm"
+                            variant="ghost"
+                            className="text-red hover:text-red border-red/20 hover:border-red/40"
+                            onClick={() => void handleRevokeShareLink(share.id)}
+                            disabled={revokingShareId === share.id}
+                          >
+                            {revokingShareId === share.id ? 'Revoking…' : 'Revoke link'}
+                          </BBButton>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── Sent invites (FileList) ─────────────────── */}
+        <div className="flex-1">
+        <FileList
         files={files}
         loading={loading}
         emptyState={<EmptyShared tab="by-me" onGoToDrive={() => navigate('/')} />}
@@ -536,6 +711,8 @@ export function Shared() {
           </BBButton>
         )}
       />
+        </div>
+      </div>
     )
   }
 
