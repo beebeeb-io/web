@@ -88,7 +88,14 @@ export async function encryptedUpload(
 ): Promise<DriveFile> {
   onProgress?.({ stage: 'Encrypting', progress: 0 })
 
-  const encName = await encryptFilename(fileKey, file.name)
+  // Encrypt metadata as JSON so we can store MIME type zero-knowledge.
+  // The server only sees the opaque ciphertext — it cannot infer the file type.
+  // Backward-compat: old code encrypted just the filename string; new code
+  // encrypts {"name":"filename","mime_type":"image/jpeg"}. Both formats are
+  // handled by decryptFileMetadata() on the read side.
+  const mimeType = file.type || null
+  const metadataPlain = JSON.stringify({ name: file.name, mime_type: mimeType })
+  const encName = await encryptFilename(fileKey, metadataPlain)
   const nameEncrypted = JSON.stringify({
     nonce: toBase64(encName.nonce),
     ciphertext: toBase64(encName.ciphertext),
@@ -112,7 +119,7 @@ export async function encryptedUpload(
       const { file_id } = await withNetworkRetry(() => initUpload({
         file_id: fileId,
         name_encrypted: nameEncrypted,
-        mime_type: file.type || 'application/octet-stream',
+        mime_type: null, // MIME is now encrypted in name_encrypted metadata
         size_bytes: file.size,
         chunk_count: totalChunks,
         parent_id: parentId ?? null,
@@ -138,7 +145,7 @@ export async function encryptedUpload(
         const { file_id } = await withNetworkRetry(() => initUpload({
           file_id: fileId,
           name_encrypted: nameEncrypted,
-          mime_type: file.type || 'application/octet-stream',
+          mime_type: null, // MIME is now encrypted in name_encrypted metadata
           size_bytes: file.size,
           chunk_count: totalChunks,
           parent_id: parentId ?? null,
@@ -150,7 +157,7 @@ export async function encryptedUpload(
       const { file_id } = await withNetworkRetry(() => initUpload({
         file_id: fileId,
         name_encrypted: nameEncrypted,
-        mime_type: file.type || 'application/octet-stream',
+        mime_type: null, // MIME is now encrypted in name_encrypted metadata
         size_bytes: file.size,
         chunk_count: totalChunks,
         parent_id: parentId ?? null,

@@ -109,6 +109,39 @@ export async function decryptFilename(
   return getProxy().decryptFilename(fileKey, nonce, ciphertext)
 }
 
+/**
+ * Decrypt and parse the `name_encrypted` field from a DriveFile.
+ *
+ * Supports two formats:
+ *   New (ZK-safe): the decrypted plaintext is `{"name":"report.pdf","mime_type":"application/pdf"}`
+ *   Legacy:        the decrypted plaintext is just `"report.pdf"` (a bare filename string)
+ *
+ * Always returns `{ name, mimeType }` regardless of format, so callers
+ * are insulated from the migration.
+ */
+export async function decryptFileMetadata(
+  fileKey: Uint8Array,
+  nameEncrypted: string,
+): Promise<{ name: string; mimeType: string | null }> {
+  let name = 'Encrypted file'
+  let mimeType: string | null = null
+  try {
+    const outer = JSON.parse(nameEncrypted) as { nonce: string; ciphertext: string }
+    const plain = await decryptFilename(fileKey, fromBase64(outer.nonce), fromBase64(outer.ciphertext))
+    try {
+      const meta = JSON.parse(plain) as { name?: string; mime_type?: string }
+      name = meta.name ?? plain
+      mimeType = meta.mime_type ?? null
+    } catch {
+      // Legacy format — plain is just the filename string
+      name = plain
+    }
+  } catch {
+    // Decryption failed — return placeholder
+  }
+  return { name, mimeType }
+}
+
 // ─── Recovery phrase ────────────────────────────────
 
 /** Generate a 12-word BIP39 recovery phrase and the corresponding master key. */

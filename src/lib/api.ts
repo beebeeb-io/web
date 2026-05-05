@@ -536,7 +536,8 @@ export async function createFolder(
 export async function initUpload(metadata: {
   file_id?: string
   name_encrypted: string
-  mime_type: string
+  /** Pass null — MIME type is now encrypted inside name_encrypted metadata. */
+  mime_type: string | null
   size_bytes: number
   chunk_count: number
   parent_id?: string | null

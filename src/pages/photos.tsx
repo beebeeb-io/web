@@ -5,7 +5,7 @@ import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '../components/icons'
 import { listFiles, type DriveFile } from '../lib/api'
 import { useKeys } from '../lib/key-context'
-import { decryptFilename, fromBase64 } from '../lib/crypto'
+import { decryptFileMetadata } from '../lib/crypto'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { EmptyPhotos } from '../components/empty-states/empty-photos'
 import { PhotoGroupSkeleton } from '../components/skeleton'
@@ -134,6 +134,9 @@ export function Photos() {
   const [dateDropdownOpen, setDateDropdownOpen] = useState(false)
   const [allFiles, setAllFiles] = useState<DriveFile[]>([])
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({})
+  /** Decrypted MIME types — populated from the encrypted metadata for new uploads
+   *  (where the server stores null). Falls back to f.mime_type for legacy files. */
+  const [decryptedMimeTypes, setDecryptedMimeTypes] = useState<Record<string, string>>({})
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({})
   const loadingThumbs = useRef(new Set<string>())
   const [loading, setLoading] = useState(true)
@@ -156,33 +159,37 @@ export function Photos() {
     fetchAllFiles()
   }, [fetchAllFiles])
 
-  // Decrypt file names
+  // Decrypt file names + MIME types from the encrypted metadata blob.
+  // New uploads: metadata = JSON { name, mime_type } (zero-knowledge).
+  // Legacy uploads: metadata decrypts to a bare filename string.
+  // decryptFileMetadata() handles both formats transparently.
   useEffect(() => {
     if (!isUnlocked || allFiles.length === 0) {
-      if (!isUnlocked) setDecryptedNames({})
+      if (!isUnlocked) {
+        setDecryptedNames({})
+        setDecryptedMimeTypes({})
+      }
       return
     }
     let cancelled = false
     async function decryptAll() {
       const names: Record<string, string> = {}
+      const mimes: Record<string, string> = {}
       for (const file of allFiles) {
         if (cancelled) return
         try {
-          const parsed = JSON.parse(file.name_encrypted) as {
-            nonce: string
-            ciphertext: string
-          }
           const fileKey = await getFileKey(file.id)
-          names[file.id] = await decryptFilename(
-            fileKey,
-            fromBase64(parsed.nonce),
-            fromBase64(parsed.ciphertext),
-          )
+          const { name, mimeType } = await decryptFileMetadata(fileKey, file.name_encrypted)
+          names[file.id] = name
+          if (mimeType) mimes[file.id] = mimeType
         } catch {
-          names[file.id] = file.name_encrypted
+          names[file.id] = 'Encrypted file'
         }
       }
-      if (!cancelled) setDecryptedNames(names)
+      if (!cancelled) {
+        setDecryptedNames(names)
+        setDecryptedMimeTypes(mimes)
+      }
     }
     decryptAll()
     return () => { cancelled = true }
@@ -208,11 +215,14 @@ export function Photos() {
     return raw
   }
 
-  // Filter to media files only
+  // Filter to media files only.
+  // Prefer decrypted MIME type (from encrypted metadata) over f.mime_type
+  // (which is null for ZK-uploaded files where the server doesn't know the type).
   const mediaFiles = allFiles.filter((f) => {
     if (f.is_folder) return false
     const name = displayName(f)
-    return isMediaFile(name, f.mime_type)
+    const mime = decryptedMimeTypes[f.id] ?? f.mime_type
+    return isMediaFile(name, mime)
   })
 
   // Apply date range filter
@@ -233,7 +243,7 @@ export function Photos() {
       id: f.id,
       name,
       sizeBytes: f.size_bytes,
-      isVideo: isVideoFile(name, f.mime_type),
+      isVideo: isVideoFile(name, decryptedMimeTypes[f.id] ?? f.mime_type),
       duration: null,
       isShared: false,
       isFeatured: f.is_starred ?? false,
