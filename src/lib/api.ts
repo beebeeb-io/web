@@ -957,6 +957,28 @@ export async function downloadSharedFile(token: string, passphrase?: string): Pr
   return res.blob()
 }
 
+/**
+ * Fetch the first `byteCount` bytes of a shared file's raw ciphertext.
+ * Used by the Glassbox "what the server sees" panel to show a real hex dump.
+ * Sends a Range header; falls back gracefully if the server returns 200.
+ */
+export async function fetchShareCiphertextPreview(
+  token: string,
+  passphrase?: string,
+  byteCount = 80,
+): Promise<Uint8Array> {
+  const headers: HeadersInit = { Range: `bytes=0-${byteCount - 1}` }
+  if (passphrase) {
+    headers['X-Share-Passphrase'] = passphrase
+  }
+  const res = await fetch(`${API_URL}/api/v1/shares/${token}/download`, { headers })
+  if (!res.ok && res.status !== 206) {
+    throw new ApiError(res.statusText, res.status)
+  }
+  const buf = await res.arrayBuffer()
+  return new Uint8Array(buf).slice(0, byteCount)
+}
+
 export async function listMyShares(): Promise<MyShare[]> {
   const data = await request<{ shares: MyShare[] }>('/api/v1/shares/mine')
   return data.shares

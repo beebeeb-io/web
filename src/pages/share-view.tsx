@@ -9,6 +9,7 @@ import {
   getShare,
   verifySharePassphrase,
   downloadSharedFile,
+  fetchShareCiphertextPreview,
   type ShareView as ShareViewData,
 } from '../lib/api'
 import { decryptFilename, decryptChunk, fromBase64, initCrypto } from '../lib/crypto'
@@ -30,6 +31,240 @@ function formatExpiry(expiresAt: string | null | undefined): string {
   const days = Math.floor(hours / 24)
   return `${days}d remaining`
 }
+
+// ─── Glassbox sub-components ──────────────────────────────────────────────────
+
+/** The amber "Decrypted in your browser" banner with collapsible explanation. */
+function ZeroBanner() {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="rounded-xl border border-amber/30 bg-amber-bg overflow-hidden mb-4">
+      <div className="flex items-start gap-3 px-4 py-3.5">
+        {/* Amber left accent */}
+        <div className="w-0.5 self-stretch bg-amber-deep rounded-full shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <Icon name="lock" size={12} className="text-amber-deep shrink-0" />
+            <span className="text-[13px] font-semibold text-ink">Decrypted in your browser</span>
+          </div>
+          <p className="text-[12px] text-ink-2 leading-relaxed">
+            Beebeeb cannot read this file. The decryption key is in the URL fragment
+            {' '}<span className="font-mono text-[11px] text-amber-deep">#key=…</span>{' '}
+            which never reaches our servers.
+          </p>
+          <button
+            type="button"
+            onClick={() => setOpen(v => !v)}
+            className="mt-2 flex items-center gap-1 text-[11.5px] text-amber-deep font-medium hover:underline underline-offset-2 cursor-pointer"
+          >
+            How does this work?
+            <Icon
+              name="chevron-down"
+              size={10}
+              className={`transition-transform ${open ? 'rotate-180' : ''}`}
+            />
+          </button>
+        </div>
+      </div>
+
+      {open && (
+        <div className="border-t border-amber/20 px-4 py-3 bg-amber-bg/60">
+          <ol className="space-y-2.5">
+            {[
+              {
+                n: '1',
+                title: 'A random key was generated',
+                body: 'When the file was shared, a random 256-bit key was created locally in the sender\'s browser. It never left their device in plaintext.',
+              },
+              {
+                n: '2',
+                title: 'The key encrypted the file',
+                body: 'AES-256-GCM encrypted each chunk of the file client-side, running in WebAssembly. The server only ever received ciphertext.',
+              },
+              {
+                n: '3',
+                title: 'The key lives in the URL fragment',
+                body: 'Browsers never send the #fragment to servers. When you opened this link, the key stayed local — we served you the ciphertext, your browser decrypted it.',
+              },
+            ].map(step => (
+              <li key={step.n} className="flex items-start gap-3">
+                <span className="w-5 h-5 rounded-full bg-amber-deep/20 text-amber-deep text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">
+                  {step.n}
+                </span>
+                <div>
+                  <div className="text-[12px] font-semibold text-ink">{step.title}</div>
+                  <div className="text-[11.5px] text-ink-3 leading-relaxed mt-0.5">{step.body}</div>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Renders the URL with the #key=... fragment highlighted in amber. */
+function UrlAnnotation() {
+  const fullUrl = window.location.href
+  const hashIdx = fullUrl.indexOf('#')
+  if (hashIdx === -1) return null
+
+  const base = fullUrl.slice(0, hashIdx)
+  const fragment = fullUrl.slice(hashIdx) // includes the '#'
+
+  // Extract just the key value for display truncation
+  const params = new URLSearchParams(fragment.slice(1))
+  const keyVal = params.get('key') ?? ''
+  const keyDisplay =
+    keyVal.length > 16
+      ? `${keyVal.slice(0, 8)}…${keyVal.slice(-4)}`
+      : keyVal
+
+  const fragmentDisplay = `#key=${keyDisplay}`
+
+  return (
+    <div className="mt-4 pt-4 border-t border-line">
+      <div className="text-[10.5px] font-mono text-ink-3 break-all leading-relaxed bg-paper-2 rounded-lg border border-line px-3 py-2.5">
+        <span className="text-ink-4">{base}</span>
+        <span
+          className="text-amber-deep font-semibold"
+          title={fragment}
+        >
+          {fragmentDisplay}
+        </span>
+      </div>
+      <div className="flex items-center gap-1 mt-1.5 ml-[calc(1rem+1px)] text-[10.5px] text-ink-4">
+        <svg width="8" height="14" viewBox="0 0 8 14" fill="none" className="shrink-0">
+          <path d="M4 0v10M1 8l3 4 3-4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+        <span>this part never reaches our servers</span>
+      </div>
+    </div>
+  )
+}
+
+/** Converts a Uint8Array to a formatted two-column hex dump string. */
+function toHexDump(bytes: Uint8Array, limit = 64): string {
+  const rows: string[] = []
+  const capped = bytes.slice(0, limit)
+  for (let i = 0; i < capped.length; i += 8) {
+    const chunk = capped.slice(i, i + 8)
+    rows.push(Array.from(chunk).map(b => b.toString(16).padStart(2, '0')).join(' '))
+  }
+  return rows.join('\n')
+}
+
+/** The "Show what the server sees" expandable panel. */
+function ServerViewPanel({
+  token,
+  passphrase,
+  decryptedName,
+}: {
+  token: string
+  passphrase?: string
+  decryptedName: string | null
+}) {
+  const [open, setOpen] = useState(false)
+  const [ciphertext, setCiphertext] = useState<Uint8Array | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [fetchError, setFetchError] = useState(false)
+
+  useEffect(() => {
+    if (!open || ciphertext || loading) return
+    setLoading(true)
+    setFetchError(false)
+    fetchShareCiphertextPreview(token, passphrase)
+      .then(bytes => setCiphertext(bytes))
+      .catch(() => setFetchError(true))
+      .finally(() => setLoading(false))
+  }, [open, ciphertext, loading, token, passphrase])
+
+  const hexDump = ciphertext ? toHexDump(ciphertext, 64) : null
+
+  return (
+    <div className="mt-3">
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-2 text-[11.5px] text-ink-3 hover:text-ink-2 transition-colors cursor-pointer"
+      >
+        <Icon
+          name="chevron-down"
+          size={10}
+          className={`transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+        Show what the server sees
+      </button>
+
+      {open && (
+        <div className="mt-3 rounded-xl border border-line overflow-hidden">
+          {/* Panel header */}
+          <div className="flex items-center gap-2 px-3 py-2 bg-paper-2 border-b border-line">
+            <div className="w-2.5 h-2.5 rounded-full bg-red/60" />
+            <div className="w-2.5 h-2.5 rounded-full bg-amber/60" />
+            <div className="w-2.5 h-2.5 rounded-full bg-green/60" />
+            <span className="ml-1 text-[10px] font-mono text-ink-4">beebeeb-server · share/{token.slice(0, 8)}…</span>
+          </div>
+
+          <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-line">
+            {/* Left: server's view — raw ciphertext */}
+            <div className="flex-1 p-3.5">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-ink-3 mb-2">
+                What the server stored
+              </div>
+              {loading ? (
+                <div className="flex items-center gap-2 text-[11px] text-ink-4 py-2">
+                  <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Fetching ciphertext…
+                </div>
+              ) : fetchError ? (
+                <p className="text-[11px] text-ink-4 italic">Could not fetch</p>
+              ) : hexDump ? (
+                <>
+                  <pre className="font-mono text-[10px] text-ink-3 leading-relaxed whitespace-pre overflow-x-auto bg-paper-3 rounded-md p-2">
+                    {hexDump}
+                  </pre>
+                  <p className="text-[10px] text-ink-4 mt-1.5 italic">
+                    First 64 bytes of AES-256-GCM ciphertext
+                  </p>
+                </>
+              ) : null}
+            </div>
+
+            {/* Right: your view — decrypted */}
+            <div className="flex-1 p-3.5">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-ink-3 mb-2">
+                What you see
+              </div>
+              <div className="flex items-center gap-2 bg-paper-3 rounded-md px-3 py-2.5">
+                <Icon name="file" size={14} className="text-ink-3 shrink-0" />
+                <span className="text-[12px] font-medium text-ink truncate">
+                  {decryptedName ?? 'Decrypting…'}
+                </span>
+              </div>
+              <p className="text-[10px] text-ink-4 mt-1.5 italic">
+                Your browser ran AES-256-GCM in WebAssembly
+              </p>
+            </div>
+          </div>
+
+          {/* Footer explanation */}
+          <div className="px-3.5 py-2.5 bg-paper-2 border-t border-line text-[11px] text-ink-3 leading-relaxed">
+            The math between these two columns is{' '}
+            <span className="font-mono text-[10.5px] text-ink-2">AES-256-GCM</span> decryption,
+            running entirely in your browser's WebAssembly engine. Beebeeb never holds the key.
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export function ShareViewPage() {
   const { token } = useParams<{ token: string }>()
@@ -345,12 +580,17 @@ export function ShareViewPage() {
 
   // File info view
   return (
-    <div className="min-h-screen flex items-center justify-center bg-paper relative overflow-hidden">
+    <div className="min-h-screen flex items-center justify-center bg-paper relative overflow-hidden py-8">
       {honeycombBg}
       <div className="relative w-full max-w-[28rem] mx-4">
-        <div className="text-center mb-8">
+        <div className="text-center mb-6">
           <BBLogo size={16} />
         </div>
+
+        {/* ── Glassbox: zero-knowledge banner — only shown when key is present ── */}
+        {hasKey && <ZeroBanner />}
+
+        {/* ── Main file card ── */}
         <div className="bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
           {/* Header */}
           <div className="px-6 py-4 border-b border-line flex items-center gap-2.5">
@@ -476,6 +716,18 @@ export function ShareViewPage() {
                 {downloadError}
               </div>
             )}
+
+            {/* ── Glassbox: URL annotation + server view — only when key present ── */}
+            {hasKey && token && (
+              <>
+                <UrlAnnotation />
+                <ServerViewPanel
+                  token={token}
+                  passphrase={passphrase || undefined}
+                  decryptedName={decryptedName}
+                />
+              </>
+            )}
           </div>
 
           {/* Footer */}
@@ -484,7 +736,17 @@ export function ShareViewPage() {
               <Icon name="shield" size={11} className="text-amber-deep" />
               End-to-end encrypted with Beebeeb
             </div>
-            <div className="flex items-center justify-center mt-1.5">
+            {/* Learn more + Report */}
+            <div className="flex items-center justify-center gap-3 mt-1.5">
+              <a
+                href="https://beebeeb.io/security"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[11px] text-ink-3 hover:text-ink-2 transition-colors underline-offset-2 hover:underline"
+              >
+                Learn more about our encryption →
+              </a>
+              <span className="text-ink-4">·</span>
               <button
                 type="button"
                 onClick={() => setReportOpen(true)}
