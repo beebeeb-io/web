@@ -1,7 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { loadStripe } from '@stripe/stripe-js'
-import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js'
 import { SettingsShell, SettingsHeader } from '../components/settings-shell'
 import { BBButton } from '../components/bb-button'
 import { BBChip } from '../components/bb-chip'
@@ -18,7 +16,6 @@ import {
   getPaymentMethod,
   cancelSubscription,
   reactivateSubscription,
-  createSetupIntent,
   getPreference,
   setPreference,
   getApiUrl,
@@ -29,13 +26,6 @@ import {
 } from '../lib/api'
 import { formatStorageSI } from '../lib/format'
 import { StorageBreakdown, type StorageSegment } from '../components/storage-breakdown'
-
-/* ── Stripe setup ──────────────────────────────────────── */
-
-const STRIPE_PK = (import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY as string | undefined)
-  || 'pk_test_51TS19oEuxoMq4EoFLsLq7PjY1YTnoD7rj5ALrJxlSJeXfGQtqsvVPpomoQsfGQ82u5l5GyK23gRR0ID4QOZKVzES004EwFLqHF'
-
-const stripePromise = loadStripe(STRIPE_PK)
 
 /* ── Plan metadata ─────────────────────────────────────── */
 
@@ -89,62 +79,6 @@ function AnimatedProgress({ percent, className = '' }: { percent: number; classN
   )
 }
 
-/* ── Stripe Payment Setup Form ─────────────────────────── */
-
-function PaymentSetupForm({ onSuccess, onCancel }: { onSuccess: () => void; onCancel: () => void }) {
-  const stripe = useStripe()
-  const elements = useElements()
-  const { showToast } = useToast()
-  const [submitting, setSubmitting] = useState(false)
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!stripe || !elements) return
-    setSubmitting(true)
-    try {
-      const { error } = await stripe.confirmSetup({
-        elements,
-        confirmParams: {
-          return_url: window.location.origin + '/billing',
-        },
-        redirect: 'if_required',
-      })
-      if (error) {
-        showToast({
-          icon: 'x',
-          title: 'Payment setup failed',
-          description: error.message,
-          danger: true,
-        })
-      } else {
-        showToast({ icon: 'check', title: 'Payment method saved' })
-        onSuccess()
-      }
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4 mt-3">
-      <PaymentElement options={{ layout: 'tabs' }} />
-      <div className="flex gap-2">
-        <BBButton
-          type="submit"
-          variant="amber"
-          size="sm"
-          disabled={!stripe || submitting}
-        >
-          {submitting ? 'Saving...' : 'Save payment method'}
-        </BBButton>
-        <BBButton type="button" size="sm" variant="ghost" onClick={onCancel}>
-          Cancel
-        </BBButton>
-      </div>
-    </form>
-  )
-}
-
 /* ── Main component ────────────────────────────────────── */
 
 export function Billing() {
@@ -162,9 +96,6 @@ export function Billing() {
   const [cancelConfirm, setCancelConfirm] = useState(false)
   const [cancelLoading, setCancelLoading] = useState(false)
   const [reactivateLoading, setReactivateLoading] = useState(false)
-  const [showPaymentSetup, setShowPaymentSetup] = useState(false)
-  const [setupSecret, setSetupSecret] = useState<string | null>(null)
-  const [setupLoading, setSetupLoading] = useState(false)
   // Invoice preferences
   const [invoiceSendEmail, setInvoiceSendEmail] = useState(true)
   const [invoiceEmail, setInvoiceEmail] = useState('')
@@ -266,35 +197,6 @@ export function Billing() {
     } finally {
       setReactivateLoading(false)
     }
-  }
-
-  async function handleAddPaymentMethod() {
-    setSetupLoading(true)
-    try {
-      const { client_secret } = await createSetupIntent()
-      setSetupSecret(client_secret)
-      setShowPaymentSetup(true)
-    } catch (err) {
-      showToast({
-        icon: 'x',
-        title: 'Could not initialize payment setup',
-        description: err instanceof Error ? err.message : 'Please try again.',
-        danger: true,
-      })
-    } finally {
-      setSetupLoading(false)
-    }
-  }
-
-  function handlePaymentSetupSuccess() {
-    setShowPaymentSetup(false)
-    setSetupSecret(null)
-    void loadData()
-  }
-
-  function handlePaymentSetupCancel() {
-    setShowPaymentSetup(false)
-    setSetupSecret(null)
   }
 
   async function handleManageBilling() {
@@ -437,10 +339,10 @@ export function Billing() {
             <BBButton
               size="sm"
               variant="danger"
-              onClick={() => void handleAddPaymentMethod()}
-              disabled={setupLoading || showPaymentSetup}
+              onClick={() => void handleManageBilling()}
+              disabled={portalLoading}
             >
-              {setupLoading ? 'Loading...' : 'Update payment method'}
+              {portalLoading ? 'Redirecting...' : 'Update payment method'}
             </BBButton>
           </div>
         )}
@@ -623,25 +525,6 @@ export function Billing() {
                   Upgrade to add a payment method and unlock more storage.
                 </div>
               </div>
-            ) : showPaymentSetup && setupSecret ? (
-              <Elements
-                stripe={stripePromise}
-                options={{
-                  clientSecret: setupSecret,
-                  appearance: {
-                    theme: 'flat',
-                    variables: {
-                      fontFamily: 'Inter, sans-serif',
-                      borderRadius: '6px',
-                    },
-                  },
-                }}
-              >
-                <PaymentSetupForm
-                  onSuccess={handlePaymentSetupSuccess}
-                  onCancel={handlePaymentSetupCancel}
-                />
-              </Elements>
             ) : payment ? (
               <div className="space-y-2 flex-1">
                 <div className="flex items-center gap-3 p-3 rounded-lg border border-line bg-paper-2">
@@ -667,14 +550,15 @@ export function Billing() {
                   </div>
                   <BBChip variant="green">Default</BBChip>
                 </div>
+                {/* Payment method changes go through the Stripe Customer Portal — no Stripe.js on our domain */}
                 <BBButton
                   size="sm"
                   variant="ghost"
                   className="w-full"
-                  onClick={() => void handleAddPaymentMethod()}
-                  disabled={setupLoading}
+                  onClick={() => void handleManageBilling()}
+                  disabled={portalLoading}
                 >
-                  {setupLoading ? 'Loading...' : 'Update payment method'}
+                  {portalLoading ? 'Redirecting...' : 'Update payment method'}
                 </BBButton>
               </div>
             ) : (
@@ -689,10 +573,10 @@ export function Billing() {
                 <BBButton
                   size="sm"
                   variant="amber"
-                  onClick={() => void handleAddPaymentMethod()}
-                  disabled={setupLoading}
+                  onClick={() => void handleManageBilling()}
+                  disabled={portalLoading}
                 >
-                  {setupLoading ? 'Loading...' : 'Add payment method'}
+                  {portalLoading ? 'Redirecting...' : 'Add payment method'}
                 </BBButton>
               </div>
             )}
