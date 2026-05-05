@@ -17,6 +17,7 @@ const navItems: NavItem[] = [
   { id: 'notifications', label: 'Notifications', icon: 'clock', href: '/settings/notifications' },
   { id: 'billing', label: 'Plan & billing', icon: 'file', href: '/settings/billing' },
   { id: 'appearance', label: 'Appearance', icon: 'star', href: '/settings/appearance' },
+  { id: 'import', label: 'Import', icon: 'download', href: '/settings/import' },
   { id: 'referrals', label: 'Referrals', icon: 'star', href: '/settings/referrals' },
   { id: 'developer', label: 'Developer', icon: 'key', href: '/settings/developer' },
 ]
