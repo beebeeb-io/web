@@ -12,14 +12,59 @@ import wasmUrl from 'beebeeb-wasm/beebeeb_wasm_bg.wasm?url'
 
 let wasmModule: typeof WasmTypes | null = null
 
+/** Manifest written by gen-wasm-sri.mjs at build time. */
+interface WasmSriManifest {
+  integrity: string
+  file: string
+  generated: string
+}
+
+/**
+ * In production, load the WASM with integrity verification:
+ *  1. Fetch the SRI manifest written at build time → dist/wasm-sri.json
+ *  2. Pass integrity= to fetch() so the browser rejects any tampered binary
+ *  3. Hand the verified ArrayBuffer to wasm-bindgen's init()
+ *
+ * In development, skip the manifest (no wasm-sri.json generated) and load
+ * via URL directly — Vite HMR and source-map support remain unaffected.
+ */
 async function ensureWasm(): Promise<typeof WasmTypes> {
   if (wasmModule) return wasmModule
   const mod = await import('beebeeb-wasm')
+
   if (typeof mod.default === 'function') {
-    // Pass the resolved WASM URL explicitly — the default() function
-    // accepts a URL/string to fetch the .wasm binary from.
-    await mod.default(wasmUrl)
+    if (import.meta.env.PROD) {
+      // Fetch the build-time SRI manifest
+      let manifest: WasmSriManifest | null = null
+      try {
+        const resp = await fetch('/wasm-sri.json')
+        if (resp.ok) {
+          manifest = await resp.json() as WasmSriManifest
+        } else {
+          console.warn('[crypto] WASM SRI manifest not found (HTTP', resp.status, ')— loading without integrity check')
+        }
+      } catch (e) {
+        console.warn('[crypto] WASM SRI manifest fetch failed:', e, '— loading without integrity check')
+      }
+
+      if (manifest?.integrity) {
+        // fetch() with integrity= enforces SHA-384 — browser throws on mismatch
+        const wasmResp = await fetch(wasmUrl, {
+          integrity: manifest.integrity,
+          credentials: 'same-origin',
+        })
+        const wasmBuffer = await wasmResp.arrayBuffer()
+        await mod.default(wasmBuffer)
+      } else {
+        // Degraded: Vite content-hash in filename still provides URL-level integrity
+        await mod.default(wasmUrl)
+      }
+    } else {
+      // Development: pass URL directly (no manifest generated)
+      await mod.default(wasmUrl)
+    }
   }
+
   wasmModule = mod
   return wasmModule
 }
