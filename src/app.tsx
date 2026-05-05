@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import React, { useState, useCallback, useEffect, lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { AuthProvider, useAuth } from './lib/auth-context'
@@ -18,53 +18,65 @@ import { registerErrorNotifier, registerSessionExpiredHandler } from './lib/api'
 import { CommandPalette } from './components/command-palette'
 import { ShortcutsCheatsheet } from './components/shortcuts-cheatsheet'
 import { useKeyboardShortcuts } from './hooks/use-keyboard-shortcuts'
+// ── Eager: needed on every first load ────────────────────────────────────────
 import { Signup } from './pages/signup'
 import { Login } from './pages/login'
 import { Onboarding } from './pages/onboarding'
 import { Drive } from './pages/drive'
-import { Starred } from './pages/starred'
-import { Recent } from './pages/recent'
-import { SettingsAccount } from './pages/settings/account'
-import { SettingsNotifications } from './pages/settings/notifications'
-import { SettingsPrivacy } from './pages/settings/privacy'
-import { Cookies } from './pages/cookies'
-import { SettingsAppearance } from './pages/settings/appearance'
-import { SettingsDeveloper } from './pages/settings/developer'
-import { SettingsReferrals } from './pages/settings/referrals'
-import { SettingsImport } from './pages/settings/import'
-import { DropboxCallback } from './pages/settings/import/dropbox-callback'
-import { GoogleCallback } from './pages/settings/import/google-callback'
-import { Security } from './pages/security'
-import { Trash } from './pages/trash'
-import { Search } from './pages/search'
-import { Pricing } from './pages/pricing'
-import { Billing } from './pages/billing'
-import { Photos } from './pages/photos'
-import { ShareViewPage } from './pages/share-view'
-import { ForgotPassword } from './pages/forgot-password'
-import { ResetPassword } from './pages/reset-password'
-import { RecoverWithPhrase } from './pages/recover-with-phrase'
-import { Compliance } from './pages/admin/compliance'
-import { AdminUsers } from './pages/admin/users'
-import { AdminBilling } from './pages/admin/billing-overview'
-import { Dashboard } from './pages/admin/dashboard'
-import { Infrastructure } from './pages/admin/infrastructure'
-import { Security as AdminSecurity } from './pages/admin/security'
-import { CliAuth } from './pages/cli-auth'
-import { PoolLifecycle } from './pages/admin/pool-lifecycle'
-import { MissionControl } from './pages/admin/mission-control'
-import { AdminSettings } from './pages/admin/settings'
-import { VerifyEmail } from './pages/verify-email'
-import { Migration } from './pages/migration'
-import { Team } from './pages/team'
-import { AcceptInvite } from './pages/accept-invite'
-import { Shared } from './pages/shared'
-import { SharedFolder } from './pages/shared-folder'
-import { PasskeySetup } from './pages/passkey-setup'
-import { DeleteAccount } from './pages/delete-account'
-import { Receive } from './pages/receive'
-import { NotFound } from './pages/errors/not-found'
-import { ServerError } from './pages/errors/server-error'
+
+// ── Lazy: split into separate chunks, loaded on demand ───────────────────────
+// Named-export helper: React.lazy requires a default export
+function lazyNamed<T>(factory: () => Promise<{ [K in keyof T]: T[K] }>, name: keyof T) {
+  return lazy(() => factory().then(m => ({ default: m[name] as React.ComponentType })))
+}
+
+const Starred        = lazyNamed(() => import('./pages/starred'),        'Starred')
+const Recent         = lazyNamed(() => import('./pages/recent'),         'Recent')
+const Shared         = lazyNamed(() => import('./pages/shared'),         'Shared')
+const SharedFolder   = lazyNamed(() => import('./pages/shared-folder'),  'SharedFolder')
+const Trash          = lazyNamed(() => import('./pages/trash'),          'Trash')
+const Search         = lazyNamed(() => import('./pages/search'),         'Search')
+const Photos         = lazyNamed(() => import('./pages/photos'),         'Photos')
+const Security       = lazyNamed(() => import('./pages/security'),       'Security')
+const Pricing        = lazyNamed(() => import('./pages/pricing'),        'Pricing')
+const Billing        = lazyNamed(() => import('./pages/billing'),        'Billing')
+const ShareViewPage  = lazyNamed(() => import('./pages/share-view'),     'ShareViewPage')
+const ForgotPassword = lazyNamed(() => import('./pages/forgot-password'),'ForgotPassword')
+const ResetPassword  = lazyNamed(() => import('./pages/reset-password'), 'ResetPassword')
+const RecoverWithPhrase = lazyNamed(() => import('./pages/recover-with-phrase'), 'RecoverWithPhrase')
+const VerifyEmail    = lazyNamed(() => import('./pages/verify-email'),   'VerifyEmail')
+const Migration      = lazyNamed(() => import('./pages/migration'),      'Migration')
+const Team           = lazyNamed(() => import('./pages/team'),           'Team')
+const AcceptInvite   = lazyNamed(() => import('./pages/accept-invite'),  'AcceptInvite')
+const PasskeySetup   = lazyNamed(() => import('./pages/passkey-setup'),  'PasskeySetup')
+const DeleteAccount  = lazyNamed(() => import('./pages/delete-account'), 'DeleteAccount')
+const Receive        = lazyNamed(() => import('./pages/receive'),        'Receive')
+const CliAuth        = lazyNamed(() => import('./pages/cli-auth'),       'CliAuth')
+const Cookies        = lazyNamed(() => import('./pages/cookies'),        'Cookies')
+const NotFound       = lazyNamed(() => import('./pages/errors/not-found'),   'NotFound')
+const ServerError    = lazyNamed(() => import('./pages/errors/server-error'), 'ServerError')
+
+// Settings (grouped — lazy-loaded as a settings bundle)
+const SettingsAccount       = lazyNamed(() => import('./pages/settings/account'),       'SettingsAccount')
+const SettingsNotifications = lazyNamed(() => import('./pages/settings/notifications'), 'SettingsNotifications')
+const SettingsPrivacy       = lazyNamed(() => import('./pages/settings/privacy'),       'SettingsPrivacy')
+const SettingsAppearance    = lazyNamed(() => import('./pages/settings/appearance'),    'SettingsAppearance')
+const SettingsDeveloper     = lazyNamed(() => import('./pages/settings/developer'),     'SettingsDeveloper')
+const SettingsReferrals     = lazyNamed(() => import('./pages/settings/referrals'),     'SettingsReferrals')
+const SettingsImport        = lazyNamed(() => import('./pages/settings/import'),        'SettingsImport')
+const DropboxCallback       = lazyNamed(() => import('./pages/settings/import/dropbox-callback'), 'DropboxCallback')
+const GoogleCallback        = lazyNamed(() => import('./pages/settings/import/google-callback'),  'GoogleCallback')
+
+// Admin (heavy, admin-only — largest split opportunity)
+const Compliance    = lazyNamed(() => import('./pages/admin/compliance'),        'Compliance')
+const AdminUsers    = lazyNamed(() => import('./pages/admin/users'),             'AdminUsers')
+const AdminBilling  = lazyNamed(() => import('./pages/admin/billing-overview'),  'AdminBilling')
+const Dashboard     = lazyNamed(() => import('./pages/admin/dashboard'),         'Dashboard')
+const Infrastructure = lazyNamed(() => import('./pages/admin/infrastructure'),   'Infrastructure')
+const AdminSecurity = lazy(() => import('./pages/admin/security').then(m => ({ default: m.Security as React.ComponentType })))
+const PoolLifecycle = lazyNamed(() => import('./pages/admin/pool-lifecycle'),    'PoolLifecycle')
+const MissionControl = lazyNamed(() => import('./pages/admin/mission-control'), 'MissionControl')
+const AdminSettings = lazyNamed(() => import('./pages/admin/settings'),          'AdminSettings')
 import { ThemeProvider } from './lib/theme-context'
 import { DisplayProvider } from './lib/display-context'
 import { CookieBanner } from './components/cookie-banner'
@@ -207,6 +219,11 @@ export function App() {
         <OfflineBanner />
         <GlobalShortcuts />
         <CookieBanner />
+        <Suspense fallback={
+          <div className="flex items-center justify-center min-h-screen">
+            <div className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-amber" />
+          </div>
+        }>
         <Routes>
           <Route
             path="/signup"
@@ -411,6 +428,7 @@ export function App() {
           <Route path="/500" element={<ServerError />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
+        </Suspense>
         </DisplayProvider>
         </ToastProvider>
         </SyncProvider>
