@@ -18,6 +18,8 @@ import {
   fromBase64,
   zeroize,
   encryptFileKeyForSharing,
+  wrapKeyForShare,
+  toBase64url,
 } from '../lib/crypto'
 import {
   generateFolderKey,
@@ -462,6 +464,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
   const [error, setError] = useState<string | null>(null)
   const [inviteDone, setInviteDone] = useState<string | null>(null)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
+  const [doubleEncrypted, setDoubleEncrypted] = useState(false)
 
   const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
 
@@ -489,6 +492,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       setLoading(false)
       setInviteDone(null)
       setFeedbackOpen(false)
+      setDoubleEncrypted(false)
     }
   }, [open])
 
@@ -516,16 +520,41 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
     }
 
     try {
-      // Derive the real file key for the decryption key
       const fileKey = await getFileKey(fileId)
-      const keyB64 = toBase64(fileKey)
-      zeroize(fileKey)
 
-      const result = await createShare(fileId, options)
+      let keyForUrl: string  // what goes into the #key= fragment
+      let result
+
+      if (doubleEncrypted) {
+        // ── Double-encrypted mode ─────────────────────────────────────────
+        // 1. Generate K_c client-side (never leaves the browser)
+        const clientKey = crypto.getRandomValues(new Uint8Array(32))
+
+        // 2. Wrap the file key under K_c — server stores opaque blob, sees nothing
+        const wrappedFileKey = await wrapKeyForShare(clientKey, fileKey)
+        zeroize(fileKey)
+
+        // 3. Send wrapped_file_key to server as base64
+        options.wrapped_file_key = toBase64(wrappedFileKey)
+
+        // 4. The URL fragment carries K_c (base64url — no + or / in URLs)
+        keyForUrl = toBase64url(clientKey)
+        zeroize(clientKey)
+
+        result = await createShare(fileId, options)
+      } else {
+        // ── Standard mode — existing behaviour ────────────────────────────
+        // The file key goes directly into the URL fragment.
+        keyForUrl = toBase64(fileKey)
+        zeroize(fileKey)
+        result = await createShare(fileId, options)
+      }
+
       setShareResult(result)
-      setDecryptionKey(keyB64)
+      setDecryptionKey(keyForUrl)
+
       if (onShareCreated) {
-        const url = `${window.location.origin}/s/${result.token}#key=${encodeURIComponent(keyB64)}`
+        const url = `${window.location.origin}/s/${result.token}#key=${encodeURIComponent(keyForUrl)}`
         onShareCreated({ fileId, shareUrl: url })
       }
     } catch (e) {
@@ -533,7 +562,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
     } finally {
       setLoading(false)
     }
-  }, [fileId, expiryIdx, maxOpensIdx, passphrase, isUnlocked, getFileKey, onShareCreated])
+  }, [fileId, expiryIdx, maxOpensIdx, passphrase, isUnlocked, getFileKey, onShareCreated, doubleEncrypted])
 
   const copyToClipboard = useCallback(async (text: string, type: 'full-link' | 'split-link' | 'split-key') => {
     try {
@@ -644,6 +673,15 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
                         <span className="flex items-center gap-1">
                           <Icon name="lock" size={11} />
                           Passphrase required
+                        </span>
+                      </>
+                    )}
+                    {shareResult.double_encrypted && (
+                      <>
+                        <span className="w-px h-3 bg-line-2" />
+                        <span className="flex items-center gap-1 text-amber-deep font-medium">
+                          <Icon name="shield" size={11} />
+                          Double encrypted
                         </span>
                       </>
                     )}
@@ -798,6 +836,37 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
                       <p className="text-[11px] text-ink-3 mt-1">
                         Recipients enter this before the file decrypts. Share it out-of-band.
                       </p>
+                    </div>
+
+                    {/* Double-encryption toggle */}
+                    <div className="mb-[18px]">
+                      <label className="flex items-start gap-3 cursor-pointer group">
+                        <div className="relative mt-0.5 shrink-0">
+                          <input
+                            type="checkbox"
+                            checked={doubleEncrypted}
+                            onChange={(e) => setDoubleEncrypted(e.target.checked)}
+                            className="sr-only peer"
+                          />
+                          <div className={`w-9 h-5 rounded-full transition-colors ${doubleEncrypted ? 'bg-amber' : 'bg-line-2'}`} />
+                          <div className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-paper shadow-sm transition-transform ${doubleEncrypted ? 'translate-x-4' : 'translate-x-0'}`} />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[13px] font-medium text-ink">Double encrypted</span>
+                            {doubleEncrypted && (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-px bg-amber-bg border border-amber/40 rounded text-[9.5px] font-semibold text-amber-deep uppercase tracking-wide">
+                                <Icon name="shield" size={9} /> Active
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-ink-3 mt-0.5 leading-relaxed">
+                            {doubleEncrypted
+                              ? 'Even Beebeeb cannot decrypt this link. Only someone with the exact URL can access the file.'
+                              : 'Beebeeb holds a wrapped copy of the key for revocation. Enable for full client-side control.'}
+                          </p>
+                        </div>
+                      </label>
                     </div>
 
                     {error && (

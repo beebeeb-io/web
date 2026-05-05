@@ -245,3 +245,82 @@ export function fromBase64(b64: string): Uint8Array {
 export function zeroize(buffer: Uint8Array): void {
   buffer.fill(0)
 }
+
+// ─── Client-side share key wrapping ─────────────────────────────────────────
+//
+// Used for "double-encrypted" shares where the client generates K_c and wraps
+// the file key under it before sending to the server. The server stores the
+// opaque blob but can never recover the file key without K_c — which only
+// lives in the URL fragment (#key=…) and is never sent to the server.
+//
+// Wire format: nonce(12 bytes) || AES-256-GCM-ciphertext(32 + 16 tag = 48 bytes)
+// Total: 60 bytes.
+
+/**
+ * Wrap a file key under a client-generated share key using AES-256-GCM.
+ * Returns nonce(12) || ciphertext(48) = 60 bytes.
+ *
+ * @param wrapKey  32-byte client key (stays in URL fragment, never sent to server)
+ * @param keyToWrap  32-byte file key to protect
+ */
+export async function wrapKeyForShare(
+  wrapKey: Uint8Array,
+  keyToWrap: Uint8Array,
+): Promise<Uint8Array> {
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    wrapKey.buffer as ArrayBuffer,
+    { name: 'AES-GCM' },
+    false,
+    ['encrypt'],
+  )
+  const encrypted = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv, tagLength: 128 },
+    cryptoKey,
+    keyToWrap.buffer as ArrayBuffer,
+  )
+  const result = new Uint8Array(iv.length + encrypted.byteLength)
+  result.set(iv, 0)
+  result.set(new Uint8Array(encrypted), iv.length)
+  return result
+}
+
+/**
+ * Unwrap a file key that was previously wrapped with wrapKeyForShare.
+ * Used on the share-view page when the recipient opens a double-encrypted link.
+ *
+ * @param wrapKey  32-byte client key extracted from the URL #key= fragment
+ * @param wrappedKey  60-byte blob from the server (nonce || ciphertext)
+ */
+export async function unwrapKeyFromShare(
+  wrapKey: Uint8Array,
+  wrappedKey: Uint8Array,
+): Promise<Uint8Array> {
+  const iv = wrappedKey.slice(0, 12)
+  const ciphertext = wrappedKey.slice(12)
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    wrapKey.buffer as ArrayBuffer,
+    { name: 'AES-GCM' },
+    false,
+    ['decrypt'],
+  )
+  const plaintext = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv, tagLength: 128 },
+    cryptoKey,
+    ciphertext.buffer as ArrayBuffer,
+  )
+  return new Uint8Array(plaintext)
+}
+
+/**
+ * Base64url encode (URL-safe, no padding).
+ * Use this for keys in URL fragments — avoids %2B / %2F encoding.
+ */
+export function toBase64url(bytes: Uint8Array): string {
+  return toBase64(bytes)
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '')
+}

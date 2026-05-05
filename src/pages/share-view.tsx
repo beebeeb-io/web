@@ -13,7 +13,7 @@ import {
   getToken,
   type ShareView as ShareViewData,
 } from '../lib/api'
-import { decryptFilename, decryptChunk, fromBase64, initCrypto } from '../lib/crypto'
+import { decryptFilename, decryptChunk, fromBase64, unwrapKeyFromShare, initCrypto } from '../lib/crypto'
 import { formatBytes } from '../lib/format'
 
 
@@ -337,7 +337,9 @@ export function ShareViewPage() {
     return shareData?.name_encrypted ?? 'Unknown file'
   }
 
-  // Extract the file key from the URL fragment (#key=...)
+  // Extract the raw key bytes from the URL fragment (#key=...).
+  // For standard shares: this IS the file key.
+  // For double-encrypted shares: this is K_c; call resolveFileKey() to unwrap.
   function getKeyFromFragment(): Uint8Array | null {
     const hash = window.location.hash
     if (!hash) return null
@@ -345,7 +347,37 @@ export function ShareViewPage() {
     const keyB64 = params.get('key')
     if (!keyB64) return null
     try {
-      return fromBase64(decodeURIComponent(keyB64))
+      // Accept both standard base64 and base64url (double-encrypted links use url-safe)
+      const normalized = decodeURIComponent(keyB64).replace(/-/g, '+').replace(/_/g, '/')
+      return fromBase64(normalized)
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Resolve the actual file decryption key.
+   * - Standard share: key from fragment IS the file key → returns it directly.
+   * - Double-encrypted share: key from fragment is K_c → unwrap wrapped_file_key.
+   */
+  async function resolveFileKey(shareData: ShareViewData | null): Promise<Uint8Array | null> {
+    const keyFromFragment = getKeyFromFragment()
+    if (!keyFromFragment) return null
+
+    if (!shareData?.double_encrypted) {
+      // Standard: fragment = file key
+      return keyFromFragment
+    }
+
+    // Double-encrypted: fragment = K_c, need to unwrap wrapped_file_key
+    if (!shareData.wrapped_file_key) {
+      console.error('[share-view] double_encrypted=true but no wrapped_file_key in response')
+      return null
+    }
+    try {
+      await initCrypto()
+      const wrappedBytes = fromBase64(shareData.wrapped_file_key)
+      return await unwrapKeyFromShare(keyFromFragment, wrappedBytes)
     } catch {
       return null
     }
@@ -381,21 +413,22 @@ export function ShareViewPage() {
       })
   }, [token])
 
-  // Decrypt the filename using the key from the URL fragment
+  // Decrypt the filename using the resolved file key.
+  // For double-encrypted shares, resolveFileKey() unwraps the wrapped_file_key first.
   useEffect(() => {
     if (!shareData?.name_encrypted) return
-    const fileKey = getKeyFromFragment()
-    if (!fileKey) return
     let cancelled = false
     async function decrypt() {
       try {
         await initCrypto()
+        const fileKey = await resolveFileKey(shareData)
+        if (!fileKey || cancelled) return
         const parsed = JSON.parse(shareData!.name_encrypted!) as {
           nonce: string
           ciphertext: string
         }
         const name = await decryptFilename(
-          fileKey!,
+          fileKey,
           fromBase64(parsed.nonce),
           fromBase64(parsed.ciphertext),
         )
@@ -406,6 +439,7 @@ export function ShareViewPage() {
     }
     decrypt()
     return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shareData, keyAvailable])
 
   /** Handle manual key entry to unlock the file. */
@@ -446,11 +480,18 @@ export function ShareViewPage() {
 
   const handleDownload = useCallback(async () => {
     if (!token || !shareData) return
-    const key = getKeyFromFragment()
-    if (!key) {
-      setDownloadError('Decryption key missing. Make sure you have the full share link including the #key= fragment.')
+
+    // Resolve the file key — handles both standard and double-encrypted shares
+    const fileKey = await resolveFileKey(shareData)
+    if (!fileKey) {
+      setDownloadError(
+        shareData.double_encrypted
+          ? 'Decryption key missing or invalid. The full share URL (including #key=…) is required.'
+          : 'Decryption key missing. Make sure you have the full share link including the #key= fragment.',
+      )
       return
     }
+
     setDownloading(true)
     setDownloadError(null)
     try {
@@ -461,7 +502,7 @@ export function ShareViewPage() {
       const NONCE_LEN = 12
       const nonce = encrypted.slice(0, NONCE_LEN)
       const ciphertext = encrypted.slice(NONCE_LEN)
-      const plaintext = await decryptChunk(key, nonce, ciphertext)
+      const plaintext = await decryptChunk(fileKey, nonce, ciphertext)
 
       const decryptedBlob = new Blob([plaintext as BlobPart], { type: shareData.mime_type || 'application/octet-stream' })
       const url = URL.createObjectURL(decryptedBlob)
@@ -477,7 +518,8 @@ export function ShareViewPage() {
     } finally {
       setDownloading(false)
     }
-  }, [token, shareData, decryptedName, passphrase])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, shareData, decryptedName, passphrase, keyAvailable])
 
   // Honeycomb background pattern
   const honeycombBg = (
@@ -637,6 +679,13 @@ export function ShareViewPage() {
                 <Icon name="lock" size={9} /> E2EE
               </span>
             </BBChip>
+            {shareData?.double_encrypted && (
+              <BBChip variant="amber">
+                <span className="flex items-center gap-1 text-[9.5px]">
+                  <Icon name="shield" size={9} /> Double encrypted
+                </span>
+              </BBChip>
+            )}
           </div>
 
           {/* File info */}

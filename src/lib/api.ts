@@ -858,6 +858,14 @@ export interface ShareOptions {
   expires_in_hours?: number | null
   max_opens?: number | null
   passphrase?: string
+  /**
+   * When set, the client has wrapped the file key under a client-generated key
+   * (double-encrypted mode). The server stores this opaque blob and returns it
+   * to recipients — the server cannot decrypt it without the client key that
+   * lives only in the URL fragment.
+   * Format: base64(nonce(12) || AES-256-GCM-ciphertext(48)) = 80 chars.
+   */
+  wrapped_file_key?: string
 }
 
 export interface ShareInfo {
@@ -868,6 +876,8 @@ export interface ShareInfo {
   max_opens: number | null
   has_passphrase: boolean
   created_at: string
+  /** True when the client supplied wrapped_file_key at creation time. */
+  double_encrypted?: boolean
 }
 
 export interface ShareView {
@@ -885,6 +895,19 @@ export interface ShareView {
   requires_passphrase?: boolean
   error?: string
   message?: string
+  /**
+   * True when the share was created in double-encrypted mode.
+   * When true, wrapped_file_key is present and the #key= fragment contains
+   * the client key K_c — not the file key directly.
+   * Recipients must: fileKey = AES-GCM-Decrypt(K_c, wrapped_file_key).
+   */
+  double_encrypted?: boolean
+  /**
+   * Base64-encoded wrapped file key (nonce || ciphertext, 60 bytes).
+   * Only present when double_encrypted === true.
+   * The server stores this opaque blob; decryption requires K_c from the URL fragment.
+   */
+  wrapped_file_key?: string
 }
 
 export interface MyShare {
