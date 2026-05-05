@@ -22,8 +22,10 @@ import {
   opaqueRegistrationFinish,
   deriveX25519Public,
   computeRecoveryCheck,
+  deriveFileKey,
   toBase64,
 } from '../lib/crypto'
+import { encryptedUpload } from '../lib/encrypted-upload'
 
 type Step = 'display' | 'verify' | 'password' | 'processing'
 
@@ -231,6 +233,38 @@ export function Onboarding() {
       // 4. Wrap master key with password, store in IndexedDB, set in memory
       setProcessingStatus('Securing your vault...')
       await setMasterKey(masterKeyBytes, password)
+
+      // 5. Upload a welcome file so new users land on a non-empty drive
+      setProcessingStatus('Setting up your vault...')
+      try {
+        const welcomeContent = [
+          '# Welcome to Beebeeb',
+          '',
+          'Your files are now protected by end-to-end encryption.',
+          'The decryption key lives on this device — we never see it.',
+          '',
+          '## Try it',
+          '- Drag a file here to upload (it\'s encrypted before leaving your browser)',
+          '- Click "Share" to create a link (the key is in the URL fragment)',
+          '- Open the link in an incognito tab — watch it decrypt in the browser',
+          '',
+          '## Need help?',
+          '- Docs: https://docs.beebeeb.io',
+          '- Support: support@beebeeb.io',
+          '',
+          'You can delete this file anytime.',
+        ].join('\n')
+        const welcomeFile = new File(
+          [new TextEncoder().encode(welcomeContent)],
+          'Welcome to Beebeeb.md',
+          { type: 'text/markdown' },
+        )
+        const fileId = crypto.randomUUID()
+        const fileKey = await deriveFileKey(masterKeyBytes, fileId)
+        await encryptedUpload(welcomeFile, fileId, fileKey)
+      } catch {
+        // Welcome file is a nice-to-have — never block account creation on failure
+      }
 
       // 6. Refresh user state and navigate to drive
       setProcessingStatus('Almost there...')
