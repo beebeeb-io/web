@@ -925,6 +925,7 @@ export interface MyShare {
   max_opens: number | null
   open_count: number
   has_passphrase: boolean
+  revoked?: boolean
   created_at: string
   file: {
     name_encrypted: string
@@ -1183,12 +1184,15 @@ export interface Plan {
 }
 
 export interface BillingSyncResult {
-  plans_synced: number
+  /** Total plans upserted (server field: synced) */
+  synced: number
+  /** Alias for synced — server may return either */
+  count?: number
+  plans_synced?: number
   created: number
   updated: number
-  already_up_to_date: boolean
-  stripe_reachable: boolean
   synced_at: string
+  message?: string
 }
 
 export async function syncBillingPlans(): Promise<BillingSyncResult> {

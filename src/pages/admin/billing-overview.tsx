@@ -149,9 +149,11 @@ export function AdminBilling() {
         <div className="ml-auto flex items-center gap-3">
           {syncResult && (
             <span className="text-[11px] text-ink-3 font-mono">
-              {syncResult.already_up_to_date
-                ? `Already up to date · last synced ${formatTimeAgo(syncResult.synced_at)}`
-                : `Synced ${syncResult.plans_synced} plans (${syncResult.created} created, ${syncResult.updated} updated) · ${formatTimeAgo(syncResult.synced_at)}`
+              {syncResult.message
+                ? `${syncResult.message} · ${formatTimeAgo(syncResult.synced_at)}`
+                : (syncResult.synced ?? syncResult.plans_synced ?? 0) === 0
+                  ? `Already up to date · last synced ${formatTimeAgo(syncResult.synced_at)}`
+                  : `Synced ${syncResult.synced ?? syncResult.plans_synced} plans (${syncResult.created ?? 0} created, ${syncResult.updated ?? 0} updated) · ${formatTimeAgo(syncResult.synced_at)}`
               }
             </span>
           )}
