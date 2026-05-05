@@ -3344,3 +3344,40 @@ export async function setNotificationPreferences(
     body: JSON.stringify(prefs),
   })
 }
+
+// ─── DSAR / privacy tools (spec 025) ─────────────────────────────────────────
+
+export interface DataExportRequest {
+  export_id: string
+  status: 'pending' | 'processing' | 'ready' | 'failed' | string
+  estimated_seconds?: number
+}
+
+export interface DataExportStatus {
+  export_id: string
+  status: 'pending' | 'processing' | 'ready' | 'failed' | string
+  file_count?: number
+  total_bytes?: number
+  download_url?: string
+  expires_at?: string
+}
+
+/** POST /api/v1/me/data-export — request a new data export */
+export async function requestDataExport(): Promise<DataExportRequest> {
+  return request<DataExportRequest>('/api/v1/me/data-export', { method: 'POST' })
+}
+
+/** GET /api/v1/me/data-export/:id — poll export status */
+export async function getDataExportStatus(exportId: string): Promise<DataExportStatus> {
+  return request<DataExportStatus>(`/api/v1/me/data-export/${exportId}`)
+}
+
+/** POST /api/v1/me/freeze — suspend all processing */
+export async function freezeAccount(): Promise<{ frozen: boolean }> {
+  return request<{ frozen: boolean }>('/api/v1/me/freeze', { method: 'POST' })
+}
+
+/** POST /api/v1/me/unfreeze — re-enable processing */
+export async function unfreezeAccount(): Promise<{ frozen: boolean }> {
+  return request<{ frozen: boolean }>('/api/v1/me/unfreeze', { method: 'POST' })
+}

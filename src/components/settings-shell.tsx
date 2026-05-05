@@ -14,6 +14,7 @@ type NavItem = {
 const navItems: NavItem[] = [
   { id: 'account', label: 'Account', icon: 'users', href: '/settings/account' },
   { id: 'security', label: 'Security', icon: 'shield', href: '/settings/security' },
+  { id: 'privacy', label: 'Privacy', icon: 'eye-off', href: '/settings/privacy' },
   { id: 'notifications', label: 'Notifications', icon: 'clock', href: '/settings/notifications' },
   { id: 'billing', label: 'Plan & billing', icon: 'file', href: '/settings/billing' },
   { id: 'appearance', label: 'Appearance', icon: 'star', href: '/settings/appearance' },

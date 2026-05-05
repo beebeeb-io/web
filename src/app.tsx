@@ -26,6 +26,7 @@ import { Starred } from './pages/starred'
 import { Recent } from './pages/recent'
 import { SettingsAccount } from './pages/settings/account'
 import { SettingsNotifications } from './pages/settings/notifications'
+import { SettingsPrivacy } from './pages/settings/privacy'
 import { SettingsAppearance } from './pages/settings/appearance'
 import { SettingsDeveloper } from './pages/settings/developer'
 import { SettingsReferrals } from './pages/settings/referrals'
@@ -290,6 +291,7 @@ export function App() {
           <Route path="/settings" element={<ProtectedRoute><Navigate to="/settings/account" replace /></ProtectedRoute>} />
           <Route path="/settings/account" element={<ProtectedRoute><SettingsAccount /></ProtectedRoute>} />
           <Route path="/settings/security" element={<ProtectedRoute><Security /></ProtectedRoute>} />
+          <Route path="/settings/privacy" element={<ProtectedRoute><SettingsPrivacy /></ProtectedRoute>} />
           <Route path="/settings/notifications" element={<ProtectedRoute><SettingsNotifications /></ProtectedRoute>} />
           <Route path="/settings/billing" element={<ProtectedRoute><Billing /></ProtectedRoute>} />
           <Route path="/settings/appearance" element={<ProtectedRoute><SettingsAppearance /></ProtectedRoute>} />
