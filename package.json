@@ -19,6 +19,7 @@
     "@stripe/stripe-js": "^9.4.0",
     "beebeeb-wasm": "../../repos/core/beebeeb-wasm/pkg",
     "comlink": "^4.4.2",
+    "fflate": "^0.8.2",
     "i18next": "^26.0.8",
     "jsqr": "^1.4.0",
     "qrcode": "^1.5.4",

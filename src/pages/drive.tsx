@@ -40,6 +40,7 @@ import {
 import { getRemainingBytes } from '../components/quota-warning'
 import { encryptedUpload } from '../lib/encrypted-upload'
 import { encryptedDownload } from '../lib/encrypted-download'
+import { downloadAsZip, ZIP_SIZE_WARNING_BYTES } from '../lib/bulk-download'
 import {
   computeFingerprint,
   getActiveUploads,
@@ -93,6 +94,7 @@ export function Drive() {
   // ─── Pending shares state ────────────────────────────
   const [incomingInviteCount, setIncomingInviteCount] = useState(0)
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0)
+  const [bulkZipProgress, setBulkZipProgress] = useState<{ done: number; total: number } | null>(null)
   const [pendingSharesDismissed, setPendingSharesDismissed] = useState(false)
 
   // ─── Bulk move state ─────────────────────────────────
@@ -1113,13 +1115,62 @@ export function Drive() {
   }
 
   async function handleBulkDownload(ids: string[]) {
-    const filesToDownload = files.filter((f) => ids.includes(f.id) && !f.is_folder)
-    if (filesToDownload.length === 0) {
-      showToast({ icon: 'download', title: 'Nothing to download', description: 'Select at least one file (not folder) to download.' })
+    const selectedItems = files.filter((f) => ids.includes(f.id))
+    if (selectedItems.length === 0) {
+      showToast({ icon: 'download', title: 'Nothing to download', description: 'Select at least one file to download.' })
       return
     }
-    for (const file of filesToDownload) {
-      await handleFileDownload(file)
+
+    // Single non-folder file → regular download (no zip overhead)
+    if (selectedItems.length === 1 && !selectedItems[0].is_folder) {
+      await handleFileDownload(selectedItems[0])
+      return
+    }
+
+    // Check size warning before starting
+    const nonFolderItems = selectedItems.filter(f => !f.is_folder)
+    const estimatedBytes = nonFolderItems.reduce((s, f) => s + (f.size_bytes ?? 0), 0)
+    if (estimatedBytes > ZIP_SIZE_WARNING_BYTES) {
+      showToast({
+        icon: 'cloud',
+        title: 'Large download',
+        description: 'Total size exceeds 1 GB — this may take a while.',
+      })
+    }
+
+    // Multi-file or folder → ZIP
+    const total = selectedItems.length
+    showToast({ icon: 'download', title: `Creating ZIP…`, description: `Downloading ${total} item${total !== 1 ? 's' : ''}` })
+    setBulkZipProgress({ done: 0, total })
+
+    try {
+      const { errorCount } = await downloadAsZip(
+        selectedItems,
+        getFileKey,
+        {
+          onProgress: (done, tot) => setBulkZipProgress({ done, total: tot }),
+          zipFilename: `beebeeb-files-${new Date().toISOString().slice(0, 10)}.zip`,
+        },
+      )
+      if (errorCount > 0) {
+        showToast({
+          icon: 'download',
+          title: 'ZIP downloaded with errors',
+          description: `${errorCount} file${errorCount !== 1 ? 's' : ''} failed — see _errors.txt inside the zip.`,
+          danger: true,
+        })
+      } else {
+        showToast({ icon: 'download', title: 'ZIP downloaded', description: `${total} item${total !== 1 ? 's' : ''} packaged successfully.` })
+      }
+    } catch (err) {
+      showToast({
+        icon: 'download',
+        title: 'ZIP failed',
+        description: err instanceof Error ? err.message : 'Could not create the archive.',
+        danger: true,
+      })
+    } finally {
+      setBulkZipProgress(null)
     }
   }
 
@@ -1396,6 +1447,7 @@ export function Drive() {
             onBulkMove={(ids) => { setBulkMoveIds(ids); setBulkMoveOpen(true) }}
             onBulkShare={handleBulkShare}
             onBulkDownload={handleBulkDownload}
+            bulkZipProgress={bulkZipProgress}
             trashingIds={trashingIds}
             starPulseId={starPulseId}
             recentlyUploadedIds={recentlyUploaded}

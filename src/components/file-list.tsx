@@ -102,6 +102,8 @@ export interface FileListProps {
   onBulkMove?: (ids: string[]) => void
   onBulkShare?: (ids: string[]) => void
   onBulkDownload?: (ids: string[]) => Promise<void>
+  /** When set, shows ZIP progress in the bulk action bar and disables the download button. */
+  bulkZipProgress?: { done: number; total: number } | null
 
   // Animation state driven by parent (for drive page micro-interactions)
   trashingIds?: Set<string>
@@ -138,6 +140,7 @@ export function FileList({
   onBulkMove,
   onBulkShare,
   onBulkDownload,
+  bulkZipProgress = null,
   trashingIds = new Set<string>(),
   starPulseId = null,
   recentlyUploadedIds = new Set<string>(),
@@ -858,13 +861,30 @@ export function FileList({
               <BBButton
                 size="sm"
                 variant="amber"
-                className="gap-1.5"
+                className="gap-1.5 min-w-[100px]"
+                disabled={!!bulkZipProgress}
                 onClick={async () => {
+                  if (bulkZipProgress) return
                   const ids = Array.from(selectedIds)
                   await onBulkDownload(ids)
                 }}
               >
-                <Icon name="download" size={13} /> Download
+                {bulkZipProgress ? (
+                  <>
+                    <svg className="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    {bulkZipProgress.total > 0
+                      ? `${bulkZipProgress.done}/${bulkZipProgress.total}`
+                      : 'Zipping…'}
+                  </>
+                ) : (
+                  <>
+                    <Icon name="download" size={13} />
+                    {selectedIds.size > 1 ? 'Download ZIP' : 'Download'}
+                  </>
+                )}
               </BBButton>
             )}
           </div>
