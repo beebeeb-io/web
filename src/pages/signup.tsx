@@ -9,6 +9,7 @@ import { Icon } from '../components/icons'
 // Referral keys — read here, forwarded to onboarding, cleared after signup
 export const REFERRAL_SOURCE_KEY = 'bb_ref_source'
 export const REFERRAL_SHARER_KEY = 'bb_ref_sharer'
+export const REFERRAL_CODE_KEY   = 'bb_ref_code'
 
 export function Signup() {
   const navigate = useNavigate()
@@ -18,13 +19,18 @@ export function Signup() {
   const [accepted, setAccepted] = useState(false)
   const [error, setError] = useState('')
 
-  // Persist ?ref=share&sharer=<id> from share-view CTA links into localStorage
-  // so the attribution data survives through the multi-step onboarding flow.
+  // Persist referral attribution from URL params into localStorage so it
+  // survives the multi-step onboarding flow.
+  // Handles two sources:
+  //   ?ref=share&sharer=<id>    — from the share-view acquisition CTA
+  //   ?ref=referral&code=<code> — from the /r/<code> referral landing page
   useEffect(() => {
     const ref = searchParams.get('ref')
     const sharer = searchParams.get('sharer')
+    const code = searchParams.get('code')
     if (ref) localStorage.setItem(REFERRAL_SOURCE_KEY, ref)
     if (sharer) localStorage.setItem(REFERRAL_SHARER_KEY, sharer)
+    if (code) localStorage.setItem(REFERRAL_CODE_KEY, code)
   }, [searchParams])
 
   function handleSubmit(e: FormEvent) {

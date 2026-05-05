@@ -12,7 +12,7 @@ import {
   opaqueRegisterFinish,
   ApiError,
 } from '../lib/api'
-import { REFERRAL_SOURCE_KEY, REFERRAL_SHARER_KEY } from './signup'
+import { REFERRAL_SOURCE_KEY, REFERRAL_SHARER_KEY, REFERRAL_CODE_KEY } from './signup'
 import { generateRecoveryKitPDF } from '../lib/recovery-kit-pdf'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
@@ -213,6 +213,7 @@ export function Onboarding() {
       setProcessingStatus('Registering with server...')
       const referralSource = localStorage.getItem(REFERRAL_SOURCE_KEY) ?? undefined
       const referralSharerId = localStorage.getItem(REFERRAL_SHARER_KEY) ?? undefined
+      const referralCode = localStorage.getItem(REFERRAL_CODE_KEY) ?? undefined
       await opaqueRegisterFinish(
         email,
         toBase64(regUpload),
@@ -220,10 +221,12 @@ export function Onboarding() {
         toBase64(recoveryCheck),
         referralSource,
         referralSharerId,
+        referralCode,
       )
       // Clear referral attribution after it has been sent
       localStorage.removeItem(REFERRAL_SOURCE_KEY)
       localStorage.removeItem(REFERRAL_SHARER_KEY)
+      localStorage.removeItem(REFERRAL_CODE_KEY)
 
       // 4. Wrap master key with password, store in IndexedDB, set in memory
       setProcessingStatus('Securing your vault...')

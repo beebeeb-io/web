@@ -222,6 +222,7 @@ export async function opaqueRegisterFinish(
   recoveryCheck?: string,
   referralSource?: string,
   referralSharerId?: string,
+  referralCode?: string,
 ): Promise<{ user_id: string; session_token: string }> {
   const data = await request<{ user_id: string; session_token: string }>('/api/v1/opaque/register-finish', {
     method: 'POST',
@@ -232,6 +233,7 @@ export async function opaqueRegisterFinish(
       recovery_check: recoveryCheck,
       ...(referralSource && { referral_source: referralSource }),
       ...(referralSharerId && { referral_sharer_id: referralSharerId }),
+      ...(referralCode && { referral_code: referralCode }),
     }),
   })
   setToken(data.session_token)
@@ -1270,6 +1272,48 @@ export async function reactivateSubscription(): Promise<{ message: string }> {
 
 export async function createSetupIntent(): Promise<{ client_secret: string }> {
   return request<{ client_secret: string }>('/api/v1/billing/setup-intent', { method: 'POST' })
+}
+
+// ─── Referral program ────────────────────────────────────────────────────────
+
+export interface ReferralStats {
+  code: string
+  referral_count: number
+  earned_gb: number
+}
+
+export interface ReferralEntry {
+  /** Anonymised display, e.g. "a***@example.com" */
+  display_email: string
+  joined_at: string
+  status: 'active' | 'pending'
+}
+
+/**
+ * Returns the user's referral code + summary stats.
+ * Returns null on 404 — caller falls back to client-side code derivation.
+ */
+export async function getReferralStats(): Promise<ReferralStats | null> {
+  try {
+    return await request<ReferralStats>('/api/v1/referrals/stats')
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null
+    throw err
+  }
+}
+
+/**
+ * List friends who signed up via the current user's referral link.
+ * Returns [] on 404.
+ */
+export async function listReferrals(): Promise<ReferralEntry[]> {
+  try {
+    const data = await request<{ referrals: ReferralEntry[] }>('/api/v1/referrals')
+    return data.referrals
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return []
+    throw err
+  }
 }
 
 // ─── Personal Access Tokens ───────────────────────────────────────────────────
