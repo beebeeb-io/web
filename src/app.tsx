@@ -27,6 +27,7 @@ import { Recent } from './pages/recent'
 import { SettingsAccount } from './pages/settings/account'
 import { SettingsNotifications } from './pages/settings/notifications'
 import { SettingsPrivacy } from './pages/settings/privacy'
+import { Cookies } from './pages/cookies'
 import { SettingsAppearance } from './pages/settings/appearance'
 import { SettingsDeveloper } from './pages/settings/developer'
 import { SettingsReferrals } from './pages/settings/referrals'
@@ -405,6 +406,7 @@ export function App() {
             }
           />
           <Route path="/s/:token" element={<ShareViewPage />} />
+          <Route path="/cookies" element={<Cookies />} />
           <Route path="/receive" element={<Receive />} />
           <Route path="/500" element={<ServerError />} />
           <Route path="*" element={<NotFound />} />

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 // Type-only import — no side effects, does NOT load the Stripe.js script
 import type { Stripe } from '@stripe/stripe-js'
@@ -11,6 +11,7 @@ import { BBInput } from '../components/bb-input'
 import { Icon } from '../components/icons'
 import { UpgradeDialog } from '../components/upgrade-dialog'
 import { useToast } from '../components/toast'
+import { allowsFunctional, setConsent } from '../lib/consent'
 import {
   getSubscription,
   getInvoices,
@@ -159,13 +160,18 @@ export function Billing() {
   const [setupSecret, setSetupSecret] = useState<string | null>(null)
   const [setupLoading, setSetupLoading] = useState(false)
 
-  // Lazy Stripe initializer — only calls loadStripe() when the Billing
-  // component first mounts (i.e. when the user navigates to /billing).
-  // This guarantees the Stripe.js script (and r.stripe.com requests) never
-  // fire on /drive, /photos, /settings, or any other page.
-  const [stripePromise] = useState<Promise<Stripe | null>>(() =>
-    import('@stripe/stripe-js').then(({ loadStripe }) => loadStripe(STRIPE_PK))
-  )
+  // Consent-gated Stripe initializer.
+  // Stripe.js (and r.stripe.com requests) only load when:
+  //   1. The user is on /billing (lazy mount — already guaranteed), AND
+  //   2. They have consented to functional cookies ('all').
+  // If they chose 'essential only', stripePromise stays null and the UI shows
+  // a notice with a session-allow button.
+  const [stripeFunctionalAllowed, setStripeFunctionalAllowed] = useState(allowsFunctional)
+  const [stripePromise] = useState<Promise<Stripe | null>>(() => {
+    if (!allowsFunctional()) return Promise.resolve(null)
+    return import('@stripe/stripe-js').then(({ loadStripe }) => loadStripe(STRIPE_PK))
+  })
+  const stripeLoadedRef = useRef<boolean>(false)
 
   // Invoice preferences
   const [invoiceSendEmail, setInvoiceSendEmail] = useState(true)
@@ -604,6 +610,43 @@ export function Billing() {
                 <div className="text-xs text-ink-4">
                   Upgrade to add a payment method and unlock more storage.
                 </div>
+              </div>
+            ) : showPaymentSetup && !stripeFunctionalAllowed ? (
+              /* Stripe blocked by consent — ask user to allow for this session */
+              <div className="flex flex-col gap-3 p-4 rounded-lg border border-line bg-paper-2">
+                <div className="flex items-start gap-2.5">
+                  <Icon name="lock" size={13} className="text-ink-3 shrink-0 mt-0.5" />
+                  <p className="text-[12.5px] text-ink-2 leading-relaxed">
+                    Payment processing requires Stripe cookies. You chose to allow essential cookies only.
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConsent('all')
+                      setStripeFunctionalAllowed(true)
+                      stripeLoadedRef.current = true
+                      // Reload the page so the Stripe Promise initializer re-runs
+                      window.location.reload()
+                    }}
+                    className="text-[12.5px] font-medium text-amber-deep hover:underline"
+                  >
+                    Allow payment cookies for this session
+                  </button>
+                  <span className="text-ink-4 text-[12px]">·</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowPaymentSetup(false)}
+                    className="text-[12.5px] text-ink-3 hover:text-ink transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+                <p className="text-[11px] text-ink-4">
+                  Stripe processes the payment — Beebeeb never sees your card details.{' '}
+                  <a href="/cookies" className="underline hover:text-ink-3">Cookie details</a>
+                </p>
               </div>
             ) : showPaymentSetup && setupSecret ? (
               <Elements
