@@ -91,7 +91,6 @@ export function UpgradeDialog({
         {/* Header */}
         <div className="flex items-center gap-2.5 px-[22px] py-3.5 border-b border-line">
           <h3 className="text-base font-bold">Upgrade to {planName}</h3>
-          <BBChip variant="amber" className="ml-auto">14-day free trial</BBChip>
           <button onClick={onClose} aria-label="Close" className="ml-2 text-ink-3 hover:text-ink transition-colors">
             <Icon name="x" size={16} />
           </button>
@@ -203,14 +202,13 @@ export function UpgradeDialog({
           {/* Summary */}
           <div className="p-3.5 bg-ink text-paper rounded-md mb-3">
             <div className="flex items-baseline mb-0.5">
-              <span className="text-[13px] opacity-70">Today</span>
+              <span className="text-[13px] opacity-70">Due today</span>
               <span className="font-mono text-base font-semibold text-amber ml-auto">
-                EUR 0.00
+                EUR {cycle === 'yearly' ? yearlyTotal.toFixed(2) : monthlyTotal.toFixed(2)}
               </span>
             </div>
             <div className="text-[11px] opacity-60">
-              14 days free · then EUR{' '}
-              {cycle === 'yearly' ? yearlyTotal.toFixed(2) : monthlyTotal.toFixed(2)}{' '}
+              EUR {cycle === 'yearly' ? yearlyTotal.toFixed(2) : monthlyTotal.toFixed(2)}{' '}
               / {cycle === 'yearly' ? 'year' : 'month'} · cancel anytime
             </div>
           </div>
@@ -226,7 +224,7 @@ export function UpgradeDialog({
             onClick={handleSubmit}
             disabled={loading}
           >
-            {loading ? 'Processing...' : 'Start free trial'}
+            {loading ? 'Processing...' : 'Subscribe'}
             {!loading && <Icon name="chevron-right" size={13} className="ml-1" />}
           </BBButton>
 

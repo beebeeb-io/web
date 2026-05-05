@@ -731,7 +731,7 @@ export function Billing() {
                       {formatStorageSI(p.storagePerSeat * 1_000_000_000)}
                     </div>
                     <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-deep">
-                      Start 14-day trial
+                      Subscribe
                       <Icon name="chevron-right" size={10} />
                     </span>
                   </button>

@@ -55,7 +55,7 @@ const plans: PlanDef[] = [
     note: '1 TB · €8.99/TB',
     storage: '1 TB',
     perTb: '€8.99/TB',
-    cta: 'Start 14-day trial',
+    cta: 'Subscribe',
     ctaVariant: 'default',
     features: [
       { label: 'Everything in Free' },
@@ -76,7 +76,7 @@ const plans: PlanDef[] = [
     note: '5 TB · €7.99/TB',
     storage: '5 TB',
     perTb: '€7.99/TB',
-    cta: 'Start 14-day trial',
+    cta: 'Subscribe',
     ctaVariant: 'amber',
     highlight: true,
     features: [
@@ -97,7 +97,7 @@ const plans: PlanDef[] = [
     note: '20 TB · €6.99/TB · lowest per-TB',
     storage: '20 TB',
     perTb: '€6.99/TB',
-    cta: 'Start 14-day trial',
+    cta: 'Subscribe',
     ctaVariant: 'default',
     badge: 'Best value',
     features: [
@@ -145,8 +145,8 @@ const faqItems: FaqItem[] = [
     a: 'We support SEPA Direct Debit, Visa, Mastercard, and invoice billing for Business plans. All prices are in EUR, billed in EUR — no currency conversion surprises. VAT is handled automatically with reverse charge for EU businesses.',
   },
   {
-    q: 'Is there a free trial?',
-    a: 'Every paid plan includes a 14-day free trial. No credit card required to start. You will get a reminder before any charge.',
+    q: 'Is there a free tier?',
+    a: 'Yes. The Free plan gives you 5 GB of end-to-end encrypted storage with no time limit and no credit card required. Upgrade when you need more space.',
   },
   {
     q: 'What makes Beebeeb different from other encrypted storage?',
@@ -464,7 +464,7 @@ export function Pricing() {
         {/* Bottom CTA */}
         <div className="text-center pb-4">
           <p className="text-[11.5px] text-ink-4">
-            All plans include a 14-day free trial. No credit card required.
+            Start free with 5 GB — no credit card required. Cancel paid plans anytime.
             Operated by Initlabs B.V., Wijchen, Netherlands.
           </p>
         </div>
