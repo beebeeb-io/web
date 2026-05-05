@@ -58,6 +58,7 @@ import { NotFound } from './pages/errors/not-found'
 import { ServerError } from './pages/errors/server-error'
 import { ThemeProvider } from './lib/theme-context'
 import { DisplayProvider } from './lib/display-context'
+import { CookieBanner } from './components/cookie-banner'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
@@ -164,6 +165,7 @@ export function App() {
         <ImpersonationBanner />
         <OfflineBanner />
         <GlobalShortcuts />
+        <CookieBanner />
         <Routes>
           <Route
             path="/signup"
