@@ -1350,7 +1350,9 @@ export function Drive() {
       const mod = isMac ? e.metaKey : e.ctrlKey
       if (mod && e.key.toLowerCase() === 'k') {
         e.preventDefault()
-        e.stopPropagation()
+        // stopImmediatePropagation so GlobalShortcuts' bubble listener
+        // (document-level, same element) doesn't also open the command palette.
+        e.stopImmediatePropagation()
         searchInputRef.current?.focus()
         searchInputRef.current?.select()
       }
@@ -1396,15 +1398,15 @@ export function Drive() {
               placeholder="Search files and folders..."
               className="flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-4"
             />
-            <kbd className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-mono text-ink-4 bg-paper-2 border border-line rounded">
-              {isMac ? <><span>⌘</span>K</> : 'Ctrl+K'}
+            <kbd className="hidden sm:inline-flex items-center self-center gap-0.5 px-1.5 py-[3px] text-[10px] leading-none font-mono text-ink-4 bg-paper-2 border border-line rounded shrink-0">
+              {isMac ? <><span className="text-[11px] leading-none">⌘</span>K</> : 'Ctrl+K'}
             </kbd>
           </form>
 
           {/* New + Upload */}
           <div className="flex items-center gap-1.5 shrink-0">
             <BBButton size="sm" variant="amber" onClick={() => setFolderDialogOpen(true)} className="gap-1.5">
-              <Icon name="plus" size={13} /> New
+              <Icon name="plus" size={13} /> New folder
             </BBButton>
             <BBButton size="sm" onClick={browse} className="gap-1.5" aria-label="Upload files">
               <Icon name="upload" size={13} /> <span className="hidden sm:inline" aria-hidden="true">Upload</span>
