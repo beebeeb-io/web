@@ -1,143 +1,175 @@
 import { useState, useEffect, useCallback } from 'react'
 import { SettingsShell, SettingsHeader } from '../../components/settings-shell'
 import { BBToggle } from '../../components/bb-toggle'
-import { getPreference, setPreference } from '../../lib/api'
+import { Icon } from '../../components/icons'
+import { useToast } from '../../components/toast'
+import {
+  getNotificationPreferences,
+  setNotificationPreferences,
+  ApiError,
+  type NotificationPreferences,
+} from '../../lib/api'
 
-interface NotifItem {
+// ── Toggle definitions ────────────────────────────────────────────────────────
+
+interface PushToggle {
+  key: keyof NotificationPreferences
   label: string
-  key: string
-  inApp: boolean
-  email: boolean
+  description: string
 }
 
-interface NotifGroup {
-  title: string
-  hint: string | null
-  items: NotifItem[]
-}
-
-const defaultGroups: NotifGroup[] = [
+const PUSH_TOGGLES: PushToggle[] = [
   {
-    title: 'Security',
-    hint: "We can't see your files but we know when devices sign in.",
-    items: [
-      { label: 'New device signs in', key: 'new_device', inApp: true, email: true },
-      { label: 'Recovery phrase used', key: 'recovery_used', inApp: true, email: true },
-      { label: 'Password changed', key: 'password_changed', inApp: true, email: true },
-      { label: 'Sign-in from new country', key: 'new_country', inApp: true, email: false },
-    ],
+    key: 'share_received',
+    label: 'Share received',
+    description: 'Get notified when someone shares a file with you.',
   },
   {
-    title: 'Sharing',
-    hint: 'Activity on links and folders you share.',
-    items: [
-      { label: 'Someone opens a link you shared', key: 'link_opened', inApp: true, email: false },
-      { label: 'Link expires or is revoked', key: 'link_expired', inApp: false, email: false },
-      { label: 'New team-vault member joins', key: 'member_joined', inApp: true, email: false },
-    ],
+    key: 'storage_warning',
+    label: 'Storage warnings',
+    description: 'Alert when you reach 80% or 100% of your quota.',
   },
   {
-    title: 'System',
-    hint: null,
-    items: [
-      { label: 'Storage near limit (>90%)', key: 'storage_warning', inApp: true, email: false },
-      { label: 'Sub-processor changes', key: 'subprocessor', inApp: false, email: true },
-      { label: 'Product updates & changelog', key: 'product_updates', inApp: false, email: false },
-    ],
+    key: 'new_device_login',
+    label: 'New device sign-in',
+    description: 'Security alert when a new device accesses your account.',
+  },
+  {
+    key: 'backup_complete',
+    label: 'Backup complete',
+    description: 'Notification when photo backup finishes.',
   },
 ]
 
-type NotifPrefs = Record<string, { inApp: boolean; email: boolean }>
+const DEFAULTS: NotificationPreferences = {
+  share_received: true,
+  storage_warning: true,
+  new_device_login: true,
+  backup_complete: false,
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────────
 
 export function SettingsNotifications() {
-  const [groups, setGroups] = useState(defaultGroups)
+  const { showToast } = useToast()
+  const [prefs, setPrefs] = useState<NotificationPreferences>(DEFAULTS)
+  const [loading, setLoading] = useState(true)
+  /** true when the server endpoint is not yet deployed (404) */
+  const [endpointMissing, setEndpointMissing] = useState(false)
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    getPreference<NotifPrefs>('notification_preferences')
-      .then((prefs) => {
-        if (!prefs) return
-        setGroups((prev) =>
-          prev.map((g) => ({
-            ...g,
-            items: g.items.map((item) => {
-              const saved = prefs[item.key]
-              return saved ? { ...item, inApp: saved.inApp, email: saved.email } : item
-            }),
-          })),
-        )
+    let cancelled = false
+    getNotificationPreferences()
+      .then(data => {
+        if (!cancelled) {
+          setPrefs(data)
+          setLoading(false)
+        }
       })
-      .catch(() => {})
+      .catch(err => {
+        if (cancelled) return
+        if (err instanceof ApiError && err.status === 404) {
+          // Endpoint not yet deployed — show defaults with a note
+          setEndpointMissing(true)
+        }
+        // Any error: fall back to defaults and allow interaction
+        setLoading(false)
+      })
+    return () => { cancelled = true }
   }, [])
 
-  const savePrefs = useCallback((updatedGroups: NotifGroup[]) => {
-    const prefs: NotifPrefs = {}
-    for (const g of updatedGroups) {
-      for (const item of g.items) {
-        prefs[item.key] = { inApp: item.inApp, email: item.email }
+  const handleToggle = useCallback(
+    async (key: keyof NotificationPreferences, value: boolean) => {
+      const next: NotificationPreferences = { ...prefs, [key]: value }
+      // Optimistic update
+      setPrefs(next)
+
+      if (endpointMissing) return // can't save until server is deployed
+
+      setSaving(true)
+      try {
+        const saved = await setNotificationPreferences(next)
+        setPrefs(saved)
+        showToast({ icon: 'check', title: 'Notification preferences saved' })
+      } catch (err) {
+        // Roll back on error
+        setPrefs(prefs)
+        if (err instanceof ApiError && err.status === 404) {
+          setEndpointMissing(true)
+        } else {
+          showToast({
+            icon: 'x',
+            title: 'Failed to save preferences',
+            description: err instanceof Error ? err.message : 'Please try again.',
+            danger: true,
+          })
+        }
+      } finally {
+        setSaving(false)
       }
-    }
-    setPreference('notification_preferences', prefs).catch(() => {})
-  }, [])
-
-  function toggleItem(gi: number, ii: number, field: 'inApp' | 'email') {
-    setGroups((prev) => {
-      const next = prev.map((g, gIdx) =>
-        gIdx !== gi
-          ? g
-          : {
-              ...g,
-              items: g.items.map((item, iIdx) =>
-                iIdx !== ii ? item : { ...item, [field]: !item[field] },
-              ),
-            },
-      )
-      savePrefs(next)
-      return next
-    })
-  }
+    },
+    [prefs, endpointMissing, showToast],
+  )
 
   return (
     <SettingsShell activeSection="notifications">
       <SettingsHeader
         title="Notifications"
-        subtitle="Choose how we tell you about events. Email is always PGP-signed."
+        subtitle="Choose what events you want to be notified about."
       />
 
-      <div
-        className="grid items-center px-7 py-3 bg-paper-2 border-b border-line"
-        style={{ gridTemplateColumns: '1fr 100px 100px' }}
-      >
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-3">Event</span>
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 text-center">In-app</span>
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 text-center">Email</span>
+      {/* Endpoint-not-deployed notice */}
+      {endpointMissing && (
+        <div className="mx-7 mt-4 flex items-start gap-2.5 px-4 py-3 rounded-lg border border-line bg-paper-2">
+          <Icon name="cloud" size={13} className="text-ink-3 shrink-0 mt-0.5" />
+          <p className="text-[12px] text-ink-3 leading-relaxed">
+            Saving preferences requires the latest server update. Changes will apply once the server is updated.
+          </p>
+        </div>
+      )}
+
+      {/* Push notifications section */}
+      <div className="mt-5 mb-1">
+        <h2 className="text-[11px] font-semibold uppercase tracking-widest text-ink-4 px-7 py-3">
+          Push notifications
+        </h2>
       </div>
 
-      {groups.map((g, gi) => (
-        <div key={gi}>
-          <div className="px-7 pt-3.5 pb-2 bg-paper">
-            <div className="text-xs font-semibold text-ink-2">{g.title}</div>
-            {g.hint && (
-              <div className="text-[11px] text-ink-4 mt-0.5">{g.hint}</div>
-            )}
-          </div>
-
-          {g.items.map((item, ii) => (
+      {loading ? (
+        <div className="px-7 py-6 flex items-center gap-2 text-ink-3">
+          <span className="w-3.5 h-3.5 border-2 border-line-2 border-t-ink-3 rounded-full animate-spin shrink-0" />
+          <span className="text-[13px]">Loading preferences…</span>
+        </div>
+      ) : (
+        <div className="divide-y divide-line border-t border-b border-line mx-7 rounded-lg overflow-hidden">
+          {PUSH_TOGGLES.map(({ key, label, description }) => (
             <div
-              key={ii}
-              className="grid items-center px-7 py-2.5 border-b border-line"
-              style={{ gridTemplateColumns: '1fr 100px 100px' }}
+              key={key}
+              className="flex items-center gap-4 px-5 py-4 bg-paper hover:bg-paper-2 transition-colors"
             >
-              <span className="text-[13px] text-ink">{item.label}</span>
-              <div className="flex justify-center">
-                <BBToggle on={item.inApp} onChange={() => toggleItem(gi, ii, 'inApp')} />
+              {/* Text */}
+              <div className="flex-1 min-w-0">
+                <div className="text-[13px] font-medium text-ink">{label}</div>
+                <div className="text-[12px] text-ink-3 mt-0.5 leading-snug">{description}</div>
               </div>
-              <div className="flex justify-center">
-                <BBToggle on={item.email} onChange={() => toggleItem(gi, ii, 'email')} />
-              </div>
+
+              {/* Toggle */}
+              <BBToggle
+                on={prefs[key]}
+                onChange={(val) => void handleToggle(key, val)}
+                disabled={saving}
+              />
             </div>
           ))}
         </div>
-      ))}
+      )}
+
+      <div className="px-7 mt-4 mb-6">
+        <p className="text-[11px] text-ink-4 leading-relaxed">
+          Push notifications are delivered through your browser or device. Email notifications for security events (new device sign-in, password change) are always sent and cannot be disabled.
+        </p>
+      </div>
     </SettingsShell>
   )
 }

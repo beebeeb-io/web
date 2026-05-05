@@ -3320,3 +3320,27 @@ export interface AdminActivityResponse {
 export async function getAdminUserGdprActivity(userId: string): Promise<AdminActivityResponse> {
   return request<AdminActivityResponse>(`/api/v1/admin/users/${userId}/activity`)
 }
+
+// ─── Push notification preferences (task: notifications UI) ──────────────────
+
+export interface NotificationPreferences {
+  share_received: boolean
+  storage_warning: boolean
+  new_device_login: boolean
+  backup_complete: boolean
+}
+
+/** GET /api/v1/notifications/preferences */
+export async function getNotificationPreferences(): Promise<NotificationPreferences> {
+  return request<NotificationPreferences>('/api/v1/notifications/preferences')
+}
+
+/** PUT /api/v1/notifications/preferences */
+export async function setNotificationPreferences(
+  prefs: NotificationPreferences,
+): Promise<NotificationPreferences> {
+  return request<NotificationPreferences>('/api/v1/notifications/preferences', {
+    method: 'PUT',
+    body: JSON.stringify(prefs),
+  })
+}
