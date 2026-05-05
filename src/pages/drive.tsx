@@ -14,6 +14,7 @@ import { UploadZone, useBrowseFiles, useBrowseFolders, type FolderFile } from '.
 import { UploadProgress, type UploadItem } from '../components/upload-progress'
 import { NewFolderDialog } from '../components/new-folder-dialog'
 import { VersionHistory } from '../components/version-history'
+import { DuplicateFileDialog, getUniqueName, type ConflictItem } from '../components/duplicate-file-dialog'
 import { NotificationInbox, useNotifications } from '../components/notification-inbox'
 import { WelcomeTour } from '../components/welcome-tour'
 import { OnboardingShareGuide } from '../components/onboarding-share-guide'
@@ -109,6 +110,14 @@ export function Drive() {
   // ─── External selection + decrypted names (for keyboard shortcuts + dialogs) ─
   const [externalSelectedIds, setExternalSelectedIds] = useState<Set<string>>(new Set())
   const [externalDecryptedNames, setExternalDecryptedNames] = useState<Record<string, string | null>>({})
+
+  // ─── Duplicate-file conflict dialog ─────────────────
+  interface PendingConflictUpload {
+    conflicts: ConflictItem[]
+    nonConflicting: File[]
+    allFiles: File[]
+  }
+  const [pendingConflict, setPendingConflict] = useState<PendingConflictUpload | null>(null)
 
   // ─── Storage quota state ─────────────────────────
   const [storageUsage, setStorageUsage] = useState<StorageUsage | null>(null)
@@ -383,6 +392,50 @@ export function Drive() {
 
   const { browse: browseResume, HiddenInput: HiddenResumeInput } = useBrowseFiles(handleResumeFile)
 
+  // Build a map of lowercase decrypted name → DriveFile for conflict detection.
+  function buildNameToFileMap(): Map<string, DriveFile> {
+    const map = new Map<string, DriveFile>()
+    for (const file of files) {
+      if (file.is_folder) continue
+      const name = externalDecryptedNames[file.id]
+      if (name) map.set(name.toLowerCase(), file)
+    }
+    return map
+  }
+
+  /**
+   * Queue a resolved list of uploads.
+   * Each item carries the File to upload, an optional replaceFileId for the
+   * Replace path, and the final name to use (may differ from file.name for
+   * the "Keep both" path where we rename with a suffix).
+   */
+  function queueResolvedUploads(
+    resolved: Array<{ file: File; replaceFileId?: string; finalName?: string }>,
+  ) {
+    if (resolved.length === 0) return
+
+    const newUploads: UploadItem[] = resolved.map((r, i) => ({
+      id: `upload-${Date.now()}-${i}`,
+      name: r.finalName ?? r.file.name,
+      size: r.file.size,
+      progress: 0,
+      stage: 'Queued' as const,
+    }))
+    setUploads((prev) => [...prev, ...newUploads])
+
+    resolved.forEach((r, i) => {
+      const uploadId = newUploads[i].id
+      // For "Keep both", create a renamed File object so encryptedUpload
+      // encrypts the new name (not the original).
+      const fileToUpload =
+        r.finalName && r.finalName !== r.file.name
+          ? new File([r.file], r.finalName, { type: r.file.type })
+          : r.file
+      uploadFilesRef.current.set(uploadId, fileToUpload)
+      doEncryptedUpload(uploadId, fileToUpload, r.replaceFileId)
+    })
+  }
+
   function handleFilesSelected(selectedFiles: File[]) {
     // ─── Quota check ──────────────────────────────
     const remaining = getRemainingBytes(storageUsage?.used_bytes, storageUsage?.plan_limit_bytes)
@@ -400,23 +453,90 @@ export function Drive() {
       }
     }
 
-    const newUploads: UploadItem[] = selectedFiles.map((f, i) => ({
-      id: `upload-${Date.now()}-${i}`,
-      name: f.name,
-      size: f.size,
-      progress: 0,
-      stage: 'Queued' as const,
-    }))
-    setUploads((prev) => [...prev, ...newUploads])
+    // ─── Conflict detection ───────────────────────
+    // Only check when the vault is unlocked and we have decrypted names.
+    if (isUnlocked && Object.keys(externalDecryptedNames).length > 0) {
+      const nameToFile = buildNameToFileMap()
+      const conflicts: ConflictItem[] = []
+      const nonConflicting: File[] = []
 
-    selectedFiles.forEach((file, i) => {
-      const uploadId = newUploads[i].id
-      uploadFilesRef.current.set(uploadId, file)
-      doEncryptedUpload(uploadId, file)
-    })
+      for (const f of selectedFiles) {
+        const existing = nameToFile.get(f.name.toLowerCase())
+        if (existing) {
+          const existingName = externalDecryptedNames[existing.id] ?? f.name
+          conflicts.push({
+            newFile: f,
+            existingFileId: existing.id,
+            existingName: existingName ?? f.name,
+          })
+        } else {
+          nonConflicting.push(f)
+        }
+      }
+
+      if (conflicts.length > 0) {
+        // Pause and show the conflict dialog; uploads are queued on resolution.
+        setPendingConflict({ conflicts, nonConflicting, allFiles: selectedFiles })
+        return
+      }
+    }
+
+    // ─── No conflicts — queue immediately ─────────
+    queueResolvedUploads(selectedFiles.map((f) => ({ file: f })))
   }
 
-  async function doEncryptedUpload(uploadId: string, file: File) {
+  // ─── Conflict dialog resolution ──────────────────
+
+  function handleConflictReplace() {
+    if (!pendingConflict) return
+    const { conflicts, nonConflicting } = pendingConflict
+    setPendingConflict(null)
+    queueResolvedUploads([
+      ...nonConflicting.map((f) => ({ file: f })),
+      ...conflicts.map((c) => ({ file: c.newFile, replaceFileId: c.existingFileId })),
+    ])
+  }
+
+  function handleConflictKeepBoth() {
+    if (!pendingConflict) return
+    const { conflicts, nonConflicting } = pendingConflict
+    setPendingConflict(null)
+
+    // Build the set of existing lowercase names for suffix generation.
+    const existingNames = new Set(
+      files
+        .filter((f) => !f.is_folder)
+        .map((f) => externalDecryptedNames[f.id])
+        .filter(Boolean)
+        .map((n) => (n as string).toLowerCase()),
+    )
+    // Track names already assigned in this batch to prevent duplicates.
+    const usedInBatch = new Set<string>()
+
+    const resolved = [
+      ...nonConflicting.map((f) => ({ file: f })),
+      ...conflicts.map((c) => {
+        const finalName = getUniqueName(c.newFile.name, existingNames, usedInBatch)
+        usedInBatch.add(finalName.toLowerCase())
+        return { file: c.newFile, finalName }
+      }),
+    ]
+    queueResolvedUploads(resolved)
+  }
+
+  function handleConflictCancel() {
+    setPendingConflict(null)
+  }
+
+  /**
+   * Upload a single file.
+   *
+   * @param replaceFileId  When set (Replace mode), uses the EXISTING file's ID
+   *   so the server creates a new version of that file. The key is derived from
+   *   this ID — same key as the original, so old versions remain decryptable.
+   *   When undefined (normal / Keep-both mode), generates a fresh UUID.
+   */
+  async function doEncryptedUpload(uploadId: string, file: File, replaceFileId?: string) {
     if (!isUnlocked || !cryptoReady) {
       showToast({
         icon: 'lock',
@@ -429,8 +549,9 @@ export function Drive() {
       return
     }
 
-    // Generate a UUID for the file (used for key derivation)
-    const fileId = crypto.randomUUID()
+    // Replace mode uses the existing file's ID for versioning;
+    // normal mode generates a new UUID.
+    const fileId = replaceFileId ?? crypto.randomUUID()
     const fileKey = await getFileKey(fileId)
 
     const abortController = new AbortController()
@@ -1488,6 +1609,15 @@ export function Drive() {
         open={folderDialogOpen}
         onClose={() => setFolderDialogOpen(false)}
         onCreate={handleCreateFolder}
+      />
+
+      {/* Duplicate-file conflict dialog — shown before uploading when names collide */}
+      <DuplicateFileDialog
+        open={pendingConflict !== null}
+        conflicts={pendingConflict?.conflicts ?? []}
+        onReplace={handleConflictReplace}
+        onKeepBoth={handleConflictKeepBoth}
+        onCancel={handleConflictCancel}
       />
 
       <UploadProgress
