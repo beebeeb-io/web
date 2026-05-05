@@ -44,6 +44,7 @@ import { Infrastructure } from './pages/admin/infrastructure'
 import { Security as AdminSecurity } from './pages/admin/security'
 import { PoolLifecycle } from './pages/admin/pool-lifecycle'
 import { MissionControl } from './pages/admin/mission-control'
+import { AdminSettings } from './pages/admin/settings'
 import { VerifyEmail } from './pages/verify-email'
 import { Migration } from './pages/migration'
 import { Team } from './pages/team'
@@ -293,6 +294,7 @@ export function App() {
           <Route path="/admin/security" element={<ProtectedRoute><AdminSecurity /></ProtectedRoute>} />
           <Route path="/admin/billing" element={<ProtectedRoute><AdminBilling /></ProtectedRoute>} />
           <Route path="/admin/compliance" element={<ProtectedRoute><Compliance /></ProtectedRoute>} />
+          <Route path="/admin/settings" element={<ProtectedRoute><AdminSettings /></ProtectedRoute>} />
           <Route path="/admin/monitoring" element={<Navigate to="/admin" replace />} />
           <Route path="/admin/audit-log" element={<Navigate to="/admin/security" replace />} />
           <Route path="/admin/storage-pools" element={<Navigate to="/admin/infrastructure" replace />} />

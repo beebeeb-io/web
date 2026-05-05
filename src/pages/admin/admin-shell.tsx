@@ -19,6 +19,7 @@ const navItems: NavItem[] = [
   { id: 'security', label: 'Security', icon: 'shield', href: '/admin/security' },
   { id: 'billing', label: 'Billing', icon: 'file', href: '/admin/billing' },
   { id: 'compliance', label: 'Compliance', icon: 'check', href: '/admin/compliance' },
+  { id: 'settings', label: 'Settings', icon: 'settings', href: '/admin/settings' },
 ]
 
 interface AdminShellProps {
