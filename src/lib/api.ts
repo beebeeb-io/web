@@ -2188,6 +2188,72 @@ export async function getAdminStats(): Promise<AdminStats> {
   return request<AdminStats>('/api/v1/admin/stats')
 }
 
+// ─── Admin billing stats ─────────────────────────────────────────────────────
+
+export interface AdminBillingStats {
+  total_subscribers: number
+  mrr_cents: number
+  conversion_rate: number
+  plan_distribution: {
+    free: number
+    personal: number
+    team: number
+    business: number
+  }
+  recent_invoices: Array<{
+    id: string
+    user_id: string
+    amount_cents: number
+    currency: string
+    status: 'paid' | 'open' | 'void' | 'uncollectible'
+    created_at: string
+  }>
+}
+
+/**
+ * Fetch aggregate billing stats from the admin API.
+ * Returns null if the endpoint doesn't exist yet (404) so the UI can show
+ * a graceful placeholder rather than crashing.
+ */
+export async function getAdminBillingStats(): Promise<AdminBillingStats | null> {
+  try {
+    return await request<AdminBillingStats>('/api/v1/admin/billing/stats')
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null
+    throw err
+  }
+}
+
+// ─── Admin server config ─────────────────────────────────────────────────────
+
+export interface AdminConfig {
+  email: {
+    provider: string | null
+    configured: boolean
+  }
+  slack: {
+    configured: boolean
+    webhook_url_prefix: string | null
+  }
+  turnstile: {
+    configured: boolean
+    sitekey_prefix: string | null
+  }
+}
+
+/**
+ * Fetch server-side config flags from the admin API.
+ * Returns null if the endpoint doesn't exist yet (404).
+ */
+export async function getAdminConfig(): Promise<AdminConfig | null> {
+  try {
+    return await request<AdminConfig>('/api/v1/admin/config')
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null
+    throw err
+  }
+}
+
 export async function getHealth(): Promise<HealthResponse> {
   const res = await fetch(`${API_URL}/health`)
   if (!res.ok) {

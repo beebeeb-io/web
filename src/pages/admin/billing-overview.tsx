@@ -9,10 +9,12 @@ import {
   getPlans,
   getInvoices,
   getAdminStats,
+  getAdminBillingStats,
   type Subscription,
   type Plan,
   type Invoice,
   type AdminStats,
+  type AdminBillingStats,
 } from '../../lib/api'
 
 function formatDate(iso: string | null): string {
@@ -48,6 +50,7 @@ export function AdminBilling() {
   const [plans, setPlans] = useState<Plan[]>([])
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [stats, setStats] = useState<AdminStats | null>(null)
+  const [billingStats, setBillingStats] = useState<AdminBillingStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -55,16 +58,18 @@ export function AdminBilling() {
     setLoading(true)
     setError(null)
     try {
-      const [subData, plansData, invData, statsData] = await Promise.all([
+      const [subData, plansData, invData, statsData, billingData] = await Promise.all([
         getSubscription(),
         getPlans(),
         getInvoices(),
         getAdminStats(),
+        getAdminBillingStats(),
       ])
       setSub(subData)
       setPlans(plansData)
       setInvoices(invData)
       setStats(statsData)
+      setBillingStats(billingData)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load billing data')
     } finally {
@@ -74,16 +79,28 @@ export function AdminBilling() {
 
   useEffect(() => { load() }, [load])
 
-  // Subscriber breakdown — currently no aggregate plan data is available from
-  // the server, so we treat all users as free until a real per-plan count
-  // endpoint exists. Counts default to 0 for now.
   const totalUsers = stats?.users.total ?? 0
-  const subscribers = { personal: 0, team: 0, business: 0 }
-  const totalSubscribers = subscribers.personal + subscribers.team + subscribers.business
-  const freeUsers = Math.max(0, totalUsers - totalSubscribers)
-  const conversionRate = totalUsers > 0
-    ? `${((totalSubscribers / totalUsers) * 100).toFixed(1)}%`
-    : '0%'
+
+  // Use real billing stats when available, fall back to zeroes when the
+  // endpoint isn't deployed yet (getAdminBillingStats returns null on 404).
+  const subscribers = billingStats
+    ? {
+        personal: billingStats.plan_distribution.personal,
+        team: billingStats.plan_distribution.team,
+        business: billingStats.plan_distribution.business,
+      }
+    : { personal: 0, team: 0, business: 0 }
+
+  const totalSubscribers = billingStats?.total_subscribers
+    ?? (subscribers.personal + subscribers.team + subscribers.business)
+  const freeUsers = billingStats?.plan_distribution.free
+    ?? Math.max(0, totalUsers - totalSubscribers)
+  const mrrEur = billingStats ? billingStats.mrr_cents / 100 : null
+  const conversionRate = billingStats
+    ? `${(billingStats.conversion_rate * 100).toFixed(1)}%`
+    : totalUsers > 0
+      ? `${((totalSubscribers / totalUsers) * 100).toFixed(1)}%`
+      : '0%'
   const segments = buildSegments(totalUsers, subscribers)
 
   return (
@@ -119,9 +136,15 @@ export function AdminBilling() {
             <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
               <KpiCard
                 label="MRR"
-                value={0}
+                value={mrrEur ?? 0}
                 format="currency"
-                sub={totalSubscribers > 0 ? `${totalSubscribers} paying` : 'No paying customers yet'}
+                sub={
+                  billingStats === null
+                    ? 'Stripe not connected'
+                    : totalSubscribers > 0
+                      ? `${totalSubscribers} paying`
+                      : 'No paying customers yet'
+                }
               />
               <KpiCard
                 label="Subscribers"

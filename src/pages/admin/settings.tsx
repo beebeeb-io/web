@@ -8,8 +8,8 @@
 import { useState, useEffect } from 'react'
 import { AdminShell } from './admin-shell'
 import { Icon } from '../../components/icons'
-import { getHealth, listStoragePools, getPlans } from '../../lib/api'
-import type { HealthResponse, StoragePool } from '../../lib/api'
+import { getHealth, listStoragePools, getPlans, getAdminConfig } from '../../lib/api'
+import type { HealthResponse, StoragePool, AdminConfig } from '../../lib/api'
 import { formatBytes } from '../../lib/format'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -80,6 +80,7 @@ export function AdminSettings() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [pools, setPools] = useState<StoragePool[]>([])
   const [stripeConnected, setStripeConnected] = useState<boolean | null>(null)
+  const [config, setConfig] = useState<AdminConfig | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -87,10 +88,12 @@ export function AdminSettings() {
       getHealth().catch(() => null),
       listStoragePools().catch(() => [] as StoragePool[]),
       getPlans().then(() => true).catch(() => false),
-    ]).then(([h, p, stripe]) => {
+      getAdminConfig().catch(() => null),
+    ]).then(([h, p, stripe, cfg]) => {
       setHealth(h)
-      setPools(p)
+      setPools(p as StoragePool[])
       setStripeConnected(stripe as boolean)
+      setConfig(cfg as AdminConfig | null)
     }).finally(() => setLoading(false))
   }, [])
 
@@ -186,16 +189,42 @@ export function AdminSettings() {
               />
               <ConfigRow
                 label="Turnstile"
-                value={TURNSTILE_SITEKEY ? 'Sitekey configured' : 'Not configured (dev mode)'}
-                status={TURNSTILE_SITEKEY ? 'ok' : 'off'}
+                value={
+                  config
+                    ? config.turnstile.configured
+                      ? `Configured${config.turnstile.sitekey_prefix ? ` (${config.turnstile.sitekey_prefix}…)` : ''}`
+                      : 'Not configured'
+                    : TURNSTILE_SITEKEY
+                      ? 'Sitekey configured'
+                      : 'Not configured (dev mode)'
+                }
+                status={
+                  config
+                    ? config.turnstile.configured ? 'ok' : 'off'
+                    : TURNSTILE_SITEKEY ? 'ok' : 'off'
+                }
               />
               <ConfigRow
                 label="Email"
-                value={<span className="text-ink-4 italic">Requires server endpoint</span>}
+                value={
+                  config
+                    ? config.email.configured
+                      ? config.email.provider ?? 'Configured'
+                      : 'Not configured'
+                    : <span className="text-ink-4 italic">—</span>
+                }
+                status={config ? (config.email.configured ? 'ok' : 'off') : undefined}
               />
               <ConfigRow
                 label="Slack alerting"
-                value={<span className="text-ink-4 italic">Requires server endpoint</span>}
+                value={
+                  config
+                    ? config.slack.configured
+                      ? `Configured${config.slack.webhook_url_prefix ? ` (${config.slack.webhook_url_prefix}…)` : ''}`
+                      : 'Not configured'
+                    : <span className="text-ink-4 italic">—</span>
+                }
+                status={config ? (config.slack.configured ? 'ok' : 'off') : undefined}
               />
             </SectionCard>
 
