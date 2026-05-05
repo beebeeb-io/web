@@ -27,6 +27,7 @@ import { decryptFolderKey, decryptChildFileKey } from '../lib/folder-share-crypt
 import { decryptFilename, fromBase64 } from '../lib/crypto'
 import { QuotaWarning } from './quota-warning'
 import { QuickAccess } from './quick-access'
+import { EmailVerifyBanner } from './email-verify-banner'
 // formatStorageSI used via StorageUsageBar; kept for potential direct use
 
 const navItems: { path: string; icon: IconName; label: string }[] = [
@@ -443,6 +444,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
           </button>
           <BBLogo size={12} />
         </div>
+        <EmailVerifyBanner />
         {usage && (
           <QuotaWarning
             usedBytes={usage.used_bytes}
