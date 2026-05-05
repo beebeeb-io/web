@@ -1,0 +1,11 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "R8352WDJJR.io.beebeeb.app",
+        "paths": ["/s/*", "/share/*", "/invite/*", "/recover-with-phrase"]
+      }
+    ]
+  }
+}
