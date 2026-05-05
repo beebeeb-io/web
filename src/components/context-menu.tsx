@@ -32,6 +32,8 @@ interface ContextMenuProps {
   fileId: string
   fileName: string
   isFolder: boolean
+  /** Whether this file is currently starred — controls Star vs Unstar label */
+  isStarred?: boolean
   isPinned?: boolean
   /** Show "Version history" — only true for non-folder files with version_number > 1 */
   hasVersions?: boolean
@@ -46,6 +48,7 @@ export function ContextMenu({
   fileId,
   fileName,
   isFolder,
+  isStarred,
   isPinned,
   hasVersions,
   onClose,
@@ -138,7 +141,17 @@ export function ContextMenu({
 
   if (!open) return null
 
-  const visibleItems = MENU_ITEMS.filter((item) => item.id !== 'versions' || hasVersions)
+  const visibleItems = MENU_ITEMS
+    .filter((item) => item.id !== 'versions' || hasVersions)
+    .map((item) => {
+      // Dynamic star/unstar label based on current starred state
+      if (item.id === 'star') {
+        return isStarred
+          ? { ...item, id: 'unstar', label: 'Unstar' }
+          : item
+      }
+      return item
+    })
 
   return (
     <div

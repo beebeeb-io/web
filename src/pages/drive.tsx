@@ -1123,6 +1123,7 @@ export function Drive() {
         setRenameFileId(file.id)
         break
       case 'star':
+      case 'unstar':
         handleToggleStar(file.id)
         break
       case 'versions':
@@ -1577,6 +1578,7 @@ export function Drive() {
             onSelectionChange={setExternalSelectedIds}
             onDecryptedNamesChange={setExternalDecryptedNames}
             onFileAction={handleFileAction}
+            onToggleStar={handleToggleStar}
             onDropToFolder={handleDropToFolder}
             onBulkTrash={handleBulkTrash}
             onBulkMove={(ids) => { setBulkMoveIds(ids); setBulkMoveOpen(true) }}

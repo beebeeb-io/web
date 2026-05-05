@@ -13,6 +13,7 @@ import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { modKey } from '../hooks/use-keyboard-shortcuts'
 import { formatBytes } from '../lib/format'
 import { getPreference, setPreference } from '../lib/api'
+import { SharePopover } from './share-popover'
 import type { DriveFile } from '../lib/api'
 
 // ─── Sort types ─────────────────────────────────────
@@ -91,6 +92,9 @@ export interface FileListProps {
   // Context menu / row action handler
   onFileAction?: (action: string, file: DriveFile) => void
 
+  // Direct star toggle (bypasses context menu, used by inline star button)
+  onToggleStar?: (fileId: string) => void
+
   // Drag-and-drop to folder handler
   onDropToFolder?: (draggedIds: string[], targetFolder: DriveFile) => Promise<void>
 
@@ -135,6 +139,7 @@ export function FileList({
   onDecryptedNamesChange,
   onFileAction,
   onDropToFolder,
+  onToggleStar,
   renderActions,
   onBulkTrash,
   onBulkMove,
@@ -366,8 +371,14 @@ export function FileList({
 
   // ─── Context menu ──────────────────────────────────
   const [ctxMenu, setCtxMenu] = useState<{
-    open: boolean; x: number; y: number; fileId: string; fileName: string; isFolder: boolean; versionNumber: number
-  }>({ open: false, x: 0, y: 0, fileId: '', fileName: '', isFolder: false, versionNumber: 1 })
+    open: boolean; x: number; y: number; fileId: string; fileName: string; isFolder: boolean; versionNumber: number; isStarred: boolean
+  }>({ open: false, x: 0, y: 0, fileId: '', fileName: '', isFolder: false, versionNumber: 1, isStarred: false })
+
+  // ─── Share popover ────────────────────────────────
+  const [sharePopover, setSharePopover] = useState<{
+    fileId: string
+    anchorRect: DOMRect
+  } | null>(null)
 
   // ─── Drag-and-drop ─────────────────────────────────
   const [draggedFileId, setDraggedFileId] = useState<string | null>(null)
@@ -621,7 +632,9 @@ export function FileList({
             fileName: name ?? 'Encrypted file',
             isFolder: file.is_folder,
             versionNumber: file.version_number ?? 1,
+            isStarred: file.is_starred ?? false,
           })
+
         }}
         onKeyDown={(e) => {
           // Enter: open folder or preview file
@@ -647,6 +660,7 @@ export function FileList({
               fileName: name ?? 'Encrypted file',
               isFolder: file.is_folder,
               versionNumber: file.version_number ?? 1,
+              isStarred: file.is_starred ?? false,
             })
           }
           // Arrow keys: move focus to adjacent rows
@@ -700,10 +714,41 @@ export function FileList({
                   aria-label="Loading…"
                 />
             }
-            {file.is_starred && (
-              <span className={`inline-flex text-amber-deep${starPulseId === file.id ? ' star-pulse' : ''}`}>
-                <Icon name="star" size={11} />
-              </span>
+            {/* Star toggle — filled when starred, outline when not */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                onToggleStar?.(file.id)
+              }}
+              aria-label={file.is_starred ? 'Unstar' : 'Star'}
+              aria-pressed={!!file.is_starred}
+              className={`inline-flex items-center transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber rounded ${
+                file.is_starred
+                  ? 'text-amber-deep'
+                  : 'text-ink-4 opacity-0 group-hover:opacity-100 hover:text-amber-deep'
+              }${starPulseId === file.id ? ' star-pulse' : ''}`}
+            >
+              <Icon name="star" size={11} />
+            </button>
+
+            {/* Share badge — shown when file has active share links */}
+            {(file.share_count ?? 0) > 0 && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                  setSharePopover({ fileId: file.id, anchorRect: rect })
+                }}
+                aria-label={`Manage ${file.share_count} active share${(file.share_count ?? 0) > 1 ? 's' : ''}`}
+                className="inline-flex items-center gap-0.5 text-amber-deep hover:text-amber transition-colors cursor-pointer"
+              >
+                <Icon name="link" size={11} />
+                {(file.share_count ?? 0) > 1 && (
+                  <span className="font-mono text-[9px]">{file.share_count}</span>
+                )}
+              </button>
             )}
             {isUnlocked && (
               onShowTrustDetails && !file.is_folder ? (
@@ -768,7 +813,23 @@ export function FileList({
 
         {/* Shared indicator */}
         <div className="hidden md:block self-center">
-          <span className="text-[13px] text-ink-3">--</span>
+          {(file.share_count ?? 0) > 0 ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                setSharePopover({ fileId: file.id, anchorRect: rect })
+              }}
+              aria-label={`${file.share_count} active share link${(file.share_count ?? 0) > 1 ? 's' : ''}`}
+              className="inline-flex items-center gap-1 text-[12px] text-amber-deep hover:text-amber transition-colors cursor-pointer font-medium"
+            >
+              <Icon name="link" size={12} />
+              {(file.share_count ?? 0) > 1 && <span className="font-mono text-[11px]">{file.share_count}</span>}
+            </button>
+          ) : (
+            <span className="text-[13px] text-ink-4">—</span>
+          )}
         </div>
 
         {/* Row actions */}
@@ -792,6 +853,7 @@ export function FileList({
                   fileName: name ?? 'Encrypted file',
                   isFolder: file.is_folder,
                   versionNumber: file.version_number ?? 1,
+                  isStarred: file.is_starred ?? false,
                 })
               }}
             >
@@ -988,6 +1050,7 @@ export function FileList({
         fileId={ctxMenu.fileId}
         fileName={ctxMenu.fileName}
         isFolder={ctxMenu.isFolder}
+        isStarred={ctxMenu.isStarred}
         isPinned={pinnedFolderIds.has(ctxMenu.fileId)}
         hasVersions={!ctxMenu.isFolder && ctxMenu.versionNumber > 1}
         onClose={() => setCtxMenu((prev) => ({ ...prev, open: false }))}
@@ -996,10 +1059,27 @@ export function FileList({
             handleTogglePin(fileId)
             return
           }
+          if (action === 'star' || action === 'unstar') {
+            onToggleStar?.(fileId)
+            return
+          }
           const file = files.find((f) => f.id === fileId)
           if (file) onFileAction?.(action, file)
         }}
       />
+
+      {/* Share popover — anchored to the badge that opened it */}
+      {sharePopover && (
+        <SharePopover
+          fileId={sharePopover.fileId}
+          anchorRect={sharePopover.anchorRect}
+          onClose={() => setSharePopover(null)}
+          onRevoked={() => {
+            // Decrement share_count optimistically in the file list
+            // (actual refetch happens on next navigation or pull-to-refresh)
+          }}
+        />
+      )}
     </>
   )
 }

@@ -497,6 +497,9 @@ export interface DriveFile {
   is_starred?: boolean
   has_thumbnail?: boolean
   version_number?: number
+  /** Number of active (non-revoked, non-expired) share links for this file.
+   *  Populated by a LEFT JOIN in the server's list_files handler. */
+  share_count?: number
   created_at: string
   updated_at: string
 }
@@ -1015,6 +1018,14 @@ export async function fetchShareCiphertextPreview(
 
 export async function listMyShares(): Promise<MyShare[]> {
   const data = await request<{ shares: MyShare[] }>('/api/v1/shares/mine')
+  return data.shares
+}
+
+/** Fetch active (non-revoked, non-expired) shares for a specific file. */
+export async function getSharesForFile(fileId: string): Promise<MyShare[]> {
+  const data = await request<{ shares: MyShare[] }>(
+    `/api/v1/shares/mine?file_id=${encodeURIComponent(fileId)}`,
+  )
   return data.shares
 }
 
