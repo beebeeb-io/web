@@ -545,6 +545,14 @@ export function FileList({
       <div
         key={file.id}
         draggable={!isTrashing}
+        tabIndex={0}
+        role="row"
+        aria-label={
+          file.is_folder
+            ? `${name}, folder`
+            : `${name}, ${formatBytes(file.size_bytes)}, ${timeAgo(file.updated_at)}`
+        }
+        aria-selected={isSelected || undefined}
         onDragStart={(e) => handleDragStart(e, file)}
         onDragEnd={handleDragEnd}
         onDragOver={(e) => handleDragOver(e, file)}
@@ -554,6 +562,7 @@ export function FileList({
           'file-row group transition-colors duration-150 cursor-pointer grid gap-2.5 md:gap-[14px]',
           'grid-cols-[20px_32px_1fr_40px] md:grid-cols-[20px_32px_1fr_110px_110px_100px_60px]',
           'px-3 md:px-5 py-[11px]',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber',
           isDragTarget
             ? 'file-row--drag-target bg-amber-bg ring-2 ring-amber ring-inset'
             : isSelected
@@ -580,6 +589,42 @@ export function FileList({
             isFolder: file.is_folder,
             versionNumber: file.version_number ?? 1,
           })
+        }}
+        onKeyDown={(e) => {
+          // Enter: open folder or preview file
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            if (file.is_folder) onNavigateFolder?.(file)
+            else onSelectFile?.(file)
+          }
+          // Space: toggle selection
+          else if (e.key === ' ') {
+            e.preventDefault()
+            toggleSelection(file.id)
+          }
+          // Context menu key or Shift+F10: open context menu at element position
+          else if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+            e.preventDefault()
+            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+            setCtxMenu({
+              open: true,
+              x: rect.left + 8,
+              y: rect.bottom + 2,
+              fileId: file.id,
+              fileName: name,
+              isFolder: file.is_folder,
+              versionNumber: file.version_number ?? 1,
+            })
+          }
+          // Arrow keys: move focus to adjacent rows
+          else if (e.key === 'ArrowDown') {
+            e.preventDefault()
+            ;(e.currentTarget.nextElementSibling as HTMLElement | null)?.focus()
+          }
+          else if (e.key === 'ArrowUp') {
+            e.preventDefault()
+            ;(e.currentTarget.previousElementSibling as HTMLElement | null)?.focus()
+          }
         }}
       >
         {/* Checkbox */}
@@ -789,8 +834,10 @@ export function FileList({
         </>
       )}
 
-      {/* File list body */}
+      {/* File list body — role=rowgroup + aria-label lets screen readers announce the list */}
       <div
+        role="rowgroup"
+        aria-label="Files and folders"
         className="flex-1 overflow-y-auto"
         onClick={(e) => {
           if (e.target === e.currentTarget && selectedIds.size > 0) clearSelection()

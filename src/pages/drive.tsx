@@ -1252,6 +1252,8 @@ export function Drive() {
 
           {/* Search */}
           <form
+            role="search"
+            aria-label="Search vault"
             className="ml-auto flex items-center gap-2 border border-line rounded-md bg-paper px-2.5 py-1 w-full md:w-[260px] order-last md:order-none"
             onSubmit={(e) => {
               e.preventDefault()
@@ -1263,6 +1265,7 @@ export function Drive() {
             <input
               ref={searchInputRef}
               data-search-input
+              aria-label="Search files and folders"
               placeholder="Search files and folders..."
               className="flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-4"
             />
@@ -1276,8 +1279,8 @@ export function Drive() {
             <BBButton size="sm" variant="amber" onClick={() => setFolderDialogOpen(true)} className="gap-1.5">
               <Icon name="plus" size={13} /> New
             </BBButton>
-            <BBButton size="sm" onClick={browse} className="gap-1.5">
-              <Icon name="upload" size={13} /> <span className="hidden sm:inline">Upload</span>
+            <BBButton size="sm" onClick={browse} className="gap-1.5" aria-label="Upload files">
+              <Icon name="upload" size={13} /> <span className="hidden sm:inline" aria-hidden="true">Upload</span>
             </BBButton>
             <BBButton size="sm" onClick={browseFolder} className="hidden sm:inline-flex gap-1.5">
               <Icon name="folder" size={13} /> Upload folder
@@ -1405,7 +1408,8 @@ export function Drive() {
           />
         )}
 
-        {/* File list with upload zone */}
+        {/* File list with upload zone — id="main-content" is the skip link target */}
+        <main id="main-content">
         <UploadZone onFiles={handleFilesSelected} onFolderFiles={handleFolderFilesSelected}>
           <FileList
             files={files}
@@ -1454,6 +1458,7 @@ export function Drive() {
             onShowTrustDetails={(file) => setTrustFileId(file.id)}
           />
         </UploadZone>
+        </main>
 
         {/* Status bar */}
         <div className="px-3 md:px-5 py-2 border-t border-line bg-paper-2 flex items-center gap-2 md:gap-3.5 text-[11px] text-ink-3">

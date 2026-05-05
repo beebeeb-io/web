@@ -14,7 +14,10 @@
   --color-ink-3: oklch(0.52 0.01 78);
   --color-ink-4: oklch(0.68 0.008 80);
   --color-amber: oklch(0.82 0.17 84);
-  --color-amber-deep: oklch(0.66 0.15 72);
+  /* Darkened from 0.66 → 0.52 for WCAG AA compliance (4.5:1 vs paper).
+     Applies to text links and icon accents. Large elements (buttons, badges)
+     use --color-amber (bright) on dark ink text, which passes separately. */
+  --color-amber-deep: oklch(0.52 0.14 72);
   --color-amber-bg: oklch(0.96 0.04 88);
   --color-green: oklch(0.72 0.16 155);
   --color-red: oklch(0.62 0.21 25);
@@ -72,7 +75,8 @@
   --color-ink-2: oklch(0.78 0.008 82);
   --color-ink-3: oklch(0.62 0.008 80);
   --color-ink-4: oklch(0.48 0.008 78);
-  /* amber stays amber — brand accent is mode-independent */
+  /* amber: deep is lightened vs light-mode for contrast on dark paper (≈5.5:1) */
+  --color-amber-deep: oklch(0.76 0.15 72);
   --color-amber-bg: oklch(0.24 0.06 82);
   --color-green: oklch(0.72 0.16 155);
   --color-red: oklch(0.65 0.21 25);
