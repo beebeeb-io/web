@@ -45,17 +45,20 @@ interface PhotoItem {
   hasThumbnail: boolean
 }
 
-/** Check if a filename or MIME type represents a media file (image/video). */
-function isMediaFile(name: string, mimeType: string): boolean {
+/** Check if a filename or MIME type represents a media file (image/video).
+ *  mimeType may be null for files uploaded after the ZK audit fix — infer
+ *  from extension first, fall back to mime_type when present. */
+function isMediaFile(name: string, mimeType: string | null | undefined): boolean {
   const ext = name.split('.').pop()?.toLowerCase() ?? ''
   if (IMAGE_EXTENSIONS.has(ext) || VIDEO_EXTENSIONS.has(ext)) return true
+  if (!mimeType) return false
   return MEDIA_MIME_PREFIXES.some((p) => mimeType.startsWith(p))
 }
 
-function isVideoFile(name: string, mimeType: string): boolean {
+function isVideoFile(name: string, mimeType: string | null | undefined): boolean {
   const ext = name.split('.').pop()?.toLowerCase() ?? ''
   if (VIDEO_EXTENSIONS.has(ext)) return true
-  return mimeType.startsWith('video/')
+  return mimeType?.startsWith('video/') ?? false
 }
 
 
@@ -196,7 +199,13 @@ export function Photos() {
   }, [thumbnails, getFileKey])
 
   function displayName(file: DriveFile): string {
-    return decryptedNames[file.id] ?? file.name_encrypted
+    const dec = decryptedNames[file.id]
+    if (dec) return dec
+    // name_encrypted is JSON ciphertext for ZK-uploaded files — return
+    // a placeholder that won't mislead extension-based type detection.
+    const raw = file.name_encrypted
+    if (!raw || raw.startsWith('{')) return 'Encrypted file'
+    return raw
   }
 
   // Filter to media files only

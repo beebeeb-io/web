@@ -487,7 +487,9 @@ export async function verify2fa(
 export interface DriveFile {
   id: string
   name_encrypted: string
-  mime_type: string
+  /** Null for files uploaded after the ZK audit fix (commit 04d5288).
+   *  Infer type from decrypted filename extension instead. */
+  mime_type: string | null
   size_bytes: number
   is_folder: boolean
   parent_id: string | null

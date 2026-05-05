@@ -57,6 +57,14 @@ const EXT_LANGUAGE: Record<string, string> = {
   v: 'v', vue: 'vue', svelte: 'svelte', astro: 'astro',
 }
 
+/** Image/video extension sets used when mime_type is null (ZK-uploaded files) */
+const IMAGE_EXTENSIONS_SET = new Set([
+  'jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'bmp', 'tiff', 'tif', 'svg', 'ico',
+])
+const VIDEO_EXTENSIONS_SET = new Set([
+  'mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'ogv',
+])
+
 /** Extensions that should render as plain text (no syntax coloring) */
 const TEXT_EXTENSIONS = new Set([
   'txt', 'log', 'csv', 'tsv', 'env', 'conf', 'ini', 'cfg', 'properties',
@@ -102,21 +110,20 @@ function getExtension(filename: string): string {
   return filename.slice(dot + 1).toLowerCase()
 }
 
-function getKindLabel(mimeType: string, filename: string): string {
-  if (mimeType.startsWith('image/')) {
+function getKindLabel(mimeType: string | null | undefined, filename: string): string {
+  const ext = getExtension(filename)
+  if (mimeType?.startsWith('image/')) {
     const sub = mimeType.split('/')[1]?.toUpperCase() ?? 'Image'
     return sub === 'JPEG' ? 'JPEG Image' : `${sub} Image`
   }
   if (mimeType === 'application/pdf') return 'PDF Document'
-  if (mimeType.startsWith('video/')) {
+  if (mimeType?.startsWith('video/')) {
     const sub = mimeType.split('/')[1]?.toUpperCase() ?? 'Video'
     return `${sub} Video`
   }
   if (mimeType === 'text/markdown') return 'Markdown'
 
-  const ext = getExtension(filename)
-
-  if (TEXT_MIME_TYPES.has(mimeType) || TEXT_EXTENSIONS.has(ext)) {
+  if ((mimeType && TEXT_MIME_TYPES.has(mimeType)) || TEXT_EXTENSIONS.has(ext)) {
     if (ext === 'csv') return 'CSV File'
     if (ext === 'tsv') return 'TSV File'
     if (ext === 'log') return 'Log File'
@@ -125,12 +132,12 @@ function getKindLabel(mimeType: string, filename: string): string {
     return 'Plain Text'
   }
 
-  const lang = CODE_MIME_TYPES[mimeType] ?? EXT_LANGUAGE[ext]
+  const lang = (mimeType ? CODE_MIME_TYPES[mimeType] : undefined) ?? EXT_LANGUAGE[ext]
   if (lang) {
     return `${lang.charAt(0).toUpperCase() + lang.slice(1)} Source`
   }
 
-  return mimeType
+  return mimeType ?? (ext.toUpperCase() || 'File')
 }
 
 // Image formats that no current desktop browser decodes natively.
@@ -145,43 +152,36 @@ const UNSUPPORTED_IMAGE_MIMES = new Set([
 const UNSUPPORTED_IMAGE_EXTS = new Set(['heic', 'heif'])
 
 function pickRenderer(
-  mimeType: string,
+  mimeType: string | null | undefined,
   blob: Blob,
   filename: string,
 ): React.ReactNode {
-  if (mimeType.startsWith('image/')) {
-    const ext = getExtension(filename)
-    if (UNSUPPORTED_IMAGE_MIMES.has(mimeType) || UNSUPPORTED_IMAGE_EXTS.has(ext)) {
+  const ext = getExtension(filename)
+  if (mimeType?.startsWith('image/') || IMAGE_EXTENSIONS_SET.has(ext)) {
+    if (UNSUPPORTED_IMAGE_MIMES.has(mimeType ?? '') || UNSUPPORTED_IMAGE_EXTS.has(ext)) {
       return null
     }
     return <ImagePreview blob={blob} />
   }
-  if (mimeType === 'application/pdf') {
+  if (mimeType === 'application/pdf' || ext === 'pdf') {
     return <PdfPreview blob={blob} />
   }
-  if (mimeType.startsWith('video/')) {
+  if (mimeType?.startsWith('video/') || VIDEO_EXTENSIONS_SET.has(ext)) {
     return <VideoPreview blob={blob} />
   }
-  if (mimeType === 'text/markdown') {
+  if (mimeType === 'text/markdown' || ext === 'md' || ext === 'mdx') {
     return <MarkdownPreview blob={blob} />
   }
 
-  const ext = getExtension(filename)
-
   // Code files — text preview with syntax coloring
-  const lang = CODE_MIME_TYPES[mimeType] ?? EXT_LANGUAGE[ext]
+  const lang = (mimeType ? CODE_MIME_TYPES[mimeType] : undefined) ?? EXT_LANGUAGE[ext]
   if (lang) {
     return <TextPreview blob={blob} language={lang} filename={filename} />
   }
 
   // Plain text files
-  if (TEXT_MIME_TYPES.has(mimeType) || TEXT_EXTENSIONS.has(ext)) {
+  if ((mimeType ? TEXT_MIME_TYPES.has(mimeType) : false) || TEXT_EXTENSIONS.has(ext)) {
     return <TextPreview blob={blob} filename={filename} />
-  }
-
-  // Markdown extension even if mime is wrong
-  if (ext === 'md' || ext === 'mdx') {
-    return <MarkdownPreview blob={blob} />
   }
 
   return null
@@ -267,7 +267,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
             file.id,
             fileKey,
             file.name_encrypted,
-            file.mime_type,
+            file.mime_type ?? undefined,
             file.chunk_count,
             file.size_bytes,
           )
@@ -280,7 +280,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
             file.id,
             v.id,
             fileKey,
-            file.mime_type,
+            file.mime_type ?? undefined,
             v.chunk_count,
             v.size_bytes,
           )
@@ -339,7 +339,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   return (
     <PreviewChrome
       filename={name}
-      kind={file.mime_type}
+      kind={file.mime_type ?? ''}
       size={sizeStr}
       onClose={onClose}
       decrypted={!!blob}

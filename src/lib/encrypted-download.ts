@@ -28,7 +28,7 @@ export async function encryptedDownload(
   fileId: string,
   fileKey: Uint8Array,
   nameEncryptedJson: string,
-  mimeType: string,
+  mimeType: string | null | undefined,
   chunkCount: number,
   sizeBytes: number,
 ): Promise<void> {
@@ -143,7 +143,7 @@ export async function decryptToBlob(
   fileId: string,
   fileKey: Uint8Array,
   nameEncryptedJson: string,
-  mimeType: string,
+  mimeType: string | null | undefined,
   chunkCount: number,
   sizeBytes: number,
 ): Promise<{ plaintext: Blob; filename: string }> {
@@ -202,7 +202,7 @@ export async function decryptVersionToBlob(
   fileId: string,
   versionId: string,
   fileKey: Uint8Array,
-  mimeType: string,
+  mimeType: string | null | undefined,
   chunkCount: number,
   sizeBytes: number,
 ): Promise<Blob> {

@@ -76,7 +76,7 @@ export function Starred() {
     if (!isUnlocked || !cryptoReady || file.is_folder) return
     try {
       const fileKey = await getFileKey(file.id)
-      await encryptedDownload(file.id, fileKey, file.name_encrypted, file.mime_type, file.chunk_count, file.size_bytes)
+      await encryptedDownload(file.id, fileKey, file.name_encrypted, file.mime_type ?? undefined, file.chunk_count, file.size_bytes)
     } catch (err) {
       showToast({ icon: 'download', title: 'Download failed', description: err instanceof Error ? err.message : 'Could not decrypt the file.', danger: true })
     }

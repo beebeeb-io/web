@@ -135,7 +135,7 @@ export async function downloadAsZip(
         file.id,
         key,
         file.name_encrypted,
-        file.mime_type,
+        file.mime_type ?? undefined,
         file.chunk_count,
         file.size_bytes,
       )
