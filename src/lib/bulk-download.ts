@@ -9,7 +9,7 @@
 import { zipSync, strToU8, type Zippable } from 'fflate'
 import { decryptToBlob } from './encrypted-download'
 import { listFiles, type DriveFile } from './api'
-import { decryptFilename, fromBase64 } from './crypto'
+import { decryptFileMetadata } from './crypto'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -64,8 +64,8 @@ async function expandToFiles(
     let folderName = `folder-${item.id.slice(0, 8)}`
     try {
       const key = await getFileKey(item.id)
-      const parsed = JSON.parse(item.name_encrypted) as { nonce: string; ciphertext: string }
-      folderName = await decryptFilename(key, fromBase64(parsed.nonce), fromBase64(parsed.ciphertext))
+      const { name } = await decryptFileMetadata(key, item.name_encrypted)
+      folderName = name
     } catch {
       // Use fallback name — continue rather than failing the whole zip
     }

@@ -7,7 +7,7 @@ import { FileIcon, getFileType } from './file-icon'
 import { ContextMenu } from './context-menu'
 import { FileRowSkeleton } from './skeleton'
 import { useKeys } from '../lib/key-context'
-import { decryptFilename, fromBase64 } from '../lib/crypto'
+import { decryptFileMetadata } from '../lib/crypto'
 import { onDecrypted } from '../lib/decrypt-events'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { modKey } from '../hooks/use-keyboard-shortcuts'
@@ -201,17 +201,13 @@ export function FileList({
       for (const file of files) {
         if (cancelled) return
         try {
-          const parsed = JSON.parse(file.name_encrypted) as { nonce: string; ciphertext: string }
           const fileKey = await getFileKey(file.id)
-          names[file.id] = await decryptFilename(
-            fileKey,
-            fromBase64(parsed.nonce),
-            fromBase64(parsed.ciphertext),
-          )
+          // decryptFileMetadata handles both legacy (bare string) and new
+          // ({ name, mime_type } JSON) formats transparently.
+          const { name } = await decryptFileMetadata(fileKey, file.name_encrypted)
+          names[file.id] = name
         } catch {
           // Decryption failed — use a clear placeholder, never raw ciphertext.
-          // Common causes: vault locked between renders, key derivation error,
-          // malformed ciphertext. In all cases, "Encrypted file" is correct UX.
           names[file.id] = null
         }
       }

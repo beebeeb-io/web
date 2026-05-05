@@ -12,7 +12,7 @@ import { TextPreview } from './text-preview'
 import { BBButton } from '../bb-button'
 import { Icon } from '../icons'
 import { useKeys } from '../../lib/key-context'
-import { decryptFilename, fromBase64 } from '../../lib/crypto'
+import { decryptFileMetadata } from '../../lib/crypto'
 
 interface FilePreviewProps {
   file: DriveFile
@@ -192,6 +192,8 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   const [blob, setBlob] = useState<Blob | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [localDecryptedName, setLocalDecryptedName] = useState<string | null>(null)
+  /** MIME type extracted from encrypted metadata (null for legacy files) */
+  const [localMimeType, setLocalMimeType] = useState<string | null>(null)
 
   // Version state — only populated for files with > 1 version.
   const [versions, setVersions] = useState<FileVersion[] | null>(null)
@@ -206,25 +208,24 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   // Display name: use prop, then locally decrypted, then raw
   const name = decryptedNameProp ?? localDecryptedName ?? file.name_encrypted
 
-  // Decrypt filename if not provided as prop
+  // Decrypt filename (and MIME type if present in encrypted metadata)
+  // decryptFileMetadata handles both legacy (bare filename) and new
+  // ({ name, mime_type }) formats. Result sets both localDecryptedName
+  // and localMimeType so the renderer can infer format even when
+  // file.mime_type is null (ZK uploads from commit 85310c5+).
   useEffect(() => {
     if (decryptedNameProp || !isUnlocked) return
     let cancelled = false
     async function decrypt() {
       try {
-        const parsed = JSON.parse(file.name_encrypted) as {
-          nonce: string
-          ciphertext: string
-        }
         const fileKey = await getFileKey(file.id)
-        const decrypted = await decryptFilename(
-          fileKey,
-          fromBase64(parsed.nonce),
-          fromBase64(parsed.ciphertext),
-        )
-        if (!cancelled) setLocalDecryptedName(decrypted)
+        const { name, mimeType } = await decryptFileMetadata(fileKey, file.name_encrypted)
+        if (!cancelled) {
+          setLocalDecryptedName(name)
+          setLocalMimeType(mimeType)
+        }
       } catch {
-        // Not encrypted JSON or decryption failed -- use raw value
+        // Decryption failed — leave name/mime as null
       }
     }
     decrypt()
@@ -267,7 +268,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
             file.id,
             fileKey,
             file.name_encrypted,
-            file.mime_type ?? undefined,
+            effectiveMime ?? undefined,
             file.chunk_count,
             file.size_bytes,
           )
@@ -319,9 +320,11 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     }
   }, [file.id, selectedVersionId, onVersionRestored])
 
+  // Effective MIME: prefer server value (legacy), then encrypted metadata, then null
+  const effectiveMime = file.mime_type ?? localMimeType
   const sizeStr = formatSize(file.size_bytes)
-  const kindLabel = getKindLabel(file.mime_type, name)
-  const renderer = blob ? pickRenderer(file.mime_type, blob, name) : null
+  const kindLabel = getKindLabel(effectiveMime, name)
+  const renderer = blob ? pickRenderer(effectiveMime, blob, name) : null
   const canPreview = renderer !== null
 
   function handleDownload() {
@@ -339,7 +342,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   return (
     <PreviewChrome
       filename={name}
-      kind={file.mime_type ?? ''}
+      kind={effectiveMime ?? ''}
       size={sizeStr}
       onClose={onClose}
       decrypted={!!blob}

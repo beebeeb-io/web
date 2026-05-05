@@ -5,7 +5,7 @@ import { BBChip } from './bb-chip'
 import { Icon } from './icons'
 import { listFiles, createFolder } from '../lib/api'
 import { useKeys } from '../lib/key-context'
-import { decryptFilename, encryptFilename, fromBase64, toBase64 } from '../lib/crypto'
+import { decryptFileMetadata, encryptFilename, toBase64 } from '../lib/crypto'
 
 interface MoveModalProps {
   open: boolean
@@ -89,13 +89,9 @@ export function MoveModal({
       for (const folder of folders) {
         if (cancelled) return
         try {
-          const parsed = JSON.parse(folder.name) as { nonce: string; ciphertext: string }
           const fileKey = await getFileKey(folder.id)
-          names[folder.id] = await decryptFilename(
-            fileKey,
-            fromBase64(parsed.nonce),
-            fromBase64(parsed.ciphertext),
-          )
+          const { name } = await decryptFileMetadata(fileKey, folder.name)
+          names[folder.id] = name
         } catch {
           names[folder.id] = folder.name
         }

@@ -18,7 +18,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { Icon } from './icons'
 import { useKeys } from '../lib/key-context'
 import { getPreference, setPreference, getFile } from '../lib/api'
-import { decryptFilename, fromBase64 } from '../lib/crypto'
+import { decryptFileMetadata } from '../lib/crypto'
 
 interface PinnedFolder {
   id: string
@@ -140,9 +140,8 @@ export function QuickAccess() {
       for (const id of pinnedIds) {
         try {
           const file = await getFile(id)
-          const parsed = JSON.parse(file.name_encrypted) as { nonce: string; ciphertext: string }
           const fileKey = await getFileKey(id)
-          const name = await decryptFilename(fileKey, fromBase64(parsed.nonce), fromBase64(parsed.ciphertext))
+          const { name } = await decryptFileMetadata(fileKey, file.name_encrypted)
           results.push({ id, name })
         } catch {
           results.push({ id, name: 'Folder' })

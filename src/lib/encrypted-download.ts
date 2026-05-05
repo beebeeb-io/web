@@ -4,8 +4,7 @@
 import {
   CHUNK_SIZE,
   decryptChunk,
-  decryptFilename,
-  fromBase64,
+  decryptFileMetadata,
 } from './crypto'
 import { getToken, getApiUrl, ApiError } from './api'
 import { dispatchDecrypted } from './decrypt-events'
@@ -32,22 +31,18 @@ export async function encryptedDownload(
   chunkCount: number,
   sizeBytes: number,
 ): Promise<void> {
-  // 1. Decrypt the filename
+  // 1. Decrypt the filename (and MIME type if available in encrypted metadata)
   let filename = 'download'
+  let inferredMime: string | null = null
   try {
-    const parsed = JSON.parse(nameEncryptedJson) as {
-      nonce: string
-      ciphertext: string
-    }
-    filename = await decryptFilename(
-      fileKey,
-      fromBase64(parsed.nonce),
-      fromBase64(parsed.ciphertext),
-    )
+    const meta = await decryptFileMetadata(fileKey, nameEncryptedJson)
+    filename = meta.name
+    inferredMime = meta.mimeType
   } catch {
-    // If decryption fails, fall back to a generic name
     filename = `file-${fileId}`
   }
+  // Prefer explicit mimeType arg (legacy files) over encrypted metadata
+  const effectiveMime = mimeType || inferredMime || 'application/octet-stream'
 
   // 2. Download the encrypted blob from the API
   const token = getToken()
@@ -123,7 +118,7 @@ export async function encryptedDownload(
   }
 
   // 5. Trigger browser download
-  const blob = new Blob([decrypted], { type: mimeType || 'application/octet-stream' })
+  const blob = new Blob([decrypted], { type: effectiveMime })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
@@ -148,12 +143,15 @@ export async function decryptToBlob(
   sizeBytes: number,
 ): Promise<{ plaintext: Blob; filename: string }> {
   let filename = 'download'
+  let inferredMime2: string | null = null
   try {
-    const parsed = JSON.parse(nameEncryptedJson) as { nonce: string; ciphertext: string }
-    filename = await decryptFilename(fileKey, fromBase64(parsed.nonce), fromBase64(parsed.ciphertext))
+    const meta = await decryptFileMetadata(fileKey, nameEncryptedJson)
+    filename = meta.name
+    inferredMime2 = meta.mimeType
   } catch {
     filename = `file-${fileId}`
   }
+  const blobMime = mimeType || inferredMime2 || 'application/octet-stream'
 
   const token = getToken()
   const headers: Record<string, string> = {}
@@ -187,7 +185,7 @@ export async function decryptToBlob(
     offset += encryptedChunkSize
   }
 
-  const plaintext = new Blob(decryptedParts as unknown as BlobPart[], { type: mimeType || 'application/octet-stream' })
+  const plaintext = new Blob(decryptedParts as unknown as BlobPart[], { type: blobMime })
   dispatchDecrypted(fileId)
   return { plaintext, filename }
 }
