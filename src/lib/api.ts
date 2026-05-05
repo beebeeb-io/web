@@ -1156,6 +1156,7 @@ export async function getShareStats(): Promise<ShareStats> {
 export interface Plan {
   id: string
   name: string
+  stripe_product_id?: string | null
   price_eur: number
   price_yearly_eur: number
   storage_bytes: number
@@ -1163,6 +1164,21 @@ export interface Plan {
   per_seat: boolean
   min_seats: number
   features: string[]
+  is_active?: boolean
+  sort_order?: number
+}
+
+export interface BillingSyncResult {
+  plans_synced: number
+  created: number
+  updated: number
+  already_up_to_date: boolean
+  stripe_reachable: boolean
+  synced_at: string
+}
+
+export async function syncBillingPlans(): Promise<BillingSyncResult> {
+  return request<BillingSyncResult>('/api/v1/admin/billing/sync', { method: 'POST' })
 }
 
 export interface Subscription {

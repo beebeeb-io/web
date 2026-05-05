@@ -10,11 +10,13 @@ import {
   getInvoices,
   getAdminStats,
   getAdminBillingStats,
+  syncBillingPlans,
   type Subscription,
   type Plan,
   type Invoice,
   type AdminStats,
   type AdminBillingStats,
+  type BillingSyncResult,
 } from '../../lib/api'
 
 function formatDate(iso: string | null): string {
@@ -45,6 +47,15 @@ function buildSegments(totalUsers: number, subscribers: { personal: number; team
   ]
 }
 
+function formatTimeAgo(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime()
+  const secs = Math.floor(ms / 1000)
+  if (secs < 60) return `${secs}s ago`
+  const mins = Math.floor(secs / 60)
+  if (mins < 60) return `${mins} min ago`
+  return `${Math.floor(mins / 60)}h ago`
+}
+
 export function AdminBilling() {
   const [sub, setSub] = useState<Subscription | null>(null)
   const [plans, setPlans] = useState<Plan[]>([])
@@ -53,6 +64,9 @@ export function AdminBilling() {
   const [billingStats, setBillingStats] = useState<AdminBillingStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  const [syncResult, setSyncResult] = useState<BillingSyncResult | null>(null)
+  const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -78,6 +92,21 @@ export function AdminBilling() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  async function handleSync() {
+    setSyncing(true)
+    try {
+      const result = await syncBillingPlans()
+      setSyncResult(result)
+      // Refresh plan list after sync
+      const plansData = await getPlans()
+      setPlans(plansData.sort((a, b) => (a.sort_order ?? 99) - (b.sort_order ?? 99)))
+    } catch {
+      setSyncResult(null)
+    } finally {
+      setSyncing(false)
+    }
+  }
 
   const totalUsers = stats?.users.total ?? 0
 
@@ -114,6 +143,25 @@ export function AdminBilling() {
             {sub.status.charAt(0).toUpperCase() + sub.status.slice(1)}
           </BBChip>
         )}
+        <div className="ml-auto flex items-center gap-3">
+          {syncResult && (
+            <span className="text-[11px] text-ink-3 font-mono">
+              {syncResult.already_up_to_date
+                ? `Already up to date · last synced ${formatTimeAgo(syncResult.synced_at)}`
+                : `Synced ${syncResult.plans_synced} plans (${syncResult.created} created, ${syncResult.updated} updated) · ${formatTimeAgo(syncResult.synced_at)}`
+              }
+            </span>
+          )}
+          <BBButton
+            size="sm"
+            variant="amber"
+            onClick={() => void handleSync()}
+            disabled={syncing}
+          >
+            <Icon name="upload" size={11} className="mr-1.5" />
+            {syncing ? 'Syncing…' : 'Sync from Stripe'}
+          </BBButton>
+        </div>
       </div>
 
       {/* Content */}
@@ -219,38 +267,144 @@ export function AdminBilling() {
               </div>
             </div>
 
-            {/* Available plans */}
+            {/* Plan cards */}
             {plans.length > 0 && (
               <div>
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 mb-2">
-                  All plans
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3">
+                    Plans — Stripe source of truth
+                  </div>
+                  <span className="text-[10px] text-ink-4">Click a plan to inspect details</span>
                 </div>
-                <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${plans.length}, 1fr)` }}>
-                  {plans.map(plan => (
-                    <div
-                      key={plan.id}
-                      className={`rounded-xl border p-3.5 ${
-                        plan.id === sub?.plan
-                          ? 'bg-amber-bg border-amber-deep'
-                          : 'bg-paper border-line-2'
-                      }`}
-                    >
-                      <div className="flex items-center gap-1.5 mb-1.5">
-                        <span className="text-[13px] font-semibold">{plan.name}</span>
-                        {plan.id === sub?.plan && (
-                          <BBChip variant="amber" className="text-[9px]">Active</BBChip>
+                <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(plans.length, 4)}, 1fr)` }}>
+                  {plans
+                    .slice()
+                    .sort((a, b) => (a.sort_order ?? 99) - (b.sort_order ?? 99))
+                    .map(plan => {
+                      const isSelected = selectedPlan?.id === plan.id
+                      return (
+                        <button
+                          key={plan.id}
+                          onClick={() => setSelectedPlan(isSelected ? null : plan)}
+                          className={`rounded-xl border p-3.5 text-left cursor-pointer transition-all ${
+                            isSelected
+                              ? 'bg-amber-bg border-amber ring-1 ring-amber/40'
+                              : plan.id === sub?.plan
+                                ? 'bg-amber-bg/50 border-amber-deep/40 hover:border-amber-deep'
+                                : 'bg-paper border-line-2 hover:border-line hover:bg-paper-2'
+                          }`}
+                        >
+                          <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+                            <span className="text-[13px] font-semibold">{plan.name}</span>
+                            {plan.is_active !== false
+                              ? <BBChip variant="green" className="text-[9px]">Active</BBChip>
+                              : <BBChip className="text-[9px]">Inactive</BBChip>
+                            }
+                            {plan.id === sub?.plan && (
+                              <BBChip variant="amber" className="text-[9px]">Your plan</BBChip>
+                            )}
+                          </div>
+                          <div className="font-mono text-[13px] font-bold text-ink">
+                            {plan.price_eur === 0 ? 'Free' : `€${plan.price_eur.toFixed(2)}/mo`}
+                          </div>
+                          {plan.price_yearly_eur > 0 && (
+                            <div className="font-mono text-[10px] text-ink-3">
+                              €{plan.price_yearly_eur.toFixed(2)}/yr
+                            </div>
+                          )}
+                          <div className="text-[11px] text-ink-2 mt-1.5 font-medium">
+                            {plan.storage_label}
+                          </div>
+                          {plan.stripe_product_id && (
+                            <div className="font-mono text-[9px] text-ink-4 mt-1 truncate">
+                              {plan.stripe_product_id}
+                            </div>
+                          )}
+                        </button>
+                      )
+                    })}
+                </div>
+
+                {/* Plan detail panel */}
+                {selectedPlan && (
+                  <div className="mt-3 rounded-xl border border-line-2 bg-paper p-4 animate-in fade-in slide-in-from-top-1 duration-150">
+                    <div className="flex items-start justify-between mb-3">
+                      <div>
+                        <div className="text-[13px] font-semibold text-ink">{selectedPlan.name}</div>
+                        <div className="text-[11px] text-ink-3 mt-0.5">{selectedPlan.storage_label} storage</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {selectedPlan.stripe_product_id && (
+                          <a
+                            href={`https://dashboard.stripe.com/products/${selectedPlan.stripe_product_id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-[11px] text-amber-deep hover:underline font-medium"
+                          >
+                            Edit in Stripe
+                            <Icon name="chevron-right" size={10} />
+                          </a>
                         )}
-                      </div>
-                      <div className="font-mono text-sm font-bold">
-                        {plan.price_eur === 0 ? 'Free' : `EUR ${plan.price_eur.toFixed(2)}/mo`}
-                      </div>
-                      <div className="text-[10px] text-ink-3 mt-0.5">
-                        {plan.storage_label} storage
-                        {plan.per_seat && ` · per seat · min ${plan.min_seats}`}
+                        <button
+                          onClick={() => setSelectedPlan(null)}
+                          className="text-ink-4 hover:text-ink transition-colors"
+                        >
+                          <Icon name="x" size={13} />
+                        </button>
                       </div>
                     </div>
-                  ))}
-                </div>
+
+                    <div className="grid grid-cols-3 gap-3 mb-3">
+                      <div className="p-2.5 rounded-lg bg-paper-2 border border-line">
+                        <div className="text-[10px] text-ink-4 mb-0.5">Monthly</div>
+                        <div className="font-mono text-[13px] font-semibold">
+                          {selectedPlan.price_eur === 0 ? '—' : `€${selectedPlan.price_eur.toFixed(2)}`}
+                        </div>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-paper-2 border border-line">
+                        <div className="text-[10px] text-ink-4 mb-0.5">Annual</div>
+                        <div className="font-mono text-[13px] font-semibold">
+                          {selectedPlan.price_yearly_eur === 0 ? '—' : `€${selectedPlan.price_yearly_eur.toFixed(2)}`}
+                        </div>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-paper-2 border border-line">
+                        <div className="text-[10px] text-ink-4 mb-0.5">Storage</div>
+                        <div className="font-mono text-[13px] font-semibold">
+                          {selectedPlan.storage_label}
+                        </div>
+                      </div>
+                    </div>
+
+                    {selectedPlan.stripe_product_id && (
+                      <div className="mb-3 p-2.5 rounded-lg bg-paper-2 border border-line">
+                        <div className="text-[10px] text-ink-4 mb-0.5">Stripe product ID</div>
+                        <div className="font-mono text-[11px] text-ink-2">{selectedPlan.stripe_product_id}</div>
+                      </div>
+                    )}
+
+                    {selectedPlan.features.length > 0 && (
+                      <div>
+                        <div className="text-[10px] text-ink-4 mb-1.5">Features</div>
+                        <ul className="space-y-1">
+                          {selectedPlan.features.map((f, i) => (
+                            <li key={i} className="flex items-start gap-2 text-[12px] text-ink-2">
+                              <Icon name="check" size={10} className="text-green mt-0.5 shrink-0" />
+                              {f}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    <div className="mt-3 pt-3 border-t border-line flex items-center justify-between text-[11px] text-ink-4">
+                      <span>After editing in Stripe, click <strong className="text-ink-3">Sync from Stripe</strong> to pull changes.</span>
+                      {selectedPlan.is_active !== false
+                        ? <span className="text-green font-medium">Active</span>
+                        : <span className="text-ink-3">Inactive</span>
+                      }
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
