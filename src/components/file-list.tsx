@@ -362,12 +362,20 @@ export function FileList({
     return () => window.removeEventListener('beebeeb:pins-changed', onPinChanged)
   }, [])
 
+  const MAX_PINS = 10
+
   async function handleTogglePin(folderId: string) {
     const pref = await getPreference<{ folder_ids: string[] }>('pinned_folders').catch(() => null)
     const current = pref?.folder_ids ?? []
-    const newIds = current.includes(folderId)
-      ? current.filter(id => id !== folderId)
-      : [...current, folderId]
+    const isPinning = !current.includes(folderId)
+    if (isPinning && current.length >= MAX_PINS) {
+      // Silently skip — context menu item is still shown so the user knows pins exist,
+      // but we don't add beyond the limit.
+      return
+    }
+    const newIds = isPinning
+      ? [...current, folderId]
+      : current.filter(id => id !== folderId)
     await setPreference('pinned_folders', { folder_ids: newIds }).catch(() => {})
     window.dispatchEvent(new Event('beebeeb:pins-changed'))
   }

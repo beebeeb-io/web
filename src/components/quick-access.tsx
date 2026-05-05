@@ -115,14 +115,14 @@ export function QuickAccess() {
 
   useEffect(() => {
     getPreference<{ folder_ids: string[] }>('pinned_folders')
-      .then(pref => setPinnedIds(pref?.folder_ids ?? []))
+      .then(pref => setPinnedIds((pref?.folder_ids ?? []).slice(0, 10)))
       .catch(() => {})
   }, [])
 
   useEffect(() => {
     function onPinEvent() {
       getPreference<{ folder_ids: string[] }>('pinned_folders')
-        .then(pref => setPinnedIds(pref?.folder_ids ?? []))
+        .then(pref => setPinnedIds((pref?.folder_ids ?? []).slice(0, 10)))
         .catch(() => {})
     }
     window.addEventListener('beebeeb:pins-changed', onPinEvent)
