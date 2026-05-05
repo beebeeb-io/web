@@ -3195,3 +3195,40 @@ export async function googleTokenRefresh(
     body: JSON.stringify({ refresh_token: refreshToken }),
   })
 }
+
+// ─── Onboarding state (spec 024) ─────────────────────────────────────────────
+
+export interface OnboardingState {
+  /** User has verified their recovery phrase. */
+  phrase_verified: boolean
+  /** Server has a welcome file record (onboarding step 6 complete). */
+  welcome_file_exists: boolean
+  /** User has uploaded at least one non-welcome file. */
+  first_upload_done: boolean
+  /** User has created at least one active share link. */
+  first_share_done: boolean
+}
+
+/** GET /api/v1/account/onboarding-state */
+export async function getOnboardingState(): Promise<OnboardingState> {
+  return request<OnboardingState>('/api/v1/account/onboarding-state')
+}
+
+/** POST /api/v1/account/onboarding/mark-welcome-file — registers the welcome file ID */
+export async function markWelcomeFile(fileId: string): Promise<void> {
+  await request<void>('/api/v1/account/onboarding/mark-welcome-file', {
+    method: 'POST',
+    body: JSON.stringify({ file_id: fileId }),
+  })
+}
+
+/**
+ * POST /dev/reset-onboarding — dev/test only.
+ * Resets a user's onboarding state server-side for Playwright re-runs.
+ */
+export async function devResetOnboarding(email: string): Promise<void> {
+  await request<void>('/dev/reset-onboarding', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  })
+}

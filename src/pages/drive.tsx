@@ -18,7 +18,8 @@ import { VersionHistory } from '../components/version-history'
 import { DuplicateFileDialog, getUniqueName, type ConflictItem } from '../components/duplicate-file-dialog'
 import { NotificationInbox, useNotifications } from '../components/notification-inbox'
 import { WelcomeTour } from '../components/welcome-tour'
-import { OnboardingShareGuide } from '../components/onboarding-share-guide'
+import { OnboardingGuide } from '../components/onboarding-guide'
+import { useOnboarding } from '../lib/onboarding-context'
 import { getPreference, setPreference } from '../lib/api'
 import { useToast } from '../components/toast'
 import { useWsEvent } from '../lib/ws-context'
@@ -63,6 +64,7 @@ export function Drive() {
   const { getFileKey, isUnlocked, cryptoReady, cryptoError } = useKeys()
   const { indexFile, unindexFile } = useSearchIndex()
   const sync = useSync()
+  const { refresh: refreshOnboarding } = useOnboarding()
   const location = useLocation()
   const navigate = useNavigate()
   const [files, setFiles] = useState<DriveFile[]>([])
@@ -88,10 +90,8 @@ export function Drive() {
   const [tourCompleted, setTourCompleted] = useState<Set<string>>(new Set())
   const [pausedUploads, setPausedUploads] = useState<UploadState[]>([])
 
-  // First-share onboarding signals — let the OnboardingShareGuide observe
-  // the file the user just uploaded and the share that gets created.
+  // Track the last uploaded file id for the onboarding guide's first-share step.
   const [lastUploadedFileId, setLastUploadedFileId] = useState<string | null>(null)
-  const [onboardingShareUrl, setOnboardingShareUrl] = useState<string | null>(null)
 
   // ─── Pending shares state ────────────────────────────
   const [incomingInviteCount, setIncomingInviteCount] = useState(0)
@@ -602,6 +602,8 @@ export function Drive() {
       showToast({ icon: 'check', title: 'Uploaded', description: file.name })
       // Refresh storage usage so quota warning updates
       refreshUsage()
+      // Advance onboarding state (first_upload_done might now be true)
+      void refreshOnboarding()
       // Mark as recently uploaded for glow animation
       setRecentlyUploaded((prev) => new Set(prev).add(fileId))
       setTimeout(() => {
@@ -1489,15 +1491,12 @@ export function Drive() {
           </div>
         )}
 
-        {/* First-share onboarding — nudge banner sits inline; the modal overlay floats. */}
+        {/* Onboarding guide — context-driven bottom chip (spec 024 §1.6-1.9) */}
         {currentParentId === undefined && location.pathname === '/' && (
-          <OnboardingShareGuide
-            hasFiles={files.length > 0}
+          <OnboardingGuide
             onPickFile={browse}
-            uploadedFileId={lastUploadedFileId}
-            onOpenShare={(id) => setShareFileId(id)}
-            shareCreated={onboardingShareUrl !== null}
-            shareUrl={onboardingShareUrl}
+            onOpenShare={(id) => id && setShareFileId(id)}
+            lastUploadedFileId={lastUploadedFileId}
           />
         )}
 
@@ -1651,12 +1650,9 @@ export function Drive() {
           fileName={displayName(shareFile)}
           fileSize={shareFile.size_bytes}
           isFolder={shareFile.is_folder}
-          onShareCreated={({ fileId, shareUrl }) => {
-            // Only feed the onboarding guide when the share is for the file
-            // it just walked the user through uploading.
-            if (fileId === lastUploadedFileId) {
-              setOnboardingShareUrl(shareUrl)
-            }
+          onShareCreated={() => {
+            // Advance onboarding context (first_share_done might now be true)
+            void refreshOnboarding()
           }}
         />
       )}

@@ -21,12 +21,15 @@ import {
   deleteWebhook,
   testWebhook,
   enableWebhook,
+  devResetOnboarding,
   ApiError,
   type PersonalAccessToken,
   type CreateTokenResponse,
   type Webhook,
   type CreateWebhookResponse,
 } from '../../lib/api'
+import { useOnboarding } from '../../lib/onboarding-context'
+import { useAuth } from '../../lib/auth-context'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -598,6 +601,77 @@ function WebhooksSection() {
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
+// ─── Onboarding reset section (dev-only, spec 024 §3.2) ──────────────────────
+
+function OnboardingResetSection() {
+  const { user } = useAuth()
+  const { skipAll, refresh } = useOnboarding()
+  const { showToast } = useToast()
+  const [resetting, setResetting] = useState(false)
+
+  const handleReset = useCallback(async () => {
+    if (!user?.email) return
+    setResetting(true)
+    try {
+      // Clear localStorage state first
+      try { localStorage.removeItem('beebeeb_onboarding_state') } catch { /* ignore */ }
+      // Reset server-side state (dev endpoint)
+      await devResetOnboarding(user.email)
+      // Re-fetch to sync context
+      await refresh()
+      showToast({ icon: 'check', title: 'Onboarding reset', description: 'Reload to see the welcome guide.' })
+    } catch {
+      // Dev endpoint may not be available in production builds — fallback to localStorage only
+      try { localStorage.removeItem('beebeeb_onboarding_state') } catch { /* ignore */ }
+      await refresh()
+      showToast({ icon: 'check', title: 'Local onboarding state cleared' })
+    } finally {
+      setResetting(false)
+    }
+  }, [user?.email, refresh, showToast])
+
+  const handleSkipAll = useCallback(() => {
+    skipAll()
+    showToast({ icon: 'check', title: 'Onboarding guide dismissed' })
+  }, [skipAll, showToast])
+
+  return (
+    <div className="border-t border-line pt-6 mt-2">
+      <div className="mb-4">
+        <div className="text-[15px] font-semibold text-ink mb-1">Onboarding</div>
+        <div className="text-[13px] text-ink-3">
+          Re-trigger the guided onboarding flow or dismiss it. Dev-only — only visible in local builds.
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <BBButton
+          size="sm"
+          variant="amber"
+          onClick={() => void handleReset()}
+          disabled={resetting}
+          className="gap-1.5"
+        >
+          <Icon name="key" size={12} />
+          {resetting ? 'Resetting…' : 'Restart onboarding tour'}
+        </BBButton>
+        <BBButton
+          size="sm"
+          variant="ghost"
+          onClick={handleSkipAll}
+          className="gap-1.5"
+        >
+          <Icon name="check" size={12} />
+          Mark all steps done
+        </BBButton>
+      </div>
+      <p className="text-[11px] text-ink-4 mt-2">
+        "Restart" calls <code className="font-mono">/dev/reset-onboarding</code> then clears localStorage.
+        Only works on dev builds where the endpoint is available.
+      </p>
+    </div>
+  )
+}
+
 export function SettingsDeveloper() {
   const { showToast } = useToast()
 
@@ -940,6 +1014,9 @@ export function SettingsDeveloper() {
           </div>
           <WebhooksSection />
         </div>
+
+        {/* ── Onboarding reset (dev only — spec 024 §3.2) ── */}
+        <OnboardingResetSection />
 
         {/* ── Footer note ── */}
         <div className="text-[12px] text-ink-4 flex items-start gap-2 pt-2">

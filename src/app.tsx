@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from './lib/auth-context'
 import { KeyProvider, useKeys } from './lib/key-context'
 import { WsProvider } from './lib/ws-context'
 import { SyncProvider } from './lib/sync-context'
+import { OnboardingProvider } from './lib/onboarding-context'
 import { ToastProvider, useToast } from './components/toast'
 import { ErrorBoundary } from './components/error-boundary'
 import { WasmGuard } from './components/wasm-guard'
@@ -188,6 +189,7 @@ export function App() {
       <ImpersonationProvider>
       <DevAuthGate>
       <AuthProvider>
+        <OnboardingProvider>
         <KeyProvider>
         <WsProvider>
         <SyncProvider>
@@ -410,6 +412,7 @@ export function App() {
         </SyncProvider>
         </WsProvider>
         </KeyProvider>
+        </OnboardingProvider>
       </AuthProvider>
       </DevAuthGate>
       </ImpersonationProvider>
