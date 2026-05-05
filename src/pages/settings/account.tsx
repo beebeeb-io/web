@@ -8,7 +8,7 @@ import { Icon } from '../../components/icons'
 import { useAuth } from '../../lib/auth-context'
 import { useKeys } from '../../lib/key-context'
 import { useToast } from '../../components/toast'
-import { RecentActivity } from '../../components/recent-activity'
+import { AccountActivityPanel } from '../../components/account-activity-panel'
 import {
   getPreference, setPreference, getStorageUsage, recoverWithPhraseStart,
   deleteAccountPermanently, changeEmail, exportAccountData,
@@ -475,14 +475,14 @@ export function SettingsAccount() {
         </BBButton>
       </div>
 
-      {/* ── Section: Recent activity ── */}
+      {/* ── Section: Account activity & security ── */}
       <div className="mt-4 mb-1 border-t border-line pt-4">
         <h2 className="text-[11px] font-semibold uppercase tracking-widest text-ink-4 px-7 py-3">
-          Recent activity
+          Security &amp; activity
         </h2>
       </div>
-      <div className="px-7 pb-4">
-        <RecentActivity limit={5} />
+      <div className="px-7 pb-5">
+        <AccountActivityPanel />
       </div>
 
       {/* ── Section 2: Storage breakdown ── */}

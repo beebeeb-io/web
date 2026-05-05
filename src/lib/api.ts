@@ -2110,6 +2110,76 @@ export async function listActivity(
   return request<ActivityResponse>(`/api/v1/activity${qs ? `?${qs}` : ''}`)
 }
 
+// ─── Account activity (0050) ─────────────────────
+
+export interface AccountActivityEvent {
+  id: string
+  type: string
+  description: string
+  category: string
+  outcome: string
+  device: string | null
+  country_code: string | null
+  created_at: string
+}
+
+export interface AccountActivitySummary {
+  last_login_at: string | null
+  last_login_device: string | null
+  active_sessions: number
+  active_shares: number
+  security_score: string
+}
+
+export interface AccountActivity {
+  events: AccountActivityEvent[]
+  summary: AccountActivitySummary
+}
+
+export interface SecurityFactor {
+  key: string
+  satisfied: boolean
+}
+
+export interface SecurityScore {
+  score: number
+  max: number
+  label: string
+  factors: SecurityFactor[]
+}
+
+export interface AccountSession {
+  id: string
+  device_name: string
+  device_kind: string
+  country_code: string | null
+  last_active_at: string | null
+  created_at: string
+  is_current: boolean
+}
+
+export async function getAccountActivity(): Promise<AccountActivity> {
+  return request<AccountActivity>('/api/v1/account/activity')
+}
+
+export async function getSecurityScore(): Promise<SecurityScore> {
+  return request<SecurityScore>('/api/v1/account/security-score')
+}
+
+export async function getAccountSessions(): Promise<{ sessions: AccountSession[] }> {
+  return request<{ sessions: AccountSession[] }>('/api/v1/account/sessions')
+}
+
+export async function revokeAccountSession(id: string): Promise<void> {
+  await request<void>(`/api/v1/account/sessions/${id}`, { method: 'DELETE' })
+}
+
+export async function revokeAllOtherSessions(): Promise<{ revoked: number }> {
+  return request<{ revoked: number }>('/api/v1/account/sessions/revoke-all-others', {
+    method: 'POST',
+  })
+}
+
 // ─── Workspace endpoints ──────────────────────────
 
 export interface Workspace {
