@@ -43,7 +43,15 @@ export function AdminShell({ activeSection, children }: AdminShellProps) {
             <HealthBadge />
           </div>
           {navItems.map((item) => {
-            const isActive = item.id === activeSection || location.pathname === item.href
+            // Match by explicit activeSection prop (set by each admin page),
+            // exact pathname for the dashboard root, or startsWith for all
+            // other sections so sub-pages (pool-lifecycle, mission-control,
+            // individual pool pages) keep their parent item highlighted.
+            const isActive =
+              item.id === activeSection ||
+              (item.href === '/admin'
+                ? location.pathname === '/admin'
+                : location.pathname.startsWith(item.href))
             return (
               <Link
                 key={item.id}

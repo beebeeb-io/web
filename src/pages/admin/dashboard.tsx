@@ -4,8 +4,8 @@ import { Icon } from '../../components/icons'
 import { BBButton } from '../../components/bb-button'
 import { KpiCard } from '../../components/admin/kpi-card'
 import { GrowthChart } from '../../components/admin/growth-chart'
-import { getAdminStats, getHealth, listAuditLog, getAdminGrowthData } from '../../lib/api'
-import type { AdminStats, HealthResponse, AuditEvent } from '../../lib/api'
+import { getAdminStats, getHealth, listAuditLog, getAdminGrowthData, listStoragePools } from '../../lib/api'
+import type { AdminStats, HealthResponse, AuditEvent, StoragePool } from '../../lib/api'
 import { formatBytes } from '../../lib/format'
 
 const POLL_INTERVAL = 30_000
@@ -70,6 +70,7 @@ export function Dashboard() {
   const [stats, setStats] = useState<AdminStats | null>(null)
   const [, setHealth] = useState<HealthResponse | null>(null)
   const [events, setEvents] = useState<AuditEvent[]>([])
+  const [pools, setPools] = useState<StoragePool[]>([])
   const [growth, setGrowth] = useState<{ label: string; value: number }[]>([])
   const [activeTab, setActiveTab] = useState<GrowthMetric>('signups')
   const [activeRange, setActiveRange] = useState<string>('30')
@@ -107,14 +108,16 @@ export function Dashboard() {
   const load = useCallback(async () => {
     setError(null)
     try {
-      const [statsData, healthData, auditData] = await Promise.all([
+      const [statsData, healthData, auditData, poolsData] = await Promise.all([
         getAdminStats().catch(() => null),
         getHealth().catch(() => null),
         listAuditLog({ limit: 50 }).catch(() => null),
+        listStoragePools().catch(() => []),
       ])
       if (statsData) setStats(statsData)
       if (healthData) setHealth(healthData)
       if (auditData) setEvents(auditData.events)
+      if (poolsData.length) setPools(poolsData)
       setLastRefresh(new Date())
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load dashboard data')
@@ -152,6 +155,12 @@ export function Dashboard() {
     0
   const activeShares = statsAny?.shares.active_links ?? 0
   const signupsToday = statsAny?.users.signups_today ?? 0
+
+  // Pool capacity — sum active pool capacities for a cluster-wide view
+  const totalCapacityBytes = pools.reduce((s, p) => s + (p.capacity_bytes ?? 0), 0)
+  const poolCapacityPct = totalCapacityBytes > 0
+    ? Math.round((storageBytes / totalCapacityBytes) * 100)
+    : null
 
   return (
     <AdminShell activeSection="dashboard">
@@ -197,7 +206,7 @@ export function Dashboard() {
         ) : (
           <>
             {/* KPI cards */}
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
               <KpiCard
                 label="Total users"
                 value={totalUsers.toLocaleString()}
@@ -211,12 +220,18 @@ export function Dashboard() {
                 label="Storage used"
                 value={storageBytes}
                 format="bytes"
+                sub={poolCapacityPct !== null ? `${poolCapacityPct}% of cluster` : undefined}
+              />
+              <KpiCard
+                label="Cluster capacity"
+                value={totalCapacityBytes > 0 ? totalCapacityBytes : '—'}
+                format={totalCapacityBytes > 0 ? 'bytes' : undefined}
+                sub={pools.length > 0 ? `${pools.filter(p => p.is_active).length} active pool${pools.filter(p => p.is_active).length !== 1 ? 's' : ''}` : 'No pools'}
               />
               <KpiCard
                 label="MRR"
-                value={0}
-                format="currency"
-                sub="No paying customers yet"
+                value="—"
+                sub="Stripe not connected"
               />
               <KpiCard
                 label="Active shares"
