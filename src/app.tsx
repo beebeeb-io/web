@@ -42,6 +42,7 @@ import { AdminBilling } from './pages/admin/billing-overview'
 import { Dashboard } from './pages/admin/dashboard'
 import { Infrastructure } from './pages/admin/infrastructure'
 import { Security as AdminSecurity } from './pages/admin/security'
+import { CliAuth } from './pages/cli-auth'
 import { PoolLifecycle } from './pages/admin/pool-lifecycle'
 import { MissionControl } from './pages/admin/mission-control'
 import { AdminSettings } from './pages/admin/settings'
@@ -297,6 +298,9 @@ export function App() {
           <Route path="/admin/billing" element={<ProtectedRoute><AdminBilling /></ProtectedRoute>} />
           <Route path="/admin/compliance" element={<ProtectedRoute><Compliance /></ProtectedRoute>} />
           <Route path="/admin/settings" element={<ProtectedRoute><AdminSettings /></ProtectedRoute>} />
+          {/* CLI web auth — `bb login --browser` */}
+          <Route path="/cli-auth" element={<ProtectedRoute><CliAuth /></ProtectedRoute>} />
+
           <Route path="/admin/monitoring" element={<Navigate to="/admin" replace />} />
           <Route path="/admin/audit-log" element={<Navigate to="/admin/security" replace />} />
           <Route path="/admin/storage-pools" element={<Navigate to="/admin/infrastructure" replace />} />
