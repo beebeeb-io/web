@@ -11,14 +11,18 @@ type BillingCycle = 'monthly' | 'yearly'
 interface PlanDef {
   id: string
   name: string
+  /** Monthly price when billed monthly */
   priceMonthly: number
+  /** Monthly equivalent price when billed yearly (annual total / 12) */
   priceYearly: number
   seat: string | null
   note: string
   storage: string
+  perTb?: string
   cta: string
   ctaVariant: 'amber' | 'default' | 'ghost'
   highlight?: boolean
+  badge?: string
   features: { label: string; strong?: boolean }[]
 }
 
@@ -30,7 +34,7 @@ const plans: PlanDef[] = [
     priceYearly: 0,
     seat: null,
     note: 'Forever. No card needed.',
-    storage: '20 GB',
+    storage: '5 GB',
     cta: 'Create account',
     ctaVariant: 'default',
     features: [
@@ -45,16 +49,17 @@ const plans: PlanDef[] = [
   {
     id: 'personal',
     name: 'Personal',
-    priceMonthly: 5,
-    priceYearly: 48,
+    priceMonthly: 8.99,
+    priceYearly: 7.19,
     seat: '/ month',
-    note: '2 TB. One flat price. No upsells.',
-    storage: '2 TB',
+    note: '1 TB · €8.99/TB',
+    storage: '1 TB',
+    perTb: '€8.99/TB',
     cta: 'Start 14-day trial',
     ctaVariant: 'default',
     features: [
       { label: 'Everything in Free' },
-      { label: '2 TB encrypted storage', strong: true },
+      { label: '1 TB encrypted storage', strong: true },
       { label: 'Photo library · EXIF stripped' },
       { label: 'Recovery via trusted contact' },
       { label: 'EU jurisdiction of choice' },
@@ -63,44 +68,45 @@ const plans: PlanDef[] = [
     ],
   },
   {
-    id: 'team',
-    name: 'Team',
-    priceMonthly: 6,
-    priceYearly: 58,
-    seat: '/ user · month',
-    note: '3+ seats. 2 TB each, pooled.',
-    storage: '2 TB / seat · pooled',
-    cta: 'Try with your team',
+    id: 'pro',
+    name: 'Pro',
+    priceMonthly: 39.95,
+    priceYearly: 31.96,
+    seat: '/ month',
+    note: '5 TB · €7.99/TB',
+    storage: '5 TB',
+    perTb: '€7.99/TB',
+    cta: 'Start 14-day trial',
     ctaVariant: 'amber',
     highlight: true,
     features: [
       { label: 'Everything in Personal' },
-      { label: 'Shared vaults & team keys', strong: true },
-      { label: 'Granular permissions + client portals', strong: true },
-      { label: 'Audit log & activity export' },
-      { label: 'Centralised billing, 1 invoice' },
-      { label: '90-day version history' },
+      { label: '5 TB encrypted storage', strong: true },
+      { label: 'Unlimited version history', strong: true },
+      { label: 'Desktop sync · CLI access' },
+      { label: 'Shared folders' },
       { label: 'Priority support · 24h response' },
     ],
   },
   {
-    id: 'business',
-    name: 'Business',
-    priceMonthly: 12,
-    priceYearly: 115,
-    seat: '/ user · month',
-    note: 'Regulated industries & larger teams.',
-    storage: '5 TB / seat · pooled',
-    cta: 'Talk to sales',
+    id: 'data_hoarder',
+    name: 'Data Hoarder',
+    priceMonthly: 139.80,
+    priceYearly: 111.84,
+    seat: '/ month',
+    note: '20 TB · €6.99/TB · lowest per-TB',
+    storage: '20 TB',
+    perTb: '€6.99/TB',
+    cta: 'Start 14-day trial',
     ctaVariant: 'default',
+    badge: 'Best value',
     features: [
-      { label: 'Everything in Team' },
-      { label: 'SSO · SAML · SCIM', strong: true },
-      { label: 'Compliance dashboard (NIS2, DORA)', strong: true },
-      { label: 'Signed DPA + data residency choice' },
-      { label: 'Unlimited version history' },
+      { label: 'Everything in Pro' },
+      { label: '20 TB encrypted storage', strong: true },
+      { label: 'Lowest per-TB price (€6.99/TB)', strong: true },
+      { label: 'Dedicated support channel' },
       { label: 'Custom data retention policies' },
-      { label: 'Priority support · 4h response' },
+      { label: 'Priority egress bandwidth' },
     ],
   },
 ]
@@ -152,9 +158,15 @@ const faqItems: FaqItem[] = [
   },
 ]
 
+/** Annual saving vs paying monthly. priceYearly is the per-month equivalent. */
 function yearlySavings(plan: PlanDef): number {
-  if (plan.priceMonthly === 0) return 0
-  return plan.priceMonthly * 12 - plan.priceYearly
+  if (plan.priceMonthly === 0 || plan.priceYearly === 0) return 0
+  return Math.round((plan.priceMonthly - plan.priceYearly) * 12)
+}
+
+function formatEur(n: number): string {
+  if (n === 0) return '€0'
+  return n % 1 === 0 ? `€${n}` : `€${n.toFixed(2)}`
 }
 
 function PlanCard({
@@ -168,8 +180,8 @@ function PlanCard({
 }) {
   const displayPrice =
     cycle === 'yearly' && plan.priceYearly > 0
-      ? `€${Math.round(plan.priceYearly / 12)}`
-      : `€${plan.priceMonthly}`
+      ? formatEur(plan.priceYearly)
+      : formatEur(plan.priceMonthly)
 
   const saved = yearlySavings(plan)
 
@@ -184,6 +196,11 @@ function PlanCard({
       {plan.highlight && (
         <span className="absolute -top-2.5 left-[22px] px-2.5 py-[3px] rounded-full bg-ink text-amber font-mono text-[10px] tracking-wider uppercase font-semibold">
           Most popular
+        </span>
+      )}
+      {plan.badge && !plan.highlight && (
+        <span className="absolute -top-2.5 left-[22px] px-2.5 py-[3px] rounded-full bg-paper border border-line-2 text-ink-2 font-mono text-[10px] tracking-wider uppercase font-semibold shadow-1">
+          {plan.badge}
         </span>
       )}
 
@@ -218,6 +235,9 @@ function PlanCard({
       >
         <Icon name="cloud" size={13} className="text-amber-deep" />
         <span className="font-mono text-xs font-medium">{plan.storage}</span>
+        {plan.perTb && (
+          <span className="ml-auto font-mono text-[10px] text-ink-4">{plan.perTb}</span>
+        )}
       </div>
 
       <div className="flex flex-col gap-[7px]">
