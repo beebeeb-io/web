@@ -3232,3 +3232,65 @@ export async function devResetOnboarding(email: string): Promise<void> {
     body: JSON.stringify({ email }),
   })
 }
+
+// ─── GDPR activity tracking (task 0020) ──────────────────────────────────────
+
+/** User's current tracking opt-in state. */
+export interface TrackingPreference {
+  tracking_opted_in: boolean
+  opted_in_at: string | null
+  opted_out_at: string | null
+}
+
+/** GET /api/v1/me/tracking */
+export async function getTrackingPreference(): Promise<TrackingPreference> {
+  return request<TrackingPreference>('/api/v1/me/tracking')
+}
+
+/** PUT /api/v1/me/tracking — { opted_in: boolean } */
+export async function setTrackingPreference(optedIn: boolean): Promise<TrackingPreference> {
+  return request<TrackingPreference>('/api/v1/me/tracking', {
+    method: 'PUT',
+    body: JSON.stringify({ opted_in: optedIn }),
+  })
+}
+
+/** One sign-in record (admin view, GDPR opt-in). */
+export interface AdminSignIn {
+  id: string
+  at: string
+  /** Anonymized per data minimization — last octet zeroed for IPv4. */
+  ip_anonymized: string | null
+  /** Parsed UA string, e.g. "Chrome 124 on macOS". */
+  device: string | null
+  country_code: string | null
+  success: boolean
+}
+
+export interface AdminSignInsResponse {
+  opted_in: boolean
+  sign_ins: AdminSignIn[]
+}
+
+/** GET /api/v1/admin/users/:id/sign-ins */
+export async function getAdminUserSignIns(userId: string): Promise<AdminSignInsResponse> {
+  return request<AdminSignInsResponse>(`/api/v1/admin/users/${userId}/sign-ins`)
+}
+
+/** One GDPR activity event (admin view). */
+export interface AdminActivityEvent {
+  id: string
+  at: string
+  event_type: 'file_uploaded' | 'file_deleted' | 'file_downloaded' | 'share_created' | 'share_revoked' | 'folder_created' | string
+  description: string
+}
+
+export interface AdminActivityResponse {
+  opted_in: boolean
+  events: AdminActivityEvent[]
+}
+
+/** GET /api/v1/admin/users/:id/activity */
+export async function getAdminUserGdprActivity(userId: string): Promise<AdminActivityResponse> {
+  return request<AdminActivityResponse>(`/api/v1/admin/users/${userId}/activity`)
+}

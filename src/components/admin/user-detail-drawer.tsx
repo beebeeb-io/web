@@ -17,6 +17,8 @@ import {
   getUserStorage,
   suspendUser,
   unsuspendUser,
+  getAdminUserSignIns,
+  getAdminUserGdprActivity,
 } from '../../lib/api'
 import type {
   AdminUserDetail,
@@ -25,12 +27,14 @@ import type {
   StoragePool,
   AuditEvent,
   UserStorageBreakdown,
+  AdminSignIn,
+  AdminActivityEvent,
 } from '../../lib/api'
 import { formatBytes } from '../../lib/format'
 import { useImpersonation } from '../../lib/impersonation-context'
 import { useAuth } from '../../lib/auth-context'
 
-type TabKey = 'storage' | 'security' | 'billing' | 'activity'
+type TabKey = 'storage' | 'security' | 'billing' | 'activity' | 'sign-ins' | 'gdpr-activity'
 
 interface UserDetailDrawerProps {
   userId: string
@@ -71,6 +75,8 @@ export function UserDetailDrawer({ userId, onClose }: UserDetailDrawerProps) {
   const [loginIps, setLoginIps] = useState<LoginIp[]>([])
   const [sessions, setSessions] = useState<AdminUserSession[]>([])
   const [activity, setActivity] = useState<AuditEvent[] | null>(null)
+  const [signIns, setSignIns] = useState<{ opted_in: boolean; sign_ins: AdminSignIn[] } | null>(null)
+  const [gdprActivity, setGdprActivity] = useState<{ opted_in: boolean; events: AdminActivityEvent[] } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [tab, setTab] = useState<TabKey>('storage')
@@ -149,6 +155,26 @@ export function UserDetailDrawer({ userId, onClose }: UserDetailDrawerProps) {
       cancelled = true
     }
   }, [tab, activity, userId])
+
+  // Lazy-load sign-ins tab
+  useEffect(() => {
+    if (tab !== 'sign-ins' || signIns !== null) return
+    let cancelled = false
+    getAdminUserSignIns(userId)
+      .then(r => { if (!cancelled) setSignIns(r) })
+      .catch(() => { if (!cancelled) setSignIns({ opted_in: false, sign_ins: [] }) })
+    return () => { cancelled = true }
+  }, [tab, signIns, userId])
+
+  // Lazy-load GDPR activity tab
+  useEffect(() => {
+    if (tab !== 'gdpr-activity' || gdprActivity !== null) return
+    let cancelled = false
+    getAdminUserGdprActivity(userId)
+      .then(r => { if (!cancelled) setGdprActivity(r) })
+      .catch(() => { if (!cancelled) setGdprActivity({ opted_in: false, events: [] }) })
+    return () => { cancelled = true }
+  }, [tab, gdprActivity, userId])
 
   // Close on Escape
   useEffect(() => {
@@ -463,7 +489,9 @@ export function UserDetailDrawer({ userId, onClose }: UserDetailDrawerProps) {
                   ['storage', 'Storage'],
                   ['security', 'Security'],
                   ['billing', 'Billing'],
-                  ['activity', 'Activity'],
+                  ['activity', 'Audit'],
+                  ['sign-ins', 'Sign-ins'],
+                  ['gdpr-activity', 'Activity'],
                 ] as const
               ).map(([key, label]) => (
                 <button
@@ -498,6 +526,8 @@ export function UserDetailDrawer({ userId, onClose }: UserDetailDrawerProps) {
               )}
               {tab === 'billing' && <BillingTab detail={detail} />}
               {tab === 'activity' && <ActivityTab events={activity} />}
+              {tab === 'sign-ins' && <SignInsTab data={signIns} />}
+              {tab === 'gdpr-activity' && <GdprActivityTab data={gdprActivity} />}
             </div>
           </>
         )}
@@ -832,6 +862,147 @@ function ActivityTab({ events }: { events: AuditEvent[] | null }) {
           <span className="text-ink-3 truncate">{e.target ?? '—'}</span>
         </div>
       ))}
+    </div>
+  )
+}
+
+// ─── Sign-ins tab (GDPR opt-in) ────────────────────────
+
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime()
+  const m = Math.floor(diff / 60000)
+  if (m < 1) return 'just now'
+  if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ago`
+  const d = Math.floor(h / 24)
+  return d < 7 ? `${d}d ago` : new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+}
+
+function OptOutPlaceholder({ label }: { label: string }) {
+  return (
+    <div className="px-5 py-10 flex flex-col items-center gap-3 text-center">
+      <div className="w-10 h-10 rounded-full bg-paper-2 border border-line flex items-center justify-center">
+        <Icon name="eye-off" size={16} className="text-ink-4" />
+      </div>
+      <p className="text-[13px] font-medium text-ink-2">Tracking not enabled</p>
+      <p className="text-[12px] text-ink-3 max-w-[280px] leading-relaxed">
+        This user has not opted in to activity tracking. Only operational data (sessions, billing) is available.
+      </p>
+      <p className="text-[11px] text-ink-4">{label}</p>
+    </div>
+  )
+}
+
+function TabSpinner() {
+  return (
+    <div className="flex items-center justify-center py-8">
+      <svg className="animate-spin h-4 w-4 text-amber" viewBox="0 0 24 24" fill="none">
+        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+      </svg>
+    </div>
+  )
+}
+
+function SignInsTab({ data }: { data: { opted_in: boolean; sign_ins: AdminSignIn[] } | null }) {
+  if (data === null) return <TabSpinner />
+
+  if (!data.opted_in) {
+    return <OptOutPlaceholder label="Sign-in history is only recorded when the user opts in." />
+  }
+
+  if (data.sign_ins.length === 0) {
+    return (
+      <div className="px-5 py-8 text-center text-xs text-ink-3">
+        No sign-ins recorded yet.
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      {/* Column headers */}
+      <div
+        className="grid px-5 py-1.5 bg-paper-2 text-[10px] font-mono uppercase tracking-wide text-ink-3 border-b border-line sticky top-0"
+        style={{ gridTemplateColumns: '90px 1fr 130px 60px 60px' }}
+      >
+        <span>Time</span>
+        <span>IP</span>
+        <span>Device</span>
+        <span>Country</span>
+        <span>Status</span>
+      </div>
+      {data.sign_ins.map(s => (
+        <div
+          key={s.id}
+          className="grid px-5 py-2 text-[11px] font-mono border-b border-line last:border-b-0 items-center"
+          style={{ gridTemplateColumns: '90px 1fr 130px 60px 60px' }}
+        >
+          <span className="text-ink-3">{timeAgo(s.at)}</span>
+          <span className="text-ink truncate">{s.ip_anonymized ?? '—'}</span>
+          <span className="text-ink-2 truncate">{s.device ?? '—'}</span>
+          <span className="text-ink-2">{s.country_code ?? '—'}</span>
+          <span>
+            <span
+              className={`inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                s.success
+                  ? 'bg-green/10 text-green border border-green/20'
+                  : 'bg-red/10 text-red border border-red/20'
+              }`}
+            >
+              {s.success ? 'OK' : 'Fail'}
+            </span>
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ─── GDPR Activity tab ─────────────────────────────────
+
+const EVENT_ICON: Record<string, 'upload' | 'trash' | 'download' | 'share' | 'x' | 'folder' | 'file'> = {
+  file_uploaded: 'upload',
+  file_deleted: 'trash',
+  file_downloaded: 'download',
+  share_created: 'share',
+  share_revoked: 'x',
+  folder_created: 'folder',
+}
+
+function GdprActivityTab({ data }: { data: { opted_in: boolean; events: AdminActivityEvent[] } | null }) {
+  if (data === null) return <TabSpinner />
+
+  if (!data.opted_in) {
+    return <OptOutPlaceholder label="File activity is only recorded when the user opts in." />
+  }
+
+  if (data.events.length === 0) {
+    return (
+      <div className="px-5 py-8 text-center text-xs text-ink-3">
+        No activity recorded yet.
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      {data.events.map(e => {
+        const iconName = EVENT_ICON[e.event_type] ?? 'file'
+        return (
+          <div
+            key={e.id}
+            className="flex items-start gap-3 px-5 py-3 border-b border-line last:border-b-0"
+          >
+            <div className="mt-0.5 w-6 h-6 rounded-md bg-paper-2 border border-line flex items-center justify-center shrink-0">
+              <Icon name={iconName} size={11} className="text-ink-3" />
+            </div>
+            <span className="flex-1 text-[12px] text-ink leading-snug">{e.description}</span>
+            <span className="font-mono text-[10.5px] text-ink-3 shrink-0 mt-0.5">{timeAgo(e.at)}</span>
+          </div>
+        )
+      })}
     </div>
   )
 }
