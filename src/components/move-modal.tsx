@@ -252,7 +252,7 @@ export function MoveModal({
         </div>
 
         {/* Folder list */}
-        <div className="max-h-60 overflow-y-auto">
+        <div className="max-h-60 overflow-y-auto" role="listbox" aria-label="Folders">
           {loading ? (
             <div className="px-xl py-6 text-center text-sm text-ink-3">Loading...</div>
           ) : filteredFolders.length === 0 ? (
@@ -266,7 +266,9 @@ export function MoveModal({
                 <button
                   key={folder.id}
                   type="button"
-                  className="w-full text-left flex items-center gap-2.5 px-xl py-2.5 transition-colors cursor-pointer"
+                  role="option"
+                  aria-selected={isSelected}
+                  className="w-full text-left flex items-center gap-2.5 px-xl py-2.5 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-deep"
                   style={{
                     background: isSelected ? 'var(--color-amber-bg)' : 'transparent',
                     borderLeft: isSelected

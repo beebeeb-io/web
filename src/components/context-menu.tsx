@@ -44,6 +44,7 @@ export function ContextMenu({
   x,
   y,
   fileId,
+  fileName,
   isFolder,
   isPinned,
   hasVersions,
@@ -85,34 +86,77 @@ export function ContextMenu({
     }
   }, [open, onClose])
 
-  // Close on Escape
+  // Keyboard navigation: Arrow keys move focus between menuitems,
+  // Escape closes, Home/End jump to first/last item.
   useEffect(() => {
-    if (!open) return
+    if (!open || !menuRef.current) return
+
+    // Auto-focus the first menuitem when the menu opens
+    const firstItem = menuRef.current.querySelector<HTMLElement>('[role="menuitem"]')
+    firstItem?.focus()
+
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onClose()
+        return
+      }
+
+      const items = Array.from(
+        menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []
+      )
+      if (items.length === 0) return
+
+      const focused = document.activeElement as HTMLElement
+      const currentIdx = items.indexOf(focused)
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        const next = currentIdx < items.length - 1 ? currentIdx + 1 : 0
+        items[next]?.focus()
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        const prev = currentIdx > 0 ? currentIdx - 1 : items.length - 1
+        items[prev]?.focus()
+      } else if (e.key === 'Home') {
+        e.preventDefault()
+        items[0]?.focus()
+      } else if (e.key === 'End') {
+        e.preventDefault()
+        items[items.length - 1]?.focus()
+      } else if (e.key === 'Tab') {
+        // Keep focus inside the menu — Tab should not escape
+        e.preventDefault()
+        const next = currentIdx < items.length - 1 ? currentIdx + 1 : 0
+        items[next]?.focus()
+      }
     }
+
     document.addEventListener('keydown', handleKey)
     return () => document.removeEventListener('keydown', handleKey)
   }, [open, onClose])
 
   if (!open) return null
 
+  const visibleItems = MENU_ITEMS.filter((item) => item.id !== 'versions' || hasVersions)
+
   return (
     <div
       ref={menuRef}
       role="menu"
-      aria-label="File actions"
+      aria-label={`Actions for ${fileName}`}
+      aria-orientation="vertical"
       className="fixed z-[60] min-w-[220px] bg-paper border border-line-2 rounded-lg shadow-3 overflow-hidden py-1 ctx-menu-enter"
       style={{ left: x, top: y, transformOrigin: '0 0' }}
     >
-      {MENU_ITEMS.filter((item) => item.id !== 'versions' || hasVersions).map((item) => (
+      {visibleItems.map((item) => (
         <div key={item.id}>
           <button
             type="button"
             role="menuitem"
-            className={`w-full text-left flex items-center gap-2.5 px-3 py-[7px] text-[13px] transition-colors ${
+            className={`w-full text-left flex items-center gap-2.5 px-3 py-[7px] text-[13px] transition-colors focus-visible:outline-none focus-visible:bg-paper-2 ${
               item.danger
-                ? 'text-red hover:bg-red/5'
+                ? 'text-red hover:bg-red/5 focus-visible:bg-red/5'
                 : 'text-ink hover:bg-paper-2'
             }`}
             onClick={() => {
@@ -133,17 +177,17 @@ export function ContextMenu({
             )}
           </button>
           {item.dividerAfter && (
-            <div className="mx-2 my-1 h-px bg-line" />
+            <div className="mx-2 my-1 h-px bg-line" role="separator" />
           )}
         </div>
       ))}
       {isFolder && (
         <div>
-          <div className="mx-2 my-1 h-px bg-line" />
+          <div className="mx-2 my-1 h-px bg-line" role="separator" />
           <button
             type="button"
             role="menuitem"
-            className="w-full text-left flex items-center gap-2.5 px-3 py-[7px] text-[13px] text-ink hover:bg-paper-2 transition-colors"
+            className="w-full text-left flex items-center gap-2.5 px-3 py-[7px] text-[13px] text-ink hover:bg-paper-2 focus-visible:outline-none focus-visible:bg-paper-2 transition-colors"
             onClick={() => {
               onAction(isPinned ? 'unpin' : 'pin', fileId)
               onClose()

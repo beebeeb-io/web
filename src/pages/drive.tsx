@@ -1348,7 +1348,7 @@ export function Drive() {
                 </BBButton>
                 {pendingApprovalCount === 0 && (
                   <button
-                    onClick={() => setPendingSharesDismissed(true)}
+                    onClick={() => setPendingSharesDismissed(true)} aria-label="Dismiss notification" type="button"
                     className="p-1 text-ink-3 hover:text-ink transition-colors cursor-pointer"
                   >
                     <Icon name="x" size={14} />
@@ -1372,7 +1372,7 @@ export function Drive() {
                 </BBButton>
                 {incomingInviteCount === 0 && (
                   <button
-                    onClick={() => setPendingSharesDismissed(true)}
+                    onClick={() => setPendingSharesDismissed(true)} aria-label="Dismiss notification" type="button"
                     className="p-1 text-ink-3 hover:text-ink transition-colors cursor-pointer"
                   >
                     <Icon name="x" size={14} />
@@ -1383,7 +1383,7 @@ export function Drive() {
             {incomingInviteCount > 0 && pendingApprovalCount > 0 && (
               <div className="flex justify-end -mt-1">
                 <button
-                  onClick={() => setPendingSharesDismissed(true)}
+                  onClick={() => setPendingSharesDismissed(true)} aria-label="Dismiss notification" type="button"
                   className="p-1 text-ink-3 hover:text-ink transition-colors cursor-pointer"
                 >
                   <Icon name="x" size={14} />

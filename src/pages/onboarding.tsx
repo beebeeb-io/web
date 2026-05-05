@@ -418,9 +418,9 @@ export function Onboarding() {
                       trailing={
                         <button
                           type="button"
-                          className="text-ink-3 hover:text-ink-2 transition-colors"
+                          className="text-ink-3 hover:text-ink-2 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-deep rounded"
                           onClick={() => setShowPassword(!showPassword)}
-                          tabIndex={-1}
+                          aria-label={showPassword ? 'Hide password' : 'Show password'}
                         >
                           <Icon
                             name={showPassword ? 'eye-off' : 'eye'}
@@ -469,9 +469,9 @@ export function Onboarding() {
                       trailing={
                         <button
                           type="button"
-                          className="text-ink-3 hover:text-ink-2 transition-colors"
+                          className="text-ink-3 hover:text-ink-2 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-deep rounded"
                           onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                          tabIndex={-1}
+                          aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
                         >
                           <Icon
                             name={showConfirmPassword ? 'eye-off' : 'eye'}

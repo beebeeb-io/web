@@ -171,7 +171,7 @@ export function VersionHistory({
               </div>
             </div>
           ) : (
-            <div className="py-1 relative">
+            <div className="py-1 relative" role="listbox" aria-label="Version history" aria-orientation="vertical">
               <div
                 className="absolute bg-line-2"
                 style={{ left: 28, top: 14, bottom: 14, width: 1 }}
@@ -180,9 +180,13 @@ export function VersionHistory({
               {versions.map((v, i) => {
                 const isSelected = i === selectedIdx
                 return (
-                  <div
+                  <button
                     key={v.id}
-                    className="relative cursor-pointer transition-colors"
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
+                    aria-label={`Version ${v.version_number}, ${timeAgo(v.created_at)}, ${formatBytes(v.size_bytes)}`}
+                    className="w-full text-left relative cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-deep focus-visible:ring-inset"
                     style={{
                       padding: '12px 16px 12px 44px',
                       background: isSelected ? 'var(--color-paper-2)' : 'transparent',
@@ -229,7 +233,7 @@ export function VersionHistory({
                         </BBButton>
                       </div>
                     )}
-                  </div>
+                  </button>
                 )
               })}
             </div>

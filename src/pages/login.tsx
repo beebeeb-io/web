@@ -258,8 +258,7 @@ export function Login() {
             <label className="text-xs font-medium text-ink-2">Password</label>
             <Link
               to="/forgot-password"
-              className="ml-auto text-[11px] text-amber-deep hover:underline"
-              tabIndex={-1}
+              className="ml-auto text-[11px] text-amber-deep hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-deep rounded"
             >
               Forgot?
             </Link>
@@ -278,10 +277,9 @@ export function Login() {
             />
             <button
               type="button"
-              className="password-toggle text-ink-3 hover:text-ink-2 p-0.5 rounded-sm"
+              className="password-toggle text-ink-3 hover:text-ink-2 p-0.5 rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-deep"
               onClick={() => setShowPassword(!showPassword)}
               aria-label={showPassword ? 'Hide password' : 'Show password'}
-              tabIndex={-1}
             >
               <Icon name={showPassword ? 'eye-off' : 'eye'} size={15} />
             </button>
