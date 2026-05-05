@@ -13,6 +13,7 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { id: 'account', label: 'Account', icon: 'users', href: '/settings/account' },
+  { id: 'data-residency', label: 'Data Residency', icon: 'cloud', href: '/settings/data-residency' },
   { id: 'security', label: 'Security', icon: 'shield', href: '/settings/security' },
   { id: 'privacy', label: 'Privacy', icon: 'eye-off', href: '/settings/privacy' },
   { id: 'notifications', label: 'Notifications', icon: 'clock', href: '/settings/notifications' },

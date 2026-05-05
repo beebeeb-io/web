@@ -3381,3 +3381,40 @@ export async function freezeAccount(): Promise<{ frozen: boolean }> {
 export async function unfreezeAccount(): Promise<{ frozen: boolean }> {
   return request<{ frozen: boolean }>('/api/v1/me/unfreeze', { method: 'POST' })
 }
+
+// ─── Data residency (task 0051) ───────────────────────────────────────────────
+
+export interface AvailableRegion {
+  continent: string
+  display_name: string
+  city: string
+  provider: string
+  is_default: boolean
+}
+
+export interface RegionsResponse {
+  regions: AvailableRegion[]
+}
+
+export interface UserRegionResponse {
+  preferred_region: string | null
+  regions: AvailableRegion[]
+}
+
+/** GET /api/v1/regions — list all available storage regions */
+export async function getAvailableRegions(): Promise<RegionsResponse> {
+  return request<RegionsResponse>('/api/v1/regions')
+}
+
+/** GET /api/v1/me/region — current user's preferred region + available list */
+export async function getUserRegion(): Promise<UserRegionResponse> {
+  return request<UserRegionResponse>('/api/v1/me/region')
+}
+
+/** PUT /api/v1/me/region — set preferred region */
+export async function setUserRegion(continent: string): Promise<{ preferred_region: string }> {
+  return request<{ preferred_region: string }>('/api/v1/me/region', {
+    method: 'PUT',
+    body: JSON.stringify({ continent }),
+  })
+}

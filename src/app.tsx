@@ -58,6 +58,7 @@ const ServerError    = lazyNamed(() => import('./pages/errors/server-error'), 'S
 
 // Settings (grouped — lazy-loaded as a settings bundle)
 const SettingsAccount       = lazyNamed(() => import('./pages/settings/account'),       'SettingsAccount')
+const SettingsDataResidency = lazyNamed(() => import('./pages/settings/data-residency'), 'SettingsDataResidency')
 const SettingsNotifications = lazyNamed(() => import('./pages/settings/notifications'), 'SettingsNotifications')
 const SettingsPrivacy       = lazyNamed(() => import('./pages/settings/privacy'),       'SettingsPrivacy')
 const SettingsAppearance    = lazyNamed(() => import('./pages/settings/appearance'),    'SettingsAppearance')
@@ -308,6 +309,7 @@ export function App() {
           {/* Settings — all under /settings/* */}
           <Route path="/settings" element={<ProtectedRoute><Navigate to="/settings/account" replace /></ProtectedRoute>} />
           <Route path="/settings/account" element={<ProtectedRoute><SettingsAccount /></ProtectedRoute>} />
+          <Route path="/settings/data-residency" element={<ProtectedRoute><SettingsDataResidency /></ProtectedRoute>} />
           <Route path="/settings/security" element={<ProtectedRoute><Security /></ProtectedRoute>} />
           <Route path="/settings/privacy" element={<ProtectedRoute><SettingsPrivacy /></ProtectedRoute>} />
           <Route path="/settings/notifications" element={<ProtectedRoute><SettingsNotifications /></ProtectedRoute>} />
