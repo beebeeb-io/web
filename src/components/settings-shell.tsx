@@ -17,6 +17,7 @@ const navItems: NavItem[] = [
   { id: 'notifications', label: 'Notifications', icon: 'clock', href: '/settings/notifications' },
   { id: 'billing', label: 'Plan & billing', icon: 'file', href: '/settings/billing' },
   { id: 'appearance', label: 'Appearance', icon: 'star', href: '/settings/appearance' },
+  { id: 'developer', label: 'Developer', icon: 'key', href: '/settings/developer' },
 ]
 
 interface SettingsShellProps {

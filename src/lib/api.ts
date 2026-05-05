@@ -1272,6 +1272,57 @@ export async function createSetupIntent(): Promise<{ client_secret: string }> {
   return request<{ client_secret: string }>('/api/v1/billing/setup-intent', { method: 'POST' })
 }
 
+// ─── Personal Access Tokens ───────────────────────────────────────────────────
+
+export interface PersonalAccessToken {
+  id: string
+  name: string
+  scopes: string[]
+  created_at: string
+  last_used_at: string | null
+  expires_at: string | null
+}
+
+export interface CreateTokenResponse {
+  id: string
+  /** Raw token — shown exactly once. Server never returns it again. */
+  token: string
+  name: string
+  scopes: string[]
+  expires_at: string | null
+}
+
+/** List all personal access tokens for the current user. Returns [] on 404 (endpoint not yet deployed). */
+export async function listTokens(): Promise<PersonalAccessToken[]> {
+  try {
+    const data = await request<{ tokens: PersonalAccessToken[] }>('/api/v1/tokens')
+    return data.tokens
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return []
+    throw err
+  }
+}
+
+export interface CreateTokenParams {
+  name: string
+  scopes: string[]
+  /** ISO duration string or null for no expiry — e.g. "P30D" */
+  expires_in_days: number | null
+}
+
+/** Create a new personal access token. */
+export async function createToken(params: CreateTokenParams): Promise<CreateTokenResponse> {
+  return request<CreateTokenResponse>('/api/v1/tokens', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
+/** Revoke a personal access token by ID. */
+export async function revokeToken(id: string): Promise<void> {
+  await request(`/api/v1/tokens/${id}`, { method: 'DELETE' })
+}
+
 // ─── Admin endpoints ──────────────────────────
 
 export interface AuditEvent {

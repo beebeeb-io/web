@@ -26,6 +26,7 @@ import { Recent } from './pages/recent'
 import { SettingsAccount } from './pages/settings/account'
 import { SettingsNotifications } from './pages/settings/notifications'
 import { SettingsAppearance } from './pages/settings/appearance'
+import { SettingsDeveloper } from './pages/settings/developer'
 import { Security } from './pages/security'
 import { Trash } from './pages/trash'
 import { Search } from './pages/search'
@@ -255,6 +256,7 @@ export function App() {
           <Route path="/settings/notifications" element={<ProtectedRoute><SettingsNotifications /></ProtectedRoute>} />
           <Route path="/settings/billing" element={<ProtectedRoute><Billing /></ProtectedRoute>} />
           <Route path="/settings/appearance" element={<ProtectedRoute><SettingsAppearance /></ProtectedRoute>} />
+          <Route path="/settings/developer" element={<ProtectedRoute><SettingsDeveloper /></ProtectedRoute>} />
 
           {/* Redirects for old routes */}
           <Route path="/settings/profile" element={<Navigate to="/settings/account" replace />} />
