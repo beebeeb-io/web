@@ -45,20 +45,19 @@ const STRIPE_PK = (import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY as string | undef
 
 const planMeta: Record<string, {
   label: string
-  pricePerSeat: number
-  priceYearlySeat: number
-  /** Storage in GB (for display only — used with formatStorageSI) */
-  storagePerSeat: number
-  minSeats: number
+  priceMonthly: number
+  priceYearly: number
+  /** Storage in GB (for display — passed to formatStorageSI) */
+  storageGB: number
   tagline: string
 }> = {
-  free:         { label: 'Free',         pricePerSeat: 0,      priceYearlySeat: 0,       storagePerSeat: 5,     minSeats: 1, tagline: 'Get started with encrypted storage' },
-  personal:     { label: 'Personal',     pricePerSeat: 8.99,   priceYearlySeat: 86.30,   storagePerSeat: 1000,  minSeats: 1, tagline: '1 TB of truly private storage' },
-  pro:          { label: 'Pro',          pricePerSeat: 39.95,  priceYearlySeat: 383.52,  storagePerSeat: 5000,  minSeats: 1, tagline: '5 TB for power users and creators' },
-  data_hoarder: { label: 'Data Hoarder', pricePerSeat: 139.80, priceYearlySeat: 1342.08, storagePerSeat: 20000, minSeats: 1, tagline: '20 TB — lowest per-TB price' },
+  free:         { label: 'Free',         priceMonthly: 0,      priceYearly: 0,       storageGB: 5,     tagline: 'Get started with encrypted storage' },
+  personal:     { label: 'Personal',     priceMonthly: 8.99,   priceYearly: 86.30,   storageGB: 1000,  tagline: '1 TB of truly private storage' },
+  pro:          { label: 'Pro',          priceMonthly: 39.95,  priceYearly: 383.52,  storageGB: 5000,  tagline: '5 TB for power users and creators' },
+  data_hoarder: { label: 'Data Hoarder', priceMonthly: 139.80, priceYearly: 1342.08, storageGB: 20000, tagline: '20 TB — lowest per-TB price' },
   // Legacy plan IDs kept for users on old subscriptions
-  team:         { label: 'Team',         pricePerSeat: 6,      priceYearlySeat: 58,      storagePerSeat: 2000,  minSeats: 1, tagline: 'Legacy team plan' },
-  business:     { label: 'Business',     pricePerSeat: 12,     priceYearlySeat: 115,     storagePerSeat: 5000,  minSeats: 1, tagline: 'Legacy business plan' },
+  team:         { label: 'Team',         priceMonthly: 6,      priceYearly: 58,      storageGB: 2000,  tagline: 'Legacy team plan' },
+  business:     { label: 'Business',     priceMonthly: 12,     priceYearly: 115,     storageGB: 5000,  tagline: 'Legacy business plan' },
 }
 
 /* ── Helpers ────────────────────────────────────────────── */
@@ -208,7 +207,7 @@ export function Billing() {
   // Use the effective plan for display: cancelled → show as free
   const effectivePlan = sub?.status === 'cancelled' ? 'free' : (sub?.plan ?? 'free')
   const meta = planMeta[effectivePlan] ?? planMeta.free
-  const totalStorageGB = meta.storagePerSeat * (sub?.seats ?? 1)
+  const totalStorageGB = meta.storageGB
   const totalStorageBytes = totalStorageGB * 1024 * 1024 * 1024
   const usedBytes = storage?.used_bytes ?? 0
   const usedPercent = totalStorageBytes > 0 ? (usedBytes / totalStorageBytes) * 100 : 0
@@ -379,8 +378,8 @@ export function Billing() {
   const priceDisplay = effectivePlan === 'free'
     ? null
     : sub?.billing_cycle === 'yearly'
-      ? `${meta.priceYearlySeat} / year${meta.minSeats > 1 ? ' per seat' : ''}`
-      : `${meta.pricePerSeat} / month${meta.minSeats > 1 ? ' per seat' : ''}`
+      ? `${meta.priceYearly.toFixed(2)} / year`
+      : `${meta.priceMonthly.toFixed(2)} / month`
 
   /* ── Status badge ──────────────────────────────────── */
 
@@ -487,18 +486,6 @@ export function Billing() {
                 </div>
               )}
             </div>
-
-            {/* Seats — only shown for multi-seat plans */}
-            {meta.minSeats > 1 && (
-              <div className="mb-4">
-                <div className="p-3 rounded-lg bg-paper-2 border border-line inline-block">
-                  <div className="text-[11px] text-ink-4 mb-0.5">Seats</div>
-                  <div className="font-mono text-[15px] font-semibold">
-                    {sub?.seats ?? 1}
-                  </div>
-                </div>
-              </div>
-            )}
 
             {/* Next billing / cancels on */}
             {sub?.current_period_end && effectivePlan !== 'free' && (
@@ -723,12 +710,12 @@ export function Billing() {
                     </div>
                     <div className="flex items-baseline gap-1 mb-2">
                       <span className="font-mono text-lg font-bold">
-                        EUR {p.pricePerSeat % 1 === 0 ? p.pricePerSeat : p.pricePerSeat.toFixed(2)}
+                        EUR {p.priceMonthly % 1 === 0 ? p.priceMonthly : p.priceMonthly.toFixed(2)}
                       </span>
                       <span className="text-xs text-ink-3">/ month</span>
                     </div>
                     <div className="text-xs text-ink-3 mb-3">
-                      {formatStorageSI(p.storagePerSeat * 1_000_000_000)}
+                      {formatStorageSI(p.storageGB * 1_000_000_000)}
                     </div>
                     <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-deep">
                       Subscribe
@@ -894,9 +881,8 @@ export function Billing() {
       <UpgradeDialog
         planId={upgradePlan}
         planName={planMeta[upgradePlan]?.label ?? 'Pro'}
-        pricePerSeat={planMeta[upgradePlan]?.pricePerSeat ?? 39.95}
-        priceYearlySeat={planMeta[upgradePlan]?.priceYearlySeat ?? 383.52}
-        minSeats={planMeta[upgradePlan]?.minSeats ?? 1}
+        pricePerSeat={planMeta[upgradePlan]?.priceMonthly ?? 39.95}
+        priceYearlySeat={planMeta[upgradePlan]?.priceYearly ?? 383.52}
         open={upgradeOpen}
         onClose={() => setUpgradeOpen(false)}
         onSuccess={() => {
