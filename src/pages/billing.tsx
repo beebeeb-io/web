@@ -300,13 +300,24 @@ export function Billing() {
   async function handleManageBilling() {
     setPortalLoading(true)
     try {
-      const { url } = await createPortalSession()
-      window.location.href = url
+      const result = await createPortalSession()
+      if (result === null) {
+        // Endpoint not yet deployed (404) — show friendly notice
+        showToast({
+          icon: 'cloud',
+          title: 'Billing portal not available yet',
+          description: 'Stripe billing is being set up. Check back soon, or email billing@beebeeb.io.',
+        })
+        setPortalLoading(false)
+        return
+      }
+      // Navigate to Stripe-hosted portal (returns to /settings/billing)
+      window.location.href = result.url
     } catch (err) {
       showToast({
         icon: 'x',
         title: 'Billing portal unavailable',
-        description: err instanceof Error ? err.message : 'Could not open billing portal',
+        description: err instanceof Error ? err.message : 'Could not open billing portal.',
         danger: true,
       })
       setPortalLoading(false)

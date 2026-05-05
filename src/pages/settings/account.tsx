@@ -12,8 +12,9 @@ import { RecentActivity } from '../../components/recent-activity'
 import {
   getPreference, setPreference, getStorageUsage, recoverWithPhraseStart,
   deleteAccountPermanently, changeEmail, exportAccountData,
+  createPortalSession, getSubscription,
   clearToken, ApiError,
-  type StorageUsage,
+  type StorageUsage, type Subscription,
 } from '../../lib/api'
 import { recoverFromPhrase, computeRecoveryCheck, toBase64, initCrypto } from '../../lib/crypto'
 import { StorageUsageBar } from '../../components/storage-usage-bar'
@@ -55,6 +56,10 @@ export function SettingsAccount() {
   const [usage, setUsage] = useState<StorageUsage | null>(null)
   const [loadingUsage, setLoadingUsage] = useState(true)
 
+  // Subscription state (for the plan summary strip)
+  const [sub, setSub] = useState<Subscription | null>(null)
+  const [portalLoading, setPortalLoading] = useState(false)
+
   // Recovery phrase test modal
   const [phraseModalOpen, setPhraseModalOpen] = useState(false)
   const [testPhrase, setTestPhrase] = useState('')
@@ -90,10 +95,11 @@ export function SettingsAccount() {
   useEffect(() => {
     async function load() {
       try {
-        const [pref, regionPref, usageData] = await Promise.all([
+        const [pref, regionPref, usageData, subData] = await Promise.all([
           getPreference<{ display_name?: string; public_profile?: boolean; recovery_contact?: string }>('profile').catch(() => null),
           getPreference<{ pool_name: string; mode: RegionMode }>('storage_region').catch(() => null),
           getStorageUsage().catch(() => null),
+          getSubscription().catch(() => null),
         ])
         if (pref?.display_name) setDisplayName(pref.display_name)
         if (pref?.public_profile) setPublicProfile(pref.public_profile)
@@ -107,6 +113,7 @@ export function SettingsAccount() {
           setSavedRegionMode(regionPref.mode)
         }
         if (usageData) setUsage(usageData)
+        if (subData) setSub(subData)
       } catch {
         // defaults are fine
       } finally {
@@ -115,6 +122,31 @@ export function SettingsAccount() {
     }
     void load()
   }, [])
+
+  const handleManageSubscription = useCallback(async () => {
+    setPortalLoading(true)
+    try {
+      const result = await createPortalSession()
+      if (result === null) {
+        showToast({
+          icon: 'cloud',
+          title: 'Billing portal not available yet',
+          description: 'Stripe billing is being set up. Check back soon.',
+        })
+        return
+      }
+      window.location.href = result.url
+    } catch (err) {
+      showToast({
+        icon: 'x',
+        title: 'Billing portal unavailable',
+        description: err instanceof Error ? err.message : 'Please try again.',
+        danger: true,
+      })
+    } finally {
+      setPortalLoading(false)
+    }
+  }, [showToast])
 
   const handleSaveProfile = useCallback(async () => {
     setSavingProfile(true)
@@ -476,6 +508,63 @@ export function SettingsAccount() {
         ) : (
           <span className="text-[12.5px] text-ink-3">Could not load usage data.</span>
         )}
+      </SettingsRow>
+
+      {/* ── Section: Subscription ── */}
+      <div className="mt-4 mb-1 border-t border-line pt-4">
+        <h2 className="text-[11px] font-semibold uppercase tracking-widest text-ink-4 px-7 py-3">
+          Subscription
+        </h2>
+      </div>
+
+      <SettingsRow
+        label="Current plan"
+        hint="Manage your plan, payment method, and invoices."
+      >
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Plan name badge */}
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-paper-2 border border-line">
+            <span className="w-2 h-2 rounded-full bg-amber-deep shrink-0" />
+            <span className="text-[13px] font-medium text-ink capitalize">
+              {sub
+                ? (sub.status === 'cancelled' ? 'Free' : (sub.plan ?? 'Free'))
+                : 'Free'}
+            </span>
+            {sub && sub.plan && sub.plan !== 'free' && sub.status !== 'cancelled' && (
+              <span className="text-[11px] text-ink-3 font-mono">
+                {sub.billing_cycle === 'yearly' ? '· annual' : '· monthly'}
+              </span>
+            )}
+          </div>
+
+          {/* Action buttons */}
+          {(!sub || sub.plan === 'free' || sub.status === 'cancelled') ? (
+            <a
+              href="/pricing"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12.5px] font-medium bg-amber text-ink hover:brightness-105 transition-all no-underline"
+            >
+              <Icon name="star" size={11} />
+              Upgrade plan
+            </a>
+          ) : (
+            <BBButton
+              size="sm"
+              variant="default"
+              onClick={() => void handleManageSubscription()}
+              disabled={portalLoading}
+            >
+              <Icon name="settings" size={12} className="mr-1.5" />
+              {portalLoading ? 'Loading...' : 'Manage subscription'}
+            </BBButton>
+          )}
+
+          <a
+            href="/settings/billing"
+            className="text-[12.5px] text-ink-3 hover:text-ink transition-colors no-underline"
+          >
+            View billing →
+          </a>
+        </div>
       </SettingsRow>
 
       {/* ── Section 3: Recovery phrase ── */}

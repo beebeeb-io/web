@@ -1224,10 +1224,20 @@ export async function createCheckoutSession(params: {
   })
 }
 
-export async function createPortalSession(): Promise<{ url: string }> {
-  return request<{ url: string }>('/api/v1/billing/portal', {
-    method: 'POST',
-  })
+/**
+ * Open the Stripe Customer Portal for the current user.
+ * Returns the portal session URL on success, or null when the endpoint is not
+ * yet deployed (404) — callers should show a "not available yet" notice.
+ */
+export async function createPortalSession(): Promise<{ url: string } | null> {
+  try {
+    return await request<{ url: string }>('/api/v1/billing/portal-session', {
+      method: 'POST',
+    })
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null
+    throw err
+  }
 }
 
 export interface PaymentMethod {
