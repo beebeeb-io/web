@@ -9,6 +9,8 @@ import { PdfPreview } from './pdf-preview'
 import { VideoPreview } from './video-preview'
 import { MarkdownPreview } from './markdown-preview'
 import { TextPreview } from './text-preview'
+import { DocxPreview } from './docx-preview'
+import { XlsxPreview } from './xlsx-preview'
 import { BBButton } from '../bb-button'
 import { Icon } from '../icons'
 import { useKeys } from '../../lib/key-context'
@@ -157,6 +159,23 @@ function pickRenderer(
   filename: string,
 ): React.ReactNode {
   const ext = getExtension(filename)
+
+  // Office formats — client-side via lazy-loaded mammoth / SheetJS
+  if (
+    mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    ext === 'docx'
+  ) {
+    return <DocxPreview blob={blob} filename={filename} />
+  }
+  if (
+    mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+    ext === 'xlsx'
+  ) {
+    return <XlsxPreview blob={blob} filename={filename} />
+  }
+  // Unsupported office types (.pptx, .odt, etc.) fall through to the
+  // "preview not available" state and show a prominent download button.
+
   if (mimeType?.startsWith('image/') || IMAGE_EXTENSIONS_SET.has(ext)) {
     if (UNSUPPORTED_IMAGE_MIMES.has(mimeType ?? '') || UNSUPPORTED_IMAGE_EXTS.has(ext)) {
       return null
