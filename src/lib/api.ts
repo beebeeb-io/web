@@ -1961,6 +1961,8 @@ export interface ActivityEvent {
   subject: string | null
   details: string | null
   where: string | null
+  /** Client that triggered the event — "web" | "mobile-ios" | "mobile-android" | "desktop" | "cli" */
+  device?: string | null
   created_at: string
 }
 
