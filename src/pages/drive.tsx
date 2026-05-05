@@ -41,6 +41,11 @@ import {
   type StorageUsage,
 } from '../lib/api'
 import { getRemainingBytes } from '../components/quota-warning'
+import {
+  UpgradeNudgeModal,
+  StorageFullBanner,
+  shouldShowUpgradeNudge,
+} from '../components/upgrade-nudge-modal'
 import { encryptedUpload } from '../lib/encrypted-upload'
 import { encryptedDownload } from '../lib/encrypted-download'
 import { downloadAsZip, ZIP_SIZE_WARNING_BYTES } from '../lib/bulk-download'
@@ -122,6 +127,7 @@ export function Drive() {
 
   // ─── Storage quota state ─────────────────────────
   const [storageUsage, setStorageUsage] = useState<StorageUsage | null>(null)
+  const [showUpgradeNudge, setShowUpgradeNudge] = useState(false)
 
   const currentParentId = breadcrumbs[breadcrumbs.length - 1]?.id ?? undefined
 
@@ -225,7 +231,13 @@ export function Drive() {
 
   // Fetch storage usage for quota checks
   const refreshUsage = useCallback(() => {
-    getStorageUsage().then(setStorageUsage).catch(() => {})
+    getStorageUsage().then(usage => {
+      setStorageUsage(usage)
+      // Show upgrade nudge once per session when approaching quota limit
+      if (shouldShowUpgradeNudge(usage.used_bytes, usage.plan_limit_bytes)) {
+        setShowUpgradeNudge(true)
+      }
+    }).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -1427,6 +1439,16 @@ export function Drive() {
           </div>
         )}
 
+        {/* Storage-full banner — always visible when quota is hit */}
+        {storageUsage &&
+          storageUsage.plan_limit_bytes > 0 &&
+          storageUsage.used_bytes >= storageUsage.plan_limit_bytes && (
+          <StorageFullBanner
+            currentPlan={storageUsage.plan_name}
+            onUpgrade={() => setShowUpgradeNudge(true)}
+          />
+        )}
+
         {/* Pending shares banner */}
         {!pendingSharesDismissed && (incomingInviteCount > 0 || pendingApprovalCount > 0) && (
           <div className="px-5 py-2.5 border-b border-amber/30 border-l-4 border-l-amber bg-amber-bg flex flex-col gap-1.5 text-sm">
@@ -1731,6 +1753,16 @@ export function Drive() {
           }).catch(() => {})
         }}
       />
+
+      {/* Upgrade nudge modal — shown at >= 80% quota, once per session */}
+      {showUpgradeNudge && storageUsage && (
+        <UpgradeNudgeModal
+          usedBytes={storageUsage.used_bytes}
+          quotaBytes={storageUsage.plan_limit_bytes}
+          currentPlan={storageUsage.plan_name}
+          onClose={() => setShowUpgradeNudge(false)}
+        />
+      )}
     </DriveLayout>
   )
 }
