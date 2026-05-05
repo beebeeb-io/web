@@ -340,8 +340,8 @@ export function FileList({
 
   // ─── Context menu ──────────────────────────────────
   const [ctxMenu, setCtxMenu] = useState<{
-    open: boolean; x: number; y: number; fileId: string; fileName: string; isFolder: boolean
-  }>({ open: false, x: 0, y: 0, fileId: '', fileName: '', isFolder: false })
+    open: boolean; x: number; y: number; fileId: string; fileName: string; isFolder: boolean; versionNumber: number
+  }>({ open: false, x: 0, y: 0, fileId: '', fileName: '', isFolder: false, versionNumber: 1 })
 
   // ─── Drag-and-drop ─────────────────────────────────
   const [draggedFileId, setDraggedFileId] = useState<string | null>(null)
@@ -578,6 +578,7 @@ export function FileList({
             fileId: file.id,
             fileName: name,
             isFolder: file.is_folder,
+            versionNumber: file.version_number ?? 1,
           })
         }}
       >
@@ -705,6 +706,7 @@ export function FileList({
                   fileId: file.id,
                   fileName: name,
                   isFolder: file.is_folder,
+                  versionNumber: file.version_number ?? 1,
                 })
               }}
             >
@@ -900,6 +902,7 @@ export function FileList({
         fileName={ctxMenu.fileName}
         isFolder={ctxMenu.isFolder}
         isPinned={pinnedFolderIds.has(ctxMenu.fileId)}
+        hasVersions={!ctxMenu.isFolder && ctxMenu.versionNumber > 1}
         onClose={() => setCtxMenu((prev) => ({ ...prev, open: false }))}
         onAction={(action, fileId) => {
           if (action === 'pin' || action === 'unpin') {

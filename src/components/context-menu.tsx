@@ -33,6 +33,8 @@ interface ContextMenuProps {
   fileName: string
   isFolder: boolean
   isPinned?: boolean
+  /** Show "Version history" — only true for non-folder files with version_number > 1 */
+  hasVersions?: boolean
   onClose: () => void
   onAction: (action: string, fileId: string) => void
 }
@@ -44,6 +46,7 @@ export function ContextMenu({
   fileId,
   isFolder,
   isPinned,
+  hasVersions,
   onClose,
   onAction,
 }: ContextMenuProps) {
@@ -102,7 +105,7 @@ export function ContextMenu({
       className="fixed z-[60] min-w-[220px] bg-paper border border-line-2 rounded-lg shadow-3 overflow-hidden py-1 ctx-menu-enter"
       style={{ left: x, top: y, transformOrigin: '0 0' }}
     >
-      {MENU_ITEMS.map((item) => (
+      {MENU_ITEMS.filter((item) => item.id !== 'versions' || hasVersions).map((item) => (
         <div key={item.id}>
           <button
             type="button"
