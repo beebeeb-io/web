@@ -3,9 +3,11 @@ import { Icon } from '../icons'
 import { BBButton } from '../bb-button'
 import { BBChip } from '../bb-chip'
 import { KpiCard } from './kpi-card'
+import { StorageUsageBar } from '../storage-usage-bar'
 import { useToast } from '../toast'
 import {
   getAdminUserDetail,
+  getAdminUserSessions,
   getUserLoginIps,
   listStoragePools,
   listAuditLog,
@@ -13,9 +15,12 @@ import {
   adminPromote,
   adminDemote,
   getUserStorage,
+  suspendUser,
+  unsuspendUser,
 } from '../../lib/api'
 import type {
   AdminUserDetail,
+  AdminUserSession,
   LoginIp,
   StoragePool,
   AuditEvent,
@@ -64,6 +69,7 @@ export function UserDetailDrawer({ userId, onClose }: UserDetailDrawerProps) {
   const [pools, setPools] = useState<StoragePool[]>([])
   const [userStorage, setUserStorage] = useState<UserStorageBreakdown | null>(null)
   const [loginIps, setLoginIps] = useState<LoginIp[]>([])
+  const [sessions, setSessions] = useState<AdminUserSession[]>([])
   const [activity, setActivity] = useState<AuditEvent[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -72,6 +78,7 @@ export function UserDetailDrawer({ userId, onClose }: UserDetailDrawerProps) {
   const [migrating, setMigrating] = useState(false)
   const [impersonating, setImpersonating] = useState(false)
   const [roleChanging, setRoleChanging] = useState(false)
+  const [suspending, setSuspending] = useState(false)
 
   // True if this drawer is open for the currently-logged-in admin's own user
   // record. Used to hide self-targeting role-change actions (server also
@@ -106,13 +113,15 @@ export function UserDetailDrawer({ userId, onClose }: UserDetailDrawerProps) {
       listStoragePools(),
       getUserLoginIps(userId),
       getUserStorage(userId).catch(() => null),
+      getAdminUserSessions(userId).catch(() => []),
     ])
-      .then(([d, p, ips, us]) => {
+      .then(([d, p, ips, us, sess]) => {
         if (cancelled) return
         setDetail(d)
         setPools(p)
         setLoginIps(ips.ips)
         setUserStorage(us)
+        setSessions(sess)
       })
       .catch(err => {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load user')
@@ -254,6 +263,36 @@ export function UserDetailDrawer({ userId, onClose }: UserDetailDrawerProps) {
     [userId, showToast],
   )
 
+  const handleSuspend = useCallback(async () => {
+    if (!detail) return
+    if (!confirm(`Suspend ${detail.email}? They will not be able to log in until unsuspended.`)) return
+    setSuspending(true)
+    try {
+      await suspendUser(userId)
+      showToast({ icon: 'shield', title: 'Account suspended', description: detail.email, danger: true })
+      await reloadDetail()
+    } catch (err) {
+      showToast({ icon: 'x', title: 'Suspend failed', description: err instanceof Error ? err.message : 'Could not suspend', danger: true })
+    } finally {
+      setSuspending(false)
+    }
+  }, [detail, userId, reloadDetail, showToast])
+
+  const handleUnsuspend = useCallback(async () => {
+    if (!detail) return
+    if (!confirm(`Unsuspend ${detail.email}? They will be able to log in again.`)) return
+    setSuspending(true)
+    try {
+      await unsuspendUser(userId)
+      showToast({ icon: 'shield', title: 'Account unsuspended', description: detail.email })
+      await reloadDetail()
+    } catch (err) {
+      showToast({ icon: 'x', title: 'Unsuspend failed', description: err instanceof Error ? err.message : 'Could not unsuspend', danger: true })
+    } finally {
+      setSuspending(false)
+    }
+  }, [detail, userId, reloadDetail, showToast])
+
   const initial = detail?.email.charAt(0).toUpperCase() ?? '?'
 
   return (
@@ -315,8 +354,16 @@ export function UserDetailDrawer({ userId, onClose }: UserDetailDrawerProps) {
                       {planLabel(detail.plan)}
                     </BBChip>
                     <BBChip variant={detail.email_verified ? 'green' : 'default'}>
-                      {detail.email_verified ? 'Verified' : 'Pending'}
+                      {detail.email_verified ? '✓ Verified' : 'Unverified'}
                     </BBChip>
+                    <BBChip variant={detail.opaque_enrolled ? 'green' : 'default'}>
+                      {detail.opaque_enrolled === false ? 'Legacy auth' : detail.opaque_enrolled ? 'OPAQUE' : '—'}
+                    </BBChip>
+                    {detail.is_suspended && (
+                      <BBChip variant="default" className="!text-red !border-red/30 !bg-red/5">
+                        Suspended
+                      </BBChip>
+                    )}
                     {detail.role !== 'user' && (
                       <BBChip
                         variant={detail.role === 'superadmin' ? 'amber' : 'default'}
@@ -336,7 +383,7 @@ export function UserDetailDrawer({ userId, onClose }: UserDetailDrawerProps) {
               </div>
 
               {/* Action buttons */}
-              <div className="flex items-center gap-2 mt-4">
+              <div className="flex flex-wrap items-center gap-2 mt-4">
                 <BBButton
                   size="sm"
                   variant="amber"
@@ -348,42 +395,51 @@ export function UserDetailDrawer({ userId, onClose }: UserDetailDrawerProps) {
                   {impersonating ? 'Loading…' : 'Impersonate'}
                 </BBButton>
 
-                {/* Role-change button: shape depends on the target's current role.
-                    Superadmin is intentionally not changeable from this surface
-                    (server also rejects). Hidden when looking at our own row. */}
+                {/* Role-change button */}
                 {!isSelf && detail.role === 'user' && (
-                  <BBButton
-                    size="sm"
-                    variant="ghost"
-                    onClick={handlePromote}
-                    disabled={roleChanging}
-                  >
+                  <BBButton size="sm" variant="ghost" onClick={handlePromote} disabled={roleChanging}>
                     <Icon name="shield" size={11} className="mr-1.5" />
                     {roleChanging ? 'Promoting…' : 'Promote to admin'}
                   </BBButton>
                 )}
                 {!isSelf && detail.role === 'admin' && (
-                  <BBButton
-                    size="sm"
-                    variant="ghost"
-                    onClick={handleDemote}
-                    disabled={roleChanging}
-                  >
+                  <BBButton size="sm" variant="ghost" onClick={handleDemote} disabled={roleChanging}>
                     <Icon name="shield" size={11} className="mr-1.5" />
                     {roleChanging ? 'Demoting…' : 'Demote to user'}
                   </BBButton>
                 )}
                 {!isSelf && detail.role === 'superadmin' && (
-                  <BBButton
-                    size="sm"
-                    variant="ghost"
-                    disabled
-                    title="Superadmin role cannot be changed from this surface"
-                  >
+                  <BBButton size="sm" variant="ghost" disabled title="Superadmin role cannot be changed from this surface">
                     <Icon name="shield" size={11} className="mr-1.5" />
                     Superadmin
                   </BBButton>
                 )}
+
+                {/* Suspend / Unsuspend */}
+                {!isSelf && (
+                  detail.is_suspended ? (
+                    <BBButton size="sm" variant="ghost" onClick={handleUnsuspend} disabled={suspending}>
+                      {suspending ? 'Unsuspending…' : 'Unsuspend'}
+                    </BBButton>
+                  ) : (
+                    <BBButton
+                      size="sm"
+                      variant="ghost"
+                      onClick={handleSuspend}
+                      disabled={suspending}
+                      className="!text-red hover:!bg-red/5"
+                    >
+                      <Icon name="x" size={11} className="mr-1.5" />
+                      {suspending ? 'Suspending…' : 'Suspend'}
+                    </BBButton>
+                  )
+                )}
+
+                {/* View files — future feature, disabled for now */}
+                <BBButton size="sm" variant="ghost" disabled title="Coming soon">
+                  <Icon name="folder" size={11} className="mr-1.5" />
+                  View files
+                </BBButton>
               </div>
             </div>
 
@@ -438,7 +494,7 @@ export function UserDetailDrawer({ userId, onClose }: UserDetailDrawerProps) {
                 />
               )}
               {tab === 'security' && (
-                <SecurityTab detail={detail} loginIps={loginIps} />
+                <SecurityTab detail={detail} loginIps={loginIps} sessions={sessions} />
               )}
               {tab === 'billing' && <BillingTab detail={detail} />}
               {tab === 'activity' && <ActivityTab events={activity} />}
@@ -481,8 +537,29 @@ function StorageTab({
   const sourcePoolIds = new Set(userStorage?.pools.map(p => p.pool_id) ?? [])
   const destinationPools = activePools.filter(p => !sourcePoolIds.has(p.id))
 
+  // Plan quota — use plan_limit_bytes when the server provides it, otherwise
+  // use a 5 GB free tier baseline. The StorageUsageBar colours by percentage.
+  const quotaBytes = detail.plan_limit_bytes ?? (
+    detail.plan === 'free' ? 5_368_709_120 :
+    detail.plan === 'personal' ? 214_748_364_800 :
+    detail.plan === 'team' ? 1_099_511_627_776 :
+    10_995_116_277_760
+  )
+
   return (
     <div className="px-5 py-4 space-y-4">
+      {/* Quota bar */}
+      <div>
+        <div className="text-[10px] font-mono uppercase tracking-wide text-ink-3 mb-2">
+          Quota usage
+        </div>
+        <StorageUsageBar
+          usedBytes={totalBytes}
+          quotaBytes={quotaBytes}
+          planName={planLabel(detail.plan)}
+        />
+      </div>
+
       <div>
         <div className="text-[10px] font-mono uppercase tracking-wide text-ink-3 mb-2">
           Per-pool usage
@@ -595,43 +672,60 @@ function StorageTab({
 function SecurityTab({
   detail,
   loginIps,
+  sessions,
 }: {
   detail: AdminUserDetail
   loginIps: LoginIp[]
+  sessions: AdminUserSession[]
 }) {
   return (
     <div className="px-5 py-4 space-y-4">
+      {/* Status summary */}
       <div className="grid grid-cols-2 gap-2">
         <div className="rounded-md border border-line bg-paper-2 px-3 py-2.5">
-          <div className="text-[10px] font-mono uppercase tracking-wide text-ink-3 mb-1">
-            Sessions
-          </div>
-          <div className="text-sm font-mono font-semibold text-ink">
-            {detail.session_count}
+          <div className="text-[10px] font-mono uppercase tracking-wide text-ink-3 mb-1">Auth method</div>
+          <div className={`text-sm font-semibold ${detail.opaque_enrolled === false ? 'text-amber-deep' : 'text-ink'}`}>
+            {detail.opaque_enrolled === false ? 'Legacy' : detail.opaque_enrolled ? 'OPAQUE' : '—'}
           </div>
           <div className="text-[10px] text-ink-3 mt-0.5">
-            {detail.last_login
-              ? `Last ${formatDateTime(detail.last_login)}`
-              : 'Never'}
+            {detail.opaque_enrolled === false ? 'Argon2id, will auto-upgrade' : detail.opaque_enrolled ? 'Password-hardened auth' : 'Unknown'}
           </div>
         </div>
         <div className="rounded-md border border-line bg-paper-2 px-3 py-2.5">
-          <div className="text-[10px] font-mono uppercase tracking-wide text-ink-3 mb-1">
-            TOTP
-          </div>
-          <div className="text-sm font-semibold text-ink-3">
-            Unknown
-          </div>
+          <div className="text-[10px] font-mono uppercase tracking-wide text-ink-3 mb-1">Sessions</div>
+          <div className="text-sm font-mono font-semibold text-ink">{detail.session_count}</div>
           <div className="text-[10px] text-ink-3 mt-0.5">
-            Not yet exposed by API
+            {detail.last_login ? `Last ${formatDateTime(detail.last_login)}` : 'Never'}
           </div>
         </div>
       </div>
 
-      <div>
-        <div className="text-[10px] font-mono uppercase tracking-wide text-ink-3 mb-2">
-          Login IPs
+      {/* Active sessions */}
+      {sessions.length > 0 && (
+        <div>
+          <div className="text-[10px] font-mono uppercase tracking-wide text-ink-3 mb-2">Active sessions</div>
+          <div className="rounded-md border border-line overflow-hidden">
+            {sessions.map(s => (
+              <div key={s.id} className="flex items-center gap-3 px-3 py-2.5 border-b border-line last:border-b-0 text-[11px]">
+                <Icon name="lock" size={12} className="text-ink-3 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="font-mono text-ink truncate">
+                    {s.device_hint ?? s.user_agent?.slice(0, 40) ?? 'Unknown device'}
+                  </div>
+                  <div className="text-ink-3 font-mono">{s.ip_address ?? '—'}</div>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-ink-3">{s.last_active_at ? formatDateTime(s.last_active_at) : '—'}</div>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
+      )}
+
+      {/* Login IPs */}
+      <div>
+        <div className="text-[10px] font-mono uppercase tracking-wide text-ink-3 mb-2">Login IPs</div>
         {loginIps.length === 0 ? (
           <div className="text-xs text-ink-3 italic">No login history</div>
         ) : (
@@ -640,9 +734,7 @@ function SecurityTab({
               className="grid px-3 py-1.5 bg-paper-2 text-[10px] font-mono uppercase tracking-wide text-ink-3 border-b border-line"
               style={{ gridTemplateColumns: '1fr 110px 110px' }}
             >
-              <span>IP</span>
-              <span>First seen</span>
-              <span>Last seen</span>
+              <span>IP</span><span>First seen</span><span>Last seen</span>
             </div>
             {loginIps.map(ip => (
               <div

@@ -1329,6 +1329,11 @@ export interface AdminUserDetail {
   session_count: number
   last_login: string | null
   workspaces: { id: string; name: string; role: string; joined_at: string }[]
+  plan_limit_bytes?: number
+  /** Whether the account uses OPAQUE (true) or legacy Argon2id (false/absent). */
+  opaque_enrolled?: boolean
+  /** Whether the account is suspended (cannot log in). */
+  is_suspended?: boolean
 }
 
 export async function listAdminUsers(params?: {
@@ -1348,6 +1353,42 @@ export async function listAdminUsers(params?: {
 
 export async function getAdminUserDetail(id: string): Promise<AdminUserDetail> {
   return request<AdminUserDetail>(`/api/v1/admin/users/${id}`)
+}
+
+/** A single active session for a user. */
+export interface AdminUserSession {
+  id: string
+  created_at: string
+  last_active_at: string | null
+  ip_address: string | null
+  user_agent: string | null
+  device_hint: string | null
+}
+
+/**
+ * GET /api/v1/admin/users/:id/sessions
+ * Returns empty list gracefully on 404 (endpoint not yet deployed).
+ */
+export async function getAdminUserSessions(userId: string): Promise<AdminUserSession[]> {
+  try {
+    const data = await request<{ sessions: AdminUserSession[] }>(
+      `/api/v1/admin/users/${userId}/sessions`,
+    )
+    return data.sessions
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return []
+    throw err
+  }
+}
+
+/** POST /api/v1/admin/users/:id/suspend */
+export async function suspendUser(userId: string): Promise<void> {
+  await request(`/api/v1/admin/users/${userId}/suspend`, { method: 'POST', body: JSON.stringify({}) })
+}
+
+/** POST /api/v1/admin/users/:id/unsuspend */
+export async function unsuspendUser(userId: string): Promise<void> {
+  await request(`/api/v1/admin/users/${userId}/unsuspend`, { method: 'POST', body: JSON.stringify({}) })
 }
 
 // ─── Admin waitlist ──────────────────────────────
