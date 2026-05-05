@@ -2,15 +2,26 @@
  * Settings — Import
  *
  * Import hub: connect a cloud provider and select files to migrate.
- * Day 1 scope: Dropbox OAuth (PKCE) + file tree selection.
- * Day 2+: actual download → encrypt → upload pipeline.
+ * Day 1: Dropbox OAuth (PKCE) + file tree selection.
+ * Day 2: Download → encrypt → upload pipeline (this file).
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { SettingsShell, SettingsHeader } from '../../components/settings-shell'
 import { BBButton } from '../../components/bb-button'
 import { Icon } from '../../components/icons'
 import { useToast } from '../../components/toast'
+import { useKeys } from '../../lib/key-context'
+import {
+  expandDropboxPaths,
+  downloadDropboxFile,
+  formatEta,
+  formatSpeed,
+  formatBytes as fmtBytes,
+} from '../../lib/dropbox-import'
+import { encryptedUpload } from '../../lib/encrypted-upload'
+import { createFolder } from '../../lib/api'
+import { deriveFileKey, encryptFilename, toBase64 } from '../../lib/crypto'
 
 // ── SessionStorage keys ─────────────────────────────────────────────────────
 
@@ -246,9 +257,13 @@ function TreeRow({
 function DropboxTree({
   token,
   onDisconnect,
+  onStartImport,
+  importRunning,
 }: {
   token: string
   onDisconnect: () => void
+  onStartImport: (selectedPaths: Set<string>, selectAll: boolean, nodes: TreeNode[]) => void
+  importRunning: boolean
 }) {
   const { showToast } = useToast()
   const account = sessionStorage.getItem(ACCOUNT_KEY)
@@ -445,16 +460,12 @@ function DropboxTree({
             <BBButton
               variant="amber"
               size="md"
-              disabled={!canImport}
-              title="Import pipeline coming in Day 2"
-              className="gap-1.5 relative"
+              disabled={!canImport || importRunning}
+              onClick={() => onStartImport(selectedPaths, selectAll, nodes)}
+              className="gap-1.5"
             >
               <Icon name="download" size={13} />
-              Start import
-              {/* Day 2 badge */}
-              <span className="absolute -top-1.5 -right-1.5 bg-ink text-paper text-[8px] font-bold px-1 rounded-sm leading-tight">
-                D2
-              </span>
+              {importRunning ? 'Import running…' : 'Start import'}
             </BBButton>
           </div>
         </>
@@ -564,6 +575,7 @@ const DropboxLogo = () => (
 
 export function SettingsImport() {
   const { showToast } = useToast()
+  const { getMasterKey } = useKeys()
   const [dbxToken, setDbxToken] = useState<string | null>(
     () => sessionStorage.getItem(TOKEN_KEY)
   )
@@ -610,7 +622,265 @@ export function SettingsImport() {
     sessionStorage.removeItem(ACCOUNT_KEY)
     setDbxToken(null)
     showToast({ icon: 'check', title: 'Dropbox disconnected' })
+    setImportPhase('idle')
   }
+
+  // ── Import pipeline ──────────────────────────────────────────────────────
+
+  type ImportPhase = 'idle' | 'building-queue' | 'importing' | 'paused' | 'done'
+
+  interface FileProgress {
+    path: string
+    name: string
+    size: number
+    status: 'queued' | 'downloading' | 'encrypting' | 'uploading' | 'done' | 'failed'
+    error?: string
+  }
+
+  const [importPhase, setImportPhase] = useState<ImportPhase>('idle')
+  const [importQueue, setImportQueue] = useState<FileProgress[]>([])
+  const [importIdx, setImportIdx] = useState(0)
+  const [doneBytes, setDoneBytes] = useState(0)
+  const [totalBytes, setTotalBytes] = useState(0)
+  const [failedPaths, setFailedPaths] = useState<string[]>([])
+  const [throughputBps, setThroughputBps] = useState(0)
+  const [queueCount, setQueueCount] = useState(0)
+
+  const pausedRef = useRef(false)
+  const cancelCtrlRef = useRef<AbortController | null>(null)
+  // Folder cache: dropbox path → beebeeb folder id
+  const folderCacheRef = useRef<Map<string, string>>(new Map())
+  // Throughput tracking
+  const speedWindowRef = useRef<{ t: number; b: number }[]>([])
+
+  function trackThroughput(bytes: number) {
+    const now = Date.now()
+    speedWindowRef.current.push({ t: now, b: bytes })
+    // Keep 10-second window
+    speedWindowRef.current = speedWindowRef.current.filter(s => now - s.t < 10_000)
+    const windowBytes = speedWindowRef.current.reduce((s, x) => s + x.b, 0)
+    const windowSecs = Math.max(
+      (now - (speedWindowRef.current[0]?.t ?? now)) / 1000,
+      0.1,
+    )
+    setThroughputBps(windowBytes / windowSecs)
+  }
+
+  /** Ensure the Beebeeb folder hierarchy for a Dropbox path exists, returning the leaf folder ID. */
+  async function ensureFolderPath(
+    dropboxFolderPath: string,
+    masterKey: Uint8Array,
+  ): Promise<string | undefined> {
+    if (!dropboxFolderPath || dropboxFolderPath === '') return undefined
+    if (folderCacheRef.current.has(dropboxFolderPath)) {
+      return folderCacheRef.current.get(dropboxFolderPath)
+    }
+
+    // Ensure parent first (recursive)
+    const parts = dropboxFolderPath.split('/').filter(Boolean)
+    const name = parts[parts.length - 1] ?? dropboxFolderPath
+    const parentPath = '/' + parts.slice(0, -1).join('/')
+    const parentId = parts.length > 1
+      ? await ensureFolderPath(parentPath === '/' ? '' : parentPath, masterKey)
+      : undefined
+
+    // Derive a stable folder ID from the path (deterministic → same folder on retry)
+    const pathBytes = new TextEncoder().encode(dropboxFolderPath)
+    const pathHash = await crypto.subtle.digest('SHA-256', pathBytes)
+    const folderId = Array.from(new Uint8Array(pathHash))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('')
+      .slice(0, 36)
+      // Format as UUID-ish
+      .replace(/^(.{8})(.{4})(.{4})(.{4})(.{12}).*$/, '$1-$2-$3-$4-$5')
+
+    if (folderCacheRef.current.has(folderId)) {
+      return folderCacheRef.current.get(folderId)
+    }
+
+    // Encrypt the folder name
+    const folderKey = await deriveFileKey(masterKey, folderId)
+    const encName = await encryptFilename(folderKey, name)
+    const nameEncrypted = JSON.stringify({
+      nonce: toBase64(encName.nonce),
+      ciphertext: toBase64(encName.ciphertext),
+    })
+
+    try {
+      const folder = await createFolder(nameEncrypted, parentId, folderId)
+      folderCacheRef.current.set(dropboxFolderPath, folder.id)
+      return folder.id
+    } catch {
+      // Folder may already exist (retry scenario) — use cached ID
+      folderCacheRef.current.set(dropboxFolderPath, folderId)
+      return folderId
+    }
+  }
+
+  async function handleStartImport(
+    selectedPaths: Set<string>,
+    selectAll: boolean,
+    treeNodes: TreeNode[],
+  ) {
+    if (!dbxToken || !getMasterKey) return
+
+    setImportPhase('building-queue')
+    setImportIdx(0)
+    setDoneBytes(0)
+    setFailedPaths([])
+    setQueueCount(0)
+    speedWindowRef.current = []
+    folderCacheRef.current.clear()
+    pausedRef.current = false
+
+    try {
+      // Determine which paths to expand
+      let pathsToExpand: string[]
+      if (selectAll) {
+        pathsToExpand = treeNodes.map(n => n.path)
+      } else {
+        pathsToExpand = Array.from(selectedPaths)
+      }
+
+      const rawQueue = await expandDropboxPaths(
+        dbxToken,
+        pathsToExpand,
+        (n) => setQueueCount(n),
+      )
+
+      if (rawQueue.length === 0) {
+        showToast({ icon: 'cloud', title: 'Nothing to import', description: 'No files found in the selected folders.' })
+        setImportPhase('idle')
+        return
+      }
+
+      const total = rawQueue.reduce((s, f) => s + f.size, 0)
+      setTotalBytes(total)
+      const queue: FileProgress[] = rawQueue.map(f => ({
+        path: f.dropboxPath,
+        name: f.name,
+        size: f.size,
+        status: 'queued',
+      }))
+      setImportQueue(queue)
+      setImportPhase('importing')
+
+      // ── Worker loop ────────────────────────────────────────────────────
+      const masterKey = getMasterKey()
+      let bytesAccum = 0
+
+      for (let i = 0; i < rawQueue.length; i++) {
+        // Check pause
+        while (pausedRef.current) {
+          setImportPhase('paused')
+          await new Promise<void>(r => setTimeout(r, 300))
+        }
+        setImportPhase('importing')
+        setImportIdx(i)
+
+        const item = rawQueue[i]
+        const ctrl = new AbortController()
+        cancelCtrlRef.current = ctrl
+
+        const updateStatus = (status: FileProgress['status'], error?: string) => {
+          setImportQueue(prev => {
+            const next = [...prev]
+            next[i] = { ...next[i], status, error }
+            return next
+          })
+        }
+
+        let success = false
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            // ── Download from Dropbox ──────────────────────────────────
+            updateStatus('downloading')
+            const blob = await downloadDropboxFile(item.dropboxPath, dbxToken, ctrl.signal)
+            trackThroughput(blob.size)
+
+            // ── Ensure folder exists in Beebeeb ───────────────────────
+            const parentId = await ensureFolderPath(item.parentDropboxPath, masterKey)
+
+            // ── Derive file key ────────────────────────────────────────
+            updateStatus('encrypting')
+            const fileId = crypto.randomUUID()
+            const fileKey = await deriveFileKey(masterKey, fileId)
+
+            // ── Encrypt + upload ───────────────────────────────────────
+            updateStatus('uploading')
+            const file = new File([blob], item.name, {
+              type: blob.type || 'application/octet-stream',
+            })
+            await encryptedUpload(
+              file,
+              fileId,
+              fileKey,
+              parentId,
+              (p) => {
+                if (p.stage === 'Uploading' && p.bytesUploaded) {
+                  trackThroughput(p.bytesUploaded)
+                }
+              },
+              undefined,
+              undefined,
+              ctrl.signal,
+            )
+
+            updateStatus('done')
+            bytesAccum += item.size
+            setDoneBytes(bytesAccum)
+            success = true
+            break
+          } catch (err) {
+            if (ctrl.signal.aborted) {
+              // User cancelled — stop the loop entirely
+              setImportPhase('idle')
+              showToast({ icon: 'x', title: 'Import cancelled' })
+              return
+            }
+            if (attempt === 1) {
+              const msg = err instanceof Error ? err.message : 'Unknown error'
+              updateStatus('failed', msg)
+              setFailedPaths(prev => [...prev, item.dropboxPath])
+            }
+            // else: retry
+          }
+        }
+
+        if (!success) {
+          bytesAccum += item.size
+          setDoneBytes(bytesAccum)
+        }
+      }
+
+      setImportPhase('done')
+      showToast({
+        icon: 'check',
+        title: `Import complete`,
+        description: `${rawQueue.length} files imported${failedPaths.length > 0 ? ` · ${failedPaths.length} failed` : ''}`,
+      })
+    } catch (err) {
+      setImportPhase('idle')
+      showToast({ icon: 'x', title: 'Import failed', description: err instanceof Error ? err.message : '', danger: true })
+    }
+  }
+
+  function handlePauseResume() {
+    pausedRef.current = !pausedRef.current
+    if (!pausedRef.current) setImportPhase('importing')
+  }
+
+  function handleCancel() {
+    cancelCtrlRef.current?.abort()
+    pausedRef.current = false
+    setImportPhase('idle')
+  }
+
+  const isImporting = importPhase === 'importing' || importPhase === 'paused'
+  const progressPct = totalBytes > 0 ? Math.round((doneBytes / totalBytes) * 100) : 0
+  const currentFile = importQueue[importIdx]
+  const eta = formatEta(totalBytes - doneBytes, throughputBps)
+  const speed = formatSpeed(throughputBps)
 
   return (
     <SettingsShell activeSection="import">
@@ -675,11 +945,129 @@ export function SettingsImport() {
           </div>
         )}
 
-        {/* ── Dropbox file tree (when connected) ── */}
-        {dbxToken && (
+        {/* ── Import progress panel ── */}
+        {isImporting && (
+          <div className="rounded-xl border border-line bg-paper overflow-hidden">
+            <div className="flex items-center gap-3 px-5 py-3 border-b border-line bg-paper-2">
+              <svg className="animate-spin h-4 w-4 text-amber shrink-0" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"/>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+              </svg>
+              <span className="text-[13px] font-semibold text-ink flex-1">
+                {importPhase === 'paused' ? 'Import paused' : `Importing files…`}
+              </span>
+              <BBButton size="sm" variant="ghost" onClick={handlePauseResume} className="gap-1">
+                <Icon name={importPhase === 'paused' ? 'upload' : 'clock'} size={12} />
+                {importPhase === 'paused' ? 'Resume' : 'Pause'}
+              </BBButton>
+              <BBButton size="sm" variant="ghost" className="text-red/70 hover:text-red" onClick={handleCancel}>
+                <Icon name="x" size={12} className="mr-1" />
+                Cancel
+              </BBButton>
+            </div>
+
+            <div className="px-5 py-4 space-y-3">
+              {/* Overall bar */}
+              <div>
+                <div className="flex items-baseline justify-between mb-1.5">
+                  <span className="text-[12.5px] font-medium text-ink">
+                    {importIdx + 1} / {importQueue.length} files
+                  </span>
+                  <span className="text-[11.5px] text-ink-3 font-mono">
+                    {fmtBytes(doneBytes)} / {fmtBytes(totalBytes)}
+                    {throughputBps > 0 && ` · ${speed} · ${eta}`}
+                  </span>
+                </div>
+                <div className="h-2 rounded-full bg-paper-3 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-amber transition-all duration-500"
+                    style={{ width: `${progressPct}%` }}
+                  />
+                </div>
+                <div className="text-[10.5px] text-ink-4 mt-1">{progressPct}% complete</div>
+              </div>
+
+              {/* Current file */}
+              {currentFile && (
+                <div className="flex items-center gap-3 p-3 rounded-lg bg-paper-2 border border-line">
+                  <Icon name="file" size={13} className="text-ink-3 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[12.5px] font-medium text-ink truncate">{currentFile.name}</div>
+                    <div className="text-[11px] text-ink-3 truncate">{currentFile.path}</div>
+                  </div>
+                  <span className={`text-[11px] font-medium px-2 py-0.5 rounded ${
+                    currentFile.status === 'downloading' ? 'bg-blue-50 text-blue-600' :
+                    currentFile.status === 'encrypting' ? 'bg-amber-bg text-amber-deep' :
+                    currentFile.status === 'uploading' ? 'bg-green/10 text-green' :
+                    'text-ink-4'
+                  }`}>
+                    {currentFile.status.charAt(0).toUpperCase() + currentFile.status.slice(1)}
+                  </span>
+                </div>
+              )}
+
+              {/* Recent completions */}
+              {importQueue.filter(f => f.status === 'done').slice(-3).reverse().map(f => (
+                <div key={f.path} className="flex items-center gap-2 text-[11.5px] text-ink-3">
+                  <Icon name="check" size={11} className="text-green shrink-0" />
+                  <span className="truncate">{f.name}</span>
+                  <span className="ml-auto font-mono shrink-0">{fmtBytes(f.size)}</span>
+                </div>
+              ))}
+
+              {/* Failed files */}
+              {failedPaths.length > 0 && (
+                <div className="text-[11.5px] text-red">
+                  {failedPaths.length} file{failedPaths.length !== 1 ? 's' : ''} failed
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Import complete summary */}
+        {importPhase === 'done' && (
+          <div className="rounded-xl border border-green/30 bg-green/5 px-5 py-4 flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-green/10 flex items-center justify-center shrink-0">
+              <Icon name="check" size={16} className="text-green" />
+            </div>
+            <div className="flex-1">
+              <div className="text-[13px] font-semibold text-ink">Import complete</div>
+              <div className="text-[12px] text-ink-3">
+                {importQueue.filter(f => f.status === 'done').length} files imported
+                {failedPaths.length > 0 && ` · ${failedPaths.length} failed`}
+                {` · ${fmtBytes(doneBytes)} transferred`}
+              </div>
+            </div>
+            <BBButton size="sm" variant="ghost" onClick={() => setImportPhase('idle')}>
+              Done
+            </BBButton>
+          </div>
+        )}
+
+        {/* Building queue spinner */}
+        {importPhase === 'building-queue' && (
+          <div className="rounded-xl border border-line bg-paper-2 px-5 py-6 flex items-center gap-3">
+            <svg className="animate-spin h-5 w-5 text-amber shrink-0" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"/>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+            </svg>
+            <div>
+              <div className="text-[13px] font-medium text-ink">Building import queue…</div>
+              <div className="text-[11.5px] text-ink-3">
+                {queueCount > 0 ? `${queueCount} files found so far` : 'Listing your Dropbox…'}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Dropbox file tree (when connected and not importing) ── */}
+        {dbxToken && !isImporting && importPhase !== 'done' && (
           <DropboxTree
             token={dbxToken}
             onDisconnect={handleDisconnectDropbox}
+            onStartImport={(sel, all, nodes) => void handleStartImport(sel, all, nodes)}
+            importRunning={importPhase !== 'idle'}
           />
         )}
 
