@@ -35,8 +35,8 @@ export function EmptyDrive({ userName, onUpload, onCreateFolder }: EmptyDrivePro
           {userName ? `Welcome, ${userName}.` : 'Your vault is empty'}
         </h1>
         <p className="text-[14px] text-ink-3 leading-relaxed mb-[22px]">
-          Your drive is empty and encrypted, waiting for the first file.
-          Keys live only on your devices — start by dragging something in.
+          Drag a file in to get started — it's encrypted before it leaves your device.
+          Keys live only on your devices.
         </p>
 
         {/* Action buttons */}

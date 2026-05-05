@@ -316,7 +316,7 @@ export function Shared() {
           const newFileKey = await getFileKey(newFileId)
           await encryptedUpload(file, newFileId, newFileKey, undefined, () => {})
           zeroize(newFileKey)
-          showToast({ icon: 'check', title: 'Copy saved', description: `${filename} saved to your drive.` })
+          showToast({ icon: 'check', title: 'Copy saved', description: `${filename} saved to your vault.` })
         } catch (e) {
           showToast({ icon: 'x', title: 'Save failed', description: e instanceof Error ? e.message : 'Could not save copy.', danger: true })
         }

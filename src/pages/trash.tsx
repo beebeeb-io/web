@@ -201,7 +201,7 @@ export function Trash() {
         next.delete(id)
         return next
       })
-      showToast({ icon: 'check', title: 'File restored', description: 'Moved back to your drive' })
+      showToast({ icon: 'check', title: 'File restored', description: 'Moved back to your vault' })
     } catch (err) {
       showToast({ icon: 'x', title: 'Restore failed', description: err instanceof Error ? err.message : 'Could not restore file', danger: true })
     } finally {
@@ -309,7 +309,7 @@ export function Trash() {
       await Promise.all(files.map((f) => restoreFile(f.id)))
       setFiles([])
       setSelected(new Set())
-      showToast({ icon: 'check', title: 'All files restored', description: 'Moved back to your drive' })
+      showToast({ icon: 'check', title: 'All files restored', description: 'Moved back to your vault' })
     } catch (err) {
       showToast({ icon: 'x', title: 'Restore all failed', description: err instanceof Error ? err.message : 'Some files could not be restored', danger: true })
       fetchTrash()

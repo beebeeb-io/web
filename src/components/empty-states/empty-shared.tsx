@@ -21,7 +21,7 @@ const config: Record<
     icon: 'upload',
     heading: 'No active shares',
     subtitle:
-      'Files you share with others will appear here once they accept. Share a file from your drive to get started.',
+      'Files you share with others will appear here once they accept. Share a file from your vault to get started.',
     ctaLabel: 'Go to drive',
   },
   pending: {

@@ -9,7 +9,7 @@ export function EmptyStarred({ onGoToDrive }: EmptyStarredProps) {
     <EmptyState
       icon="star"
       heading="No starred files"
-      subtitle="Star important files to find them quickly. Right-click any file in your drive and choose Star, or use the details panel."
+      subtitle="Star important files to find them quickly. Right-click any file and choose Star, or use the details panel."
       cta={{
         label: 'Go to drive',
         icon: 'folder',
