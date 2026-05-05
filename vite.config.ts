@@ -20,12 +20,4 @@ export default defineConfig({
     port: 5173,
     fs: { allow: ['.', '/wasm-pkg', '../core'] },
   },
-  resolve: {
-    // fflate ships a browser-specific ESM build (esm/browser.js) that
-    // only includes gzip utilities — zipSync, Zip, etc. are absent.
-    // Force Vite to use the full ESM index instead.
-    alias: {
-      fflate: 'fflate/esm/index.mjs',
-    },
-  },
 })
