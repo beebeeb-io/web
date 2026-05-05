@@ -1199,6 +1199,32 @@ export async function syncBillingPlans(): Promise<BillingSyncResult> {
   return request<BillingSyncResult>('/api/v1/admin/billing/sync', { method: 'POST' })
 }
 
+export interface PlanUpdateInput {
+  name?: string
+  price_eur?: number
+  price_yearly_eur?: number
+  storage_bytes?: number
+  features?: string[]
+  is_active?: boolean
+}
+
+export interface PlanUpdateResponse {
+  plan: Plan
+  stripe_synced: boolean
+  note?: string
+}
+
+/** PATCH /api/v1/admin/billing/plans/:slug */
+export async function patchBillingPlan(
+  slug: string,
+  updates: PlanUpdateInput,
+): Promise<PlanUpdateResponse> {
+  return request<PlanUpdateResponse>(`/api/v1/admin/billing/plans/${slug}`, {
+    method: 'PATCH',
+    body: JSON.stringify(updates),
+  })
+}
+
 export interface Subscription {
   plan: string
   billing_cycle: string

@@ -2,8 +2,10 @@ import { useState, useEffect, useCallback } from 'react'
 import { Icon } from '../../components/icons'
 import { BBButton } from '../../components/bb-button'
 import { BBChip } from '../../components/bb-chip'
+import { BBToggle } from '../../components/bb-toggle'
 import { KpiCard } from '../../components/admin/kpi-card'
 import { AdminShell } from './admin-shell'
+import { useToast } from '../../components/toast'
 import {
   getSubscription,
   getPlans,
@@ -11,6 +13,7 @@ import {
   getAdminStats,
   getAdminBillingStats,
   syncBillingPlans,
+  patchBillingPlan,
   type Subscription,
   type Plan,
   type Invoice,
@@ -60,6 +63,7 @@ function formatTimeAgo(iso: string): string {
 }
 
 export function AdminBilling() {
+  const { showToast } = useToast()
   const [sub, setSub] = useState<Subscription | null>(null)
   const [plans, setPlans] = useState<Plan[]>([])
   const [invoices, setInvoices] = useState<Invoice[]>([])
@@ -70,6 +74,7 @@ export function AdminBilling() {
   const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState<BillingSyncResult | null>(null)
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null)
+  const [editingPlan, setEditingPlan] = useState<Plan | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -109,6 +114,24 @@ export function AdminBilling() {
     } finally {
       setSyncing(false)
     }
+  }
+
+  async function handleSavePlan(slug: string, updates: Parameters<typeof patchBillingPlan>[1]) {
+    const result = await patchBillingPlan(slug, updates)
+    // Merge updated plan into local state
+    setPlans(prev =>
+      prev.map(p => (p.id === result.plan.id ? result.plan : p)),
+    )
+    // If the detail panel is showing this plan, refresh it too
+    if (selectedPlan?.id === result.plan.id) setSelectedPlan(result.plan)
+    setEditingPlan(null)
+    showToast({
+      icon: 'check',
+      title: 'Plan updated',
+      description: result.stripe_synced
+        ? `${result.plan.name} synced to Stripe.`
+        : result.note ?? `${result.plan.name} saved.`,
+    })
   }
 
   const totalUsers = stats?.users.total ?? 0
@@ -287,7 +310,7 @@ export function AdminBilling() {
                   <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3">
                     Plans — Stripe source of truth
                   </div>
-                  <span className="text-[10px] text-ink-4">Click a plan to inspect details</span>
+                  <span className="text-[10px] text-ink-4">Click to inspect · hover for Edit</span>
                 </div>
                 <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(plans.length, 4)}, 1fr)` }}>
                   {plans
@@ -296,44 +319,53 @@ export function AdminBilling() {
                     .map(plan => {
                       const isSelected = selectedPlan?.id === plan.id
                       return (
-                        <button
-                          key={plan.id}
-                          onClick={() => setSelectedPlan(isSelected ? null : plan)}
-                          className={`rounded-xl border p-3.5 text-left cursor-pointer transition-all ${
-                            isSelected
-                              ? 'bg-amber-bg border-amber ring-1 ring-amber/40'
-                              : plan.id === sub?.plan
-                                ? 'bg-amber-bg/50 border-amber-deep/40 hover:border-amber-deep'
-                                : 'bg-paper border-line-2 hover:border-line hover:bg-paper-2'
-                          }`}
-                        >
-                          <div className="flex items-center gap-1.5 mb-2 flex-wrap">
-                            <span className="text-[13px] font-semibold">{plan.name}</span>
-                            {plan.is_active !== false
-                              ? <BBChip variant="green" className="text-[9px]">Active</BBChip>
-                              : <BBChip className="text-[9px]">Inactive</BBChip>
-                            }
-                            {plan.id === sub?.plan && (
-                              <BBChip variant="amber" className="text-[9px]">Your plan</BBChip>
+                        <div key={plan.id} className="relative group/card">
+                          <button
+                            onClick={() => setSelectedPlan(isSelected ? null : plan)}
+                            className={`w-full rounded-xl border p-3.5 text-left cursor-pointer transition-all ${
+                              isSelected
+                                ? 'bg-amber-bg border-amber ring-1 ring-amber/40'
+                                : plan.id === sub?.plan
+                                  ? 'bg-amber-bg/50 border-amber-deep/40 hover:border-amber-deep'
+                                  : 'bg-paper border-line-2 hover:border-line hover:bg-paper-2'
+                            }`}
+                          >
+                            <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+                              <span className="text-[13px] font-semibold">{plan.name}</span>
+                              {plan.is_active !== false
+                                ? <BBChip variant="green" className="text-[9px]">Active</BBChip>
+                                : <BBChip className="text-[9px]">Inactive</BBChip>
+                              }
+                              {plan.id === sub?.plan && (
+                                <BBChip variant="amber" className="text-[9px]">Your plan</BBChip>
+                              )}
+                            </div>
+                            <div className="font-mono text-[13px] font-bold text-ink">
+                              {plan.price_eur === 0 ? 'Free' : `€${plan.price_eur.toFixed(2)}/mo`}
+                            </div>
+                            {plan.price_yearly_eur > 0 && (
+                              <div className="font-mono text-[10px] text-ink-3">
+                                €{plan.price_yearly_eur.toFixed(2)}/yr
+                              </div>
                             )}
-                          </div>
-                          <div className="font-mono text-[13px] font-bold text-ink">
-                            {plan.price_eur === 0 ? 'Free' : `€${plan.price_eur.toFixed(2)}/mo`}
-                          </div>
-                          {plan.price_yearly_eur > 0 && (
-                            <div className="font-mono text-[10px] text-ink-3">
-                              €{plan.price_yearly_eur.toFixed(2)}/yr
+                            <div className="text-[11px] text-ink-2 mt-1.5 font-medium">
+                              {plan.storage_label}
                             </div>
-                          )}
-                          <div className="text-[11px] text-ink-2 mt-1.5 font-medium">
-                            {plan.storage_label}
-                          </div>
-                          {plan.stripe_product_id && (
-                            <div className="font-mono text-[9px] text-ink-4 mt-1 truncate">
-                              {plan.stripe_product_id}
-                            </div>
-                          )}
-                        </button>
+                            {plan.stripe_product_id && (
+                              <div className="font-mono text-[9px] text-ink-4 mt-1 truncate">
+                                {plan.stripe_product_id}
+                              </div>
+                            )}
+                          </button>
+                          {/* Edit button — appears on hover */}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setEditingPlan(plan) }}
+                            className="absolute top-2 right-2 opacity-0 group-hover/card:opacity-100 transition-opacity p-1 rounded-md bg-paper border border-line-2 text-ink-3 hover:text-ink hover:border-line shadow-sm z-10"
+                            title="Edit plan"
+                          >
+                            <Icon name="settings" size={11} />
+                          </button>
+                        </div>
                       )
                     })}
                 </div>
@@ -409,12 +441,22 @@ export function AdminBilling() {
                       </div>
                     )}
 
-                    <div className="mt-3 pt-3 border-t border-line flex items-center justify-between text-[11px] text-ink-4">
-                      <span>After editing in Stripe, click <strong className="text-ink-3">Sync from Stripe</strong> to pull changes.</span>
-                      {selectedPlan.is_active !== false
-                        ? <span className="text-green font-medium">Active</span>
-                        : <span className="text-ink-3">Inactive</span>
-                      }
+                    <div className="mt-3 pt-3 border-t border-line flex items-center justify-between gap-2">
+                      <span className="text-[11px] text-ink-4">After editing in Stripe, click <strong className="text-ink-3">Sync from Stripe</strong> to pull changes.</span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {selectedPlan.is_active !== false
+                          ? <span className="text-[11px] text-green font-medium">Active</span>
+                          : <span className="text-[11px] text-ink-3">Inactive</span>
+                        }
+                        <BBButton
+                          size="sm"
+                          variant="amber"
+                          onClick={() => setEditingPlan(selectedPlan)}
+                        >
+                          <Icon name="settings" size={11} className="mr-1" />
+                          Edit plan
+                        </BBButton>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -467,6 +509,312 @@ export function AdminBilling() {
         <Icon name="shield" size={11} className="text-amber-deep" />
         <span>All invoices are VAT-compliant (EU). Payments via Stripe Payments Europe, Ltd.</span>
       </div>
+
+      {/* Plan editor modal */}
+      {editingPlan && (
+        <PlanEditorModal
+          plan={editingPlan}
+          onClose={() => setEditingPlan(null)}
+          onSave={handleSavePlan}
+        />
+      )}
     </AdminShell>
+  )
+}
+
+// ─── Plan editor modal ────────────────────────────────────────────────────────
+
+const GB = 1_073_741_824
+const TB = 1_099_511_627_776
+
+function bytesToDisplay(bytes: number): { value: number; unit: 'GB' | 'TB' } {
+  if (bytes < TB) return { value: Math.round(bytes / GB), unit: 'GB' }
+  return { value: parseFloat((bytes / TB).toFixed(3)), unit: 'TB' }
+}
+
+function displayToBytes(value: number, unit: 'GB' | 'TB'): number {
+  return unit === 'TB' ? Math.round(value * TB) : Math.round(value * GB)
+}
+
+function storageLabel(bytes: number): string {
+  const { value, unit } = bytesToDisplay(bytes)
+  return `${value} ${unit}`
+}
+
+interface PlanEditorModalProps {
+  plan: Plan
+  onClose: () => void
+  onSave: (slug: string, updates: Parameters<typeof patchBillingPlan>[1]) => Promise<void>
+}
+
+function PlanEditorModal({ plan, onClose, onSave }: PlanEditorModalProps) {
+  const storage = bytesToDisplay(plan.storage_bytes)
+
+  const [name, setName] = useState(plan.name)
+  const [priceMonthly, setPriceMonthly] = useState(plan.price_eur.toFixed(2))
+  const [priceYearly, setPriceYearly] = useState(plan.price_yearly_eur.toFixed(2))
+  const [storageValue, setStorageValue] = useState(String(storage.value))
+  const [storageUnit, setStorageUnit] = useState<'GB' | 'TB'>(storage.unit)
+  const [features, setFeatures] = useState<string[]>(plan.features)
+  const [isActive, setIsActive] = useState(plan.is_active !== false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // Close on Escape
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  // Auto-calculate 20%-off yearly hint
+  const monthlyNum = parseFloat(priceMonthly) || 0
+  const yearlyHint = monthlyNum > 0 ? (monthlyNum * 12 * 0.8).toFixed(2) : null
+
+  const storageBytesPreview = displayToBytes(parseFloat(storageValue) || 0, storageUnit)
+
+  async function handleSave() {
+    setSaving(true)
+    setError(null)
+    try {
+      await onSave(plan.id, {
+        name: name.trim() || undefined,
+        price_eur: parseFloat(priceMonthly) || undefined,
+        price_yearly_eur: parseFloat(priceYearly) || undefined,
+        storage_bytes: storageBytesPreview || undefined,
+        features: features.filter(f => f.trim()),
+        is_active: isActive,
+      })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save plan')
+      setSaving(false)
+    }
+    // on success, parent closes modal via setEditingPlan(null)
+  }
+
+  function updateFeature(index: number, value: string) {
+    setFeatures(prev => prev.map((f, i) => (i === index ? value : f)))
+  }
+
+  function removeFeature(index: number) {
+    setFeatures(prev => prev.filter((_, i) => i !== index))
+  }
+
+  function addFeature() {
+    setFeatures(prev => [...prev, ''])
+  }
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        className="fixed inset-0 z-50 bg-ink/30"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+
+      {/* Modal */}
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="plan-editor-heading"
+      >
+        <div className="pointer-events-auto w-full max-w-[520px] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden flex flex-col max-h-[90vh]">
+          {/* Header */}
+          <div className="flex items-center gap-2.5 px-5 py-4 border-b border-line shrink-0">
+            <Icon name="settings" size={13} className="text-ink-3" />
+            <h2 id="plan-editor-heading" className="text-[14px] font-semibold text-ink flex-1">
+              Edit plan: {plan.name}
+            </h2>
+            <button
+              onClick={onClose}
+              className="text-ink-4 hover:text-ink transition-colors p-0.5"
+              aria-label="Close"
+            >
+              <Icon name="x" size={14} />
+            </button>
+          </div>
+
+          {/* Body */}
+          <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4">
+            {/* Name */}
+            <div>
+              <label className="block text-[11px] font-semibold uppercase tracking-wider text-ink-3 mb-1.5">
+                Plan name
+              </label>
+              <input
+                type="text"
+                value={name}
+                onChange={e => setName(e.target.value)}
+                className="w-full border border-line rounded-md px-3 py-2 text-[13px] text-ink bg-paper focus:border-line-2 outline-none transition-colors"
+                placeholder="e.g. Personal"
+              />
+            </div>
+
+            {/* Prices */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-semibold uppercase tracking-wider text-ink-3 mb-1.5">
+                  Monthly price (EUR)
+                </label>
+                <div className="flex items-center border border-line rounded-md overflow-hidden focus-within:border-line-2 transition-colors">
+                  <span className="px-2.5 py-2 text-[13px] text-ink-3 bg-paper-2 border-r border-line font-mono">€</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={priceMonthly}
+                    onChange={e => setPriceMonthly(e.target.value)}
+                    className="flex-1 px-2.5 py-2 text-[13px] text-ink bg-paper outline-none font-mono"
+                    placeholder="0.00"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold uppercase tracking-wider text-ink-3 mb-1.5">
+                  Yearly price (EUR)
+                  {yearlyHint && (
+                    <span className="ml-1.5 text-ink-4 normal-case tracking-normal font-normal">
+                      — 20% off = €{yearlyHint}
+                    </span>
+                  )}
+                </label>
+                <div className="flex items-center border border-line rounded-md overflow-hidden focus-within:border-line-2 transition-colors">
+                  <span className="px-2.5 py-2 text-[13px] text-ink-3 bg-paper-2 border-r border-line font-mono">€</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={priceYearly}
+                    onChange={e => setPriceYearly(e.target.value)}
+                    className="flex-1 px-2.5 py-2 text-[13px] text-ink bg-paper outline-none font-mono"
+                    placeholder="0.00"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Price note */}
+            <p className="text-[11px] text-ink-4 -mt-2 leading-relaxed">
+              Changing price creates a new Stripe Price. Existing subscribers keep their current rate until renewal.
+            </p>
+
+            {/* Storage */}
+            <div>
+              <label className="block text-[11px] font-semibold uppercase tracking-wider text-ink-3 mb-1.5">
+                Storage quota
+                {storageBytesPreview > 0 && (
+                  <span className="ml-1.5 text-ink-4 normal-case tracking-normal font-normal">
+                    — {storageLabel(storageBytesPreview)}
+                  </span>
+                )}
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={storageValue}
+                  onChange={e => setStorageValue(e.target.value)}
+                  className="flex-1 border border-line rounded-md px-3 py-2 text-[13px] text-ink bg-paper focus:border-line-2 outline-none transition-colors font-mono"
+                />
+                <div className="flex rounded-md border border-line overflow-hidden shrink-0">
+                  {(['GB', 'TB'] as const).map(unit => (
+                    <button
+                      key={unit}
+                      type="button"
+                      onClick={() => setStorageUnit(unit)}
+                      className={`px-3.5 py-2 text-[12px] font-medium transition-colors ${
+                        storageUnit === unit
+                          ? 'bg-ink text-paper'
+                          : 'bg-paper text-ink-2 hover:bg-paper-2'
+                      }`}
+                    >
+                      {unit}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Features */}
+            <div>
+              <label className="block text-[11px] font-semibold uppercase tracking-wider text-ink-3 mb-1.5">
+                Features
+              </label>
+              <div className="space-y-1.5">
+                {features.map((f, i) => (
+                  <div key={i} className="flex gap-2 items-center">
+                    <input
+                      type="text"
+                      value={f}
+                      onChange={e => updateFeature(i, e.target.value)}
+                      placeholder="Feature description"
+                      className="flex-1 border border-line rounded-md px-2.5 py-1.5 text-[12.5px] text-ink bg-paper focus:border-line-2 outline-none transition-colors"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeFeature(i)}
+                      className="text-ink-4 hover:text-red transition-colors p-0.5 shrink-0"
+                      aria-label="Remove feature"
+                    >
+                      <Icon name="x" size={12} />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={addFeature}
+                  className="flex items-center gap-1.5 text-[12px] text-ink-3 hover:text-ink transition-colors mt-1"
+                >
+                  <Icon name="plus" size={11} />
+                  Add feature
+                </button>
+              </div>
+            </div>
+
+            {/* Active toggle */}
+            <div className="flex items-center gap-3 py-1">
+              <BBToggle on={isActive} onChange={setIsActive} />
+              <span className="text-[13px] text-ink-2">
+                {isActive ? 'Active — visible to users' : 'Inactive — hidden from pricing page'}
+              </span>
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="px-5 py-4 border-t border-line bg-paper-2 shrink-0">
+            {error && (
+              <p className="text-[12px] text-red mb-3">{error}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <BBButton
+                variant="amber"
+                size="md"
+                className="flex-1 justify-center gap-2"
+                onClick={() => void handleSave()}
+                disabled={saving}
+              >
+                {saving ? (
+                  <>
+                    <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin shrink-0" />
+                    Syncing with Stripe…
+                  </>
+                ) : (
+                  <>
+                    <Icon name="upload" size={12} />
+                    Save &amp; sync to Stripe
+                  </>
+                )}
+              </BBButton>
+              <BBButton variant="ghost" size="md" onClick={onClose} disabled={saving}>
+                Cancel
+              </BBButton>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
   )
 }
