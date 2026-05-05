@@ -857,7 +857,7 @@ export function Drive() {
         file.id,
         fileKey,
         file.name_encrypted,
-        file.mime_type,
+        file.mime_type ?? undefined,
         file.chunk_count,
         file.size_bytes,
       )
@@ -1535,8 +1535,10 @@ export function Drive() {
           />
         )}
 
-        {/* File list with upload zone — id="main-content" is the skip link target */}
-        <main id="main-content">
+        {/* File list with upload zone. flex-1 + flex-col lets UploadZone fill the
+            remaining viewport height so dragging files to the empty area below
+            the list still triggers the drop zone. */}
+        <div className="flex-1 flex flex-col min-h-0">
         <UploadZone onFiles={handleFilesSelected} onFolderFiles={handleFolderFilesSelected}>
           <FileList
             files={files}
@@ -1585,7 +1587,7 @@ export function Drive() {
             onShowTrustDetails={(file) => setTrustFileId(file.id)}
           />
         </UploadZone>
-        </main>
+        </div>
 
         {/* Status bar */}
         <div className="px-3 md:px-5 py-2 border-t border-line bg-paper-2 flex items-center gap-2 md:gap-3.5 text-[11px] text-ink-3">
@@ -1734,7 +1736,7 @@ export function Drive() {
             onClose={() => setVersionFileId(null)}
             fileId={versionFileId}
             fileName={f ? displayName(f) : ''}
-            mimeType={f?.mime_type}
+            mimeType={f?.mime_type ?? undefined}
             onVersionRestored={fetchFiles}
           />
         )
