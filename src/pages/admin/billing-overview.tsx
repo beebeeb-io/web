@@ -29,21 +29,24 @@ function formatDate(iso: string | null): string {
 }
 
 interface PlanSegment {
-  id: 'free' | 'personal' | 'team' | 'business'
+  id: string
   label: string
   count: number
   pct: number
   className: string
 }
 
-function buildSegments(totalUsers: number, subscribers: { personal: number; team: number; business: number }): PlanSegment[] {
-  const free = Math.max(0, totalUsers - subscribers.personal - subscribers.team - subscribers.business)
+function buildSegments(totalUsers: number, dist: {
+  personal: number; pro: number; data_hoarder: number
+}): PlanSegment[] {
+  const paid = (dist.personal ?? 0) + (dist.pro ?? 0) + (dist.data_hoarder ?? 0)
+  const free = Math.max(0, totalUsers - paid)
   const safe = totalUsers > 0 ? totalUsers : 1
   return [
-    { id: 'free', label: 'Free', count: free, pct: (free / safe) * 100, className: 'bg-ink-3' },
-    { id: 'personal', label: 'Personal', count: subscribers.personal, pct: (subscribers.personal / safe) * 100, className: 'bg-amber' },
-    { id: 'team', label: 'Team', count: subscribers.team, pct: (subscribers.team / safe) * 100, className: 'bg-green' },
-    { id: 'business', label: 'Business', count: subscribers.business, pct: (subscribers.business / safe) * 100, className: 'bg-amber-deep' },
+    { id: 'free',         label: 'Free',         count: free,                   pct: (free                   / safe) * 100, className: 'bg-ink-3'    },
+    { id: 'personal',     label: 'Personal',     count: dist.personal ?? 0,     pct: ((dist.personal ?? 0)   / safe) * 100, className: 'bg-amber'    },
+    { id: 'pro',          label: 'Pro',           count: dist.pro ?? 0,          pct: ((dist.pro ?? 0)        / safe) * 100, className: 'bg-green'    },
+    { id: 'data_hoarder', label: 'Data Hoarder',  count: dist.data_hoarder ?? 0, pct: ((dist.data_hoarder ?? 0) / safe) * 100, className: 'bg-amber-deep' },
   ]
 }
 
@@ -112,25 +115,25 @@ export function AdminBilling() {
 
   // Use real billing stats when available, fall back to zeroes when the
   // endpoint isn't deployed yet (getAdminBillingStats returns null on 404).
-  const subscribers = billingStats
-    ? {
-        personal: billingStats.plan_distribution.personal,
-        team: billingStats.plan_distribution.team,
-        business: billingStats.plan_distribution.business,
-      }
-    : { personal: 0, team: 0, business: 0 }
+  // Guard every field with ?? 0 — production may return a partial object
+  // if the stripe_plans table is empty or the sync hasn't run yet.
+  const dist = {
+    personal:     billingStats?.plan_distribution?.personal     ?? 0,
+    pro:          billingStats?.plan_distribution?.pro          ?? 0,
+    data_hoarder: billingStats?.plan_distribution?.data_hoarder ?? 0,
+  }
 
   const totalSubscribers = billingStats?.total_subscribers
-    ?? (subscribers.personal + subscribers.team + subscribers.business)
-  const freeUsers = billingStats?.plan_distribution.free
+    ?? (dist.personal + dist.pro + dist.data_hoarder)
+  const freeUsers = billingStats?.plan_distribution?.free
     ?? Math.max(0, totalUsers - totalSubscribers)
-  const mrrEur = billingStats ? billingStats.mrr_cents / 100 : null
+  const mrrEur = billingStats ? (billingStats.mrr_cents ?? 0) / 100 : null
   const conversionRate = billingStats
-    ? `${(billingStats.conversion_rate * 100).toFixed(1)}%`
+    ? `${((billingStats.conversion_rate ?? 0) * 100).toFixed(1)}%`
     : totalUsers > 0
       ? `${((totalSubscribers / totalUsers) * 100).toFixed(1)}%`
       : '0%'
-  const segments = buildSegments(totalUsers, subscribers)
+  const segments = buildSegments(totalUsers, dist)
 
   return (
     <AdminShell activeSection="billing">
@@ -180,6 +183,14 @@ export function AdminBilling() {
           </div>
         ) : (
           <>
+            {/* No billing data banner */}
+            {!billingStats && (
+              <div className="px-4 py-3 rounded-lg border border-amber/30 bg-amber-bg text-[13px] text-ink-2 flex items-center gap-2">
+                <Icon name="upload" size={13} className="text-amber-deep shrink-0" />
+                <span>No billing data yet — click <strong>Sync from Stripe</strong> to pull plan and subscription data.</span>
+              </div>
+            )}
+
             {/* KPI row */}
             <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
               <KpiCard
@@ -197,7 +208,7 @@ export function AdminBilling() {
               <KpiCard
                 label="Subscribers"
                 value={totalSubscribers}
-                sub={`of ${totalUsers.toLocaleString()} total`}
+                sub={`of ${(totalUsers ?? 0).toLocaleString()} total`}
               />
               <KpiCard
                 label="Free users"
@@ -220,7 +231,7 @@ export function AdminBilling() {
                   Plan distribution
                 </div>
                 <div className="font-mono text-[10px] text-ink-4">
-                  {totalUsers.toLocaleString()} users
+                  {(totalUsers ?? 0).toLocaleString()} users
                 </div>
               </div>
               <div className="flex h-2.5 w-full rounded-full overflow-hidden bg-paper-3">
@@ -230,7 +241,7 @@ export function AdminBilling() {
                       key={seg.id}
                       className={seg.className}
                       style={{ width: `${seg.pct}%` }}
-                      title={`${seg.label}: ${seg.count} (${seg.pct.toFixed(1)}%)`}
+                      title={`${seg.label}: ${seg.count} (${(seg.pct ?? 0).toFixed(1)}%)`}
                     />
                   )
                 ))}
@@ -242,7 +253,7 @@ export function AdminBilling() {
                     <div className="flex flex-col min-w-0">
                       <span className="text-[11px] text-ink-2 truncate">{seg.label}</span>
                       <span className="font-mono text-[10px] text-ink-4">
-                        {seg.count.toLocaleString()} · {seg.pct.toFixed(1)}%
+                        {(seg.count ?? 0).toLocaleString()} · {(seg.pct ?? 0).toFixed(1)}%
                       </span>
                     </div>
                   </div>

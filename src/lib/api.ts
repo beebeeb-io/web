@@ -2442,8 +2442,11 @@ export interface AdminBillingStats {
   plan_distribution: {
     free: number
     personal: number
-    team: number
-    business: number
+    pro: number
+    data_hoarder: number
+    // Legacy keys — may be absent on new servers
+    team?: number
+    business?: number
   }
   recent_invoices: Array<{
     id: string
