@@ -12,6 +12,7 @@ import {
   opaqueRegisterFinish,
   ApiError,
 } from '../lib/api'
+import { REFERRAL_SOURCE_KEY, REFERRAL_SHARER_KEY } from './signup'
 import { generateRecoveryKitPDF } from '../lib/recovery-kit-pdf'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
@@ -210,12 +211,19 @@ export function Onboarding() {
 
       // 3. Finish registration on server (includes public key + recovery check)
       setProcessingStatus('Registering with server...')
+      const referralSource = localStorage.getItem(REFERRAL_SOURCE_KEY) ?? undefined
+      const referralSharerId = localStorage.getItem(REFERRAL_SHARER_KEY) ?? undefined
       await opaqueRegisterFinish(
         email,
         toBase64(regUpload),
         toBase64(x25519Pub),
         toBase64(recoveryCheck),
+        referralSource,
+        referralSharerId,
       )
+      // Clear referral attribution after it has been sent
+      localStorage.removeItem(REFERRAL_SOURCE_KEY)
+      localStorage.removeItem(REFERRAL_SHARER_KEY)
 
       // 4. Wrap master key with password, store in IndexedDB, set in memory
       setProcessingStatus('Securing your vault...')

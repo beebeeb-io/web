@@ -10,6 +10,7 @@ import {
   verifySharePassphrase,
   downloadSharedFile,
   fetchShareCiphertextPreview,
+  getToken,
   type ShareView as ShareViewData,
 } from '../lib/api'
 import { decryptFilename, decryptChunk, fromBase64, initCrypto } from '../lib/crypto'
@@ -260,6 +261,41 @@ function ServerViewPanel({
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── Acquisition CTA ─────────────────────────────────────────────────────────
+
+/**
+ * Subtle sign-up nudge shown below the share card to unauthenticated visitors.
+ * The file is the star — this is a quiet footnote, not a modal.
+ */
+function AcquisitionCTA({
+  sharerName,
+  signupUrl,
+}: {
+  sharerName?: string
+  signupUrl: string
+}) {
+  return (
+    <div className="mt-6 text-center px-4">
+      <p className="text-[12.5px] text-ink-4 mb-1">Liked how this worked?</p>
+      <p className="text-[13px] text-ink-3 mb-4 leading-relaxed max-w-[320px] mx-auto">
+        {sharerName
+          ? <><span className="text-ink-2 font-medium">{sharerName}</span> sent you this with end-to-end encryption — nobody else could read it.</>
+          : 'This file was shared with end-to-end encryption — only you can read it.'}
+        {' '}Get the same for your own files.
+      </p>
+      <a
+        href={signupUrl}
+        className="inline-flex items-center gap-2 px-5 py-2 bg-amber text-ink text-[13px] font-semibold rounded-lg hover:brightness-105 transition-all no-underline"
+      >
+        Sign up free — 5 GB
+      </a>
+      <p className="text-[11px] text-ink-4 mt-2.5">
+        No credit card. No tracking. Just encrypted storage.
+      </p>
     </div>
   )
 }
@@ -765,6 +801,25 @@ export function ShareViewPage() {
             shareToken={token}
           />
         )}
+
+        {/* Acquisition CTA — only for unauthenticated visitors */}
+        {!getToken() && (() => {
+          const sharerId = shareData?.sharer_id
+          const sharerDisplay = shareData?.shared_by
+            ? shareData.shared_by.includes('@')
+              ? shareData.shared_by.split('@')[0]  // use name-part of email
+              : shareData.shared_by
+            : undefined
+          const params = new URLSearchParams({ ref: 'share' })
+          if (sharerId) params.set('sharer', sharerId)
+          const signupUrl = `https://app.beebeeb.io/signup?${params.toString()}`
+          return (
+            <AcquisitionCTA
+              sharerName={sharerDisplay}
+              signupUrl={signupUrl}
+            />
+          )
+        })()}
       </div>
     </div>
   )

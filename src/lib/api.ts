@@ -220,6 +220,8 @@ export async function opaqueRegisterFinish(
   clientMessage: string,
   x25519PublicKey?: string,
   recoveryCheck?: string,
+  referralSource?: string,
+  referralSharerId?: string,
 ): Promise<{ user_id: string; session_token: string }> {
   const data = await request<{ user_id: string; session_token: string }>('/api/v1/opaque/register-finish', {
     method: 'POST',
@@ -228,6 +230,8 @@ export async function opaqueRegisterFinish(
       client_message: clientMessage,
       x25519_public_key: x25519PublicKey,
       recovery_check: recoveryCheck,
+      ...(referralSource && { referral_source: referralSource }),
+      ...(referralSharerId && { referral_sharer_id: referralSharerId }),
     }),
   })
   setToken(data.session_token)
@@ -870,6 +874,8 @@ export interface ShareView {
   size_bytes?: number
   mime_type?: string
   shared_by?: string
+  /** User ID of the person who created the share — for referral attribution. */
+  sharer_id?: string
   expires_at?: string | null
   max_opens?: number | null
   open_count?: number

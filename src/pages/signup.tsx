@@ -1,17 +1,31 @@
-import { type FormEvent, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { type FormEvent, useEffect, useState } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { AuthShell } from '../components/auth-shell'
 import { BBButton } from '../components/bb-button'
 import { BBCheckbox } from '../components/bb-checkbox'
 import { BBInput } from '../components/bb-input'
 import { Icon } from '../components/icons'
 
+// Referral keys — read here, forwarded to onboarding, cleared after signup
+export const REFERRAL_SOURCE_KEY = 'bb_ref_source'
+export const REFERRAL_SHARER_KEY = 'bb_ref_sharer'
+
 export function Signup() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
 
   const [email, setEmail] = useState('')
   const [accepted, setAccepted] = useState(false)
   const [error, setError] = useState('')
+
+  // Persist ?ref=share&sharer=<id> from share-view CTA links into localStorage
+  // so the attribution data survives through the multi-step onboarding flow.
+  useEffect(() => {
+    const ref = searchParams.get('ref')
+    const sharer = searchParams.get('sharer')
+    if (ref) localStorage.setItem(REFERRAL_SOURCE_KEY, ref)
+    if (sharer) localStorage.setItem(REFERRAL_SHARER_KEY, sharer)
+  }, [searchParams])
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault()
