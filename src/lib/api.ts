@@ -3347,17 +3347,19 @@ export interface NotificationPreferences {
 
 /** GET /api/v1/notifications/preferences */
 export async function getNotificationPreferences(): Promise<NotificationPreferences> {
-  return request<NotificationPreferences>('/api/v1/notifications/preferences')
+  const res = await request<{ preferences: NotificationPreferences }>('/api/v1/notifications/preferences')
+  return res.preferences
 }
 
 /** PUT /api/v1/notifications/preferences */
 export async function setNotificationPreferences(
   prefs: NotificationPreferences,
 ): Promise<NotificationPreferences> {
-  return request<NotificationPreferences>('/api/v1/notifications/preferences', {
+  const res = await request<{ preferences: NotificationPreferences }>('/api/v1/notifications/preferences', {
     method: 'PUT',
     body: JSON.stringify(prefs),
   })
+  return res.preferences
 }
 
 // ─── DSAR / privacy tools (spec 025) ─────────────────────────────────────────
