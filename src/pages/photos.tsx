@@ -12,6 +12,11 @@ import { PhotoGroupSkeleton } from '../components/skeleton'
 import { FilePreview } from '../components/preview/file-preview'
 import { useFilePreview } from '../hooks/use-file-preview'
 import { formatBytes } from '../lib/format'
+import type { UploadItem } from '../components/upload-progress'
+import { UploadCards } from '../components/upload-progress-card'
+import { UploadZone } from '../components/upload-zone'
+import { encryptedUpload } from '../lib/encrypted-upload'
+import { useToast } from '../components/toast'
 
 // ─── Constants ──────────────────────────────────
 
@@ -127,7 +132,8 @@ const DATE_RANGES = ['Last 7 days', 'Last 30 days', 'Last 3 months', 'All time']
 
 export function Photos() {
   const navigate = useNavigate()
-  const { getFileKey, isUnlocked } = useKeys()
+  const { getFileKey, isUnlocked, cryptoReady } = useKeys()
+  const { showToast } = useToast()
   const { previewFile, openPreview, closePreview } = useFilePreview()
   const [activeTab, setActiveTab] = useState(0)
   const [dateRange, setDateRange] = useState<(typeof DATE_RANGES)[number]>('All time')
@@ -140,6 +146,10 @@ export function Photos() {
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({})
   const loadingThumbs = useRef(new Set<string>())
   const [loading, setLoading] = useState(true)
+  const [uploads, setUploads] = useState<UploadItem[]>([])
+  const uploadAbortRef = useRef<Map<string, AbortController>>(new Map())
+  const uploadFilesRef = useRef<Map<string, File>>(new Map())
+  const photoInputRef = useRef<HTMLInputElement>(null)
 
   // Fetch all files recursively (flat list)
   const fetchAllFiles = useCallback(async () => {
@@ -204,6 +214,71 @@ export function Photos() {
       if (url) setThumbnails((prev) => ({ ...prev, [fileId]: url }))
     } catch { /* ignore */ }
   }, [thumbnails, getFileKey])
+
+  // ─── Upload handlers ─────────────────────────────
+
+  function handleFilesSelected(files: File[]) {
+    const newUploads: UploadItem[] = files.map((f, i) => ({
+      id: `upload-${Date.now()}-${i}`,
+      name: f.name,
+      size: f.size,
+      progress: 0,
+      stage: 'Queued' as const,
+    }))
+    setUploads((prev) => [...prev, ...newUploads])
+    files.forEach((file, i) => {
+      const uploadId = newUploads[i].id
+      uploadFilesRef.current.set(uploadId, file)
+      doEncryptedUpload(uploadId, file)
+    })
+  }
+
+  async function doEncryptedUpload(uploadId: string, file: File) {
+    if (!isUnlocked || !cryptoReady) {
+      showToast({ icon: 'lock', title: 'Vault is locked', description: 'Log in again to unlock encryption before uploading.', danger: true })
+      setUploads((prev) => prev.filter((u) => u.id !== uploadId))
+      uploadFilesRef.current.delete(uploadId)
+      return
+    }
+    const fileId = crypto.randomUUID()
+    const fileKey = await getFileKey(fileId)
+    const abortController = new AbortController()
+    uploadAbortRef.current.set(uploadId, abortController)
+    try {
+      await encryptedUpload(file, fileId, fileKey, undefined, (p) => {
+        setUploads((prev) => prev.map((u) => u.id === uploadId ? { ...u, stage: p.stage, progress: p.progress } : u))
+      }, undefined, undefined, abortController.signal)
+      setUploads((prev) => prev.filter((u) => u.id !== uploadId))
+      uploadAbortRef.current.delete(uploadId)
+      uploadFilesRef.current.delete(uploadId)
+      showToast({ icon: 'check', title: 'Uploaded', description: file.name })
+      fetchAllFiles()
+    } catch (err) {
+      uploadAbortRef.current.delete(uploadId)
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        setUploads((prev) => prev.filter((u) => u.id !== uploadId))
+        uploadFilesRef.current.delete(uploadId)
+        return
+      }
+      const errorMessage = err instanceof Error ? err.message : 'Upload failed'
+      showToast({ icon: 'upload', title: 'Upload failed', description: errorMessage, danger: true })
+      setUploads((prev) => prev.map((u) => u.id === uploadId ? { ...u, stage: 'Error' as const, progress: 0, errorMessage } : u))
+    }
+  }
+
+  function handleCancelUpload(uploadId: string) {
+    uploadAbortRef.current.get(uploadId)?.abort()
+    uploadAbortRef.current.delete(uploadId)
+    setUploads((prev) => prev.filter((u) => u.id !== uploadId))
+    uploadFilesRef.current.delete(uploadId)
+  }
+
+  function handleRetryUpload(uploadId: string) {
+    const file = uploadFilesRef.current.get(uploadId)
+    if (!file) { setUploads((prev) => prev.filter((u) => u.id !== uploadId)); return }
+    setUploads((prev) => prev.map((u) => u.id === uploadId ? { ...u, stage: 'Queued' as const, progress: 0 } : u))
+    doEncryptedUpload(uploadId, file)
+  }
 
   function displayName(file: DriveFile): string {
     const dec = decryptedNames[file.id]
@@ -331,13 +406,27 @@ export function Photos() {
             )}
           </div>
 
-          <BBButton size="sm" className="gap-1.5">
+          <BBButton size="sm" variant="amber" className="gap-1.5" onClick={() => photoInputRef.current?.click()}>
             <Icon name="upload" size={12} /> Upload
           </BBButton>
+          <input
+            ref={photoInputRef}
+            type="file"
+            multiple
+            accept="image/*,video/*"
+            className="hidden"
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? [])
+              if (files.length > 0) handleFilesSelected(files)
+              e.target.value = ''
+            }}
+          />
         </div>
 
         {/* Photo grid */}
+        <UploadZone onFiles={handleFilesSelected}>
         <div className="flex-1 overflow-y-auto px-5 py-[18px]">
+          <UploadCards uploads={uploads} onCancel={handleCancelUpload} onRetry={handleRetryUpload} />
           {loading ? (
             <div>
               <PhotoGroupSkeleton />
@@ -345,7 +434,7 @@ export function Photos() {
             </div>
           ) : groups.length === 0 ? (
             <EmptyPhotos
-              onUpload={() => navigate('/')}
+              onUpload={() => photoInputRef.current?.click()}
               onGoToDrive={() => navigate('/')}
             />
           ) : groups.map((group, gi) => (
@@ -450,6 +539,7 @@ export function Photos() {
             </div>
           ))}
         </div>
+        </UploadZone>
 
         {/* Status bar */}
         <div className="px-5 py-2 border-t border-line bg-paper-2 flex items-center gap-3.5 text-[11px] text-ink-3">

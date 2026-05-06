@@ -10,7 +10,7 @@ export function EmptyPhotos({ onUpload, onGoToDrive }: EmptyPhotosProps) {
     <EmptyState
       icon="image"
       heading="No photos yet"
-      subtitle="Upload images and videos to your vault and they will appear here automatically. Supports JPG, PNG, GIF, WebP, HEIC, AVIF, and more."
+      subtitle="Upload photos or enable camera backup on mobile."
       cta={{
         label: 'Upload photos',
         icon: 'upload',
