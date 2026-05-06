@@ -120,10 +120,6 @@ function placeholderGradient(index: number): string {
   return `linear-gradient(135deg, oklch(${lightA[i]} ${chromas[i]} ${hues[i]}), oklch(${lightB[i]} ${chromas[(i + 3) % 10]} ${hues[(i + 5) % 10]}))`
 }
 
-// ─── Tab selector ───────────────────────────────
-
-const TABS = ['All'] as const
-
 // ─── Date range options ─────────────────────────
 
 const DATE_RANGES = ['Last 7 days', 'Last 30 days', 'Last 3 months', 'All time'] as const
@@ -135,7 +131,6 @@ export function Photos() {
   const { getFileKey, isUnlocked, cryptoReady } = useKeys()
   const { showToast } = useToast()
   const { previewFile, openPreview, closePreview } = useFilePreview()
-  const [activeTab, setActiveTab] = useState(0)
   const [dateRange, setDateRange] = useState<(typeof DATE_RANGES)[number]>('All time')
   const [dateDropdownOpen, setDateDropdownOpen] = useState(false)
   const [allFiles, setAllFiles] = useState<DriveFile[]>([])
@@ -426,33 +421,8 @@ export function Photos() {
             </div>
           </div>
 
-          {/* Tab selector */}
-          <div
-            className="ml-auto flex gap-1 p-[3px] rounded-md border border-line"
-            style={{ background: 'var(--color-paper-2)' }}
-          >
-            {TABS.map((tab, i) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(i)}
-                className="transition-all"
-                style={{
-                  padding: '4px 10px',
-                  borderRadius: 4,
-                  fontSize: 12,
-                  background: i === activeTab ? 'var(--color-paper)' : 'transparent',
-                  boxShadow: i === activeTab ? 'var(--shadow-1)' : 'none',
-                  fontWeight: i === activeTab ? 600 : 400,
-                  color: i === activeTab ? 'var(--color-ink)' : 'var(--color-ink-3)',
-                }}
-              >
-                {tab}
-              </button>
-            ))}
-          </div>
-
           {/* Date range selector */}
-          <div className="relative">
+          <div className="ml-auto relative">
             <BBButton
               size="sm"
               onClick={() => setDateDropdownOpen(!dateDropdownOpen)}
