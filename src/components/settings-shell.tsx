@@ -12,12 +12,13 @@ type NavItem = {
 }
 
 const navItems: NavItem[] = [
-  { id: 'account', label: 'Account', icon: 'users', href: '/settings/account' },
-  { id: 'data-residency', label: 'Data Residency', icon: 'cloud', href: '/settings/data-residency' },
+  { id: 'profile', label: 'Profile', icon: 'users', href: '/settings/profile' },
   { id: 'security', label: 'Security', icon: 'shield', href: '/settings/security' },
+  { id: 'plan', label: 'Storage & Plan', icon: 'cloud', href: '/settings/plan' },
   { id: 'privacy', label: 'Privacy', icon: 'eye-off', href: '/settings/privacy' },
+  { id: 'activity', label: 'Activity', icon: 'clock', href: '/settings/activity' },
   { id: 'notifications', label: 'Notifications', icon: 'clock', href: '/settings/notifications' },
-  { id: 'billing', label: 'Plan & billing', icon: 'file', href: '/settings/billing' },
+  { id: 'data-residency', label: 'Data Residency', icon: 'cloud', href: '/settings/data-residency' },
   { id: 'appearance', label: 'Appearance', icon: 'star', href: '/settings/appearance' },
   { id: 'import', label: 'Import', icon: 'download', href: '/settings/import' },
   { id: 'referrals', label: 'Referrals', icon: 'star', href: '/settings/referrals' },

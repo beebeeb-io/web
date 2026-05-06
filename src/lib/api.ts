@@ -3296,6 +3296,25 @@ export async function setTrackingPreference(optedIn: boolean): Promise<TrackingP
   })
 }
 
+/** One sign-in record returned to the user themselves. */
+export interface MySignIn {
+  at: string
+  ip_anonymized: string | null
+  user_agent: string | null
+  country_code: string | null
+  success: boolean
+}
+
+export interface MySignInsResponse {
+  opted_in: boolean
+  sign_ins: MySignIn[]
+}
+
+/** GET /api/v1/me/sign-ins — recent sign-ins for the authenticated user (GDPR opt-in). */
+export async function getMySignIns(): Promise<MySignInsResponse> {
+  return request<MySignInsResponse>('/api/v1/me/sign-ins')
+}
+
 /** One sign-in record (admin view, GDPR opt-in). */
 export interface AdminSignIn {
   id: string

@@ -37,7 +37,6 @@ const SharedFolder   = lazyNamed(() => import('./pages/shared-folder'),  'Shared
 const Trash          = lazyNamed(() => import('./pages/trash'),          'Trash')
 const Search         = lazyNamed(() => import('./pages/search'),         'Search')
 const Photos         = lazyNamed(() => import('./pages/photos'),         'Photos')
-const Security       = lazyNamed(() => import('./pages/security'),       'Security')
 const Pricing        = lazyNamed(() => import('./pages/pricing'),        'Pricing')
 const Billing        = lazyNamed(() => import('./pages/billing'),        'Billing')
 const ShareViewPage  = lazyNamed(() => import('./pages/share-view'),     'ShareViewPage')
@@ -59,6 +58,10 @@ const ServerError    = lazyNamed(() => import('./pages/errors/server-error'), 'S
 
 // Settings (grouped — lazy-loaded as a settings bundle)
 const SettingsAccount       = lazyNamed(() => import('./pages/settings/account'),       'SettingsAccount')
+const SettingsProfile       = lazyNamed(() => import('./pages/settings/profile'),       'SettingsProfile')
+const SettingsSecurity      = lazyNamed(() => import('./pages/settings/security'),      'SettingsSecurity')
+const SettingsPlan          = lazyNamed(() => import('./pages/settings/plan'),          'SettingsPlan')
+const SettingsActivity      = lazyNamed(() => import('./pages/settings/activity'),      'SettingsActivity')
 const SettingsDataResidency = lazyNamed(() => import('./pages/settings/data-residency'), 'SettingsDataResidency')
 const SettingsNotifications = lazyNamed(() => import('./pages/settings/notifications'), 'SettingsNotifications')
 const SettingsPrivacy       = lazyNamed(() => import('./pages/settings/privacy'),       'SettingsPrivacy')
@@ -308,10 +311,13 @@ export function App() {
             }
           />
           {/* Settings — all under /settings/* */}
-          <Route path="/settings" element={<ProtectedRoute><Navigate to="/settings/account" replace /></ProtectedRoute>} />
+          <Route path="/settings" element={<ProtectedRoute><Navigate to="/settings/profile" replace /></ProtectedRoute>} />
+          <Route path="/settings/profile" element={<ProtectedRoute><SettingsProfile /></ProtectedRoute>} />
+          <Route path="/settings/security" element={<ProtectedRoute><SettingsSecurity /></ProtectedRoute>} />
+          <Route path="/settings/plan" element={<ProtectedRoute><SettingsPlan /></ProtectedRoute>} />
+          <Route path="/settings/activity" element={<ProtectedRoute><SettingsActivity /></ProtectedRoute>} />
           <Route path="/settings/account" element={<ProtectedRoute><SettingsAccount /></ProtectedRoute>} />
           <Route path="/settings/data-residency" element={<ProtectedRoute><SettingsDataResidency /></ProtectedRoute>} />
-          <Route path="/settings/security" element={<ProtectedRoute><Security /></ProtectedRoute>} />
           <Route path="/settings/privacy" element={<ProtectedRoute><SettingsPrivacy /></ProtectedRoute>} />
           <Route path="/settings/notifications" element={<ProtectedRoute><SettingsNotifications /></ProtectedRoute>} />
           <Route path="/settings/billing" element={<ProtectedRoute><Billing /></ProtectedRoute>} />
@@ -323,8 +329,7 @@ export function App() {
           <Route path="/settings/import/google/callback" element={<ProtectedRoute><GoogleCallback /></ProtectedRoute>} />
 
           {/* Redirects for old routes */}
-          <Route path="/settings/profile" element={<Navigate to="/settings/account" replace />} />
-          <Route path="/settings/storage" element={<Navigate to="/settings/account" replace />} />
+          <Route path="/settings/storage" element={<Navigate to="/settings/plan" replace />} />
           <Route path="/settings/devices" element={<Navigate to="/settings/security" replace />} />
           <Route path="/settings/language" element={<Navigate to="/settings/appearance" replace />} />
           <Route path="/settings/2fa" element={<Navigate to="/settings/security" replace />} />
