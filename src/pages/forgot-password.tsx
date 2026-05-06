@@ -105,13 +105,9 @@ export function ForgotPassword() {
               <Icon name="link" size={12} />
               Recovery guide — preventing this in future
             </a>
-            <Link
-              to="/settings/delete-account"
-              className="flex items-center gap-1.5 text-[12.5px] text-ink-3 hover:text-ink-2 transition-colors"
-            >
-              <Icon name="trash" size={12} />
-              Delete account and start fresh
-            </Link>
+            <p className="text-[12px] text-ink-4">
+              If you need to delete this account, sign in on a device that still has access, then go to Settings &gt; Privacy.
+            </p>
           </div>
 
           <button
