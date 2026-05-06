@@ -12,6 +12,7 @@ import {
   getSubscription,
   getInvoices,
   getStorageUsage,
+  getPlans,
   createPortalSession,
   cancelSubscription,
   reactivateSubscription,
@@ -20,6 +21,7 @@ import {
   getApiUrl,
   type Subscription,
   type Invoice,
+  type Plan,
   type StorageUsage,
 } from '../lib/api'
 import { formatStorageSI } from '../lib/format'
@@ -34,14 +36,35 @@ const planMeta: Record<string, {
   /** Storage in GB (for display — passed to formatStorageSI) */
   storageGB: number
   tagline: string
+  features: string[]
 }> = {
-  free:         { label: 'Free',         priceMonthly: 0,      priceYearly: 0,       storageGB: 5,     tagline: 'Get started with encrypted storage' },
-  personal:     { label: 'Personal',     priceMonthly: 8.99,   priceYearly: 86.30,   storageGB: 1000,  tagline: '1 TB of truly private storage' },
-  pro:          { label: 'Pro',          priceMonthly: 39.95,  priceYearly: 383.52,  storageGB: 5000,  tagline: '5 TB for power users and creators' },
-  data_hoarder: { label: 'Data Hoarder', priceMonthly: 139.80, priceYearly: 1342.08, storageGB: 20000, tagline: '20 TB — lowest per-TB price' },
+  free:         { label: 'Free',         priceMonthly: 0,      priceYearly: 0,       storageGB: 5,     tagline: 'Get started with encrypted storage', features: ['Encrypted storage', 'Photo library'] },
+  personal:     { label: 'Personal',     priceMonthly: 8.99,   priceYearly: 86.30,   storageGB: 1000,  tagline: '1 TB of truly private storage', features: ['Everything in Free', '30-day version history'] },
+  pro:          { label: 'Pro',          priceMonthly: 39.95,  priceYearly: 383.52,  storageGB: 5000,  tagline: '5 TB for power users and creators', features: ['Everything in Personal', 'Advanced sharing controls'] },
+  data_hoarder: { label: 'Data Hoarder', priceMonthly: 139.80, priceYearly: 1342.08, storageGB: 20000, tagline: '20 TB — lowest per-TB price', features: ['Everything in Pro', '20 TB encrypted storage'] },
   // Legacy plan IDs kept for users on old subscriptions
-  team:         { label: 'Team',         priceMonthly: 6,      priceYearly: 58,      storageGB: 2000,  tagline: 'Legacy team plan' },
-  business:     { label: 'Business',     priceMonthly: 12,     priceYearly: 115,     storageGB: 5000,  tagline: 'Legacy business plan' },
+  team:         { label: 'Team',         priceMonthly: 6,      priceYearly: 58,      storageGB: 2000,  tagline: 'Legacy team plan', features: ['Legacy team storage'] },
+  business:     { label: 'Business',     priceMonthly: 12,     priceYearly: 115,     storageGB: 5000,  tagline: 'Legacy business plan', features: ['Legacy business storage'] },
+}
+
+type UpgradePlanCard = {
+  id: string
+  label: string
+  priceMonthly: number
+  priceYearly: number
+  storageLabel: string
+  features: string[]
+  sortOrder: number
+}
+
+const fallbackUpgradePlanIds = ['personal', 'pro', 'data_hoarder'] as const
+const planRank: Record<string, number> = {
+  free: 0,
+  personal: 1,
+  team: 1.5,
+  pro: 2,
+  business: 2.5,
+  data_hoarder: 3,
 }
 
 /* ── Helpers ────────────────────────────────────────────── */
@@ -58,6 +81,49 @@ function formatDate(iso: string | null): string {
 function invoicePdfUrl(invoice: Invoice): string | undefined {
   // TODO: Remove this fallback once the billing API settles on one invoice PDF field.
   return invoice.pdf_url ?? invoice.url
+}
+
+function formatEuro(amount: number): string {
+  return `€${amount % 1 === 0 ? amount.toFixed(0) : amount.toFixed(2)}`
+}
+
+function upgradeCardFromApiPlan(plan: Plan, fallbackSortOrder: number): UpgradePlanCard {
+  return {
+    id: plan.id,
+    label: plan.name,
+    priceMonthly: plan.price_eur,
+    priceYearly: plan.price_yearly_eur,
+    storageLabel: plan.storage_label,
+    features: plan.features,
+    sortOrder: plan.sort_order ?? planRank[plan.id] ?? fallbackSortOrder,
+  }
+}
+
+function upgradeCardFromFallback(planId: (typeof fallbackUpgradePlanIds)[number], fallbackSortOrder: number): UpgradePlanCard {
+  const meta = planMeta[planId]
+  return {
+    id: planId,
+    label: meta.label,
+    priceMonthly: meta.priceMonthly,
+    priceYearly: meta.priceYearly,
+    storageLabel: formatStorageSI(meta.storageGB * 1_000_000_000),
+    features: meta.features,
+    sortOrder: planRank[planId] ?? fallbackSortOrder,
+  }
+}
+
+function upgradeCardFromPlanMeta(planId: string): UpgradePlanCard | null {
+  const meta = planMeta[planId]
+  if (!meta) return null
+  return {
+    id: planId,
+    label: meta.label,
+    priceMonthly: meta.priceMonthly,
+    priceYearly: meta.priceYearly,
+    storageLabel: formatStorageSI(meta.storageGB * 1_000_000_000),
+    features: meta.features,
+    sortOrder: planRank[planId] ?? 0,
+  }
 }
 
 /* ── Animated progress bar ─────────────────────────────── */
@@ -93,6 +159,7 @@ export function Billing() {
   const [sub, setSub] = useState<Subscription | null>(null)
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [storage, setStorage] = useState<StorageUsage | null>(null)
+  const [plans, setPlans] = useState<Plan[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [upgradeOpen, setUpgradeOpen] = useState(false)
@@ -113,15 +180,17 @@ export function Billing() {
     setLoading(true)
     setError(null)
     try {
-      const [subData, invData, storageData, invoicePref] = await Promise.all([
+      const [subData, invData, storageData, invoicePref, plansData] = await Promise.all([
         getSubscription(),
         getInvoices(),
         getStorageUsage().catch(() => null),
         getPreference<{ send_email: boolean; invoice_email: string }>('invoice_settings').catch(() => null),
+        getPlans().catch(() => null),
       ])
       setSub(subData)
       setInvoices(invData)
       setStorage(storageData)
+      setPlans(plansData)
       if (invoicePref) {
         setInvoiceSendEmail(invoicePref.send_email ?? true)
         setInvoiceEmail(invoicePref.invoice_email ?? '')
@@ -295,6 +364,22 @@ function openUpgrade(plan: string) {
     effectivePlan === 'personal' ? 'pro' :
     effectivePlan === 'pro' ? 'data_hoarder' : 'data_hoarder'
 
+  const allUpgradePlans = plans?.length
+    ? plans
+        .filter((plan) => plan.id !== 'free' && plan.is_active !== false)
+        .map(upgradeCardFromApiPlan)
+    : fallbackUpgradePlanIds.map(upgradeCardFromFallback)
+  const currentSortOrder = allUpgradePlans.find((plan) => plan.id === effectivePlan)?.sortOrder ?? planRank[effectivePlan]
+  const upgradePlans = allUpgradePlans
+    .filter((plan) => plan.id !== effectivePlan)
+    .filter((plan) => currentSortOrder === undefined || plan.sortOrder > currentSortOrder)
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+  const nextPlanDetails = allUpgradePlans.find((plan) => plan.id === nextPlan) ?? upgradeCardFromPlanMeta(nextPlan)
+  const selectedApiPlan = plans?.find((plan) => plan.id === upgradePlan)
+  const upgradePlanDetails = selectedApiPlan
+    ? upgradeCardFromApiPlan(selectedApiPlan, 0)
+    : upgradeCardFromPlanMeta(upgradePlan)
+
   const priceDisplay = effectivePlan === 'free'
     ? null
     : sub?.billing_cycle === 'yearly'
@@ -464,7 +549,7 @@ function openUpgrade(plan: string) {
                       size="md"
                       onClick={() => openUpgrade(nextPlan)}
                     >
-                      Upgrade to {planMeta[nextPlan]?.label}
+                      Upgrade to {nextPlanDetails?.label ?? planMeta[nextPlan]?.label}
                     </BBButton>
                   )}
                 </>
@@ -523,45 +608,52 @@ function openUpgrade(plan: string) {
         )}
 
         {/* ── Upgrade CTAs ───────────────────────────── */}
-        <div className="border border-line rounded-xl overflow-hidden bg-paper">
-          <div className="px-5 py-4 border-b border-line">
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-4 mb-1">
-              Unlock more
+        {upgradePlans.length > 0 && (
+          <div className="border border-line rounded-xl overflow-hidden bg-paper">
+            <div className="px-5 py-4 border-b border-line">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-4 mb-1">
+                Unlock more
+              </div>
+              <div className="text-sm text-ink-2">
+                All paid plans include encrypted storage, photo library, and EU data residency.
+              </div>
             </div>
-            <div className="text-sm text-ink-2">
-              All paid plans include encrypted storage, photo library, and EU data residency.
-            </div>
-          </div>
-          <div className="grid grid-cols-3 divide-x divide-line">
-            {(['personal', 'pro', 'data_hoarder'] as const).map((planId) => {
-              const p = planMeta[planId]
-              return (
+            <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-line">
+              {upgradePlans.map((plan) => (
                 <button
-                  key={planId}
-                  onClick={() => openUpgrade(planId)}
+                  key={plan.id}
+                  onClick={() => openUpgrade(plan.id)}
                   className="p-5 text-left hover:bg-paper-2 transition-colors cursor-pointer group"
                 >
                   <div className="text-sm font-semibold mb-0.5 group-hover:text-amber-deep transition-colors">
-                    {p.label}
+                    {plan.label}
                   </div>
                   <div className="flex items-baseline gap-1 mb-2">
                     <span className="font-mono text-lg font-bold">
-                      EUR {p.priceMonthly % 1 === 0 ? p.priceMonthly : p.priceMonthly.toFixed(2)}
+                      {formatEuro(plan.priceMonthly)}
                     </span>
-                    <span className="text-xs text-ink-3">/ month</span>
+                    <span className="text-xs text-ink-3">/mo</span>
                   </div>
-                  <div className="text-xs text-ink-3 mb-3">
-                    {formatStorageSI(p.storageGB * 1_000_000_000)}
-                  </div>
+                  <div className="text-xs text-ink-3 mb-3">{plan.storageLabel}</div>
+                  {plan.features.length > 0 && (
+                    <ul className="space-y-1 mb-4">
+                      {plan.features.map((feature) => (
+                        <li key={feature} className="flex gap-1.5 text-xs leading-snug text-ink-3">
+                          <span className="text-amber-deep">-</span>
+                          <span>{feature}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-deep">
                     Subscribe
                     <Icon name="chevron-right" size={10} />
                   </span>
                 </button>
-              )
-            })}
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* ── Invoices ───────────────────────────────── */}
         <div>
@@ -715,9 +807,9 @@ function openUpgrade(plan: string) {
       {/* Upgrade dialog */}
       <UpgradeDialog
         planId={upgradePlan}
-        planName={planMeta[upgradePlan]?.label ?? 'Pro'}
-        pricePerSeat={planMeta[upgradePlan]?.priceMonthly ?? 39.95}
-        priceYearlySeat={planMeta[upgradePlan]?.priceYearly ?? 383.52}
+        planName={upgradePlanDetails?.label ?? 'Pro'}
+        pricePerSeat={upgradePlanDetails?.priceMonthly ?? 39.95}
+        priceYearlySeat={upgradePlanDetails?.priceYearly ?? 383.52}
         open={upgradeOpen}
         onClose={() => setUpgradeOpen(false)}
         onSuccess={() => {
