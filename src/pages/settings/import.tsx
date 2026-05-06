@@ -810,22 +810,6 @@ function ProviderCard({
   )
 }
 
-// ── Coming soon card ─────────────────────────────────────────────────────────
-
-function ComingSoonCard({ service, description }: { service: string; description: string }) {
-  return (
-    <div className="border border-line rounded-lg p-5 bg-paper-2">
-      <div className="flex items-center gap-3 mb-3">
-        <h3 className="text-[15px] font-semibold text-ink">Import from {service}</h3>
-        <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-paper-3 border border-line text-ink-4">
-          Coming soon
-        </span>
-      </div>
-      <p className="text-[13px] text-ink-3 leading-relaxed">{description}</p>
-    </div>
-  )
-}
-
 // ── Logos ─────────────────────────────────────────────────────────────────────
 
 const DropboxLogo = () => (
@@ -1253,50 +1237,33 @@ export function SettingsImport() {
       />
 
       <div className="p-7 space-y-6">
+        <div className="rounded-xl border border-line bg-paper-2 px-5 py-4 text-[13px] text-ink-2 leading-relaxed">
+          Automated imports are coming soon. Download your files from your current provider and upload them to Beebeeb.
+        </div>
 
         {/* ── Provider card grid (when not connected) ── */}
-        {!anyConnected && (
+        {!anyConnected && (appKey || gdClientId) && (
           <div>
             <div className="text-[11px] font-semibold uppercase tracking-widest text-ink-4 mb-3">
               Connect a provider
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              {appKey ? (
+              {appKey && (
                 <ProviderCard
                   name="Dropbox"
                   logo={<DropboxLogo />}
                   status={dbxConnecting ? 'connecting' : 'disconnected'}
                   onConnect={() => void handleConnectDropbox()}
                 />
-              ) : (
-                <ComingSoonCard
-                  service="Dropbox"
-                  description="We're working on automated imports from Dropbox. In the meantime, download your files from Dropbox and upload them directly to Beebeeb."
-                />
               )}
-              {gdClientId ? (
+              {gdClientId && (
                 <ProviderCard
                   name="Google Drive"
                   logo={<GoogleDriveLogo />}
                   status={gdConnecting ? 'connecting' : 'disconnected'}
                   onConnect={() => void handleConnectGDrive()}
                 />
-              ) : (
-                <ComingSoonCard
-                  service="Google Drive"
-                  description="Automated Google Drive import is on our roadmap. Download your files from Google Takeout and upload them to Beebeeb to get started."
-                />
               )}
-              <ProviderCard
-                name="iCloud"
-                logo={
-                  <svg width="22" height="16" viewBox="0 0 24 16" fill="none">
-                    <path d="M18.5 6.5A6.5 6.5 0 0012 2a6.5 6.5 0 00-6.13 4.38A5 5 0 000 11.5C0 14 2 16 4.5 16h14A5.5 5.5 0 0024 10.5a5.5 5.5 0 00-5.5-4z" fill="#3A82F7"/>
-                  </svg>
-                }
-                status="disconnected"
-                comingSoon
-              />
             </div>
           </div>
         )}
