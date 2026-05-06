@@ -3356,6 +3356,25 @@ export async function getAdminUserGdprActivity(userId: string): Promise<AdminAct
   return request<AdminActivityResponse>(`/api/v1/admin/users/${userId}/activity`)
 }
 
+export interface MyActivityResponse {
+  opted_in: boolean
+  events: ActivityEvent[]
+}
+
+/** GET /api/v1/me/activity — file activity events for the authenticated user (GDPR opt-in). */
+export async function getMyActivity(opts?: {
+  limit?: number
+  offset?: number
+  type?: string
+}): Promise<MyActivityResponse> {
+  const params = new URLSearchParams()
+  if (opts?.limit) params.set('limit', String(opts.limit))
+  if (opts?.offset) params.set('offset', String(opts.offset))
+  if (opts?.type) params.set('type', opts.type)
+  const qs = params.toString()
+  return request<MyActivityResponse>(`/api/v1/me/activity${qs ? `?${qs}` : ''}`)
+}
+
 // ─── Push notification preferences (task: notifications UI) ──────────────────
 
 export interface NotificationPreferences {
