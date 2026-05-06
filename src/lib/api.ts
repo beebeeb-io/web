@@ -859,6 +859,35 @@ export async function changeEmail(
   })
 }
 
+export async function emailChangeStart(
+  newEmail: string,
+  opaqueClientMessage: string,
+  confirmToken: string,
+): Promise<{ server_message: string; email_change_token: string }> {
+  return request('/api/v1/me/email/start', {
+    method: 'POST',
+    headers: { 'X-Confirm-Token': confirmToken },
+    body: JSON.stringify({ new_email: newEmail, opaque_client_message: opaqueClientMessage }),
+  })
+}
+
+export async function emailChangeFinish(
+  emailChangeToken: string,
+  opaqueRegistration: string,
+  recoveryCheck: string,
+  x25519PublicKey: string,
+): Promise<{ email: string }> {
+  return request('/api/v1/me/email/finish', {
+    method: 'POST',
+    body: JSON.stringify({
+      email_change_token: emailChangeToken,
+      opaque_registration: opaqueRegistration,
+      recovery_check: recoveryCheck,
+      x25519_public_key: x25519PublicKey,
+    }),
+  })
+}
+
 export interface AccountExport {
   user_id: string
   email: string

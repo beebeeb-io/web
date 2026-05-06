@@ -9,26 +9,36 @@ import { useAuth } from '../../lib/auth-context'
 import { useToast } from '../../components/toast'
 import {
   getPreference, setPreference,
-  deleteAccountPermanently, changeEmail, exportAccountData,
+  deleteAccountPermanently, exportAccountData,
+  emailChangeStart, emailChangeFinish,
   getTrackingPreference, setTrackingPreference,
   clearToken, ApiError,
 } from '../../lib/api'
 import { ConfirmPasswordModal } from '../../components/confirm-password-modal'
+import {
+  opaqueRegistrationStart, opaqueRegistrationFinish,
+  computeRecoveryCheck, deriveX25519Public, toBase64, fromBase64,
+} from '../../lib/crypto'
+import { useKeys } from '../../lib/key-context'
 
 export function SettingsProfile() {
-  const { user } = useAuth()
+  const { user, refreshUser } = useAuth()
   const { showToast } = useToast()
   const navigate = useNavigate()
+  const { getMasterKey } = useKeys()
 
   const [displayName, setDisplayName] = useState('')
   const [publicProfile, setPublicProfile] = useState(false)
   const [recoveryContact, setRecoveryContact] = useState('')
   const [savingProfile, setSavingProfile] = useState(false)
 
-  const [showChangeEmail, setShowChangeEmail] = useState(false)
-  const [newEmail, setNewEmail] = useState('')
-  const [emailPassword, setEmailPassword] = useState('')
-  const [savingEmail, setSavingEmail] = useState(false)
+  const [emailChangePwOpen, setEmailChangePwOpen] = useState(false)
+  const [emailChangeInputOpen, setEmailChangeInputOpen] = useState(false)
+  const [emailChangePendingToken, setEmailChangePendingToken] = useState('')
+  const [emailChangePendingPw, setEmailChangePendingPw] = useState('')
+  const [newEmailForChange, setNewEmailForChange] = useState('')
+  const [emailChangeError, setEmailChangeError] = useState<string | null>(null)
+  const [emailChangeProcessing, setEmailChangeProcessing] = useState(false)
 
   const [showExport, setShowExport] = useState(false)
   const [exporting, setExporting] = useState(false)
@@ -83,21 +93,51 @@ export function SettingsProfile() {
     }
   }, [displayName, publicProfile, recoveryContact, showToast])
 
-  const handleChangeEmail = useCallback(async () => {
-    setSavingEmail(true)
+  const handleEmailChangePwConfirmed = useCallback((token: string, password: string) => {
+    setEmailChangePendingToken(token)
+    setEmailChangePendingPw(password)
+    setEmailChangePwOpen(false)
+    setNewEmailForChange('')
+    setEmailChangeError(null)
+    setEmailChangeInputOpen(true)
+  }, [])
+
+  const handleEmailChangeSubmit = useCallback(async () => {
+    if (!newEmailForChange || emailChangeProcessing) return
+    setEmailChangeProcessing(true)
+    setEmailChangeError(null)
     try {
-      await changeEmail(newEmail, emailPassword)
-      showToast({ icon: 'check', title: 'Verification email sent', description: 'Check your inbox to confirm the new address.' })
-      setShowChangeEmail(false)
-      setNewEmail('')
-      setEmailPassword('')
+      const regStart = await opaqueRegistrationStart(emailChangePendingPw)
+      const startResult = await emailChangeStart(newEmailForChange, toBase64(regStart.message), emailChangePendingToken)
+      const regUpload = await opaqueRegistrationFinish(regStart.state, emailChangePendingPw, fromBase64(startResult.server_message))
+      const masterKey = getMasterKey()
+      const [recoveryCheckBytes, x25519Pub] = await Promise.all([
+        computeRecoveryCheck(masterKey),
+        deriveX25519Public(masterKey),
+      ])
+      await emailChangeFinish(
+        startResult.email_change_token,
+        toBase64(regUpload),
+        toBase64(recoveryCheckBytes),
+        toBase64(x25519Pub),
+      )
+      await refreshUser()
+      setEmailChangeInputOpen(false)
+      setEmailChangePendingToken('')
+      setEmailChangePendingPw('')
+      setNewEmailForChange('')
+      showToast({ icon: 'check', title: `Email changed to ${newEmailForChange}`, description: 'Check your inbox for verification.' })
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to change email'
-      showToast({ icon: 'x', title: msg, danger: true })
+      if (msg.toLowerCase().includes('already') || msg.toLowerCase().includes('in use')) {
+        setEmailChangeError('This email is already in use.')
+      } else {
+        setEmailChangeError(msg)
+      }
     } finally {
-      setSavingEmail(false)
+      setEmailChangeProcessing(false)
     }
-  }, [newEmail, emailPassword, showToast])
+  }, [newEmailForChange, emailChangeProcessing, emailChangePendingPw, emailChangePendingToken, getMasterKey, refreshUser, showToast])
 
   const handleExport = useCallback(async () => {
     setExporting(true)
@@ -184,6 +224,71 @@ export function SettingsProfile() {
         onConfirmed={performDeleteAccount}
         onCancel={() => setPwPromptOpen(false)}
       />
+
+      <ConfirmPasswordModal
+        open={emailChangePwOpen}
+        title="Confirm it's you"
+        description="Re-enter your password to start the email change process."
+        confirmLabel="Continue"
+        onConfirmed={handleEmailChangePwConfirmed}
+        onCancel={() => setEmailChangePwOpen(false)}
+      />
+
+      {emailChangeInputOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/20"
+          onClick={(e) => { if (e.target === e.currentTarget && !emailChangeProcessing) { setEmailChangeInputOpen(false) } }}
+        >
+          <div className="w-full max-w-[440px] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden mx-4">
+            <div className="px-5 py-4 border-b border-line flex items-center gap-2.5">
+              <Icon name="lock" size={14} className="text-ink" />
+              <span className="text-sm font-semibold text-ink">Change email address</span>
+              <button
+                className="ml-auto text-ink-3 hover:text-ink transition-colors cursor-pointer disabled:opacity-40"
+                onClick={() => { if (!emailChangeProcessing) setEmailChangeInputOpen(false) }}
+                disabled={emailChangeProcessing}
+                aria-label="Close"
+              >
+                <Icon name="x" size={14} />
+              </button>
+            </div>
+            <div className="px-5 py-4">
+              <p className="text-[12.5px] text-ink-2 leading-relaxed mb-4">
+                Enter your new email address. You will receive a verification link there.
+              </p>
+              <BBInput
+                label="New email address"
+                type="email"
+                value={newEmailForChange}
+                onChange={(e) => { setNewEmailForChange(e.target.value); setEmailChangeError(null) }}
+                placeholder="new@example.com"
+                autoComplete="email"
+                autoFocus
+                error={emailChangeError ?? undefined}
+                className="mb-4"
+                disabled={emailChangeProcessing}
+              />
+              <div className="flex gap-2 justify-end">
+                <BBButton
+                  size="md"
+                  onClick={() => { if (!emailChangeProcessing) setEmailChangeInputOpen(false) }}
+                  disabled={emailChangeProcessing}
+                >
+                  Cancel
+                </BBButton>
+                <BBButton
+                  size="md"
+                  variant="amber"
+                  onClick={handleEmailChangeSubmit}
+                  disabled={!newEmailForChange || emailChangeProcessing}
+                >
+                  {emailChangeProcessing ? 'Updating…' : 'Change email'}
+                </BBButton>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <SettingsHeader
         title="Profile"
@@ -347,42 +452,9 @@ export function SettingsProfile() {
 
       <div className="mx-7 mb-6 rounded-lg border border-red/20 bg-red/5 overflow-hidden">
         <SettingsRow label="Change email" hint="Update the email address used to log in." danger>
-          {showChangeEmail ? (
-            <div className="flex flex-col gap-2 max-w-[360px]">
-              <BBInput
-                value={newEmail}
-                onChange={(e) => setNewEmail(e.target.value)}
-                placeholder="New email address"
-                type="email"
-              />
-              <BBInput
-                value={emailPassword}
-                onChange={(e) => setEmailPassword(e.target.value)}
-                placeholder="Current password"
-                type="password"
-              />
-              <div className="flex gap-2">
-                <BBButton
-                  size="sm"
-                  onClick={handleChangeEmail}
-                  disabled={savingEmail || !newEmail || !emailPassword}
-                >
-                  {savingEmail ? 'Sending...' : 'Send verification email'}
-                </BBButton>
-                <BBButton
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => { setShowChangeEmail(false); setNewEmail(''); setEmailPassword('') }}
-                >
-                  Cancel
-                </BBButton>
-              </div>
-            </div>
-          ) : (
-            <BBButton size="sm" variant="ghost" onClick={() => setShowChangeEmail(true)}>
-              Change email
-            </BBButton>
-          )}
+          <BBButton size="sm" variant="ghost" onClick={() => setEmailChangePwOpen(true)}>
+            Change email
+          </BBButton>
         </SettingsRow>
 
         <SettingsRow label="Export data" hint="Download a copy of your account data and file metadata." danger>
