@@ -14,6 +14,12 @@ const NONCE_LENGTH = 12
 const GCM_TAG_LENGTH = 16
 const CHUNK_OVERHEAD = NONCE_LENGTH + GCM_TAG_LENGTH
 
+function parseHeaderInt(value: string | null): number | null {
+  if (!value) return null
+  const n = Number.parseInt(value, 10)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
 export function inferChunkCountFromEncryptedSize(
   encryptedSize: number,
   plaintextSize: number,
@@ -30,6 +36,7 @@ export async function decryptEncryptedBytes(
   encryptedBytes: Uint8Array,
   chunkCount: number,
   sizeBytes: number,
+  chunkSize = CHUNK_SIZE,
 ): Promise<Uint8Array> {
   const decryptedParts: Uint8Array[] = []
   let offset = 0
@@ -41,9 +48,9 @@ export async function decryptEncryptedBytes(
     if (chunkCount === 1) {
       plaintextSize = sizeBytes
     } else if (isLastChunk) {
-      plaintextSize = sizeBytes - i * CHUNK_SIZE
+      plaintextSize = sizeBytes - i * chunkSize
     } else {
-      plaintextSize = CHUNK_SIZE
+      plaintextSize = chunkSize
     }
 
     // The encrypted chunk size: nonce + plaintext + GCM tag
@@ -130,14 +137,20 @@ export async function encryptedDownload(
   // 3. Split the concatenated stream into individual encrypted chunks and decrypt each.
   //
   // Each stored chunk is: nonce (12 bytes) + ciphertext (plaintext_len + 16-byte GCM tag).
-  // For chunks 0..N-2, plaintext is CHUNK_SIZE (1 MB).
-  // For the last chunk (N-1), plaintext is sizeBytes - (N-1) * CHUNK_SIZE.
+  // For chunks 0..N-2, plaintext is the advertised chunk size.
+  // For the last chunk (N-1), plaintext is sizeBytes - (N-1) * chunkSize.
   //
   // Use X-Chunk-Count header if available, otherwise fall back to the passed parameter.
-  const headerChunkCount = res.headers.get('X-Chunk-Count')
-  const effectiveChunkCount = headerChunkCount ? parseInt(headerChunkCount, 10) : chunkCount
+  const effectiveChunkCount = parseHeaderInt(res.headers.get('X-Chunk-Count')) ?? chunkCount
+  const headerChunkSize = parseHeaderInt(res.headers.get('X-Chunk-Size'))
 
-  const decrypted = await decryptEncryptedBytes(fileKey, encryptedBytes, effectiveChunkCount, sizeBytes)
+  const decrypted = await decryptEncryptedBytes(
+    fileKey,
+    encryptedBytes,
+    effectiveChunkCount,
+    sizeBytes,
+    headerChunkSize ?? CHUNK_SIZE,
+  )
 
   // 5. Trigger browser download
   const blob = new Blob([decrypted as BlobPart], { type: effectiveMime })
@@ -183,31 +196,18 @@ export async function decryptToBlob(
   if (!res.ok) throw new ApiError(res.statusText, res.status)
 
   const encryptedBytes = new Uint8Array(await res.arrayBuffer())
-  const headerChunkCount = res.headers.get('X-Chunk-Count')
-  const effectiveChunkCount = headerChunkCount ? parseInt(headerChunkCount, 10) : chunkCount
+  const effectiveChunkCount = parseHeaderInt(res.headers.get('X-Chunk-Count')) ?? chunkCount
+  const effectiveChunkSize = parseHeaderInt(res.headers.get('X-Chunk-Size')) ?? CHUNK_SIZE
 
-  const decryptedParts: Uint8Array[] = []
-  let offset = 0
+  const decrypted = await decryptEncryptedBytes(
+    fileKey,
+    encryptedBytes,
+    effectiveChunkCount,
+    sizeBytes,
+    effectiveChunkSize,
+  )
 
-  for (let i = 0; i < effectiveChunkCount; i++) {
-    const isLastChunk = i === effectiveChunkCount - 1
-    let plaintextSize: number
-    if (effectiveChunkCount === 1) plaintextSize = sizeBytes
-    else if (isLastChunk) plaintextSize = sizeBytes - i * CHUNK_SIZE
-    else plaintextSize = CHUNK_SIZE
-
-    const encryptedChunkSize = NONCE_LENGTH + plaintextSize + GCM_TAG_LENGTH
-    if (offset + encryptedChunkSize > encryptedBytes.length) {
-      throw new Error(`Chunk ${i}: expected ${encryptedChunkSize} bytes at offset ${offset}, but only ${encryptedBytes.length - offset} remain`)
-    }
-
-    const nonce = encryptedBytes.slice(offset, offset + NONCE_LENGTH)
-    const ciphertext = encryptedBytes.slice(offset + NONCE_LENGTH, offset + encryptedChunkSize)
-    decryptedParts.push(await decryptChunk(fileKey, nonce, ciphertext))
-    offset += encryptedChunkSize
-  }
-
-  const plaintext = new Blob(decryptedParts as unknown as BlobPart[], { type: blobMime })
+  const plaintext = new Blob([decrypted as BlobPart], { type: blobMime })
   dispatchDecrypted(fileId)
   return { plaintext, filename }
 }
@@ -237,31 +237,18 @@ export async function decryptVersionToBlob(
   if (!res.ok) throw new ApiError(res.statusText, res.status)
 
   const encryptedBytes = new Uint8Array(await res.arrayBuffer())
-  const headerChunkCount = res.headers.get('X-Chunk-Count')
-  const effectiveChunkCount = headerChunkCount ? parseInt(headerChunkCount, 10) : chunkCount
+  const effectiveChunkCount = parseHeaderInt(res.headers.get('X-Chunk-Count')) ?? chunkCount
+  const effectiveChunkSize = parseHeaderInt(res.headers.get('X-Chunk-Size')) ?? CHUNK_SIZE
 
-  const decryptedParts: Uint8Array[] = []
-  let offset = 0
+  const decrypted = await decryptEncryptedBytes(
+    fileKey,
+    encryptedBytes,
+    effectiveChunkCount,
+    sizeBytes,
+    effectiveChunkSize,
+  )
 
-  for (let i = 0; i < effectiveChunkCount; i++) {
-    const isLastChunk = i === effectiveChunkCount - 1
-    let plaintextSize: number
-    if (effectiveChunkCount === 1) plaintextSize = sizeBytes
-    else if (isLastChunk) plaintextSize = sizeBytes - i * CHUNK_SIZE
-    else plaintextSize = CHUNK_SIZE
-
-    const encryptedChunkSize = NONCE_LENGTH + plaintextSize + GCM_TAG_LENGTH
-    if (offset + encryptedChunkSize > encryptedBytes.length) {
-      throw new Error(`Chunk ${i}: expected ${encryptedChunkSize} bytes at offset ${offset}, but only ${encryptedBytes.length - offset} remain`)
-    }
-
-    const nonce = encryptedBytes.slice(offset, offset + NONCE_LENGTH)
-    const ciphertext = encryptedBytes.slice(offset + NONCE_LENGTH, offset + encryptedChunkSize)
-    decryptedParts.push(await decryptChunk(fileKey, nonce, ciphertext))
-    offset += encryptedChunkSize
-  }
-
-  const plaintext = new Blob(decryptedParts as unknown as BlobPart[], { type: mimeType || 'application/octet-stream' })
+  const plaintext = new Blob([decrypted as BlobPart], { type: mimeType || 'application/octet-stream' })
   dispatchDecrypted(fileId)
   return plaintext
 }

@@ -501,7 +501,12 @@ export function ShareViewPage() {
       // worker uninitialized when the user clicks Download.
       await initCrypto()
 
-      const { blob, chunkCount: headerChunkCount, originalSize: headerOriginalSize } =
+      const {
+        blob,
+        chunkCount: headerChunkCount,
+        chunkSize: headerChunkSize,
+        originalSize: headerOriginalSize,
+      } =
         await downloadSharedFile(token, passphrase || undefined)
       const encrypted = new Uint8Array(await blob.arrayBuffer())
 
@@ -523,6 +528,7 @@ export function ShareViewPage() {
         encrypted,
         chunkCount,
         originalSize,
+        headerChunkSize ?? undefined,
       )
 
       const decryptedBlob = new Blob([plaintext as BlobPart], { type: shareData.mime_type || 'application/octet-stream' })
