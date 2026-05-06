@@ -170,6 +170,7 @@ export interface AuthUser {
   email: string
   email_verified: boolean
   created_at: string
+  frozen_at?: string | null
 }
 
 export interface SignupResult {
@@ -3399,8 +3400,11 @@ export interface DataExportStatus {
 }
 
 /** POST /api/v1/me/data-export — request a new data export */
-export async function requestDataExport(): Promise<DataExportRequest> {
-  return request<DataExportRequest>('/api/v1/me/data-export', { method: 'POST' })
+export async function requestDataExport(confirmToken?: string): Promise<DataExportRequest> {
+  return request<DataExportRequest>('/api/v1/me/data-export', {
+    method: 'POST',
+    headers: confirmToken ? { 'X-Confirm-Token': confirmToken } : undefined,
+  })
 }
 
 /** GET /api/v1/me/data-export/:id — poll export status */

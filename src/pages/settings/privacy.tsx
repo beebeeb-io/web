@@ -15,6 +15,7 @@ import { SettingsShell, SettingsHeader } from '../../components/settings-shell'
 import { BBButton } from '../../components/bb-button'
 import { Icon } from '../../components/icons'
 import { useToast } from '../../components/toast'
+import { ConfirmPasswordModal } from '../../components/confirm-password-modal'
 import {
   requestDataExport,
   getDataExportStatus,
@@ -70,6 +71,7 @@ function DataExportCard() {
   const [requesting, setRequesting] = useState(false)
   const [exportStatus, setExportStatus] = useState<DataExportStatus | null>(null)
   const [endpointMissing, setEndpointMissing] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const stopPolling = useCallback(() => {
@@ -96,11 +98,12 @@ function DataExportCard() {
 
   useEffect(() => () => stopPolling(), [stopPolling])
 
-  const handleRequest = useCallback(async () => {
+  const handleRequest = useCallback(async (confirmToken: string) => {
+    setConfirmOpen(false)
     setRequesting(true)
     setEndpointMissing(false)
     try {
-      const res = await requestDataExport()
+      const res = await requestDataExport(confirmToken)
       const initial: DataExportStatus = {
         export_id: res.export_id,
         status: res.status,
@@ -129,6 +132,14 @@ function DataExportCard() {
 
   return (
     <Card title="Your data">
+      <ConfirmPasswordModal
+        open={confirmOpen}
+        title="Confirm data export"
+        description="Re-enter your password to request a copy of your data."
+        confirmLabel="Export my data"
+        onConfirmed={(token) => void handleRequest(token)}
+        onCancel={() => setConfirmOpen(false)}
+      />
       <div className="flex flex-col gap-3">
         <p className="text-[13px] text-ink-2 leading-relaxed">
           Download a copy of everything Beebeeb holds about you: file metadata, share history, activity logs, and account settings. File contents are exported encrypted.
@@ -177,7 +188,7 @@ function DataExportCard() {
             <BBButton
               variant="default"
               size="md"
-              onClick={() => void handleRequest()}
+              onClick={() => setConfirmOpen(true)}
               disabled={requesting}
               className="gap-1.5"
             >
