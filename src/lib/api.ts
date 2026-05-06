@@ -526,13 +526,14 @@ export interface DriveFile {
 export async function listFiles(
   parentId?: string,
   trashed?: boolean,
-  options?: { starred?: boolean; recent?: boolean },
+  options?: { starred?: boolean; recent?: boolean; limit?: number },
 ): Promise<DriveFile[]> {
   const params = new URLSearchParams()
   if (parentId) params.set('parent_id', parentId)
   if (trashed !== undefined) params.set('trashed', String(trashed))
   if (options?.starred) params.set('starred', 'true')
   if (options?.recent) params.set('recent', 'true')
+  if (options?.limit !== undefined) params.set('limit', String(options.limit))
   const qs = params.toString()
   const data = await request<{ files: DriveFile[] }>(`/api/v1/files${qs ? `?${qs}` : ''}`)
   return data.files
@@ -1292,6 +1293,8 @@ export interface Invoice {
   amount_eur: number
   status: string
   period: string
+  url?: string
+  pdf_url?: string
 }
 
 export interface StorageUsage {

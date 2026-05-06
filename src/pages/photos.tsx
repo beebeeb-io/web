@@ -155,7 +155,16 @@ export function Photos() {
   const fetchAllFiles = useCallback(async () => {
     setLoading(true)
     try {
-      const files = await listFiles(undefined, false)
+      const walk = async (parentId?: string): Promise<DriveFile[]> => {
+        const children = await listFiles(parentId, false, { limit: 500 })
+        const nested = await Promise.all(
+          children
+            .filter((file) => file.is_folder)
+            .map((folder) => walk(folder.id)),
+        )
+        return [...children, ...nested.flat()]
+      }
+      const files = await walk()
       setAllFiles(files)
     } catch (err) {
       console.error('[Photos] Failed to load files:', err)

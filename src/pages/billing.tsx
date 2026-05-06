@@ -55,6 +55,11 @@ function formatDate(iso: string | null): string {
   })
 }
 
+function invoicePdfUrl(invoice: Invoice): string | undefined {
+  // TODO: Remove this fallback once the billing API settles on one invoice PDF field.
+  return invoice.pdf_url ?? invoice.url
+}
+
 /* ── Animated progress bar ─────────────────────────────── */
 
 function AnimatedProgress({ percent, className = '' }: { percent: number; className?: string }) {
@@ -127,6 +132,24 @@ export function Billing() {
       setLoading(false)
     }
   }, [])
+
+  const handleDownloadInvoice = useCallback((invoice: Invoice) => {
+    const url = invoicePdfUrl(invoice)
+    if (!url) {
+      showToast({ icon: 'download', title: 'Invoice unavailable', description: 'No PDF URL was provided for this invoice.', danger: true })
+      return
+    }
+    window.open(url, '_blank', 'noopener,noreferrer')
+  }, [showToast])
+
+  const handleDownloadAllInvoices = useCallback(() => {
+    const urls = invoices.map(invoicePdfUrl).filter((url): url is string => Boolean(url))
+    if (urls.length === 0) {
+      showToast({ icon: 'download', title: 'Invoices unavailable', description: 'No PDF URLs were provided for these invoices.', danger: true })
+      return
+    }
+    urls.forEach((url) => window.open(url, '_blank', 'noopener,noreferrer'))
+  }, [invoices, showToast])
 
   useEffect(() => {
     void loadData()
@@ -547,7 +570,7 @@ function openUpgrade(plan: string) {
               Invoices
             </span>
             {invoices.length > 0 && (
-              <BBButton size="sm" variant="ghost" className="ml-auto">
+              <BBButton size="sm" variant="ghost" className="ml-auto" onClick={handleDownloadAllInvoices}>
                 <Icon name="download" size={11} className="mr-1" />
                 Download all
               </BBButton>
@@ -597,7 +620,7 @@ function openUpgrade(plan: string) {
                       </BBChip>
                     </span>
                     <div className="flex justify-end">
-                      <BBButton size="sm" variant="ghost">
+                      <BBButton size="sm" variant="ghost" onClick={() => handleDownloadInvoice(inv)}>
                         <Icon name="download" size={12} />
                       </BBButton>
                     </div>

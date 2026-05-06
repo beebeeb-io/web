@@ -48,6 +48,9 @@ const REGION_META: Record<string, { label: string; flag: string }> = {
   nuremberg: { label: 'Nuremberg, DE · Hetzner', flag: '' },
 }
 
+const PINNED_FOLDERS_PREF = 'pinned_folders'
+const LEGACY_PINNED_FOLDERS_PREF = 'pinned_shared_folders'
+
 function UserCard() {
   const { user, logout } = useAuth()
   const [open, setOpen] = useState(false)
@@ -178,8 +181,19 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    getPreference<{ folder_ids: string[] }>('pinned_shared_folders')
-      .then(pref => setPinnedIds(pref?.folder_ids ?? []))
+    getPreference<{ folder_ids: string[] }>(PINNED_FOLDERS_PREF)
+      .then(async (pref) => {
+        if (pref?.folder_ids?.length) {
+          setPinnedIds(pref.folder_ids)
+          return
+        }
+        const legacy = await getPreference<{ folder_ids: string[] }>(LEGACY_PINNED_FOLDERS_PREF).catch(() => null)
+        const folderIds = legacy?.folder_ids ?? []
+        setPinnedIds(folderIds)
+        if (folderIds.length) {
+          await setPreference(PINNED_FOLDERS_PREF, { folder_ids: folderIds }).catch(() => {})
+        }
+      })
       .catch((err) => console.error('[DriveLayout] Failed to load pinned folders:', err))
     getPreference<{ pool_name: string }>('storage_region')
       .then(pref => { if (pref?.pool_name) setStorageRegion(pref.pool_name) })
@@ -223,10 +237,10 @@ export function DriveLayout({ children }: { children: ReactNode }) {
     setQuickAccessDragOver(false)
     const folderId = e.dataTransfer.getData('application/beebeeb-folder')
     if (!folderId) return
-    const pref = await getPreference<{ folder_ids: string[] }>('pinned_folders').catch(() => null)
+    const pref = await getPreference<{ folder_ids: string[] }>(PINNED_FOLDERS_PREF).catch(() => null)
     const current = pref?.folder_ids ?? []
     if (!current.includes(folderId)) {
-      await setPreference('pinned_folders', { folder_ids: [...current, folderId] }).catch(() => {})
+      await setPreference(PINNED_FOLDERS_PREF, { folder_ids: [...current, folderId] }).catch(() => {})
       window.dispatchEvent(new Event('beebeeb:pins-changed'))
     }
   }
@@ -236,7 +250,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
       ? pinnedIds.filter(id => id !== folderId)
       : [...pinnedIds, folderId]
     setPinnedIds(newIds)
-    await setPreference('pinned_shared_folders', { folder_ids: newIds }).catch((err) => console.error('[DriveLayout] Failed to save pinned folders:', err))
+    await setPreference(PINNED_FOLDERS_PREF, { folder_ids: newIds }).catch((err) => console.error('[DriveLayout] Failed to save pinned folders:', err))
   }
 
   useEffect(() => {

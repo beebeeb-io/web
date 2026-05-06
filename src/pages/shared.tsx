@@ -113,6 +113,7 @@ export function Shared() {
   // Forward share dialog
   const [forwardFileId, setForwardFileId] = useState<string | null>(null)
   const [forwardFileName, setForwardFileName] = useState<string>('')
+  const [forwardFileSize, setForwardFileSize] = useState(0)
 
   // Multi-select
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -361,6 +362,7 @@ export function Shared() {
         if (invite?.file_id) {
           setForwardFileId(invite.file_id)
           setForwardFileName(displayName(invite))
+          setForwardFileSize(invite.size_bytes ?? 0)
         }
         break
       }
@@ -1079,7 +1081,7 @@ export function Shared() {
           onClose={() => setForwardFileId(null)}
           fileId={forwardFileId}
           fileName={forwardFileName}
-          fileSize={0}
+          fileSize={forwardFileSize}
         />
       )}
     </DriveLayout>

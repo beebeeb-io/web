@@ -481,6 +481,13 @@ export function FileList({
     return displayName(file) ?? ''
   }
 
+  function typeLabel(file: DriveFile): string {
+    if (file.is_folder) return 'Folder'
+    if (file.mime_type) return file.mime_type
+    const ext = safeName(file).split('.').pop()?.trim()
+    return ext ? ext.toUpperCase() : 'Encrypted file'
+  }
+
   const sortedFiles = sortable
     ? [...files].sort((a, b) => {
         if (a.is_folder && !b.is_folder) return -1
@@ -795,7 +802,7 @@ export function FileList({
             )}
           </div>
           <div className="text-[11px] text-ink-3 mt-0.5 flex items-center gap-1.5 flex-wrap">
-            <span className="truncate">{file.mime_type || 'Folder'}</span>
+            <span className="truncate">{typeLabel(file)}</span>
             {!file.is_folder && (
               <>
                 <span className="md:hidden text-line-2">·</span>
