@@ -1,12 +1,18 @@
 # Beebeeb web app — production build.
 # Build context must be the workspace root (parent of repos/) so this can
-# reach both repos/web/ and repos/core/beebeeb-wasm/pkg/.
+# reach repos/web/, repos/core/beebeeb-wasm/pkg/, and packages/shared/
+# (the @beebeeb/shared workspace dep).
 
 FROM oven/bun:1 AS builder
 WORKDIR /app
 
 # WASM dep — package.json references it via a relative file path.
 COPY repos/core/beebeeb-wasm/pkg /wasm-pkg
+
+# Shared workspace package — outside the workspace root, bun cannot resolve
+# `@beebeeb/shared: workspace:*`, so we copy the package to a known path
+# and rewrite the dep to point at it before installing.
+COPY packages/shared /shared
 
 # Web sources
 COPY repos/web/ ./
@@ -15,8 +21,11 @@ COPY repos/web/ ./
 # which avoids needing a git binary in the container.
 RUN rm -rf .git node_modules
 
-# Rewrite the WASM dep path to the container path, then install.
+# Rewrite the WASM dep path to the container path AND swap the
+# @beebeeb/shared workspace-protocol dep to the file path we copied
+# above, then install.
 RUN sed -i 's|../../repos/core/beebeeb-wasm/pkg|/wasm-pkg|' package.json && \
+    sed -i 's|"@beebeeb/shared": "workspace:\*"|"@beebeeb/shared": "/shared"|' package.json && \
     bun install
 
 # API URL is baked into the JS bundle at build time (Vite replaces
