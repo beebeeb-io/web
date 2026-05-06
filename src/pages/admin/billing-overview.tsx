@@ -286,21 +286,40 @@ export function AdminBilling() {
               </div>
             </div>
 
-            {/* Revenue placeholder */}
+            {/* Revenue overview */}
             <div className="rounded-xl bg-paper border border-line-2 p-4">
               <div className="flex items-baseline justify-between mb-3">
                 <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3">
                   Revenue
                 </div>
-                <span className="font-mono text-[10px] text-ink-4">Last 30 days</span>
+                <span className="font-mono text-[10px] text-ink-4">Current period</span>
               </div>
-              <div className="flex flex-col items-center justify-center gap-2 h-40 rounded-lg border border-dashed border-line-2 bg-paper-2">
-                <Icon name="lock" size={16} className="text-ink-3" />
-                <div className="text-xs text-ink-2 font-medium">Connect Stripe to see revenue data</div>
-                <div className="text-[11px] text-ink-3">
-                  MRR, churn, and lifetime value will appear here once Stripe is wired up.
+              {billingStats ? (
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="rounded-lg bg-paper-2 border border-line p-3 text-center">
+                    <div className="text-[20px] font-bold font-mono text-ink">
+                      {(mrrEur ?? 0).toLocaleString('nl-NL', { style: 'currency', currency: 'EUR' })}
+                    </div>
+                    <div className="text-[10px] text-ink-3 mt-0.5">Monthly recurring</div>
+                  </div>
+                  <div className="rounded-lg bg-paper-2 border border-line p-3 text-center">
+                    <div className="text-[20px] font-bold font-mono text-ink">
+                      {billingStats.total_subscribers ?? 0}
+                    </div>
+                    <div className="text-[10px] text-ink-3 mt-0.5">Paid subscribers</div>
+                  </div>
+                  <div className="rounded-lg bg-paper-2 border border-line p-3 text-center">
+                    <div className="text-[20px] font-bold font-mono text-ink">
+                      {((mrrEur ?? 0) * 12).toLocaleString('nl-NL', { style: 'currency', currency: 'EUR' })}
+                    </div>
+                    <div className="text-[10px] text-ink-3 mt-0.5">Projected ARR</div>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center gap-2 h-24 rounded-lg border border-dashed border-line-2 bg-paper-2">
+                  <div className="text-xs text-ink-3">Loading billing data...</div>
+                </div>
+              )}
             </div>
 
             {/* Plan cards */}
