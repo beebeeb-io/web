@@ -21,6 +21,7 @@ import { BBInput } from '../components/bb-input'
 import { Icon } from '../components/icons'
 import {
   recoverWithPhraseStart,
+  recoverOpaqueRegister,
   recoverWithPhraseFinalize,
   ApiError,
 } from '../lib/api'
@@ -29,6 +30,7 @@ import {
   computeRecoveryCheck,
   opaqueRegistrationStart,
   opaqueRegistrationFinish,
+  deriveX25519Public,
   toBase64,
   initCrypto,
 } from '../lib/crypto'
@@ -72,7 +74,6 @@ export function RecoverWithPhrase() {
   // Carried across steps (not stored persistently — lives only in component state)
   const [derivedMasterKey, setDerivedMasterKey] = useState<Uint8Array | null>(null)
   const [recoveryToken, setRecoveryToken] = useState('')
-  const [opaqueServerMessage, setOpaqueServerMessage] = useState('')
 
   // Step 2 state
   const [newPassword, setNewPassword] = useState('')
@@ -111,7 +112,6 @@ export function RecoverWithPhrase() {
       // Store master key in component state for use in step 2
       setDerivedMasterKey(masterKey)
       setRecoveryToken(result.recovery_token)
-      setOpaqueServerMessage(result.opaque_server_message)
       setStep('password')
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
@@ -133,27 +133,41 @@ export function RecoverWithPhrase() {
 
     const validationError = validatePassword(newPassword, confirmPassword)
     if (validationError) { setPasswordError(validationError); return }
-    if (!derivedMasterKey || !recoveryToken || !opaqueServerMessage) {
-      setPasswordError('Session expired. Please start over.')
+    if (!derivedMasterKey || !recoveryToken) {
+      setPasswordError('Recovery session lost. Please start over.')
       setStep('phrase')
       return
     }
 
     setPasswordSubmitting(true)
     try {
-      // OPAQUE registration: client side
+      // 1. OPAQUE registration start (client-side) — generates request + state
       const regStart = await opaqueRegistrationStart(newPassword)
-      const serverMsg = Uint8Array.from(atob(opaqueServerMessage), (c) => c.charCodeAt(0))
-      const regUpload = await opaqueRegistrationFinish(regStart.state, newPassword, serverMsg)
 
-      // Finalize recovery on server
-      await recoverWithPhraseFinalize(
-        email.trim().toLowerCase(),
+      // 2. Send client message to server to get OPAQUE server response
+      //    Uses recovery token for auth (no session exists yet)
+      const { server_message } = await recoverOpaqueRegister(
         recoveryToken,
-        toBase64(regUpload),
+        toBase64(regStart.message),
       )
 
-      // Re-wrap master key under the new password and store in vault
+      // 3. OPAQUE registration finish (client-side) — produces upload bytes
+      const serverMsg = Uint8Array.from(atob(server_message), (c) => c.charCodeAt(0))
+      const regUpload = await opaqueRegistrationFinish(regStart.state, newPassword, serverMsg)
+
+      // 4. Compute new recovery check and x25519 public key from the master key
+      const newRecoveryCheck = await computeRecoveryCheck(derivedMasterKey)
+      const newX25519Pub = await deriveX25519Public(derivedMasterKey)
+
+      // 5. Finalize recovery — rotates all credentials on the server
+      await recoverWithPhraseFinalize(
+        recoveryToken,
+        toBase64(regUpload),
+        toBase64(newRecoveryCheck),
+        toBase64(newX25519Pub),
+      )
+
+      // 6. Re-wrap master key under the new password and store in vault
       await setMasterKey(derivedMasterKey, newPassword)
 
       // Clear sensitive data from component state
@@ -164,7 +178,7 @@ export function RecoverWithPhrase() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
         setStep('unavailable')
-      } else if (err instanceof ApiError && err.status === 401) {
+      } else if (err instanceof ApiError && err.status === 400) {
         setPasswordError('Recovery token expired. Please start the process again.')
         setStep('phrase')
       } else {
@@ -173,7 +187,7 @@ export function RecoverWithPhrase() {
     } finally {
       setPasswordSubmitting(false)
     }
-  }, [newPassword, confirmPassword, derivedMasterKey, recoveryToken, opaqueServerMessage, email, setMasterKey, refreshUser])
+  }, [newPassword, confirmPassword, derivedMasterKey, recoveryToken, email, setMasterKey, refreshUser])
 
   // ── Renders ──────────────────────────────────────────────────────────
 

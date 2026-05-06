@@ -323,9 +323,9 @@ export async function opaqueRegisterFinishExisting(
 export async function recoverWithPhraseStart(
   email: string,
   recoveryCheck: string,
-): Promise<{ recovery_token: string; opaque_server_message: string } | null> {
+): Promise<{ recovery_token: string } | null> {
   try {
-    return await request<{ recovery_token: string; opaque_server_message: string }>(
+    return await request<{ recovery_token: string }>(
       '/api/v1/auth/recover-with-phrase-start',
       { method: 'POST', body: JSON.stringify({ email, recovery_check: recoveryCheck }) },
     )
@@ -333,6 +333,19 @@ export async function recoverWithPhraseStart(
     if (err instanceof ApiError && err.status === 404) return null
     throw err
   }
+}
+
+export async function recoverOpaqueRegister(
+  recoveryToken: string,
+  clientMessage: string,
+): Promise<{ server_message: string }> {
+  return request<{ server_message: string }>(
+    '/api/v1/auth/recover-opaque-register',
+    {
+      method: 'POST',
+      body: JSON.stringify({ recovery_token: recoveryToken, client_message: clientMessage }),
+    },
+  )
 }
 
 /**
@@ -343,18 +356,20 @@ export async function recoverWithPhraseStart(
  * the OPAQUE password file update and returns a fresh session token.
  */
 export async function recoverWithPhraseFinalize(
-  email: string,
   recoveryToken: string,
-  opaqueClientMessage: string,
+  opaqueRegistration: string,
+  recoveryCheck: string,
+  x25519PublicKey: string,
 ): Promise<{ session_token: string; user_id: string }> {
   const data = await request<{ session_token: string; user_id: string }>(
     '/api/v1/auth/recover-with-phrase-finalize',
     {
       method: 'POST',
       body: JSON.stringify({
-        email,
         recovery_token: recoveryToken,
-        client_message: opaqueClientMessage,
+        opaque_registration: opaqueRegistration,
+        recovery_check: recoveryCheck,
+        x25519_public_key: x25519PublicKey,
       }),
     },
   )
