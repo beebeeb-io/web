@@ -19,6 +19,8 @@ import {
 } from './crypto'
 import { registerLogoutCallback } from './auth-context'
 import { wrapAndStore, unwrap, hasVault, clearVault } from './vault'
+import { getToken } from './api'
+import { pushTauriSession, clearTauriSession } from './tauri-bridge'
 
 interface KeyState {
   /** True once WASM is loaded and ready. */
@@ -151,12 +153,22 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     document.body.dataset.cryptoReady = cryptoReady ? 'true' : 'false'
   }, [cryptoReady])
 
+  // Push the (token, masterKey) pair to the Tauri desktop shell so it can
+  // persist them and auto-unlock on next launch. No-op outside Tauri and on
+  // any failure — the bridge is an enhancement, not part of the auth path.
+  const handoffToTauri = useCallback((key: Uint8Array) => {
+    const token = getToken()
+    if (!token) return
+    void pushTauriSession(token, key)
+  }, [])
+
   const unlock = useCallback(async (password: string, salt: Uint8Array) => {
     const { masterKey } = await deriveKeys(password, salt)
     masterKeyRef.current = masterKey
     setIsUnlocked(true)
     cacheKey(masterKey)
-  }, [cacheKey])
+    handoffToTauri(masterKey)
+  }, [cacheKey, handoffToTauri])
 
   const setMasterKey = useCallback(async (key: Uint8Array, password: string) => {
     masterKeyRef.current = key
@@ -164,7 +176,8 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     setVaultExists(true)
     setIsUnlocked(true)
     cacheKey(key)
-  }, [cacheKey])
+    handoffToTauri(key)
+  }, [cacheKey, handoffToTauri])
 
   const unlockVault = useCallback(async (password: string): Promise<boolean> => {
     const key = await unwrap(password)
@@ -172,8 +185,9 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     masterKeyRef.current = key
     setIsUnlocked(true)
     cacheKey(key)
+    handoffToTauri(key)
     return true
-  }, [cacheKey])
+  }, [cacheKey, handoffToTauri])
 
   const getFileKey = useCallback(async (fileId: string): Promise<Uint8Array> => {
     if (!masterKeyRef.current) {
@@ -207,6 +221,9 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     await clearVault()
     setVaultExists(false)
     setIsUnlocked(false)
+    // Tell the desktop shell to drop its cached session so the next launch
+    // doesn't auto-unlock with stale credentials.
+    void clearTauriSession()
   }, [clearCachedKey])
 
   // Full clear on explicit logout — wipe in-memory key AND IndexedDB vault.
