@@ -147,6 +147,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   const location = useLocation()
   const { isUnlocked, getMasterKey } = useKeys()
   const { isFrozen } = useFrozen()
+  const adminUrl = import.meta.env.VITE_ADMIN_URL ?? 'https://admin.beebeeb.io'
   const [planDetails, setPlanDetails] = useState<Plan | null>(null)
   const [sharedFolders, setSharedFolders] = useState<(ShareInvite & { decryptedName?: string })[]>([])
   const [pinnedIds, setPinnedIds] = useState<string[]>([])
@@ -428,20 +429,19 @@ export function DriveLayout({ children }: { children: ReactNode }) {
 
         {isAdmin && (
           <div className="px-3 pt-2">
-            <button
-              type="button"
+            <a
+              href={adminUrl}
+              target="_blank"
+              rel="noopener noreferrer"
               onClick={async () => {
-                // Mint a 60s OTP, then navigate to admin.beebeeb.io. The
-                // server returns the full redirect URL; using it verbatim
-                // keeps the admin host hardcoded server-side (no env needed
-                // here) — see docs/superpowers/specs/2026-05-07-admin-portal-separation.md.
+                // Mint a 60s OTP, then navigate to the configured admin app.
                 try {
                   const handoff = await requestAdminHandoff()
-                  window.location.href = handoff.redirect_url
+                  window.location.href = `${adminUrl}/auth/handoff?token=${encodeURIComponent(handoff.token)}`
                 } catch {
                   // Fall back to a plain navigation — admin's own login
                   // page handles unauthenticated visitors.
-                  window.location.href = 'https://admin.beebeeb.io/'
+                  window.location.href = adminUrl
                 }
               }}
               className="w-full flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] transition-colors text-ink-2 hover:bg-paper-3/50 cursor-pointer"
@@ -449,7 +449,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
               <Icon name="shield" size={13} className="shrink-0" />
               <span className="flex-1 text-left">Admin</span>
               <Icon name="link" size={11} className="text-ink-4 shrink-0" />
-            </button>
+            </a>
           </div>
         )}
 
