@@ -71,16 +71,9 @@ const SettingsImport        = lazyNamed(() => import('./pages/settings/import'),
 const DropboxCallback       = lazyNamed(() => import('./pages/settings/import/dropbox-callback'), 'DropboxCallback')
 const GoogleCallback        = lazyNamed(() => import('./pages/settings/import/google-callback'),  'GoogleCallback')
 
-// Admin (heavy, admin-only — largest split opportunity)
-const Compliance    = lazyNamed(() => import('./pages/admin/compliance'),        'Compliance')
-const AdminUsers    = lazyNamed(() => import('./pages/admin/users'),             'AdminUsers')
-const AdminBilling  = lazyNamed(() => import('./pages/admin/billing-overview'),  'AdminBilling')
-const Dashboard     = lazyNamed(() => import('./pages/admin/dashboard'),         'Dashboard')
-const Infrastructure = lazyNamed(() => import('./pages/admin/infrastructure'),   'Infrastructure')
-const AdminSecurity = lazy(() => import('./pages/admin/security').then(m => ({ default: m.Security as React.ComponentType })))
-const PoolLifecycle = lazyNamed(() => import('./pages/admin/pool-lifecycle'),    'PoolLifecycle')
-const MissionControl = lazyNamed(() => import('./pages/admin/mission-control'), 'MissionControl')
-const AdminSettings = lazyNamed(() => import('./pages/admin/settings'),          'AdminSettings')
+// Admin pages live at admin.beebeeb.io now (own repo, own subdomain) —
+// see docs/superpowers/specs/2026-05-07-admin-portal-separation.md.
+// The /admin/* catch-all below redirects any leftover deep links there.
 import { ThemeProvider } from './lib/theme-context'
 import { DisplayProvider } from './lib/display-context'
 import { CookieBanner } from './components/cookie-banner'
@@ -100,6 +93,23 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
   }
 
   return <WasmGuard>{children}</WasmGuard>
+}
+
+/**
+ * External redirect to the standalone admin portal. Used by the legacy
+ * /admin/* routes — the user app no longer hosts admin pages, so we
+ * bounce any deep link to admin.beebeeb.io. The admin app's login page
+ * handles unauthenticated visitors.
+ *
+ * `useEffect` runs the navigation as a side-effect so the browser does a
+ * real cross-origin GET (react-router's `<Navigate>` only manipulates
+ * the in-app history stack — it can't leave the origin).
+ */
+function AdminRedirect() {
+  useEffect(() => {
+    window.location.href = 'https://admin.beebeeb.io/'
+  }, [])
+  return null
 }
 
 function GuestRoute({ children }: { children: ReactNode }) {
@@ -358,27 +368,14 @@ export function App() {
           />
           <Route path="/pricing" element={<Pricing />} />
           <Route path="/billing" element={<Navigate to="/settings/billing" replace />} />
-          <Route path="/admin" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-          <Route path="/admin/users" element={<ProtectedRoute><AdminUsers /></ProtectedRoute>} />
-          <Route path="/admin/infrastructure" element={<ProtectedRoute><Infrastructure /></ProtectedRoute>} />
-          <Route path="/admin/infrastructure/pools/:poolId" element={<ProtectedRoute><PoolLifecycle /></ProtectedRoute>} />
-          <Route path="/admin/infrastructure/pools/:poolId/runs/:runId/monitor" element={<ProtectedRoute><MissionControl /></ProtectedRoute>} />
-          <Route path="/admin/security" element={<ProtectedRoute><AdminSecurity /></ProtectedRoute>} />
-          <Route path="/admin/billing" element={<ProtectedRoute><AdminBilling /></ProtectedRoute>} />
-          <Route path="/admin/compliance" element={<ProtectedRoute><Compliance /></ProtectedRoute>} />
-          <Route path="/admin/settings" element={<ProtectedRoute><AdminSettings /></ProtectedRoute>} />
+          {/* Admin moved to admin.beebeeb.io. Redirect any /admin/* URL
+              there so old bookmarks keep working. The admin app's login
+              page handles unauthenticated visitors. See
+              docs/superpowers/specs/2026-05-07-admin-portal-separation.md. */}
+          <Route path="/admin" element={<AdminRedirect />} />
+          <Route path="/admin/*" element={<AdminRedirect />} />
           {/* CLI web auth — `bb login --browser` */}
           <Route path="/cli-auth" element={<ProtectedRoute><CliAuth /></ProtectedRoute>} />
-
-          <Route path="/admin/monitoring" element={<Navigate to="/admin" replace />} />
-          <Route path="/admin/audit-log" element={<Navigate to="/admin/security" replace />} />
-          <Route path="/admin/storage-pools" element={<Navigate to="/admin/infrastructure" replace />} />
-          <Route path="/admin/migrations" element={<Navigate to="/admin/infrastructure" replace />} />
-          <Route path="/admin/abuse-reports" element={<Navigate to="/admin/security" replace />} />
-          <Route path="/admin/waitlist" element={<Navigate to="/admin/users" replace />} />
-          <Route path="/admin/sso" element={<Navigate to="/admin" replace />} />
-          <Route path="/admin/data-export" element={<Navigate to="/admin" replace />} />
-          <Route path="/admin/api-tokens" element={<Navigate to="/admin" replace />} />
           <Route
             path="/migration"
             element={
