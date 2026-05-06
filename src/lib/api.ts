@@ -171,7 +171,7 @@ export interface AuthUser {
   email_verified: boolean
   created_at: string
   frozen_at?: string | null
-  totp_enabled?: boolean
+  totp_enabled: boolean
   two_factor_enabled?: boolean
   twoFactorEnabled?: boolean
 }

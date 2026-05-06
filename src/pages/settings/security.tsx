@@ -307,7 +307,10 @@ function TotpSection() {
     getMe()
       .then((user) => {
         if (cancelled) return
-        const status = user.totp_enabled ?? user.two_factor_enabled ?? user.twoFactorEnabled
+        const status =
+          user.totp_enabled ??
+          user.two_factor_enabled ??
+          user.twoFactorEnabled
         if (typeof status === 'boolean') {
           setEnabled(status)
         }
