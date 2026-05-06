@@ -67,6 +67,7 @@ android/app/build/
 .playwright-mcp/
 test-results/
 playwright-report/
+qa-screenshots/
 
 # Graphify per-file AST cache — local incremental data, not for the repo.
 # graph.json / graph.html / GRAPH_REPORT.md (the rest of graphify-out/) are
