@@ -810,6 +810,22 @@ function ProviderCard({
   )
 }
 
+// ── Coming soon card ─────────────────────────────────────────────────────────
+
+function ComingSoonCard({ service, description }: { service: string; description: string }) {
+  return (
+    <div className="border border-line rounded-lg p-5 bg-paper-2">
+      <div className="flex items-center gap-3 mb-3">
+        <h3 className="text-[15px] font-semibold text-ink">Import from {service}</h3>
+        <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-paper-3 border border-line text-ink-4">
+          Coming soon
+        </span>
+      </div>
+      <p className="text-[13px] text-ink-3 leading-relaxed">{description}</p>
+    </div>
+  )
+}
+
 // ── Logos ─────────────────────────────────────────────────────────────────────
 
 const DropboxLogo = () => (
@@ -1154,10 +1170,7 @@ export function SettingsImport() {
   // ── OAuth handlers ───────────────────────────────────────────────────────────
 
   async function handleConnectDropbox() {
-    if (!appKey) {
-      showToast({ icon: 'x', title: 'Dropbox not configured', description: 'VITE_DROPBOX_APP_KEY is not set.', danger: true })
-      return
-    }
+    if (!appKey) return
     setDbxConnecting(true)
     try {
       const verifier = generateVerifier()
@@ -1188,10 +1201,7 @@ export function SettingsImport() {
   }
 
   async function handleConnectGDrive() {
-    if (!gdClientId) {
-      showToast({ icon: 'x', title: 'Google Drive not configured', description: 'VITE_GOOGLE_CLIENT_ID is not set.', danger: true })
-      return
-    }
+    if (!gdClientId) return
     setGdConnecting(true)
     try {
       const verifier = generateVerifier()
@@ -1244,18 +1254,6 @@ export function SettingsImport() {
 
       <div className="p-7 space-y-6">
 
-        {/* ── Config warnings ── */}
-        {!appKey && (
-          <div className="flex items-start gap-3 p-4 rounded-xl border border-amber/30 bg-amber-bg text-[13px] text-ink-2">
-            <Icon name="shield" size={14} className="text-amber-deep shrink-0 mt-0.5" />
-            <div>
-              <div className="font-medium text-ink mb-0.5">Dropbox app key not configured</div>
-              Add <code className="font-mono text-[11.5px] bg-paper border border-line px-1 rounded">VITE_DROPBOX_APP_KEY=your_key</code> to your{' '}
-              <code className="font-mono text-[11.5px] bg-paper border border-line px-1 rounded">.env</code> file.
-            </div>
-          </div>
-        )}
-
         {/* ── Provider card grid (when not connected) ── */}
         {!anyConnected && (
           <div>
@@ -1263,20 +1261,32 @@ export function SettingsImport() {
               Connect a provider
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <ProviderCard
-                name="Dropbox"
-                logo={<DropboxLogo />}
-                status={dbxConnecting ? 'connecting' : 'disconnected'}
-                onConnect={() => void handleConnectDropbox()}
-                disabled={!appKey}
-              />
-              <ProviderCard
-                name="Google Drive"
-                logo={<GoogleDriveLogo />}
-                status={gdConnecting ? 'connecting' : 'disconnected'}
-                onConnect={() => void handleConnectGDrive()}
-                disabled={!gdClientId}
-              />
+              {appKey ? (
+                <ProviderCard
+                  name="Dropbox"
+                  logo={<DropboxLogo />}
+                  status={dbxConnecting ? 'connecting' : 'disconnected'}
+                  onConnect={() => void handleConnectDropbox()}
+                />
+              ) : (
+                <ComingSoonCard
+                  service="Dropbox"
+                  description="We're working on automated imports from Dropbox. In the meantime, download your files from Dropbox and upload them directly to Beebeeb."
+                />
+              )}
+              {gdClientId ? (
+                <ProviderCard
+                  name="Google Drive"
+                  logo={<GoogleDriveLogo />}
+                  status={gdConnecting ? 'connecting' : 'disconnected'}
+                  onConnect={() => void handleConnectGDrive()}
+                />
+              ) : (
+                <ComingSoonCard
+                  service="Google Drive"
+                  description="Automated Google Drive import is on our roadmap. Download your files from Google Takeout and upload them to Beebeeb to get started."
+                />
+              )}
               <ProviderCard
                 name="iCloud"
                 logo={
