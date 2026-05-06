@@ -94,6 +94,8 @@ export function SettingsReferrals() {
         setCode(deriveCode(user.user_id))
       }
       setReferrals(entries)
+    } catch (err) {
+      console.error('Failed to load referrals:', err)
     } finally {
       setLoading(false)
     }
@@ -249,7 +251,7 @@ export function SettingsReferrals() {
               </div>
               {referrals.map((ref, i) => (
                 <div
-                  key={i}
+                  key={(ref as ReferralEntry & { id?: string }).id ?? ref.display_email ?? i}
                   className="grid gap-4 px-5 py-3 border-b border-line last:border-b-0 items-center hover:bg-paper-2/40 transition-colors"
                   style={{ gridTemplateColumns: '2fr 1fr 80px' }}
                 >

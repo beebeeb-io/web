@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams, Navigate } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { SplitAuthScreen } from '../components/split-auth-screen'
 import { BBButton } from '../components/bb-button'
 import { BBChip } from '../components/bb-chip'
@@ -19,6 +19,7 @@ async function validateReferralCode(code: string): Promise<void> {
 
 export function JoinPage() {
   const { code } = useParams<{ code: string }>()
+  const navigate = useNavigate()
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
@@ -100,16 +101,16 @@ export function JoinPage() {
           size="lg"
           className="w-full"
           disabled={!ready}
-          onClick={() => { window.location.href = signupUrl }}
+          onClick={() => { navigate(signupUrl) }}
         >
           Get started — it's free
         </BBButton>
 
         <p className="text-[12px] text-ink-4 text-center">
           Already have an account?{' '}
-          <a href="/login" className="text-amber-deep font-medium hover:underline">
+          <Link to="/login" className="text-amber-deep font-medium hover:underline">
             Log in
-          </a>
+          </Link>
         </p>
 
         <div className="border-t border-line pt-4 flex items-center gap-2 text-[11px] text-ink-3">
