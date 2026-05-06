@@ -21,7 +21,7 @@ export function EmptyPhotos({ onUpload, onGoToDrive }: EmptyPhotosProps) {
         icon: 'folder',
         onClick: onGoToDrive,
       }}
-      hint="EXIF data and GPS coordinates are stripped before encryption."
+      hint="Photos are end-to-end encrypted. Only you can decrypt them."
     />
   )
 }

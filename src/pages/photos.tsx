@@ -624,18 +624,15 @@ export function Photos() {
         </div>
         </UploadZone>
 
-        {/* Status bar */}
+        {/* Status bar.
+            EXIF/GPS stripping is NOT yet implemented in the upload pipeline
+            (see src/lib/encrypted-upload.ts) — so the previous claim that
+            EXIF was stripped on upload was false and was removed. Restore
+            the badges here only after a real strip step exists. */}
         <div className="px-5 py-2 border-t border-line bg-paper-2 flex items-center gap-3.5 text-[11px] text-ink-3">
           <span className="flex items-center gap-1.5">
             <Icon name="shield" size={12} className="text-amber-deep" />
-            All photos E2E encrypted · EXIF stripped on upload
-          </span>
-          <span
-            className="ml-auto flex items-center gap-1.5 font-mono text-[10px]"
-            title="GPS & device serial stripped before encryption"
-          >
-            <Icon name="lock" size={10} className="text-amber-deep" />
-            GPS & device serial stripped before encryption
+            All photos end-to-end encrypted
           </span>
         </div>
 
