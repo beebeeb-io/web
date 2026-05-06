@@ -1,9 +1,9 @@
 import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Icon } from '../components/icons'
-import { BBButton } from '../components/bb-button'
-import { BBInput } from '../components/bb-input'
-import { BBCheckbox } from '../components/bb-checkbox'
+import { Icon } from '@beebeeb/shared'
+import { BBButton } from '@beebeeb/shared'
+import { BBInput } from '@beebeeb/shared'
+import { BBCheckbox } from '@beebeeb/shared'
 import { ConfirmPasswordModal } from '../components/confirm-password-modal'
 import { deleteAccountPermanently, ApiError } from '../lib/api'
 

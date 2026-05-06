@@ -1,7 +1,7 @@
-import { Icon } from '../../components/icons'
-import { BBButton } from '../../components/bb-button'
-import { BBChip } from '../../components/bb-chip'
-import type { IconName } from '../../components/icons'
+import { Icon } from '@beebeeb/shared'
+import { BBButton } from '@beebeeb/shared'
+import { BBChip } from '@beebeeb/shared'
+import type { IconName } from '@beebeeb/shared'
 
 interface FolderRow {
   name: string

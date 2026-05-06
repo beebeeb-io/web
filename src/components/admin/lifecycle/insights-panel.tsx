@@ -6,8 +6,8 @@
  */
 
 import { useState } from 'react'
-import { BBButton } from '../../bb-button'
-import { Icon } from '../../icons'
+import { BBButton } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 import { formatBytes } from '../../../lib/format'
 import { startLifecycleRun, type PoolInsights, type StoragePool } from '../../../lib/api'
 import { ConfirmationModal } from './confirmation-modal'

@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { AdminShell, AdminHeader } from './admin-shell'
-import { Icon } from '../../components/icons'
-import { BBButton } from '../../components/bb-button'
-import { BBChip } from '../../components/bb-chip'
+import { Icon } from '@beebeeb/shared'
+import { BBButton } from '@beebeeb/shared'
+import { BBChip } from '@beebeeb/shared'
 import { useToast } from '../../components/toast'
 import {
   listAuditLog,

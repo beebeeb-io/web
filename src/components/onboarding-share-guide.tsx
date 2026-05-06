@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useFocusTrap } from '../hooks/use-focus-trap'
-import { BBButton } from './bb-button'
-import { BBChip } from './bb-chip'
-import { Icon } from './icons'
+import { BBButton } from '@beebeeb/shared'
+import { BBChip } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 
 export const FIRST_SHARE_FLAG = 'bb_first_share_completed'
 export const FIRST_SHARE_NUDGE_DISMISSED = 'bb_first_share_nudge_dismissed'

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { Icon } from './icons'
+import { Icon } from '@beebeeb/shared'
 import { formatStorageSI } from '../lib/format'
 
 const DISMISS_KEY = 'bb_quota_warning_dismissed_at'

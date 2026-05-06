@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { useKeys } from '../lib/key-context'
-import { BBLogo } from './bb-logo'
+import { BBLogo } from '@beebeeb/shared'
 
 export function WasmGuard({ children }: { children: ReactNode }) {
   const { cryptoReady, cryptoLoading, cryptoError } = useKeys()

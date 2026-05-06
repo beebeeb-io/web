@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useFocusTrap } from '../hooks/use-focus-trap'
-import { BBButton } from './bb-button'
-import { Icon } from './icons'
+import { BBButton } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 
 interface RenameDialogProps {
   open: boolean

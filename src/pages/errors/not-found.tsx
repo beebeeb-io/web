@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
-import { BBLogo } from '../../components/bb-logo'
-import { BBButton } from '../../components/bb-button'
-import { Icon } from '../../components/icons'
+import { BBLogo } from '@beebeeb/shared'
+import { BBButton } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 
 export function NotFound() {
   const navigate = useNavigate()

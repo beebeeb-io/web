@@ -1,4 +1,4 @@
-import { Icon } from './icons'
+import { Icon } from '@beebeeb/shared'
 import { formatBytes } from '../lib/format'
 
 export interface UploadItem {

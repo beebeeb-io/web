@@ -4,7 +4,7 @@
  */
 
 import { useState } from 'react'
-import { BBButton } from '../../bb-button'
+import { BBButton } from '@beebeeb/shared'
 import { formatBytes } from '../../../lib/format'
 import { retryFile, type RunFileEntry } from '../../../lib/api'
 

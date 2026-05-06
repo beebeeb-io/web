@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { SettingsShell, SettingsHeader } from '../../components/settings-shell'
-import { BBToggle } from '../../components/bb-toggle'
-import { Icon } from '../../components/icons'
+import { BBToggle } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 import { useToast } from '../../components/toast'
 import {
   getNotificationPreferences,

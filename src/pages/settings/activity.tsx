@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { SettingsShell, SettingsHeader } from '../../components/settings-shell'
-import { Icon } from '../../components/icons'
+import { Icon } from '@beebeeb/shared'
 import { getMyActivity, ApiError, type ActivityEvent } from '../../lib/api'
 
 const PAGE_SIZE = 50

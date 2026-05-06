@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
-import { BBLogo } from './bb-logo'
-import { Icon } from './icons'
+import { BBLogo } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 
 interface AuthShellProps {
   title: string

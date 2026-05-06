@@ -12,8 +12,8 @@
 
 import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { BBButton } from './bb-button'
-import { Icon } from './icons'
+import { BBButton } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 import { createCheckoutSession } from '../lib/api'
 import { formatBytes } from '../lib/format'
 

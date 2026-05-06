@@ -1,8 +1,8 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useFocusTrap } from '../hooks/use-focus-trap'
-import { BBButton } from './bb-button'
-import { BBInput } from './bb-input'
-import { Icon } from './icons'
+import { BBButton } from '@beebeeb/shared'
+import { BBInput } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 import { confirmAction, IncorrectPasswordError } from '../lib/api'
 
 interface ConfirmPasswordModalProps {

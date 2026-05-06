@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { BBButton } from './bb-button'
-import { Icon } from './icons'
+import { BBButton } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 import { useToast } from './toast'
 import {
   getPendingApprovals,

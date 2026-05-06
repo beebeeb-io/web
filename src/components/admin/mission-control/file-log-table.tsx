@@ -8,8 +8,8 @@
  */
 
 import { useMemo, useState } from 'react'
-import { BBButton } from '../../bb-button'
-import { Icon } from '../../icons'
+import { BBButton } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 import { formatBytes } from '../../../lib/format'
 import type { MigrationFileEntry, MigrationFileStatus } from './types'
 

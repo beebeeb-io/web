@@ -1,10 +1,10 @@
 import { type FormEvent, useEffect, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { AuthShell } from '../components/auth-shell'
-import { BBButton } from '../components/bb-button'
-import { BBCheckbox } from '../components/bb-checkbox'
-import { BBInput } from '../components/bb-input'
-import { Icon } from '../components/icons'
+import { BBButton } from '@beebeeb/shared'
+import { BBCheckbox } from '@beebeeb/shared'
+import { BBInput } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 
 // Referral keys — read here, forwarded to onboarding, cleared after signup
 export const REFERRAL_SOURCE_KEY = 'bb_ref_source'

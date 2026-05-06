@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
-import { Icon, type IconName } from '../icons'
-import { BBButton } from '../bb-button'
+import { Icon, type IconName } from '@beebeeb/shared'
+import { BBButton } from '@beebeeb/shared'
 
 interface EmptyStateProps {
   /** Icon shown inside the rounded container */

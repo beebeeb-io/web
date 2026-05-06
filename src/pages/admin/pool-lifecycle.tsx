@@ -13,7 +13,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { AdminShell } from './admin-shell'
-import { Icon } from '../../components/icons'
+import { Icon } from '@beebeeb/shared'
 import {
   listStoragePools,
   listLifecycleRuns,

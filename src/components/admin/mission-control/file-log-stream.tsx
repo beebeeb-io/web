@@ -15,7 +15,7 @@
 
 import { useEffect, useRef } from 'react'
 import { formatBytes } from '../../../lib/format'
-import { Icon } from '../../icons'
+import { Icon } from '@beebeeb/shared'
 import type { MigrationFileEvent, MigrationFileEventType } from './types'
 
 interface FileLogStreamProps {

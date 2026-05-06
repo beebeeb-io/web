@@ -1,6 +1,6 @@
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
-import { BBButton } from './bb-button'
-import { Icon } from './icons'
+import { BBButton } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 
 interface TwoFactorPromptProps {
   onVerify: (code: string) => Promise<void>

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Icon } from '../components/icons'
-import { BBButton } from '../components/bb-button'
-import { BBChip } from '../components/bb-chip'
-import { BBLogo } from '../components/bb-logo'
+import { Icon } from '@beebeeb/shared'
+import { BBButton } from '@beebeeb/shared'
+import { BBChip } from '@beebeeb/shared'
+import { BBLogo } from '@beebeeb/shared'
 import { useAuth } from '../lib/auth-context'
 import { type AcceptInviteResponse, ApiError, acceptWorkspaceInvite } from '../lib/api'
 

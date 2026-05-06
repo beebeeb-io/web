@@ -13,8 +13,8 @@
 
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { BBLogo } from '../../../components/bb-logo'
-import { Icon } from '../../../components/icons'
+import { BBLogo } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 
 const DBX_TOKEN_URL = 'https://api.dropboxapi.com/oauth2/token'
 const VERIFIER_KEY = 'bb_dbx_pkce_verifier'

@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { SettingsShell, SettingsHeader } from '../components/settings-shell'
-import { BBButton } from '../components/bb-button'
-import { BBChip } from '../components/bb-chip'
-import { Icon } from '../components/icons'
+import { BBButton } from '@beebeeb/shared'
+import { BBChip } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 import {
   startPasskeyRegistration,
   finishPasskeyRegistration,

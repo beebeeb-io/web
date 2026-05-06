@@ -6,8 +6,8 @@
 
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { BBButton } from '../../bb-button'
-import { Icon } from '../../icons'
+import { BBButton } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 import {
   reverseMigrateRun,
   archiveRun,

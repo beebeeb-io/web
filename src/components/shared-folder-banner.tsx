@@ -1,4 +1,4 @@
-import { Icon } from './icons'
+import { Icon } from '@beebeeb/shared'
 
 interface SharedFolderBannerProps {
   ownerEmail: string

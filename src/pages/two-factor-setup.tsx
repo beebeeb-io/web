@@ -2,8 +2,8 @@ import QRCode from 'qrcode'
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AuthShell } from '../components/auth-shell'
-import { BBButton } from '../components/bb-button'
-import { Icon } from '../components/icons'
+import { BBButton } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 import { enable2fa, setup2fa } from '../lib/api'
 
 export function TwoFactorSetup() {

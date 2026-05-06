@@ -1,5 +1,5 @@
-import { Icon } from '../icons'
-import { BBButton } from '../bb-button'
+import { Icon } from '@beebeeb/shared'
+import { BBButton } from '@beebeeb/shared'
 
 interface EmptySearchProps {
   query: string

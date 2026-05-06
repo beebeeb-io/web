@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { Icon } from '../icons'
+import { Icon } from '@beebeeb/shared'
 
 interface TextPreviewProps {
   blob: Blob

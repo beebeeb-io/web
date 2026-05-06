@@ -1,4 +1,4 @@
-import { Icon } from './icons'
+import { Icon } from '@beebeeb/shared'
 
 export interface BreadcrumbItem {
   id: string | null

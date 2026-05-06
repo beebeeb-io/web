@@ -1,7 +1,7 @@
 import { type FormEvent, useState } from 'react'
 import { AuthShell } from './auth-shell'
-import { BBButton } from './bb-button'
-import { Icon } from './icons'
+import { BBButton } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 import { useKeys } from '../lib/key-context'
 import { useAuth } from '../lib/auth-context'
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Icon } from './icons'
-import { BBButton } from './bb-button'
+import { Icon } from '@beebeeb/shared'
+import { BBButton } from '@beebeeb/shared'
 import { downloadFile } from '../lib/api'
 import type { TrustFile } from './trust-details-panel'
 

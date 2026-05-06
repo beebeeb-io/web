@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Icon } from '../components/icons'
-import { BBButton } from '../components/bb-button'
-import { BBChip } from '../components/bb-chip'
-import { BBInput } from '../components/bb-input'
+import { Icon } from '@beebeeb/shared'
+import { BBButton } from '@beebeeb/shared'
+import { BBChip } from '@beebeeb/shared'
+import { BBInput } from '@beebeeb/shared'
 import { useToast } from '../components/toast'
 import { useAuth } from '../lib/auth-context'
 import {

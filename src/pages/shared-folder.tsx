@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
-import { BBButton } from '../components/bb-button'
+import { BBButton } from '@beebeeb/shared'
 import { Breadcrumb, type BreadcrumbItem } from '../components/breadcrumb'
 import { DriveLayout } from '../components/drive-layout'
-import { Icon } from '../components/icons'
+import { Icon } from '@beebeeb/shared'
 import { SharedFolderBanner } from '../components/shared-folder-banner'
-import { SharedRowSkeleton } from '../components/skeleton'
+import { SharedRowSkeleton } from '@beebeeb/shared'
 import { useToast } from '../components/toast'
 import {
   listSharedFolderFiles,

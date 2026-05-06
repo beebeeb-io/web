@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Icon } from './icons'
-import type { IconName } from './icons'
-import { BBChip } from './bb-chip'
-import { BBButton } from './bb-button'
+import { Icon } from '@beebeeb/shared'
+import type { IconName } from '@beebeeb/shared'
+import { BBChip } from '@beebeeb/shared'
+import { BBButton } from '@beebeeb/shared'
 import {
   listNotifications,
   markNotificationRead,

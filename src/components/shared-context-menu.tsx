@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
-import { Icon } from './icons'
-import type { IconName } from './icons'
+import { Icon } from '@beebeeb/shared'
+import type { IconName } from '@beebeeb/shared'
 
 export type SharedMenuTab = 'with-me' | 'by-me' | 'pending'
 

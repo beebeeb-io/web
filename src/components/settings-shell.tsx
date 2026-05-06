@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { Icon } from './icons'
-import type { IconName } from './icons'
+import { Icon } from '@beebeeb/shared'
+import type { IconName } from '@beebeeb/shared'
 import { DriveLayout } from './drive-layout'
 
 type NavItem = {

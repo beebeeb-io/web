@@ -1,4 +1,4 @@
-import { Icon } from './icons'
+import { Icon } from '@beebeeb/shared'
 import { useImpersonation } from '../lib/impersonation-context'
 
 export function ImpersonationBanner() {

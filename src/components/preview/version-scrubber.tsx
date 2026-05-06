@@ -3,7 +3,7 @@
 // FilePreview crossfades the content. The "current" version is the
 // rightmost dot (newest); historical versions extend to the left.
 
-import { Icon } from '../icons'
+import { Icon } from '@beebeeb/shared'
 
 export interface ScrubberVersion {
   id: string

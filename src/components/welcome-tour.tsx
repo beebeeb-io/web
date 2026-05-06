@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Icon } from './icons'
-import type { IconName } from './icons'
-import { BBButton } from './bb-button'
-import { BBLogo } from './bb-logo'
+import { Icon } from '@beebeeb/shared'
+import type { IconName } from '@beebeeb/shared'
+import { BBButton } from '@beebeeb/shared'
+import { BBLogo } from '@beebeeb/shared'
 
 interface TourStep {
   id: string

@@ -16,9 +16,9 @@
 import { type FormEvent, useState, useCallback } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { AuthShell } from '../components/auth-shell'
-import { BBButton } from '../components/bb-button'
-import { BBInput } from '../components/bb-input'
-import { Icon } from '../components/icons'
+import { BBButton } from '@beebeeb/shared'
+import { BBInput } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 import {
   recoverWithPhraseStart,
   recoverOpaqueRegister,

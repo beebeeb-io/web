@@ -16,8 +16,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { AdminShell } from './admin-shell'
-import { BBButton } from '../../components/bb-button'
-import { Icon } from '../../components/icons'
+import { BBButton } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 import {
   getLifecycleRun,
   getLifecycleRunFiles,

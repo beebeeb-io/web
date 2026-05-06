@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, type ReactNode } from 'react'
-import { Icon } from './icons'
+import { Icon } from '@beebeeb/shared'
 
 // ─── Folder traversal helpers ─────────────────────
 

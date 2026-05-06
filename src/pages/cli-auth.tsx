@@ -25,9 +25,9 @@
 
 import { useState, useEffect } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { BBButton } from '../components/bb-button'
-import { BBLogo } from '../components/bb-logo'
-import { Icon } from '../components/icons'
+import { BBButton } from '@beebeeb/shared'
+import { BBLogo } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
 import { getToken } from '../lib/api'

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { DriveLayout } from '../components/drive-layout'
-import { Icon } from '../components/icons'
+import { Icon } from '@beebeeb/shared'
 import { FileList } from '../components/file-list'
 import { ShareDialog } from '../components/share-dialog'
 import { MoveModal } from '../components/move-modal'

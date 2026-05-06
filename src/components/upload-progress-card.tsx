@@ -10,7 +10,7 @@
  * Spec 024 §4.
  */
 import type { UploadItem } from './upload-progress'
-import { Icon } from './icons'
+import { Icon } from '@beebeeb/shared'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

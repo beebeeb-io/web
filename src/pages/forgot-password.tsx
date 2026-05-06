@@ -13,7 +13,7 @@
 import { Link, useNavigate } from 'react-router-dom'
 import React from 'react'
 import { AuthShell } from '../components/auth-shell'
-import { Icon, type IconName } from '../components/icons'
+import { Icon, type IconName } from '@beebeeb/shared'
 
 interface OptionCardProps {
   icon: IconName

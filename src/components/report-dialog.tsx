@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useFocusTrap } from '../hooks/use-focus-trap'
-import { BBButton } from './bb-button'
-import { Icon } from './icons'
+import { BBButton } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 import { reportShareLink } from '../lib/api'
 import { useToast } from './toast'
 

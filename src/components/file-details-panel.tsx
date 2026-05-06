@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
-import { Icon } from './icons'
-import type { IconName } from './icons'
-import { BBButton } from './bb-button'
+import { Icon } from '@beebeeb/shared'
+import type { IconName } from '@beebeeb/shared'
+import { BBButton } from '@beebeeb/shared'
 import { formatBytes } from '../lib/format'
 
 export interface FileDetailsMeta {

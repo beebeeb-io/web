@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect, createContext, useContext } from 'react'
 import type { ReactNode } from 'react'
-import { Icon } from './icons'
-import type { IconName } from './icons'
+import { Icon } from '@beebeeb/shared'
+import type { IconName } from '@beebeeb/shared'
 
 // ─── Types ────────────────────────────────────────
 

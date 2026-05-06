@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react'
-import { Icon } from '../icons'
-import { BBButton } from '../bb-button'
-import { BBLogo } from '../bb-logo'
-import { BBChip } from '../bb-chip'
-import type { IconName } from '../icons'
+import { Icon } from '@beebeeb/shared'
+import { BBButton } from '@beebeeb/shared'
+import { BBLogo } from '@beebeeb/shared'
+import { BBChip } from '@beebeeb/shared'
+import type { IconName } from '@beebeeb/shared'
 
 interface RecoveryOption {
   icon: IconName

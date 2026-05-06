@@ -16,8 +16,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { getSharesForFile, revokeShare, type MyShare } from '../lib/api'
 import { useToast } from './toast'
-import { Icon } from './icons'
-import { BBButton } from './bb-button'
+import { Icon } from '@beebeeb/shared'
+import { BBButton } from '@beebeeb/shared'
 
 interface SharePopoverProps {
   fileId: string

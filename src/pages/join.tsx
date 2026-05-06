@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { SplitAuthScreen } from '../components/split-auth-screen'
-import { BBButton } from '../components/bb-button'
-import { BBChip } from '../components/bb-chip'
-import { Icon } from '../components/icons'
+import { BBButton } from '@beebeeb/shared'
+import { BBChip } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 import { getApiUrl } from '../lib/api'
 
 async function validateReferralCode(code: string): Promise<void> {

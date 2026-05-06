@@ -1,6 +1,6 @@
-import { Icon } from '../icons'
-import { BBButton } from '../bb-button'
-import { BBChip } from '../bb-chip'
+import { Icon } from '@beebeeb/shared'
+import { BBButton } from '@beebeeb/shared'
+import { BBChip } from '@beebeeb/shared'
 
 export interface FailedUpload {
   name: string

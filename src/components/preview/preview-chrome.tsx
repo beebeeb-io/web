@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
-import { Icon } from '../icons'
-import { BBChip } from '../bb-chip'
+import { Icon } from '@beebeeb/shared'
+import { BBChip } from '@beebeeb/shared'
 
 interface PreviewChromeProps {
   filename: string

@@ -13,8 +13,8 @@
 
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { BBLogo } from '../../../components/bb-logo'
-import { Icon } from '../../../components/icons'
+import { BBLogo } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 import { googleTokenExchange } from '../../../lib/api'
 
 export const GD_VERIFIER_KEY   = 'bb_gd_pkce_verifier'

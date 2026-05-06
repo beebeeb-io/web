@@ -6,9 +6,9 @@
 import { useEffect, useState } from 'react'
 // Link import removed when /activity route was hidden (spec TBD)
 // import { Link } from 'react-router-dom'
-import { Icon } from './icons'
-import type { IconName } from './icons'
-import { SkeletonLine } from './skeleton'
+import { Icon } from '@beebeeb/shared'
+import type { IconName } from '@beebeeb/shared'
+import { SkeletonLine } from '@beebeeb/shared'
 import { listActivity } from '../lib/api'
 import type { ActivityEvent } from '../lib/api'
 

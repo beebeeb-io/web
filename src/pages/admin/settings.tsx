@@ -7,7 +7,7 @@
 
 import { useState, useEffect } from 'react'
 import { AdminShell } from './admin-shell'
-import { Icon } from '../../components/icons'
+import { Icon } from '@beebeeb/shared'
 import { getHealth, listStoragePools, getPlans, getAdminConfig } from '../../lib/api'
 import type { HealthResponse, StoragePool, AdminConfig } from '../../lib/api'
 import { formatBytes } from '../../lib/format'

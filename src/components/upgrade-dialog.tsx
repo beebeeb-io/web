@@ -1,8 +1,8 @@
 import { useState, useCallback } from 'react'
 import { useFocusTrap } from '../hooks/use-focus-trap'
-import { BBButton } from './bb-button'
-import { BBChip } from './bb-chip'
-import { Icon } from './icons'
+import { BBButton } from '@beebeeb/shared'
+import { BBChip } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 import { useToast } from './toast'
 import { createCheckoutSession } from '../lib/api'
 

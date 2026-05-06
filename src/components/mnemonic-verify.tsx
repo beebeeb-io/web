@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
-import { BBButton } from './bb-button'
-import { BBInput } from './bb-input'
+import { BBButton } from '@beebeeb/shared'
+import { BBInput } from '@beebeeb/shared'
 
 interface MnemonicVerifyProps {
   phrase: string

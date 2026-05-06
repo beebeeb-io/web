@@ -15,7 +15,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { Link, useLocation } from 'react-router-dom'
-import { Icon } from './icons'
+import { Icon } from '@beebeeb/shared'
 import { useKeys } from '../lib/key-context'
 import { getPreference, setPreference, getFile } from '../lib/api'
 import { decryptFileMetadata } from '../lib/crypto'

@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
-import { BBLogo } from '../components/bb-logo'
-import { BBButton } from '../components/bb-button'
-import { BBChip } from '../components/bb-chip'
-import { Icon } from '../components/icons'
+import { BBLogo } from '@beebeeb/shared'
+import { BBButton } from '@beebeeb/shared'
+import { BBChip } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 import { ReportDialog } from '../components/report-dialog'
 import {
   getShare,

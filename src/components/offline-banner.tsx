@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Icon } from './icons'
+import { Icon } from '@beebeeb/shared'
 import { registerConnectionStatusHandler } from '../lib/api'
 
 // 'flaky' = browser thinks we're online but the API has been failing.

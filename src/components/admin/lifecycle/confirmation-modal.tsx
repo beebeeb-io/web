@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
-import { BBButton } from '../../bb-button'
+import { BBButton } from '@beebeeb/shared'
 
 interface ConfirmationModalProps {
   open: boolean

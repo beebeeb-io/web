@@ -1,5 +1,5 @@
 import { EmptyState } from './empty-state'
-import type { IconName } from '../icons'
+import type { IconName } from '@beebeeb/shared'
 
 interface EmptySharedProps {
   tab: 'with-me' | 'by-me' | 'pending'

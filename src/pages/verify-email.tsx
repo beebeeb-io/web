@@ -8,7 +8,7 @@ import {
 } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AuthShell } from '../components/auth-shell'
-import { BBButton } from '../components/bb-button'
+import { BBButton } from '@beebeeb/shared'
 import { useAuth } from '../lib/auth-context'
 import { verifyEmail, resendVerification, ApiError } from '../lib/api'
 

@@ -22,9 +22,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { BBLogo } from '../components/bb-logo'
-import { BBButton } from '../components/bb-button'
-import { Icon } from '../components/icons'
+import { BBLogo } from '@beebeeb/shared'
+import { BBButton } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 import {
   ackTransfer,
   downloadTransferBlob,

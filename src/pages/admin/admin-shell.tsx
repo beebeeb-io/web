@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { Icon } from '../../components/icons'
-import type { IconName } from '../../components/icons'
+import { Icon } from '@beebeeb/shared'
+import type { IconName } from '@beebeeb/shared'
 import { DriveLayout } from '../../components/drive-layout'
 import { HealthBadge } from '../../components/admin/health-badge'
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { BBButton } from './bb-button'
-import { Icon, type IconName } from './icons'
+import { BBButton } from '@beebeeb/shared'
+import { Icon, type IconName } from '@beebeeb/shared'
 import { useToast } from './toast'
 import {
   getAccountActivity,

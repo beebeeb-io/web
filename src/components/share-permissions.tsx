@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { BBButton } from './bb-button'
-import { BBToggle } from './bb-toggle'
+import { BBButton } from '@beebeeb/shared'
+import { BBToggle } from '@beebeeb/shared'
 import { useToast } from './toast'
 import { patchInvite } from '../lib/api'
 

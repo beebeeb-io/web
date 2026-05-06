@@ -10,8 +10,8 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { SettingsShell, SettingsHeader } from '../../components/settings-shell'
-import { BBButton } from '../../components/bb-button'
-import { Icon } from '../../components/icons'
+import { BBButton } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 import { useToast } from '../../components/toast'
 import { useKeys } from '../../lib/key-context'
 import {

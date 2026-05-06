@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { BBButton } from '../components/bb-button'
-import { BBChip } from '../components/bb-chip'
-import { Icon } from '../components/icons'
+import { BBButton } from '@beebeeb/shared'
+import { BBChip } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 import { useToast } from '../components/toast'
 import { getToken, createCheckoutSession } from '../lib/api'
 

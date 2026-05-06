@@ -1,13 +1,128 @@
 import { clearTauriSession } from './tauri-bridge'
+import {
+  ApiError,
+  IncorrectPasswordError,
+  clearToken,
+  getApiUrl,
+  getToken,
+  registerConnectionStatusHandler,
+  registerErrorNotifier,
+  registerOnTokenCleared,
+  registerSessionExpiredHandler,
+  request,
+  setApiUrl,
+  setToken,
+} from '@beebeeb/shared'
+import type {
+  AbuseReport,
+  AbuseReportStatus,
+  AcceptInviteResponse,
+  AccountActivity,
+  AccountExport,
+  AccountSession,
+  ActivityResponse,
+  AdminActivityResponse,
+  AdminBillingStats,
+  AdminConfig,
+  AdminSignInsResponse,
+  AdminStats,
+  AdminUserDetail,
+  AdminUserSession,
+  AdminUsersResponse,
+  AuditEvent,
+  AuthSessionResponse,
+  AuthUser,
+  BillingSyncResult,
+  BillingUsage,
+  CreateTokenParams,
+  CreateTokenResponse,
+  CreateWebhookResponse,
+  CspReport,
+  DataExportRequest,
+  DataExportStatus,
+  DriveFile,
+  FileVersion,
+  GrowthDataPoint,
+  HealthResponse,
+  ImpersonateResponse,
+  InviteActivity,
+  InviteInfo,
+  InvitePreview,
+  Invoice,
+  JoinTransferResponse,
+  LifecycleOutcome,
+  LifecyclePhase,
+  LifecycleRun,
+  LifecycleRunEvent,
+  LoginIp,
+  LoginResult,
+  MigrationEntry,
+  MigrationSummary,
+  MyActivityResponse,
+  MyShare,
+  MySignInsResponse,
+  Notification,
+  NotificationPreferences,
+  OnboardingState,
+  PasskeyInfo,
+  PasskeyLoginStartResponse,
+  PasskeyRegisterStartResponse,
+  PaymentMethod,
+  PersonalAccessToken,
+  Plan,
+  PlanUpdateInput,
+  PlanUpdateResponse,
+  PoolInsights,
+  PoolUsageEntry,
+  ReferralEntry,
+  ReferralStats,
+  RegionsResponse,
+  RoleChangeResponse,
+  RunFileEntry,
+  RunProgress,
+  SecurityScore,
+  Session,
+  ShareInfo,
+  ShareInvite,
+  ShareOptions,
+  ShareStats,
+  ShareView,
+  SharedFileDownload,
+  SignupResult,
+  StoragePool,
+  StorageUsage,
+  StreamTokenResponse,
+  SubmittedSyncOp,
+  Subscription,
+  SyncOp,
+  SyncOpsResult,
+  SyncSnapshot,
+  TotpSetupResponse,
+  TrackingPreference,
+  TransferStatus,
+  UploadStatusResponse,
+  UserRegionResponse,
+  UserStorageBreakdown,
+  VersionSetting,
+  WaitlistResponse,
+  Webhook,
+  Workspace,
+  WorkspaceMember,
+  WorkspaceMembersResponse,
+} from '@beebeeb/shared'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 
-export function getApiUrl(): string {
-  return API_URL
-}
+setApiUrl(API_URL)
+registerOnTokenCleared(() => {
+  void clearTauriSession()
+})
 
-const TOKEN_KEY = 'bb_session'
-
+/**
+ * Decode a hex string into a byte array. Used by the legacy login path that
+ * receives the password salt as hex from /auth/login. Kept local because
+ * shared has no obvious need for it and it pulls no extra deps.
+ */
 export function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2)
   for (let i = 0; i < hex.length; i += 2) {
@@ -16,183 +131,134 @@ export function hexToBytes(hex: string): Uint8Array {
   return bytes
 }
 
-export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY)
+export {
+  ApiError,
+  IncorrectPasswordError,
+  clearToken,
+  getApiUrl,
+  getToken,
+  registerConnectionStatusHandler,
+  registerErrorNotifier,
+  request,
+  registerSessionExpiredHandler,
+  setToken,
 }
 
-export function setToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token)
-}
-
-export function clearToken(): void {
-  localStorage.removeItem(TOKEN_KEY)
-  void clearTauriSession()
-}
-
-// ─── Global error hooks ─────────────────────────────
-// Registered at app startup by ToastProvider / AuthProvider.
-
-type ErrorNotifier = (message: string) => void
-type SessionExpiredHandler = () => void
-type ConnectionStatusHandler = (status: 'ok' | 'flaky') => void
-
-let notifyError: ErrorNotifier | null = null
-let onSessionExpired: SessionExpiredHandler | null = null
-let onConnectionStatus: ConnectionStatusHandler | null = null
-
-/** Register a callback to show a toast when the API is unreachable. */
-export function registerErrorNotifier(fn: ErrorNotifier): void {
-  notifyError = fn
-}
-
-/** Register a callback to handle 401 (token expired) globally. */
-export function registerSessionExpiredHandler(fn: SessionExpiredHandler): void {
-  onSessionExpired = fn
-}
-
-/**
- * Register a callback for connection-quality changes. Fires `flaky` after
- * CONNECTION_FAILURE_THRESHOLD consecutive network failures while the browser
- * still reports itself online, and `ok` after the next successful request.
- */
-export function registerConnectionStatusHandler(fn: ConnectionStatusHandler): void {
-  onConnectionStatus = fn
-}
-
-const CONNECTION_FAILURE_THRESHOLD = 2
-const RETRY_DELAY_MS = 800
-
-let consecutiveFailures = 0
-let lastReported: 'ok' | 'flaky' = 'ok'
-
-function reportConnection(status: 'ok' | 'flaky'): void {
-  if (status === lastReported) return
-  lastReported = status
-  onConnectionStatus?.(status)
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-async function request<T>(
-  path: string,
-  options: RequestInit = {},
-): Promise<T> {
-  const token = getToken()
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(options.headers as Record<string, string> | undefined),
-  }
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`
-  }
-
-  // One retry on network failure with a short delay. Anything beyond that and
-  // we surface the error so the caller can decide. We don't retry HTTP error
-  // responses — those are deterministic, not transient.
-  let res: Response
-  try {
-    res = await fetch(`${API_URL}${path}`, { ...options, headers })
-  } catch (_first) {
-    await delay(RETRY_DELAY_MS)
-    try {
-      res = await fetch(`${API_URL}${path}`, { ...options, headers })
-    } catch (_second) {
-      consecutiveFailures += 1
-      if (consecutiveFailures >= CONNECTION_FAILURE_THRESHOLD) {
-        reportConnection('flaky')
-      }
-      const message = 'Could not reach the server. Check your connection and try again.'
-      notifyError?.(message)
-      throw new ApiError(message, 0)
-    }
-  }
-
-  // Got a response — connection is fine even if the response is an error.
-  consecutiveFailures = 0
-  reportConnection('ok')
-
-  if (res.status === 401) {
-    // Only treat 401 as "session expired" when this request was authenticated
-    // (had a stored token). For unauthenticated requests — e.g. wrong-password
-    // login attempts — fall through to the body-surfacing branch below so the
-    // user sees the actual server error message instead of misleading copy
-    // suggesting their session timed out. See task 0010.
-    if (token) {
-      clearToken()
-      onSessionExpired?.()
-      throw new ApiError('Session expired', 401)
-    }
-  }
-
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
-    throw new ApiError(
-      (body.message ?? body.error ?? res.statusText) as string,
-      res.status,
-    )
-  }
-
-  return res.json() as Promise<T>
-}
-
-export class ApiError extends Error {
-  status: number
-  constructor(message: string, status: number) {
-    super(message)
-    this.name = 'ApiError'
-    this.status = status
-  }
-}
-
-/**
- * Thrown by confirmAction when the server rejects the password during step-up
- * re-auth. Distinct from ApiError(401) because a wrong password during step-up
- * must NOT clear the user's session — they're still logged in, they just
- * mistyped. Callers (ConfirmPasswordModal) catch this to show an inline error
- * instead of bouncing the user to /login.
- */
-export class IncorrectPasswordError extends Error {
-  constructor(message = 'Incorrect password.') {
-    super(message)
-    this.name = 'IncorrectPasswordError'
-  }
-}
-
-// ─── Auth endpoints ──────────────────────────────
-
-interface AuthSessionResponse {
-  user_id: string
-  session_token: string
-  salt: string
-}
-
-export interface AuthUser {
-  user_id: string
-  email: string
-  email_verified: boolean
-  created_at: string
-  frozen_at?: string | null
-  totp_enabled: boolean
-  two_factor_enabled?: boolean
-  twoFactorEnabled?: boolean
-}
-
-export interface SignupResult {
-  session_token: string
-  salt: string
-  user_id: string
-}
-
-/** Login may return a full session OR a 2FA challenge. */
-export interface LoginResult {
-  requires_2fa?: boolean
-  partial_token?: string
-  user_id?: string
-  session_token?: string
-  salt?: string
-}
+export type {
+  AbuseReport,
+  AbuseReportStatus,
+  AcceptInviteResponse,
+  AccountActivity,
+  AccountActivityEvent,
+  AccountActivitySummary,
+  AccountExport,
+  AccountSession,
+  ActivityEvent,
+  ActivityResponse,
+  AdminActivityEvent,
+  AdminActivityResponse,
+  AdminBillingStats,
+  AdminConfig,
+  AdminSignIn,
+  AdminSignInsResponse,
+  AdminStats,
+  AdminUser,
+  AdminUserDetail,
+  AdminUserSession,
+  AdminUsersResponse,
+  AuditEvent,
+  AuthSessionResponse,
+  AuthUser,
+  AvailableRegion,
+  BillingSyncResult,
+  BillingUsage,
+  ConnectionStatusHandler,
+  CreateTokenParams,
+  CreateTokenResponse,
+  CreateWebhookResponse,
+  CspReport,
+  DataExportRequest,
+  DataExportStatus,
+  DriveFile,
+  ErrorNotifier,
+  FileVersion,
+  GrowthDataPoint,
+  HealthResponse,
+  HealthWorkerItem,
+  ImpersonateResponse,
+  InviteActivity,
+  InviteInfo,
+  InvitePreview,
+  Invoice,
+  JoinTransferResponse,
+  LifecycleOutcome,
+  LifecyclePhase,
+  LifecycleRun,
+  LifecycleRunEvent,
+  LoginIp,
+  LoginResult,
+  MigrationEntry,
+  MigrationSummary,
+  MyActivityResponse,
+  MyShare,
+  MySignIn,
+  MySignInsResponse,
+  Notification,
+  NotificationPreferences,
+  OnboardingState,
+  PasskeyInfo,
+  PasskeyLoginStartResponse,
+  PasskeyRegisterStartResponse,
+  PaymentMethod,
+  PendingInvite,
+  PersonalAccessToken,
+  Plan,
+  PlanUpdateInput,
+  PlanUpdateResponse,
+  PoolInsights,
+  PoolUsageEntry,
+  ReferralEntry,
+  ReferralStats,
+  RegionsResponse,
+  RoleChangeResponse,
+  RunFileEntry,
+  RunProgress,
+  SecurityFactor,
+  SecurityScore,
+  Session,
+  SessionExpiredHandler,
+  ShareInfo,
+  ShareInvite,
+  ShareOptions,
+  ShareStats,
+  ShareView,
+  SharedFileDownload,
+  SignupResult,
+  StoragePool,
+  StorageUsage,
+  StreamTokenResponse,
+  SubmittedSyncOp,
+  Subscription,
+  SyncNode,
+  SyncOp,
+  SyncOpsResult,
+  SyncSnapshot,
+  TotpSetupResponse,
+  TrackingPreference,
+  TransferStatus,
+  UploadStatusResponse,
+  UserRegionResponse,
+  UserStorageBreakdown,
+  UserStoragePoolEntry,
+  VersionSetting,
+  WaitlistEntry,
+  WaitlistResponse,
+  Webhook,
+  Workspace,
+  WorkspaceMember,
+  WorkspaceMemberDetail,
+  WorkspaceMembersResponse,
+} from '@beebeeb/shared'
 
 export async function signup(
   email: string,
@@ -462,14 +528,6 @@ export async function getMe(): Promise<AuthUser> {
   return request<AuthUser>('/api/v1/auth/me')
 }
 
-// ─── 2FA endpoints ──────────────────────────────
-
-export interface TotpSetupResponse {
-  secret: string
-  qr_uri: string
-  backup_codes: string[]
-}
-
 export async function setup2fa(): Promise<TotpSetupResponse> {
   return request<TotpSetupResponse>('/api/v1/auth/2fa/setup', {
     method: 'POST',
@@ -502,28 +560,6 @@ export async function verify2fa(
     setToken(data.session_token)
   }
   return data
-}
-
-// ─── Drive / Files endpoints ─────────────────────
-
-export interface DriveFile {
-  id: string
-  name_encrypted: string
-  /** Null for files uploaded after the ZK audit fix (commit 04d5288).
-   *  Infer type from decrypted filename extension instead. */
-  mime_type: string | null
-  size_bytes: number
-  is_folder: boolean
-  parent_id: string | null
-  chunk_count: number
-  is_starred?: boolean
-  has_thumbnail?: boolean
-  version_number?: number
-  /** Number of active (non-revoked, non-expired) share links for this file.
-   *  Populated by a LEFT JOIN in the server's list_files handler. */
-  share_count?: number
-  created_at: string
-  updated_at: string
 }
 
 export async function listFiles(
@@ -598,8 +634,11 @@ export async function uploadChunk(
       body: new Uint8Array(data) as BodyInit,
     })
   } catch (_err) {
+    // The error notifier now lives in @beebeeb/shared and is fired by the
+    // shared `request()` helper for normal endpoints. Chunk uploads use raw
+    // `fetch()` because they stream binary, so just throw — the caller
+    // (encryptedUpload) already surfaces upload failures via toast.
     const message = 'Could not reach the server. Check your connection and try again.'
-    notifyError?.(message)
     throw new ApiError(message, 0)
   }
 
@@ -621,13 +660,6 @@ export async function completeUpload(
     method: 'POST',
     body: JSON.stringify({}),
   })
-}
-
-export interface UploadStatusResponse {
-  file_id: string
-  chunk_count: number
-  uploaded_chunks: number[]
-  is_uploading: boolean
 }
 
 export async function getUploadStatus(
@@ -711,62 +743,6 @@ export async function uploadThumbnail(fileId: string, blob: Blob): Promise<void>
   if (!res.ok) {
     throw new ApiError(res.statusText, res.status)
   }
-}
-
-// ─── Sync engine (CRDT op log + SSE) ─────────────
-// Spec: docs/superpowers/specs/2026-05-02-crdt-sync-engine-design.md
-
-export interface SyncNode {
-  id: string
-  name_encrypted: string
-  parent_id: string | null
-  is_folder: boolean
-  size_bytes: number
-  mime_type: string | null
-  content_hash: string | null
-  version_number: number
-  has_thumbnail: boolean
-  storage_pool_id: string | null
-  is_trashed: boolean
-  is_starred: boolean
-  chunk_count?: number
-  created_at: string
-  updated_at: string
-}
-
-export interface SyncOp {
-  seq_id: number
-  op_type: string
-  client_op_id?: string
-  payload: Record<string, unknown>
-  device_id?: string
-  created_at: string
-}
-
-export interface SyncSnapshot {
-  seq_id: number
-  nodes: SyncNode[]
-}
-
-export interface SubmittedSyncOp {
-  client_op_id: string
-  op_type: string
-  payload: Record<string, unknown>
-  device_id?: string
-}
-
-export interface SyncOpsResult {
-  applied: { seq_id: number; client_op_id: string }[]
-  rejected: {
-    client_op_id: string
-    reason: string
-    winning_op?: { op_type: string; payload: Record<string, unknown> }
-  }[]
-}
-
-export interface StreamTokenResponse {
-  stream_token: string
-  expires_at: string
 }
 
 export async function getSnapshot(): Promise<SyncSnapshot> {
@@ -895,96 +871,10 @@ export async function emailChangeFinish(
   })
 }
 
-export interface AccountExport {
-  user_id: string
-  email: string
-  exported_at: string
-  preferences: Record<string, unknown>
-  files: unknown[]
-  shares: unknown[]
-}
-
 export async function exportAccountData(): Promise<AccountExport> {
   return request<AccountExport>('/api/v1/auth/account/export', {
     method: 'POST',
   })
-}
-
-// ─── Share endpoints ────────────────────────────
-
-export interface ShareOptions {
-  expires_in_hours?: number | null
-  max_opens?: number | null
-  passphrase?: string
-  /**
-   * When set, the client has wrapped the file key under a client-generated key
-   * (double-encrypted mode). The server stores this opaque blob and returns it
-   * to recipients — the server cannot decrypt it without the client key that
-   * lives only in the URL fragment.
-   * Format: base64(nonce(12) || AES-256-GCM-ciphertext(48)) = 80 chars.
-   */
-  wrapped_file_key?: string
-}
-
-export interface ShareInfo {
-  id: string
-  token: string
-  url: string
-  expires_at: string | null
-  max_opens: number | null
-  has_passphrase: boolean
-  created_at: string
-  /** True when the client supplied wrapped_file_key at creation time. */
-  double_encrypted?: boolean
-}
-
-export interface ShareView {
-  id: string
-  name_encrypted?: string
-  size_bytes?: number
-  chunk_count?: number
-  mime_type?: string
-  shared_by?: string
-  /** User ID of the person who created the share — for referral attribution. */
-  sharer_id?: string
-  expires_at?: string | null
-  max_opens?: number | null
-  open_count?: number
-  created_at?: string
-  requires_passphrase?: boolean
-  error?: string
-  message?: string
-  /**
-   * True when the share was created in double-encrypted mode.
-   * When true, wrapped_file_key is present and the #key= fragment contains
-   * the client key K_c — not the file key directly.
-   * Recipients must: fileKey = AES-GCM-Decrypt(K_c, wrapped_file_key).
-   */
-  double_encrypted?: boolean
-  /**
-   * Base64-encoded wrapped file key (nonce || ciphertext, 60 bytes).
-   * Only present when double_encrypted === true.
-   * The server stores this opaque blob; decryption requires K_c from the URL fragment.
-   */
-  wrapped_file_key?: string
-}
-
-export interface MyShare {
-  id: string
-  file_id: string
-  token: string
-  url: string
-  expires_at: string | null
-  max_opens: number | null
-  open_count: number
-  has_passphrase: boolean
-  revoked?: boolean
-  created_at: string
-  file: {
-    name_encrypted: string
-    size_bytes: number
-    mime_type: string | null
-  }
 }
 
 export async function createShare(
@@ -1034,12 +924,6 @@ export async function verifySharePassphrase(
   }
 
   return res.json() as Promise<ShareView>
-}
-
-export interface SharedFileDownload {
-  blob: Blob
-  chunkCount: number | null
-  originalSize: number | null
 }
 
 export async function downloadSharedFile(token: string, passphrase?: string): Promise<SharedFileDownload> {
@@ -1101,33 +985,6 @@ export async function getSharesForFile(fileId: string): Promise<MyShare[]> {
 
 export async function revokeShare(id: string): Promise<void> {
   await request<void>(`/api/v1/shares/${id}`, { method: 'DELETE' })
-}
-
-// ─── Share invites (blind sharing) ──────────────
-
-export interface ShareInvite {
-  id: string
-  file_id: string
-  sender_id: string
-  recipient_email: string
-  status: string
-  created_at: string
-  claimed_at?: string
-  approved_at?: string
-  file_name_encrypted?: string
-  sender_email?: string
-  sender_public_key?: string
-  recipient_public_key?: string
-  can_reshare?: boolean
-  expires_at?: string | null
-  size_bytes?: number
-  is_folder?: boolean
-  chunk_count?: number
-  mime_type?: string
-  encrypted_file_key?: string
-  is_folder_share?: boolean
-  encrypted_folder_key?: string
-  encrypted_owner_folder_key?: string
 }
 
 export async function createInvite(
@@ -1197,16 +1054,6 @@ export async function patchInvite(
   })
 }
 
-export interface InviteActivity {
-  recipient_email: string
-  created_at: string
-  claimed_at: string | null
-  approved_at: string | null
-  download_count: number
-  last_accessed: string | null
-  first_accessed: string | null
-}
-
 export async function getInviteActivity(inviteId: string): Promise<InviteActivity> {
   return request(`/api/v1/shares/invites/${inviteId}/activity`)
 }
@@ -1223,64 +1070,12 @@ export async function hideInvite(inviteId: string): Promise<void> {
   await request(`/api/v1/shares/invites/${inviteId}/hide`, { method: 'POST' })
 }
 
-// ─── Share stats ─────────────────────────────
-
-export interface ShareStats {
-  active_links: number
-  pending_invites: number
-  total_downloads: number
-}
-
 export async function getShareStats(): Promise<ShareStats> {
   return request<ShareStats>('/api/v1/shares/stats')
 }
 
-// ─── Billing endpoints ─────────────────────────
-
-export interface Plan {
-  id: string
-  name: string
-  stripe_product_id?: string | null
-  price_eur: number
-  price_yearly_eur: number
-  storage_bytes: number
-  storage_label: string
-  per_seat: boolean
-  min_seats: number
-  features: string[]
-  is_active?: boolean
-  sort_order?: number
-}
-
-export interface BillingSyncResult {
-  /** Total plans upserted (server field: synced) */
-  synced: number
-  /** Alias for synced — server may return either */
-  count?: number
-  plans_synced?: number
-  created: number
-  updated: number
-  synced_at: string
-  message?: string
-}
-
 export async function syncBillingPlans(): Promise<BillingSyncResult> {
   return request<BillingSyncResult>('/api/v1/admin/billing/sync', { method: 'POST' })
-}
-
-export interface PlanUpdateInput {
-  name?: string
-  price_eur?: number
-  price_yearly_eur?: number
-  storage_bytes?: number
-  features?: string[]
-  is_active?: boolean
-}
-
-export interface PlanUpdateResponse {
-  plan: Plan
-  stripe_synced: boolean
-  note?: string
 }
 
 /** PATCH /api/v1/admin/billing/plans/:slug */
@@ -1294,51 +1089,8 @@ export async function patchBillingPlan(
   })
 }
 
-export interface Subscription {
-  plan: string
-  billing_cycle: string
-  seats: number
-  region: string
-  status: string
-  is_mock?: boolean
-  created_at: string | null
-  current_period_end: string | null
-}
-
-export interface Invoice {
-  id: string
-  number: string
-  date: string
-  amount_eur: number
-  status: string
-  period: string
-  url?: string
-  pdf_url?: string
-}
-
-export interface StorageUsage {
-  used_bytes: number
-  plan_limit_bytes: number
-  plan_name: string
-}
-
 export async function getStorageUsage(): Promise<StorageUsage> {
   return request<StorageUsage>('/api/v1/files/usage')
-}
-
-/**
- * GET /api/v1/billing/usage
- *
- * Returns authoritative storage quota from the billing subsystem.
- * Implemented in server task 0033. Returns null instead of throwing
- * when the endpoint is not yet deployed (404), so callers can fall back
- * to getStorageUsage() without crashing.
- */
-export interface BillingUsage {
-  used_bytes: number
-  quota_bytes: number
-  /** Server-computed percentage 0–100. */
-  percentage: number
 }
 
 export async function fetchUsage(): Promise<BillingUsage | null> {
@@ -1402,16 +1154,6 @@ export async function createPortalSession(): Promise<{ url: string } | null> {
   }
 }
 
-export interface PaymentMethod {
-  type: string
-  brand?: string
-  last4?: string
-  exp_month?: number
-  exp_year?: number
-  iban_last4?: string
-  is_default: boolean
-}
-
 export async function getPaymentMethod(): Promise<PaymentMethod> {
   return request<PaymentMethod>('/api/v1/billing/payment-method')
 }
@@ -1426,21 +1168,6 @@ export async function reactivateSubscription(): Promise<{ message?: string; acti
 
 export async function createSetupIntent(): Promise<{ client_secret: string }> {
   return request<{ client_secret: string }>('/api/v1/billing/setup-intent', { method: 'POST' })
-}
-
-// ─── Referral program ────────────────────────────────────────────────────────
-
-export interface ReferralStats {
-  code: string
-  referral_count: number
-  earned_gb: number
-}
-
-export interface ReferralEntry {
-  /** Anonymised display, e.g. "a***@example.com" */
-  display_email: string
-  joined_at: string
-  status: 'active' | 'pending'
 }
 
 /**
@@ -1470,26 +1197,6 @@ export async function listReferrals(): Promise<ReferralEntry[]> {
   }
 }
 
-// ─── Personal Access Tokens ───────────────────────────────────────────────────
-
-export interface PersonalAccessToken {
-  id: string
-  name: string
-  scopes: string[]
-  created_at: string
-  last_used_at: string | null
-  expires_at: string | null
-}
-
-export interface CreateTokenResponse {
-  id: string
-  /** Raw token — shown exactly once. Server never returns it again. */
-  token: string
-  name: string
-  scopes: string[]
-  expires_at: string | null
-}
-
 /** List all personal access tokens for the current user. Returns [] on 404 (endpoint not yet deployed). */
 export async function listTokens(): Promise<PersonalAccessToken[]> {
   try {
@@ -1499,13 +1206,6 @@ export async function listTokens(): Promise<PersonalAccessToken[]> {
     if (err instanceof ApiError && err.status === 404) return []
     throw err
   }
-}
-
-export interface CreateTokenParams {
-  name: string
-  scopes: string[]
-  /** ISO duration string or null for no expiry — e.g. "P30D" */
-  expires_in_days: number | null
 }
 
 /** Create a new personal access token. */
@@ -1519,27 +1219,6 @@ export async function createToken(params: CreateTokenParams): Promise<CreateToke
 /** Revoke a personal access token by ID. */
 export async function revokeToken(id: string): Promise<void> {
   await request(`/api/v1/tokens/${id}`, { method: 'DELETE' })
-}
-
-// ─── Webhooks ─────────────────────────────────────────────────────────────────
-
-export interface Webhook {
-  id: string
-  url: string
-  events: string[]
-  is_active: boolean
-  last_triggered_at: string | null
-  failure_count: number
-  created_at: string
-}
-
-export interface CreateWebhookResponse {
-  id: string
-  url: string
-  /** Signing secret — returned once on creation, never again. */
-  secret: string
-  events: string[]
-  is_active: boolean
 }
 
 /** List all webhooks. Returns [] on 404 (endpoint not yet deployed). */
@@ -1584,26 +1263,6 @@ export async function enableWebhook(id: string): Promise<Webhook> {
   return request<Webhook>(`/api/v1/webhooks/${id}/enable`, { method: 'POST' })
 }
 
-// ─── Admin endpoints ──────────────────────────
-
-export interface AuditEvent {
-  id: string
-  workspace_id: string | null
-  actor: string
-  event: string
-  target: string | null
-  ip_address: string | null
-  device: string | null
-  created_at: string
-}
-
-export interface WorkspaceMember {
-  id: string
-  email: string
-  email_verified: boolean
-  joined_at: string
-}
-
 export async function listAuditLog(params?: {
   actor?: string
   event?: string
@@ -1644,48 +1303,6 @@ export async function removeMember(id: string): Promise<{ message: string }> {
   return request(`/api/v1/admin/members/${id}`, { method: 'DELETE' })
 }
 
-// ─── Admin user endpoints (platform-wide) ────────────────
-
-export interface AdminUser {
-  id: string
-  email: string
-  created_at: string
-  email_verified: boolean
-  plan: string
-  storage_used_bytes: number
-}
-
-export interface AdminUsersResponse {
-  users: AdminUser[]
-  total: number
-  limit: number
-  offset: number
-}
-
-export interface AdminUserDetail {
-  id: string
-  email: string
-  email_verified: boolean
-  /** Top-level account role. Server adds this in `7be299a` for task 0018. */
-  role: 'user' | 'admin' | 'superadmin'
-  created_at: string
-  plan: string
-  billing_cycle: string | null
-  subscription_status: string | null
-  current_period_end: string | null
-  storage_bytes: number
-  file_count: number
-  share_count: number
-  session_count: number
-  last_login: string | null
-  workspaces: { id: string; name: string; role: string; joined_at: string }[]
-  plan_limit_bytes?: number
-  /** Whether the account uses OPAQUE (true) or legacy Argon2id (false/absent). */
-  opaque_enrolled?: boolean
-  /** Whether the account is suspended (cannot log in). */
-  is_suspended?: boolean
-}
-
 export async function listAdminUsers(params?: {
   search?: string
   limit?: number
@@ -1703,16 +1320,6 @@ export async function listAdminUsers(params?: {
 
 export async function getAdminUserDetail(id: string): Promise<AdminUserDetail> {
   return request<AdminUserDetail>(`/api/v1/admin/users/${id}`)
-}
-
-/** A single active session for a user. */
-export interface AdminUserSession {
-  id: string
-  created_at: string
-  last_active_at: string | null
-  ip_address: string | null
-  user_agent: string | null
-  device_hint: string | null
 }
 
 /**
@@ -1741,66 +1348,8 @@ export async function unsuspendUser(userId: string): Promise<void> {
   await request(`/api/v1/admin/users/${userId}/unsuspend`, { method: 'POST', body: JSON.stringify({}) })
 }
 
-// ─── Admin waitlist ──────────────────────────────
-
-export interface WaitlistEntry {
-  email: string
-  source: string
-  created_at: string
-}
-
-export interface WaitlistResponse {
-  count: number
-  entries: WaitlistEntry[]
-}
-
 export async function getWaitlist(): Promise<WaitlistResponse> {
   return request<WaitlistResponse>('/api/v1/admin/waitlist')
-}
-
-// ─── Admin storage pool endpoints ────────────────
-
-export interface StoragePool {
-  id: string
-  name: string
-  provider: string
-  endpoint: string
-  bucket: string
-  region: string
-  /** Human-readable city name shown in region badges (e.g. "Falkenstein") */
-  city?: string | null
-  /** Continent slug for data-residency display (e.g. "europe") */
-  continent?: string | null
-  display_name: string
-  is_default: boolean
-  is_active: boolean
-  capacity_bytes: number | null
-  used_bytes: number
-  usage_pct: number | null
-  created_at: string
-  lifecycle_phase?: LifecyclePhase
-}
-
-export interface MigrationSummary {
-  pending: number
-  copying: number
-  verifying: number
-  done: number
-  failed: number
-  total: number
-}
-
-export interface MigrationEntry {
-  id: string
-  file_id: string
-  from_pool: string | null
-  to_pool: string | null
-  status: string
-  chunks_copied: number
-  error: string | null
-  started_at: string | null
-  completed_at: string | null
-  created_at: string
 }
 
 export async function listStoragePools(): Promise<StoragePool[]> {
@@ -1852,13 +1401,6 @@ export async function updateStoragePool(
   })
 }
 
-export interface PoolUsageEntry {
-  user_id: string
-  email: string
-  used_bytes: number
-  file_count: number
-}
-
 export async function getPoolUsage(id: string): Promise<{
   pool_id: string
   entries: PoolUsageEntry[]
@@ -1878,25 +1420,6 @@ export async function migrateUser(
     method: 'POST',
     body: JSON.stringify({ target_pool_id: targetPoolId }),
   })
-}
-
-// ─── Admin: per-user storage breakdown ────────────────
-
-export interface UserStoragePoolEntry {
-  pool_id: string
-  pool_name: string
-  file_count: number
-  total_bytes: number
-}
-
-export interface UserStorageBreakdown {
-  user_id: string
-  /** Pools where the user has at least one non-trashed, non-folder file. */
-  pools: UserStoragePoolEntry[]
-  total_files: number
-  total_bytes: number
-  plan_name: string
-  plan_limit_bytes: number
 }
 
 /**
@@ -1967,14 +1490,6 @@ export async function setPreference(key: string, value: unknown): Promise<void> 
     method: 'PUT',
     body: JSON.stringify(value),
   })
-}
-
-// ─── Passkey endpoints ──────────────────────────
-
-export interface PasskeyInfo {
-  id: string
-  name: string
-  created_at: string
 }
 
 // ─── WebAuthn base64url helpers ──────────────────
@@ -2106,15 +1621,6 @@ export function credentialToAuthenticationJSON(credential: PublicKeyCredential):
   }
 }
 
-// ─── Passkey registration endpoints ─────────────
-
-/** Raw server response — binary fields are base64url strings, not ArrayBuffers. */
-interface PasskeyRegisterStartResponse {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  publicKey: any
-  reg_state: string
-}
-
 export async function startPasskeyRegistration(): Promise<PasskeyRegisterStartResponse> {
   return request<PasskeyRegisterStartResponse>('/api/v1/auth/passkey/register-start', {
     method: 'POST',
@@ -2130,16 +1636,6 @@ export async function finishPasskeyRegistration(
     method: 'POST',
     body: JSON.stringify({ credential, reg_state: regState, name }),
   })
-}
-
-// ─── Passkey login endpoints ─────────────────────
-
-/** Raw server response — binary fields are base64url strings, not ArrayBuffers. */
-interface PasskeyLoginStartResponse {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  publicKey: any
-  auth_state: string
-  user_id: string
 }
 
 export async function startPasskeyLogin(email: string): Promise<PasskeyLoginStartResponse> {
@@ -2175,25 +1671,6 @@ export async function deletePasskey(id: string): Promise<void> {
   await request<void>(`/api/v1/auth/passkeys/${id}`, { method: 'DELETE' })
 }
 
-// ─── Activity endpoints ──────────────────────────
-
-export interface ActivityEvent {
-  id: string
-  type: string
-  subject: string | null
-  details: string | null
-  where: string | null
-  /** Client that triggered the event — "web" | "mobile-ios" | "mobile-android" | "desktop" | "cli" */
-  device?: string | null
-  created_at: string
-}
-
-export interface ActivityResponse {
-  events: ActivityEvent[]
-  total: number
-  page: number
-}
-
 export async function listActivity(
   page?: number,
   type?: string,
@@ -2205,54 +1682,6 @@ export async function listActivity(
   if (since) params.set('since', since)
   const qs = params.toString()
   return request<ActivityResponse>(`/api/v1/activity${qs ? `?${qs}` : ''}`)
-}
-
-// ─── Account activity (0050) ─────────────────────
-
-export interface AccountActivityEvent {
-  id: string
-  type: string
-  description: string
-  category: string
-  outcome: string
-  device: string | null
-  country_code: string | null
-  created_at: string
-}
-
-export interface AccountActivitySummary {
-  last_login_at: string | null
-  last_login_device: string | null
-  active_sessions: number
-  active_shares: number
-  security_score: string
-}
-
-export interface AccountActivity {
-  events: AccountActivityEvent[]
-  summary: AccountActivitySummary
-}
-
-export interface SecurityFactor {
-  key: string
-  satisfied: boolean
-}
-
-export interface SecurityScore {
-  score: number
-  max: number
-  label: string
-  factors: SecurityFactor[]
-}
-
-export interface AccountSession {
-  id: string
-  device_name: string
-  device_kind: string
-  country_code: string | null
-  last_active_at: string | null
-  created_at: string
-  is_current: boolean
 }
 
 export async function getAccountActivity(): Promise<AccountActivity> {
@@ -2275,63 +1704,6 @@ export async function revokeAllOtherSessions(): Promise<{ revoked: number }> {
   return request<{ revoked: number }>('/api/v1/account/sessions/revoke-all-others', {
     method: 'POST',
   })
-}
-
-// ─── Workspace endpoints ──────────────────────────
-
-export interface Workspace {
-  id: string
-  name: string
-  owner_id: string
-  role: string
-  created_at: string
-}
-
-export interface WorkspaceMemberDetail {
-  id: string
-  email: string
-  role: string
-  joined_at: string
-}
-
-export interface PendingInvite {
-  id: string
-  email: string
-  role: string
-  invited_by: string
-  created_at: string
-  expires_at: string
-}
-
-export interface WorkspaceMembersResponse {
-  members: WorkspaceMemberDetail[]
-  pending_invites: PendingInvite[]
-}
-
-export interface InviteInfo {
-  id: string
-  email: string
-  role: string
-  token: string
-  workspace_name: string
-  invited_by: string
-  expires_at: string
-  created_at: string
-}
-
-export interface AcceptInviteResponse {
-  message: string
-  workspace_id: string
-  workspace_name: string
-  role?: string
-  invited_by?: string
-}
-
-export interface InvitePreview {
-  workspace_name: string
-  invited_by: string
-  role: string
-  expires_at: string
 }
 
 export async function createWorkspace(name: string): Promise<Workspace> {
@@ -2412,17 +1784,6 @@ export async function getInvitePreview(
   return res.json() as Promise<InvitePreview>
 }
 
-// ─── Version History ──────────────────────────────────────
-
-export interface FileVersion {
-  id: string
-  version_number: number
-  size_bytes: number
-  chunk_count: number
-  created_by: string | null
-  created_at: string
-}
-
 export async function listVersions(fileId: string): Promise<{
   file_id: string
   current_version: number
@@ -2447,15 +1808,6 @@ export async function deleteVersion(fileId: string, versionId: string): Promise<
   await request(`/api/v1/files/${fileId}/versions/${versionId}`, { method: 'DELETE' })
 }
 
-export interface VersionSetting {
-  id: string
-  scope: string
-  target_id: string | null
-  enabled: boolean
-  max_versions: number | null
-  retention_days: number | null
-}
-
 export async function getVersionSettings(): Promise<{ settings: VersionSetting[] }> {
   return request('/api/v1/version-settings')
 }
@@ -2472,18 +1824,6 @@ export async function setVersionSetting(params: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
   })
-}
-
-// ─── Notifications ────────────────────────────────────────
-
-export interface Notification {
-  id: string
-  type: string
-  title: string
-  body: string | null
-  data: Record<string, unknown> | null
-  read: boolean
-  created_at: string
 }
 
 export async function listNotifications(unreadOnly?: boolean): Promise<{
@@ -2510,15 +1850,6 @@ export async function deleteNotification(id: string): Promise<void> {
   await request(`/api/v1/notifications/${id}`, { method: 'DELETE' })
 }
 
-// ─── Sessions ─────────────────────────────────────────────
-
-export interface Session {
-  id: string
-  is_current: boolean
-  created_at: string
-  expires_at: string
-}
-
 export async function listSessions(): Promise<{ sessions: Session[] }> {
   return request('/api/v1/auth/sessions')
 }
@@ -2527,27 +1858,11 @@ export async function revokeSession(id: string): Promise<void> {
   await request(`/api/v1/auth/sessions/${id}`, { method: 'DELETE' })
 }
 
-// ─── Admin impersonation ────────────────────────
-
-export interface ImpersonateResponse {
-  session_token: string
-  user_id: string
-  email: string
-}
-
 export async function adminImpersonate(userId: string): Promise<ImpersonateResponse> {
   const data = await request<ImpersonateResponse>(`/api/v1/admin/impersonate/${userId}`, {
     method: 'POST',
   })
   return data
-}
-
-// ─── Admin role management (superadmin-only on server) ──────────
-
-export interface RoleChangeResponse {
-  message: string
-  user_id: string
-  role: 'user' | 'admin' | 'superadmin'
 }
 
 /** Promote a user to admin. Server requires superadmin auth. */
@@ -2564,80 +1879,8 @@ export async function adminDemote(userId: string): Promise<RoleChangeResponse> {
   })
 }
 
-// ─── Admin stats & health ────────────────────────
-
-export interface AdminStats {
-  users: {
-    total: number
-    active_7d: number
-    signups_today: number
-  }
-  files: {
-    total: number
-    storage_used_bytes: number
-    uploads_today: number
-  }
-  shares: {
-    active_links: number
-    active_invites: number
-    created_today: number
-  }
-}
-
-export interface HealthWorkerItem {
-  interval_secs: number
-  last_run: string | null
-  seconds_ago?: number | null
-  status: string
-}
-
-export interface HealthResponse {
-  status: string
-  version: string
-  uptime_seconds: number
-  db: string
-  blob_store?: string
-  db_pool?: { active: number; idle: number; max: number; size: number }
-  checks: {
-    database: { status: string; latency_ms: number }
-    blob_store: { status: string; pools: number }
-  }
-  background_workers?: {
-    any_stale: boolean
-    count: number
-    items: Record<string, HealthWorkerItem>
-  }
-  websocket_connections?: number
-  process_memory?: { rss_kb: number; rss_mb: number } | null
-}
-
 export async function getAdminStats(): Promise<AdminStats> {
   return request<AdminStats>('/api/v1/admin/stats')
-}
-
-// ─── Admin billing stats ─────────────────────────────────────────────────────
-
-export interface AdminBillingStats {
-  total_subscribers: number
-  mrr_cents: number
-  conversion_rate: number
-  plan_distribution: {
-    free: number
-    personal: number
-    pro: number
-    data_hoarder: number
-    // Legacy keys — may be absent on new servers
-    team?: number
-    business?: number
-  }
-  recent_invoices: Array<{
-    id: string
-    user_id: string
-    amount_cents: number
-    currency: string
-    status: 'paid' | 'open' | 'void' | 'uncollectible'
-    created_at: string
-  }>
 }
 
 /**
@@ -2651,23 +1894,6 @@ export async function getAdminBillingStats(): Promise<AdminBillingStats | null> 
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) return null
     throw err
-  }
-}
-
-// ─── Admin server config ─────────────────────────────────────────────────────
-
-export interface AdminConfig {
-  email: {
-    provider: string | null
-    configured: boolean
-  }
-  slack: {
-    configured: boolean
-    webhook_url_prefix: string | null
-  }
-  turnstile: {
-    configured: boolean
-    sitekey_prefix: string | null
   }
 }
 
@@ -2716,23 +1942,6 @@ export async function reportShareLink(
   return res.json() as Promise<{ id: string }>
 }
 
-// ─── Admin abuse reports ────────────────────────
-
-export type AbuseReportStatus = 'pending' | 'reviewing' | 'actioned' | 'dismissed'
-
-export interface AbuseReport {
-  id: string
-  share_token: string
-  reporter_id: string | null
-  reporter_ip: string | null
-  reporter_email: string | null
-  reason: string
-  status: AbuseReportStatus
-  admin_notes: string | null
-  created_at: string
-  resolved_at: string | null
-}
-
 export async function listAbuseReports(params?: {
   status?: AbuseReportStatus
   limit?: number
@@ -2755,25 +1964,6 @@ export async function updateAbuseReport(
     method: 'PATCH',
     body: JSON.stringify(updates),
   })
-}
-
-// ─── Constellation peer transfer ────────────────────
-//
-// Receiver-side endpoints for the Constellation transfer flow. These run
-// without an active Beebeeb session — anyone with a 6-digit code (or
-// session_id) can join, derive a SAS code with the sender, and download.
-// Bearer auth is intentionally omitted; the per-session `download_token`
-// returned at join time authenticates subsequent calls.
-//
-// Sender-side endpoints (init / approve / upload / cancel) live elsewhere
-// — only Beebeeb users initiate transfers, and the web client is receive-
-// only for v1.
-
-export interface JoinTransferResponse {
-  /** Sender's ephemeral X25519 public key, base64. */
-  sender_pk: string
-  /** One-time token the receiver presents on status / blob / ack. */
-  download_token: string
 }
 
 /**
@@ -2811,14 +2001,6 @@ export async function joinTransferByCode(
   })
   if (!res.ok) throw new ApiError(await readError(res), res.status)
   return res.json() as Promise<JoinTransferResponse & { session_id: string }>
-}
-
-export interface TransferStatus {
-  status: 'waiting' | 'joined' | 'approved' | 'ready' | 'downloaded' | 'complete' | 'cancelled' | 'expired'
-  receiver_pk?: string
-  blob_size?: number
-  /** Encrypted (with transfer_key) filename hint, base64. */
-  file_name_hint?: string
 }
 
 /**
@@ -2903,18 +2085,6 @@ export async function reconcileUsage(): Promise<{
   return request('/api/v1/admin/reconcile-usage', { method: 'POST' })
 }
 
-// ─── Admin: CSP reports ────────────────────────────────
-
-export interface CspReport {
-  id: string
-  document_uri: string | null
-  violated_directive: string | null
-  blocked_uri: string | null
-  source_file: string | null
-  line_number: number | null
-  created_at: string
-}
-
 export async function listCspReports(params?: {
   limit?: number
   offset?: number
@@ -2926,23 +2096,8 @@ export async function listCspReports(params?: {
   return request(`/api/v1/admin/csp-reports${qs ? `?${qs}` : ''}`)
 }
 
-// ─── Admin: user login IPs ────────────────────────────
-
-export interface LoginIp {
-  ip: string
-  first_seen: string
-  last_seen: string
-}
-
 export async function getUserLoginIps(userId: string): Promise<{ ips: LoginIp[] }> {
   return request(`/api/v1/admin/users/${userId}/login-ips`)
-}
-
-// ─── Admin: growth data ───────────────────────────────
-
-export interface GrowthDataPoint {
-  date: string
-  value: number
 }
 
 export async function getAdminGrowthData(
@@ -2950,75 +2105,6 @@ export async function getAdminGrowthData(
   days: number = 30,
 ): Promise<{ data: GrowthDataPoint[] }> {
   return request(`/api/v1/admin/stats/growth?metric=${metric}&days=${days}`)
-}
-
-// ─── Storage pool lifecycle wizard (spec 011) ─────────────────────────────
-//
-// All endpoints are mounted at `/api/v1/admin/pools/:poolId/…` and gated on
-// `SuperAdminUser` server-side. The existing Bearer token in localStorage
-// carries that auth automatically via the `request()` helper.
-
-export type LifecyclePhase =
-  | 'active'
-  | 'quiescing'
-  | 'migrating'
-  | 'drained'
-  | 'deleted'
-
-export type LifecycleOutcome =
-  | 'in_progress'
-  | 'aborted'
-  | 'reverse_migrated'
-  | 'archived'
-  | 'completed_deleted'
-
-export interface LifecycleRun {
-  id: string
-  pool_id: string
-  target_pool_id: string
-  started_by: string
-  started_at: string
-  current_phase: LifecyclePhase
-  outcome: LifecycleOutcome
-  terminated_at: string | null
-}
-
-/** Live stats for an active pool shown in the Phase 1 insights panel. */
-export interface PoolInsights {
-  used_bytes: number
-  files_count: number
-  users_with_files_count: number
-  currently_active_users_count: number
-  in_flight_uploads_count: number
-  /** Rough estimate based on recent migration throughput; falls back to a
-   *  static 50 MB/s baseline when no history data is available. */
-  estimated_migration_seconds: number
-}
-
-/** Progress snapshot polled every 5 s during the migrating phase. */
-export interface RunProgress {
-  run: LifecycleRun
-  /** 0..1 fraction of files migrated for this run. */
-  phase_progress: number
-  throughput_bytes_per_sec: number
-  files_total: number
-  files_migrated: number
-  files_failed: number
-  files_pending: number
-  /** Remaining seconds at current throughput; 0 when complete. */
-  eta_seconds: number
-}
-
-/** Single file_migrations row returned by getLifecycleRunFiles. */
-export interface RunFileEntry {
-  file_id: string
-  /** Encrypted filename — UI shows truncated UUID or raw ciphertext; not decryptable in admin context. */
-  name_encrypted: string
-  size_bytes: number
-  status: 'pending' | 'copying' | 'verifying' | 'done' | 'failed' | string
-  error: string | null
-  started_at: string | null
-  completed_at: string | null
 }
 
 /**
@@ -3047,34 +2133,6 @@ export async function getLifecycleRunFiles(
   runId: string,
 ): Promise<{ files: RunFileEntry[]; total: number }> {
   return request(`/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}/files`)
-}
-
-/**
- * A single persisted migration event row, as returned by the events history
- * endpoint. Shape mirrors the WebSocket MigrationEvent variants plus an
- * auto-increment `id` used for replay (since_id cursor).
- *
- * All variant-specific fields are optional — use `type` to discriminate.
- */
-export interface LifecycleRunEvent {
-  /** DB sequence number — used as the since_id cursor for WS reconnect replay. */
-  id: number
-  type: string
-  at: string
-  // file event fields
-  file_id?: string
-  size_bytes?: number
-  chunks?: number
-  bytes_copied?: number
-  chunks_copied?: number
-  duration_ms?: number
-  error?: string
-  // throughput_sample fields
-  bytes_per_sec?: number
-  files_per_sec?: number
-  // phase_changed fields
-  from?: string
-  to?: string
 }
 
 /**
@@ -3293,19 +2351,6 @@ export async function googleTokenRefresh(
   })
 }
 
-// ─── Onboarding state (spec 024) ─────────────────────────────────────────────
-
-export interface OnboardingState {
-  /** User has verified their recovery phrase. */
-  phrase_verified: boolean
-  /** Server has a welcome file record (onboarding step 6 complete). */
-  welcome_file_exists: boolean
-  /** User has uploaded at least one non-welcome file. */
-  first_upload_done: boolean
-  /** User has created at least one active share link. */
-  first_share_done: boolean
-}
-
 /** GET /api/v1/account/onboarding-state */
 export async function getOnboardingState(): Promise<OnboardingState> {
   return request<OnboardingState>('/api/v1/account/onboarding-state')
@@ -3330,15 +2375,6 @@ export async function devResetOnboarding(email: string): Promise<void> {
   })
 }
 
-// ─── GDPR activity tracking (task 0020) ──────────────────────────────────────
-
-/** User's current tracking opt-in state. */
-export interface TrackingPreference {
-  tracking_opted_in: boolean
-  opted_in_at: string | null
-  opted_out_at: string | null
-}
-
 /** GET /api/v1/me/tracking */
 export async function getTrackingPreference(): Promise<TrackingPreference> {
   return request<TrackingPreference>('/api/v1/me/tracking')
@@ -3352,40 +2388,9 @@ export async function setTrackingPreference(optedIn: boolean): Promise<TrackingP
   })
 }
 
-/** One sign-in record returned to the user themselves. */
-export interface MySignIn {
-  at: string
-  ip_anonymized: string | null
-  user_agent: string | null
-  country_code: string | null
-  success: boolean
-}
-
-export interface MySignInsResponse {
-  opted_in: boolean
-  sign_ins: MySignIn[]
-}
-
 /** GET /api/v1/me/sign-ins — recent sign-ins for the authenticated user (GDPR opt-in). */
 export async function getMySignIns(): Promise<MySignInsResponse> {
   return request<MySignInsResponse>('/api/v1/me/sign-ins')
-}
-
-/** One sign-in record (admin view, GDPR opt-in). */
-export interface AdminSignIn {
-  id: string
-  at: string
-  /** Anonymized per data minimization — last octet zeroed for IPv4. */
-  ip_anonymized: string | null
-  /** Parsed UA string, e.g. "Chrome 124 on macOS". */
-  device: string | null
-  country_code: string | null
-  success: boolean
-}
-
-export interface AdminSignInsResponse {
-  opted_in: boolean
-  sign_ins: AdminSignIn[]
 }
 
 /** GET /api/v1/admin/users/:id/sign-ins */
@@ -3393,27 +2398,9 @@ export async function getAdminUserSignIns(userId: string): Promise<AdminSignInsR
   return request<AdminSignInsResponse>(`/api/v1/admin/users/${userId}/sign-ins`)
 }
 
-/** One GDPR activity event (admin view). */
-export interface AdminActivityEvent {
-  id: string
-  at: string
-  event_type: 'file_uploaded' | 'file_deleted' | 'file_downloaded' | 'share_created' | 'share_revoked' | 'folder_created' | string
-  description: string
-}
-
-export interface AdminActivityResponse {
-  opted_in: boolean
-  events: AdminActivityEvent[]
-}
-
 /** GET /api/v1/admin/users/:id/activity */
 export async function getAdminUserGdprActivity(userId: string): Promise<AdminActivityResponse> {
   return request<AdminActivityResponse>(`/api/v1/admin/users/${userId}/activity`)
-}
-
-export interface MyActivityResponse {
-  opted_in: boolean
-  events: ActivityEvent[]
 }
 
 /** GET /api/v1/me/activity — file activity events for the authenticated user (GDPR opt-in). */
@@ -3428,15 +2415,6 @@ export async function getMyActivity(opts?: {
   if (opts?.type) params.set('type', opts.type)
   const qs = params.toString()
   return request<MyActivityResponse>(`/api/v1/me/activity${qs ? `?${qs}` : ''}`)
-}
-
-// ─── Push notification preferences (task: notifications UI) ──────────────────
-
-export interface NotificationPreferences {
-  share_received: boolean
-  storage_warning: boolean
-  new_device_login: boolean
-  backup_complete: boolean
 }
 
 /** GET /api/v1/notifications/preferences */
@@ -3454,31 +2432,6 @@ export async function setNotificationPreferences(
     body: JSON.stringify(prefs),
   })
   return res.preferences
-}
-
-// ─── DSAR / privacy tools (spec 025) ─────────────────────────────────────────
-
-export interface DataExportRequest {
-  export_id: string
-  status: 'pending' | 'processing' | 'ready' | 'failed' | string
-  estimated_seconds?: number
-  /** Server returns `resumed: true` when an existing export job is reused
-   * instead of creating a new one. When resumed, the response also carries
-   * any already-populated status fields below. */
-  resumed?: boolean
-  file_count?: number
-  total_bytes?: number
-  download_url?: string
-  expires_at?: string
-}
-
-export interface DataExportStatus {
-  export_id: string
-  status: 'pending' | 'processing' | 'ready' | 'failed' | string
-  file_count?: number
-  total_bytes?: number
-  download_url?: string
-  expires_at?: string
 }
 
 /**
@@ -3517,25 +2470,6 @@ export async function freezeAccount(): Promise<{ frozen: boolean }> {
 /** POST /api/v1/me/unfreeze — re-enable processing */
 export async function unfreezeAccount(): Promise<{ frozen: boolean }> {
   return request<{ frozen: boolean }>('/api/v1/me/unfreeze', { method: 'POST' })
-}
-
-// ─── Data residency (task 0051) ───────────────────────────────────────────────
-
-export interface AvailableRegion {
-  continent: string
-  display_name: string
-  city: string
-  provider: string
-  is_default: boolean
-}
-
-export interface RegionsResponse {
-  regions: AvailableRegion[]
-}
-
-export interface UserRegionResponse {
-  preferred_region: string | null
-  regions: AvailableRegion[]
 }
 
 /** GET /api/v1/regions — list all available storage regions */

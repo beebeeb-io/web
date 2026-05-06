@@ -5,8 +5,8 @@
 
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { BBButton } from '../components/bb-button'
-import { Icon } from '../components/icons'
+import { BBButton } from '@beebeeb/shared'
+import { Icon } from '@beebeeb/shared'
 import { getConsent, setConsent, type ConsentLevel } from '../lib/consent'
 
 // ── Cookie table ──────────────────────────────────────────────────────────────

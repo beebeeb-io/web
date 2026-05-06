@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useFocusTrap } from '../hooks/use-focus-trap'
-import { BBButton } from './bb-button'
+import { BBButton } from '@beebeeb/shared'
 
 interface NewFolderDialogProps {
   open: boolean
