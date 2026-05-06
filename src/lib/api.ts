@@ -1,3 +1,5 @@
+import { clearTauriSession } from './tauri-bridge'
+
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 
 export function getApiUrl(): string {
@@ -24,6 +26,7 @@ export function setToken(token: string): void {
 
 export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY)
+  void clearTauriSession()
 }
 
 // ─── Global error hooks ─────────────────────────────
