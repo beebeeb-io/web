@@ -11,6 +11,14 @@ import {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+const FALLBACK_REGIONS: AvailableRegion[] = [{
+  continent: 'europe',
+  display_name: 'Europe',
+  city: 'Falkenstein',
+  provider: 'Hetzner',
+  is_default: true,
+}]
+
 function countryFromCity(city: string): string {
   const map: Record<string, string> = {
     falkenstein: 'Germany',
@@ -99,7 +107,8 @@ export function SettingsDataResidency() {
     getUserRegion()
       .then(data => {
         if (cancelled) return
-        setRegions(data.regions ?? [])
+        const availableRegions = data.regions?.length ? data.regions : FALLBACK_REGIONS
+        setRegions(availableRegions)
         setPreferred(data.preferred_region ?? null)
       })
       .catch(err => {
@@ -107,7 +116,7 @@ export function SettingsDataResidency() {
         if (err instanceof ApiError && err.status === 404) {
           setEndpointMissing(true)
         }
-        // Fall back to empty — page still renders gracefully
+        setRegions(FALLBACK_REGIONS)
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -166,44 +175,36 @@ export function SettingsDataResidency() {
 
           {/* Region list */}
           <div className="px-7 mt-5">
-            {regions.length === 0 && !endpointMissing ? (
-              <p className="text-[13px] text-ink-3">No regions available.</p>
-            ) : (
-              <>
-                <div className="flex flex-col gap-2.5">
-                  {regions.map(region => (
-                    <RegionCard
-                      key={region.continent}
-                      region={region}
-                      selected={effectiveRegion === region.continent}
-                      disabled={saving || onlyOneRegion}
-                      onClick={() => void handleSelect(region.continent)}
-                    />
-                  ))}
-                </div>
+            <div className="flex flex-col gap-2.5">
+              {regions.map(region => (
+                <RegionCard
+                  key={region.continent}
+                  region={region}
+                  selected={effectiveRegion === region.continent}
+                  disabled={saving || onlyOneRegion}
+                  onClick={() => void handleSelect(region.continent)}
+                />
+              ))}
+            </div>
 
-                {/* Single-region note */}
-                {onlyOneRegion && regions.length > 0 && (
-                  <p className="text-[12px] text-ink-4 mt-3 leading-relaxed">
-                    More regions coming soon. Your files are stored in {regions[0]?.city ?? 'Europe'}.
-                  </p>
-                )}
-              </>
+            {/* Single-region note */}
+            {onlyOneRegion && (
+              <p className="text-[12px] text-ink-4 mt-3 leading-relaxed">
+                More regions coming soon. Your files are stored in {regions[0]?.city ?? 'Europe'}.
+              </p>
             )}
           </div>
 
           {/* Bottom note */}
-          {regions.length > 0 && (
-            <div className="px-7 mt-5 pb-6">
-              <div className="flex items-start gap-2.5 p-3 rounded-lg bg-paper-2 border border-line">
-                <Icon name="shield" size={13} className="text-amber-deep shrink-0 mt-0.5" />
-                <div className="text-[12px] text-ink-3 leading-relaxed">
-                  <strong className="text-ink-2">Existing files stay where they are.</strong>{' '}
-                  Only new uploads use your preferred region. All regions are in the EU — Hetzner data centers, governed by EU law.
-                </div>
+          <div className="px-7 mt-5 pb-6">
+            <div className="flex items-start gap-2.5 p-3 rounded-lg bg-paper-2 border border-line">
+              <Icon name="shield" size={13} className="text-amber-deep shrink-0 mt-0.5" />
+              <div className="text-[12px] text-ink-3 leading-relaxed">
+                <strong className="text-ink-2">Existing files stay where they are.</strong>{' '}
+                Only new uploads use your preferred region. All regions are in the EU — Hetzner data centers, governed by EU law.
               </div>
             </div>
-          )}
+          </div>
         </>
       )}
     </SettingsShell>
