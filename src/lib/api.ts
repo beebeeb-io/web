@@ -1394,7 +1394,7 @@ export async function cancelSubscription(): Promise<{ message: string; cancel_at
   return request<{ message: string; cancel_at?: string }>('/api/v1/billing/cancel', { method: 'POST' })
 }
 
-export async function reactivateSubscription(): Promise<{ message: string }> {
+export async function reactivateSubscription(): Promise<{ message?: string; action?: string; url?: string }> {
   return request<{ message: string }>('/api/v1/billing/reactivate', { method: 'POST' })
 }
 

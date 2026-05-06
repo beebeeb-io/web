@@ -1,8 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
-// Type-only import — no side effects, does NOT load the Stripe.js script
-import type { Stripe } from '@stripe/stripe-js'
-import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js'
 import { SettingsShell, SettingsHeader } from '../components/settings-shell'
 import { BBButton } from '../components/bb-button'
 import { BBChip } from '../components/bb-chip'
@@ -11,36 +8,22 @@ import { BBInput } from '../components/bb-input'
 import { Icon } from '../components/icons'
 import { UpgradeDialog } from '../components/upgrade-dialog'
 import { useToast } from '../components/toast'
-import { allowsFunctional, setConsent } from '../lib/consent'
 import {
   getSubscription,
   getInvoices,
   getStorageUsage,
   createPortalSession,
-  getPaymentMethod,
   cancelSubscription,
   reactivateSubscription,
-  createSetupIntent,
   getPreference,
   setPreference,
   getApiUrl,
   type Subscription,
   type Invoice,
   type StorageUsage,
-  type PaymentMethod,
 } from '../lib/api'
 import { formatStorageSI } from '../lib/format'
 import { StorageBreakdown } from '../components/storage-breakdown'
-
-/* ── Stripe publishable key ────────────────────────────── */
-// NOTE: Do NOT call loadStripe() here at module level.  Module-level calls
-// are evaluated whenever this file is imported, which would inject the
-// Stripe.js script on every page in the same bundle — causing r.stripe.com
-// requests on /drive, /photos, etc.
-// Instead we use a lazy useState initializer inside the Billing component so
-// Stripe.js only loads when the user actually navigates to /billing.
-const STRIPE_PK = (import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY as string | undefined)
-  || 'pk_live_51TS19oRS0saULmbDLcvwYgZSxJmSwnCMhvZDKt98q3VmNRxENbr7fHlnDRdPzv2nIEdLPUJcGpFuMxL0DgLLYjjR00hIrdQ8G7'
 
 /* ── Plan metadata ─────────────────────────────────────── */
 
@@ -97,48 +80,6 @@ function AnimatedProgress({ percent, className = '' }: { percent: number; classN
   )
 }
 
-/* ── Stripe Payment Setup Form ─────────────────────────── */
-
-function PaymentSetupForm({ onSuccess, onCancel }: { onSuccess: () => void; onCancel: () => void }) {
-  const stripe = useStripe()
-  const elements = useElements()
-  const { showToast } = useToast()
-  const [submitting, setSubmitting] = useState(false)
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!stripe || !elements) return
-    setSubmitting(true)
-    try {
-      const { error } = await stripe.confirmSetup({
-        elements,
-        confirmParams: { return_url: window.location.origin + '/billing' },
-        redirect: 'if_required',
-      })
-      if (error) {
-        showToast({ icon: 'x', title: 'Payment setup failed', description: error.message, danger: true })
-      } else {
-        showToast({ icon: 'check', title: 'Payment method saved' })
-        onSuccess()
-      }
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4 mt-3">
-      <PaymentElement options={{ layout: 'tabs' }} />
-      <div className="flex gap-2">
-        <BBButton type="submit" variant="amber" size="sm" disabled={!stripe || submitting}>
-          {submitting ? 'Saving...' : 'Save payment method'}
-        </BBButton>
-        <BBButton type="button" size="sm" variant="ghost" onClick={onCancel}>Cancel</BBButton>
-      </div>
-    </form>
-  )
-}
-
 /* ── Main component ────────────────────────────────────── */
 
 export function Billing() {
@@ -152,26 +93,9 @@ export function Billing() {
   const [upgradeOpen, setUpgradeOpen] = useState(false)
   const [upgradePlan, setUpgradePlan] = useState<string>('pro')
   const [portalLoading, setPortalLoading] = useState(false)
-  const [payment, setPayment] = useState<PaymentMethod | null>(null)
   const [cancelConfirm, setCancelConfirm] = useState(false)
   const [cancelLoading, setCancelLoading] = useState(false)
   const [reactivateLoading, setReactivateLoading] = useState(false)
-  const [showPaymentSetup, setShowPaymentSetup] = useState(false)
-  const [setupSecret, setSetupSecret] = useState<string | null>(null)
-  const [setupLoading, setSetupLoading] = useState(false)
-
-  // Consent-gated Stripe initializer.
-  // Stripe.js (and r.stripe.com requests) only load when:
-  //   1. The user is on /billing (lazy mount — already guaranteed), AND
-  //   2. They have consented to functional cookies ('all').
-  // If they chose 'essential only', stripePromise stays null and the UI shows
-  // a notice with a session-allow button.
-  const [stripeFunctionalAllowed, setStripeFunctionalAllowed] = useState(allowsFunctional)
-  const [stripePromise] = useState<Promise<Stripe | null>>(() => {
-    if (!allowsFunctional()) return Promise.resolve(null)
-    return import('@stripe/stripe-js').then(({ loadStripe }) => loadStripe(STRIPE_PK))
-  })
-  const stripeLoadedRef = useRef<boolean>(false)
 
   // Invoice preferences
   const [invoiceSendEmail, setInvoiceSendEmail] = useState(true)
@@ -184,17 +108,15 @@ export function Billing() {
     setLoading(true)
     setError(null)
     try {
-      const [subData, invData, storageData, paymentData, invoicePref] = await Promise.all([
+      const [subData, invData, storageData, invoicePref] = await Promise.all([
         getSubscription(),
         getInvoices(),
         getStorageUsage().catch(() => null),
-        getPaymentMethod().catch(() => null),
         getPreference<{ send_email: boolean; invoice_email: string }>('invoice_settings').catch(() => null),
       ])
       setSub(subData)
       setInvoices(invData)
       setStorage(storageData)
-      setPayment(paymentData)
       if (invoicePref) {
         setInvoiceSendEmail(invoicePref.send_email ?? true)
         setInvoiceEmail(invoicePref.invoice_email ?? '')
@@ -254,7 +176,11 @@ function openUpgrade(plan: string) {
   async function handleReactivate() {
     setReactivateLoading(true)
     try {
-      await reactivateSubscription()
+      const result = await reactivateSubscription()
+      if (result.action === 'checkout' && result.url) {
+        window.location.href = result.url
+        return
+      }
       showToast({ icon: 'check', title: 'Plan reactivated' })
       window.dispatchEvent(new Event('beebeeb:plan-changed'))
       await loadData()
@@ -268,35 +194,6 @@ function openUpgrade(plan: string) {
     } finally {
       setReactivateLoading(false)
     }
-  }
-
-  async function handleAddPaymentMethod() {
-    setSetupLoading(true)
-    try {
-      const { client_secret } = await createSetupIntent()
-      setSetupSecret(client_secret)
-      setShowPaymentSetup(true)
-    } catch (err) {
-      showToast({
-        icon: 'x',
-        title: 'Could not initialize payment setup',
-        description: err instanceof Error ? err.message : 'Please try again.',
-        danger: true,
-      })
-    } finally {
-      setSetupLoading(false)
-    }
-  }
-
-  function handlePaymentSetupSuccess() {
-    setShowPaymentSetup(false)
-    setSetupSecret(null)
-    void loadData()
-  }
-
-  function handlePaymentSetupCancel() {
-    setShowPaymentSetup(false)
-    setSetupSecret(null)
   }
 
   async function handleManageBilling() {
@@ -431,16 +328,16 @@ function openUpgrade(plan: string) {
             <BBButton
               size="sm"
               variant="danger"
-              onClick={() => void handleAddPaymentMethod()}
-              disabled={setupLoading || showPaymentSetup}
+              onClick={() => void handleManageBilling()}
+              disabled={portalLoading}
             >
-              {setupLoading ? 'Loading...' : 'Update payment method'}
+              {portalLoading ? 'Redirecting...' : 'Update payment method'}
             </BBButton>
           </div>
         )}
 
-        {/* ── Plan summary + Payment methods ─────────── */}
-        <div className="grid gap-4" style={{ gridTemplateColumns: '1.2fr 1fr' }}>
+        {/* ── Plan summary ──────────────────────────── */}
+        <div className="grid gap-4">
 
           {/* Current plan card */}
           <div className="border border-line rounded-xl p-5 bg-paper relative">
@@ -586,127 +483,6 @@ function openUpgrade(plan: string) {
               )
             )}
           </div>
-
-          {/* Payment method */}
-          <div className="border border-line rounded-xl p-5 bg-paper flex flex-col">
-            <div className="flex items-center mb-3">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-4">
-                Payment method
-              </div>
-            </div>
-
-            {effectivePlan === 'free' ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-center py-4">
-                <div className="w-10 h-10 rounded-xl bg-paper-2 border border-line flex items-center justify-center mb-3">
-                  <Icon name="shield" size={16} className="text-ink-3" />
-                </div>
-                <div className="text-sm text-ink-3 mb-1">No payment method needed</div>
-                <div className="text-xs text-ink-4">
-                  Upgrade to add a payment method and unlock more storage.
-                </div>
-              </div>
-            ) : showPaymentSetup && !stripeFunctionalAllowed ? (
-              /* Stripe blocked by consent — ask user to allow for this session */
-              <div className="flex flex-col gap-3 p-4 rounded-lg border border-line bg-paper-2">
-                <div className="flex items-start gap-2.5">
-                  <Icon name="lock" size={13} className="text-ink-3 shrink-0 mt-0.5" />
-                  <p className="text-[12.5px] text-ink-2 leading-relaxed">
-                    Payment processing requires Stripe cookies. You chose to allow essential cookies only.
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setConsent('all')
-                      setStripeFunctionalAllowed(true)
-                      stripeLoadedRef.current = true
-                      // Reload the page so the Stripe Promise initializer re-runs
-                      window.location.reload()
-                    }}
-                    className="text-[12.5px] font-medium text-amber-deep hover:underline"
-                  >
-                    Allow payment cookies for this session
-                  </button>
-                  <span className="text-ink-4 text-[12px]">·</span>
-                  <button
-                    type="button"
-                    onClick={() => setShowPaymentSetup(false)}
-                    className="text-[12.5px] text-ink-3 hover:text-ink transition-colors"
-                  >
-                    Cancel
-                  </button>
-                </div>
-                <p className="text-[11px] text-ink-4">
-                  Stripe processes the payment — Beebeeb never sees your card details.{' '}
-                  <a href="/cookies" className="underline hover:text-ink-3">Cookie details</a>
-                </p>
-              </div>
-            ) : showPaymentSetup && setupSecret ? (
-              <Elements
-                stripe={stripePromise}
-                options={{
-                  clientSecret: setupSecret,
-                  appearance: { theme: 'flat', variables: { fontFamily: 'Inter, sans-serif', borderRadius: '6px' } },
-                }}
-              >
-                <PaymentSetupForm onSuccess={handlePaymentSetupSuccess} onCancel={handlePaymentSetupCancel} />
-              </Elements>
-            ) : payment ? (
-              <div className="space-y-2 flex-1">
-                <div className="flex items-center gap-3 p-3 rounded-lg border border-line bg-paper-2">
-                  <div className="w-[36px] h-[24px] rounded bg-ink text-paper text-[9px] font-bold flex items-center justify-center tracking-wider uppercase shrink-0">
-                    {payment.type === 'sepa_debit' ? 'SEPA' : (payment.brand ?? payment.type).slice(0, 4)}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-mono text-xs font-medium">
-                      ···· {payment.last4 ?? payment.iban_last4}
-                      {payment.type === 'card' && payment.exp_month != null && payment.exp_year != null && (
-                        <span className="text-ink-3 font-normal ml-2">
-                          {payment.exp_month}/{String(payment.exp_year).slice(-2)}
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[11px] text-ink-3">
-                      {payment.type === 'sepa_debit'
-                        ? 'Direct debit'
-                        : payment.brand
-                          ? payment.brand.charAt(0).toUpperCase() + payment.brand.slice(1)
-                          : 'Card'}
-                    </div>
-                  </div>
-                  <BBChip variant="green">Default</BBChip>
-                </div>
-                <BBButton
-                  size="sm"
-                  variant="ghost"
-                  className="w-full"
-                  onClick={() => void handleAddPaymentMethod()}
-                  disabled={setupLoading}
-                >
-                  {setupLoading ? 'Loading...' : 'Update payment method'}
-                </BBButton>
-              </div>
-            ) : (
-              <div className="flex-1 flex flex-col items-center justify-center text-center py-4">
-                <div className="w-10 h-10 rounded-xl bg-paper-2 border border-line flex items-center justify-center mb-3">
-                  <Icon name="file-text" size={16} className="text-ink-3" />
-                </div>
-                <div className="text-sm text-ink-3 mb-1">No payment method on file</div>
-                <div className="text-xs text-ink-4 mb-3">
-                  Add one to keep your subscription active.
-                </div>
-                <BBButton
-                  size="sm"
-                  variant="amber"
-                  onClick={() => void handleAddPaymentMethod()}
-                  disabled={setupLoading}
-                >
-                  {setupLoading ? 'Loading...' : 'Add payment method'}
-                </BBButton>
-              </div>
-            )}
-          </div>
         </div>
 
         {/* ── Storage breakdown ──────────────────────── */}
@@ -723,48 +499,46 @@ function openUpgrade(plan: string) {
           </div>
         )}
 
-        {/* ── Upgrade CTAs for free plan ─────────────── */}
-        {effectivePlan === 'free' && (
-          <div className="border border-line rounded-xl overflow-hidden bg-paper">
-            <div className="px-5 py-4 border-b border-line">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-4 mb-1">
-                Unlock more
-              </div>
-              <div className="text-sm text-ink-2">
-                All paid plans include encrypted storage, photo library, and EU data residency.
-              </div>
+        {/* ── Upgrade CTAs ───────────────────────────── */}
+        <div className="border border-line rounded-xl overflow-hidden bg-paper">
+          <div className="px-5 py-4 border-b border-line">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-4 mb-1">
+              Unlock more
             </div>
-            <div className="grid grid-cols-3 divide-x divide-line">
-              {(['personal', 'pro', 'data_hoarder'] as const).map((planId) => {
-                const p = planMeta[planId]
-                return (
-                  <button
-                    key={planId}
-                    onClick={() => openUpgrade(planId)}
-                    className="p-5 text-left hover:bg-paper-2 transition-colors cursor-pointer group"
-                  >
-                    <div className="text-sm font-semibold mb-0.5 group-hover:text-amber-deep transition-colors">
-                      {p.label}
-                    </div>
-                    <div className="flex items-baseline gap-1 mb-2">
-                      <span className="font-mono text-lg font-bold">
-                        EUR {p.priceMonthly % 1 === 0 ? p.priceMonthly : p.priceMonthly.toFixed(2)}
-                      </span>
-                      <span className="text-xs text-ink-3">/ month</span>
-                    </div>
-                    <div className="text-xs text-ink-3 mb-3">
-                      {formatStorageSI(p.storageGB * 1_000_000_000)}
-                    </div>
-                    <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-deep">
-                      Subscribe
-                      <Icon name="chevron-right" size={10} />
-                    </span>
-                  </button>
-                )
-              })}
+            <div className="text-sm text-ink-2">
+              All paid plans include encrypted storage, photo library, and EU data residency.
             </div>
           </div>
-        )}
+          <div className="grid grid-cols-3 divide-x divide-line">
+            {(['personal', 'pro', 'data_hoarder'] as const).map((planId) => {
+              const p = planMeta[planId]
+              return (
+                <button
+                  key={planId}
+                  onClick={() => openUpgrade(planId)}
+                  className="p-5 text-left hover:bg-paper-2 transition-colors cursor-pointer group"
+                >
+                  <div className="text-sm font-semibold mb-0.5 group-hover:text-amber-deep transition-colors">
+                    {p.label}
+                  </div>
+                  <div className="flex items-baseline gap-1 mb-2">
+                    <span className="font-mono text-lg font-bold">
+                      EUR {p.priceMonthly % 1 === 0 ? p.priceMonthly : p.priceMonthly.toFixed(2)}
+                    </span>
+                    <span className="text-xs text-ink-3">/ month</span>
+                  </div>
+                  <div className="text-xs text-ink-3 mb-3">
+                    {formatStorageSI(p.storageGB * 1_000_000_000)}
+                  </div>
+                  <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-deep">
+                    Subscribe
+                    <Icon name="chevron-right" size={10} />
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
 
         {/* ── Invoices ───────────────────────────────── */}
         <div>
