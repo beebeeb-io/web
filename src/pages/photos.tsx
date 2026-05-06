@@ -145,6 +145,13 @@ export function Photos() {
   const [decryptedMimeTypes, setDecryptedMimeTypes] = useState<Record<string, string>>({})
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({})
   const loadingThumbs = useRef(new Set<string>())
+  // Stable mirror of the latest thumbnails map so loadThumbnail can dedupe
+  // without becoming a new function identity on every render.
+  const thumbnailsRef = useRef(thumbnails)
+  // Indirection that lets the IntersectionObserver call the latest
+  // loadThumbnail without us re-creating the observer when getFileKey
+  // identity changes.
+  const loadThumbnailRef = useRef<((fileId: string) => void) | null>(null)
   const [loading, setLoading] = useState(true)
   const [uploads, setUploads] = useState<UploadItem[]>([])
   const uploadAbortRef = useRef<Map<string, AbortController>>(new Map())
@@ -214,15 +221,63 @@ export function Photos() {
     return () => { cancelled = true }
   }, [allFiles, isUnlocked, getFileKey])
 
+  // Keep thumbnailsRef in sync so loadThumbnail's dedupe check sees the
+  // latest map without depending on `thumbnails` (which would invalidate
+  // the IntersectionObserver every time a new thumb arrived).
+  useEffect(() => { thumbnailsRef.current = thumbnails }, [thumbnails])
+
   const loadThumbnail = useCallback(async (fileId: string) => {
-    if (thumbnails[fileId] || loadingThumbs.current.has(fileId)) return
+    if (thumbnailsRef.current[fileId] || loadingThumbs.current.has(fileId)) return
     loadingThumbs.current.add(fileId)
     try {
       const fileKey = await getFileKey(fileId)
       const url = await fetchAndDecryptThumbnail(fileId, fileKey)
       if (url) setThumbnails((prev) => ({ ...prev, [fileId]: url }))
     } catch { /* ignore */ }
-  }, [thumbnails, getFileKey])
+  }, [getFileKey])
+
+  useEffect(() => {
+    loadThumbnailRef.current = loadThumbnail
+  }, [loadThumbnail])
+
+  // ─── Lazy-load thumbnails via IntersectionObserver ──────────────────
+  // Mirrors FileList's pattern: each photo cell registers its DOM node
+  // through `setPhotoCellRef`. The observer fires loadThumbnail only once
+  // per cell when it scrolls into view (rootMargin pre-warms the next
+  // screenful so users don't see placeholder flashes on fast scrolls).
+  const observerRef = useRef<IntersectionObserver | null>(null)
+  const photoNodeRefs = useRef(new Map<string, HTMLElement>())
+
+  useEffect(() => {
+    if (!isUnlocked) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            const fileId = (entry.target as HTMLElement).dataset.photoId
+            if (fileId) loadThumbnailRef.current?.(fileId)
+          }
+        }
+      },
+      { threshold: 0.1, rootMargin: '200px' },
+    )
+    observerRef.current = observer
+    for (const el of photoNodeRefs.current.values()) {
+      observer.observe(el)
+    }
+    return () => observer.disconnect()
+  }, [isUnlocked])
+
+  const setPhotoCellRef = useCallback((fileId: string, el: HTMLElement | null) => {
+    if (el) {
+      photoNodeRefs.current.set(fileId, el)
+      observerRef.current?.observe(el)
+    } else {
+      const existing = photoNodeRefs.current.get(fileId)
+      if (existing) observerRef.current?.unobserve(existing)
+      photoNodeRefs.current.delete(fileId)
+    }
+  }, [])
 
   // ─── Upload handlers ─────────────────────────────
 
@@ -477,14 +532,20 @@ export function Photos() {
                 {group.items.map((photo, pi) => {
                   const globalIndex = gi * 100 + pi
                   const thumbUrl = thumbnails[photo.id]
-                  if (!thumbUrl && photo.hasThumbnail && isUnlocked) {
-                    loadThumbnail(photo.id)
-                  }
+                  // Thumbnail decryption is kicked off by the
+                  // IntersectionObserver wired up above — never call
+                  // loadThumbnail() during render. Cells without a thumbnail
+                  // image (icon-only files) skip observer registration.
                   const file = filteredFiles.find((f) => f.id === photo.id)
+                  const observe = photo.hasThumbnail && isUnlocked
                   return (
                     <button
                       type="button"
                       key={photo.id}
+                      ref={observe
+                        ? (el) => setPhotoCellRef(photo.id, el as HTMLElement | null)
+                        : undefined}
+                      data-photo-id={observe ? photo.id : undefined}
                       onClick={() => file && openPreview(file)}
                       aria-label={`Open ${photo.name}`}
                       className="relative overflow-hidden rounded-sm cursor-pointer group/cell focus:outline-none focus:ring-2 focus:ring-amber"
