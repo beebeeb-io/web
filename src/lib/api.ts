@@ -1033,7 +1033,13 @@ export async function verifySharePassphrase(
   return res.json() as Promise<ShareView>
 }
 
-export async function downloadSharedFile(token: string, passphrase?: string): Promise<Blob> {
+export interface SharedFileDownload {
+  blob: Blob
+  chunkCount: number | null
+  originalSize: number | null
+}
+
+export async function downloadSharedFile(token: string, passphrase?: string): Promise<SharedFileDownload> {
   const headers: HeadersInit = {}
   if (passphrase) {
     headers['X-Share-Passphrase'] = passphrase
@@ -1042,7 +1048,17 @@ export async function downloadSharedFile(token: string, passphrase?: string): Pr
   if (!res.ok) {
     throw new ApiError(res.statusText, res.status)
   }
-  return res.blob()
+
+  const parseHeaderInt = (value: string | null): number | null => {
+    if (!value) return null
+    const n = Number.parseInt(value, 10)
+    return Number.isFinite(n) && n >= 0 ? n : null
+  }
+
+  const chunkCount = parseHeaderInt(res.headers.get('X-Chunk-Count'))
+  const originalSize = parseHeaderInt(res.headers.get('X-Original-Size'))
+  const blob = await res.blob()
+  return { blob, chunkCount, originalSize }
 }
 
 /**

@@ -496,18 +496,33 @@ export function ShareViewPage() {
     setDownloading(true)
     setDownloadError(null)
     try {
-      const blob = await downloadSharedFile(token, passphrase || undefined)
+      // Ensure WASM crypto worker is ready before we try to decrypt — the
+      // filename-decrypt useEffect may have failed silently, leaving the
+      // worker uninitialized when the user clicks Download.
+      await initCrypto()
+
+      const { blob, chunkCount: headerChunkCount, originalSize: headerOriginalSize } =
+        await downloadSharedFile(token, passphrase || undefined)
       const encrypted = new Uint8Array(await blob.arrayBuffer())
-      if (shareData.size_bytes == null) {
+
+      // Prefer the server-provided original size (X-Original-Size header) over
+      // the share metadata, which can occasionally be stale or missing.
+      const originalSize = headerOriginalSize ?? shareData.size_bytes
+      if (originalSize == null) {
         throw new Error('Missing file size metadata')
       }
-      const chunkCount = shareData.chunk_count
-        ?? inferChunkCountFromEncryptedSize(encrypted.length, shareData.size_bytes)
+
+      // Use the server-provided chunk count from the X-Chunk-Count header
+      // when available — it's authoritative. Fall back to share metadata,
+      // then to size-based inference as a last resort.
+      const chunkCount = headerChunkCount
+        ?? shareData.chunk_count
+        ?? inferChunkCountFromEncryptedSize(encrypted.length, originalSize)
       const plaintext = await decryptEncryptedBytes(
         fileKey,
         encrypted,
         chunkCount,
-        shareData.size_bytes,
+        originalSize,
       )
 
       const decryptedBlob = new Blob([plaintext as BlobPart], { type: shareData.mime_type || 'application/octet-stream' })
@@ -519,7 +534,11 @@ export function ShareViewPage() {
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
-    } catch {
+    } catch (err) {
+      // Log the real error so devtools surfaces WASM init failures, size
+      // calculation errors, or anything else hiding behind the generic
+      // user-facing message below.
+      console.error('[share-view] download failed:', err)
       setDownloadError('Decryption failed. The share link may have an incorrect key.')
     } finally {
       setDownloading(false)
