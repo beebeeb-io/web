@@ -30,7 +30,7 @@ import {
   type PaymentMethod,
 } from '../lib/api'
 import { formatStorageSI } from '../lib/format'
-import { StorageBreakdown, type StorageSegment } from '../components/storage-breakdown'
+import { StorageBreakdown } from '../components/storage-breakdown'
 
 /* ── Stripe publishable key ────────────────────────────── */
 // NOTE: Do NOT call loadStripe() here at module level.  Module-level calls
@@ -218,13 +218,7 @@ export function Billing() {
   const usedBytes = storage?.used_bytes ?? 0
   const usedPercent = totalStorageBytes > 0 ? (usedBytes / totalStorageBytes) * 100 : 0
 
-  const storageSegments: StorageSegment[] = usedBytes > 0 ? [
-    { label: 'Files', bytes: Math.round(usedBytes * 0.55), color: 'oklch(0.66 0.15 72)' },
-    { label: 'Photos', bytes: Math.round(usedBytes * 0.30), color: 'oklch(0.72 0.16 155)' },
-    { label: 'Shared', bytes: Math.round(usedBytes * 0.15), color: 'oklch(0.70 0.14 250)' },
-  ] : []
-
-  function openUpgrade(plan: string) {
+function openUpgrade(plan: string) {
     setUpgradePlan(plan)
     setUpgradeOpen(true)
   }
@@ -722,8 +716,9 @@ export function Billing() {
               Storage breakdown
             </div>
             <StorageBreakdown
-              segments={storageSegments}
-              totalBytes={totalStorageBytes}
+              usageBytes={usedBytes}
+              quotaBytes={totalStorageBytes}
+              planName={effectivePlan}
             />
           </div>
         )}

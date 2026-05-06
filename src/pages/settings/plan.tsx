@@ -7,7 +7,7 @@ import {
   getStorageUsage, createPortalSession, getSubscription,
   type StorageUsage, type Subscription,
 } from '../../lib/api'
-import { StorageUsageBar } from '../../components/storage-usage-bar'
+import { StorageBreakdown } from '../../components/storage-breakdown'
 
 export function SettingsPlan() {
   const { showToast } = useToast()
@@ -79,8 +79,8 @@ export function SettingsPlan() {
           </div>
         ) : usage ? (
           <div className="max-w-[460px] w-full">
-            <StorageUsageBar
-              usedBytes={usage.used_bytes}
+            <StorageBreakdown
+              usageBytes={usage.used_bytes}
               quotaBytes={usage.plan_limit_bytes}
               planName={usage.plan_name}
             />
