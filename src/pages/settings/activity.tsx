@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import { SettingsShell, SettingsHeader } from '../../components/settings-shell'
 import { Icon } from '../../components/icons'
 import { getMyActivity, ApiError, type ActivityEvent } from '../../lib/api'
@@ -30,7 +31,7 @@ function actionMeta(type: string): ActionMeta {
     case 'share_revoked':
       return { label: 'Unshared', icon: 'link', badgeClass: 'bg-paper-2 text-ink-2 border border-line' }
     case 'file_downloaded':
-      return { label: 'Downloaded', icon: 'download', badgeClass: 'bg-blue-50 text-blue-600' }
+      return { label: 'Downloaded', icon: 'download', badgeClass: 'bg-amber-bg text-amber-deep' }
     case 'folder_created':
       return { label: 'Folder', icon: 'folder', badgeClass: 'bg-paper-2 text-ink-2 border border-line' }
     default:
@@ -127,9 +128,9 @@ export function SettingsActivity() {
               <p>Activity tracking is not enabled.</p>
               <p className="mt-1">
                 Enable it in{' '}
-                <a href="/settings/profile" className="text-amber-deep hover:underline">
+                <Link to="/settings/profile" className="text-amber-deep hover:underline">
                   Settings &gt; Privacy
-                </a>{' '}
+                </Link>{' '}
                 to see your file activity history.
               </p>
             </div>

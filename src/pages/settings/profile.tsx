@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { SettingsShell, SettingsHeader, SettingsRow } from '../../components/settings-shell'
 import { BBInput } from '../../components/bb-input'
 import { BBButton } from '../../components/bb-button'
@@ -436,7 +436,7 @@ export function SettingsProfile() {
               <p className="text-[11px] text-ink-4 leading-relaxed">
                 When enabled: we log which devices signed in, and high-level file actions (not file contents — we cannot read them).
                 Disabling deletes all collected data within 30 days.{' '}
-                <a href="/privacy" className="text-amber-deep hover:underline">Learn more about our privacy practices</a>.
+                <Link to="/settings/privacy" className="text-amber-deep hover:underline">Learn more about our privacy practices</Link>.
               </p>
             </>
           )}

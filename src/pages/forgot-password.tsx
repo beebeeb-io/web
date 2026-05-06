@@ -11,6 +11,7 @@
  */
 
 import { Link, useNavigate } from 'react-router-dom'
+import React from 'react'
 import { AuthShell } from '../components/auth-shell'
 import { Icon, type IconName } from '../components/icons'
 
@@ -163,6 +164,3 @@ export function ForgotPassword() {
     </AuthShell>
   )
 }
-
-// React import needed for useState
-import React from 'react'

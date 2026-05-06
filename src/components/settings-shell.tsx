@@ -17,11 +17,11 @@ const navItems: NavItem[] = [
   { id: 'plan', label: 'Storage & Plan', icon: 'cloud', href: '/settings/billing' },
   { id: 'privacy', label: 'Privacy', icon: 'eye-off', href: '/settings/privacy' },
   { id: 'activity', label: 'Activity', icon: 'clock', href: '/settings/activity' },
-  { id: 'notifications', label: 'Notifications', icon: 'clock', href: '/settings/notifications' },
+  { id: 'notifications', label: 'Notifications', icon: 'bell', href: '/settings/notifications' },
   { id: 'data-residency', label: 'Data Residency', icon: 'cloud', href: '/settings/data-residency' },
   { id: 'appearance', label: 'Appearance', icon: 'star', href: '/settings/appearance' },
   { id: 'import', label: 'Import', icon: 'download', href: '/settings/import' },
-  { id: 'referrals', label: 'Referrals', icon: 'star', href: '/settings/referrals' },
+  { id: 'referrals', label: 'Referrals', icon: 'share', href: '/settings/referrals' },
   { id: 'developer', label: 'Developer', icon: 'key', href: '/settings/developer' },
 ]
 
