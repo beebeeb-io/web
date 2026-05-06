@@ -16,6 +16,8 @@ import { BBButton } from '../../components/bb-button'
 import { Icon } from '../../components/icons'
 import { useToast } from '../../components/toast'
 import { ConfirmPasswordModal } from '../../components/confirm-password-modal'
+import { useAuth } from '../../lib/auth-context'
+import { useFrozen } from '../../hooks/use-frozen'
 import {
   requestDataExport,
   getDataExportStatus,
@@ -257,7 +259,7 @@ function ActivityTrackingCard() {
           <p className="text-[11px] text-ink-4 mt-2">GDPR Article 7 — consent. Article 17 — right to erasure.</p>
         </div>
         <Link
-          to="/settings/account#privacy"
+          to="/settings/profile"
           className="shrink-0 inline-flex items-center gap-1.5 text-[12.5px] font-medium text-amber-deep hover:underline whitespace-nowrap"
         >
           Manage
@@ -272,7 +274,8 @@ function ActivityTrackingCard() {
 
 function RestrictProcessingCard() {
   const { showToast } = useToast()
-  const [frozen, setFrozen] = useState(false)
+  const { refreshUser } = useAuth()
+  const { isFrozen } = useFrozen()
   const [loading, setLoading] = useState(false)
   const [endpointMissing, setEndpointMissing] = useState(false)
 
@@ -283,8 +286,8 @@ function RestrictProcessingCard() {
 
     setLoading(true)
     try {
-      const res = await freezeAccount()
-      setFrozen(res.frozen)
+      await freezeAccount()
+      await refreshUser()
       showToast({ icon: 'shield', title: 'Account frozen', description: 'Processing suspended. Unfreeze anytime.' })
     } catch (err) {
       if (err instanceof ApiError && (err.status === 404 || err.status === 501)) {
@@ -295,13 +298,13 @@ function RestrictProcessingCard() {
     } finally {
       setLoading(false)
     }
-  }, [showToast])
+  }, [refreshUser, showToast])
 
   const handleUnfreeze = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await unfreezeAccount()
-      setFrozen(res.frozen)
+      await unfreezeAccount()
+      await refreshUser()
       showToast({ icon: 'check', title: 'Account unfrozen', description: 'Processing resumed.' })
     } catch (err) {
       if (err instanceof ApiError && (err.status === 404 || err.status === 501)) {
@@ -312,12 +315,12 @@ function RestrictProcessingCard() {
     } finally {
       setLoading(false)
     }
-  }, [showToast])
+  }, [refreshUser, showToast])
 
   return (
     <Card title="Restrict processing">
       <div className="flex flex-col gap-3">
-        {frozen ? (
+        {isFrozen ? (
           <div className="flex items-start gap-2.5 px-4 py-3 rounded-md bg-amber-bg border border-amber/20">
             <Icon name="shield" size={13} className="text-amber-deep shrink-0 mt-0.5" />
             <div>
@@ -346,7 +349,7 @@ function RestrictProcessingCard() {
           </div>
         )}
 
-        {frozen ? (
+        {isFrozen ? (
           <BBButton
             variant="default"
             size="md"
@@ -386,7 +389,7 @@ function DeleteAccountCard() {
           <p className="text-[11px] text-ink-4 mt-2">GDPR Article 17 — right to erasure.</p>
         </div>
         <Link
-          to="/settings/account"
+          to="/settings/delete-account"
           className="shrink-0 inline-flex items-center gap-1.5 text-[12.5px] font-medium text-red hover:underline whitespace-nowrap"
         >
           Delete account

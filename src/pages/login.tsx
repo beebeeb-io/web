@@ -9,13 +9,13 @@ import { DeviceProvision } from '../components/device-provision'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
 import { devAutoAuth } from '../lib/dev-auth'
-import { startPasskeyLogin, finishPasskeyLogin, getMe, setToken, hexToBytes, opaqueLoginStart as apiOpaqueLoginStart, opaqueLoginFinish as apiOpaqueLoginFinish, opaqueRegisterStartExisting, opaqueRegisterFinishExisting, serverOptsToGetOptions, credentialToAuthenticationJSON } from '../lib/api'
+import { startPasskeyLogin, finishPasskeyLogin, setToken, hexToBytes, opaqueLoginStart as apiOpaqueLoginStart, opaqueLoginFinish as apiOpaqueLoginFinish, opaqueRegisterStartExisting, opaqueRegisterFinishExisting, serverOptsToGetOptions, credentialToAuthenticationJSON } from '../lib/api'
 import { opaqueLoginStart, opaqueLoginFinish, opaqueRegistrationStart, opaqueRegistrationFinish, computeRecoveryCheck, deriveX25519Public, toBase64, fromBase64 } from '../lib/crypto'
 
 export function Login() {
   const navigate = useNavigate()
   const { login, refreshUser, verify2fa } = useAuth()
-  const { unlock, unlockVault, vaultExists, cryptoReady, cryptoError, getMasterKey } = useKeys()
+  const { unlock, unlockVault, vaultExists, cryptoReady, cryptoError, getMasterKey, isUnlocked } = useKeys()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -193,11 +193,16 @@ export function Login() {
 
       if (result.session_token) {
         setToken(result.session_token)
-        await getMe()
-        // Note: passkey login skips password-based key unlock.
-        // The vault key would need to be stored encrypted on the server
-        // or retrieved via another mechanism. For now, navigate to drive.
-        navigate('/')
+        await refreshUser()
+        if (isUnlocked) {
+          navigate('/')
+          return
+        }
+
+        // TODO(passkey-vault-unlock): passkey login currently returns only an auth
+        // session, not a wrapped vault key or device-provision payload. Add server
+        // support for passkey-bound vault key unwrap, then set the master key here.
+        setError('Passkey sign-in succeeded, but this device still needs your password to unlock the vault.')
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Passkey authentication failed')
@@ -307,7 +312,7 @@ export function Login() {
               Unlocking vault...
             </span>
           ) : (
-            'Log in'
+            'Sign in'
           )}
         </BBButton>
 
