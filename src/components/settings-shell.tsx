@@ -14,7 +14,7 @@ type NavItem = {
 const navItems: NavItem[] = [
   { id: 'profile', label: 'Profile', icon: 'users', href: '/settings/profile' },
   { id: 'security', label: 'Security', icon: 'shield', href: '/settings/security' },
-  { id: 'plan', label: 'Storage & Plan', icon: 'cloud', href: '/settings/plan' },
+  { id: 'plan', label: 'Storage & Plan', icon: 'cloud', href: '/settings/billing' },
   { id: 'privacy', label: 'Privacy', icon: 'eye-off', href: '/settings/privacy' },
   { id: 'activity', label: 'Activity', icon: 'clock', href: '/settings/activity' },
   { id: 'notifications', label: 'Notifications', icon: 'clock', href: '/settings/notifications' },
