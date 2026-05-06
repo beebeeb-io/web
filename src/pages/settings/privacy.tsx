@@ -23,6 +23,7 @@ import {
   getDataExportStatus,
   freezeAccount,
   unfreezeAccount,
+  getToken,
   ApiError,
   type DataExportStatus,
 } from '../../lib/api'
@@ -105,14 +106,30 @@ function DataExportCard() {
     setRequesting(true)
     setEndpointMissing(false)
     try {
+      // The server may return a resumed job (200 with resumed:true) when an
+      // export already exists. The response carries the same fields as the
+      // status endpoint, so we copy any populated fields straight in.
       const res = await requestDataExport(confirmToken)
       const initial: DataExportStatus = {
         export_id: res.export_id,
         status: res.status,
+        file_count: res.file_count,
+        total_bytes: res.total_bytes,
+        download_url: res.download_url,
+        expires_at: res.expires_at,
       }
       setExportStatus(initial)
       if (res.status !== 'ready' && res.status !== 'failed') {
         pollStatus(res.export_id)
+      } else if (res.status === 'ready' && !res.download_url) {
+        // Resumed-ready response without download_url — fetch full status
+        // so the download button has somewhere to go.
+        try {
+          const full = await getDataExportStatus(res.export_id)
+          setExportStatus(full)
+        } catch {
+          // Non-fatal — user can refresh
+        }
       }
     } catch (err) {
       if (err instanceof ApiError && (err.status === 404 || err.status === 501)) {
@@ -129,6 +146,30 @@ function DataExportCard() {
       setRequesting(false)
     }
   }, [pollStatus, showToast])
+
+  const downloadExport = useCallback(async (url: string) => {
+    const token = getToken()
+    try {
+      const res = await fetch(url, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!res.ok) {
+        showToast({ icon: 'x', title: 'Download failed', danger: true })
+        return
+      }
+      const blob = await res.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = objectUrl
+      a.download = `beebeeb-export-${new Date().toISOString().slice(0, 10)}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(objectUrl)
+    } catch {
+      showToast({ icon: 'x', title: 'Download failed', danger: true })
+    }
+  }, [showToast])
 
   const status = exportStatus?.status
 
@@ -167,14 +208,15 @@ function DataExportCard() {
               </div>
             </div>
             {exportStatus.download_url && (
-              <a
-                href={exportStatus.download_url}
-                download
-                className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12.5px] font-medium bg-ink text-paper hover:bg-ink-2 transition-colors"
+              <BBButton
+                variant="default"
+                size="sm"
+                onClick={() => void downloadExport(exportStatus.download_url!)}
+                className="shrink-0 gap-1.5"
               >
                 <Icon name="download" size={12} />
                 Download
-              </a>
+              </BBButton>
             )}
           </div>
         ) : status === 'failed' ? (

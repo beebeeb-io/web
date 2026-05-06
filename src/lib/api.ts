@@ -3459,6 +3459,14 @@ export interface DataExportRequest {
   export_id: string
   status: 'pending' | 'processing' | 'ready' | 'failed' | string
   estimated_seconds?: number
+  /** Server returns `resumed: true` when an existing export job is reused
+   * instead of creating a new one. When resumed, the response also carries
+   * any already-populated status fields below. */
+  resumed?: boolean
+  file_count?: number
+  total_bytes?: number
+  download_url?: string
+  expires_at?: string
 }
 
 export interface DataExportStatus {
@@ -3470,17 +3478,32 @@ export interface DataExportStatus {
   expires_at?: string
 }
 
+/**
+ * Normalize a server-returned download_url. The API returns a relative path
+ * like "/api/v1/auth/account/export/:id/download"; the web app is served from
+ * a different origin (app.beebeeb.io vs api.beebeeb.io), so a bare relative
+ * path resolves to the wrong host. Make it absolute by prefixing API_URL.
+ */
+function normalizeExportUrl<T extends { download_url?: string }>(data: T): T {
+  if (data.download_url && !data.download_url.startsWith('http')) {
+    data.download_url = `${getApiUrl()}${data.download_url}`
+  }
+  return data
+}
+
 /** POST /api/v1/me/data-export — request a new data export */
 export async function requestDataExport(confirmToken?: string): Promise<DataExportRequest> {
-  return request<DataExportRequest>('/api/v1/me/data-export', {
+  const data = await request<DataExportRequest>('/api/v1/me/data-export', {
     method: 'POST',
     headers: confirmToken ? { 'X-Confirm-Token': confirmToken } : undefined,
   })
+  return normalizeExportUrl(data)
 }
 
 /** GET /api/v1/me/data-export/:id — poll export status */
 export async function getDataExportStatus(exportId: string): Promise<DataExportStatus> {
-  return request<DataExportStatus>(`/api/v1/me/data-export/${exportId}`)
+  const data = await request<DataExportStatus>(`/api/v1/me/data-export/${exportId}`)
+  return normalizeExportUrl(data)
 }
 
 /** POST /api/v1/me/freeze — suspend all processing */
