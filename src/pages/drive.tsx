@@ -26,6 +26,7 @@ import { useWsEvent } from '../lib/ws-context'
 import { useSync } from '../lib/sync-context'
 import { useKeys } from '../lib/key-context'
 import { useKeyboardShortcuts, isMac } from '../hooks/use-keyboard-shortcuts'
+import { useFrozen } from '../hooks/use-frozen'
 import {
   listFiles,
   createFolder,
@@ -66,6 +67,7 @@ import { formatBytes } from '../lib/format'
 // within each group. localStorage key: 'bb_drive_sort'.
 
 export function Drive() {
+  const { isFrozen } = useFrozen()
   const { getFileKey, isUnlocked, cryptoReady, cryptoError } = useKeys()
   const { indexFile, unindexFile } = useSearchIndex()
   const sync = useSync()
@@ -1383,13 +1385,13 @@ export function Drive() {
 
           {/* New + Upload */}
           <div className="flex items-center gap-1.5 shrink-0">
-            <BBButton size="sm" variant="amber" onClick={() => setFolderDialogOpen(true)} className="gap-1.5">
+            <BBButton size="sm" variant="amber" onClick={() => setFolderDialogOpen(true)} className="gap-1.5" disabled={isFrozen} title={isFrozen ? 'Account is frozen' : undefined}>
               <Icon name="plus" size={13} /> New folder
             </BBButton>
-            <BBButton size="sm" onClick={browse} className="gap-1.5" aria-label="Upload files">
+            <BBButton size="sm" onClick={browse} className="gap-1.5" aria-label="Upload files" disabled={isFrozen} title={isFrozen ? 'Account is frozen' : undefined}>
               <Icon name="upload" size={13} /> <span className="hidden sm:inline" aria-hidden="true">Upload</span>
             </BBButton>
-            <BBButton size="sm" onClick={browseFolder} className="hidden sm:inline-flex gap-1.5">
+            <BBButton size="sm" onClick={browseFolder} className="hidden sm:inline-flex gap-1.5" disabled={isFrozen} title={isFrozen ? 'Account is frozen' : undefined}>
               <Icon name="folder" size={13} /> Upload folder
             </BBButton>
           </div>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode, DragEvent } from 'react'
 import { Link, useLocation } from 'react-router-dom'
+import { useFrozen } from '../hooks/use-frozen'
 import { BBLogo } from './bb-logo'
 import { Icon } from './icons'
 import type { IconName } from './icons'
@@ -142,6 +143,7 @@ function UserCard() {
 export function DriveLayout({ children }: { children: ReactNode }) {
   const location = useLocation()
   const { isUnlocked, getMasterKey } = useKeys()
+  const { isFrozen } = useFrozen()
   const [_sub, setSub] = useState<Subscription | null>(null)
   const [planDetails, setPlanDetails] = useState<Plan | null>(null)
   const [sharedFolders, setSharedFolders] = useState<(ShareInvite & { decryptedName?: string })[]>([])
@@ -445,6 +447,14 @@ export function DriveLayout({ children }: { children: ReactNode }) {
           <BBLogo size={12} />
         </div>
         <EmailVerifyBanner />
+        {isFrozen && (
+          <div className="bg-amber/10 border-b border-amber/20 px-4 py-2.5 text-center text-[13px] text-ink-2">
+            Your account is frozen. You can view and download files but cannot upload, delete, or share.{' '}
+            <Link to="/settings/privacy" className="text-amber-deep hover:underline font-medium">
+              Unfreeze in Settings
+            </Link>
+          </div>
+        )}
         {usage && (
           <QuotaWarning
             usedBytes={usage.used_bytes}
