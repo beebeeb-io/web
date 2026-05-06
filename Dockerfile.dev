@@ -1,7 +1,10 @@
 FROM oven/bun:1
 WORKDIR /app
 
-# Copy WASM package first (web depends on it via local path)
+# Copy shared package (web depends on @beebeeb/shared via workspace)
+COPY packages/shared /shared
+
+# Copy WASM package (web depends on it via local path)
 COPY repos/core/beebeeb-wasm/pkg /wasm-pkg
 
 # Copy web app source (excluding node_modules via .dockerignore)
@@ -10,8 +13,9 @@ COPY repos/web/ .
 # Remove .git so Tailwind v4 falls back to filesystem scanning (no git binary in container)
 RUN rm -rf .git
 
-# Rewrite WASM dependency path for container and install
+# Rewrite local dependency paths for container and install
 RUN sed -i 's|../../repos/core/beebeeb-wasm/pkg|/wasm-pkg|' package.json && \
+    sed -i 's|"@beebeeb/shared": "workspace:\*"|"@beebeeb/shared": "/shared"|' package.json && \
     rm -rf node_modules && \
     bun install
 

@@ -21,28 +21,18 @@ import type {
   AccountExport,
   AccountSession,
   ActivityResponse,
-  AdminActivityResponse,
-  AdminBillingStats,
-  AdminConfig,
-  AdminSignInsResponse,
   AdminStats,
-  AdminUserDetail,
-  AdminUserSession,
-  AdminUsersResponse,
   AuditEvent,
   AuthSessionResponse,
   AuthUser,
-  BillingSyncResult,
   BillingUsage,
   CreateTokenParams,
   CreateTokenResponse,
   CreateWebhookResponse,
-  CspReport,
   DataExportRequest,
   DataExportStatus,
   DriveFile,
   FileVersion,
-  GrowthDataPoint,
   HealthResponse,
   ImpersonateResponse,
   InviteActivity,
@@ -50,14 +40,7 @@ import type {
   InvitePreview,
   Invoice,
   JoinTransferResponse,
-  LifecycleOutcome,
-  LifecyclePhase,
-  LifecycleRun,
-  LifecycleRunEvent,
-  LoginIp,
   LoginResult,
-  MigrationEntry,
-  MigrationSummary,
   MyActivityResponse,
   MyShare,
   MySignInsResponse,
@@ -70,16 +53,9 @@ import type {
   PaymentMethod,
   PersonalAccessToken,
   Plan,
-  PlanUpdateInput,
-  PlanUpdateResponse,
-  PoolInsights,
-  PoolUsageEntry,
   ReferralEntry,
   ReferralStats,
   RegionsResponse,
-  RoleChangeResponse,
-  RunFileEntry,
-  RunProgress,
   SecurityScore,
   Session,
   ShareInfo,
@@ -89,7 +65,6 @@ import type {
   ShareView,
   SharedFileDownload,
   SignupResult,
-  StoragePool,
   StorageUsage,
   StreamTokenResponse,
   SubmittedSyncOp,
@@ -102,12 +77,9 @@ import type {
   TransferStatus,
   UploadStatusResponse,
   UserRegionResponse,
-  UserStorageBreakdown,
   VersionSetting,
-  WaitlistResponse,
   Webhook,
   Workspace,
-  WorkspaceMember,
   WorkspaceMembersResponse,
 } from '@beebeeb/shared'
 
@@ -155,34 +127,21 @@ export type {
   AccountSession,
   ActivityEvent,
   ActivityResponse,
-  AdminActivityEvent,
-  AdminActivityResponse,
-  AdminBillingStats,
-  AdminConfig,
-  AdminSignIn,
-  AdminSignInsResponse,
   AdminStats,
-  AdminUser,
-  AdminUserDetail,
-  AdminUserSession,
-  AdminUsersResponse,
   AuditEvent,
   AuthSessionResponse,
   AuthUser,
   AvailableRegion,
-  BillingSyncResult,
   BillingUsage,
   ConnectionStatusHandler,
   CreateTokenParams,
   CreateTokenResponse,
   CreateWebhookResponse,
-  CspReport,
   DataExportRequest,
   DataExportStatus,
   DriveFile,
   ErrorNotifier,
   FileVersion,
-  GrowthDataPoint,
   HealthResponse,
   HealthWorkerItem,
   ImpersonateResponse,
@@ -191,14 +150,7 @@ export type {
   InvitePreview,
   Invoice,
   JoinTransferResponse,
-  LifecycleOutcome,
-  LifecyclePhase,
-  LifecycleRun,
-  LifecycleRunEvent,
-  LoginIp,
   LoginResult,
-  MigrationEntry,
-  MigrationSummary,
   MyActivityResponse,
   MyShare,
   MySignIn,
@@ -213,16 +165,9 @@ export type {
   PendingInvite,
   PersonalAccessToken,
   Plan,
-  PlanUpdateInput,
-  PlanUpdateResponse,
-  PoolInsights,
-  PoolUsageEntry,
   ReferralEntry,
   ReferralStats,
   RegionsResponse,
-  RoleChangeResponse,
-  RunFileEntry,
-  RunProgress,
   SecurityFactor,
   SecurityScore,
   Session,
@@ -234,7 +179,6 @@ export type {
   ShareView,
   SharedFileDownload,
   SignupResult,
-  StoragePool,
   StorageUsage,
   StreamTokenResponse,
   SubmittedSyncOp,
@@ -248,11 +192,7 @@ export type {
   TransferStatus,
   UploadStatusResponse,
   UserRegionResponse,
-  UserStorageBreakdown,
-  UserStoragePoolEntry,
   VersionSetting,
-  WaitlistEntry,
-  WaitlistResponse,
   Webhook,
   Workspace,
   WorkspaceMember,
@@ -1078,21 +1018,6 @@ export async function getShareStats(): Promise<ShareStats> {
   return request<ShareStats>('/api/v1/shares/stats')
 }
 
-export async function syncBillingPlans(): Promise<BillingSyncResult> {
-  return request<BillingSyncResult>('/api/v1/admin/billing/sync', { method: 'POST' })
-}
-
-/** PATCH /api/v1/admin/billing/plans/:slug */
-export async function patchBillingPlan(
-  slug: string,
-  updates: PlanUpdateInput,
-): Promise<PlanUpdateResponse> {
-  return request<PlanUpdateResponse>(`/api/v1/admin/billing/plans/${slug}`, {
-    method: 'PATCH',
-    body: JSON.stringify(updates),
-  })
-}
-
 export async function getStorageUsage(): Promise<StorageUsage> {
   return request<StorageUsage>('/api/v1/files/usage')
 }
@@ -1282,157 +1207,6 @@ export async function listAuditLog(params?: {
   return request<{ events: AuditEvent[]; total: number; page: number }>(
     `/api/v1/activity${q ? `?${q}` : ''}`,
   )
-}
-
-export async function exportAuditLog(): Promise<{
-  export: { format: string; exported_at: string; total: number }
-  events: AuditEvent[]
-}> {
-  return request('/api/v1/admin/audit-log/export')
-}
-
-export async function listMembers(): Promise<WorkspaceMember[]> {
-  const data = await request<{ members: WorkspaceMember[] }>('/api/v1/admin/members')
-  return data.members
-}
-
-export async function inviteMember(email: string): Promise<{ message: string; email: string }> {
-  return request('/api/v1/admin/members/invite', {
-    method: 'POST',
-    body: JSON.stringify({ email }),
-  })
-}
-
-export async function removeMember(id: string): Promise<{ message: string }> {
-  return request(`/api/v1/admin/members/${id}`, { method: 'DELETE' })
-}
-
-export async function listAdminUsers(params?: {
-  search?: string
-  limit?: number
-  offset?: number
-}): Promise<AdminUsersResponse> {
-  const qs = new URLSearchParams()
-  if (params?.search) qs.set('search', params.search)
-  if (params?.limit) qs.set('limit', String(params.limit))
-  if (params?.offset != null) qs.set('offset', String(params.offset))
-  const q = qs.toString()
-  return request<AdminUsersResponse>(
-    `/api/v1/admin/users${q ? `?${q}` : ''}`,
-  )
-}
-
-export async function getAdminUserDetail(id: string): Promise<AdminUserDetail> {
-  return request<AdminUserDetail>(`/api/v1/admin/users/${id}`)
-}
-
-/**
- * GET /api/v1/admin/users/:id/sessions
- * Returns empty list gracefully on 404 (endpoint not yet deployed).
- */
-export async function getAdminUserSessions(userId: string): Promise<AdminUserSession[]> {
-  try {
-    const data = await request<{ sessions: AdminUserSession[] }>(
-      `/api/v1/admin/users/${userId}/sessions`,
-    )
-    return data.sessions
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 404) return []
-    throw err
-  }
-}
-
-/** POST /api/v1/admin/users/:id/suspend */
-export async function suspendUser(userId: string): Promise<void> {
-  await request(`/api/v1/admin/users/${userId}/suspend`, { method: 'POST', body: JSON.stringify({}) })
-}
-
-/** POST /api/v1/admin/users/:id/unsuspend */
-export async function unsuspendUser(userId: string): Promise<void> {
-  await request(`/api/v1/admin/users/${userId}/unsuspend`, { method: 'POST', body: JSON.stringify({}) })
-}
-
-export async function getWaitlist(): Promise<WaitlistResponse> {
-  return request<WaitlistResponse>('/api/v1/admin/waitlist')
-}
-
-export async function listStoragePools(): Promise<StoragePool[]> {
-  const data = await request<{ pools: StoragePool[] }>('/api/v1/admin/storage-pools')
-  return data.pools
-}
-
-export async function listMigrations(): Promise<{
-  summary: MigrationSummary
-  recent: MigrationEntry[]
-}> {
-  return request('/api/v1/admin/migrations')
-}
-
-export async function createStoragePool(params: {
-  name: string
-  display_name: string
-  provider: string
-  endpoint: string
-  bucket: string
-  region: string
-  city?: string
-  continent?: string
-  access_key_id: string
-  secret_access_key: string
-  capacity_bytes?: number | null
-  is_default?: boolean
-}): Promise<StoragePool> {
-  return request<StoragePool>('/api/v1/admin/storage-pools', {
-    method: 'POST',
-    body: JSON.stringify(params),
-  })
-}
-
-export async function updateStoragePool(
-  id: string,
-  updates: {
-    display_name?: string
-    city?: string
-    is_active?: boolean
-    is_default?: boolean
-    /** Pass -1 to clear the capacity limit (set to unlimited). */
-    capacity_bytes?: number | null
-  },
-): Promise<StoragePool> {
-  return request<StoragePool>(`/api/v1/admin/storage-pools/${id}`, {
-    method: 'POST',
-    body: JSON.stringify(updates),
-  })
-}
-
-export async function getPoolUsage(id: string): Promise<{
-  pool_id: string
-  entries: PoolUsageEntry[]
-}> {
-  return request(`/api/v1/admin/storage-pools/${id}/usage`)
-}
-
-export async function migrateUser(
-  userId: string,
-  targetPoolId: string,
-): Promise<{ message: string; migration_count: number }> {
-  // Body field is `target_pool_id` to match the server contract (sister
-  // handlers `migrate_all_pool` + `decommission_pool` use the same name).
-  // The previous `to_pool_id` was silently discarded by the server before
-  // task 0019's backend fix (e0ffae0). See task 0019 for details.
-  return request(`/api/v1/admin/migrate-user/${userId}`, {
-    method: 'POST',
-    body: JSON.stringify({ target_pool_id: targetPoolId }),
-  })
-}
-
-/**
- * Per-pool breakdown of a user's storage. Used by the admin user-detail
- * drawer to filter the migrate-destination dropdown — pools that already
- * appear in `pools[]` are sources, not valid destinations.
- */
-export async function getUserStorage(userId: string): Promise<UserStorageBreakdown> {
-  return request<UserStorageBreakdown>(`/api/v1/admin/user-storage/${userId}`)
 }
 
 // ─── Folder sharing ──────────────────────────────
@@ -1869,20 +1643,11 @@ export async function adminImpersonate(userId: string): Promise<ImpersonateRespo
   return data
 }
 
-/** Promote a user to admin. Server requires superadmin auth. */
-export async function adminPromote(userId: string): Promise<RoleChangeResponse> {
-  return request<RoleChangeResponse>(`/api/v1/admin/promote/${userId}`, {
-    method: 'POST',
-  })
-}
-
-/** Demote an admin back to regular user. Server requires superadmin auth. */
-export async function adminDemote(userId: string): Promise<RoleChangeResponse> {
-  return request<RoleChangeResponse>(`/api/v1/admin/demote/${userId}`, {
-    method: 'POST',
-  })
-}
-
+/**
+ * Used by drive-layout to gate the sidebar Admin link. The actual
+ * admin portal lives at admin.beebeeb.io — this just answers the
+ * question "is the current user allowed to see the link at all".
+ */
 export async function getAdminStats(): Promise<AdminStats> {
   return request<AdminStats>('/api/v1/admin/stats')
 }
@@ -1902,33 +1667,6 @@ export async function requestAdminHandoff(): Promise<AdminHandoffResponse> {
   return request<AdminHandoffResponse>('/api/v1/auth/admin-handoff', {
     method: 'POST',
   })
-}
-
-/**
- * Fetch aggregate billing stats from the admin API.
- * Returns null if the endpoint doesn't exist yet (404) so the UI can show
- * a graceful placeholder rather than crashing.
- */
-export async function getAdminBillingStats(): Promise<AdminBillingStats | null> {
-  try {
-    return await request<AdminBillingStats>('/api/v1/admin/billing/stats')
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 404) return null
-    throw err
-  }
-}
-
-/**
- * Fetch server-side config flags from the admin API.
- * Returns null if the endpoint doesn't exist yet (404).
- */
-export async function getAdminConfig(): Promise<AdminConfig | null> {
-  try {
-    return await request<AdminConfig>('/api/v1/admin/config')
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 404) return null
-    throw err
-  }
 }
 
 export async function getHealth(): Promise<HealthResponse> {
@@ -2077,277 +1815,6 @@ async function readError(res: Response): Promise<string> {
   }
 }
 
-// ─── Admin: pool migration ─────────────────────────────
-
-export async function migrateAllPool(
-  poolId: string,
-  targetPoolId: string,
-): Promise<{ migrations_queued: number }> {
-  return request(`/api/v1/admin/storage-pools/${poolId}/migrate-all`, {
-    method: 'POST',
-    body: JSON.stringify({ target_pool_id: targetPoolId }),
-  })
-}
-
-export async function decommissionPool(
-  poolId: string,
-  targetPoolId: string,
-): Promise<{ pool_id: string; status: string; migrations_queued: number }> {
-  return request(`/api/v1/admin/storage-pools/${poolId}/decommission`, {
-    method: 'POST',
-    body: JSON.stringify({ target_pool_id: targetPoolId }),
-  })
-}
-
-export async function reconcileUsage(): Promise<{
-  pools_corrected: number
-  total_drift_bytes: number
-}> {
-  return request('/api/v1/admin/reconcile-usage', { method: 'POST' })
-}
-
-export async function listCspReports(params?: {
-  limit?: number
-  offset?: number
-}): Promise<{ reports: CspReport[]; total: number }> {
-  const q = new URLSearchParams()
-  if (params?.limit) q.set('limit', String(params.limit))
-  if (params?.offset) q.set('offset', String(params.offset))
-  const qs = q.toString()
-  return request(`/api/v1/admin/csp-reports${qs ? `?${qs}` : ''}`)
-}
-
-export async function getUserLoginIps(userId: string): Promise<{ ips: LoginIp[] }> {
-  return request(`/api/v1/admin/users/${userId}/login-ips`)
-}
-
-export async function getAdminGrowthData(
-  metric: 'signups' | 'storage' | 'shares',
-  days: number = 30,
-): Promise<{ data: GrowthDataPoint[] }> {
-  return request(`/api/v1/admin/stats/growth?metric=${metric}&days=${days}`)
-}
-
-/**
- * POST /api/v1/admin/pools/:poolId/lifecycle/runs/:runId/files/:fileId/retry
- *
- * Resets a failed file_migration row to 'pending' so the worker picks it up
- * again. No-op if the file is already done/pending/copying.
- */
-export async function retryFile(
-  poolId: string,
-  runId: string,
-  fileId: string,
-): Promise<{ status: string }> {
-  return request(
-    `/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}/files/${fileId}/retry`,
-    { method: 'POST', body: JSON.stringify({}) },
-  )
-}
-
-/** GET /api/v1/admin/pools/:poolId/lifecycle/runs/:runId/files
- *
- *  Returns the 20 most recent file_migrations for the run, newest first.
- *  Used by the migrating panel's "Recent files" list. */
-export async function getLifecycleRunFiles(
-  poolId: string,
-  runId: string,
-): Promise<{ files: RunFileEntry[]; total: number }> {
-  return request(`/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}/files`)
-}
-
-/**
- * GET /api/v1/admin/pools/:poolId/lifecycle/runs/:runId/events
- *
- * Returns persisted migration events for history backfill and event replay.
- * Supports cursor-based pagination via `since_id` (exclusive lower bound on
- * the event id column). Ordered by id ASC.
- *
- * NOTE: This endpoint is implemented in server task 0033 Phase 1. Until that
- * commit lands the endpoint returns 404 — callers must handle that gracefully.
- */
-export async function getLifecycleRunEvents(
-  poolId: string,
-  runId: string,
-  sinceId?: number,
-  limit = 1000,
-): Promise<{ events: LifecycleRunEvent[]; has_more: boolean }> {
-  const params = new URLSearchParams({ limit: String(limit) })
-  if (sinceId !== undefined) params.set('since_id', String(sinceId))
-  return request(
-    `/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}/events?${params}`,
-  )
-}
-
-/** GET /api/v1/admin/pools/:poolId/insights */
-export async function getPoolInsights(poolId: string): Promise<PoolInsights> {
-  return request<PoolInsights>(`/api/v1/admin/pools/${poolId}/insights`)
-}
-
-/** POST /api/v1/admin/pools/:poolId/lifecycle/runs
- *
- *  Transitions pool active → quiescing and creates the run record. */
-export async function startLifecycleRun(
-  poolId: string,
-  targetPoolId: string,
-): Promise<{ run: LifecycleRun; pool_lifecycle_phase: LifecyclePhase }> {
-  return request(`/api/v1/admin/pools/${poolId}/lifecycle/runs`, {
-    method: 'POST',
-    body: JSON.stringify({ target_pool_id: targetPoolId }),
-  })
-}
-
-/** GET /api/v1/admin/pools/:poolId/lifecycle/runs/:runId
- *
- *  Returns the run with live progress counters. Poll this every 5 s during
- *  the migrating phase. */
-export async function getLifecycleRun(
-  poolId: string,
-  runId: string,
-): Promise<RunProgress> {
-  return request<RunProgress>(
-    `/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}`,
-  )
-}
-
-/** GET /api/v1/admin/pools/:poolId/lifecycle/runs
- *
- *  Full history for this pool (capped at 100 rows, newest first). */
-export async function listLifecycleRuns(
-  poolId: string,
-): Promise<{ runs: LifecycleRun[] }> {
-  return request(`/api/v1/admin/pools/${poolId}/lifecycle/runs`)
-}
-
-/** POST …/advance — quiescing → migrating.
- *
- *  `expectedPhase` is an optimistic-concurrency check: the server rejects
- *  with 409 if the pool has moved on since the client last polled. */
-export async function advanceLifecycleRun(
-  poolId: string,
-  runId: string,
-  expectedPhase: LifecyclePhase,
-): Promise<{ current_phase: LifecyclePhase }> {
-  return request(`/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}/advance`, {
-    method: 'POST',
-    body: JSON.stringify({ expected_phase: expectedPhase }),
-  })
-}
-
-/** POST …/abort — quiescing → active (full abort) OR migrating → quiescing (pause).
- *
- *  When `reverseOrphanedWrites` is true (only meaningful for quiescing abort),
- *  the server seeds reverse migration rows so files written to the target
- *  during the quiescing window are moved back to the source. */
-export async function abortLifecycleRun(
-  poolId: string,
-  runId: string,
-  expectedPhase: LifecyclePhase,
-  reverseOrphanedWrites: boolean,
-): Promise<{
-  current_phase: LifecyclePhase
-  outcome: LifecycleOutcome
-  orphaned_writes_count: number
-  cancelled_migrations_count: number
-}> {
-  return request(`/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}/abort`, {
-    method: 'POST',
-    body: JSON.stringify({
-      expected_phase: expectedPhase,
-      reverse_orphaned_writes: reverseOrphanedWrites,
-    }),
-  })
-}
-
-/** POST …/reverse-migrate — drained → migrating (target → source direction). */
-export async function reverseMigrateRun(
-  poolId: string,
-  runId: string,
-): Promise<{ current_phase: LifecyclePhase }> {
-  return request(
-    `/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}/reverse-migrate`,
-    { method: 'POST', body: JSON.stringify({}) },
-  )
-}
-
-/** POST …/archive — drained (outcome=in_progress) → drained (outcome=archived).
- *
- *  The pool remains empty and accepts no new writes, but the row is kept for
- *  audit purposes. `reactivateRun` can undo this. */
-export async function archiveRun(
-  poolId: string,
-  runId: string,
-): Promise<{ current_phase: LifecyclePhase; outcome: LifecycleOutcome }> {
-  return request(
-    `/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}/archive`,
-    { method: 'POST', body: JSON.stringify({}) },
-  )
-}
-
-/** POST …/reactivate — drained (outcome=archived) → active.
- *
- *  Clears the run binding and brings the pool back into the write rotation. */
-export async function reactivateRun(
-  poolId: string,
-  runId: string,
-): Promise<{ current_phase: LifecyclePhase }> {
-  return request(
-    `/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}/reactivate`,
-    { method: 'POST', body: JSON.stringify({}) },
-  )
-}
-
-/** POST …/delete-pool — terminal: tombstones the pool row (phase=deleted).
- *
- *  `confirmationName` must exactly match `storage_pools.name`.
- *  After this call the pool is gone from write routing; the row stays for FK
- *  integrity. */
-export async function deletePool(
-  poolId: string,
-  runId: string,
-  confirmationName: string,
-): Promise<{
-  current_phase: LifecyclePhase
-  pool_name: string
-  deletion_outcome: string
-}> {
-  return request(
-    `/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}/delete-pool`,
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        expected_phase: 'drained' as LifecyclePhase,
-        confirmation_pool_name: confirmationName,
-      }),
-    },
-  )
-}
-
-/** POST …/force-drain — escape hatch: hard-deletes stuck files so migration
- *  can complete.
- *
- *  `confirmationName` must match `storage_pools.name`.
- *  `fileIds` must be UUIDs of files currently on the source pool.
- *  Files are deleted permanently — no recovery path. */
-export async function forceDrainRun(
-  poolId: string,
-  runId: string,
-  confirmationName: string,
-  fileIds: string[],
-): Promise<{ files_deleted: number; advanced_to_drained: boolean }> {
-  return request(
-    `/api/v1/admin/pools/${poolId}/lifecycle/runs/${runId}/force-drain`,
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        expected_phase: 'migrating' as LifecyclePhase,
-        confirmation_pool_name: confirmationName,
-        file_ids: fileIds,
-      }),
-    },
-  )
-}
-
 // ─── Google Drive import proxy ────────────────────────────────────────────────
 
 /** Exchange a Google OAuth code for tokens via our server proxy. */
@@ -2414,15 +1881,6 @@ export async function getMySignIns(): Promise<MySignInsResponse> {
   return request<MySignInsResponse>('/api/v1/me/sign-ins')
 }
 
-/** GET /api/v1/admin/users/:id/sign-ins */
-export async function getAdminUserSignIns(userId: string): Promise<AdminSignInsResponse> {
-  return request<AdminSignInsResponse>(`/api/v1/admin/users/${userId}/sign-ins`)
-}
-
-/** GET /api/v1/admin/users/:id/activity */
-export async function getAdminUserGdprActivity(userId: string): Promise<AdminActivityResponse> {
-  return request<AdminActivityResponse>(`/api/v1/admin/users/${userId}/activity`)
-}
 
 /** GET /api/v1/me/activity — file activity events for the authenticated user (GDPR opt-in). */
 export async function getMyActivity(opts?: {
