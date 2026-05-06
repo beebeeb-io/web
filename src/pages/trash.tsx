@@ -168,7 +168,11 @@ export function Trash() {
             fromBase64(parsed.ciphertext),
           )
         } catch {
-          names[file.id] = file.name_encrypted
+          // Decryption failed — never fall back to file.name_encrypted, which
+          // is `{"nonce":"…","ciphertext":"…"}` JSON for ZK files and would
+          // expose raw ciphertext to the user. The displayName() helper below
+          // already substitutes "Encrypted file" when a name is missing.
+          names[file.id] = 'Encrypted file'
         }
       }
       if (!cancelled) setDecryptedNames(names)

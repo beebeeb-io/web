@@ -218,7 +218,24 @@ export function Shared() {
             names[invite.id] = 'Encrypted file'
           }
         } else {
-          names[invite.id] = invite.file_name_encrypted ?? 'Encrypted file'
+          // Legacy/plaintext share path. The server occasionally still
+          // ships ZK-style JSON ciphertext (`{"nonce":"…","ciphertext":"…"}`)
+          // here when a sender's public key is absent — rendering that
+          // verbatim leaks raw ciphertext to the recipient. Detect it and
+          // substitute the standard placeholder.
+          const raw = invite.file_name_encrypted
+          if (raw && raw.trim().startsWith('{')) {
+            try {
+              const probe = JSON.parse(raw)
+              if (probe && typeof probe === 'object' && ('nonce' in probe || 'ciphertext' in probe)) {
+                names[invite.id] = 'Encrypted file'
+                continue
+              }
+            } catch {
+              // Not JSON — fall through to use as-is.
+            }
+          }
+          names[invite.id] = raw ?? 'Encrypted file'
         }
       }
       if (!cancelled) setDecryptedNames(names)

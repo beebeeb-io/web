@@ -579,7 +579,14 @@ export function ShareViewPage() {
             <div className="mt-8 bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
               <div className="p-8 text-center">
                 <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-red/10 flex items-center justify-center">
-                  <Icon name="clock" size={24} className="text-red" />
+                  {/* Map icon to error type — clock implies timing/expiry, but
+                      a non-expired error (revoked, max opens, etc.) is not a
+                      timing issue and shouldn't read like one. */}
+                  <Icon
+                    name={shareData.error === 'expired' ? 'clock' : 'shield'}
+                    size={24}
+                    className="text-red"
+                  />
                 </div>
                 <h2 className="text-lg font-semibold text-ink mb-2">
                   {shareData.error === 'expired' ? 'This link has expired' : 'Link unavailable'}
