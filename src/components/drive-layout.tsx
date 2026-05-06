@@ -17,6 +17,7 @@ import {
   getPreference,
   setPreference,
   getAdminStats,
+  requestAdminHandoff,
   type Plan,
   type ShareInvite,
   type StorageUsage,
@@ -427,17 +428,28 @@ export function DriveLayout({ children }: { children: ReactNode }) {
 
         {isAdmin && (
           <div className="px-3 pt-2">
-            <Link
-              to="/admin"
-              className={`w-full flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] transition-colors ${
-                location.pathname.startsWith('/admin')
-                  ? 'bg-paper-3 font-semibold text-ink'
-                  : 'text-ink-2 hover:bg-paper-3/50'
-              }`}
+            <button
+              type="button"
+              onClick={async () => {
+                // Mint a 60s OTP, then navigate to admin.beebeeb.io. The
+                // server returns the full redirect URL; using it verbatim
+                // keeps the admin host hardcoded server-side (no env needed
+                // here) — see docs/superpowers/specs/2026-05-07-admin-portal-separation.md.
+                try {
+                  const handoff = await requestAdminHandoff()
+                  window.location.href = handoff.redirect_url
+                } catch {
+                  // Fall back to a plain navigation — admin's own login
+                  // page handles unauthenticated visitors.
+                  window.location.href = 'https://admin.beebeeb.io/'
+                }
+              }}
+              className="w-full flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] transition-colors text-ink-2 hover:bg-paper-3/50 cursor-pointer"
             >
               <Icon name="shield" size={13} className="shrink-0" />
-              <span className="flex-1">Admin</span>
-            </Link>
+              <span className="flex-1 text-left">Admin</span>
+              <Icon name="link" size={11} className="text-ink-4 shrink-0" />
+            </button>
           </div>
         )}
 

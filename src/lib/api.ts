@@ -1888,6 +1888,23 @@ export async function getAdminStats(): Promise<AdminStats> {
 }
 
 /**
+ * Mint a one-time handoff OTP and return the URL the browser should
+ * navigate to (admin.beebeeb.io/auth/handoff?token=…). The OTP is
+ * single-use and expires in 60 s — see
+ * docs/superpowers/specs/2026-05-07-admin-portal-separation.md.
+ */
+export interface AdminHandoffResponse {
+  token: string
+  redirect_url: string
+  expires_at: string
+}
+export async function requestAdminHandoff(): Promise<AdminHandoffResponse> {
+  return request<AdminHandoffResponse>('/api/v1/auth/admin-handoff', {
+    method: 'POST',
+  })
+}
+
+/**
  * Fetch aggregate billing stats from the admin API.
  * Returns null if the endpoint doesn't exist yet (404) so the UI can show
  * a graceful placeholder rather than crashing.
