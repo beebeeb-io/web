@@ -1,6 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { getPreference, setPreference } from './api'
 
 export type FontSize = 'compact' | 'default' | 'comfortable'
 export type SidebarDensity = 'compact' | 'default' | 'spacious'
@@ -78,23 +77,6 @@ export function DisplayProvider({ children }: { children: ReactNode }) {
     applyDisplayVars(prefs)
   }, [prefs])
 
-  // Sync from server on mount (best-effort)
-  useEffect(() => {
-    getPreference<Partial<DisplayPreferences>>('display')
-      .then((server) => {
-        if (!server) return
-        setPrefs((prev) => {
-          const merged = {
-            fontSize: isValidFontSize(server.fontSize) ? server.fontSize : prev.fontSize,
-            sidebarDensity: isValidDensity(server.sidebarDensity) ? server.sidebarDensity : prev.sidebarDensity,
-          }
-          persist(merged)
-          return merged
-        })
-      })
-      .catch(() => {})
-  }, [])
-
   function persist(next: DisplayPreferences) {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
@@ -102,8 +84,6 @@ export function DisplayProvider({ children }: { children: ReactNode }) {
       // ignore
     }
     applyDisplayVars(next)
-    // Fire-and-forget server sync
-    setPreference('display', next).catch(() => {})
   }
 
   const setFontSize = useCallback((fontSize: FontSize) => {
