@@ -260,7 +260,20 @@ export function Photos() {
       setUploads((prev) => prev.filter((u) => u.id !== uploadId))
       uploadAbortRef.current.delete(uploadId)
       uploadFilesRef.current.delete(uploadId)
-      showToast({ icon: 'check', title: 'Uploaded', description: file.name })
+      // Photos page only renders media (images/videos). When the user uploads
+      // anything else from here, it still gets stored — but it lands in All
+      // Files (root) and never appears in this grid. Signal that explicitly
+      // instead of showing the generic "Uploaded" toast and leaving the user
+      // wondering why the file vanished.
+      if (isMediaFile(file.name, file.type)) {
+        showToast({ icon: 'check', title: 'Uploaded', description: file.name })
+      } else {
+        showToast({
+          icon: 'file',
+          title: 'File saved to All Files',
+          description: `${file.name} is not a photo or video — it was uploaded to All Files.`,
+        })
+      }
       fetchAllFiles()
     } catch (err) {
       uploadAbortRef.current.delete(uploadId)
