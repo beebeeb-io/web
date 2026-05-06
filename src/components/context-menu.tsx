@@ -14,7 +14,7 @@ interface ContextMenuItem {
 const MENU_ITEMS: ContextMenuItem[] = [
   { id: 'open', label: 'Open', icon: 'file', shortcut: 'Enter' },
   { id: 'share', label: 'Share', icon: 'share', shortcut: 'S' },
-  { id: 'copy-link', label: 'Copy share link', icon: 'link' },
+  { id: 'manage-shares', label: 'Manage shares', icon: 'link' },
   { id: 'move', label: 'Move to...', icon: 'folder', shortcut: 'M', dividerAfter: true },
   { id: 'star', label: 'Star', icon: 'star', shortcut: 'F' },
   { id: 'rename', label: 'Rename', icon: 'file', shortcut: 'F2' },

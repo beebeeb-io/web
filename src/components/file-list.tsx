@@ -15,7 +15,7 @@ import { formatBytes } from '../lib/format'
 import { getPreference, setPreference } from '../lib/api'
 import { SharePopover } from './share-popover'
 import { useToast } from './toast'
-import type { DriveFile } from '../lib/api'
+import type { DriveFile, MyShare } from '../lib/api'
 
 // ─── Sort types ─────────────────────────────────────
 
@@ -124,6 +124,11 @@ export interface FileListProps {
   // City defaults to "Falkenstein" — use whatever the file's storage pool returns when wired.
   onShowTrustDetails?: (file: DriveFile) => void
   encryptionCity?: string
+
+  /** Active shares owned by the current user, used to flag rows that have at
+   *  least one non-revoked share when `share_count` may not be populated yet
+   *  (e.g. immediately after a share is created). */
+  myShares?: MyShare[]
 }
 
 // ─── Component ───────────────────────────────────────
@@ -156,9 +161,30 @@ export function FileList({
   onShowTrustDetails,
   encryptionCity = 'Falkenstein',
   uploadCards,
+  myShares,
 }: FileListProps) {
   const { getFileKey, isUnlocked } = useKeys()
   const { showToast } = useToast()
+
+  // ─── Active-share lookup ───────────────────────────
+  // Derived set of file ids that currently have at least one non-revoked,
+  // non-expired share belonging to the current user. Used to show the share
+  // indicator next to filenames even when `file.share_count` is stale (the
+  // server count can lag right after a share is created/revoked).
+  const sharedFileIds = useMemo(() => {
+    if (!myShares) return null
+    const now = Date.now()
+    const ids = new Set<string>()
+    for (const s of myShares) {
+      if (s.revoked) continue
+      if (s.expires_at) {
+        const exp = new Date(s.expires_at).getTime()
+        if (Number.isFinite(exp) && exp <= now) continue
+      }
+      ids.add(s.file_id)
+    }
+    return ids
+  }, [myShares])
 
   // ─── Sort state ────────────────────────────────────
   const [sortKey, setSortKey] = useState<SortKey>(() => {
@@ -757,8 +783,10 @@ export function FileList({
               <Icon name="star" size={11} />
             </button>
 
-            {/* Share badge — shown when file has active share links */}
-            {(file.share_count ?? 0) > 0 && (
+            {/* Share badge — shown when file has active share links.
+                Falls back to `myShares` when share_count is stale (e.g.
+                immediately after creating a share, before the next refetch). */}
+            {((file.share_count ?? 0) > 0 || sharedFileIds?.has(file.id)) && (
               <button
                 type="button"
                 onClick={(e) => {
@@ -766,7 +794,12 @@ export function FileList({
                   const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
                   setSharePopover({ fileId: file.id, anchorRect: rect })
                 }}
-                aria-label={`Manage ${file.share_count} active share${(file.share_count ?? 0) > 1 ? 's' : ''}`}
+                aria-label={
+                  (file.share_count ?? 0) > 0
+                    ? `Manage ${file.share_count} active share${(file.share_count ?? 0) > 1 ? 's' : ''}`
+                    : 'Manage active share'
+                }
+                title="Shared"
                 className="inline-flex items-center gap-0.5 text-amber-deep hover:text-amber transition-colors cursor-pointer"
               >
                 <Icon name="link" size={11} />

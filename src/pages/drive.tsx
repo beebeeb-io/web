@@ -8,6 +8,7 @@ import { FileList } from '../components/file-list'
 import { FileDetailsPanel, type FileDetailsMeta } from '../components/file-details-panel'
 import { TrustDetailsPanel, type TrustFile } from '../components/trust-details-panel'
 import { ShareDialog } from '../components/share-dialog'
+import { ShareInfoModal } from '../components/share-info-modal'
 import { MoveModal } from '../components/move-modal'
 import { RenameDialog } from '../components/rename-dialog'
 import { UploadZone, useBrowseFiles, useBrowseFolders, type FolderFile } from '../components/upload-zone'
@@ -39,6 +40,7 @@ import {
   listMyShares,
   getStorageUsage,
   type DriveFile,
+  type MyShare,
   type StorageUsage,
 } from '../lib/api'
 import { getRemainingBytes } from '../components/quota-warning'
@@ -89,6 +91,12 @@ export function Drive() {
   const [syncedAgo, setSyncedAgo] = useState(0)
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null)
   const [shareFileId, setShareFileId] = useState<string | null>(null)
+  // File whose Manage-shares modal is currently open.
+  const [manageSharesFileId, setManageSharesFileId] = useState<string | null>(null)
+  // Active shares owned by the current user, used to flag rows in the file
+  // list and seed the ShareInfoModal so it doesn't have to refetch from
+  // scratch every time it opens.
+  const [myShares, setMyShares] = useState<MyShare[]>([])
   const [moveFileId, setMoveFileId] = useState<string | null>(null)
   const [renameFileId, setRenameFileId] = useState<string | null>(null)
   const [versionFileId, setVersionFileId] = useState<string | null>(null)
@@ -181,6 +189,25 @@ export function Drive() {
   useEffect(() => {
     fetchFiles()
   }, [fetchFiles])
+
+  // ─── My active shares ──────────────────────────────
+  // Loaded once per drive session and refreshed when the user creates,
+  // revokes, or deletes a share. Powers the "shared" indicator on file
+  // rows and seeds the ShareInfoModal so it doesn't have to flash a
+  // loading state every time it opens.
+  const fetchMyShares = useCallback(async () => {
+    if (!isUnlocked) return
+    try {
+      const shares = await listMyShares()
+      setMyShares(shares)
+    } catch {
+      // Non-fatal — the file list still works without share indicators.
+    }
+  }, [isUnlocked])
+
+  useEffect(() => {
+    fetchMyShares()
+  }, [fetchMyShares])
 
   // Re-derive when the sync engine pushes ops affecting the visible folder.
   useEffect(() => {
@@ -1070,26 +1097,13 @@ export function Drive() {
       case 'share':
         setShareFileId(file.id)
         break
+      case 'manage-shares':
+      // Legacy action id kept for any callers still passing 'copy-link'
+      // before the context-menu rename — funnels into the same modal.
       case 'copy-link':
-        try {
-          if (!isUnlocked || !cryptoReady) {
-            showToast({ icon: 'lock', title: 'Vault is locked', description: 'Unlock the vault to copy share links.', danger: true })
-            return
-          }
-          const shares = await listMyShares()
-          const existingShare = shares.find((s) => s.file_id === file.id)
-          if (!existingShare) {
-            showToast({ icon: 'link', title: 'No share link exists', description: 'Share the file first to create a link.' })
-            return
-          }
-          const fileKey = await getFileKey(file.id)
-          const keyB64 = toBase64(fileKey)
-          const shareUrl = `${window.location.origin}/s/${existingShare.token}#key=${encodeURIComponent(keyB64)}`
-          await navigator.clipboard.writeText(shareUrl)
-          showToast({ icon: 'check', title: 'Share link copied', description: 'Link with decryption key copied to clipboard.' })
-        } catch (err) {
-          showToast({ icon: 'x', title: 'Failed to copy link', description: err instanceof Error ? err.message : 'Something went wrong.', danger: true })
-        }
+        setManageSharesFileId(file.id)
+        // Refresh the share list so the modal opens with current data.
+        fetchMyShares()
         break
       case 'move':
         setMoveFileId(file.id)
@@ -1575,6 +1589,7 @@ export function Drive() {
             starPulseId={starPulseId}
             recentlyUploadedIds={recentlyUploaded}
             onShowTrustDetails={(file) => setTrustFileId(file.id)}
+            myShares={myShares}
             uploadCards={
               <UploadCards
                 uploads={uploads}
@@ -1677,9 +1692,27 @@ export function Drive() {
           onShareCreated={() => {
             // Advance onboarding context (first_share_done might now be true)
             void refreshOnboarding()
+            // Refresh share indicators on file rows.
+            void fetchMyShares()
           }}
         />
       )}
+
+      {manageSharesFileId && (() => {
+        const file = files.find((f) => f.id === manageSharesFileId)
+        if (!file) return null
+        return (
+          <ShareInfoModal
+            isOpen={true}
+            onClose={() => setManageSharesFileId(null)}
+            fileId={file.id}
+            fileName={displayName(file)}
+            myShares={myShares}
+            onCreateNew={() => setShareFileId(file.id)}
+            onRevoked={() => { void fetchMyShares() }}
+          />
+        )
+      })()}
 
       {moveFile && (
         <MoveModal
