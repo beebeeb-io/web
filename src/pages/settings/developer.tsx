@@ -465,7 +465,7 @@ function WebhooksSection() {
                               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
                             </svg>
                           ) : (
-                            <Icon name="upload" size={13} />
+                            <Icon name="link" size={13} />
                           )}
                         </button>
 
@@ -1016,7 +1016,7 @@ export function SettingsDeveloper() {
         </div>
 
         {/* ── Onboarding reset (dev only — spec 024 §3.2) ── */}
-        <OnboardingResetSection />
+        {import.meta.env.DEV && <OnboardingResetSection />}
 
         {/* ── Footer note ── */}
         <div className="text-[12px] text-ink-4 flex items-start gap-2 pt-2">

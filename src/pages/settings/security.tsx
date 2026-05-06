@@ -6,7 +6,6 @@ import { BBChip } from '../../components/bb-chip'
 import { BBInput } from '../../components/bb-input'
 import { Icon } from '../../components/icons'
 import { useToast } from '../../components/toast'
-import { useAuth } from '../../lib/auth-context'
 import { useKeys } from '../../lib/key-context'
 import { ChangePasswordDialog } from '../../components/change-password-dialog'
 import { encryptForQr, generateCode } from '../../lib/qr-crypto'
@@ -20,14 +19,11 @@ import {
   serverOptsToCreateOptions, credentialToRegistrationJSON,
   type Session, type PasskeyInfo, type MySignIn,
 } from '../../lib/api'
-import { generateRecoveryKitPDF } from '../../lib/recovery-kit-pdf'
 import QRCode from 'qrcode'
 
 /* ── Recovery phrase ────────────────────────────── */
 
 function RecoveryPhraseSection() {
-  const { user } = useAuth()
-  const recoveryPhrase = ''
   return (
     <SettingsRow
       label="Recovery phrase"
@@ -41,16 +37,11 @@ function RecoveryPhraseSection() {
         <p className="text-[12px] text-ink-3 mt-1">
           If you need your recovery phrase, check your password manager or printed copy.
         </p>
-        <div className="flex flex-wrap gap-2">
-          <BBButton
-            size="sm"
-            onClick={() => recoveryPhrase && generateRecoveryKitPDF(recoveryPhrase, user?.email ?? '')}
-            title="Opens a print-ready Recovery Kit — choose 'Save as PDF'"
-            disabled={!recoveryPhrase || !user?.email}
-          >
-            <Icon name="file-text" size={13} className="mr-1.5" />
-            Download Recovery Kit
-          </BBButton>
+        <div className="flex items-start gap-2.5 rounded-md border border-line bg-paper-2 px-3 py-2.5">
+          <Icon name="file-text" size={13} className="text-ink-3 shrink-0 mt-0.5" />
+          <p className="text-[12px] text-ink-2 leading-relaxed">
+            Your recovery phrase was shown once during onboarding. If you downloaded it then, keep it safe. It cannot be shown again.
+          </p>
         </div>
         <p className="text-[11px] text-ink-4 leading-relaxed">
           We cannot retrieve, reset, or regenerate your recovery phrase.

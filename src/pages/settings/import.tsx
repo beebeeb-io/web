@@ -1237,10 +1237,6 @@ export function SettingsImport() {
       />
 
       <div className="p-7 space-y-6">
-        <div className="rounded-xl border border-line bg-paper-2 px-5 py-4 text-[13px] text-ink-2 leading-relaxed">
-          Automated imports are coming soon. Download your files from your current provider and upload them to Beebeeb.
-        </div>
-
         {/* ── Provider card grid (when not connected) ── */}
         {!anyConnected && (appKey || gdClientId) && (
           <div>

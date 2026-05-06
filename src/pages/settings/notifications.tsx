@@ -91,7 +91,6 @@ export function SettingsNotifications() {
       try {
         const saved = await setNotificationPreferences(next)
         setPrefs(saved)
-        showToast({ icon: 'check', title: 'Notification preferences saved' })
       } catch (err) {
         // Roll back on error
         setPrefs(prefs)

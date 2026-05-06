@@ -378,7 +378,7 @@ export function SettingsProfile() {
               </div>
               <div className="flex gap-2">
                 <BBButton
-                  variant="default"
+                  variant="danger"
                   size="md"
                   onClick={handleTrackingConfirmOff}
                   className="flex-1 justify-center"

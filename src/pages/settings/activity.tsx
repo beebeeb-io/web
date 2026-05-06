@@ -31,7 +31,7 @@ function actionMeta(type: string): ActionMeta {
     case 'share_revoked':
       return { label: 'Unshared', icon: 'link', badgeClass: 'bg-paper-2 text-ink-2 border border-line' }
     case 'file_downloaded':
-      return { label: 'Downloaded', icon: 'download', badgeClass: 'bg-amber-bg text-amber-deep' }
+      return { label: 'Downloaded', icon: 'download', badgeClass: 'bg-paper-3 text-ink-2 border border-line' }
     case 'folder_created':
       return { label: 'Folder', icon: 'folder', badgeClass: 'bg-paper-2 text-ink-2 border border-line' }
     default:

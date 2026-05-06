@@ -224,6 +224,7 @@ const densityOptions: { id: SidebarDensity; label: string; description: string }
 ]
 
 interface LocalePreference {
+  language?: string
   region?: string
   timezone?: string
   firstDay?: 'Sun' | 'Mon'
@@ -322,7 +323,11 @@ export function SettingsAppearance() {
                 key={lang.code}
                 type="button"
                 disabled={!lang.available}
-                onClick={() => lang.available && i18n.changeLanguage(lang.code)}
+                onClick={() => {
+                  if (!lang.available) return
+                  void i18n.changeLanguage(lang.code)
+                  saveLocale({ language: lang.code })
+                }}
                 className={`group/lang flex items-center gap-2.5 px-3 py-2.5 rounded-md border text-left transition-all duration-200 ${
                   isActive
                     ? 'border-amber-deep bg-amber-bg cursor-default'
