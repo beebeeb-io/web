@@ -269,7 +269,7 @@ export function Photos() {
         showToast({ icon: 'check', title: 'Uploaded', description: file.name })
       } else {
         showToast({
-          icon: 'file',
+          icon: 'info',
           title: 'File saved to All Files',
           description: `${file.name} is not a photo or video — it was uploaded to All Files.`,
         })
