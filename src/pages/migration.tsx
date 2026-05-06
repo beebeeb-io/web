@@ -54,7 +54,7 @@ export function Migration() {
   return (
     <DriveLayout>
       <div className="flex-1 overflow-y-auto px-6 py-6">
-        <div className="max-w-2xl">
+        <div className="max-w-[672px]">
           <h2 className="text-xl font-bold text-ink mb-1">Import your files</h2>
           <p className="text-sm text-ink-3 mb-6">
             Bring your files from other cloud providers into your encrypted vault.

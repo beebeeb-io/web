@@ -200,7 +200,7 @@ export function Receive() {
 
       {/* Body */}
       <main className="flex-1 flex flex-col items-center justify-start px-5 pt-10 pb-8">
-        <div className="w-full max-w-sm">
+        <div className="w-full max-w-[384px]">
           {phase === 'idle' && (
             <CodeEntry
               code={codeInput}

@@ -31,7 +31,7 @@ export function JoinPage() {
   const signupUrl = `/signup?ref=referral&code=${encodeURIComponent(code)}`
 
   const contextPanel = (
-    <div className="max-w-sm w-full space-y-8">
+    <div className="max-w-[384px] w-full space-y-8">
       <div>
         <div className="mb-4">
           <BBChip variant="amber">10 GB free encrypted storage</BBChip>
@@ -78,7 +78,7 @@ export function JoinPage() {
 
   return (
     <SplitAuthScreen contextPanel={contextPanel}>
-      <div className="max-w-sm w-full space-y-6">
+      <div className="max-w-[384px] w-full space-y-6">
         <div>
           <h2 className="text-[22px] font-bold tracking-tight text-ink mb-2">
             Create your account

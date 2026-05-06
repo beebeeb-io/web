@@ -7,12 +7,16 @@ interface SplitAuthScreenProps {
 
 export function SplitAuthScreen({ contextPanel, children }: SplitAuthScreenProps) {
   return (
-    <div className="min-h-screen flex flex-col md:flex-row bg-paper">
-      <div className="md:flex-[1_1_420px] md:min-w-[320px] bg-paper-2 border-r border-line flex items-center justify-center p-8 md:p-12">
-        {contextPanel}
+    <div className="min-h-screen grid grid-cols-1 lg:grid-cols-2 bg-paper">
+      <div className="bg-paper-2 lg:border-r border-b lg:border-b-0 border-line p-8 md:p-12 lg:p-16 flex items-center justify-center">
+        <div style={{ width: '100%', maxWidth: '28rem' }}>
+          {contextPanel}
+        </div>
       </div>
-      <div className="md:flex-[1_1_420px] md:min-w-[320px] flex items-center justify-center p-8 md:p-12">
-        {children}
+      <div className="p-8 md:p-12 lg:p-16 flex items-center justify-center">
+        <div style={{ width: '100%', maxWidth: '28rem' }}>
+          {children}
+        </div>
       </div>
     </div>
   )
