@@ -75,7 +75,7 @@ export function SettingsReferrals() {
   const [copied, setCopied] = useState(false)
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const referralUrl = code ? `https://beebeeb.io/r/${code}` : null
+  const referralUrl = code ? `${window.location.origin}/join/${code}` : null
 
   const load = useCallback(async () => {
     if (!user) return

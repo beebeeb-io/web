@@ -53,6 +53,7 @@ const DeleteAccount  = lazyNamed(() => import('./pages/delete-account'), 'Delete
 const Receive        = lazyNamed(() => import('./pages/receive'),        'Receive')
 const CliAuth        = lazyNamed(() => import('./pages/cli-auth'),       'CliAuth')
 const Cookies        = lazyNamed(() => import('./pages/cookies'),        'Cookies')
+const JoinPage       = lazyNamed(() => import('./pages/join'),            'JoinPage')
 const NotFound       = lazyNamed(() => import('./pages/errors/not-found'),   'NotFound')
 const ServerError    = lazyNamed(() => import('./pages/errors/server-error'), 'ServerError')
 
@@ -425,6 +426,7 @@ export function App() {
             }
           />
           <Route path="/s/:token" element={<ShareViewPage />} />
+          <Route path="/join/:code" element={<JoinPage />} />
           <Route path="/cookies" element={<Cookies />} />
           <Route path="/receive" element={<Receive />} />
           <Route path="/500" element={<ServerError />} />
