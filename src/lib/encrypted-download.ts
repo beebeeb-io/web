@@ -12,6 +12,74 @@ import { dispatchDecrypted } from './decrypt-events'
 // AES-256-GCM: 12-byte nonce, 16-byte auth tag
 const NONCE_LENGTH = 12
 const GCM_TAG_LENGTH = 16
+const CHUNK_OVERHEAD = NONCE_LENGTH + GCM_TAG_LENGTH
+
+export function inferChunkCountFromEncryptedSize(
+  encryptedSize: number,
+  plaintextSize: number,
+): number {
+  const overheadSize = encryptedSize - plaintextSize
+  if (overheadSize <= 0 || overheadSize % CHUNK_OVERHEAD !== 0) {
+    throw new Error('Encrypted file size does not match chunk metadata')
+  }
+  return overheadSize / CHUNK_OVERHEAD
+}
+
+export async function decryptEncryptedBytes(
+  fileKey: Uint8Array,
+  encryptedBytes: Uint8Array,
+  chunkCount: number,
+  sizeBytes: number,
+): Promise<Uint8Array> {
+  const decryptedParts: Uint8Array[] = []
+  let offset = 0
+
+  for (let i = 0; i < chunkCount; i++) {
+    // Calculate the plaintext size for this chunk
+    const isLastChunk = i === chunkCount - 1
+    let plaintextSize: number
+    if (chunkCount === 1) {
+      plaintextSize = sizeBytes
+    } else if (isLastChunk) {
+      plaintextSize = sizeBytes - i * CHUNK_SIZE
+    } else {
+      plaintextSize = CHUNK_SIZE
+    }
+
+    // The encrypted chunk size: nonce + plaintext + GCM tag
+    const encryptedChunkSize = NONCE_LENGTH + plaintextSize + GCM_TAG_LENGTH
+
+    // Guard: make sure we have enough bytes
+    if (offset + encryptedChunkSize > encryptedBytes.length) {
+      throw new Error(
+        `Chunk ${i}: expected ${encryptedChunkSize} bytes at offset ${offset}, ` +
+        `but only ${encryptedBytes.length - offset} remain`,
+      )
+    }
+
+    // Extract nonce and ciphertext
+    const nonce = encryptedBytes.slice(offset, offset + NONCE_LENGTH)
+    const ciphertext = encryptedBytes.slice(
+      offset + NONCE_LENGTH,
+      offset + encryptedChunkSize,
+    )
+
+    const plaintext = await decryptChunk(fileKey, nonce, ciphertext)
+    decryptedParts.push(plaintext)
+
+    offset += encryptedChunkSize
+  }
+
+  const totalSize = decryptedParts.reduce((sum, p) => sum + p.length, 0)
+  const decrypted = new Uint8Array(totalSize)
+  let writeOffset = 0
+  for (const part of decryptedParts) {
+    decrypted.set(part, writeOffset)
+    writeOffset += part.length
+  }
+
+  return decrypted
+}
 
 /**
  * Download and decrypt a file, then trigger a browser save dialog.
@@ -69,56 +137,10 @@ export async function encryptedDownload(
   const headerChunkCount = res.headers.get('X-Chunk-Count')
   const effectiveChunkCount = headerChunkCount ? parseInt(headerChunkCount, 10) : chunkCount
 
-  const decryptedParts: Uint8Array[] = []
-  let offset = 0
-
-  for (let i = 0; i < effectiveChunkCount; i++) {
-    // Calculate the plaintext size for this chunk
-    const isLastChunk = i === effectiveChunkCount - 1
-    let plaintextSize: number
-    if (effectiveChunkCount === 1) {
-      plaintextSize = sizeBytes
-    } else if (isLastChunk) {
-      plaintextSize = sizeBytes - i * CHUNK_SIZE
-    } else {
-      plaintextSize = CHUNK_SIZE
-    }
-
-    // The encrypted chunk size: nonce + plaintext + GCM tag
-    const encryptedChunkSize = NONCE_LENGTH + plaintextSize + GCM_TAG_LENGTH
-
-    // Guard: make sure we have enough bytes
-    if (offset + encryptedChunkSize > encryptedBytes.length) {
-      throw new Error(
-        `Chunk ${i}: expected ${encryptedChunkSize} bytes at offset ${offset}, ` +
-        `but only ${encryptedBytes.length - offset} remain`,
-      )
-    }
-
-    // Extract nonce and ciphertext
-    const nonce = encryptedBytes.slice(offset, offset + NONCE_LENGTH)
-    const ciphertext = encryptedBytes.slice(
-      offset + NONCE_LENGTH,
-      offset + encryptedChunkSize,
-    )
-
-    const plaintext = await decryptChunk(fileKey, nonce, ciphertext)
-    decryptedParts.push(plaintext)
-
-    offset += encryptedChunkSize
-  }
-
-  // 4. Combine decrypted parts
-  const totalSize = decryptedParts.reduce((sum, p) => sum + p.length, 0)
-  const decrypted = new Uint8Array(totalSize)
-  let writeOffset = 0
-  for (const part of decryptedParts) {
-    decrypted.set(part, writeOffset)
-    writeOffset += part.length
-  }
+  const decrypted = await decryptEncryptedBytes(fileKey, encryptedBytes, effectiveChunkCount, sizeBytes)
 
   // 5. Trigger browser download
-  const blob = new Blob([decrypted], { type: effectiveMime })
+  const blob = new Blob([decrypted as BlobPart], { type: effectiveMime })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url

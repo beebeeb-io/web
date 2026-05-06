@@ -938,6 +938,7 @@ export interface ShareView {
   id: string
   name_encrypted?: string
   size_bytes?: number
+  chunk_count?: number
   mime_type?: string
   shared_by?: string
   /** User ID of the person who created the share — for referral attribution. */

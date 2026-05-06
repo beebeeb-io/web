@@ -13,7 +13,8 @@ import {
   getToken,
   type ShareView as ShareViewData,
 } from '../lib/api'
-import { decryptFilename, decryptChunk, fromBase64, unwrapKeyFromShare, initCrypto } from '../lib/crypto'
+import { decryptFilename, fromBase64, unwrapKeyFromShare, initCrypto } from '../lib/crypto'
+import { decryptEncryptedBytes, inferChunkCountFromEncryptedSize } from '../lib/encrypted-download'
 import { formatBytes } from '../lib/format'
 
 
@@ -497,12 +498,17 @@ export function ShareViewPage() {
     try {
       const blob = await downloadSharedFile(token, passphrase || undefined)
       const encrypted = new Uint8Array(await blob.arrayBuffer())
-
-      // Decrypt: each chunk is nonce(12) + ciphertext
-      const NONCE_LEN = 12
-      const nonce = encrypted.slice(0, NONCE_LEN)
-      const ciphertext = encrypted.slice(NONCE_LEN)
-      const plaintext = await decryptChunk(fileKey, nonce, ciphertext)
+      if (shareData.size_bytes == null) {
+        throw new Error('Missing file size metadata')
+      }
+      const chunkCount = shareData.chunk_count
+        ?? inferChunkCountFromEncryptedSize(encrypted.length, shareData.size_bytes)
+      const plaintext = await decryptEncryptedBytes(
+        fileKey,
+        encrypted,
+        chunkCount,
+        shareData.size_bytes,
+      )
 
       const decryptedBlob = new Blob([plaintext as BlobPart], { type: shareData.mime_type || 'application/octet-stream' })
       const url = URL.createObjectURL(decryptedBlob)
