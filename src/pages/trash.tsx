@@ -179,7 +179,7 @@ export function Trash() {
 
   /** Get the display name for a file (decrypted if available, raw otherwise). */
   function displayName(file: DriveFile): string {
-    return decryptedNames[file.id] ?? file.name_encrypted
+    return decryptedNames[file.id] ?? 'Encrypted file'
   }
 
   const toggleSelect = (id: string) => {

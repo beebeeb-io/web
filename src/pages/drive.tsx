@@ -86,7 +86,7 @@ export function Drive() {
   // upload pipeline when the user clicks Retry on a failed item.
   const uploadFilesRef = useRef<Map<string, File>>(new Map())
   const searchInputRef = useRef<HTMLInputElement>(null)
-  const [syncedAgo, setSyncedAgo] = useState(14)
+  const [syncedAgo, setSyncedAgo] = useState(0)
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null)
   const [shareFileId, setShareFileId] = useState<string | null>(null)
   const [moveFileId, setMoveFileId] = useState<string | null>(null)

@@ -257,8 +257,6 @@ function InviteForm({
             const encFolderKey = await encryptFolderKeyForRecipient(
               masterKey, recipientPubKey, fileId, folderKey,
             )
-            const { patchInvite } = await import('../lib/api')
-            await patchInvite(result.invite_id, {})
             await approveInvite(result.invite_id, toBase64(encFolderKey))
           } catch {
             // Approval failed — invite stays claimed, sender can retry approval later.

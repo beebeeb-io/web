@@ -17,7 +17,6 @@ import {
   getPreference,
   setPreference,
   getAdminStats,
-  type Subscription,
   type Plan,
   type ShareInvite,
   type StorageUsage,
@@ -147,7 +146,6 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   const location = useLocation()
   const { isUnlocked, getMasterKey } = useKeys()
   const { isFrozen } = useFrozen()
-  const [_sub, setSub] = useState<Subscription | null>(null)
   const [planDetails, setPlanDetails] = useState<Plan | null>(null)
   const [sharedFolders, setSharedFolders] = useState<(ShareInvite & { decryptedName?: string })[]>([])
   const [pinnedIds, setPinnedIds] = useState<string[]>([])
@@ -168,7 +166,6 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   }, [location.pathname])
 
   useEffect(() => {
-    getSubscription().then(setSub).catch((err) => console.error('[DriveLayout] Failed to load subscription:', err))
     getStorageUsage().then(setUsage).catch((err) => console.error('[DriveLayout] Failed to load storage usage:', err))
     // Try the billing usage endpoint; null = not yet deployed (404), fall back to getStorageUsage data.
     fetchUsage().then((b) => { if (b) setBillingUsage(b) }).catch(() => {})
@@ -203,7 +200,6 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   useEffect(() => {
     function onPlanChanged() {
       getStorageUsage().then(setUsage).catch(() => {})
-      getSubscription().then(setSub).catch(() => {})
     }
     function onRegionChanged() {
       getPreference<{ pool_name: string }>('storage_region')

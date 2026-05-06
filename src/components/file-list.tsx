@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react'
 import { BBCheckbox } from './bb-checkbox'
 import { BBChip } from './bb-chip'
 import { BBButton } from './bb-button'
@@ -14,6 +14,7 @@ import { modKey } from '../hooks/use-keyboard-shortcuts'
 import { formatBytes } from '../lib/format'
 import { getPreference, setPreference } from '../lib/api'
 import { SharePopover } from './share-popover'
+import { useToast } from './toast'
 import type { DriveFile } from '../lib/api'
 
 // ─── Sort types ─────────────────────────────────────
@@ -157,6 +158,7 @@ export function FileList({
   uploadCards,
 }: FileListProps) {
   const { getFileKey, isUnlocked } = useKeys()
+  const { showToast } = useToast()
 
   // ─── Sort state ────────────────────────────────────
   const [sortKey, setSortKey] = useState<SortKey>(() => {
@@ -369,8 +371,11 @@ export function FileList({
     const current = pref?.folder_ids ?? []
     const isPinning = !current.includes(folderId)
     if (isPinning && current.length >= MAX_PINS) {
-      // Silently skip — context menu item is still shown so the user knows pins exist,
-      // but we don't add beyond the limit.
+      showToast({
+        icon: 'bell',
+        title: 'Pin limit reached',
+        description: 'Remove a pin first to add a new one.',
+      })
       return
     }
     const newIds = isPinning
@@ -488,26 +493,28 @@ export function FileList({
     return ext ? ext.toUpperCase() : 'Encrypted file'
   }
 
-  const sortedFiles = sortable
-    ? [...files].sort((a, b) => {
-        if (a.is_folder && !b.is_folder) return -1
-        if (!a.is_folder && b.is_folder) return 1
-        switch (sortKey) {
-          case 'name-asc':      return safeName(a).localeCompare(safeName(b))
-          case 'name-desc':     return safeName(b).localeCompare(safeName(a))
-          case 'modified-desc': return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-          case 'modified-asc':  return new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
-          case 'size-desc':     return b.size_bytes - a.size_bytes
-          case 'size-asc':      return a.size_bytes - b.size_bytes
-          case 'type-asc': {
-            const ta = (a.mime_type || safeName(a).split('.').pop() || '').toLowerCase()
-            const tb = (b.mime_type || safeName(b).split('.').pop() || '').toLowerCase()
-            if (ta !== tb) return ta.localeCompare(tb)
-            return safeName(a).localeCompare(safeName(b))
+  const sortedFiles = useMemo(() => (
+    sortable
+      ? [...files].sort((a, b) => {
+          if (a.is_folder && !b.is_folder) return -1
+          if (!a.is_folder && b.is_folder) return 1
+          switch (sortKey) {
+            case 'name-asc':      return safeName(a).localeCompare(safeName(b))
+            case 'name-desc':     return safeName(b).localeCompare(safeName(a))
+            case 'modified-desc': return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+            case 'modified-asc':  return new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
+            case 'size-desc':     return b.size_bytes - a.size_bytes
+            case 'size-asc':      return a.size_bytes - b.size_bytes
+            case 'type-asc': {
+              const ta = (a.mime_type || safeName(a).split('.').pop() || '').toLowerCase()
+              const tb = (b.mime_type || safeName(b).split('.').pop() || '').toLowerCase()
+              if (ta !== tb) return ta.localeCompare(tb)
+              return safeName(a).localeCompare(safeName(b))
+            }
           }
-        }
-      })
-    : files
+        })
+      : files
+  ), [files, sortable, sortKey, decryptedNames])
 
   const allSelected = sortedFiles.length > 0 && selectedIds.size === sortedFiles.length
   const someSelected = selectedIds.size > 0 && selectedIds.size < sortedFiles.length
@@ -638,7 +645,7 @@ export function FileList({
         ].filter(Boolean).join(' ')}
         onClick={(e) => handleRowClick(file, e)}
         onDoubleClick={() => {
-          if (!file.is_folder) onFileAction?.('download', file)
+          if (!file.is_folder) onFileAction?.('open', file)
         }}
         onContextMenu={(e) => {
           e.preventDefault()

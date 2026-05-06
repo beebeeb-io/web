@@ -215,7 +215,7 @@ export function Shared() {
             zeroize(shareKey)
             zeroize(fileKey)
           } catch {
-            names[invite.id] = invite.file_name_encrypted
+            names[invite.id] = 'Encrypted file'
           }
         } else {
           names[invite.id] = invite.file_name_encrypted ?? 'Encrypted file'

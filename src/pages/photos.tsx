@@ -122,7 +122,7 @@ function placeholderGradient(index: number): string {
 
 // ─── Tab selector ───────────────────────────────
 
-const TABS = ['All', 'Albums', 'People', 'Places'] as const
+const TABS = ['All'] as const
 
 // ─── Date range options ─────────────────────────
 
@@ -455,7 +455,7 @@ export function Photos() {
                   <span className="text-[11px] text-ink-3">-- {group.place}</span>
                 )}
                 <span className="font-mono text-[11px] text-ink-4 ml-auto">
-                  {group.items.length} photos
+                  {group.items.length} item{group.items.length !== 1 ? 's' : ''}
                 </span>
               </div>
 
