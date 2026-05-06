@@ -99,8 +99,8 @@ export function SettingsDataResidency() {
     getUserRegion()
       .then(data => {
         if (cancelled) return
-        setRegions(data.regions)
-        setPreferred(data.preferred_region)
+        setRegions(data.regions ?? [])
+        setPreferred(data.preferred_region ?? null)
       })
       .catch(err => {
         if (cancelled) return
