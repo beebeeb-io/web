@@ -85,10 +85,11 @@ test.describe('Page refresh stability (task 0028)', () => {
   // server-side admin endpoints will 403, but the route + URL are
   // user-agnostic) — so a regular signed-up user is sufficient to test
   // routing behaviour.
+  // Note: /admin/* routes now redirect to admin.beebeeb.io (removed from list)
   const refreshStablePaths = [
-    '/admin/users',
-    '/admin/infrastructure',
     '/settings/security',
+    '/settings/profile',
+    '/settings/billing',
   ] as const
 
   test('refresh on admin + settings pages keeps the user on the same URL', async ({
