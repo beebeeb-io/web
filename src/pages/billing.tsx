@@ -18,7 +18,6 @@ import {
   reactivateSubscription,
   getPreference,
   setPreference,
-  getApiUrl,
   type Subscription,
   type Invoice,
   type Plan,
