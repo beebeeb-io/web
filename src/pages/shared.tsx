@@ -114,6 +114,7 @@ export function Shared() {
   const [forwardFileId, setForwardFileId] = useState<string | null>(null)
   const [forwardFileName, setForwardFileName] = useState<string>('')
   const [forwardFileSize, setForwardFileSize] = useState(0)
+  const [forwardIsFolder, setForwardIsFolder] = useState(false)
 
   // Multi-select
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -380,6 +381,7 @@ export function Shared() {
           setForwardFileId(invite.file_id)
           setForwardFileName(displayName(invite))
           setForwardFileSize(invite.size_bytes ?? 0)
+          setForwardIsFolder(!!invite.is_folder)
         }
         break
       }
@@ -1099,6 +1101,7 @@ export function Shared() {
           fileId={forwardFileId}
           fileName={forwardFileName}
           fileSize={forwardFileSize}
+          isFolder={forwardIsFolder}
         />
       )}
     </DriveLayout>
