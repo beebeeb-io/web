@@ -572,6 +572,8 @@ export function Search() {
                         state: {
                           openFolderId: targetFolderId,
                           openFolderName: targetFolderName,
+                          // For file results: auto-select the file in the drive view
+                          openFileId: entry.type === 'folder' ? undefined : id,
                         },
                       })
                     }}

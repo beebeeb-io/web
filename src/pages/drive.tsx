@@ -218,12 +218,22 @@ export function Drive() {
 
   // Deep-link into a folder when navigating from search results
   useEffect(() => {
-    const state = location.state as { openFolderId?: string | null; openFolderName?: string } | null
+    const state = location.state as {
+      openFolderId?: string | null
+      openFolderName?: string
+      openFileId?: string | null
+    } | null
     if (state?.openFolderId) {
       setBreadcrumbs([
         { id: null, name: 'All files' },
         { id: state.openFolderId, name: state.openFolderName ?? 'Folder' },
       ])
+    }
+    if (state?.openFileId) {
+      // Auto-select the file so the detail panel opens
+      setSelectedFileId(state.openFileId)
+    }
+    if (state?.openFolderId || state?.openFileId) {
       // Clear location state so refreshing doesn't re-navigate
       navigate(location.pathname, { replace: true, state: null })
     }
