@@ -788,7 +788,7 @@ export function SettingsDeveloper() {
             <div>
               <div className="font-medium text-ink mb-0.5">API tokens coming soon</div>
               The <code className="font-mono text-[11.5px] bg-paper border border-line px-1 rounded">/api/v1/tokens</code> endpoint is being deployed.
-              {' '}Once live, you can create tokens for the <a href="https://docs.beebeeb.io/cli/install" target="_blank" rel="noopener" className="text-amber-deep hover:underline">CLI</a> and your own scripts.
+              {' '}Once live, you can create tokens for the <a href="https://docs.beebeeb.io/cli/install" target="_blank" rel="noopener noreferrer" className="text-amber-deep hover:underline">CLI</a> and your own scripts.
             </div>
           </div>
         )}

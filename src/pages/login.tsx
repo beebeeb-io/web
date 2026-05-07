@@ -121,7 +121,7 @@ export function Login() {
       }
     } catch (opaqueErr) {
       // OPAQUE failed — try legacy login. Log in dev to catch infrastructure issues.
-      console.warn('[login] OPAQUE failed, falling back to legacy:', opaqueErr)
+      if (import.meta.env.DEV) console.warn('[login] OPAQUE failed, falling back to legacy:', opaqueErr)
       try {
         const result = await login(email, password)
         if (result.requires_2fa && result.partial_token) {

@@ -372,7 +372,7 @@ export function ShareViewPage() {
 
     // Double-encrypted: fragment = K_c, need to unwrap wrapped_file_key
     if (!shareData.wrapped_file_key) {
-      console.error('[share-view] double_encrypted=true but no wrapped_file_key in response')
+      if (import.meta.env.DEV) console.error('[share-view] double_encrypted=true but no wrapped_file_key in response')
       return null
     }
     try {
@@ -544,7 +544,7 @@ export function ShareViewPage() {
       // Log the real error so devtools surfaces WASM init failures, size
       // calculation errors, or anything else hiding behind the generic
       // user-facing message below.
-      console.error('[share-view] download failed:', err)
+      if (import.meta.env.DEV) console.error('[share-view] download failed:', err)
       setDownloadError('Decryption failed. The share link may have an incorrect key.')
     } finally {
       setDownloading(false)
