@@ -664,6 +664,7 @@ export function ShareViewPage() {
                     if (e.key === 'Enter') handleVerify()
                   }}
                   placeholder="Enter passphrase"
+                  aria-label="Share passphrase"
                   className="flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-4"
                   autoFocus
                 />

@@ -943,7 +943,7 @@ export function Shared() {
       </div>
 
       {/* Tab bar */}
-      <div className="px-5 border-b border-line flex items-center gap-0">
+      <div role="tablist" aria-label="Shared files" className="px-5 border-b border-line flex items-center gap-0">
         {([
           { id: 'with-me' as TabId, label: 'With me' },
           { id: 'by-me' as TabId, label: 'By me' },
@@ -957,6 +957,8 @@ export function Shared() {
           return (
             <button
               key={t.id}
+              role="tab"
+              aria-selected={isActive}
               onClick={() => setTab(t.id)}
               className="relative px-4 py-2.5 text-[13px] font-medium cursor-pointer transition-colors"
               style={{ color: isActive ? 'var(--color-ink)' : 'var(--color-ink-3)' }}
@@ -967,8 +969,8 @@ export function Shared() {
                   <span
                     className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-semibold"
                     style={{
-                      backgroundColor: 'oklch(0.82 0.17 84)',
-                      color: 'oklch(0.25 0.04 84)',
+                      backgroundColor: 'var(--color-amber)',
+                      color: 'var(--color-ink)',
                     }}
                   >
                     {badgeCount}
