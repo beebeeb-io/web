@@ -15,6 +15,21 @@ import { envTestAccount, loginAndProvision } from './helpers/auth'
 const uniqueEmail = () => `e2e-${Date.now()}-${Math.random().toString(36).slice(2)}@beebeeb-test.io`
 
 test.describe('Authentication', () => {
+  test.beforeEach(async ({ page }) => {
+    // Block the dev auto-login endpoint so tests start unauthenticated.
+    // In dev mode, devAutoAuth() calls /dev/auto-login on every page load —
+    // intercepting it with a 404 prevents the automatic session injection.
+    await page.route('**/dev/auto-login', (route) => route.fulfill({ status: 404 }))
+
+    // Also clear any existing localStorage auth state
+    await page.goto('http://localhost:5173', { waitUntil: 'domcontentloaded' })
+    await page.evaluate(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
+    await page.context().clearCookies()
+    await page.goto('about:blank')
+  })
   test('signup flow: fill form, submit, redirected to /onboarding', async ({ page }) => {
     const email = uniqueEmail()
 
