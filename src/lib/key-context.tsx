@@ -19,6 +19,12 @@ import {
 } from './crypto'
 import { registerLogoutCallback } from './auth-context'
 import { wrapAndStore, unwrap, hasVault, clearVault } from './vault'
+import {
+  initSessionVault,
+  cacheVaultKey,
+  getVaultKey,
+  clearVaultKey,
+} from './session-vault-cache'
 import { getEmail, getToken } from './api'
 import { pushTauriSession, clearTauriSession } from './tauri-bridge'
 
@@ -63,42 +69,25 @@ export function KeyProvider({ children }: { children: ReactNode }) {
 
   const masterKeyRef = useRef<Uint8Array | null>(null)
 
+  // Wrap the master key with the tab's non-extractable session key and persist
+  // to IndexedDB. Failures are swallowed — caching is an enhancement; the live
+  // masterKeyRef is the source of truth within the tab.
   const cacheKey = useCallback(async (key: Uint8Array) => {
     try {
-      const sessionKey = crypto.getRandomValues(new Uint8Array(32))
-      const iv = crypto.getRandomValues(new Uint8Array(12))
-      const ck = await crypto.subtle.importKey('raw', sessionKey.buffer as ArrayBuffer, 'AES-GCM', false, ['encrypt'])
-      const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, ck, key.buffer as ArrayBuffer)
-      sessionStorage.setItem('bb_sk', btoa(String.fromCharCode(...sessionKey)))
-      sessionStorage.setItem('bb_iv', btoa(String.fromCharCode(...iv)))
-      sessionStorage.setItem('bb_mk', btoa(String.fromCharCode(...new Uint8Array(ct))))
+      await cacheVaultKey(key)
     } catch { /* best effort */ }
   }, [])
 
   const restoreCachedKey = useCallback(async (): Promise<Uint8Array | null> => {
     try {
-      const skB64 = sessionStorage.getItem('bb_sk')
-      const ivB64 = sessionStorage.getItem('bb_iv')
-      const mkB64 = sessionStorage.getItem('bb_mk')
-      if (!skB64 || !ivB64 || !mkB64) return null
-      const sk = Uint8Array.from(atob(skB64), c => c.charCodeAt(0))
-      const iv = Uint8Array.from(atob(ivB64), c => c.charCodeAt(0))
-      const ct = Uint8Array.from(atob(mkB64), c => c.charCodeAt(0))
-      const ck = await crypto.subtle.importKey('raw', sk.buffer as ArrayBuffer, 'AES-GCM', false, ['decrypt'])
-      const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, ck, ct.buffer as ArrayBuffer)
-      return new Uint8Array(pt)
+      return await getVaultKey()
     } catch {
-      sessionStorage.removeItem('bb_sk')
-      sessionStorage.removeItem('bb_iv')
-      sessionStorage.removeItem('bb_mk')
       return null
     }
   }, [])
 
   const clearCachedKey = useCallback(() => {
-    sessionStorage.removeItem('bb_sk')
-    sessionStorage.removeItem('bb_iv')
-    sessionStorage.removeItem('bb_mk')
+    void clearVaultKey()
   }, [])
 
   // Initialize WASM on mount + check if vault exists + restore cached key.
@@ -119,6 +108,10 @@ export function KeyProvider({ children }: { children: ReactNode }) {
         if (cancelled) return
         setCryptoReady(true)
         setCryptoLoading(false)
+        // Generate the tab's non-extractable session key. Idempotent if dev-auth
+        // already initialised it earlier in the boot sequence.
+        await initSessionVault()
+        if (cancelled) return
         const exists = await hasVault()
         if (cancelled) return
         setVaultExists(exists)

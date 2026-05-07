@@ -6,10 +6,11 @@
  * Vite constant-folds the check and Rollup tree-shakes the dev logic.
  *
  * Why a gate (not a useEffect in the app)?
- * AuthProvider reads localStorage on mount. KeyProvider reads sessionStorage
- * via restoreCachedKey() after initCrypto resolves. Both need the credentials
- * in place BEFORE they first render. A gate component that delays child mount
- * until the credentials are written ensures the timing is correct.
+ * AuthProvider reads localStorage on mount. KeyProvider unwraps the cached
+ * master key from IndexedDB after initCrypto resolves. Both need the
+ * credentials in place BEFORE they first render. A gate component that
+ * delays child mount until the credentials are written ensures the timing
+ * is correct.
  */
 
 import { useState, useEffect, type ReactNode } from 'react'
@@ -67,26 +68,18 @@ export function DevAuthGate({ children }: DevAuthGateProps) {
 }
 
 function DevAuthGateInner({ children }: { children: ReactNode }) {
-  // Start ready if BOTH a session token and a session-cached master key exist.
-  // If the cache is missing (e.g. after a page reload) we need to re-inject it
-  // via devAutoAuth even if a session token is already present.
-  const [ready, setReady] = useState(() => {
-    const hasToken = !!localStorage.getItem('bb_session')
-    const hasCachedKey =
-      !!sessionStorage.getItem('bb_sk') &&
-      !!sessionStorage.getItem('bb_iv') &&
-      !!sessionStorage.getItem('bb_mk')
-    return hasToken && hasCachedKey
-  })
+  // The non-extractable session-cache wrapping key lives only in memory, so a
+  // page reload always loses it — always re-run devAutoAuth on mount to
+  // repopulate the cache before children render.
+  const [ready, setReady] = useState(false)
   const [devAuthed, setDevAuthed] = useState(false)
 
   useEffect(() => {
-    if (ready) return
     devAutoAuth().then((authed) => {
       setDevAuthed(authed)
       setReady(true)
     })
-  }, [ready])
+  }, [])
 
   if (!ready) {
     return (
