@@ -87,8 +87,29 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 
 setApiUrl(API_URL)
 registerOnTokenCleared(() => {
+  clearEmail()
   void clearTauriSession()
 })
+
+// ─── Email storage (parallel to token) ──────────────
+// Stored alongside the session token so the desktop shell can show the
+// signed-in identity on its Account page. Cleared whenever the token is.
+const EMAIL_STORAGE_KEY = 'bb_email'
+
+export function setEmail(email: string): void {
+  if (typeof localStorage === 'undefined') return
+  localStorage.setItem(EMAIL_STORAGE_KEY, email)
+}
+
+export function getEmail(): string | null {
+  if (typeof localStorage === 'undefined') return null
+  return localStorage.getItem(EMAIL_STORAGE_KEY)
+}
+
+export function clearEmail(): void {
+  if (typeof localStorage === 'undefined') return
+  localStorage.removeItem(EMAIL_STORAGE_KEY)
+}
 
 /**
  * Decode a hex string into a byte array. Used by the legacy login path that
@@ -115,6 +136,7 @@ export {
   registerSessionExpiredHandler,
   setToken,
 }
+
 
 export type {
   AbuseReport,
@@ -209,6 +231,7 @@ export async function signup(
     body: JSON.stringify({ email, password }),
   })
   setToken(data.session_token)
+  setEmail(email)
   return data
 }
 
@@ -250,6 +273,7 @@ export async function opaqueRegisterFinish(
     }),
   })
   setToken(data.session_token)
+  setEmail(email)
   return data
 }
 
@@ -273,6 +297,7 @@ export async function opaqueLoginFinish(
     body: JSON.stringify({ email, client_message: clientMessage, server_state: serverState }),
   })
   setToken(data.session_token)
+  setEmail(email)
   return data
 }
 
@@ -400,6 +425,7 @@ export async function login(
   })
   if (!data.requires_2fa && data.session_token) {
     setToken(data.session_token)
+    setEmail(email)
   }
   return data
 }

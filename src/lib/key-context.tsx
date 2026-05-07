@@ -19,7 +19,7 @@ import {
 } from './crypto'
 import { registerLogoutCallback } from './auth-context'
 import { wrapAndStore, unwrap, hasVault, clearVault } from './vault'
-import { getToken } from './api'
+import { getEmail, getToken } from './api'
 import { pushTauriSession, clearTauriSession } from './tauri-bridge'
 
 interface KeyState {
@@ -159,7 +159,8 @@ export function KeyProvider({ children }: { children: ReactNode }) {
   const handoffToTauri = useCallback((key: Uint8Array) => {
     const token = getToken()
     if (!token) return
-    void pushTauriSession(token, key)
+    const email = getEmail()
+    void pushTauriSession(token, key, email ?? undefined)
   }, [])
 
   const unlock = useCallback(async (password: string, salt: Uint8Array) => {

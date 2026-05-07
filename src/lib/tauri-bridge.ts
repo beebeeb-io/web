@@ -6,12 +6,14 @@ export const isTauri = () =>
 export async function pushTauriSession(
   token: string,
   masterKeyBytes: Uint8Array,
+  email?: string,
 ): Promise<void> {
   try {
     if (!isTauri()) return
     await invoke('set_session', {
       token,
       masterKey: Array.from(masterKeyBytes),
+      email: email ?? null,
     }).catch(console.warn)
   } catch (err) {
     console.warn(err)
