@@ -39,7 +39,7 @@ const planMeta: Record<string, {
 }> = {
   free:         { label: 'Free',         priceMonthly: 0,      priceYearly: 0,       storageGB: 5,     tagline: 'Get started with encrypted storage', features: ['Encrypted storage', 'Photo library'] },
   personal:     { label: 'Personal',     priceMonthly: 8.99,   priceYearly: 86.30,   storageGB: 1000,  tagline: '1 TB of truly private storage', features: ['Everything in Free', '30-day version history'] },
-  pro:          { label: 'Pro',          priceMonthly: 39.95,  priceYearly: 383.52,  storageGB: 10000, tagline: '10 TB for power users and creators', features: ['Everything in Personal', '10 TB encrypted storage', 'Unlimited version history', 'Advanced sharing controls'] },
+  pro:          { label: 'Pro',          priceMonthly: 39.95,  priceYearly: 383.52,  storageGB: 5000,  tagline: '5 TB for power users and creators', features: ['Everything in Personal', '5 TB encrypted storage', 'Unlimited version history', 'Advanced sharing controls'] },
   data_hoarder: { label: 'Data Hoarder', priceMonthly: 139.80, priceYearly: 1342.08, storageGB: 20000, tagline: '20 TB — lowest per-TB price', features: ['Everything in Pro', '20 TB encrypted storage'] },
   // Legacy plan IDs kept for users on old subscriptions
   team:         { label: 'Team',         priceMonthly: 6,      priceYearly: 58,      storageGB: 2000,  tagline: 'Legacy team plan', features: ['Legacy team storage'] },
