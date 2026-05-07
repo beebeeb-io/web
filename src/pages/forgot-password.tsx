@@ -10,8 +10,8 @@
  * at the route level for any user with OPAQUE credentials.
  */
 
-import { Link, useNavigate } from 'react-router-dom'
 import React from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { AuthShell } from '../components/auth-shell'
 import { Icon, type IconName } from '@beebeeb/shared'
 
