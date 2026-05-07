@@ -55,7 +55,6 @@ export function Login() {
    *   5. POST /opaque/register-finish-existing (bearer auth)
    */
   async function silentOpaqueUpgrade(pwd: string): Promise<void> {
-    console.log('[OPAQUE migration] started for', email)
     try {
       // Step 1+2: registration start
       const regStart = await opaqueRegistrationStart(pwd)
@@ -78,8 +77,6 @@ export function Login() {
         toBase64(recoveryCheck),
         toBase64(x25519Pub),
       )
-
-      console.log('[OPAQUE migration] success — account enrolled in OPAQUE')
     } catch (err) {
       // Non-fatal: log and bail. Will retry next legacy login.
       console.warn('[OPAQUE migration] failed (will retry next login):', err)
