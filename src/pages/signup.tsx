@@ -65,13 +65,21 @@ export function Signup() {
           required
         />
 
-        <div className="mt-2.5 mb-3.5">
+        <div className="mt-2.5">
           <BBCheckbox
             checked={accepted}
             onChange={setAccepted}
             label="I understand that Beebeeb cannot recover my account if I lose both my password and recovery phrase. We can't recover this."
           />
         </div>
+
+        <p className="text-[11px] text-ink-3 mt-2 mb-3.5">
+          By creating an account, you agree to our{' '}
+          <a href="https://beebeeb.io/terms" target="_blank" rel="noopener noreferrer" className="text-amber-deep hover:underline">Terms of Service</a>
+          {' '}and{' '}
+          <a href="https://beebeeb.io/privacy" target="_blank" rel="noopener noreferrer" className="text-amber-deep hover:underline">Privacy Policy</a>.
+          Your data is processed by Initlabs B.V. under GDPR.
+        </p>
 
         {error && (
           <p className="text-xs text-red mb-3">{error}</p>
@@ -100,7 +108,9 @@ export function Signup() {
         {/* Footer */}
         <div className="border-t border-line mt-[18px] pt-3.5 flex items-center gap-2 text-[11px] text-ink-3">
           <Icon name="shield" size={14} className="text-amber-deep shrink-0" />
-          <span>Stored in Falkenstein. Hetzner. Under EU jurisdiction.</span>
+          <span>Stored in Falkenstein. Hetzner. EU jurisdiction.{' '}
+            <a href="https://beebeeb.io/privacy" target="_blank" rel="noopener noreferrer" className="hover:underline">Privacy Policy</a>.
+          </span>
         </div>
       </form>
     </AuthShell>
