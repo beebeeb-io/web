@@ -119,8 +119,9 @@ export function Login() {
         setNeedsProvision(true)
         setSubmitting(false)
       }
-    } catch {
-      // OPAQUE failed — try legacy login
+    } catch (opaqueErr) {
+      // OPAQUE failed — try legacy login. Log in dev to catch infrastructure issues.
+      console.warn('[login] OPAQUE failed, falling back to legacy:', opaqueErr)
       try {
         const result = await login(email, password)
         if (result.requires_2fa && result.partial_token) {
