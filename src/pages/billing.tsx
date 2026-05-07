@@ -780,7 +780,7 @@ function openUpgrade(plan: string) {
             <BBButton
               size="sm"
               variant="ghost"
-              onClick={() => window.open(`${getApiUrl()}/api/v1/legal/dpa`, '_blank')}
+              onClick={() => window.open('https://beebeeb.io/dpa', '_blank')}
             >
               Download DPA
             </BBButton>
