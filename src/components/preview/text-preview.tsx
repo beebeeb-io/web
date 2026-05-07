@@ -51,92 +51,6 @@ function toShikiLang(lang: string): string {
   return LANG_MAP[lang] ?? lang
 }
 
-// ─── Fallback regex colorizer (instant, used while Shiki loads) ──────────────
-// Safety: all user content is HTML-escaped via esc() before any markup is added.
-
-const KEYWORD_PATTERN =
-  /\b(abstract|as|async|await|break|case|catch|class|const|continue|debugger|default|delete|do|else|enum|export|extends|false|finally|fn|for|from|function|if|impl|import|in|instanceof|interface|let|loop|match|mod|mut|new|null|of|package|private|protected|pub|public|ref|return|self|static|struct|super|switch|this|throw|trait|true|try|type|typeof|undefined|use|var|void|where|while|with|yield)\b/g
-
-function esc(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-}
-
-function colorKeywords(text: string): string {
-  let result = esc(text)
-  result = result.replace(KEYWORD_PATTERN, '<span style="color:#e06c75;font-weight:500">$1</span>')
-  result = result.replace(/\b(\d+(?:\.\d+)?)\b/g, '<span style="color:#d19a66">$1</span>')
-  return result
-}
-
-function colorTokensFallback(text: string): string {
-  if (!text) return ''
-  const parts: string[] = []
-  let current = ''
-  let inStr: string | null = null
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]
-    const prev = i > 0 ? text[i - 1] : ''
-    if (inStr) {
-      current += ch
-      if (ch === inStr && prev !== '\\') {
-        parts.push(`<span style="color:#98c379">${esc(current)}</span>`)
-        current = ''
-        inStr = null
-      }
-    } else if (ch === '"' || ch === "'" || ch === '`') {
-      if (current) { parts.push(colorKeywords(current)); current = '' }
-      current += ch; inStr = ch
-    } else {
-      current += ch
-    }
-  }
-  if (current) {
-    parts.push(inStr ? `<span style="color:#98c379">${esc(current)}</span>` : colorKeywords(current))
-  }
-  return parts.join('')
-}
-
-function colorLineFallback(line: string, inBlock: boolean): { html: string; inBlock: boolean } {
-  if (inBlock) {
-    const end = line.indexOf('*/')
-    if (end === -1) return { html: `<span style="color:#7f848e;font-style:italic">${esc(line)}</span>`, inBlock: true }
-    return {
-      html: `<span style="color:#7f848e;font-style:italic">${esc(line.slice(0, end + 2))}</span>${colorLineFallback(line.slice(end + 2), false).html}`,
-      inBlock: false,
-    }
-  }
-  const blockStart = line.indexOf('/*')
-  if (blockStart !== -1) {
-    const after = line.slice(blockStart)
-    const blockEnd = after.indexOf('*/', 2)
-    if (blockEnd !== -1) {
-      return {
-        html: `${colorTokensFallback(line.slice(0, blockStart))}<span style="color:#7f848e;font-style:italic">${esc(after.slice(0, blockEnd + 2))}</span>${colorLineFallback(after.slice(blockEnd + 2), false).html}`,
-        inBlock: false,
-      }
-    }
-    return {
-      html: `${colorTokensFallback(line.slice(0, blockStart))}<span style="color:#7f848e;font-style:italic">${esc(after)}</span>`,
-      inBlock: true,
-    }
-  }
-  const inlineIdx = line.indexOf('//')
-  if (inlineIdx > 0) {
-    return {
-      html: `${colorTokensFallback(line.slice(0, inlineIdx))}<span style="color:#7f848e;font-style:italic">${esc(line.slice(inlineIdx))}</span>`,
-      inBlock: false,
-    }
-  }
-  const hashIdx = line.match(/^(\s*)(#.*)$/)
-  if (hashIdx) {
-    return {
-      html: `${esc(hashIdx[1])}<span style="color:#7f848e;font-style:italic">${esc(hashIdx[2])}</span>`,
-      inBlock: false,
-    }
-  }
-  return { html: colorTokensFallback(line), inBlock: false }
-}
-
 // ─── Render helpers ───────────────────────────────────────────────────────────
 
 function tokenStyle(t: ShikiToken): React.CSSProperties {
@@ -245,18 +159,6 @@ export function TextPreview({ blob, language, filename }: TextPreviewProps) {
 
   const lines = text.split('\n')
   const gutterWidth = String(lines.length).length
-
-  // Fallback regex lines (used while Shiki loads or on failure)
-  let fallbackLines: string[] | null = null
-  if (isCode && !shiki) {
-    fallbackLines = []
-    let inBlock = false
-    for (const line of lines) {
-      const result = colorLineFallback(line, inBlock)
-      fallbackLines.push(result.html)
-      inBlock = result.inBlock
-    }
-  }
 
   // ── Dark code theme context ────────────────────────────────────────────────
   const bg = shiki?.bg ?? (isCode ? '#0d1117' : undefined)
@@ -421,14 +323,9 @@ export function TextPreview({ blob, language, filename }: TextPreviewProps) {
                           </span>
                         )) ?? ''}
                       </span>
-                    ) : fallbackLines ? (
-                      // Regex fallback (instant, while Shiki loads)
-                      <span
-                        className={wrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}
-                        dangerouslySetInnerHTML={{ __html: fallbackLines[i] || '' }}
-                      />
                     ) : (
-                      // Plain text
+                      // Plain text fallback while Shiki loads (or on failure).
+                      // Rendered as React children — no dangerouslySetInnerHTML.
                       <span className={wrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}>
                         {line || '​'}
                       </span>
