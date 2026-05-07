@@ -3,7 +3,12 @@ import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from '@beebeeb/shared'
 import { BBInput } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
-import { confirmAction, IncorrectPasswordError } from '../lib/api'
+import {
+  confirmAction,
+  IncorrectPasswordError,
+  SessionTooOldForConfirmationError,
+} from '../lib/api'
+import { useToast } from './toast'
 
 interface ConfirmPasswordModalProps {
   open: boolean
@@ -32,6 +37,7 @@ export function ConfirmPasswordModal({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
+  const { showToast } = useToast()
 
   useEffect(() => {
     if (open) {
@@ -49,6 +55,19 @@ export function ConfirmPasswordModal({
       const { confirmation_token } = await confirmAction(password)
       onConfirmed(confirmation_token, password)
     } catch (e) {
+      if (e instanceof SessionTooOldForConfirmationError) {
+        // Re-typing the password cannot fix this — the session itself is too
+        // old. Close the modal and surface a toast directing the user to
+        // log out and back in.
+        showToast({
+          icon: 'shield',
+          title: 'Please log out and back in',
+          description:
+            'For security, this action requires a fresh login. Your data is safe.',
+        })
+        onCancel()
+        return
+      }
       if (e instanceof IncorrectPasswordError) {
         setError('Incorrect password.')
       } else {
@@ -57,7 +76,7 @@ export function ConfirmPasswordModal({
     } finally {
       setLoading(false)
     }
-  }, [password, loading, onConfirmed])
+  }, [password, loading, onConfirmed, onCancel, showToast])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {

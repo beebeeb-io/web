@@ -2,6 +2,7 @@ import { clearTauriSession } from './tauri-bridge'
 import {
   ApiError,
   IncorrectPasswordError,
+  SessionTooOldForConfirmationError,
   clearToken,
   getApiUrl,
   getToken,
@@ -127,6 +128,7 @@ export function hexToBytes(hex: string): Uint8Array {
 export {
   ApiError,
   IncorrectPasswordError,
+  SessionTooOldForConfirmationError,
   clearToken,
   getApiUrl,
   getToken,
@@ -465,6 +467,19 @@ export async function confirmAction(
   })
 
   if (res.status === 401) {
+    // Two distinct 401s are possible here:
+    //   - "session_too_old_for_confirmation": session is OK but older than the
+    //     step-up freshness window — re-typing the password cannot fix it.
+    //   - everything else: the password was wrong.
+    // Read the body (best-effort) so the UI can surface the right message.
+    const body = (await res
+      .json()
+      .catch(() => ({}))) as Record<string, unknown>
+    if (body.error === 'session_too_old_for_confirmation') {
+      throw new SessionTooOldForConfirmationError(
+        (body.message as string | undefined) ?? undefined,
+      )
+    }
     throw new IncorrectPasswordError()
   }
   if (!res.ok) {
