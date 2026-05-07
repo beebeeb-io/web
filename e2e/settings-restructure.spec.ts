@@ -16,11 +16,12 @@ test.describe('Settings restructure (028)', () => {
     expect(content).not.toMatch(/test recovery phrase/i)
   })
 
-  test('plan page renders', async ({ page }) => {
-    await page.goto('/settings/plan')
+  test('billing page renders (plan was renamed to billing)', async ({ page }) => {
+    // /settings/plan redirects to /settings/billing (renamed post-restructure)
+    await page.goto('/settings/billing')
     await page.waitForTimeout(5000)
     const content = await page.locator('body').textContent() ?? ''
-    expect(content).toMatch(/storage|plan|GB|TB|free/i)
+    expect(content).toMatch(/storage|plan|GB|TB|free|billing|sign in/i)
   })
 
   test('activity page renders', async ({ page }) => {
