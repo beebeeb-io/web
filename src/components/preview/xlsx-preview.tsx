@@ -180,6 +180,9 @@ export function XlsxPreview({ blob, filename }: XlsxPreviewProps) {
 
       {/* Sheet iframe — scrollable */}
       <div className="flex-1 overflow-hidden">
+        {/* allow-same-origin is intentional — SheetJS needs DOM access to render.
+            DO NOT add allow-scripts: it would let user-uploaded xlsx content execute JS
+            in the main origin. */}
         <iframe
           key={activeSheet}
           srcDoc={srcDoc}
