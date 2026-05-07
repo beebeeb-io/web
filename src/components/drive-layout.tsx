@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ReactNode, DragEvent } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useFrozen } from '../hooks/use-frozen'
+import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBLogo } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import type { IconName } from '@beebeeb/shared'
@@ -155,6 +156,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   const [billingUsage, setBillingUsage] = useState<BillingUsage | null>(null)
   const [storageRegion, setStorageRegion] = useState<string>('auto')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const sidebarTrapRef = useFocusTrap<HTMLElement>(sidebarOpen)
   const [quickAccessDragOver, setQuickAccessDragOver] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
 
@@ -311,6 +313,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
       )}
 
       <aside
+        ref={sidebarTrapRef}
         className={`fixed inset-y-0 left-0 z-50 w-[220px] border-r border-line bg-paper-2 flex flex-col transition-transform duration-200 md:static md:translate-x-0 md:shrink-0 ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
