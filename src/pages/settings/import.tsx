@@ -982,7 +982,7 @@ export function SettingsImport() {
           const file = new File([blob], item.name, { type: blob.type || 'application/octet-stream' })
           await encryptedUpload(file, fileId, fileKey, parentId, (p) => {
             if (p.stage === 'Uploading' && p.bytesUploaded) trackThroughput(p.bytesUploaded)
-          }, undefined, undefined, ctrl.signal)
+          }, undefined, undefined, ctrl.signal, (serverFileId) => deriveFileKey(masterKey, serverFileId))
 
           updateStatus('done')
           bytesAccum += item.size

@@ -13,7 +13,7 @@ import {
   encryptFilename,
   toBase64,
 } from './crypto'
-import { initUpload, uploadChunk, completeUpload, getUploadStatus, ApiError } from './api'
+import { initUpload, uploadChunk, completeUpload, getUploadStatus, updateFile, ApiError } from './api'
 import type { DriveFile } from './api'
 import {
   computeFingerprint,
@@ -80,6 +80,8 @@ export interface SharedFolderUploadContext {
   inviteId: string
 }
 
+type FileKeyResolver = (fileId: string) => Promise<Uint8Array>
+
 export async function encryptedUpload(
   file: File,
   fileId: string,
@@ -89,32 +91,68 @@ export async function encryptedUpload(
   resumeFileId?: string,
   sharedFolderContext?: SharedFolderUploadContext,
   signal?: AbortSignal,
+  deriveFileKeyForId?: FileKeyResolver,
 ): Promise<DriveFile> {
   onProgress?.({ stage: 'Preparing', progress: 0 })
 
-  // Encrypt metadata as JSON so we can store MIME type zero-knowledge.
-  // The server only sees the opaque ciphertext — it cannot infer the file type.
-  // Backward-compat: old code encrypted just the filename string; new code
-  // encrypts {"name":"filename","mime_type":"image/jpeg"}. Both formats are
-  // handled by decryptFileMetadata() on the read side.
   const mimeType = file.type || null
   const metadataPlain = JSON.stringify({ name: file.name, mime_type: mimeType })
-  const encName = await encryptFilename(fileKey, metadataPlain)
-  const nameEncrypted = JSON.stringify({
-    nonce: toBase64(encName.nonce),
-    ciphertext: toBase64(encName.ciphertext),
-  })
+  let activeFileKey = fileKey
+  let nameEncrypted = await encryptMetadata(activeFileKey)
 
   const fallbackChunkCount = Math.max(1, Math.ceil(file.size / FALLBACK_CHUNK_SIZE_BYTES))
 
   // ── Resume detection ──────────────────────────────
-  let serverFileId: string
+  let serverFileId = fileId
   let skipChunks = new Set<number>()
   let uploadSessionId: string | null = null
   let objectVersionId: string | null = null
   let chunkBytes = FALLBACK_CHUNK_SIZE_BYTES
   let totalChunks = fallbackChunkCount
   let region: string | null = null
+
+  async function encryptMetadata(key: Uint8Array): Promise<string> {
+    // Encrypt metadata as JSON so we can store MIME type zero-knowledge.
+    // The server only sees the opaque ciphertext — it cannot infer the file type.
+    // Backward-compat: old code encrypted just the filename string; new code
+    // encrypts {"name":"filename","mime_type":"image/jpeg"}. Both formats are
+    // handled by decryptFileMetadata() on the read side.
+    const encName = await encryptFilename(key, metadataPlain)
+    return JSON.stringify({
+      nonce: toBase64(encName.nonce),
+      ciphertext: toBase64(encName.ciphertext),
+    })
+  }
+
+  async function startUpload(): Promise<void> {
+    const init = await withNetworkRetry(() => initUpload({
+      file_id: fileId,
+      name_encrypted: nameEncrypted,
+      mime_type: null, // MIME is now encrypted in name_encrypted metadata
+      size_bytes: file.size,
+      chunk_count: fallbackChunkCount,
+      parent_id: parentId ?? null,
+    }), signal)
+
+    serverFileId = init.file_id
+    totalChunks = init.chunk_count
+    if (init.protocol !== 'v2') return
+
+    uploadSessionId = init.upload_session_id
+    objectVersionId = init.object_version_id
+    chunkBytes = init.chunk_size_bytes
+    region = init.region
+
+    if (init.file_id === fileId) return
+
+    if (!deriveFileKeyForId) {
+      throw new Error('V2 upload init returned a server-generated file id, but no file-key resolver was provided.')
+    }
+
+    activeFileKey = await deriveFileKeyForId(init.file_id)
+    nameEncrypted = await encryptMetadata(activeFileKey)
+    await withNetworkRetry(() => updateFile(init.file_id, { name_encrypted: nameEncrypted }), signal)
+  }
 
   if (resumeFileId) {
     // Caller explicitly wants to resume this file ID
@@ -139,25 +177,7 @@ export async function encryptedUpload(
       } catch {
         // Status check failed — server record may be gone, start fresh
         skipChunks = new Set()
-        const init = await withNetworkRetry(() => initUpload({
-          file_id: fileId,
-          name_encrypted: nameEncrypted,
-          mime_type: null, // MIME is now encrypted in name_encrypted metadata
-          size_bytes: file.size,
-          chunk_count: fallbackChunkCount,
-          parent_id: parentId ?? null,
-        }), signal)
-        if (init.protocol === 'v2' && init.file_id !== fileId) {
-          throw new Error('V2 upload init returned a different file id; web encryption requires the client file id.')
-        }
-        serverFileId = init.file_id
-        totalChunks = init.chunk_count
-        if (init.protocol === 'v2') {
-          uploadSessionId = init.upload_session_id
-          objectVersionId = init.object_version_id
-          chunkBytes = init.chunk_size_bytes
-          region = init.region
-        }
+        await startUpload()
       }
     }
   } else {
@@ -185,25 +205,7 @@ export async function encryptedUpload(
         } catch {
           // Server doesn't know about it anymore — start fresh
           await removeUploadState(existing.fileId)
-          const init = await withNetworkRetry(() => initUpload({
-            file_id: fileId,
-            name_encrypted: nameEncrypted,
-            mime_type: null, // MIME is now encrypted in name_encrypted metadata
-            size_bytes: file.size,
-            chunk_count: fallbackChunkCount,
-            parent_id: parentId ?? null,
-          }), signal)
-          if (init.protocol === 'v2' && init.file_id !== fileId) {
-            throw new Error('V2 upload init returned a different file id; web encryption requires the client file id.')
-          }
-          serverFileId = init.file_id
-          totalChunks = init.chunk_count
-          if (init.protocol === 'v2') {
-            uploadSessionId = init.upload_session_id
-            objectVersionId = init.object_version_id
-            chunkBytes = init.chunk_size_bytes
-            region = init.region
-          }
+          await startUpload()
         }
       }
     } else {
@@ -211,25 +213,7 @@ export async function encryptedUpload(
         await removeUploadState(existing.fileId)
       }
       // No prior upload — start fresh
-      const init = await withNetworkRetry(() => initUpload({
-        file_id: fileId,
-        name_encrypted: nameEncrypted,
-        mime_type: null, // MIME is now encrypted in name_encrypted metadata
-        size_bytes: file.size,
-        chunk_count: fallbackChunkCount,
-        parent_id: parentId ?? null,
-      }), signal)
-      if (init.protocol === 'v2' && init.file_id !== fileId) {
-        throw new Error('V2 upload init returned a different file id; web encryption requires the client file id.')
-      }
-      serverFileId = init.file_id
-      totalChunks = init.chunk_count
-      if (init.protocol === 'v2') {
-        uploadSessionId = init.upload_session_id
-        objectVersionId = init.object_version_id
-        chunkBytes = init.chunk_size_bytes
-        region = init.region
-      }
+      await startUpload()
     }
 
     // Save state to IndexedDB for future resume
@@ -299,7 +283,7 @@ export async function encryptedUpload(
     const buffer = await file.slice(start, end).arrayBuffer()
     const plaintext = new Uint8Array(buffer)
 
-    const encrypted = await encryptChunk(fileKey, plaintext)
+    const encrypted = await encryptChunk(activeFileKey, plaintext)
 
     const combined = new Uint8Array(encrypted.nonce.length + encrypted.ciphertext.length)
     combined.set(encrypted.nonce, 0)
@@ -329,7 +313,7 @@ export async function encryptedUpload(
   if (sharedFolderContext) {
     const { encryptChildFileKey } = await import('./folder-share-crypto')
     const { addFolderKeys } = await import('./api')
-    const encryptedKey = await encryptChildFileKey(sharedFolderContext.folderKey, fileKey)
+    const encryptedKey = await encryptChildFileKey(sharedFolderContext.folderKey, activeFileKey)
     await addFolderKeys(sharedFolderContext.inviteId, [{
       file_id: serverFileId,
       encrypted_file_key: encryptedKey,
@@ -341,7 +325,7 @@ export async function encryptedUpload(
     const { generateThumbnail, encryptAndUploadThumbnail } = await import('./thumbnail')
     const thumbBlob = await generateThumbnail(file)
     if (thumbBlob) {
-      await encryptAndUploadThumbnail(serverFileId, thumbBlob, fileKey)
+      await encryptAndUploadThumbnail(serverFileId, thumbBlob, activeFileKey)
     }
   } catch {
     // Thumbnail generation is best-effort

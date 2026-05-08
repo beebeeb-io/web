@@ -610,7 +610,6 @@ export async function initUpload(metadata: {
     const v2 = await request<UploadInitV2Response>('/api/v1/uploads/init', {
       method: 'POST',
       body: JSON.stringify({
-        file_id: metadata.file_id,
         file_name: metadata.name_encrypted,
         file_size_bytes: metadata.size_bytes,
         mime_type: metadata.mime_type,

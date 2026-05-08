@@ -429,6 +429,9 @@ export function Drive() {
             )
           },
           match.fileId, // resumeFileId
+          undefined,
+          undefined,
+          getFileKey,
         )
         setUploads((prev) => prev.filter((u) => u.id !== uploadId))
         showToast({ icon: 'check', title: 'Upload resumed', description: file.name })
@@ -620,7 +623,7 @@ export function Drive() {
 
     try {
       let uploadStartedAt: number | undefined
-      await encryptedUpload(file, fileId, fileKey, currentParentId, (p) => {
+      const uploadedFile = await encryptedUpload(file, fileId, fileKey, currentParentId, (p) => {
         if (p.stage === 'Uploading' && !uploadStartedAt) {
           uploadStartedAt = Date.now()
         }
@@ -641,11 +644,12 @@ export function Drive() {
               : u,
           ),
         )
-      }, undefined, undefined, abortController.signal)
+      }, undefined, undefined, abortController.signal, getFileKey)
+      const uploadedFileId = uploadedFile.id
 
       // Update the encrypted search index with the new file
       const pathPrefix = breadcrumbs.slice(1).map((b) => b.name).join('/')
-      indexFile(fileId, {
+      indexFile(uploadedFileId, {
         name: file.name,
         path: pathPrefix ? `/${pathPrefix}` : '/',
         type: file.type || 'application/octet-stream',
@@ -662,18 +666,18 @@ export function Drive() {
       uploadFilesRef.current.delete(uploadId)
       // Remove from paused list if this was a resume
       setPausedUploads((prev) => prev.filter((u) => u.fileId !== fileId))
-      setLastUploadedFileId(fileId)
+      setLastUploadedFileId(uploadedFileId)
       showToast({ icon: 'check', title: 'Uploaded', description: file.name })
       // Refresh storage usage so quota warning updates
       refreshUsage()
       // Advance onboarding state (first_upload_done might now be true)
       void refreshOnboarding()
       // Mark as recently uploaded for glow animation
-      setRecentlyUploaded((prev) => new Set(prev).add(fileId))
+      setRecentlyUploaded((prev) => new Set(prev).add(uploadedFileId))
       setTimeout(() => {
         setRecentlyUploaded((prev) => {
           const next = new Set(prev)
-          next.delete(fileId)
+          next.delete(uploadedFileId)
           return next
         })
       }, 1200)
@@ -851,7 +855,7 @@ export function Drive() {
         const fileId = crypto.randomUUID()
         const fileKey = await getFileKey(fileId)
 
-        await encryptedUpload(ff.file, fileId, fileKey, parentId, (p) => {
+        const uploadedFile = await encryptedUpload(ff.file, fileId, fileKey, parentId, (p) => {
           // Blend per-file progress into overall progress
           const fileProgress = p.progress / 100
           const overallProgress = Math.round(
@@ -872,14 +876,14 @@ export function Drive() {
                 : u,
             ),
           )
-        })
+        }, undefined, undefined, undefined, getFileKey)
 
         // Index each file
         const pathPrefix = breadcrumbs.slice(1).map((b) => b.name).join('/')
         const filePath = parentPath
           ? `/${pathPrefix ? pathPrefix + '/' : ''}${parentPath}`
           : pathPrefix ? `/${pathPrefix}` : '/'
-        indexFile(fileId, {
+        indexFile(uploadedFile.id, {
           name: ff.file.name,
           path: filePath,
           type: ff.file.type || 'application/octet-stream',

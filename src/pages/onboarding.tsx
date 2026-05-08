@@ -261,7 +261,17 @@ export function Onboarding() {
         )
         const fileId = crypto.randomUUID()
         const fileKey = await deriveFileKey(masterKeyBytes, fileId)
-        await encryptedUpload(welcomeFile, fileId, fileKey)
+        await encryptedUpload(
+          welcomeFile,
+          fileId,
+          fileKey,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          (serverFileId) => deriveFileKey(masterKeyBytes, serverFileId),
+        )
       } catch {
         // Welcome file is a nice-to-have — never block account creation on failure
       }
