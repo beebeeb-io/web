@@ -59,6 +59,11 @@ export interface UploadState {
   fileName: string
   fileSize: number
   totalChunks: number
+  upload_session_id?: string | null
+  object_version_id?: string | null
+  chunk_size_bytes?: number
+  chunk_count?: number
+  region?: string | null
   parentId: string | null
   createdAt: number // Date.now()
 }

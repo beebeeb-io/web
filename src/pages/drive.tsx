@@ -414,7 +414,16 @@ export function Drive() {
             setUploads((prev) =>
               prev.map((u) =>
                 u.id === uploadId
-                  ? { ...u, stage: p.stage, progress: p.progress }
+                  ? {
+                      ...u,
+                      stage: p.stage,
+                      progress: p.progress,
+                      bytesUploaded: p.bytesUploaded,
+                      uploadedChunks: p.uploadedChunks,
+                      totalChunks: p.totalChunks,
+                      chunkSizeBytes: p.chunkSizeBytes,
+                      storageRegion: p.region,
+                    }
                   : u,
               ),
             )
@@ -623,6 +632,10 @@ export function Drive() {
                   stage: p.stage,
                   progress: p.progress,
                   bytesUploaded: p.bytesUploaded,
+                  uploadedChunks: p.uploadedChunks,
+                  totalChunks: p.totalChunks,
+                  chunkSizeBytes: p.chunkSizeBytes,
+                  storageRegion: p.region,
                   startedAt: uploadStartedAt,
                 }
               : u,
@@ -847,7 +860,15 @@ export function Drive() {
           setUploads((prev) =>
             prev.map((u) =>
               u.id === foldUploadId
-                ? { ...u, stage: p.stage === 'Done' ? 'Uploading' as const : p.stage, progress: overallProgress }
+                ? {
+                    ...u,
+                    stage: p.stage === 'Done' ? 'Uploading' as const : p.stage,
+                    progress: overallProgress,
+                    uploadedChunks: p.uploadedChunks,
+                    totalChunks: p.totalChunks,
+                    chunkSizeBytes: p.chunkSizeBytes,
+                    storageRegion: p.region,
+                  }
                 : u,
             ),
           )

@@ -576,6 +576,27 @@ export async function createFolder(
 // would have 400'd if anyone called it — but nothing did. The chunked
 // init+chunks+complete flow below is the one wired into encrypted-upload.ts.)
 
+interface UploadInitV1Response {
+  file_id: string
+  chunk_count: number
+}
+
+interface UploadInitV2Response {
+  file_id: string
+  tenant_id: string
+  object_version_id: string
+  upload_session_id: string
+  chunk_size_bytes: number
+  chunk_count: number
+  storage_format_version: number
+  storage_pool_id: string
+  region: string
+}
+
+export type UploadInitResponse =
+  | (UploadInitV1Response & { protocol: 'v1' })
+  | (UploadInitV2Response & { protocol: 'v2' })
+
 export async function initUpload(metadata: {
   file_id?: string
   name_encrypted: string
@@ -584,21 +605,57 @@ export async function initUpload(metadata: {
   size_bytes: number
   chunk_count: number
   parent_id?: string | null
-}): Promise<{ file_id: string; chunk_count: number }> {
-  return request<{ file_id: string; chunk_count: number }>(
-    '/api/v1/files/upload/init',
-    {
+}): Promise<UploadInitResponse> {
+  try {
+    const v2 = await request<UploadInitV2Response>('/api/v1/uploads/init', {
       method: 'POST',
-      body: JSON.stringify(metadata),
-    },
-  )
+      body: JSON.stringify({
+        file_id: metadata.file_id,
+        file_name: metadata.name_encrypted,
+        file_size_bytes: metadata.size_bytes,
+        mime_type: metadata.mime_type,
+        parent_id: metadata.parent_id,
+        profile: 'web',
+      }),
+    })
+    return { ...v2, protocol: 'v2' }
+  } catch (err) {
+    if (!(err instanceof ApiError) || err.status !== 404) {
+      throw err
+    }
+  }
+
+  const v1 = await request<UploadInitV1Response>('/api/v1/files/upload/init', {
+    method: 'POST',
+    body: JSON.stringify(metadata),
+  })
+  return { ...v1, protocol: 'v1' }
 }
 
 export async function uploadChunk(
   fileId: string,
   index: number,
   data: Uint8Array,
-): Promise<{ index: number; size: number }> {
+  uploadSessionId?: string | null,
+): Promise<{ index: number; size: number; skipped?: boolean }> {
+  const v2Path = uploadSessionId ? `/api/v1/uploads/${uploadSessionId}/chunks/${index}` : null
+  if (v2Path) {
+    try {
+      return await uploadChunkRequest(v2Path, data)
+    } catch (err) {
+      if (!(err instanceof ApiError) || err.status !== 404) {
+        throw err
+      }
+    }
+  }
+
+  return uploadChunkRequest(`/api/v1/files/${fileId}/chunks/${index}`, data)
+}
+
+async function uploadChunkRequest(
+  path: string,
+  data: Uint8Array,
+): Promise<{ index: number; size: number; skipped?: boolean }> {
   const token = getToken()
   const headers: Record<string, string> = {
     'Content-Type': 'application/octet-stream',
@@ -609,7 +666,7 @@ export async function uploadChunk(
 
   let res: Response
   try {
-    res = await fetch(`${API_URL}/api/v1/files/${fileId}/chunks/${index}`, {
+    res = await fetch(`${API_URL}${path}`, {
       method: 'PUT',
       headers,
       body: new Uint8Array(data) as BodyInit,
@@ -631,12 +688,26 @@ export async function uploadChunk(
     )
   }
 
-  return res.json() as Promise<{ index: number; size: number }>
+  return res.json() as Promise<{ index: number; size: number; skipped?: boolean }>
 }
 
 export async function completeUpload(
   fileId: string,
+  uploadSessionId?: string | null,
 ): Promise<DriveFile> {
+  if (uploadSessionId) {
+    try {
+      return await request<DriveFile>(`/api/v1/uploads/${uploadSessionId}/complete`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      })
+    } catch (err) {
+      if (!(err instanceof ApiError) || err.status !== 404) {
+        throw err
+      }
+    }
+  }
+
   return request<DriveFile>(`/api/v1/files/${fileId}/upload/complete`, {
     method: 'POST',
     body: JSON.stringify({}),

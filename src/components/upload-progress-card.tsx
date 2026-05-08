@@ -14,11 +14,32 @@ import { Icon } from '@beebeeb/shared'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+function formatChunkSize(bytes?: number): string | null {
+  if (!bytes || bytes <= 0) return null
+  const mib = bytes / (1024 * 1024)
+  if (mib >= 1024 && Number.isInteger(mib / 1024)) return `${mib / 1024} GiB`
+  if (Number.isInteger(mib)) return `${mib} MiB`
+  return `${mib.toFixed(1)} MiB`
+}
+
+function regionLabel(region?: string | null): string | null {
+  if (!region) return null
+  return region
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ')
+}
+
 function phaseLabel(item: UploadItem): string {
   if (item.stage === 'Done') return 'done'
   if (item.stage === 'Error') return 'failed'
   if (item.paused) return 'paused'
+  if (item.stage === 'Preparing') return 'Preparing encrypted backup'
   if (item.stage === 'Uploading') {
+    if (item.totalChunks) {
+      return `Uploading ${item.uploadedChunks ?? 0} / ${item.totalChunks} chunks`
+    }
     return `uploading to ${item.storageCity ?? 'Falkenstein'}`
   }
   return 'encrypting on this device'
@@ -45,8 +66,10 @@ interface UploadCardProps {
 
 export function UploadCard({ upload, onCancel, onRetry }: UploadCardProps) {
   const { stage, progress } = upload
-  const isEncrypting = stage === 'Queued' || stage === 'Encrypting'
+  const isEncrypting = stage === 'Queued' || stage === 'Preparing' || stage === 'Encrypting'
   const isError = stage === 'Error'
+  const chunkSize = formatChunkSize(upload.chunkSizeBytes)
+  const region = regionLabel(upload.storageRegion)
 
   // Done cards are removed from the list by the parent; nothing to show.
   if (stage === 'Done') return null
@@ -85,7 +108,14 @@ export function UploadCard({ upload, onCancel, onRetry }: UploadCardProps) {
         {/* Hint below encrypting bar */}
         {isEncrypting && !isError && (
           <div className="text-[10.5px] text-ink-4 mt-1 leading-tight">
-            ↗ Then we&apos;ll send the ciphertext to {upload.storageCity ?? 'Falkenstein'}
+            Preparing encrypted backup
+          </div>
+        )}
+
+        {stage === 'Uploading' && !isError && (
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10.5px] text-ink-4 leading-tight">
+            {chunkSize && <span>Chunk size: {chunkSize}</span>}
+            {region && <span>Stored in {region}</span>}
           </div>
         )}
 

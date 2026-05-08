@@ -305,7 +305,16 @@ export function Photos() {
     uploadAbortRef.current.set(uploadId, abortController)
     try {
       await encryptedUpload(file, fileId, fileKey, undefined, (p) => {
-        setUploads((prev) => prev.map((u) => u.id === uploadId ? { ...u, stage: p.stage, progress: p.progress } : u))
+        setUploads((prev) => prev.map((u) => u.id === uploadId ? {
+          ...u,
+          stage: p.stage,
+          progress: p.progress,
+          bytesUploaded: p.bytesUploaded,
+          uploadedChunks: p.uploadedChunks,
+          totalChunks: p.totalChunks,
+          chunkSizeBytes: p.chunkSizeBytes,
+          storageRegion: p.region,
+        } : u))
       }, undefined, undefined, abortController.signal)
       setUploads((prev) => prev.filter((u) => u.id !== uploadId))
       uploadAbortRef.current.delete(uploadId)

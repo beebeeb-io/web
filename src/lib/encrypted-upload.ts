@@ -1,11 +1,11 @@
 // ─── Encrypted chunked upload ──────────────────────
-// Pipelines encrypt + upload with 4 concurrent HTTP requests.
-// While chunk N is uploading, chunk N+1 is encrypting — the worker
-// and network run in parallel, not sequentially.
+// Encrypts and uploads one chunk at a time. That keeps browser memory bounded
+// to one plaintext chunk plus one encrypted chunk, even when the server returns
+// a larger storage-v2 chunk plan.
 //
-// Supports resumable uploads: if a matching fingerprint is found in
-// IndexedDB and the server confirms a partial upload, we skip
-// already-uploaded chunks and only encrypt+upload the missing ones.
+// Supports resumable uploads: v1 uploads reconcile uploaded chunks through
+// server status, while v2 uploads reuse the stored upload session and rely on
+// idempotent chunk PUTs.
 
 import {
   CHUNK_SIZE,
@@ -22,7 +22,7 @@ import {
   removeUploadState,
 } from './upload-resume'
 
-const PARALLEL_UPLOADS = 4
+const FALLBACK_CHUNK_SIZE_BYTES = CHUNK_SIZE
 
 /**
  * Long-form retry delay for transient network failures, layered on top of
@@ -57,10 +57,14 @@ async function withNetworkRetry<T>(
 }
 
 export interface UploadProgress {
-  stage: 'Encrypting' | 'Uploading' | 'Done'
+  stage: 'Preparing' | 'Encrypting' | 'Uploading' | 'Done'
   progress: number
   /** Total bytes uploaded so far (only set during 'Uploading' stage) */
   bytesUploaded?: number
+  uploadedChunks?: number
+  totalChunks?: number
+  chunkSizeBytes?: number
+  region?: string | null
 }
 
 /**
@@ -86,7 +90,7 @@ export async function encryptedUpload(
   sharedFolderContext?: SharedFolderUploadContext,
   signal?: AbortSignal,
 ): Promise<DriveFile> {
-  onProgress?.({ stage: 'Encrypting', progress: 0 })
+  onProgress?.({ stage: 'Preparing', progress: 0 })
 
   // Encrypt metadata as JSON so we can store MIME type zero-knowledge.
   // The server only sees the opaque ciphertext — it cannot infer the file type.
@@ -101,68 +105,131 @@ export async function encryptedUpload(
     ciphertext: toBase64(encName.ciphertext),
   })
 
-  const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE))
+  const fallbackChunkCount = Math.max(1, Math.ceil(file.size / FALLBACK_CHUNK_SIZE_BYTES))
 
   // ── Resume detection ──────────────────────────────
   let serverFileId: string
   let skipChunks = new Set<number>()
+  let uploadSessionId: string | null = null
+  let objectVersionId: string | null = null
+  let chunkBytes = FALLBACK_CHUNK_SIZE_BYTES
+  let totalChunks = fallbackChunkCount
+  let region: string | null = null
 
   if (resumeFileId) {
     // Caller explicitly wants to resume this file ID
     serverFileId = resumeFileId
-    try {
-      const status = await getUploadStatus(resumeFileId)
-      skipChunks = new Set(status.uploaded_chunks)
-    } catch {
-      // Status check failed — server record may be gone, start fresh
-      skipChunks = new Set()
-      const { file_id } = await withNetworkRetry(() => initUpload({
-        file_id: fileId,
-        name_encrypted: nameEncrypted,
-        mime_type: null, // MIME is now encrypted in name_encrypted metadata
-        size_bytes: file.size,
-        chunk_count: totalChunks,
-        parent_id: parentId ?? null,
-      }), signal)
-      serverFileId = file_id
+    const fingerprint = await computeFingerprint(file)
+    const existing = await findByFingerprint(fingerprint)
+    if (existing?.fileId === resumeFileId && existing.upload_session_id) {
+      uploadSessionId = existing.upload_session_id
+      objectVersionId = existing.object_version_id ?? null
+      chunkBytes = existing.chunk_size_bytes ?? FALLBACK_CHUNK_SIZE_BYTES
+      totalChunks = existing.chunk_count ?? existing.totalChunks
+      region = existing.region ?? null
+    } else {
+      if (existing?.fileId === resumeFileId) {
+        chunkBytes = existing.chunk_size_bytes ?? FALLBACK_CHUNK_SIZE_BYTES
+        totalChunks = existing.chunk_count ?? existing.totalChunks
+        region = existing.region ?? null
+      }
+      try {
+        const status = await getUploadStatus(resumeFileId)
+        skipChunks = new Set(status.uploaded_chunks)
+      } catch {
+        // Status check failed — server record may be gone, start fresh
+        skipChunks = new Set()
+        const init = await withNetworkRetry(() => initUpload({
+          file_id: fileId,
+          name_encrypted: nameEncrypted,
+          mime_type: null, // MIME is now encrypted in name_encrypted metadata
+          size_bytes: file.size,
+          chunk_count: fallbackChunkCount,
+          parent_id: parentId ?? null,
+        }), signal)
+        if (init.protocol === 'v2' && init.file_id !== fileId) {
+          throw new Error('V2 upload init returned a different file id; web encryption requires the client file id.')
+        }
+        serverFileId = init.file_id
+        totalChunks = init.chunk_count
+        if (init.protocol === 'v2') {
+          uploadSessionId = init.upload_session_id
+          objectVersionId = init.object_version_id
+          chunkBytes = init.chunk_size_bytes
+          region = init.region
+        }
+      }
     }
   } else {
     // Check IndexedDB for a matching fingerprint
     const fingerprint = await computeFingerprint(file)
     const existing = await findByFingerprint(fingerprint)
 
-    if (existing && existing.totalChunks === totalChunks && existing.fileSize === file.size) {
+    if (
+      existing &&
+      existing.fileId === fileId &&
+      existing.fileSize === file.size
+    ) {
       // Found a prior upload — check server status
       serverFileId = existing.fileId
-      try {
-        const status = await getUploadStatus(existing.fileId)
-        skipChunks = new Set(status.uploaded_chunks)
-        // Use the original fileId for key derivation consistency
-        fileId = existing.fileId
-      } catch {
-        // Server doesn't know about it anymore — start fresh
-        await removeUploadState(existing.fileId)
-        const { file_id } = await withNetworkRetry(() => initUpload({
-          file_id: fileId,
-          name_encrypted: nameEncrypted,
-          mime_type: null, // MIME is now encrypted in name_encrypted metadata
-          size_bytes: file.size,
-          chunk_count: totalChunks,
-          parent_id: parentId ?? null,
-        }), signal)
-        serverFileId = file_id
+      chunkBytes = existing.chunk_size_bytes ?? FALLBACK_CHUNK_SIZE_BYTES
+      totalChunks = existing.chunk_count ?? existing.totalChunks
+      region = existing.region ?? null
+      if (existing.upload_session_id) {
+        uploadSessionId = existing.upload_session_id
+        objectVersionId = existing.object_version_id ?? null
+      } else {
+        try {
+          const status = await getUploadStatus(existing.fileId)
+          skipChunks = new Set(status.uploaded_chunks)
+        } catch {
+          // Server doesn't know about it anymore — start fresh
+          await removeUploadState(existing.fileId)
+          const init = await withNetworkRetry(() => initUpload({
+            file_id: fileId,
+            name_encrypted: nameEncrypted,
+            mime_type: null, // MIME is now encrypted in name_encrypted metadata
+            size_bytes: file.size,
+            chunk_count: fallbackChunkCount,
+            parent_id: parentId ?? null,
+          }), signal)
+          if (init.protocol === 'v2' && init.file_id !== fileId) {
+            throw new Error('V2 upload init returned a different file id; web encryption requires the client file id.')
+          }
+          serverFileId = init.file_id
+          totalChunks = init.chunk_count
+          if (init.protocol === 'v2') {
+            uploadSessionId = init.upload_session_id
+            objectVersionId = init.object_version_id
+            chunkBytes = init.chunk_size_bytes
+            region = init.region
+          }
+        }
       }
     } else {
+      if (existing && existing.fileId !== fileId) {
+        await removeUploadState(existing.fileId)
+      }
       // No prior upload — start fresh
-      const { file_id } = await withNetworkRetry(() => initUpload({
+      const init = await withNetworkRetry(() => initUpload({
         file_id: fileId,
         name_encrypted: nameEncrypted,
         mime_type: null, // MIME is now encrypted in name_encrypted metadata
         size_bytes: file.size,
-        chunk_count: totalChunks,
+        chunk_count: fallbackChunkCount,
         parent_id: parentId ?? null,
       }), signal)
-      serverFileId = file_id
+      if (init.protocol === 'v2' && init.file_id !== fileId) {
+        throw new Error('V2 upload init returned a different file id; web encryption requires the client file id.')
+      }
+      serverFileId = init.file_id
+      totalChunks = init.chunk_count
+      if (init.protocol === 'v2') {
+        uploadSessionId = init.upload_session_id
+        objectVersionId = init.object_version_id
+        chunkBytes = init.chunk_size_bytes
+        region = init.region
+      }
     }
 
     // Save state to IndexedDB for future resume
@@ -172,6 +239,11 @@ export async function encryptedUpload(
       fileName: file.name,
       fileSize: file.size,
       totalChunks,
+      upload_session_id: uploadSessionId,
+      object_version_id: objectVersionId,
+      chunk_size_bytes: chunkBytes,
+      chunk_count: totalChunks,
+      region,
       parentId: parentId ?? null,
       createdAt: Date.now(),
     })
@@ -180,7 +252,16 @@ export async function encryptedUpload(
   // ── Upload chunks ─────────────────────────────────
 
   let completedChunks = skipChunks.size
-  const chunkBytes = CHUNK_SIZE
+
+  onProgress?.({
+    stage: 'Uploading',
+    progress: Math.round((completedChunks / totalChunks) * 95),
+    bytesUploaded: Math.min(completedChunks * chunkBytes, file.size),
+    uploadedChunks: completedChunks,
+    totalChunks,
+    chunkSizeBytes: chunkBytes,
+    region,
+  })
 
   function reportProgress() {
     completedChunks++
@@ -189,6 +270,10 @@ export async function encryptedUpload(
       stage: 'Uploading',
       progress: Math.round((completedChunks / totalChunks) * 95),
       bytesUploaded,
+      uploadedChunks: completedChunks,
+      totalChunks,
+      chunkSizeBytes: chunkBytes,
+      region,
     })
   }
 
@@ -199,14 +284,18 @@ export async function encryptedUpload(
       stage: 'Uploading',
       progress: Math.round((skipChunks.size / totalChunks) * 95),
       bytesUploaded,
+      uploadedChunks: skipChunks.size,
+      totalChunks,
+      chunkSizeBytes: chunkBytes,
+      region,
     })
   }
 
   async function encryptAndUpload(index: number): Promise<void> {
     if (skipChunks.has(index)) return
 
-    const start = index * CHUNK_SIZE
-    const end = Math.min(start + CHUNK_SIZE, file.size)
+    const start = index * chunkBytes
+    const end = Math.min(start + chunkBytes, file.size)
     const buffer = await file.slice(start, end).arrayBuffer()
     const plaintext = new Uint8Array(buffer)
 
@@ -216,29 +305,22 @@ export async function encryptedUpload(
     combined.set(encrypted.nonce, 0)
     combined.set(encrypted.ciphertext, encrypted.nonce.length)
 
-    await withNetworkRetry(() => uploadChunk(serverFileId, index, combined), signal)
+    await withNetworkRetry(() => uploadChunk(serverFileId, index, combined, uploadSessionId), signal)
     reportProgress()
   }
 
-  // Upload chunks with bounded concurrency
-  const inflight = new Set<Promise<void>>()
+  // Upload chunks sequentially so large web chunks never overlap in memory.
+  // The server-side Web profile currently caps chunks at 64 MiB; v1 fallback
+  // stays at the historical 4 MiB constant from discovery task 0126.
   for (let i = 0; i < totalChunks; i++) {
     if (signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError')
     if (skipChunks.has(i)) continue
-
-    const p = encryptAndUpload(i)
-    inflight.add(p)
-    p.finally(() => inflight.delete(p))
-
-    if (inflight.size >= PARALLEL_UPLOADS) {
-      await Promise.race(inflight)
-    }
+    await encryptAndUpload(i)
   }
-  await Promise.all(inflight)
 
   if (signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError')
 
-  const fileMeta = await completeUpload(serverFileId)
+  const fileMeta = await completeUpload(serverFileId, uploadSessionId)
 
   // Clean up IndexedDB state on success
   await removeUploadState(serverFileId)

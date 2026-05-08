@@ -6,9 +6,13 @@ export interface UploadItem {
   name: string
   size: number
   progress: number
-  stage: 'Queued' | 'Encrypting' | 'Uploading' | 'Done' | 'Error'
+  stage: 'Queued' | 'Preparing' | 'Encrypting' | 'Uploading' | 'Done' | 'Error'
   /** Bytes uploaded so far — used for speed calculation */
   bytesUploaded?: number
+  uploadedChunks?: number
+  totalChunks?: number
+  chunkSizeBytes?: number
+  storageRegion?: string | null
   /** Timestamp when uploading stage started */
   startedAt?: number
   /** Whether this upload is paused */
@@ -81,13 +85,17 @@ function stageLabel(item: UploadItem, city: string): string {
     return item.errorMessage ?? "Couldn't reach the server. Retry?"
   }
   if (item.stage === 'Queued') return 'Queued'
+  if (item.stage === 'Preparing') return 'Preparing encrypted backup'
   switch (pipelineStage(item)) {
     case 'encrypt':
       return 'Encrypting on your device...'
     case 'upload':
+      if (item.totalChunks) {
+        return `Uploading ${item.uploadedChunks ?? 0} / ${item.totalChunks} chunks`
+      }
       return `Uploading ciphertext to ${city}`
     case 'confirm':
-      return `Stored in Europe · ${city} · Key stayed on your device`
+      return `Stored in ${item.storageRegion ?? 'Europe'} · ${city} · Key stayed on your device`
   }
 }
 
