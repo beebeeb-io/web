@@ -774,14 +774,14 @@ function openUpgrade(plan: string) {
           <div className="flex items-center gap-3.5 px-5 py-3.5 bg-paper-2 border border-line rounded-xl text-[11.5px] text-ink-3">
             <Icon name="shield" size={13} className="text-amber-deep shrink-0" />
             <span className="flex-1">
-              All invoices are VAT-compliant (EU reverse charge). Signed DPA on file.
+              All invoices are VAT-compliant (EU reverse charge). Standard DPA available.
             </span>
             <BBButton
               size="sm"
               variant="ghost"
               onClick={() => window.open('https://beebeeb.io/dpa', '_blank')}
             >
-              Download DPA
+              Review DPA
             </BBButton>
           </div>
 
