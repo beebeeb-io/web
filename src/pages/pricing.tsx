@@ -47,8 +47,8 @@ const plans: PlanDef[] = [
     ],
   },
   {
-    id: 'personal',
-    name: 'Personal',
+    id: 'basic',
+    name: 'Basic',
     priceMonthly: 8.99,
     priceYearly: 7.19,
     seat: '/ month',
@@ -80,7 +80,7 @@ const plans: PlanDef[] = [
     ctaVariant: 'amber',
     highlight: true,
     features: [
-      { label: 'Everything in Personal' },
+      { label: 'Everything in Basic' },
       { label: '5 TB encrypted storage', strong: true },
       { label: 'Unlimited version history', strong: true },
       { label: 'Desktop sync · CLI access' },
@@ -89,8 +89,8 @@ const plans: PlanDef[] = [
     ],
   },
   {
-    id: 'data_hoarder',
-    name: 'Data Hoarder',
+    id: 'business',
+    name: 'Business',
     priceMonthly: 139.80,
     priceYearly: 111.84,
     seat: '/ month',

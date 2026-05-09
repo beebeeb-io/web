@@ -3,7 +3,7 @@
  *
  * Rules:
  *   - Triggers at used/quota >= 0.80
- *   - Auto-recommends the next plan tier (free → personal → pro → data_hoarder)
+ *   - Auto-recommends the next plan tier (free → basic → pro → business)
  *   - "Upgrade now" creates a Stripe Checkout session directly
  *   - "View all plans" navigates to /billing
  *   - Shown once per browser session (sessionStorage flag)
@@ -28,16 +28,24 @@ interface PlanInfo {
 }
 
 const PLAN_INFO: Record<string, PlanInfo> = {
-  free:         { label: 'Free',         priceMonthly: 0,      priceYearly: 0,        storageGB: 5 },
-  personal:     { label: 'Personal',     priceMonthly: 8.99,   priceYearly: 86.30,    storageGB: 1000 },
-  pro:          { label: 'Pro',          priceMonthly: 39.95,  priceYearly: 383.52,   storageGB: 5000 },
-  data_hoarder: { label: 'Data Hoarder', priceMonthly: 139.80, priceYearly: 1342.08,  storageGB: 20000 },
+  free:     { label: 'Free',     priceMonthly: 0,      priceYearly: 0,        storageGB: 5 },
+  basic:    { label: 'Basic',    priceMonthly: 8.99,   priceYearly: 86.30,    storageGB: 1000 },
+  pro:      { label: 'Pro',      priceMonthly: 39.95,  priceYearly: 383.52,   storageGB: 5000 },
+  business: { label: 'Business', priceMonthly: 139.80, priceYearly: 1342.08,  storageGB: 20000 },
+  // Legacy slug aliases: the server is migrating personal → basic and
+  // data_hoarder → business. Keep entries here so live data on older sessions
+  // still resolves to the new label.
+  personal:     { label: 'Basic',    priceMonthly: 8.99,   priceYearly: 86.30,    storageGB: 1000 },
+  data_hoarder: { label: 'Business', priceMonthly: 139.80, priceYearly: 1342.08,  storageGB: 20000 },
 }
 
 const UPGRADE_CHAIN: Record<string, string> = {
-  free:     'personal',
-  personal: 'pro',
-  pro:      'data_hoarder',
+  free:  'basic',
+  basic: 'pro',
+  pro:   'business',
+  // Legacy slug aliases.
+  personal:     'pro',
+  data_hoarder: 'business',
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -73,7 +81,7 @@ export function shouldShowUpgradeNudge(usedBytes: number, quotaBytes: number): b
 export interface UpgradeNudgeModalProps {
   usedBytes: number
   quotaBytes: number
-  /** Plan slug from /api/v1/files/usage — e.g. "free", "personal" */
+  /** Plan slug from /api/v1/files/usage — e.g. "free", "basic" */
   currentPlan: string
   onClose: () => void
 }

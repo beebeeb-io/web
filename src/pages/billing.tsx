@@ -37,13 +37,16 @@ const planMeta: Record<string, {
   tagline: string
   features: string[]
 }> = {
-  free:         { label: 'Free',         priceMonthly: 0,      priceYearly: 0,       storageGB: 5,     tagline: 'Get started with encrypted storage', features: ['Encrypted storage', 'Photo library'] },
-  personal:     { label: 'Personal',     priceMonthly: 8.99,   priceYearly: 86.30,   storageGB: 1000,  tagline: '1 TB of truly private storage', features: ['Everything in Free', '30-day version history'] },
-  pro:          { label: 'Pro',          priceMonthly: 39.95,  priceYearly: 383.52,  storageGB: 5000,  tagline: '5 TB for power users and creators', features: ['Everything in Personal', '5 TB encrypted storage', 'Unlimited version history', 'Advanced sharing controls'] },
-  data_hoarder: { label: 'Data Hoarder', priceMonthly: 139.80, priceYearly: 1342.08, storageGB: 20000, tagline: '20 TB — lowest per-TB price', features: ['Everything in Pro', '20 TB encrypted storage'] },
-  // Legacy plan IDs kept for users on old subscriptions
-  team:         { label: 'Team',         priceMonthly: 6,      priceYearly: 58,      storageGB: 2000,  tagline: 'Legacy team plan', features: ['Legacy team storage'] },
-  business:     { label: 'Business',     priceMonthly: 12,     priceYearly: 115,     storageGB: 5000,  tagline: 'Legacy business plan', features: ['Legacy business storage'] },
+  free:     { label: 'Free',     priceMonthly: 0,      priceYearly: 0,       storageGB: 5,     tagline: 'Get started with encrypted storage', features: ['Encrypted storage', 'Photo library'] },
+  basic:    { label: 'Basic',    priceMonthly: 8.99,   priceYearly: 86.30,   storageGB: 1000,  tagline: '1 TB of truly private storage', features: ['Everything in Free', '30-day version history'] },
+  pro:      { label: 'Pro',      priceMonthly: 39.95,  priceYearly: 383.52,  storageGB: 5000,  tagline: '5 TB for power users and creators', features: ['Everything in Basic', '5 TB encrypted storage', 'Unlimited version history', 'Advanced sharing controls'] },
+  business: { label: 'Business', priceMonthly: 139.80, priceYearly: 1342.08, storageGB: 20000, tagline: '20 TB — lowest per-TB price', features: ['Everything in Pro', '20 TB encrypted storage'] },
+  // Legacy plan IDs kept for users on old subscriptions. The server is migrating
+  // personal → basic and data_hoarder → business; aliases keep the UI rendering
+  // a sensible label even if a live response still carries the old slug.
+  personal:     { label: 'Basic',    priceMonthly: 8.99,   priceYearly: 86.30,   storageGB: 1000,  tagline: '1 TB of truly private storage', features: ['Everything in Free', '30-day version history'] },
+  data_hoarder: { label: 'Business', priceMonthly: 139.80, priceYearly: 1342.08, storageGB: 20000, tagline: '20 TB — lowest per-TB price', features: ['Everything in Pro', '20 TB encrypted storage'] },
+  team:         { label: 'Team',     priceMonthly: 6,      priceYearly: 58,      storageGB: 2000,  tagline: 'Legacy team plan', features: ['Legacy team storage'] },
 }
 
 type UpgradePlanCard = {
@@ -56,14 +59,15 @@ type UpgradePlanCard = {
   sortOrder: number
 }
 
-const fallbackUpgradePlanIds = ['personal', 'pro', 'data_hoarder'] as const
+const fallbackUpgradePlanIds = ['basic', 'pro', 'business'] as const
 const planRank: Record<string, number> = {
   free: 0,
-  personal: 1,
+  basic: 1,
+  personal: 1, // legacy alias
   team: 1.5,
   pro: 2,
-  business: 2.5,
-  data_hoarder: 3,
+  business: 3,
+  data_hoarder: 3, // legacy alias
 }
 
 /* ── Helpers ────────────────────────────────────────────── */
@@ -359,9 +363,9 @@ function openUpgrade(plan: string) {
   /* ── Computed values for the template ──────────────── */
 
   const nextPlan =
-    effectivePlan === 'free' ? 'personal' :
-    effectivePlan === 'personal' ? 'pro' :
-    effectivePlan === 'pro' ? 'data_hoarder' : 'data_hoarder'
+    effectivePlan === 'free' ? 'basic' :
+    effectivePlan === 'basic' || effectivePlan === 'personal' ? 'pro' :
+    effectivePlan === 'pro' ? 'business' : 'business'
 
   const allUpgradePlans = plans?.length
     ? plans
@@ -521,9 +525,9 @@ function openUpgrade(plan: string) {
                   <BBButton
                     variant="amber"
                     size="md"
-                    onClick={() => openUpgrade('personal')}
+                    onClick={() => openUpgrade('basic')}
                   >
-                    Upgrade to Personal
+                    Upgrade to Basic
                   </BBButton>
                   <BBButton
                     size="md"
