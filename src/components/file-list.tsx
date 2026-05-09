@@ -254,10 +254,11 @@ export function FileList({
     async function decryptAll() {
       const names: Record<string, string | null> = {}
       // Retry transient failures (commonly: WASM still initializing when the
-      // first render fires, or a brief master-key handoff race). Three
-      // attempts spaced 300ms apart costs at most ~900ms before we surface
-      // the encrypted placeholder.
-      const MAX_ATTEMPTS = 3
+      // first render fires, a brief master-key handoff race, or — for folders
+      // created on iOS — the file-key being derived from a different KDF path
+      // that races with the web key cache warm-up). Four attempts with mild
+      // backoff costs at most ~1.5s before we surface the encrypted placeholder.
+      const MAX_ATTEMPTS = 4
       const RETRY_DELAY_MS = 300
       for (const file of files) {
         if (cancelled) return
@@ -270,7 +271,7 @@ export function FileList({
           } catch (err) {
             lastErr = err
             if (attempt < MAX_ATTEMPTS - 1) {
-              await new Promise((r) => setTimeout(r, RETRY_DELAY_MS))
+              await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * (attempt + 1)))
             }
           }
           if (cancelled) return
@@ -279,10 +280,16 @@ export function FileList({
           names[file.id] = resolved
         } else {
           names[file.id] = null
+          // Capture a small ciphertext prefix so we can correlate which client
+          // (iOS vs web) wrote the metadata when investigating "Encrypted file"
+          // placeholders. Only logged on failure — never on success — so we do
+          // not leak ciphertext into the console for healthy items.
           // eslint-disable-next-line no-console
           console.error('[file-list] decryption failed', {
             fileId: file.id,
             isFolder: file.is_folder,
+            mimeType: file.mime_type,
+            nameEncryptedPrefix: file.name_encrypted?.slice(0, 64),
             error: lastErr instanceof Error ? lastErr.message : String(lastErr),
           })
         }
