@@ -52,6 +52,10 @@ const DeleteAccount  = lazyNamed(() => import('./pages/delete-account'), 'Delete
 const Receive        = lazyNamed(() => import('./pages/receive'),        'Receive')
 const CliAuth        = lazyNamed(() => import('./pages/cli-auth'),       'CliAuth')
 const Cookies        = lazyNamed(() => import('./pages/cookies'),        'Cookies')
+const ImpersonateRedeem = lazyNamed(
+  () => import('./pages/auth/impersonate'),
+  'ImpersonateRedeem',
+)
 const JoinPage       = lazyNamed(() => import('./pages/join'),            'JoinPage')
 const NotFound       = lazyNamed(() => import('./pages/errors/not-found'),   'NotFound')
 const ServerError    = lazyNamed(() => import('./pages/errors/server-error'), 'ServerError')
@@ -425,6 +429,9 @@ export function App() {
               </ProtectedRoute>
             }
           />
+          {/* Admin impersonation redemption — public; the token in the
+              query string is the credential. See task 0161. */}
+          <Route path="/auth/impersonate" element={<ImpersonateRedeem />} />
           <Route path="/s/:token" element={<ShareViewPage />} />
           <Route path="/join/:code" element={<JoinPage />} />
           <Route path="/cookies" element={<Cookies />} />

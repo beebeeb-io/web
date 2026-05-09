@@ -1755,6 +1755,35 @@ export async function adminImpersonate(userId: string): Promise<ImpersonateRespo
 }
 
 /**
+ * Token-based impersonation redemption (task 0161). Public endpoint — the
+ * single-use 15-minute token in the body is itself the credential. On success
+ * stores the returned session token so subsequent requests authenticate as
+ * the impersonated user.
+ */
+export interface ImpersonationRedeemResponse {
+  session_token: string
+  user_id: string
+  is_impersonation: true
+  admin_user_id: string
+}
+
+export async function redeemImpersonationToken(
+  token: string,
+): Promise<ImpersonationRedeemResponse> {
+  const data = await request<ImpersonationRedeemResponse>(
+    '/api/v1/auth/impersonate',
+    {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    },
+  )
+  if (data.session_token) {
+    setToken(data.session_token)
+  }
+  return data
+}
+
+/**
  * Used by drive-layout to gate the sidebar Admin link. The actual
  * admin portal lives at admin.beebeeb.io — this just answers the
  * question "is the current user allowed to see the link at all".
