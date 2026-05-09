@@ -7,7 +7,7 @@ import { FileIcon, getFileType } from './file-icon'
 import { ContextMenu } from './context-menu'
 import { FileRowSkeleton } from '@beebeeb/shared'
 import { useKeys } from '../lib/key-context'
-import { decryptFileMetadata } from '../lib/crypto'
+import { decryptFilename, fromBase64 } from '../lib/crypto'
 import { onDecrypted } from '../lib/decrypt-events'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { modKey } from '../hooks/use-keyboard-shortcuts'
@@ -232,19 +232,59 @@ export function FileList({
       return
     }
     let cancelled = false
+
+    // Strict decryption: throws on failure so the caller can decide whether
+    // to retry. Avoids the silent "Encrypted file" placeholder that the
+    // shared decryptFileMetadata helper returns on error.
+    async function decryptOne(file: DriveFile): Promise<string> {
+      const fileKey = await getFileKey(file.id)
+      const outer = JSON.parse(file.name_encrypted) as { nonce: string; ciphertext: string }
+      const plain = await decryptFilename(fileKey, fromBase64(outer.nonce), fromBase64(outer.ciphertext))
+      try {
+        const meta = JSON.parse(plain) as { name?: string }
+        if (meta && typeof meta === 'object' && typeof meta.name === 'string' && meta.name.trim()) {
+          return meta.name.trim()
+        }
+      } catch {
+        // Legacy format — `plain` is the bare filename.
+      }
+      return plain
+    }
+
     async function decryptAll() {
       const names: Record<string, string | null> = {}
+      // Retry transient failures (commonly: WASM still initializing when the
+      // first render fires, or a brief master-key handoff race). Three
+      // attempts spaced 300ms apart costs at most ~900ms before we surface
+      // the encrypted placeholder.
+      const MAX_ATTEMPTS = 3
+      const RETRY_DELAY_MS = 300
       for (const file of files) {
         if (cancelled) return
-        try {
-          const fileKey = await getFileKey(file.id)
-          // decryptFileMetadata handles both legacy (bare string) and new
-          // ({ name, mime_type } JSON) formats transparently.
-          const { name } = await decryptFileMetadata(fileKey, file.name_encrypted)
-          names[file.id] = name
-        } catch {
-          // Decryption failed — use a clear placeholder, never raw ciphertext.
+        let lastErr: unknown
+        let resolved: string | null = null
+        for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+          try {
+            resolved = await decryptOne(file)
+            break
+          } catch (err) {
+            lastErr = err
+            if (attempt < MAX_ATTEMPTS - 1) {
+              await new Promise((r) => setTimeout(r, RETRY_DELAY_MS))
+            }
+          }
+          if (cancelled) return
+        }
+        if (resolved !== null) {
+          names[file.id] = resolved
+        } else {
           names[file.id] = null
+          // eslint-disable-next-line no-console
+          console.error('[file-list] decryption failed', {
+            fileId: file.id,
+            isFolder: file.is_folder,
+            error: lastErr instanceof Error ? lastErr.message : String(lastErr),
+          })
         }
       }
       if (!cancelled) {
