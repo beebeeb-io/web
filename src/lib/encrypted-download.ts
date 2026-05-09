@@ -38,6 +38,17 @@ export async function decryptEncryptedBytes(
   sizeBytes: number,
   chunkSize = CHUNK_SIZE,
 ): Promise<Uint8Array> {
+  // Detect whether sizeBytes is the plaintext size (legacy/correct) or the
+  // encrypted total size (an older server bug stored encrypted blob bytes
+  // in files.size_bytes). If encryptedBytes.length === sizeBytes, then
+  // sizeBytes IS the encrypted total — subtract chunk overhead to recover
+  // the plaintext size. Otherwise, treat sizeBytes as the plaintext size.
+  const encryptedTotal = encryptedBytes.length
+  const isEncryptedSizeStored = encryptedTotal === sizeBytes
+  const effectivePlaintextSize = isEncryptedSizeStored
+    ? sizeBytes - chunkCount * CHUNK_OVERHEAD
+    : sizeBytes
+
   const decryptedParts: Uint8Array[] = []
   let offset = 0
 
@@ -46,9 +57,9 @@ export async function decryptEncryptedBytes(
     const isLastChunk = i === chunkCount - 1
     let plaintextSize: number
     if (chunkCount === 1) {
-      plaintextSize = sizeBytes
+      plaintextSize = effectivePlaintextSize
     } else if (isLastChunk) {
-      plaintextSize = sizeBytes - i * chunkSize
+      plaintextSize = effectivePlaintextSize - i * chunkSize
     } else {
       plaintextSize = chunkSize
     }

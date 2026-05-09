@@ -59,7 +59,7 @@ import {
   removeUploadState,
   type UploadState,
 } from '../lib/upload-resume'
-import { encryptFilename, toBase64 } from '../lib/crypto'
+import { encryptFilename, toBase64, decryptFileMetadata } from '../lib/crypto'
 import { useSearchIndex } from '../hooks/use-search-index'
 import { EmptyDrive } from '../components/empty-states/empty-drive'
 import { formatBytes } from '../lib/format'
@@ -238,6 +238,46 @@ export function Drive() {
       navigate(location.pathname, { replace: true, state: null })
     }
   }, [location.state, navigate, location.pathname])
+
+  // Deep-link via ?folder=<id> query param (used by the Quick Access sidebar
+  // on the home route). Runs whenever the search string changes — the Quick
+  // Access Link writes ?folder=<id>, this effect resolves the folder name and
+  // sets breadcrumbs accordingly.
+  const lastResolvedFolderRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!isUnlocked) return
+    const params = new URLSearchParams(location.search)
+    const folderId = params.get('folder')
+    if (!folderId) {
+      lastResolvedFolderRef.current = null
+      return
+    }
+    if (lastResolvedFolderRef.current === folderId) return
+    lastResolvedFolderRef.current = folderId
+    let cancelled = false
+    ;(async () => {
+      try {
+        const file = await getFile(folderId)
+        const fileKey = await getFileKey(folderId)
+        const { name } = await decryptFileMetadata(fileKey, file.name_encrypted)
+        if (cancelled) return
+        setBreadcrumbs([
+          { id: null, name: 'All files' },
+          { id: folderId, name: name || 'Folder' },
+        ])
+      } catch (err) {
+        if (cancelled) return
+        // Folder may have been deleted/unshared. Show with a placeholder name.
+        // eslint-disable-next-line no-console
+        console.error('[drive] Failed to resolve ?folder= deep link', { folderId, err })
+        setBreadcrumbs([
+          { id: null, name: 'All files' },
+          { id: folderId, name: 'Folder' },
+        ])
+      }
+    })()
+    return () => { cancelled = true }
+  }, [location.search, isUnlocked, getFileKey])
 
   useEffect(() => {
     getPreference<{ seen?: boolean; completed?: string[] }>('welcome_tour')

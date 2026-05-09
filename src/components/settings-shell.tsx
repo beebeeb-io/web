@@ -35,11 +35,11 @@ export function SettingsShell({ activeSection, children }: SettingsShellProps) {
 
   return (
     <DriveLayout>
-      <div className="flex-1 flex min-h-0">
-        {/* Settings sub-nav */}
+      <div className="flex-1 flex flex-col md:flex-row min-h-0">
+        {/* Settings sub-nav — desktop sidebar */}
         <nav
           aria-label="Settings"
-          className="w-[200px] shrink-0 border-r border-line bg-paper-2 px-3 py-4 overflow-y-auto"
+          className="hidden md:flex md:flex-col w-[200px] shrink-0 border-r border-line bg-paper-2 px-3 py-4 overflow-y-auto"
         >
           <div className="flex items-center gap-2 px-2 pb-2.5">
             <Icon name="settings" size={13} className="text-ink-3" />
@@ -68,8 +68,36 @@ export function SettingsShell({ activeSection, children }: SettingsShellProps) {
           })}
         </nav>
 
+        {/* Settings sub-nav — mobile horizontal tab bar */}
+        <nav
+          aria-label="Settings"
+          className="md:hidden flex overflow-x-auto gap-1 border-b border-line bg-paper-2 px-2 py-2 shrink-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
+          {navItems.map((item) => {
+            const isActive = item.id === activeSection || location.pathname === item.href
+            return (
+              <Link
+                key={item.id}
+                to={item.href}
+                className={`flex items-center gap-1.5 shrink-0 px-3 py-1.5 rounded-md text-[13px] whitespace-nowrap transition-colors ${
+                  isActive
+                    ? 'bg-paper-3 font-semibold text-ink'
+                    : 'text-ink-2 hover:bg-paper-3/50'
+                }`}
+              >
+                <Icon
+                  name={item.icon}
+                  size={12}
+                  className={`shrink-0 ${isActive ? 'text-ink' : 'text-ink-3'}`}
+                />
+                <span>{item.label}</span>
+              </Link>
+            )
+          })}
+        </nav>
+
         {/* Content */}
-        <div className="flex-1 min-w-0 overflow-y-auto">{children}</div>
+        <div className="flex-1 min-w-0 w-full overflow-y-auto">{children}</div>
       </div>
     </DriveLayout>
   )

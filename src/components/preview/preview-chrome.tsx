@@ -88,16 +88,16 @@ export function PreviewChrome({
 
       {belowTopBar}
 
-      {/* Body */}
-      <div className="flex min-h-0 flex-1">
+      {/* Body — stacked on mobile (canvas on top, info below), side-by-side on md+ */}
+      <div className="flex min-h-0 flex-1 flex-col md:flex-row overflow-auto md:overflow-hidden">
         {/* Canvas area */}
-        <div className="relative flex flex-1 items-center justify-center bg-paper-2 p-6">
+        <div className="relative flex w-full md:flex-1 items-center justify-center bg-paper-2 p-4 md:p-6 min-h-[50vh] md:min-h-0">
           {children}
         </div>
 
         {/* Right rail */}
         {rightRail && (
-          <div className="w-[280px] shrink-0 overflow-auto border-l border-line bg-paper-2 p-[18px] text-ink-2">
+          <div className="w-full md:w-[280px] shrink-0 overflow-auto border-t md:border-t-0 md:border-l border-line bg-paper-2 p-[18px] text-ink-2">
             {rightRail}
           </div>
         )}
