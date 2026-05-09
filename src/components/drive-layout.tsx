@@ -30,6 +30,7 @@ import { decryptFilename, fromBase64 } from '../lib/crypto'
 import { QuotaWarning } from './quota-warning'
 import { QuickAccess } from './quick-access'
 import { EmailVerifyBanner } from './email-verify-banner'
+import { AnnouncementBanner } from './announcement-banner'
 // formatStorageSI used via StorageUsageBar; kept for potential direct use
 
 const navItems: { path: string; icon: IconName; label: string }[] = [
@@ -471,6 +472,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
           </button>
           <BBLogo size={12} />
         </div>
+        <AnnouncementBanner />
         <EmailVerifyBanner />
         {isFrozen && (
           <div className="bg-amber/10 border-b border-amber/20 px-4 py-2.5 text-center text-[13px] text-ink-2">

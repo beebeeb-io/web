@@ -2079,3 +2079,20 @@ export async function setUserRegion(continent: string): Promise<{ preferred_regi
     body: JSON.stringify({ continent }),
   })
 }
+
+// ─── System announcements (task 0158) ─────────────────────────────────
+
+export type AnnouncementSeverity = 'info' | 'warning' | 'critical'
+
+export interface Announcement {
+  id: string
+  message: string
+  severity: AnnouncementSeverity
+  created_at: string
+  expires_at: string | null
+}
+
+/** GET /api/v1/announcements — public; safe to call before login. */
+export async function listAnnouncements(): Promise<{ announcements: Announcement[] }> {
+  return request<{ announcements: Announcement[] }>('/api/v1/announcements')
+}

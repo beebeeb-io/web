@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { BBLogo } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
+import { AnnouncementBanner } from './announcement-banner'
 
 interface AuthShellProps {
   title: string
@@ -22,6 +23,12 @@ export function AuthShell({
 }: AuthShellProps) {
   return (
     <div className="auth-bg min-h-screen flex flex-col items-center justify-center bg-paper px-4 py-6 sm:p-xl">
+      {/* Pinned to the top of the auth screen so admin-broadcast notices
+          (maintenance windows, status updates) are visible even before
+          the user signs in. */}
+      <div className="fixed top-0 inset-x-0 z-30">
+        <AnnouncementBanner />
+      </div>
       <div className="auth-card w-full max-w-[28rem] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
         {/* Header */}
         <div className="px-5 py-4 sm:px-xl sm:py-lg border-b border-line">
