@@ -365,6 +365,8 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
       size={sizeStr}
       onClose={onClose}
       decrypted={!!blob}
+      onDownload={blob ? handleDownload : undefined}
+      isStarred={file.is_starred}
       belowTopBar={
         versions && versions.length > 1 ? (
           <VersionScrubber

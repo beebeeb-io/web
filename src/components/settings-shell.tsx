@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { type ReactNode, useEffect, useRef } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { Icon } from '@beebeeb/shared'
 import type { IconName } from '@beebeeb/shared'
@@ -32,6 +32,15 @@ interface SettingsShellProps {
 
 export function SettingsShell({ activeSection, children }: SettingsShellProps) {
   const location = useLocation()
+  const mobileNavRef = useRef<HTMLElement>(null)
+
+  // When the active tab changes, scroll it into view without resetting the bar position
+  useEffect(() => {
+    const nav = mobileNavRef.current
+    if (!nav) return
+    const active = nav.querySelector('[data-active="true"]') as HTMLElement | null
+    active?.scrollIntoView({ inline: 'nearest', behavior: 'smooth' })
+  }, [activeSection, location.pathname])
 
   return (
     <DriveLayout>
@@ -70,6 +79,7 @@ export function SettingsShell({ activeSection, children }: SettingsShellProps) {
 
         {/* Settings sub-nav — mobile horizontal tab bar */}
         <nav
+          ref={mobileNavRef}
           aria-label="Settings"
           className="md:hidden flex overflow-x-auto gap-1 border-b border-line bg-paper-2 px-2 py-2 shrink-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
@@ -79,6 +89,7 @@ export function SettingsShell({ activeSection, children }: SettingsShellProps) {
               <Link
                 key={item.id}
                 to={item.href}
+                data-active={isActive}
                 className={`flex items-center gap-1.5 shrink-0 px-3 py-1.5 rounded-md text-[13px] whitespace-nowrap transition-colors ${
                   isActive
                     ? 'bg-paper-3 font-semibold text-ink'
