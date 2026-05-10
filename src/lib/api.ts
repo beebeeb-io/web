@@ -2143,3 +2143,54 @@ export interface Announcement {
 export async function listAnnouncements(): Promise<{ announcements: Announcement[] }> {
   return request<{ announcements: Announcement[] }>('/api/v1/announcements')
 }
+
+// ─── Public profile ────────────────────────────────────────────────────────
+
+export interface PublicProfileShare {
+  token: string
+  file_size: number | null
+  created_at: string
+  expires_at: string | null
+}
+
+export interface PublicProfile {
+  username: string
+  display_name: string | null
+  shares: PublicProfileShare[]
+}
+
+/**
+ * GET /api/v1/me/profile — current user's username + display_name (auth required).
+ */
+export async function getMyProfile(): Promise<{ username: string | null; display_name: string | null }> {
+  return request<{ username: string | null; display_name: string | null }>('/api/v1/me/profile')
+}
+
+/**
+ * GET /api/v1/p/:username — public, no auth required.
+ * Returns the user's public profile and their active, non-revoked share links.
+ */
+export async function getPublicProfile(username: string): Promise<PublicProfile> {
+  const res = await fetch(`${API_URL}/api/v1/p/${encodeURIComponent(username)}`)
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: 'Profile not found' })) as Record<string, unknown>
+    throw new ApiError(
+      (body.message ?? body.error ?? res.statusText) as string,
+      res.status,
+    )
+  }
+  return res.json() as Promise<PublicProfile>
+}
+
+/**
+ * PUT /api/v1/me/profile — update username and display_name (auth required).
+ */
+export async function updatePublicProfile(params: {
+  username?: string
+  display_name?: string
+}): Promise<{ message: string }> {
+  return request<{ message: string }>('/api/v1/me/profile', {
+    method: 'PUT',
+    body: JSON.stringify(params),
+  })
+}

@@ -12,6 +12,7 @@ import {
   deleteAccountPermanently, exportAccountData,
   emailChangeStart, emailChangeFinish,
   getTrackingPreference, setTrackingPreference,
+  getMyProfile, updatePublicProfile,
   clearToken, ApiError,
 } from '../../lib/api'
 import { ConfirmPasswordModal } from '../../components/confirm-password-modal'
@@ -28,6 +29,8 @@ export function SettingsProfile() {
   const { getMasterKey } = useKeys()
 
   const [displayName, setDisplayName] = useState('')
+  const [username, setUsername] = useState('')
+  const [usernameError, setUsernameError] = useState<string | null>(null)
   const [publicProfile, setPublicProfile] = useState(false)
   const [recoveryContact, setRecoveryContact] = useState('')
   const [savingProfile, setSavingProfile] = useState(false)
@@ -60,14 +63,16 @@ export function SettingsProfile() {
   useEffect(() => {
     async function load() {
       try {
-        const [pref, trackingPref] = await Promise.all([
+        const [pref, trackingPref, profileData] = await Promise.all([
           getPreference<{ display_name?: string; public_profile?: boolean; recovery_contact?: string }>('profile').catch(() => null),
           getTrackingPreference().catch(() => null),
+          getMyProfile().catch(() => null),
         ])
         if (pref?.display_name) setDisplayName(pref.display_name)
         if (pref?.public_profile) setPublicProfile(pref.public_profile)
         if (pref?.recovery_contact) setRecoveryContact(pref.recovery_contact)
         setTrackingOptedIn(trackingPref?.tracking_opted_in ?? false)
+        if (profileData?.username) setUsername(profileData.username)
       } catch {
         // defaults are fine
       } finally {
@@ -78,20 +83,41 @@ export function SettingsProfile() {
   }, [])
 
   const handleSaveProfile = useCallback(async () => {
+    // Validate username before saving
+    if (username) {
+      const usernameOk = /^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/.test(username)
+      if (!usernameOk) {
+        setUsernameError('3-32 chars, lowercase letters, numbers, or hyphens. Must start and end with a letter or number.')
+        return
+      }
+    }
+    setUsernameError(null)
     setSavingProfile(true)
     try {
-      await setPreference('profile', {
-        display_name: displayName,
-        public_profile: publicProfile,
-        recovery_contact: recoveryContact,
-      })
+      await Promise.all([
+        setPreference('profile', {
+          display_name: displayName,
+          public_profile: publicProfile,
+          recovery_contact: recoveryContact,
+        }),
+        // Save username + display_name to the users table via the profile endpoint
+        updatePublicProfile({
+          username: username || undefined,
+          display_name: displayName || undefined,
+        }),
+      ])
       showToast({ icon: 'check', title: 'Profile saved' })
-    } catch {
-      showToast({ icon: 'x', title: 'Failed to save', danger: true })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to save'
+      if (msg.toLowerCase().includes('taken') || msg.toLowerCase().includes('already')) {
+        setUsernameError('Username is already taken. Choose a different one.')
+      } else {
+        showToast({ icon: 'x', title: 'Failed to save', danger: true })
+      }
     } finally {
       setSavingProfile(false)
     }
-  }, [displayName, publicProfile, recoveryContact, showToast])
+  }, [displayName, username, publicProfile, recoveryContact, showToast])
 
   const handleEmailChangePwConfirmed = useCallback((token: string, password: string) => {
     setEmailChangePendingToken(token)
@@ -306,6 +332,26 @@ export function SettingsProfile() {
           placeholder="Your name"
           className="max-w-[340px]"
         />
+      </SettingsRow>
+
+      <SettingsRow label="Username" hint="Your public handle at app.beebeeb.io/p/:username — lowercase, 3-32 chars.">
+        <div className="flex flex-col gap-1 max-w-[340px]">
+          <div className="relative">
+            <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-[12px] text-ink-3 select-none">@</span>
+            <BBInput
+              value={username}
+              onChange={(e) => { setUsername(e.target.value.toLowerCase()); setUsernameError(null) }}
+              placeholder="your-handle"
+              className="pl-7 max-w-[340px]"
+              error={usernameError ?? undefined}
+            />
+          </div>
+          {username && !usernameError && (
+            <span className="text-[11px] text-ink-4 font-mono">
+              app.beebeeb.io/p/{username}
+            </span>
+          )}
+        </div>
       </SettingsRow>
 
       <SettingsRow label="Avatar" hint="Derived from your email. Avatar upload is not available in a zero-knowledge vault.">

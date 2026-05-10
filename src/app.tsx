@@ -59,6 +59,7 @@ const ImpersonateRedeem = lazyNamed(
 const JoinPage       = lazyNamed(() => import('./pages/join'),            'JoinPage')
 const NotFound       = lazyNamed(() => import('./pages/errors/not-found'),   'NotFound')
 const ServerError    = lazyNamed(() => import('./pages/errors/server-error'), 'ServerError')
+const PublicProfilePage = lazyNamed(() => import('./pages/public-profile'), 'PublicProfilePage')
 
 // Settings (grouped — lazy-loaded as a settings bundle)
 const SettingsAccount       = lazyNamed(() => import('./pages/settings/account'),       'SettingsAccount')
@@ -433,6 +434,8 @@ export function App() {
               query string is the credential. See task 0161. */}
           <Route path="/auth/impersonate" element={<ImpersonateRedeem />} />
           <Route path="/s/:token" element={<ShareViewPage />} />
+          {/* Public user profile — no auth required */}
+          <Route path="/p/:username" element={<PublicProfilePage />} />
           <Route path="/join/:code" element={<JoinPage />} />
           <Route path="/cookies" element={<Cookies />} />
           <Route path="/receive" element={<Receive />} />
