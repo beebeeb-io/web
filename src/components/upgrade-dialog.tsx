@@ -181,7 +181,7 @@ export function UpgradeDialog({
           </BBButton>
 
           <div className="text-[11px] text-ink-4 text-center mt-2">
-            SEPA · card · invoice · PayPal · Bitcoin
+            Card · Apple Pay · SEPA Direct Debit · iDEAL
           </div>
         </div>
       </div>
