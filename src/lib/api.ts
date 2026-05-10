@@ -75,6 +75,7 @@ import type {
   SyncSnapshot,
   TotpSetupResponse,
   TrackingPreference,
+  TransferProof,
   TransferStatus,
   UploadStatusResponse,
   UserRegionResponse,
@@ -213,6 +214,7 @@ export type {
   SyncSnapshot,
   TotpSetupResponse,
   TrackingPreference,
+  TransferProof,
   TransferStatus,
   UploadStatusResponse,
   UserRegionResponse,
@@ -1962,6 +1964,33 @@ export async function ackTransfer(sessionId: string, token: string): Promise<voi
     headers: { 'X-Transfer-Token': token, 'Content-Type': 'application/json' },
   })
   if (!res.ok) throw new ApiError(await readError(res), res.status)
+}
+
+/**
+ * POST /api/v1/transfer/{id}/proof — create a tamper-evident transfer receipt.
+ * Called by the sender after ACK. sha256Hash is computed client-side over the
+ * decrypted file bytes. Bearer auth required.
+ */
+export async function createTransferProof(
+  sessionId: string,
+  params: {
+    file_name: string
+    file_size_bytes: number
+    sha256_hash: string
+    receiver_display_name?: string
+  },
+): Promise<TransferProof> {
+  const token = getToken()
+  const res = await fetch(`${API_URL}/api/v1/transfer/${sessionId}/proof`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(params),
+  })
+  if (!res.ok) throw new ApiError(await readError(res), res.status)
+  return res.json() as Promise<TransferProof>
 }
 
 async function readError(res: Response): Promise<string> {

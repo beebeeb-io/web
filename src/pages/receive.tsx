@@ -15,6 +15,7 @@
  *   5. GET /transfer/{id}/blob → Blob → "Save to device" triggers a
  *      browser download.
  *   6. POST /transfer/{id}/ack so the server drops the blob.
+ *   7. Transfer Receipt is shown with SHA-256 fingerprint of the file.
  *
  * v1: bytes are saved as-is (encrypted with the transfer_key). When WASM
  * exposes HKDF + AES-GCM here we'll decrypt before saving.
@@ -65,12 +66,32 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(s)
 }
 
+/**
+ * Compute SHA-256 of a Blob. Returns lowercase hex string.
+ * Uses Web Crypto API — available in all modern browsers.
+ */
+async function sha256Hex(blob: Blob): Promise<string> {
+  const arrayBuf = await blob.arrayBuffer()
+  const hashBuf = await crypto.subtle.digest('SHA-256', arrayBuf)
+  return Array.from(new Uint8Array(hashBuf))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+}
+
 function friendlyError(err: unknown): string {
   if (err instanceof Error && err.message) return err.message
   return 'Something went wrong. Please try again.'
 }
 
 type VaultSavePhase = 'idle' | 'saving' | 'saved' | 'error'
+
+interface ProofData {
+  fileName: string
+  fileSizeBytes: number
+  sha256Hash: string
+  sessionId: string
+  timestamp: string
+}
 
 export function Receive() {
   const [searchParams] = useSearchParams()
@@ -90,6 +111,7 @@ export function Receive() {
 
   const [savedBlob, setSavedBlob] = useState<Blob | null>(null)
   const [savedFilename, setSavedFilename] = useState<string>('beebeeb-transfer')
+  const [proofData, setProofData] = useState<ProofData | null>(null)
 
   const [vaultSavePhase, setVaultSavePhase] = useState<VaultSavePhase>('idle')
   const [vaultSaveError, setVaultSaveError] = useState<string | null>(null)
@@ -170,7 +192,19 @@ export function Receive() {
         const suffix = Array.from(randomBytes(4))
           .map((b) => b.toString(16).padStart(2, '0'))
           .join('')
-        setSavedFilename(`beebeeb-transfer-${suffix}.enc`)
+        const filename = `beebeeb-transfer-${suffix}.enc`
+        setSavedFilename(filename)
+
+        // Compute SHA-256 of the received bytes for the transfer receipt.
+        const hash = await sha256Hex(blob)
+        const timestamp = new Date().toISOString()
+        setProofData({
+          fileName: filename.replace(/\.enc$/, ''),
+          fileSizeBytes: blob.size,
+          sha256Hash: hash,
+          sessionId,
+          timestamp,
+        })
 
         // ACK so the server drops the blob. Best-effort — server's expiry
         // sweep cleans up after 24h regardless.
@@ -268,6 +302,7 @@ export function Receive() {
               vaultSavePhase={vaultSavePhase}
               vaultSaveError={vaultSaveError}
               onSaveToVault={() => { void handleSaveToVault() }}
+              proof={proofData}
             />
           )}
 
@@ -399,6 +434,198 @@ function CenterStatus({ title, subtitle }: { title: string; subtitle?: string })
   )
 }
 
+// ─── Transfer Receipt card ───────────────────────────────────────────────────
+
+function TransferReceipt({ proof }: { proof: ProofData }) {
+  const [copied, setCopied] = useState(false)
+  const [receiptExpanded, setReceiptExpanded] = useState(false)
+
+  const proofJson = JSON.stringify({
+    session_id: proof.sessionId,
+    file_name: proof.fileName,
+    file_size_bytes: proof.fileSizeBytes,
+    sha256_hash: proof.sha256Hash,
+    timestamp: proof.timestamp,
+  }, null, 2)
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(proofJson)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Clipboard not available — ignore
+    }
+  }
+
+  const handleDownloadText = () => {
+    const blob = new Blob([proofJson], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `beebeeb-receipt-${proof.sessionId.slice(0, 8)}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  const handlePrint = () => {
+    // Open a minimal print window with the receipt
+    const localTime = new Date(proof.timestamp).toLocaleString()
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Beebeeb Transfer Receipt</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+           background: #fff; color: #111; padding: 48px; max-width: 600px; margin: auto; }
+    h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+    .sub { font-size: 13px; color: #666; margin-bottom: 28px; }
+    .grid { display: grid; grid-template-columns: 140px 1fr; gap: 10px 16px; }
+    .label { font-size: 12px; color: #888; font-weight: 500; padding-top: 1px; }
+    .value { font-size: 13px; color: #111; word-break: break-all; }
+    .mono { font-family: 'JetBrains Mono', 'Courier New', monospace; font-size: 12px; }
+    hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+    .footer { font-size: 11px; color: #aaa; margin-top: 28px; }
+  </style>
+</head>
+<body>
+  <h1>Transfer Receipt</h1>
+  <p class="sub">Beebeeb Constellation — verifiable transfer proof</p>
+  <div class="grid">
+    <span class="label">File name</span>
+    <span class="value">${escapeHtml(proof.fileName)}</span>
+    <span class="label">Size</span>
+    <span class="value">${formatBytes(proof.fileSizeBytes)}</span>
+    <span class="label">Timestamp</span>
+    <span class="value">${escapeHtml(localTime)} (${escapeHtml(proof.timestamp)})</span>
+    <span class="label">Session ID</span>
+    <span class="value mono">${escapeHtml(proof.sessionId)}</span>
+    <span class="label">SHA-256</span>
+    <span class="value mono">${escapeHtml(proof.sha256Hash)}</span>
+  </div>
+  <hr />
+  <p class="footer">This receipt was generated by Beebeeb (beebeeb.io). The SHA-256 hash is computed
+  client-side from the received file bytes and can be verified independently with any standard tool.</p>
+</body>
+</html>`
+    const w = window.open('', '_blank', 'width=700,height=600')
+    if (!w) return
+    w.document.write(html)
+    w.document.close()
+    w.focus()
+    w.print()
+  }
+
+  const shortHash = `${proof.sha256Hash.slice(0, 16)}…`
+
+  return (
+    <div className="mt-6 w-full">
+      <button
+        onClick={() => setReceiptExpanded((v) => !v)}
+        className="w-full flex items-center justify-between text-left px-4 py-3 bg-white/[0.04] border border-white/10 rounded-lg hover:bg-white/[0.06] transition-colors"
+        aria-expanded={receiptExpanded}
+      >
+        <div className="flex items-center gap-2.5">
+          <Icon name="shield" size={14} className="text-amber shrink-0" />
+          <span className="text-sm font-medium text-white">Transfer receipt</span>
+          <span className="text-xs text-white/40 font-mono">{shortHash}</span>
+        </div>
+        <Icon
+          name="chevron-down"
+          size={14}
+          className={`text-white/40 shrink-0 transition-transform ${receiptExpanded ? 'rotate-180' : ''}`}
+        />
+      </button>
+
+      {receiptExpanded && (
+        <div className="mt-1 border border-white/10 border-t-0 rounded-b-lg overflow-hidden">
+          {/* Receipt rows */}
+          <div className="px-4 pt-4 pb-2 space-y-3">
+            <ReceiptRow label="File name" value={proof.fileName} />
+            <ReceiptRow label="Size" value={formatBytes(proof.fileSizeBytes)} />
+            <ReceiptRow
+              label="Timestamp"
+              value={new Date(proof.timestamp).toLocaleString()}
+              sub={proof.timestamp}
+            />
+            <ReceiptRow
+              label="Session ID"
+              value={proof.sessionId}
+              mono
+            />
+            <ReceiptRow
+              label="SHA-256"
+              value={proof.sha256Hash}
+              mono
+            />
+          </div>
+
+          {/* Action row */}
+          <div className="px-4 pb-4 pt-2 flex gap-2">
+            <button
+              onClick={() => { void handleCopy() }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs text-white/70 bg-white/[0.05] hover:bg-white/[0.09] border border-white/10 transition-colors"
+            >
+              <Icon name={copied ? 'check' : 'copy'} size={12} className={copied ? 'text-amber' : ''} />
+              {copied ? 'Copied' : 'Copy proof'}
+            </button>
+            <button
+              onClick={handleDownloadText}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs text-white/70 bg-white/[0.05] hover:bg-white/[0.09] border border-white/10 transition-colors"
+            >
+              <Icon name="download" size={12} />
+              Download JSON
+            </button>
+            <button
+              onClick={handlePrint}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs text-white/70 bg-white/[0.05] hover:bg-white/[0.09] border border-white/10 transition-colors"
+            >
+              <Icon name="file" size={12} />
+              Export PDF
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ReceiptRow({
+  label,
+  value,
+  sub,
+  mono = false,
+}: {
+  label: string
+  value: string
+  sub?: string
+  mono?: boolean
+}) {
+  return (
+    <div className="grid grid-cols-[100px_1fr] gap-2 items-start">
+      <span className="text-[11px] text-white/40 pt-0.5 font-medium uppercase tracking-wide">
+        {label}
+      </span>
+      <div>
+        <span
+          className={`text-xs break-all text-white/80 ${mono ? 'font-mono' : ''}`}
+        >
+          {value}
+        </span>
+        {sub && (
+          <div className="text-[10px] font-mono text-white/30 mt-0.5 break-all">{sub}</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Received view ───────────────────────────────────────────────────────────
+
 function Received({
   filename,
   size,
@@ -407,6 +634,7 @@ function Received({
   vaultSavePhase,
   vaultSaveError,
   onSaveToVault,
+  proof,
 }: {
   filename: string
   size: number
@@ -415,6 +643,7 @@ function Received({
   vaultSavePhase: VaultSavePhase
   vaultSaveError: string | null
   onSaveToVault: () => void
+  proof: ProofData | null
 }) {
   // Strip the .enc suffix for display — it's a v1 transfer artifact.
   const displayName = filename.replace(/\.enc$/, '')
@@ -424,7 +653,7 @@ function Received({
       <div className="w-14 h-14 rounded-2xl bg-amber/15 border border-amber/30 flex items-center justify-center mb-5">
         <Icon name="check" size={26} className="text-amber" />
       </div>
-      <h1 className="text-2xl font-semibold text-white mb-2">Done</h1>
+      <h1 className="text-2xl font-semibold text-white mb-2">Transfer complete</h1>
       <p className="text-sm text-white/60 mb-8 leading-relaxed">
         File received. Server copy is being deleted.
       </p>
@@ -504,6 +733,9 @@ function Received({
           Create free account to save this file
         </a>
       )}
+
+      {/* Transfer receipt — collapsible, shows SHA-256 fingerprint */}
+      {proof && <TransferReceipt proof={proof} />}
     </div>
   )
 }
@@ -551,4 +783,12 @@ function formatBytes(n: number): string {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
   if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`
   return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
 }
