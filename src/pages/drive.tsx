@@ -63,6 +63,7 @@ import { encryptFilename, toBase64, decryptFileMetadata } from '../lib/crypto'
 import { useSearchIndex } from '../hooks/use-search-index'
 import { EmptyDrive } from '../components/empty-states/empty-drive'
 import { formatBytes } from '../lib/format'
+import { cacheFileList, getCachedFileList } from '../lib/offline-cache'
 
 // ─── Drive component ────────────────────────────────
 // Folders are always grouped before files; the chosen key only orders
@@ -107,6 +108,9 @@ export function Drive() {
 
   // Track the last uploaded file id for the onboarding guide's first-share step.
   const [lastUploadedFileId, setLastUploadedFileId] = useState<string | null>(null)
+
+  // ─── Offline cache state ─────────────────────────────
+  const [showingCached, setShowingCached] = useState(false)
 
   // ─── Pending shares state ────────────────────────────
   const [incomingInviteCount, setIncomingInviteCount] = useState(0)
@@ -171,15 +175,30 @@ export function Drive() {
             updated_at: n.updated_at,
           }))
         setFiles(nodes)
+        setShowingCached(false)
+        // Cache the live result so it can be shown offline later
+        if (!trashed) cacheFileList(currentParentId ?? null, nodes)
       } else {
         const data = await listFiles(currentParentId ?? undefined, trashed)
         setFiles(data)
+        setShowingCached(false)
+        // Cache the live result so it can be shown offline later
+        if (!trashed) cacheFileList(currentParentId ?? null, data)
       }
       setSyncedAgo(0)
     } catch (err) {
       console.error('[Drive] Failed to load files:', err)
-      showToast({ icon: 'x', title: 'Failed to load files', danger: true })
-      setFiles([])
+      // When offline, try to show cached data instead of a blank state
+      const isOffline = !navigator.onLine
+      const cached = getCachedFileList(currentParentId ?? null)
+      if (isOffline && cached) {
+        setFiles(cached)
+        setShowingCached(true)
+      } else {
+        showToast({ icon: 'x', title: 'Failed to load files', danger: true })
+        setFiles([])
+        setShowingCached(false)
+      }
     } finally {
       setLoading(false)
     }
@@ -1527,6 +1546,14 @@ export function Drive() {
             >
               Dismiss
             </BBButton>
+          </div>
+        )}
+
+        {/* Offline cached data banner */}
+        {showingCached && (
+          <div className="px-5 py-2 border-b border-amber/30 bg-amber-bg flex items-center gap-2 text-[12px] text-amber-deep">
+            <Icon name="cloud" size={13} className="shrink-0" />
+            Offline — showing cached files from your last visit
           </div>
         )}
 

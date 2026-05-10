@@ -38,6 +38,7 @@ function timeAgo(dateStr: string): string {
 
 type Kind = 'pdf' | 'image' | 'video' | 'audio' | 'doc' | 'code' | 'archive' | 'folder'
 type DateRange = 'today' | 'this-week' | 'this-month' | 'this-year'
+type SizeRange = 'small' | 'medium' | 'large'
 
 const KIND_FILTERS: { id: Kind; label: string; icon: IconName }[] = [
   { id: 'pdf',     label: 'PDF',      icon: 'file-text' },
@@ -55,6 +56,12 @@ const DATE_FILTERS: { id: DateRange; label: string }[] = [
   { id: 'this-week',  label: 'This week' },
   { id: 'this-month', label: 'This month' },
   { id: 'this-year',  label: 'This year' },
+]
+
+const SIZE_FILTERS: { id: SizeRange; label: string; minBytes?: number; maxBytes?: number }[] = [
+  { id: 'small',  label: '< 1 MB',     maxBytes: 1_048_576 },
+  { id: 'medium', label: '1 – 100 MB', minBytes: 1_048_576,   maxBytes: 104_857_600 },
+  { id: 'large',  label: '> 100 MB',   minBytes: 104_857_600 },
 ]
 
 const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'avif', 'bmp', 'tif', 'tiff'])
@@ -142,6 +149,12 @@ function parseDateParam(raw: string | null): DateRange | null {
   return (valid as Set<string>).has(raw) ? (raw as DateRange) : null
 }
 
+function parseSizeParam(raw: string | null): SizeRange | null {
+  if (!raw) return null
+  const valid = new Set<SizeRange>(SIZE_FILTERS.map((f) => f.id))
+  return (valid as Set<string>).has(raw) ? (raw as SizeRange) : null
+}
+
 // ─── Search page ─────────────────────────────────
 
 export function Search() {
@@ -150,6 +163,7 @@ export function Search() {
   const initialQuery = searchParams.get('q') ?? ''
   const initialKinds = useMemo(() => parseKindsParam(searchParams.get('kind')), [searchParams])
   const initialDate = useMemo(() => parseDateParam(searchParams.get('modified')), [searchParams])
+  const initialSize = useMemo(() => parseSizeParam(searchParams.get('size')), [searchParams])
 
   const { isUnlocked, getMasterKey } = useKeys()
 
@@ -157,6 +171,7 @@ export function Search() {
   const [results, setResults] = useState<SearchResult[]>([])
   const [kinds, setKinds] = useState<Set<Kind>>(initialKinds)
   const [dateRange, setDateRange] = useState<DateRange | null>(initialDate)
+  const [sizeRange, setSizeRange] = useState<SizeRange | null>(initialSize)
   const [recent, setRecent] = useState<string[]>(() => loadRecent())
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -238,10 +253,12 @@ export function Search() {
     else next.delete('kind')
     if (dateRange) next.set('modified', dateRange)
     else next.delete('modified')
+    if (sizeRange) next.set('size', sizeRange)
+    else next.delete('size')
     if (next.toString() !== searchParams.toString()) {
       setSearchParams(next, { replace: true })
     }
-  }, [kinds, dateRange, searchParams, setSearchParams])
+  }, [kinds, dateRange, sizeRange, searchParams, setSearchParams])
 
   function commitQuery(q: string) {
     const trimmed = q.trim()
@@ -264,6 +281,7 @@ export function Search() {
     setSearched(false)
     setKinds(new Set())
     setDateRange(null)
+    setSizeRange(null)
     setSearchParams({})
     inputRef.current?.focus()
   }
@@ -281,18 +299,28 @@ export function Search() {
     setDateRange((cur) => (cur === d ? null : d))
   }
 
+  function pickSize(s: SizeRange | null) {
+    setSizeRange((cur) => (cur === s ? null : s))
+  }
+
   // Apply filters
   const dateCutoff = dateRange ? dateRangeStart(dateRange) : null
+  const activeSizeFilter = sizeRange ? SIZE_FILTERS.find((f) => f.id === sizeRange) : null
   const filteredResults = results.filter((r) => {
     if (kinds.size > 0 && !kinds.has(entryKind(r.entry))) return false
     if (dateCutoff !== null) {
       const t = new Date(r.entry.modified).getTime()
       if (Number.isNaN(t) || t < dateCutoff) return false
     }
+    if (activeSizeFilter && r.entry.type !== 'folder') {
+      const sz = r.entry.size
+      if (activeSizeFilter.minBytes !== undefined && sz < activeSizeFilter.minBytes) return false
+      if (activeSizeFilter.maxBytes !== undefined && sz >= activeSizeFilter.maxBytes) return false
+    }
     return true
   })
 
-  const hasActiveFilters = kinds.size > 0 || dateRange !== null
+  const hasActiveFilters = kinds.size > 0 || dateRange !== null || sizeRange !== null
 
   return (
     <DriveLayout>
@@ -334,7 +362,7 @@ export function Search() {
               Filters
               {hasActiveFilters && (
                 <span className="font-mono text-[10px] tabular-nums">
-                  · {kinds.size + (dateRange ? 1 : 0)}
+                  · {kinds.size + (dateRange ? 1 : 0) + (sizeRange ? 1 : 0)}
                 </span>
               )}
             </button>
@@ -373,9 +401,24 @@ export function Search() {
                   <Icon name="x" size={9} className="ml-0.5" />
                 </button>
               )}
+              {sizeRange && (() => {
+                const meta = SIZE_FILTERS.find((f) => f.id === sizeRange)
+                if (!meta) return null
+                return (
+                  <button
+                    type="button"
+                    onClick={() => setSizeRange(null)}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11.5px] bg-amber-bg text-amber-deep border border-amber-deep/40 hover:border-amber-deep transition-colors cursor-pointer"
+                  >
+                    <Icon name="cloud" size={10} />
+                    size:{meta.label}
+                    <Icon name="x" size={9} className="ml-0.5" />
+                  </button>
+                )
+              })()}
               <button
                 type="button"
-                onClick={() => { setKinds(new Set()); setDateRange(null) }}
+                onClick={() => { setKinds(new Set()); setDateRange(null); setSizeRange(null) }}
                 className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11.5px] text-ink-3 hover:text-ink-2 hover:bg-paper-2 transition-colors cursor-pointer"
               >
                 Clear filters
@@ -408,7 +451,7 @@ export function Search() {
                 })}
               </div>
               <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 mb-1.5">Modified</div>
-              <div className="flex flex-wrap gap-1.5">
+              <div className="flex flex-wrap gap-1.5 mb-3">
                 {DATE_FILTERS.map((f) => {
                   const active = dateRange === f.id
                   return (
@@ -423,6 +466,27 @@ export function Search() {
                       }`}
                     >
                       <Icon name="clock" size={11} />
+                      {f.label}
+                    </button>
+                  )
+                })}
+              </div>
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 mb-1.5">Size</div>
+              <div className="flex flex-wrap gap-1.5">
+                {SIZE_FILTERS.map((f) => {
+                  const active = sizeRange === f.id
+                  return (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => pickSize(f.id)}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[12px] transition-colors cursor-pointer border ${
+                        active
+                          ? 'bg-amber-bg text-amber-deep border-amber-deep'
+                          : 'bg-paper text-ink-3 border-line hover:bg-paper-2 hover:text-ink-2'
+                      }`}
+                    >
+                      <Icon name="cloud" size={11} />
                       {f.label}
                     </button>
                   )
@@ -507,7 +571,7 @@ export function Search() {
               }
               cta={{
                 label: hasActiveFilters && results.length > 0 ? 'Clear filters' : 'Clear search',
-                onClick: hasActiveFilters && results.length > 0 ? () => { setKinds(new Set()); setDateRange(null) } : handleClear,
+                onClick: hasActiveFilters && results.length > 0 ? () => { setKinds(new Set()); setDateRange(null); setSizeRange(null) } : handleClear,
                 variant: 'default',
               }}
               secondaryCta={{
