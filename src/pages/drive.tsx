@@ -19,6 +19,7 @@ import { NewFolderDialog } from '../components/new-folder-dialog'
 import { VersionHistory } from '../components/version-history'
 import { DuplicateFileDialog, getUniqueName, type ConflictItem } from '../components/duplicate-file-dialog'
 import { NotificationInbox, useNotifications } from '../components/notification-inbox'
+import { ShortcutsCheatsheet } from '../components/shortcuts-cheatsheet'
 import { WelcomeTour } from '../components/welcome-tour'
 import { OnboardingGuide } from '../components/onboarding-guide'
 import { useOnboarding } from '../lib/onboarding-context'
@@ -179,6 +180,9 @@ export function Drive() {
 
   const [folderSuggestion, setFolderSuggestion] = useState<FolderSuggestion | null>(null)
   const [suggestionCreating, setSuggestionCreating] = useState(false)
+
+  // ─── Shortcuts cheatsheet ────────────────────────────
+  const [showShortcuts, setShowShortcuts] = useState(false)
 
   // ─── Dedup banner state ──────────────────────────────
   // Shows when a file whose hash was already uploaded this session is selected.
@@ -1726,7 +1730,7 @@ export function Drive() {
         navigate('/search')
       }
     },
-    // onShortcuts is wired globally in app.tsx (GlobalShortcuts).
+    onShortcuts: () => setShowShortcuts((v) => !v),
     onOpenSelected: () => {
       // Prefer the active selection set; fall back to the inspector's pinned file.
       const ids = externalSelectedIds.size > 0
@@ -1738,7 +1742,10 @@ export function Drive() {
       if (file.is_folder) handleFolderOpen(file)
       else setSelectedFileId(file.id)
     },
-    onEscape: () => {}, // handled inside FileList
+    onEscape: () => {
+      if (showShortcuts) setShowShortcuts(false)
+      // Other escape handling is done inside FileList
+    },
   })
 
   // Cmd-K / Ctrl-K focuses the inline search bar. Uses capture phase so it
@@ -2313,6 +2320,20 @@ export function Drive() {
           onClose={() => setShowUpgradeNudge(false)}
         />
       )}
+
+      {/* Keyboard shortcuts help button — bottom-right FAB */}
+      <button
+        type="button"
+        aria-label="Keyboard shortcuts"
+        title="Keyboard shortcuts (?)"
+        onClick={() => setShowShortcuts((v) => !v)}
+        className="fixed bottom-5 right-5 z-40 flex items-center justify-center w-8 h-8 rounded-full bg-paper border border-line-2 shadow-2 text-ink-3 hover:text-ink hover:border-line hover:shadow-3 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+      >
+        <span className="text-sm font-mono font-semibold leading-none select-none">?</span>
+      </button>
+
+      {/* Shortcuts cheatsheet — also opens on '?' key via GlobalShortcuts in app.tsx */}
+      <ShortcutsCheatsheet open={showShortcuts} onClose={() => setShowShortcuts(false)} />
     </DriveLayout>
   )
 }
