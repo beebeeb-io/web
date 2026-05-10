@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } fro
 import { BBCheckbox } from '@beebeeb/shared'
 import { BBChip } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
-import { Icon } from '@beebeeb/shared'
+import { Icon } from './icons'
 import { FileIcon, getFileType } from './file-icon'
 import { ContextMenu } from './context-menu'
 import { FileRowSkeleton } from '@beebeeb/shared'

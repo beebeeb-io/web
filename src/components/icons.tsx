@@ -44,6 +44,7 @@ export type IconName =
   | 'info'
   | 'camera'
   | 'scan'
+  | 'pin'
 
 interface IconProps extends SVGProps<SVGSVGElement> {
   name: IconName
@@ -130,6 +131,9 @@ const paths: Record<IconName, string> = {
   // Scan: document scanner / scan corners
   scan:
     'M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M8 12h8M12 8v8',
+  // Pin: pushpin
+  pin:
+    'M12 17v5M8 17h8M12 3v5M5 8h14a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z',
 }
 
 export function Icon({ name, size = 24, ...rest }: IconProps) {
