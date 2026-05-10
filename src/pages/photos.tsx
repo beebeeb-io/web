@@ -491,7 +491,9 @@ export function Photos() {
               onUpload={() => photoInputRef.current?.click()}
               onGoToDrive={() => navigate('/')}
             />
-          ) : groups.map((group, gi) => (
+          ) : (
+          <div className="animate-fade-in">
+          {groups.map((group, gi) => (
             <div key={gi} className="mb-6">
               {/* Group header */}
               <div className="flex items-baseline mb-2.5 gap-2.5">
@@ -598,6 +600,8 @@ export function Photos() {
               </div>
             </div>
           ))}
+          </div>
+          )}
         </div>
         </UploadZone>
 
