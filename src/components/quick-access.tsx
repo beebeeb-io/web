@@ -97,10 +97,10 @@ function SortablePinnedFolder({ folder, isActive, onUnpin }: {
       <button
         onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); onUnpin(folder.id) }}
-        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity text-ink-3 hover:text-ink z-10"
-        title="Unpin"
+        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity text-amber-deep hover:text-ink z-10"
+        title="Unpin from Quick access"
       >
-        <Icon name="x" size={10} />
+        <Icon name="pin" size={10} />
       </button>
     </div>
   )
@@ -178,8 +178,11 @@ export function QuickAccess() {
     <>
       <div className="mx-4 my-2.5 h-px bg-line" />
       <div className="px-4 py-1">
-        <div className="text-[10px] font-medium uppercase tracking-wider text-ink-3 mb-1">
-          Quick access
+        <div className="flex items-center gap-1.5 mb-1">
+          <Icon name="pin" size={10} className="text-amber-deep shrink-0" />
+          <div className="text-[10px] font-medium uppercase tracking-wider text-ink-3">
+            Quick access
+          </div>
         </div>
       </div>
       <nav className="px-3 pb-1.5">

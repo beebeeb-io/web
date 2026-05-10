@@ -204,8 +204,11 @@ export function ContextMenu({
               onClose()
             }}
           >
-            <Icon name="star" size={13} className="text-ink-3" />
+            <Icon name="pin" size={13} className={isPinned ? 'text-amber-deep' : 'text-ink-3'} />
             <span className="flex-1">{isPinned ? 'Unpin from Quick access' : 'Pin to Quick access'}</span>
+            <kbd className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-mono text-ink-4 bg-paper-2 border border-line rounded">
+              P
+            </kbd>
           </button>
         </div>
       )}

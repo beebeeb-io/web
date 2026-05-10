@@ -906,6 +906,17 @@ export function FileList({
               <Icon name="star" size={11} />
             </button>
 
+            {/* Pin badge — shown when folder is pinned to Quick access */}
+            {file.is_folder && pinnedFolderIds.has(file.id) && (
+              <span
+                className="inline-flex items-center text-amber-deep"
+                title="Pinned to Quick access"
+                aria-label="Pinned to Quick access"
+              >
+                <Icon name="pin" size={10} />
+              </span>
+            )}
+
             {/* Folder viewer badge — compact presence dots for shared folders */}
             {file.is_folder && folderViewerCounts?.[file.id] && (folderViewerCounts[file.id].count > 0) && (
               <FolderViewerBadge
