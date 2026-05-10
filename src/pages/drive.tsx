@@ -2321,7 +2321,8 @@ export function Drive() {
         aria-label="Keyboard shortcuts"
         title="Keyboard shortcuts (?)"
         onClick={() => setShowShortcuts((v) => !v)}
-        className="fixed bottom-5 right-5 z-40 flex items-center justify-center w-8 h-8 rounded-full bg-paper border border-line-2 shadow-2 text-ink-3 hover:text-ink hover:border-line hover:shadow-3 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+        className="hidden sm:flex fixed right-5 z-40 items-center justify-center w-8 h-8 rounded-full bg-paper border border-line-2 shadow-2 text-ink-3 hover:text-ink hover:border-line hover:shadow-3 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+        style={{ bottom: 'max(1.25rem, env(safe-area-inset-bottom, 1.25rem))' }}
       >
         <span className="text-sm font-mono font-semibold leading-none select-none">?</span>
       </button>

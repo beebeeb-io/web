@@ -507,7 +507,7 @@ export function Photos() {
               </div>
 
               {/* Grid */}
-              <div className="grid gap-1" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))' }}>
+              <div className="grid gap-1 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
                 {group.items.map((photo, pi) => {
                   const globalIndex = gi * 100 + pi
                   const thumbUrl = thumbnails[photo.id]

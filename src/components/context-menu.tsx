@@ -76,10 +76,10 @@ export function ContextMenu({
     const vh = window.innerHeight
 
     if (rect.right > vw) {
-      menu.style.left = `${x - rect.width}px`
+      menu.style.left = `${Math.max(4, x - rect.width)}px`
     }
     if (rect.bottom > vh) {
-      menu.style.top = `${y - rect.height}px`
+      menu.style.top = `${Math.max(4, y - rect.height)}px`
     }
   }, [open, x, y])
 
