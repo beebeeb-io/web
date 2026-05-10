@@ -1047,6 +1047,18 @@ export function FileList({
             )}
           </div>
           <div className="text-[11px] text-ink-3 mt-0.5 flex items-center gap-1.5 flex-wrap">
+            {!file.is_folder && name !== null ? (() => {
+              const ext = name.split('.').pop()?.toLowerCase() ?? ''
+              const badgeStyle = getBadgeStyle(fileType)
+              return ext ? (
+                <span
+                  className="font-mono font-medium shrink-0 rounded px-[5px] py-px text-[10px] leading-tight"
+                  style={{ color: badgeStyle.color, background: badgeStyle.background }}
+                >
+                  {ext.toUpperCase()}
+                </span>
+              ) : null
+            })() : null}
             <span className="truncate">{typeLabel(file)}</span>
             {!file.is_folder && (
               <>

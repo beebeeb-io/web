@@ -1,6 +1,6 @@
 import { Icon, type IconName } from '@beebeeb/shared'
 
-type FileType =
+export type FileType =
   | 'folder'
   | 'pdf'
   | 'word'
