@@ -9,13 +9,13 @@ import { DeviceProvision } from '../components/device-provision'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
 import { devAutoAuth } from '../lib/dev-auth'
-import { startPasskeyLogin, finishPasskeyLogin, setToken, hexToBytes, opaqueLoginStart as apiOpaqueLoginStart, opaqueLoginFinish as apiOpaqueLoginFinish, opaqueRegisterStartExisting, opaqueRegisterFinishExisting, serverOptsToGetOptions, credentialToAuthenticationJSON } from '../lib/api'
-import { opaqueLoginStart, opaqueLoginFinish, opaqueRegistrationStart, opaqueRegistrationFinish, computeRecoveryCheck, deriveX25519Public, toBase64, fromBase64 } from '../lib/crypto'
+import { startPasskeyLogin, finishPasskeyLogin, setToken, hexToBytes, opaqueLoginStart as apiOpaqueLoginStart, opaqueLoginFinish as apiOpaqueLoginFinish, serverOptsToGetOptions, credentialToAuthenticationJSON } from '../lib/api'
+import { opaqueLoginStart, opaqueLoginFinish, toBase64 } from '../lib/crypto'
 
 export function Login() {
   const navigate = useNavigate()
-  const { login, refreshUser, verify2fa } = useAuth()
-  const { unlock, unlockVault, vaultExists, cryptoReady, cryptoError, getMasterKey, isUnlocked } = useKeys()
+  const { refreshUser, verify2fa } = useAuth()
+  const { unlock, unlockVault, vaultExists, cryptoReady, cryptoError, isUnlocked } = useKeys()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -42,47 +42,6 @@ export function Login() {
   // Device provisioning state — shown when OPAQUE auth succeeds but no vault exists on this device
   const [needsProvision, setNeedsProvision] = useState(false)
 
-  /**
-   * Silently migrate a legacy (Argon2id) session to OPAQUE after a successful
-   * legacy login. Runs fire-and-forget — any failure is logged but never shown
-   * to the user. The account stays on legacy until the next successful run.
-   *
-   * Steps:
-   *   1. OPAQUE registration start (client-side WASM)
-   *   2. POST /opaque/register-start-existing (bearer auth) → server_message
-   *   3. OPAQUE registration finish (client-side WASM)
-   *   4. Compute recovery_check + x25519 public key from master key
-   *   5. POST /opaque/register-finish-existing (bearer auth)
-   */
-  async function silentOpaqueUpgrade(pwd: string): Promise<void> {
-    try {
-      // Step 1+2: registration start
-      const regStart = await opaqueRegistrationStart(pwd)
-      const serverResp = await opaqueRegisterStartExisting(toBase64(regStart.message))
-      const serverMsg = Uint8Array.from(atob(serverResp.server_message), c => c.charCodeAt(0))
-
-      // Step 3: registration finish
-      const regUpload = await opaqueRegistrationFinish(regStart.state, pwd, serverMsg)
-
-      // Step 4: compute recovery_check + x25519 public key from in-memory master key
-      const masterKey = getMasterKey()
-      const [recoveryCheck, x25519Pub] = await Promise.all([
-        computeRecoveryCheck(masterKey),
-        deriveX25519Public(masterKey),
-      ])
-
-      // Step 5: finalize on server
-      await opaqueRegisterFinishExisting(
-        toBase64(regUpload),
-        toBase64(recoveryCheck),
-        toBase64(x25519Pub),
-      )
-    } catch (err) {
-      // Non-fatal: log and bail. Will retry next legacy login.
-      console.warn('[OPAQUE migration] failed (will retry next login):', err)
-    }
-  }
-
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setError('')
@@ -94,7 +53,7 @@ export function Login() {
 
     setSubmitting(true)
 
-    // Try OPAQUE first, then legacy fallback
+    // OPAQUE is mandatory — no fallback path.
     try {
       const loginStart = await opaqueLoginStart(password)
       const serverResp = await apiOpaqueLoginStart(email, toBase64(loginStart.message))
@@ -120,24 +79,9 @@ export function Login() {
         setSubmitting(false)
       }
     } catch (opaqueErr) {
-      // OPAQUE failed — try legacy login. Log in dev to catch infrastructure issues.
-      if (import.meta.env.DEV) console.warn('[login] OPAQUE failed, falling back to legacy:', opaqueErr)
-      try {
-        const result = await login(email, password)
-        if (result.requires_2fa && result.partial_token) {
-          setPartialToken(result.partial_token)
-        } else if (result.salt) {
-          const saltBytes = fromBase64(result.salt)
-          await unlock(password, saltBytes)
-          // Navigate immediately — don't wait for the upgrade.
-          navigate('/')
-          // Fire-and-forget silent OPAQUE migration. The master key is now
-          // in memory (unlock() just set it). Any failure is safe to ignore.
-          void silentOpaqueUpgrade(password)
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Invalid email or password')
-      }
+      // OPAQUE is mandatory — never fall back to password auth.
+      if (import.meta.env.DEV) console.warn('[login] OPAQUE failed:', opaqueErr)
+      setError('Authentication failed. Please try again.')
     } finally {
       setSubmitting(false)
     }

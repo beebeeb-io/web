@@ -15,7 +15,7 @@ interface PresenceAvatarsProps {
   folderId: string | null | undefined
   /** Current user's own ID — their avatar is excluded from the list. */
   currentUserId?: string | null
-  /** How often to refresh, in milliseconds. Default: 30_000 (30 s). */
+  /** How often to refresh, in milliseconds. Default: 60_000 (60 s). */
   intervalMs?: number
   /** Max avatars to show before the "+N more" overflow. Default: 5. */
   maxVisible?: number
@@ -63,7 +63,7 @@ function initials(email: string): string {
 export function PresenceAvatars({
   folderId,
   currentUserId,
-  intervalMs = 30_000,
+  intervalMs = 60_000,
   maxVisible = 5,
 }: PresenceAvatarsProps) {
   const [members, setMembers] = useState<PresenceMember[]>([])

@@ -233,7 +233,7 @@ function VaultSwitcher() {
 
           <div className="my-1 mx-1 h-px bg-line" />
 
-          {/* Create team vault — locked/upgrade */}
+          {/* Team vaults — Business plan upgrade */}
           <div
             role="menuitem"
             className="flex flex-col gap-1 px-2 py-[7px] rounded-md text-[13px]"
@@ -252,18 +252,18 @@ function VaultSwitcher() {
               >
                 <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
               </svg>
-              <span className="font-medium">Create team vault</span>
+              <span className="font-medium">Team vaults</span>
             </div>
             <p className="text-[11px] text-ink-3 ml-[21px] leading-relaxed">
-              Invite your team. Starts at &euro;8/user/mo.
+              Available on the Business plan.
             </p>
             <div className="ml-[21px] mt-0.5">
               <a
-                href="/settings/billing"
+                href="/billing"
                 onClick={() => setOpen(false)}
                 className="inline-flex items-center px-2 py-1 rounded-md text-[11px] font-medium bg-amber-bg text-amber-deep hover:bg-amber-bg/80 transition-colors"
               >
-                Upgrade
+                Upgrade to Business
               </a>
             </div>
           </div>
