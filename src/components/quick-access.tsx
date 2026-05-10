@@ -19,16 +19,18 @@ import { Icon } from '@beebeeb/shared'
 import { useKeys } from '../lib/key-context'
 import { getPreference, setPreference, getFile } from '../lib/api'
 import { decryptFileMetadata } from '../lib/crypto'
+import { getFolderColorDot } from '../lib/folder-colors'
 
 interface PinnedFolder {
   id: string
   name: string
 }
 
-function SortablePinnedFolder({ folder, isActive, onUnpin }: {
+function SortablePinnedFolder({ folder, isActive, onUnpin, colorDot }: {
   folder: PinnedFolder
   isActive: boolean
   onUnpin: (id: string) => void
+  colorDot?: string | null
 }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: folder.id })
   const style = { transform: CSS.Transform.toString(transform), transition }
@@ -92,6 +94,18 @@ function SortablePinnedFolder({ folder, isActive, onUnpin }: {
         }`}
       >
         <Icon name="folder" size={13} className="shrink-0 text-amber-deep" />
+        {colorDot && (
+          <span
+            aria-hidden="true"
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: '50%',
+              backgroundColor: colorDot,
+              flexShrink: 0,
+            }}
+          />
+        )}
         <span className="flex-1 truncate">{folder.name}</span>
       </Link>
       <button
@@ -109,6 +123,7 @@ function SortablePinnedFolder({ folder, isActive, onUnpin }: {
 export function QuickAccess() {
   const [pinnedIds, setPinnedIds] = useState<string[]>([])
   const [folders, setFolders] = useState<PinnedFolder[]>([])
+  const [folderColorDots, setFolderColorDots] = useState<Record<string, string | null>>({})
   const { getFileKey, isUnlocked } = useKeys()
   const location = useLocation()
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
@@ -153,6 +168,25 @@ export function QuickAccess() {
     return () => { cancelled = true }
   }, [pinnedIds, isUnlocked, getFileKey])
 
+  // Load color dots whenever the folder list changes
+  useEffect(() => {
+    const dots: Record<string, string | null> = {}
+    for (const folder of folders) {
+      dots[folder.id] = getFolderColorDot(folder.id)
+    }
+    setFolderColorDots(dots)
+  }, [folders])
+
+  // Listen for color changes dispatched by file-list
+  useEffect(() => {
+    function onColorChanged(e: Event) {
+      const { folderId } = (e as CustomEvent<{ folderId: string }>).detail
+      setFolderColorDots((prev) => ({ ...prev, [folderId]: getFolderColorDot(folderId) }))
+    }
+    window.addEventListener('beebeeb:folder-color-changed', onColorChanged)
+    return () => window.removeEventListener('beebeeb:folder-color-changed', onColorChanged)
+  }, [])
+
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event
     if (!over || active.id === over.id) return
@@ -194,6 +228,7 @@ export function QuickAccess() {
                 folder={folder}
                 isActive={currentFolder === folder.id}
                 onUnpin={handleUnpin}
+                colorDot={folderColorDots[folder.id]}
               />
             ))}
           </SortableContext>

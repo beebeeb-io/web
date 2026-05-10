@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Icon } from '@beebeeb/shared'
 import type { IconName } from '@beebeeb/shared'
+import { FOLDER_COLORS, getFolderColor, setFolderColor } from '../lib/folder-colors'
 
 interface ContextMenuItem {
   id: string
@@ -37,6 +38,8 @@ interface ContextMenuProps {
   hasVersions?: boolean
   onClose: () => void
   onAction: (action: string, fileId: string) => void
+  /** Called when a color label is selected for a folder so parent can re-render the dot */
+  onColorChange?: (folderId: string, colorName: string | null) => void
 }
 
 export function ContextMenu({
@@ -51,8 +54,18 @@ export function ContextMenu({
   hasVersions,
   onClose,
   onAction,
+  onColorChange,
 }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
+
+  // Track the current color label for this folder so the picker shows the
+  // active selection immediately when the menu opens.
+  const [activeColor, setActiveColor] = useState<string | null>(null)
+  useEffect(() => {
+    if (open && isFolder) {
+      setActiveColor(getFolderColor(fileId))
+    }
+  }, [open, isFolder, fileId])
 
   // Position adjustments so the menu doesn't overflow viewport
   useEffect(() => {
@@ -193,7 +206,7 @@ export function ContextMenu({
         </div>
       ))}
       {isFolder && (
-        <div>
+        <>
           <div className="mx-2 my-1 h-px bg-line" role="separator" />
           <button
             type="button"
@@ -210,7 +223,90 @@ export function ContextMenu({
               P
             </kbd>
           </button>
-        </div>
+
+          {/* Color label picker */}
+          <div className="mx-2 my-1 h-px bg-line" role="separator" />
+          <div className="px-3 py-[7px]">
+            <div className="text-[11px] text-ink-3 mb-2">Color label</div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {/* None option — X through a gray dot */}
+              <button
+                type="button"
+                aria-label="No color label"
+                title="None"
+                onClick={() => {
+                  setFolderColor(fileId, null)
+                  setActiveColor(null)
+                  onColorChange?.(fileId, null)
+                  // Don't close — let user see the selection cleared
+                }}
+                className="relative w-[14px] h-[14px] rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+                style={{ backgroundColor: '#d1d5db' }}
+              >
+                {/* X mark */}
+                <span
+                  aria-hidden="true"
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '9px',
+                    lineHeight: 1,
+                    color: '#fff',
+                    fontWeight: 700,
+                  }}
+                >
+                  ✕
+                </span>
+                {/* Active ring */}
+                {activeColor === null && (
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      position: 'absolute',
+                      inset: '-3px',
+                      borderRadius: '50%',
+                      border: '2px solid #d1d5db',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                )}
+              </button>
+
+              {FOLDER_COLORS.map((color) => (
+                <button
+                  key={color.name}
+                  type="button"
+                  aria-label={`Color label: ${color.name}`}
+                  title={color.name.charAt(0).toUpperCase() + color.name.slice(1)}
+                  onClick={() => {
+                    setFolderColor(fileId, color.name)
+                    setActiveColor(color.name)
+                    onColorChange?.(fileId, color.name)
+                  }}
+                  className="relative w-[14px] h-[14px] rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+                  style={{ backgroundColor: color.dot }}
+                >
+                  {/* Active ring */}
+                  {activeColor === color.name && (
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        position: 'absolute',
+                        inset: '-3px',
+                        borderRadius: '50%',
+                        border: `2px solid ${color.dot}`,
+                        pointerEvents: 'none',
+                      }}
+                    />
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
       )}
     </div>
   )

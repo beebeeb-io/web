@@ -16,6 +16,7 @@ import { getPreference, setPreference } from '../lib/api'
 import { SharePopover } from './share-popover'
 import { FolderViewerBadge } from './presence-avatars'
 import { useToast } from './toast'
+import { getFolderColorDot, FOLDER_COLORS } from '../lib/folder-colors'
 import type { DriveFile, MyShare } from '../lib/api'
 
 // ─── Sort types ─────────────────────────────────────
@@ -513,6 +514,31 @@ export function FileList({
     window.dispatchEvent(new Event('beebeeb:pins-changed'))
   }
 
+  // ─── Folder color labels ───────────────────────────
+  // Map of folderId → hex dot color. Initialized lazily from localStorage when
+  // files load. Updated immediately on user color selection without page reload.
+  const [folderColors, setFolderColors] = useState<Record<string, string | null>>({})
+
+  useEffect(() => {
+    if (files.length === 0) return
+    const initial: Record<string, string | null> = {}
+    for (const file of files) {
+      if (file.is_folder) {
+        initial[file.id] = getFolderColorDot(file.id)
+      }
+    }
+    setFolderColors(initial)
+  }, [files])
+
+  function handleFolderColorChange(folderId: string, colorName: string | null) {
+    const dot = colorName
+      ? (FOLDER_COLORS.find((c) => c.name === colorName)?.dot ?? null)
+      : null
+    setFolderColors((prev) => ({ ...prev, [folderId]: dot }))
+    // Notify quick-access and other listeners so they can re-read localStorage
+    window.dispatchEvent(new CustomEvent('beebeeb:folder-color-changed', { detail: { folderId } }))
+  }
+
   // ─── Context menu ──────────────────────────────────
   const [ctxMenu, setCtxMenu] = useState<{
     open: boolean; x: number; y: number; fileId: string; fileName: string; isFolder: boolean; versionNumber: number; isStarred: boolean
@@ -893,7 +919,24 @@ export function FileList({
             )}
           </div>
         ) : (
-          <FileIcon type={fileType} />
+          <div className="relative inline-flex shrink-0">
+            <FileIcon type={fileType} />
+            {file.is_folder && folderColors[file.id] && (
+              <span
+                aria-hidden="true"
+                style={{
+                  position: 'absolute',
+                  bottom: 0,
+                  right: 0,
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  backgroundColor: folderColors[file.id] as string,
+                  boxShadow: '0 0 0 1.5px var(--color-paper)',
+                }}
+              />
+            )}
+          </div>
         )}
 
         {/* Name column */}
@@ -1320,6 +1363,7 @@ export function FileList({
           const file = files.find((f) => f.id === fileId)
           if (file) onFileAction?.(action, file)
         }}
+        onColorChange={handleFolderColorChange}
       />
 
       {/* Share popover — anchored to the badge that opened it */}
