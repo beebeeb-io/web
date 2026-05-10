@@ -535,7 +535,7 @@ export function Shared() {
       <FileList
         files={files}
         loading={loading}
-        emptyState={<EmptyShared tab="with-me" onGoToDrive={() => navigate('/')} />}
+        emptyState={<EmptyShared tab="with-me" onGoToDrive={() => navigate('/')} onShareFile={() => navigate('/')} />}
         sortable={false}
         externalDecryptedNames={decryptedNames}
         renderActions={(file) => (

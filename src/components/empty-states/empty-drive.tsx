@@ -19,7 +19,7 @@ export function EmptyDrive({ userName, onUpload, onCreateFolder }: EmptyDrivePro
       />
 
       <div className="relative max-w-[520px] text-center">
-        {/* Upload icon */}
+        {/* Lock icon */}
         <div
           className="w-[58px] h-[58px] mx-auto mb-[18px] rounded-2xl flex items-center justify-center -rotate-[4deg]"
           style={{
@@ -28,15 +28,15 @@ export function EmptyDrive({ userName, onUpload, onCreateFolder }: EmptyDrivePro
               '0 8px 24px -6px oklch(0.82 0.17 84 / 0.5), inset 0 1px 0 rgba(255,255,255,0.4)',
           }}
         >
-          <Icon name="arrow-up" size={24} className="text-ink" />
+          <Icon name="lock" size={26} className="text-ink" />
         </div>
 
         <h1 className="text-xl font-semibold text-ink mb-2">
-          {userName ? `Welcome, ${userName}.` : 'Your vault is empty'}
+          {userName ? `Welcome, ${userName}.` : 'Your encrypted vault is empty'}
         </h1>
         <p className="text-[14px] text-ink-3 leading-relaxed mb-[22px]">
-          Drag a file in to get started — it's encrypted before it leaves your device.
-          Keys live only on your devices.
+          Drop files here or click Upload to get started — everything is encrypted before it
+          leaves your device. Keys live only on your devices.
         </p>
 
         {/* Action buttons */}
@@ -51,7 +51,7 @@ export function EmptyDrive({ userName, onUpload, onCreateFolder }: EmptyDrivePro
 
         {/* Feature grid */}
         <div
-          className="grid grid-cols-3 gap-2.5 p-3.5 bg-paper border border-line rounded-lg"
+          className="grid grid-cols-3 gap-2.5 p-3.5 bg-paper border border-line rounded-lg mb-4"
           style={{ boxShadow: 'var(--shadow-1)' }}
         >
           {(
@@ -78,6 +78,18 @@ export function EmptyDrive({ userName, onUpload, onCreateFolder }: EmptyDrivePro
             </div>
           ))}
         </div>
+
+        {/* iOS app CTA */}
+        <a
+          href="https://apps.apple.com/app/id6766666400"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-paper border border-line text-[12px] text-ink-2 hover:bg-paper-2 hover:border-line-2 transition-colors"
+          style={{ boxShadow: 'var(--shadow-1)' }}
+        >
+          <Icon name="image" size={13} className="text-amber-deep" />
+          Get the iOS app to back up your camera roll automatically
+        </a>
 
         {/* Encryption badge */}
         <div className="mt-4 inline-flex items-center gap-1.5 font-mono text-[10.5px] text-ink-3">

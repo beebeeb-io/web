@@ -23,13 +23,17 @@ export function EmptySearch({
         </div>
 
         <h3 className="text-[15px] font-semibold text-ink mb-1.5">
-          No matches for &ldquo;{query}&rdquo;
+          No files found for &ldquo;{query}&rdquo;
         </h3>
 
-        <p className="text-[12.5px] text-ink-3 leading-relaxed mb-3.5 max-w-[400px] mx-auto">
+        <p className="text-[12.5px] text-ink-3 leading-relaxed mb-2 max-w-[400px] mx-auto">
           We search filenames on your device — file contents stay encrypted
           on our servers. If it was in a shared folder, ask the owner to
           re-share.
+        </p>
+
+        <p className="text-[11.5px] text-ink-4 leading-relaxed mb-4 max-w-[360px] mx-auto">
+          Tip: Try searching for a file type like &ldquo;pdf&rdquo;, &ldquo;jpg&rdquo;, or a date like &ldquo;May&rdquo;
         </p>
 
         <div className="flex gap-1.5 justify-center flex-wrap">
@@ -43,8 +47,8 @@ export function EmptySearch({
               <Icon name="users" size={11} /> Search shared with me
             </BBButton>
           )}
-          <BBButton size="sm" variant="ghost" onClick={onClearSearch}>
-            Clear filters
+          <BBButton size="sm" variant="amber" onClick={onClearSearch} className="gap-1.5">
+            <Icon name="x" size={11} /> Clear search
           </BBButton>
         </div>
       </div>

@@ -147,6 +147,32 @@ export function Drive() {
   }
   const [pendingConflict, setPendingConflict] = useState<PendingConflictUpload | null>(null)
 
+  // ─── Smart folder suggestion state ───────────────────
+  type FolderSuggestion = { type: 'images'; count: number } | { type: 'pdfs'; count: number }
+  const DISMISSED_SUGGESTIONS_KEY = 'bb_dismissed_folder_suggestions'
+
+  function getDismissedSuggestions(): Set<string> {
+    try {
+      const raw = localStorage.getItem(DISMISSED_SUGGESTIONS_KEY)
+      if (!raw) return new Set()
+      const parsed = JSON.parse(raw)
+      return Array.isArray(parsed) ? new Set(parsed as string[]) : new Set()
+    } catch {
+      return new Set()
+    }
+  }
+
+  function dismissSuggestion(key: string) {
+    try {
+      const current = getDismissedSuggestions()
+      current.add(key)
+      localStorage.setItem(DISMISSED_SUGGESTIONS_KEY, JSON.stringify([...current]))
+    } catch { /* quota */ }
+  }
+
+  const [folderSuggestion, setFolderSuggestion] = useState<FolderSuggestion | null>(null)
+  const [suggestionCreating, setSuggestionCreating] = useState(false)
+
   // ─── Dedup banner state ──────────────────────────────
   // Shows when a file whose hash was already uploaded this session is selected.
   interface DedupWarning {
@@ -252,6 +278,44 @@ export function Drive() {
   useEffect(() => {
     fetchMyShares()
   }, [fetchMyShares])
+
+  // ─── Smart folder suggestion analysis ─────────────────
+  // Only active at root (no parent). Detect 5+ images or 5+ PDFs without
+  // a corresponding folder. Show at most one suggestion at a time.
+  useEffect(() => {
+    if (currentParentId || loading || files.length === 0) {
+      setFolderSuggestion(null)
+      return
+    }
+    const dismissed = getDismissedSuggestions()
+    const folderNames = files
+      .filter((f) => f.is_folder)
+      .map((f) => {
+        const dec = externalDecryptedNames[f.id]
+        return dec ? dec.toLowerCase() : null
+      })
+      .filter(Boolean) as string[]
+
+    const imageFiles = files.filter(
+      (f) => !f.is_folder && (f.mime_type ?? '').startsWith('image/'),
+    )
+    const pdfFiles = files.filter(
+      (f) => !f.is_folder && f.mime_type === 'application/pdf',
+    )
+
+    const hasPhotosFolder = folderNames.some((n) => n === 'photos')
+    const hasDocumentsFolder = folderNames.some((n) => n === 'documents')
+
+    if (imageFiles.length >= 5 && !hasPhotosFolder && !dismissed.has('images')) {
+      setFolderSuggestion({ type: 'images', count: imageFiles.length })
+    } else if (pdfFiles.length >= 5 && !hasDocumentsFolder && !dismissed.has('pdfs')) {
+      setFolderSuggestion({ type: 'pdfs', count: pdfFiles.length })
+    } else {
+      setFolderSuggestion(null)
+    }
+  // externalDecryptedNames changes frequently; include it so folder names are resolved
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [files, loading, currentParentId, externalDecryptedNames])
 
   // Re-derive when the sync engine pushes ops affecting the visible folder.
   useEffect(() => {
@@ -1111,6 +1175,55 @@ export function Drive() {
     }
   }
 
+  // ─── Smart folder suggestion: create folder + move files ─────────────────
+
+  async function handleAcceptFolderSuggestion() {
+    if (!folderSuggestion || !isUnlocked || !cryptoReady) return
+    const folderName = folderSuggestion.type === 'images' ? 'Photos' : 'Documents'
+    const filesToMove = folderSuggestion.type === 'images'
+      ? files.filter((f) => !f.is_folder && (f.mime_type ?? '').startsWith('image/'))
+      : files.filter((f) => !f.is_folder && f.mime_type === 'application/pdf')
+
+    setSuggestionCreating(true)
+    try {
+      // Create the folder
+      const folderId = crypto.randomUUID()
+      const folderKey = await getFileKey(folderId)
+      const enc = await encryptFilename(folderKey, folderName)
+      const nameEncrypted = JSON.stringify({
+        nonce: toBase64(enc.nonce),
+        ciphertext: toBase64(enc.ciphertext),
+      })
+      const result = await createFolder(nameEncrypted, undefined, folderId)
+
+      // Move all matching files into it
+      await Promise.all(filesToMove.map((f) => updateFile(f.id, { parent_id: result.id })))
+
+      showToast({
+        icon: 'folder',
+        title: `${folderName} folder created`,
+        description: `${filesToMove.length} file${filesToMove.length !== 1 ? 's' : ''} moved.`,
+      })
+      setFolderSuggestion(null)
+      fetchFiles()
+    } catch (err) {
+      showToast({
+        icon: 'x',
+        title: 'Could not create folder',
+        description: err instanceof Error ? err.message : 'Something went wrong.',
+        danger: true,
+      })
+    } finally {
+      setSuggestionCreating(false)
+    }
+  }
+
+  function handleDismissFolderSuggestion() {
+    if (!folderSuggestion) return
+    dismissSuggestion(folderSuggestion.type)
+    setFolderSuggestion(null)
+  }
+
   function handleFolderOpen(folder: DriveFile) {
     setBreadcrumbs((prev) => [
       ...prev,
@@ -1834,6 +1947,40 @@ export function Drive() {
             onOpenShare={(id) => id && setShareFileId(id)}
             lastUploadedFileId={lastUploadedFileId}
           />
+        )}
+
+        {/* Smart folder suggestion banner */}
+        {folderSuggestion && !currentParentId && (
+          <div className="px-5 py-3 border-b border-amber/30 border-l-4 border-l-amber bg-paper-2 flex items-center gap-3 text-sm">
+            <Icon name="folder" size={14} className="text-amber-deep shrink-0" />
+            <span className="flex-1 text-ink">
+              {folderSuggestion.type === 'images'
+                ? `You have ${folderSuggestion.count} images in your root folder. Create a Photos folder and move them there?`
+                : `You have ${folderSuggestion.count} PDFs in your root folder. Create a Documents folder and move them there?`}
+            </span>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <BBButton
+                size="sm"
+                variant="amber"
+                disabled={suggestionCreating}
+                onClick={handleAcceptFolderSuggestion}
+              >
+                {suggestionCreating
+                  ? 'Creating…'
+                  : folderSuggestion.type === 'images'
+                    ? 'Create Photos folder'
+                    : 'Create Documents folder'}
+              </BBButton>
+              <BBButton
+                size="sm"
+                variant="ghost"
+                disabled={suggestionCreating}
+                onClick={handleDismissFolderSuggestion}
+              >
+                Dismiss
+              </BBButton>
+            </div>
+          </div>
         )}
 
         {/* File list with upload zone. flex-1 + flex-col lets UploadZone fill the

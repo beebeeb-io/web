@@ -4,6 +4,8 @@ import type { IconName } from '@beebeeb/shared'
 interface EmptySharedProps {
   tab: 'with-me' | 'by-me' | 'pending'
   onGoToDrive: () => void
+  /** Called when the user clicks "Share a file" in the with-me empty state. */
+  onShareFile?: () => void
 }
 
 const config: Record<
@@ -11,11 +13,11 @@ const config: Record<
   { icon: IconName; heading: string; subtitle: string; ctaLabel: string }
 > = {
   'with-me': {
-    icon: 'share',
-    heading: 'Nothing shared with you yet',
+    icon: 'users',
+    heading: 'No files shared with you yet',
     subtitle:
-      'When someone shares a file or folder with you, it will appear here. Shared files use separate key exchange -- the sender must approve your access.',
-    ctaLabel: 'Go to drive',
+      'Files shared with you via encrypted links will appear here. Shared files use separate key exchange — the sender must approve your access.',
+    ctaLabel: 'Share a file',
   },
   'by-me': {
     icon: 'upload',
@@ -33,8 +35,30 @@ const config: Record<
   },
 }
 
-export function EmptyShared({ tab, onGoToDrive }: EmptySharedProps) {
+export function EmptyShared({ tab, onGoToDrive, onShareFile }: EmptySharedProps) {
   const c = config[tab]
+
+  if (tab === 'with-me') {
+    return (
+      <EmptyState
+        icon={c.icon}
+        heading={c.heading}
+        subtitle={c.subtitle}
+        cta={{
+          label: c.ctaLabel,
+          icon: 'share',
+          onClick: onShareFile ?? onGoToDrive,
+          variant: 'amber',
+        }}
+        secondaryCta={{
+          label: 'Go to drive',
+          icon: 'folder',
+          onClick: onGoToDrive,
+        }}
+      />
+    )
+  }
+
   return (
     <EmptyState
       icon={c.icon}

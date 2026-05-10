@@ -10,7 +10,7 @@ export function EmptyPhotos({ onUpload, onGoToDrive }: EmptyPhotosProps) {
     <EmptyState
       icon="image"
       heading="No photos yet"
-      subtitle="Upload photos or enable camera backup on mobile."
+      subtitle="Enable camera backup in the Beebeeb iOS app to automatically back up your photos here — or upload photos directly."
       cta={{
         label: 'Upload photos',
         icon: 'upload',
@@ -22,6 +22,15 @@ export function EmptyPhotos({ onUpload, onGoToDrive }: EmptyPhotosProps) {
         onClick: onGoToDrive,
       }}
       hint="Photos are end-to-end encrypted. Only you can decrypt them."
-    />
+    >
+      <a
+        href="https://apps.apple.com/app/id6766666400"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-paper border border-line text-[11.5px] text-ink-2 hover:bg-paper-2 transition-colors"
+      >
+        Get Beebeeb for iOS
+      </a>
+    </EmptyState>
   )
 }

@@ -563,14 +563,19 @@ export function Search() {
             /* Empty results */
             <EmptyState
               icon="search"
-              heading={hasActiveFilters && results.length > 0 ? 'No matches with these filters' : 'No files match your search'}
+              heading={
+                hasActiveFilters && results.length > 0
+                  ? 'No matches with these filters'
+                  : `No files found for “${query}”`
+              }
               subtitle={
                 hasActiveFilters && results.length > 0
-                  ? `${results.length} match${results.length !== 1 ? 'es' : ''} for "${query}", but none pass the active filters. Try removing one.`
-                  : `Nothing matched "${query}". We search file names on your device -- file contents stay encrypted on our servers. Try a different term or check your spelling.`
+                  ? `${results.length} match${results.length !== 1 ? 'es' : ''} for “${query}”, but none pass the active filters. Try removing one.`
+                  : `We search filenames on your device — file contents stay encrypted on our servers.`
               }
               cta={{
                 label: hasActiveFilters && results.length > 0 ? 'Clear filters' : 'Clear search',
+                icon: 'x',
                 onClick: hasActiveFilters && results.length > 0 ? () => { setKinds(new Set()); setDateRange(null); setSizeRange(null) } : handleClear,
                 variant: 'default',
               }}
@@ -579,6 +584,11 @@ export function Search() {
                 icon: 'trash',
                 onClick: () => navigate('/trash'),
               }}
+              hint={
+                hasActiveFilters && results.length > 0
+                  ? undefined
+                  : 'Tip: Try searching for a file type like “pdf”, “jpg”, or a date like “May”'
+              }
             />
           ) : (
             <>
