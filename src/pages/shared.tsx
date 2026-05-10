@@ -688,13 +688,22 @@ export function Shared() {
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="text-[13px] font-medium text-ink truncate">{name}</div>
-                          <div className="flex items-center gap-2 text-[11px] text-ink-3 mt-0.5">
-                            <span className="font-mono">{share.open_count ?? 0}</span>
-                            <span>{(share.open_count ?? 0) === 1 ? 'open' : 'opens'}</span>
-                            {share.max_opens && <><span>·</span><span className="font-mono">/ {share.max_opens} max</span></>}
-                            {share.has_passphrase && <><span>·</span><span className="text-amber-deep">Passphrase</span></>}
-                            <span>·</span>
-                            <span>Created {timeAgo(share.created_at)}</span>
+                          <div className="flex items-center gap-2 text-[11px] mt-0.5">
+                            {(share.open_count ?? 0) > 0 ? (
+                              <>
+                                <span className="font-mono text-ink-2">{share.open_count}</span>
+                                <span className="text-ink-2">{share.open_count === 1 ? 'view' : 'views'}</span>
+                                {share.last_opened_at && (
+                                  <><span className="text-ink-4">·</span><span className="text-ink-3">last {timeAgo(share.last_opened_at)}</span></>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-ink-4">Not yet opened</span>
+                            )}
+                            {share.max_opens && <><span className="text-ink-4">·</span><span className="font-mono text-ink-3">/ {share.max_opens} max</span></>}
+                            {share.has_passphrase && <><span className="text-ink-4">·</span><span className="text-amber-deep">Passphrase</span></>}
+                            <span className="text-ink-4">·</span>
+                            <span className="text-ink-3">Created {timeAgo(share.created_at)}</span>
                           </div>
                         </div>
                         {/* Expiry badge */}
@@ -746,12 +755,18 @@ export function Shared() {
                         </div>
 
                         {/* KPI row */}
-                        <div className="grid grid-cols-3 gap-2 mb-3">
+                        <div className="grid grid-cols-4 gap-2 mb-3">
                           <div className="rounded-lg bg-paper border border-line p-2.5">
-                            <div className="text-[10px] text-ink-4 mb-0.5">Opens</div>
+                            <div className="text-[10px] text-ink-4 mb-0.5">Views</div>
                             <div className="font-mono text-[13px] font-semibold">
                               {share.open_count ?? 0}
                               {share.max_opens ? ` / ${share.max_opens}` : ''}
+                            </div>
+                          </div>
+                          <div className="rounded-lg bg-paper border border-line p-2.5">
+                            <div className="text-[10px] text-ink-4 mb-0.5">Last viewed</div>
+                            <div className="text-[12px]">
+                              {share.last_opened_at ? timeAgo(share.last_opened_at) : '—'}
                             </div>
                           </div>
                           <div className="rounded-lg bg-paper border border-line p-2.5">
