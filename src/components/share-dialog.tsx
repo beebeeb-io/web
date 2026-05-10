@@ -452,8 +452,10 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
   const [mode, setMode] = useState<ShareMode>('link')
   const [expiryIdx, setExpiryIdx] = useState(2)  // default: 7 days (spec 024 §1.8)
   const [maxOpensIdx, setMaxOpensIdx] = useState(4) // default: Unlimited (spec 024 §1.8)
+  const [passwordEnabled, setPasswordEnabled] = useState(false)
   const [passphrase, setPassphrase] = useState('')
   const [showPassphrase, setShowPassphrase] = useState(false)
+  const [passwordCopied, setPasswordCopied] = useState(false)
   const [loading, setLoading] = useState(false)
   const [shareResult, setShareResult] = useState<ShareInfo | null>(null)
   const [decryptionKey, setDecryptionKey] = useState<string>('')
@@ -484,8 +486,10 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       setMode('link')
       setExpiryIdx(2)   // 7 days
       setMaxOpensIdx(4) // unlimited
+      setPasswordEnabled(false)
       setPassphrase('')
       setShowPassphrase(false)
+      setPasswordCopied(false)
       setShareResult(null)
       setDecryptionKey('')
       setError(null)
@@ -507,8 +511,8 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       return
     }
 
-    const trimmedPassphrase = passphrase.trim()
-    if (trimmedPassphrase && trimmedPassphrase.length < 4) {
+    const trimmedPassphrase = passwordEnabled ? passphrase.trim() : ''
+    if (passwordEnabled && trimmedPassphrase && trimmedPassphrase.length < 4) {
       setError('Passphrase must be at least 4 characters.')
       setLoading(false)
       return
@@ -563,7 +567,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
     } finally {
       setLoading(false)
     }
-  }, [fileId, expiryIdx, maxOpensIdx, passphrase, isUnlocked, getFileKey, onShareCreated, doubleEncrypted])
+  }, [fileId, expiryIdx, maxOpensIdx, passphrase, passwordEnabled, isUnlocked, getFileKey, onShareCreated, doubleEncrypted])
 
   // Auto-generate link when dialog opens (spec 024 §1.8: URL appears immediately on open).
   // Runs once the state reset from the open-effect has settled AND the vault is unlocked.
@@ -573,6 +577,33 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       void handleGenerate()
     }
   }, [autoGenPending, isUnlocked, mode, shareResult, loading, handleGenerate])
+
+  const generatePassphrase = useCallback(() => {
+    // 8 random alphanumeric characters — easy to type, hard to guess
+    const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'
+    const arr = crypto.getRandomValues(new Uint8Array(8))
+    const pw = Array.from(arr).map(b => chars[b % chars.length]).join('')
+    setPassphrase(pw)
+    setShowPassphrase(true)
+    setError(null)
+  }, [])
+
+  const copyPasswordToClipboard = useCallback(async (pw: string) => {
+    try {
+      await navigator.clipboard.writeText(pw)
+    } catch {
+      const ta = document.createElement('textarea')
+      ta.value = pw
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+    }
+    setPasswordCopied(true)
+    setTimeout(() => setPasswordCopied(false), 2000)
+  }, [])
 
   const copyToClipboard = useCallback(async (text: string, type: 'full-link' | 'split-link' | 'split-key') => {
     try {
@@ -735,6 +766,17 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
                       <Icon name={copied === 'full-link' ? 'check' : 'copy'} size={14} />
                       {copied === 'full-link' ? 'Copied' : 'Copy link'}
                     </BBButton>
+                    {/* Copy password CTA — only when a password was set */}
+                    {shareResult.has_passphrase && passphrase && (
+                      <BBButton
+                        size="lg"
+                        className="w-full justify-center gap-2 mt-2"
+                        onClick={() => copyPasswordToClipboard(passphrase)}
+                      >
+                        <Icon name={passwordCopied ? 'check' : 'key'} size={14} />
+                        {passwordCopied ? 'Password copied' : 'Copy password'}
+                      </BBButton>
+                    )}
                     {/* Expiry badge — prominent amber below the CTA */}
                     {EXPIRY_OPTIONS[expiryIdx].hours && (
                       <div className="flex items-center justify-center gap-1.5 mt-2.5 px-3 py-1.5 bg-amber-bg border border-amber/30 rounded-md text-[11.5px] font-medium text-amber-deep">
@@ -830,36 +872,60 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
                       </div>
                     </div>
 
-                    {/* Optional passphrase */}
+                    {/* Password protection toggle */}
                     <div className="mb-[18px]">
-                      <label htmlFor="share-passphrase" className="block text-xs font-medium text-ink-2 mb-1.5">
-                        Passphrase <span className="text-ink-3 font-normal">(optional)</span>
+                      <label className="flex items-center gap-3 cursor-pointer mb-2">
+                        <div className="relative shrink-0">
+                          <input
+                            type="checkbox"
+                            checked={passwordEnabled}
+                            onChange={(e) => {
+                              setPasswordEnabled(e.target.checked)
+                              if (!e.target.checked) { setPassphrase(''); setError(null) }
+                            }}
+                            className="sr-only"
+                          />
+                          <div className={`w-9 h-5 rounded-full transition-colors ${passwordEnabled ? 'bg-amber' : 'bg-line-2'}`} />
+                          <div className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-paper shadow-sm transition-transform ${passwordEnabled ? 'translate-x-4' : 'translate-x-0'}`} />
+                        </div>
+                        <span className="text-[13px] font-medium text-ink">Require password</span>
                       </label>
-                      <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 transition-all hover:border-line-2 focus-within:border-line-2">
-                        <Icon name="lock" size={13} className="text-ink-3 shrink-0" />
-                        <input
-                          id="share-passphrase"
-                          type={showPassphrase ? 'text' : 'password'}
-                          value={passphrase}
-                          onChange={(e) => { setPassphrase(e.currentTarget.value); setError(null) }}
-                          placeholder="Add a passphrase recipients must enter"
-                          autoComplete="off"
-                          className="flex-1 bg-transparent text-[13px] text-ink outline-none placeholder:text-ink-4"
-                        />
-                        {passphrase && (
-                          <button
-                            type="button"
-                            onClick={() => setShowPassphrase((v) => !v)}
-                            className="text-ink-3 hover:text-ink-2 transition-colors shrink-0"
-                            aria-label={showPassphrase ? 'Hide passphrase' : 'Show passphrase'}
-                          >
-                            <Icon name={showPassphrase ? 'eye-off' : 'eye'} size={13} />
-                          </button>
-                        )}
-                      </div>
-                      <p className="text-[11px] text-ink-3 mt-1">
-                        Recipients enter this before the file decrypts. Share it out-of-band.
-                      </p>
+                      {passwordEnabled && (
+                        <>
+                          <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 transition-all hover:border-line-2 focus-within:border-line-2 mb-1.5">
+                            <Icon name="lock" size={13} className="text-ink-3 shrink-0" />
+                            <input
+                              id="share-passphrase"
+                              type={showPassphrase ? 'text' : 'password'}
+                              value={passphrase}
+                              onChange={(e) => { setPassphrase(e.currentTarget.value); setError(null) }}
+                              placeholder="Enter a password for recipients"
+                              autoComplete="new-password"
+                              className="flex-1 bg-transparent text-[13px] text-ink outline-none placeholder:text-ink-4"
+                            />
+                            {passphrase && (
+                              <button
+                                type="button"
+                                onClick={() => setShowPassphrase((v) => !v)}
+                                className="text-ink-3 hover:text-ink-2 transition-colors shrink-0"
+                                aria-label={showPassphrase ? 'Hide password' : 'Show password'}
+                              >
+                                <Icon name={showPassphrase ? 'eye-off' : 'eye'} size={13} />
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={generatePassphrase}
+                              className="text-[11px] text-amber-deep font-medium hover:text-amber transition-colors shrink-0 border-l border-line pl-2 ml-1"
+                            >
+                              Generate
+                            </button>
+                          </div>
+                          <p className="text-[11px] text-ink-3">
+                            Recipients must enter this before the file decrypts. Share it separately.
+                          </p>
+                        </>
+                      )}
                     </div>
 
                     {/* Double-encryption toggle */}

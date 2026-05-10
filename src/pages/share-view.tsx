@@ -370,6 +370,7 @@ export function ShareViewPage() {
   const [passphrase, setPassphrase] = useState('')
   const [verifying, setVerifying] = useState(false)
   const [verifyError, setVerifyError] = useState<string | null>(null)
+  const [shaking, setShaking] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const [downloadError, setDownloadError] = useState<string | null>(null)
   const [manualKey, setManualKey] = useState('')
@@ -537,7 +538,9 @@ export function ShareViewPage() {
       const data = await verifySharePassphrase(token, passphrase)
       setShareData(data)
     } catch (e) {
-      setVerifyError(e instanceof Error ? e.message : 'Invalid passphrase')
+      setVerifyError(e instanceof Error ? e.message : 'Incorrect password — try again')
+      setShaking(true)
+      setTimeout(() => setShaking(false), 450)
     } finally {
       setVerifying(false)
     }
@@ -735,23 +738,25 @@ export function ShareViewPage() {
               <p className="text-sm text-ink-3 mb-4">
                 This file is protected with a passphrase. Enter it below to access the file.
               </p>
-              <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 mb-3 focus-within:ring-2 focus-within:ring-amber/30 focus-within:border-amber-deep">
+              <div className={`flex items-center gap-2 border rounded-md bg-paper px-3 py-2 mb-3 focus-within:ring-2 focus-within:ring-amber/30 transition-colors ${verifyError ? 'border-red/60 focus-within:border-red/60' : 'border-line focus-within:border-amber-deep'} ${shaking ? 'shake' : ''}`}>
                 <Icon name="key" size={14} className="text-ink-3 shrink-0" />
                 <input
                   type="password"
                   value={passphrase}
-                  onChange={(e) => setPassphrase(e.target.value)}
+                  onChange={(e) => { setPassphrase(e.target.value); setVerifyError(null) }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleVerify()
                   }}
-                  placeholder="Enter passphrase"
-                  aria-label="Share passphrase"
+                  placeholder="Enter password"
+                  aria-label="Share password"
                   className="flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-4"
                   autoFocus
                 />
               </div>
               {verifyError && (
-                <p className="text-xs text-red mb-3">{verifyError}</p>
+                <p className="text-xs text-red mb-3 flex items-center gap-1">
+                  <span>Incorrect password — try again</span>
+                </p>
               )}
               <BBButton
                 variant="amber"
