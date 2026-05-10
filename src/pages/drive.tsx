@@ -5,6 +5,7 @@ import { Breadcrumb } from '../components/breadcrumb'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '@beebeeb/shared'
 import { FileList } from '../components/file-list'
+import { PresenceAvatars } from '../components/presence-avatars'
 import { FileDetailsPanel, type FileDetailsMeta } from '../components/file-details-panel'
 import { TrustDetailsPanel, type TrustFile } from '../components/trust-details-panel'
 import { ShareDialog } from '../components/share-dialog'
@@ -28,6 +29,7 @@ import { useSync } from '../lib/sync-context'
 import { useKeys } from '../lib/key-context'
 import { useKeyboardShortcuts, isMac } from '../hooks/use-keyboard-shortcuts'
 import { useFrozen } from '../hooks/use-frozen'
+import { useAuth } from '../lib/auth-context'
 import {
   listFiles,
   createFolder,
@@ -71,6 +73,7 @@ import { cacheFileList, getCachedFileList } from '../lib/offline-cache'
 
 export function Drive() {
   const { isFrozen } = useFrozen()
+  const { user } = useAuth()
   const { getFileKey, isUnlocked, cryptoReady, cryptoError } = useKeys()
   const { indexFile, unindexFile } = useSearchIndex()
   const sync = useSync()
@@ -1466,6 +1469,18 @@ export function Drive() {
         <div className="px-3 md:px-5 py-2.5 border-b border-line flex items-center gap-2 md:gap-3 flex-wrap md:flex-nowrap">
           {/* Breadcrumbs */}
           <Breadcrumb items={breadcrumbs} onNavigate={handleBreadcrumbNav} />
+
+          {/* Presence avatars — shown when the current folder is shared */}
+          {currentParentId && (
+            <PresenceAvatars
+              folderId={
+                myShares.some((s) => s.file_id === currentParentId)
+                  ? currentParentId
+                  : null
+              }
+              currentUserId={user?.user_id ?? null}
+            />
+          )}
 
           {/* Search */}
           <form
