@@ -42,23 +42,25 @@ export function PreviewChrome({
 
         {/* File info */}
         <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-[5px] bg-paper-2">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[5px] bg-paper-2">
               <Icon name={kindIcon} size={12} />
             </span>
-            <span className="truncate text-[13px] font-medium text-ink">
+            <span className="min-w-0 truncate text-[13px] font-medium text-ink">
               {filename}
             </span>
-            <span className="font-mono text-[11px] text-ink-3">{size}</span>
-            <BBChip variant="amber">
-              <Icon name="lock" size={9} className="mr-1" />
-              <span className="text-[9px]">Decrypted locally</span>
-            </BBChip>
+            <span className="hidden shrink-0 font-mono text-[11px] text-ink-3 sm:inline">{size}</span>
+            <span className="hidden sm:inline">
+              <BBChip variant="amber">
+                <Icon name="lock" size={9} className="mr-1" />
+                <span className="text-[9px]">Decrypted locally</span>
+              </BBChip>
+            </span>
           </div>
           {decrypted && (
             <div
               key={filename}
-              className="decrypt-fade-in font-mono text-[10.5px] text-ink-3 mt-0.5 ml-[30px] flex items-center gap-1.5"
+              className="decrypt-fade-in hidden font-mono text-[10.5px] text-ink-3 mt-0.5 ml-[30px] items-center gap-1.5 sm:flex"
             >
               <span className="inline-block h-1 w-1 rounded-full bg-amber-deep" />
               <span>Decrypted locally · key never left this device</span>
