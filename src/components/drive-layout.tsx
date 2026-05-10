@@ -34,7 +34,56 @@ import { QuickAccess } from './quick-access'
 import { EmailVerifyBanner } from './email-verify-banner'
 import { AnnouncementBanner } from './announcement-banner'
 import { IosAppBanner } from './ios-app-banner'
-// formatStorageSI used via StorageUsageBar; kept for potential direct use
+import { formatStorageSI } from '../lib/format'
+
+// ─── Sidebar storage quota warning ──────────────────────────────────────────
+
+interface SidebarQuotaBarProps {
+  usedBytes: number
+  quotaBytes: number
+}
+
+/**
+ * Shows a compact warning bar below the regular storage meter when usage
+ * is at or above 80%. Hidden entirely below that threshold.
+ *
+ * - ≥ 80% and < 95%: amber bar + "X GB of Y GB used"
+ * - ≥ 95%: red bar + "Almost full — upgrade your plan" link to /billing
+ */
+function SidebarQuotaBar({ usedBytes, quotaBytes }: SidebarQuotaBarProps) {
+  if (quotaBytes <= 0) return null
+
+  const pct = Math.min(100, (usedBytes / quotaBytes) * 100)
+
+  if (pct < 80) return null
+
+  const isCritical = pct >= 95
+
+  return (
+    <div className="mt-2 pt-2 border-t border-line">
+      {/* Bar track + fill */}
+      <div className="h-[3px] w-full rounded-full bg-line overflow-hidden mb-1.5">
+        <div
+          className={`h-full rounded-full transition-all duration-700 ease-out ${isCritical ? 'bg-red' : 'bg-amber'}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+
+      {isCritical ? (
+        <div className="text-[11px] text-red leading-snug">
+          Almost full —{' '}
+          <Link to="/billing" className="font-semibold underline underline-offset-2 hover:text-red/80">
+            upgrade your plan
+          </Link>
+        </div>
+      ) : (
+        <div className="text-[11px] text-ink-2 font-mono tabular-nums">
+          {formatStorageSI(usedBytes)} of {formatStorageSI(quotaBytes)} used
+        </div>
+      )}
+    </div>
+  )
+}
 
 const navItems: { path: string; icon: IconName; label: string }[] = [
   { path: '/', icon: 'folder', label: 'All files' },
@@ -697,6 +746,10 @@ export function DriveLayout({ children }: { children: ReactNode }) {
             usedBytes={resolvedUsedBytes}
             quotaBytes={resolvedQuotaBytes}
             compact
+          />
+          <SidebarQuotaBar
+            usedBytes={resolvedUsedBytes}
+            quotaBytes={resolvedQuotaBytes}
           />
           <div className="mt-3 flex items-center gap-1.5 text-[10px] text-ink-3">
             {REGION_META[storageRegion]?.flag ? (
