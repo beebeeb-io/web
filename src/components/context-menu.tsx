@@ -19,7 +19,7 @@ const MENU_ITEMS: ContextMenuItem[] = [
   { id: 'star', label: 'Star', icon: 'star', shortcut: 'F' },
   { id: 'rename', label: 'Rename', icon: 'file', shortcut: 'F2' },
   { id: 'download', label: 'Download', icon: 'download', shortcut: 'D', dividerAfter: true },
-  { id: 'versions', label: 'Version history', icon: 'clock', shortcut: 'H' },
+  { id: 'versions', label: 'See versions', icon: 'clock', shortcut: 'H' },
   { id: 'trash', label: 'Move to trash', icon: 'trash', danger: true, shortcut: 'Del' },
 ]
 

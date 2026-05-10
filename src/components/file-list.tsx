@@ -1159,7 +1159,7 @@ export function FileList({
         isFolder={ctxMenu.isFolder}
         isStarred={ctxMenu.isStarred}
         isPinned={pinnedFolderIds.has(ctxMenu.fileId)}
-        hasVersions={!ctxMenu.isFolder && ctxMenu.versionNumber > 1}
+        hasVersions={!ctxMenu.isFolder}
         onClose={() => setCtxMenu((prev) => ({ ...prev, open: false }))}
         onAction={(action, fileId) => {
           if (action === 'pin' || action === 'unpin') {
