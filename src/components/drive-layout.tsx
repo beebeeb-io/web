@@ -36,6 +36,71 @@ import { IosAppBanner } from './ios-app-banner'
 import { formatStorageSI } from '../lib/format'
 import { NotificationInbox, useNotifications } from './notification-inbox'
 
+// ─── PWA install prompt ──────────────────────────────────────────────────────
+
+interface BeforeInstallPromptEvent extends Event {
+  prompt(): Promise<void>
+  readonly userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>
+}
+
+const INSTALL_DISMISS_KEY = 'beebeeb_pwa_install_dismissed'
+
+function PwaInstallBanner() {
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null)
+  const [dismissed, setDismissed] = useState(false)
+
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem(INSTALL_DISMISS_KEY) === '1') {
+        setDismissed(true)
+        return
+      }
+    } catch { /* ignore */ }
+
+    function onBeforeInstall(e: Event) {
+      e.preventDefault()
+      setDeferredPrompt(e as BeforeInstallPromptEvent)
+    }
+    window.addEventListener('beforeinstallprompt', onBeforeInstall)
+    return () => window.removeEventListener('beforeinstallprompt', onBeforeInstall)
+  }, [])
+
+  if (!deferredPrompt || dismissed) return null
+
+  async function handleInstall() {
+    if (!deferredPrompt) return
+    await deferredPrompt.prompt()
+    await deferredPrompt.userChoice
+    setDeferredPrompt(null)
+  }
+
+  function handleDismiss() {
+    try { sessionStorage.setItem(INSTALL_DISMISS_KEY, '1') } catch { /* ignore */ }
+    setDismissed(true)
+  }
+
+  return (
+    <div className="mx-3 mb-2 flex items-center gap-2 px-2 py-1.5 rounded-md bg-amber-bg text-amber-deep text-[12px]">
+      <Icon name="cloud" size={12} className="shrink-0" />
+      <button
+        type="button"
+        onClick={handleInstall}
+        className="flex-1 text-left font-medium hover:opacity-80 transition-opacity cursor-pointer"
+      >
+        Install app
+      </button>
+      <button
+        type="button"
+        onClick={handleDismiss}
+        className="shrink-0 hover:opacity-60 transition-opacity cursor-pointer"
+        aria-label="Dismiss install prompt"
+      >
+        <Icon name="x" size={10} />
+      </button>
+    </div>
+  )
+}
+
 // ─── Sidebar storage quota warning ──────────────────────────────────────────
 
 interface SidebarQuotaBarProps {
@@ -843,6 +908,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
           </div>
         )}
 
+        <PwaInstallBanner />
         <UserCard />
       </aside>
 
