@@ -1,8 +1,153 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { Icon } from '@beebeeb/shared'
 import type { IconName } from '@beebeeb/shared'
+import type { FileVersion } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
 import { formatBytes } from '../lib/format'
+import { listVersions } from '../lib/api'
+
+// ─── Versions tab (inline, inside the detail panel) ─────────────────────────
+
+function timeAgoPanel(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
+}
+
+function VersionsTab({
+  fileId,
+  onOpenFullHistory,
+}: {
+  fileId: string
+  onOpenFullHistory?: () => void
+}) {
+  const [versions, setVersions] = useState<FileVersion[]>([])
+  const [currentVersion, setCurrentVersion] = useState(1)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    if (!fileId) return
+    setLoading(true)
+    setError(false)
+    listVersions(fileId)
+      .then((data) => {
+        setVersions(data.versions)
+        setCurrentVersion(data.current_version)
+      })
+      .catch(() => setError(true))
+      .finally(() => setLoading(false))
+  }, [fileId])
+
+  if (loading) {
+    return (
+      <div className="px-xl py-10 text-center text-[12px] text-ink-3">
+        Loading versions...
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center gap-2 py-10 text-center">
+        <Icon name="clock" size={20} className="text-ink-3" />
+        <p className="text-[13px] text-ink-2 font-medium">Version history</p>
+        <p className="text-[12px] text-ink-3">Coming in a future update</p>
+      </div>
+    )
+  }
+
+  if (versions.length === 0) {
+    return (
+      <div className="flex flex-col items-center gap-2 py-10 text-center px-xl">
+        <Icon name="clock" size={20} className="text-ink-3" />
+        <p className="text-[13px] text-ink-2 font-medium">No previous versions</p>
+        <p className="text-[12px] text-ink-3">
+          Versions are created when you re-upload a file with the same name.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col">
+      {/* Version list */}
+      <div className="py-1 relative">
+        {/* Timeline connector */}
+        <div
+          className="absolute bg-line-2"
+          style={{ left: 36, top: 14, bottom: 14, width: 1 }}
+        />
+
+        {versions.map((v) => {
+          const isCurrent = v.version_number === currentVersion
+          return (
+            <div
+              key={v.id}
+              className="relative flex items-start gap-3 px-xl py-2.5"
+            >
+              {/* Timeline dot */}
+              <div
+                className="rounded-full border-2 shrink-0 z-[1]"
+                style={{
+                  width: 10,
+                  height: 10,
+                  marginTop: 4,
+                  background: isCurrent ? 'var(--color-amber)' : 'var(--color-paper)',
+                  borderColor: isCurrent ? 'var(--color-amber-deep)' : 'var(--color-line-2)',
+                }}
+              />
+
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="font-mono text-[11.5px] font-semibold text-ink">
+                    v{v.version_number}
+                  </span>
+                  {isCurrent && (
+                    <span className="px-1.5 py-px rounded text-[9.5px] font-semibold bg-amber/20 text-amber-deep">
+                      Current
+                    </span>
+                  )}
+                  <span className="text-[10.5px] text-ink-3 font-mono ml-auto">
+                    {formatBytes(v.size_bytes)}
+                  </span>
+                </div>
+                <div className="text-[10.5px] text-ink-4 mt-0.5">
+                  {timeAgoPanel(v.created_at)}
+                  {' · '}
+                  {new Date(v.created_at).toLocaleDateString('en-GB', {
+                    day: 'numeric',
+                    month: 'short',
+                    year: 'numeric',
+                  })}
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Link to full version history overlay */}
+      {onOpenFullHistory && (
+        <div className="px-xl pb-lg pt-1 border-t border-line mt-1">
+          <BBButton
+            size="sm"
+            variant="ghost"
+            className="w-full justify-center gap-1.5"
+            onClick={onOpenFullHistory}
+          >
+            <Icon name="clock" size={11} /> Full version history
+          </BBButton>
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ─── Local file notes (client-only, per-device) ──────────────────────────────
 
@@ -207,6 +352,12 @@ export function FileDetailsPanel({
   isStarred = false,
 }: FileDetailsPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null)
+  const [activeTab, setActiveTab] = useState<'info' | 'versions'>('info')
+
+  // Reset tab to info when the selected file changes
+  useEffect(() => {
+    setActiveTab('info')
+  }, [file?.id])
 
   // Close on Escape
   useEffect(() => {
@@ -308,136 +459,167 @@ export function FileDetailsPanel({
           </div>
         </div>
 
+        {/* Tab bar — only shown for files (not folders) */}
+        {!file.isFolder && (
+          <div className="flex border-b border-line px-xl">
+            {(['info', 'versions'] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={[
+                  'py-2.5 mr-4 text-[11.5px] font-medium border-b-2 -mb-px transition-colors',
+                  activeTab === tab
+                    ? 'border-amber-deep text-ink'
+                    : 'border-transparent text-ink-3 hover:text-ink',
+                ].join(' ')}
+              >
+                {tab === 'info' ? 'Info' : 'Versions'}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto">
-          {/* Who has access */}
-          <div className="px-xl py-lg border-b border-line">
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 mb-2.5">
-              Who has access
-            </div>
-            {access.length > 0 ? (
-              <>
-                <div className="flex flex-col gap-2">
-                  {access.map((p, i) => (
-                    <div key={i} className="flex items-center gap-2.5">
-                      <div
-                        className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-white text-[9.5px] font-semibold"
-                        style={{ background: accessColors[i % accessColors.length] }}
-                      >
-                        {p.initials}
+          {activeTab === 'versions' && !file.isFolder ? (
+            /* ── Versions tab ─────────────────────────────────────────────── */
+            <VersionsTab
+              fileId={file.id}
+              onOpenFullHistory={onVersionHistory}
+            />
+          ) : (
+            /* ── Info tab (default) ───────────────────────────────────────── */
+            <>
+              {/* Who has access */}
+              <div className="px-xl py-lg border-b border-line">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 mb-2.5">
+                  Who has access
+                </div>
+                {access.length > 0 ? (
+                  <>
+                    <div className="flex flex-col gap-2">
+                      {access.map((p, i) => (
+                        <div key={i} className="flex items-center gap-2.5">
+                          <div
+                            className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-white text-[9.5px] font-semibold"
+                            style={{ background: accessColors[i % accessColors.length] }}
+                          >
+                            {p.initials}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[11.5px] font-medium text-ink truncate">{p.name}</div>
+                            <div className="text-[10px] text-ink-3">{p.role}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <BBButton
+                      size="sm"
+                      variant="ghost"
+                      className="w-full justify-center mt-2.5 gap-1.5"
+                      onClick={onShare}
+                    >
+                      <Icon name="plus" size={11} /> Add people
+                    </BBButton>
+                  </>
+                ) : (
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-6 h-6 rounded-full bg-paper-2 border border-line flex items-center justify-center shrink-0">
+                      <Icon name="lock" size={10} className="text-ink-3" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[11.5px] font-medium text-ink">Only you</div>
+                      <div className="text-[10px] text-ink-3">Private — not shared</div>
+                    </div>
+                    <BBButton
+                      size="sm"
+                      variant="ghost"
+                      className="gap-1.5"
+                      onClick={onShare}
+                    >
+                      <Icon name="share" size={10} /> Share
+                    </BBButton>
+                  </div>
+                )}
+              </div>
+
+              {/* Details grid */}
+              <div className="px-xl py-lg border-b border-line">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 mb-2.5">
+                  Details
+                </div>
+                <div className="flex flex-col gap-[7px]">
+                  {details.map(([k, v]) => (
+                    <div key={k} className="flex text-[11.5px] gap-3">
+                      <span className="text-ink-3 w-[84px] shrink-0">{k}</span>
+                      <span className="text-ink-2 flex-1 break-words">{v}</span>
+                    </div>
+                  ))}
+                  {file.keyId && (
+                    <div className="flex text-[11.5px] gap-3">
+                      <span className="text-ink-3 w-[84px] shrink-0">Key ID</span>
+                      <span className="text-ink-2 flex-1 font-mono text-[10.5px]">
+                        {file.keyId.slice(0, 16)}...
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Crypto section */}
+              {file.cipher && (
+                <div className="px-xl py-lg border-b border-line">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 mb-2.5">
+                    Encryption
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-wrap px-2.5 py-2 bg-paper-2 border border-line rounded-md font-mono text-[10.5px] text-ink-3">
+                    <span className="text-ink-4">upload</span>
+                    <Icon name="chevron-right" size={9} className="text-ink-4" />
+                    <span>{file.cipher}</span>
+                    <Icon name="chevron-right" size={9} className="text-ink-4" />
+                    <span className="text-amber-deep font-medium">sealed</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-2 text-[11px] text-ink-3">
+                    <Icon name="shield" size={11} className="text-amber-deep" />
+                    MAC verified — ciphertext integrity confirmed
+                  </div>
+                </div>
+              )}
+
+              {/* Recent activity */}
+              {activity.length > 0 && (
+                <div className="px-xl py-lg border-b border-line">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 mb-2.5">
+                    Recent activity
+                  </div>
+                  {activity.map((a, i, arr) => (
+                    <div
+                      key={i}
+                      className="flex gap-2.5 relative"
+                      style={{ paddingBottom: i < arr.length - 1 ? 14 : 0 }}
+                    >
+                      <div className="w-[22px] h-[22px] rounded-full shrink-0 bg-paper-2 border border-line flex items-center justify-center z-[1]">
+                        <Icon name={a.icon} size={10} className="text-ink-3" />
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-[11.5px] font-medium text-ink truncate">{p.name}</div>
-                        <div className="text-[10px] text-ink-3">{p.role}</div>
+                      {i < arr.length - 1 && (
+                        <div
+                          className="absolute bg-line"
+                          style={{ left: 10.5, top: 22, bottom: -2, width: 1 }}
+                        />
+                      )}
+                      <div>
+                        <div className="text-[11.5px] text-ink">{a.label}</div>
+                        <div className="text-[10px] text-ink-3 mt-px">{a.when}</div>
                       </div>
                     </div>
                   ))}
                 </div>
-                <BBButton
-                  size="sm"
-                  variant="ghost"
-                  className="w-full justify-center mt-2.5 gap-1.5"
-                  onClick={onShare}
-                >
-                  <Icon name="plus" size={11} /> Add people
-                </BBButton>
-              </>
-            ) : (
-              <div className="flex items-center gap-2.5">
-                <div className="w-6 h-6 rounded-full bg-paper-2 border border-line flex items-center justify-center shrink-0">
-                  <Icon name="lock" size={10} className="text-ink-3" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-[11.5px] font-medium text-ink">Only you</div>
-                  <div className="text-[10px] text-ink-3">Private — not shared</div>
-                </div>
-                <BBButton
-                  size="sm"
-                  variant="ghost"
-                  className="gap-1.5"
-                  onClick={onShare}
-                >
-                  <Icon name="share" size={10} /> Share
-                </BBButton>
-              </div>
-            )}
-          </div>
-
-          {/* Details grid */}
-          <div className="px-xl py-lg border-b border-line">
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 mb-2.5">
-              Details
-            </div>
-            <div className="flex flex-col gap-[7px]">
-              {details.map(([k, v]) => (
-                <div key={k} className="flex text-[11.5px] gap-3">
-                  <span className="text-ink-3 w-[84px] shrink-0">{k}</span>
-                  <span className="text-ink-2 flex-1 break-words">{v}</span>
-                </div>
-              ))}
-              {file.keyId && (
-                <div className="flex text-[11.5px] gap-3">
-                  <span className="text-ink-3 w-[84px] shrink-0">Key ID</span>
-                  <span className="text-ink-2 flex-1 font-mono text-[10.5px]">
-                    {file.keyId.slice(0, 16)}...
-                  </span>
-                </div>
               )}
-            </div>
-          </div>
 
-          {/* Crypto section */}
-          {file.cipher && (
-            <div className="px-xl py-lg border-b border-line">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 mb-2.5">
-                Encryption
-              </div>
-              <div className="flex items-center gap-1.5 flex-wrap px-2.5 py-2 bg-paper-2 border border-line rounded-md font-mono text-[10.5px] text-ink-3">
-                <span className="text-ink-4">upload</span>
-                <Icon name="chevron-right" size={9} className="text-ink-4" />
-                <span>{file.cipher}</span>
-                <Icon name="chevron-right" size={9} className="text-ink-4" />
-                <span className="text-amber-deep font-medium">sealed</span>
-              </div>
-              <div className="flex items-center gap-1.5 mt-2 text-[11px] text-ink-3">
-                <Icon name="shield" size={11} className="text-amber-deep" />
-                MAC verified — ciphertext integrity confirmed
-              </div>
-            </div>
+              {/* Notes — client-only, stored in localStorage per device */}
+              <FileNotesSection fileId={file.id} />
+            </>
           )}
-
-          {/* Recent activity */}
-          {activity.length > 0 && (
-            <div className="px-xl py-lg border-b border-line">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 mb-2.5">
-                Recent activity
-              </div>
-              {activity.map((a, i, arr) => (
-                <div
-                  key={i}
-                  className="flex gap-2.5 relative"
-                  style={{ paddingBottom: i < arr.length - 1 ? 14 : 0 }}
-                >
-                  <div className="w-[22px] h-[22px] rounded-full shrink-0 bg-paper-2 border border-line flex items-center justify-center z-[1]">
-                    <Icon name={a.icon} size={10} className="text-ink-3" />
-                  </div>
-                  {i < arr.length - 1 && (
-                    <div
-                      className="absolute bg-line"
-                      style={{ left: 10.5, top: 22, bottom: -2, width: 1 }}
-                    />
-                  )}
-                  <div>
-                    <div className="text-[11.5px] text-ink">{a.label}</div>
-                    <div className="text-[10px] text-ink-3 mt-px">{a.when}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Notes — client-only, stored in localStorage per device */}
-          <FileNotesSection fileId={file.id} />
         </div>
 
         {/* Footer actions */}
@@ -445,11 +627,6 @@ export function FileDetailsPanel({
           <BBButton size="sm" variant="ghost" className="gap-1.5" onClick={onMove}>
             <Icon name="folder" size={11} /> Move
           </BBButton>
-          {!file.isFolder && onVersionHistory && (
-            <BBButton size="sm" variant="ghost" className="gap-1.5" onClick={onVersionHistory}>
-              <Icon name="clock" size={11} /> Versions
-            </BBButton>
-          )}
           <BBButton size="sm" variant="ghost" className="gap-1.5 ml-auto text-red" onClick={onTrash}>
             <Icon name="trash" size={11} /> Trash
           </BBButton>
