@@ -209,7 +209,7 @@ export function NotificationInbox({
         className="relative p-1.5 rounded-md text-ink-2 hover:bg-paper-2 transition-colors"
         aria-label={`Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ''}`}
       >
-        <Icon name="cloud" size={14} />
+        <Icon name="bell" size={14} />
         {unreadCount > 0 && (
           <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-amber-deep text-paper text-[9px] font-semibold">
             {unreadCount > 99 ? '99+' : unreadCount}

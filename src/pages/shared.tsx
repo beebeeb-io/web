@@ -5,7 +5,6 @@ import { BBChip } from '@beebeeb/shared'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '@beebeeb/shared'
 import { FileList } from '../components/file-list'
-import { NotificationInbox, useNotifications } from '../components/notification-inbox'
 import { ShareActivity } from '../components/share-activity'
 import { ShareApprove } from '../components/share-approve'
 import { ShareDialog } from '../components/share-dialog'
@@ -64,8 +63,6 @@ export function Shared() {
   const [searchParams] = useSearchParams()
   const { isUnlocked, getMasterKey, getFileKey } = useKeys()
   const { showToast } = useToast()
-  const { notifications, unreadCount, markRead, markAllRead } = useNotifications()
-
   const [tab, setTab] = useState<TabId>(() => {
     const p = searchParams.get('tab')
     if (p === 'by-me' || p === 'pending') return p
@@ -1011,14 +1008,6 @@ export function Shared() {
             </BBChip>
           </div>
         )}
-        <div className="ml-auto">
-          <NotificationInbox
-            notifications={notifications}
-            unreadCount={unreadCount}
-            onMarkRead={markRead}
-            onMarkAllRead={markAllRead}
-          />
-        </div>
       </div>
 
       {/* Tab bar */}

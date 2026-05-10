@@ -34,6 +34,7 @@ import { EmailVerifyBanner } from './email-verify-banner'
 import { AnnouncementBanner } from './announcement-banner'
 import { IosAppBanner } from './ios-app-banner'
 import { formatStorageSI } from '../lib/format'
+import { NotificationInbox, useNotifications } from './notification-inbox'
 
 // ─── Sidebar storage quota warning ──────────────────────────────────────────
 
@@ -531,6 +532,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   const [quickAccessDragOver, setQuickAccessDragOver] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
   const recentUploadCount = useRecentUploadBadge(location.pathname)
+  const { notifications, unreadCount, markRead, markAllRead } = useNotifications()
 
   useEffect(() => {
     getAdminStats().then(() => setIsAdmin(true)).catch(() => setIsAdmin(false))
@@ -855,6 +857,24 @@ export function DriveLayout({ children }: { children: ReactNode }) {
             <Icon name="menu" size={18} />
           </button>
           <BBLogo size={12} />
+          <div className="ml-auto">
+            <NotificationInbox
+              notifications={notifications}
+              unreadCount={unreadCount}
+              onMarkRead={markRead}
+              onMarkAllRead={markAllRead}
+            />
+          </div>
+        </div>
+
+        {/* Desktop notification bar — bell in top-right, hidden on mobile */}
+        <div className="hidden md:flex items-center justify-end px-5 py-1.5 border-b border-line bg-paper">
+          <NotificationInbox
+            notifications={notifications}
+            unreadCount={unreadCount}
+            onMarkRead={markRead}
+            onMarkAllRead={markAllRead}
+          />
         </div>
         <IosAppBanner />
         <AnnouncementBanner />

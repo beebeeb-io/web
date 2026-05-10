@@ -18,7 +18,6 @@ import { UploadCards } from '../components/upload-progress-card'
 import { NewFolderDialog } from '../components/new-folder-dialog'
 import { VersionHistory } from '../components/version-history'
 import { DuplicateFileDialog, getUniqueName, type ConflictItem } from '../components/duplicate-file-dialog'
-import { NotificationInbox, useNotifications } from '../components/notification-inbox'
 import { ShortcutsCheatsheet } from '../components/shortcuts-cheatsheet'
 import { WelcomeTour } from '../components/welcome-tour'
 import { OnboardingGuide } from '../components/onboarding-guide'
@@ -519,8 +518,6 @@ export function Drive() {
     })
   }, [])
 
-  // Notifications
-  const { notifications, unreadCount, markRead, markAllRead } = useNotifications()
   const { showToast } = useToast()
 
   // ─── Real-time WebSocket event handling ──────────
@@ -1840,13 +1837,6 @@ export function Drive() {
             </BBButton>
           </div>
 
-          {/* Notifications */}
-          <NotificationInbox
-            notifications={notifications}
-            unreadCount={unreadCount}
-            onMarkRead={markRead}
-            onMarkAllRead={markAllRead}
-          />
         </div>
 
         {/* Resume banner */}
