@@ -67,7 +67,7 @@ function SortablePinnedFolder({ folder, isActive, onUnpin }: {
     if (fileIds.length === 0) return
     window.dispatchEvent(
       new CustomEvent('beebeeb:drop-into-folder', {
-        detail: { folderId: folder.id, fileIds },
+        detail: { folderId: folder.id, fileIds, folderName: folder.name },
       }),
     )
   }

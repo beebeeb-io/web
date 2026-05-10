@@ -1552,14 +1552,16 @@ export function Drive() {
 
   // ─── Drop to folder handler ────────────────────────
 
-  async function handleDropToFolder(ids: string[], targetFolder: DriveFile) {
-    const targetName = displayName(targetFolder)
+  async function handleDropToFolder(ids: string[], targetFolder: DriveFile, knownFolderName?: string) {
+    // Use the pre-decrypted name from the event if available (covers pinned
+    // folders that may not be in the current `files` list / decryptedNames map).
+    const targetName = knownFolderName || displayName(targetFolder) || 'folder'
     try {
       await Promise.all(ids.map((id) => updateFile(id, { parent_id: targetFolder.id })))
       if (ids.length === 1) {
         const movedFile = files.find((f) => f.id === ids[0])
         const movedName = movedFile ? displayName(movedFile) : 'File'
-        showToast({ icon: 'folder', title: `Moved ${movedName} to ${targetName}` })
+        showToast({ icon: 'folder', title: `Moved to ${targetName}`, description: movedName || undefined })
       } else {
         showToast({ icon: 'folder', title: `Moved ${ids.length} items to ${targetName}` })
       }
@@ -1575,17 +1577,17 @@ export function Drive() {
   // a target folder id, and we look up the folder + run the same move flow.
   useEffect(() => {
     function onDrop(e: Event) {
-      const ce = e as CustomEvent<{ folderId: string; fileIds: string[] }>
+      const ce = e as CustomEvent<{ folderId: string; fileIds: string[]; folderName?: string }>
       const detail = ce.detail
       if (!detail?.folderId || !Array.isArray(detail.fileIds)) return
       const target = files.find((f) => f.id === detail.folderId)
       if (target) {
-        handleDropToFolder(detail.fileIds, target)
+        handleDropToFolder(detail.fileIds, target, detail.folderName)
         return
       }
       // Pinned folder may not be in the current `files` list — fetch it.
       getFile(detail.folderId)
-        .then((folder) => handleDropToFolder(detail.fileIds, folder))
+        .then((folder) => handleDropToFolder(detail.fileIds, folder, detail.folderName))
         .catch(() => {
           showToast({ icon: 'x', title: 'Move failed', description: 'Could not load target folder.', danger: true })
         })

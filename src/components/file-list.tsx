@@ -848,14 +848,33 @@ export function FileList({
           }
         }}
       >
-        {/* Checkbox */}
-        <span
-          className={`flex items-center justify-center ${
-            selectable && isSelected ? '' : 'opacity-0 group-hover:opacity-100'
-          } transition-opacity`}
-          onClick={(e) => selectable && handleCheckboxClick(file.id, e)}
-        >
-          {selectable && <BBCheckbox checked={isSelected} onChange={() => {}} />}
+        {/* Checkbox — shows on hover (or always when selected); drag grip shows on hover when nothing is selected */}
+        <span className="relative flex items-center justify-center">
+          {/* Drag grip — shows behind the checkbox when hovering and no selection is active */}
+          <span
+            className={`absolute inset-0 flex items-center justify-center transition-opacity text-ink-4 cursor-grab active:cursor-grabbing pointer-events-none ${
+              selectedIds.size === 0 ? 'opacity-0 group-hover:opacity-100' : 'opacity-0'
+            }`}
+            aria-hidden="true"
+          >
+            <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="3" cy="2" r="1.2" />
+              <circle cx="7" cy="2" r="1.2" />
+              <circle cx="3" cy="7" r="1.2" />
+              <circle cx="7" cy="7" r="1.2" />
+              <circle cx="3" cy="12" r="1.2" />
+              <circle cx="7" cy="12" r="1.2" />
+            </svg>
+          </span>
+          {/* Checkbox — on top of the grip; visible when selected or when items are already selected */}
+          <span
+            className={`relative z-10 transition-opacity ${
+              selectable && isSelected ? '' : 'opacity-0 group-hover:opacity-100'
+            }`}
+            onClick={(e) => selectable && handleCheckboxClick(file.id, e)}
+          >
+            {selectable && <BBCheckbox checked={isSelected} onChange={() => {}} />}
+          </span>
         </span>
 
         {/* Icon or thumbnail */}
