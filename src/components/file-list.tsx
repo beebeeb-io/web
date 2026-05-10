@@ -4,6 +4,7 @@ import { BBChip } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
 import { Icon } from './icons'
 import { FileIcon, getFileType } from './file-icon'
+import { getBadgeStyle } from '../lib/file-colors'
 import { ContextMenu } from './context-menu'
 import { FileRowSkeleton } from '@beebeeb/shared'
 import { useKeys } from '../lib/key-context'
@@ -1243,7 +1244,7 @@ export function FileList({
         {/* Inline upload cards — rendered at top of scroll area (spec 024 §4) */}
         {uploadCards}
         {loading ? (
-          <div>{Array.from({ length: 8 }, (_, i) => <FileRowSkeleton key={i} />)}</div>
+          <div aria-busy="true" aria-label="Loading files">{Array.from({ length: 8 }, (_, i) => <FileRowSkeleton key={i} />)}</div>
         ) : sortedFiles.length === 0 ? (
           emptyState
         ) : grouped ? (

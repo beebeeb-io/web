@@ -159,6 +159,8 @@ export function UploadZone({ onFiles, onFolderFiles, children }: UploadZoneProps
 
   return (
     <div
+      role="region"
+      aria-label="Drop files here to upload"
       className="relative flex-1 min-h-0"
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
