@@ -11,6 +11,7 @@ import {
   downloadSharedFile,
   fetchShareCiphertextPreview,
   getToken,
+  ApiError,
   type ShareView as ShareViewData,
 } from '../lib/api'
 import { decryptFilename, fromBase64, unwrapKeyFromShare, initCrypto } from '../lib/crypto'
@@ -614,7 +615,14 @@ export function ShareViewPage() {
       // calculation errors, or anything else hiding behind the generic
       // user-facing message below.
       if (import.meta.env.DEV) console.error('[share-view] download failed:', err)
-      setDownloadError('Decryption failed. The share link may have an incorrect key.')
+      // Distinguish server errors (ApiError with a real message) from local
+      // decryption failures, so users see actionable text instead of a
+      // misleading "incorrect key" hint when the server rejected the request.
+      if (err instanceof ApiError && err.message) {
+        setDownloadError(err.message)
+      } else {
+        setDownloadError('Decryption failed. The share link may have an incorrect key.')
+      }
     } finally {
       setDownloading(false)
     }

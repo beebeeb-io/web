@@ -983,13 +983,22 @@ export async function downloadSharedFile(
   token: string,
   passphrase?: string,
 ): Promise<SharedFileDownload & { chunkSize: number | null }> {
-  const headers: HeadersInit = {}
-  if (passphrase) {
-    headers['X-Share-Passphrase'] = passphrase
-  }
-  const res = await fetch(`${API_URL}/api/v1/shares/${token}/download`, { headers })
+  // The server accepts the passphrase via a ?passphrase= query parameter as
+  // an alternative to the X-Share-Passphrase header. Using the query param
+  // keeps the request a simple GET (no custom headers) so no CORS preflight
+  // is triggered — the X-Share-Passphrase header is not in the server's
+  // CORS allow_headers list and would cause a preflight rejection.
+  const url = passphrase
+    ? `${API_URL}/api/v1/shares/${token}/download?passphrase=${encodeURIComponent(passphrase)}`
+    : `${API_URL}/api/v1/shares/${token}/download`
+  const res = await fetch(url)
   if (!res.ok) {
-    throw new ApiError(res.statusText, res.status)
+    // Try to read the server's JSON error body so we surface the real message
+    // (e.g. "link has expired", "incorrect passphrase") instead of the opaque
+    // HTTP status text, which is empty in HTTP/2.
+    const body = await res.json().catch(() => null) as Record<string, unknown> | null
+    const message = ((body?.message ?? body?.error) || res.statusText || 'Download failed') as string
+    throw new ApiError(message, res.status)
   }
 
   const parseHeaderInt = (value: string | null): number | null => {
@@ -1015,12 +1024,15 @@ export async function fetchShareCiphertextPreview(
   passphrase?: string,
   byteCount = 80,
 ): Promise<Uint8Array> {
-  const headers: HeadersInit = { Range: `bytes=0-${byteCount - 1}` }
-  if (passphrase) {
-    headers['X-Share-Passphrase'] = passphrase
-  }
-  const res = await fetch(`${API_URL}/api/v1/shares/${token}/download`, { headers })
-  if (!res.ok && res.status !== 206) {
+  // Use the query-param passphrase path to avoid CORS preflight (same reason
+  // as downloadSharedFile). Omit the Range header: it is a non-simple header
+  // that also triggers a preflight, and the server doesn't support range
+  // requests on the share download endpoint anyway. We slice client-side.
+  const url = passphrase
+    ? `${API_URL}/api/v1/shares/${token}/download?passphrase=${encodeURIComponent(passphrase)}`
+    : `${API_URL}/api/v1/shares/${token}/download`
+  const res = await fetch(url)
+  if (!res.ok) {
     throw new ApiError(res.statusText, res.status)
   }
   const buf = await res.arrayBuffer()
