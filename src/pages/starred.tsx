@@ -67,6 +67,7 @@ export function Starred() {
       } else {
         setFiles((prev) => prev.map((f) => f.id === fileId ? { ...f, is_starred: result.is_starred } : f))
       }
+      window.dispatchEvent(new Event('beebeeb:star-changed'))
     } catch (err) {
       showToast({ icon: 'star', title: 'Failed to update star', description: err instanceof Error ? err.message : 'Something went wrong', danger: true })
     }

@@ -735,6 +735,13 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
                       <Icon name={copied === 'full-link' ? 'check' : 'copy'} size={14} />
                       {copied === 'full-link' ? 'Copied' : 'Copy link'}
                     </BBButton>
+                    {/* Expiry badge — prominent amber below the CTA */}
+                    {EXPIRY_OPTIONS[expiryIdx].hours && (
+                      <div className="flex items-center justify-center gap-1.5 mt-2.5 px-3 py-1.5 bg-amber-bg border border-amber/30 rounded-md text-[11.5px] font-medium text-amber-deep">
+                        <Icon name="clock" size={11} />
+                        Expires in {EXPIRY_OPTIONS[expiryIdx].label.toLowerCase()}
+                      </div>
+                    )}
                     <div className="flex items-center gap-1.5 mt-3 text-[11.5px] text-ink-3">
                       <Icon name="shield" size={11} className="text-amber-deep" />
                       Key is embedded in the link. One click to share.
@@ -775,7 +782,14 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
                       </BBButton>
                     </div>
 
-                    <div className="flex items-center gap-1.5 text-[11.5px] text-ink-3">
+                    {/* Expiry badge in split mode */}
+                    {EXPIRY_OPTIONS[expiryIdx].hours && (
+                      <div className="flex items-center gap-1.5 mt-2.5 px-3 py-1.5 bg-amber-bg border border-amber/30 rounded-md text-[11.5px] font-medium text-amber-deep">
+                        <Icon name="clock" size={11} />
+                        Expires in {EXPIRY_OPTIONS[expiryIdx].label.toLowerCase()}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-1.5 mt-3 text-[11.5px] text-ink-3">
                       <Icon name="shield" size={11} className="text-amber-deep" />
                       Zero-knowledge by default — we never see the key.
                     </div>

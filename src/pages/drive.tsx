@@ -41,10 +41,14 @@ import {
   getPendingApprovals,
   listMyShares,
   getStorageUsage,
+  listVersions,
+  getSharesForFile,
   type DriveFile,
   type MyShare,
   type StorageUsage,
 } from '../lib/api'
+import type { FileActivityEntry } from '../components/file-details-panel'
+import { timeAgo } from '../components/file-list'
 import { getRemainingBytes } from '../components/quota-warning'
 import {
   UpgradeNudgeModal,
@@ -145,6 +149,9 @@ export function Drive() {
   // ─── Storage quota state ─────────────────────────
   const [storageUsage, setStorageUsage] = useState<StorageUsage | null>(null)
   const [showUpgradeNudge, setShowUpgradeNudge] = useState(false)
+
+  // ─── File activity feed (for FileDetailsPanel right rail) ────────────────
+  const [fileActivity, setFileActivity] = useState<FileActivityEntry[]>([])
 
   const currentParentId = breadcrumbs[breadcrumbs.length - 1]?.id ?? undefined
 
@@ -1087,6 +1094,87 @@ export function Drive() {
 
   const selectedFile = files.find((f) => f.id === selectedFileId) ?? null
 
+  // Load activity feed when the details panel opens for a file
+  useEffect(() => {
+    if (!selectedFileId || !selectedFile) {
+      setFileActivity([])
+      return
+    }
+    let cancelled = false
+    async function loadActivity() {
+      if (!selectedFileId) return
+      try {
+        const events: FileActivityEntry[] = []
+
+        // ── Baseline: created event ──────────────────────────────────────────
+        if (selectedFile) {
+          events.push({
+            label: selectedFile.is_folder ? 'Folder created' : 'File created',
+            when: timeAgo(selectedFile.created_at),
+            icon: selectedFile.is_folder ? 'folder' : 'upload',
+          })
+        }
+
+        // ── Version history (files only) ─────────────────────────────────────
+        if (selectedFile && !selectedFile.is_folder) {
+          try {
+            const versionData = await listVersions(selectedFileId)
+            if (!cancelled) {
+              // Each version beyond the first represents a new upload
+              const sorted = [...versionData.versions].sort(
+                (a, b) => a.version_number - b.version_number,
+              )
+              for (const v of sorted) {
+                if (v.version_number > 1) {
+                  events.push({
+                    label: `Version ${v.version_number} uploaded`,
+                    when: timeAgo(v.created_at),
+                    icon: 'clock',
+                  })
+                }
+              }
+            }
+          } catch {
+            // Versions endpoint may not be available — skip silently
+          }
+        }
+
+        // ── Share events ─────────────────────────────────────────────────────
+        try {
+          const shares = await getSharesForFile(selectedFileId)
+          if (!cancelled) {
+            for (const s of shares) {
+              events.push({
+                label: 'Share link created',
+                when: timeAgo(s.created_at),
+                icon: 'share',
+              })
+              if (s.revoked) {
+                events.push({
+                  label: 'Share link revoked',
+                  when: s.expires_at ? timeAgo(s.expires_at) : 'previously',
+                  icon: 'x',
+                })
+              }
+            }
+          }
+        } catch {
+          // Share endpoint may not include this file — skip silently
+        }
+
+        // We only have relative "time ago" strings, so preserve insertion order which is chronological
+        // (events were pushed in: created → versions → shares, already time-ordered)
+
+        if (!cancelled) setFileActivity(events)
+      } catch {
+        if (!cancelled) setFileActivity([])
+      }
+    }
+    loadActivity()
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedFileId])
+
   function buildDetailsMeta(file: DriveFile): FileDetailsMeta {
     const name = displayName(file)
     const ext = name.includes('.') ? name.split('.').pop() ?? '' : ''
@@ -1118,6 +1206,8 @@ export function Drive() {
       // Trigger star pulse animation
       setStarPulseId(fileId)
       setTimeout(() => setStarPulseId(null), 400)
+      // Notify the sidebar starred section to refresh
+      window.dispatchEvent(new Event('beebeeb:star-changed'))
     } catch (err) {
       showToast({
         icon: 'star',
@@ -1760,6 +1850,7 @@ export function Drive() {
         open={selectedFile !== null}
         onClose={() => setSelectedFileId(null)}
         file={selectedFile ? buildDetailsMeta(selectedFile) : null}
+        activity={fileActivity}
         onDownload={() => selectedFile && handleFileDownload(selectedFile)}
         onShare={() => {
           if (selectedFile) {

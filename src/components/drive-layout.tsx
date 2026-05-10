@@ -19,14 +19,16 @@ import {
   setPreference,
   getAdminStats,
   requestAdminHandoff,
+  listFiles,
   type Plan,
   type ShareInvite,
   type StorageUsage,
   type BillingUsage,
+  type DriveFile,
 } from '../lib/api'
 import { StorageUsageBar } from './storage-usage-bar'
 import { decryptFolderKey, decryptChildFileKey } from '../lib/folder-share-crypto'
-import { decryptFilename, fromBase64 } from '../lib/crypto'
+import { decryptFilename, decryptFileMetadata, fromBase64 } from '../lib/crypto'
 import { QuotaWarning } from './quota-warning'
 import { QuickAccess } from './quick-access'
 import { EmailVerifyBanner } from './email-verify-banner'
@@ -143,6 +145,132 @@ function UserCard() {
         />
       </button>
     </div>
+  )
+}
+
+// ─── Starred quick-access sidebar section ───────────────────────────────────
+
+interface StarredItem {
+  id: string
+  name: string
+  isFolder: boolean
+}
+
+function StarredQuickAccess() {
+  const [items, setItems] = useState<StarredItem[]>([])
+  const { getFileKey, isUnlocked } = useKeys()
+  const location = useLocation()
+
+  useEffect(() => {
+    if (!isUnlocked) {
+      setItems([])
+      return
+    }
+    let cancelled = false
+    async function load() {
+      try {
+        const files: DriveFile[] = await listFiles(undefined, false, { starred: true, limit: 5 })
+        if (cancelled || files.length === 0) {
+          if (!cancelled) setItems([])
+          return
+        }
+        const resolved: StarredItem[] = []
+        for (const f of files.slice(0, 5)) {
+          try {
+            const fileKey = await getFileKey(f.id)
+            const { name } = await decryptFileMetadata(fileKey, f.name_encrypted)
+            resolved.push({ id: f.id, name, isFolder: f.is_folder })
+          } catch {
+            resolved.push({ id: f.id, name: f.name_encrypted, isFolder: f.is_folder })
+          }
+        }
+        if (!cancelled) setItems(resolved)
+      } catch {
+        // Non-fatal — sidebar still works without starred section
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [isUnlocked, getFileKey])
+
+  // Refresh when files are starred/unstarred anywhere in the app
+  useEffect(() => {
+    function onStarChanged() {
+      if (!isUnlocked) return
+      let cancelled = false
+      async function reload() {
+        try {
+          const files: DriveFile[] = await listFiles(undefined, false, { starred: true, limit: 5 })
+          if (cancelled) return
+          const resolved: StarredItem[] = []
+          for (const f of files.slice(0, 5)) {
+            try {
+              const fileKey = await getFileKey(f.id)
+              const { name } = await decryptFileMetadata(fileKey, f.name_encrypted)
+              resolved.push({ id: f.id, name, isFolder: f.is_folder })
+            } catch {
+              resolved.push({ id: f.id, name: f.name_encrypted, isFolder: f.is_folder })
+            }
+          }
+          setItems(resolved)
+        } catch {
+          /* ignore */
+        }
+      }
+      reload()
+      return () => { cancelled = true }
+    }
+    window.addEventListener('beebeeb:star-changed', onStarChanged)
+    return () => window.removeEventListener('beebeeb:star-changed', onStarChanged)
+  }, [isUnlocked, getFileKey])
+
+  if (items.length === 0) return null
+
+  const currentFolder = new URLSearchParams(location.search).get('folder')
+
+  return (
+    <>
+      <div className="mx-4 my-2.5 h-px bg-line" />
+      <div className="px-4 py-1">
+        <div className="flex items-center gap-1.5 mb-1">
+          <Icon name="star" size={10} className="text-amber-deep shrink-0" />
+          <div className="text-[10px] font-medium uppercase tracking-wider text-ink-3">
+            Starred
+          </div>
+        </div>
+      </div>
+      <nav aria-label="Starred files" className="px-3 pb-1.5">
+        {items.map((item) => {
+          const isActive = item.isFolder
+            ? currentFolder === item.id
+            : false
+          // Folders: navigate into the folder via ?folder= param.
+          // Files: navigate to drive root with location state so the detail panel opens.
+          const to = item.isFolder ? `/?folder=${item.id}` : '/'
+          const state = item.isFolder ? undefined : { openFileId: item.id }
+          return (
+            <Link
+              key={item.id}
+              to={to}
+              state={state}
+              style={{ paddingTop: 'var(--sidebar-item-py, 7px)', paddingBottom: 'var(--sidebar-item-py, 7px)' }}
+              className={`w-full flex items-center gap-2.5 px-2 rounded-md text-[13px] transition-colors ${
+                isActive
+                  ? 'bg-paper-3 font-semibold text-ink'
+                  : 'text-ink-2 hover:bg-paper-3/50'
+              }`}
+            >
+              <Icon
+                name={item.isFolder ? 'folder' : 'file'}
+                size={13}
+                className="shrink-0 text-amber-deep"
+              />
+              <span className="flex-1 truncate">{item.name}</span>
+            </Link>
+          )
+        })}
+      </nav>
+    </>
   )
 }
 
@@ -366,6 +494,8 @@ export function DriveLayout({ children }: { children: ReactNode }) {
             </div>
           )}
         </div>
+
+        <StarredQuickAccess />
 
         {sharedFolders.length > 0 && (
           <>

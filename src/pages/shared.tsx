@@ -599,6 +599,20 @@ export function Shared() {
     return `Expires in ${days}d`
   }
 
+  /** Returns a date string like "May 17" for use in expiry badges. */
+  function formatExpiryDate(iso: string | null): string {
+    if (!iso) return 'No expiry'
+    const d = new Date(iso)
+    const now = new Date()
+    if (d < now) return 'Expired'
+    return `Expires ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+  }
+
+  function isExpired(iso: string | null): boolean {
+    if (!iso) return false
+    return new Date(iso) < new Date()
+  }
+
   const renderByMe = () => {
     const files = sentApproved.map((i) =>
       inviteToFile(i, i.recipient_email ? `Shared with ${i.recipient_email}` : 'Shared file'),
@@ -639,11 +653,22 @@ export function Shared() {
                         <div className="flex items-center gap-2 text-[11px] text-ink-3 mt-0.5">
                           <span>{share.open_count ?? 0} opens</span>
                           {share.max_opens && <><span>·</span><span>/ {share.max_opens} max</span></>}
-                          <span>·</span>
-                          <span>{formatExpiry(share.expires_at)}</span>
                           {share.has_passphrase && <><span>·</span><span className="text-amber-deep">Passphrase</span></>}
                         </div>
                       </div>
+                      {/* Expiry badge */}
+                      <span
+                        className={`shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10.5px] font-medium ${
+                          isExpired(share.expires_at)
+                            ? 'bg-red/10 text-red border border-red/20'
+                            : share.expires_at
+                              ? 'bg-amber-bg text-amber-deep border border-amber/30'
+                              : 'bg-paper-2 text-ink-3 border border-line'
+                        }`}
+                      >
+                        <Icon name="clock" size={9} />
+                        {formatExpiryDate(share.expires_at)}
+                      </span>
                       <Icon
                         name="chevron-down"
                         size={13}
