@@ -54,6 +54,7 @@ export function IosAppBanner() {
   return (
     <div
       role="status"
+      data-tour="mobile"
       className="flex items-center gap-2.5 px-4 py-2.5 border-b border-amber/30 bg-amber-bg sticky top-0 z-30"
     >
       <Icon name="image" size={14} className="shrink-0 text-amber-deep" />

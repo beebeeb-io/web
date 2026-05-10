@@ -21,6 +21,7 @@ import { DuplicateFileDialog, getUniqueName, type ConflictItem } from '../compon
 import { ShortcutsCheatsheet } from '../components/shortcuts-cheatsheet'
 import { WelcomeTour } from '../components/welcome-tour'
 import { OnboardingGuide } from '../components/onboarding-guide'
+import { OnboardingTour } from '../components/onboarding-tour'
 import { useOnboarding } from '../lib/onboarding-context'
 import { getPreference, setPreference } from '../lib/api'
 import { useToast } from '../components/toast'
@@ -1829,7 +1830,7 @@ export function Drive() {
             <BBButton size="sm" variant="amber" onClick={() => setFolderDialogOpen(true)} className="gap-1.5" disabled={isFrozen} title={isFrozen ? 'Account is frozen' : undefined}>
               <Icon name="plus" size={13} /> New folder
             </BBButton>
-            <BBButton size="sm" onClick={browse} className="gap-1.5" aria-label="Upload files" disabled={isFrozen} title={isFrozen ? 'Account is frozen' : undefined}>
+            <BBButton size="sm" onClick={browse} className="gap-1.5" aria-label="Upload files" disabled={isFrozen} title={isFrozen ? 'Account is frozen' : undefined} data-tour="upload">
               <Icon name="upload" size={13} /> <span className="hidden sm:inline" aria-hidden="true">Upload</span>
             </BBButton>
             <BBButton size="sm" onClick={browseFolder} className="hidden sm:inline-flex gap-1.5" disabled={isFrozen} title={isFrozen ? 'Account is frozen' : undefined}>
@@ -2300,6 +2301,9 @@ export function Drive() {
           }).catch(() => {})
         }}
       />
+
+      {/* First-run spotlight tour — 3 steps: upload, share, mobile */}
+      <OnboardingTour />
 
       {/* Upgrade nudge modal — shown at >= 80% quota, once per session */}
       {showUpgradeNudge && storageUsage && (

@@ -784,6 +784,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
                     ? 'bg-paper-3 font-semibold text-ink'
                     : 'text-ink-2 hover:bg-paper-3/50'
                 }`}
+                {...(item.path === '/shared' ? { 'data-tour': 'share' } : {})}
               >
                 <Icon name={item.icon} size={13} className="shrink-0" />
                 <span className="flex-1">{item.label}</span>
