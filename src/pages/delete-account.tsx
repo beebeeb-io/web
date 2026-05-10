@@ -4,7 +4,7 @@ import { Icon } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
 import { BBInput } from '@beebeeb/shared'
 import { BBCheckbox } from '@beebeeb/shared'
-import { ConfirmPasswordModal } from '../components/confirm-password-modal'
+import { StepUpAuth } from '../components/step-up-auth'
 import { deleteAccountPermanently, ApiError } from '../lib/api'
 
 const deletionItems: [string, string][] = [
@@ -52,13 +52,12 @@ export function DeleteAccount() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-paper p-xl">
-      <ConfirmPasswordModal
+      <StepUpAuth
         open={pwPromptOpen}
-        title="Confirm account deletion"
-        description="Re-enter your password to permanently delete your account. This cannot be undone."
-        confirmLabel="Delete account"
+        description="Enter your password to permanently delete your account. This cannot be undone."
+        submitLabel="Delete account"
         onConfirmed={performDelete}
-        onCancel={() => setPwPromptOpen(false)}
+        onClose={() => setPwPromptOpen(false)}
       />
       <div className="w-full max-w-[480px] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
         {/* Header */}

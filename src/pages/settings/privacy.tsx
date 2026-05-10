@@ -15,7 +15,7 @@ import { SettingsShell, SettingsHeader } from '../../components/settings-shell'
 import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useToast } from '../../components/toast'
-import { ConfirmPasswordModal } from '../../components/confirm-password-modal'
+import { StepUpAuth } from '../../components/step-up-auth'
 import { useAuth } from '../../lib/auth-context'
 import { useFrozen } from '../../hooks/use-frozen'
 import {
@@ -101,6 +101,30 @@ function DataExportCard() {
 
   useEffect(() => () => stopPolling(), [stopPolling])
 
+  const downloadExport = useCallback(async (url: string) => {
+    const token = getToken()
+    try {
+      const res = await fetch(url, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!res.ok) {
+        showToast({ icon: 'x', title: 'Download failed', danger: true })
+        return
+      }
+      const blob = await res.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = objectUrl
+      a.download = `beebeeb-export-${new Date().toISOString().slice(0, 10)}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(objectUrl)
+    } catch {
+      showToast({ icon: 'x', title: 'Download failed', danger: true })
+    }
+  }, [showToast])
+
   const handleRequest = useCallback(async (confirmToken: string) => {
     setConfirmOpen(false)
     setRequesting(true)
@@ -130,6 +154,8 @@ function DataExportCard() {
         } catch {
           // Non-fatal — user can refresh
         }
+      } else if (res.status === 'ready' && res.download_url) {
+        await downloadExport(res.download_url)
       }
     } catch (err) {
       if (err instanceof ApiError && (err.status === 404 || err.status === 501)) {
@@ -145,43 +171,18 @@ function DataExportCard() {
     } finally {
       setRequesting(false)
     }
-  }, [pollStatus, showToast])
-
-  const downloadExport = useCallback(async (url: string) => {
-    const token = getToken()
-    try {
-      const res = await fetch(url, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      })
-      if (!res.ok) {
-        showToast({ icon: 'x', title: 'Download failed', danger: true })
-        return
-      }
-      const blob = await res.blob()
-      const objectUrl = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = objectUrl
-      a.download = `beebeeb-export-${new Date().toISOString().slice(0, 10)}.json`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(objectUrl)
-    } catch {
-      showToast({ icon: 'x', title: 'Download failed', danger: true })
-    }
-  }, [showToast])
+  }, [downloadExport, pollStatus, showToast])
 
   const status = exportStatus?.status
 
   return (
     <Card title="Your data">
-      <ConfirmPasswordModal
+      <StepUpAuth
         open={confirmOpen}
-        title="Confirm data export"
-        description="Re-enter your password to request a copy of your data."
-        confirmLabel="Export my data"
+        description="Enter your password to request a copy of your data."
+        submitLabel="Export my data"
         onConfirmed={(token) => void handleRequest(token)}
-        onCancel={() => setConfirmOpen(false)}
+        onClose={() => setConfirmOpen(false)}
       />
       <div className="flex flex-col gap-3">
         <p className="text-[13px] text-ink-2 leading-relaxed">

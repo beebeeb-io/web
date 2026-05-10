@@ -16,6 +16,7 @@ import {
   clearToken, ApiError,
 } from '../../lib/api'
 import { ConfirmPasswordModal } from '../../components/confirm-password-modal'
+import { StepUpAuth } from '../../components/step-up-auth'
 import {
   opaqueRegistrationStart, opaqueRegistrationFinish,
   computeRecoveryCheck, deriveX25519Public, toBase64, fromBase64,
@@ -242,13 +243,12 @@ export function SettingsProfile() {
 
   return (
     <SettingsShell activeSection="profile">
-      <ConfirmPasswordModal
+      <StepUpAuth
         open={pwPromptOpen}
-        title="Confirm account deletion"
-        description="Re-enter your password to permanently delete your account. This cannot be undone."
-        confirmLabel="Delete account"
+        description="Enter your password to permanently delete your account. This cannot be undone."
+        submitLabel="Delete account"
         onConfirmed={performDeleteAccount}
-        onCancel={() => setPwPromptOpen(false)}
+        onClose={() => setPwPromptOpen(false)}
       />
 
       <ConfirmPasswordModal
