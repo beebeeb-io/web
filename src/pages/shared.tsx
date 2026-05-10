@@ -89,6 +89,7 @@ export function Shared() {
   // Which share link has its insights panel expanded
   const [expandedShareId, setExpandedShareId] = useState<string | null>(null)
   const [revokingShareId, setRevokingShareId] = useState<string | null>(null)
+  const [revokingAll, setRevokingAll] = useState(false)
 
   // "Pending" state
   const [sentInvited, setSentInvited] = useState<ShareInvite[]>([])
@@ -575,6 +576,33 @@ export function Shared() {
     }
   }
 
+  async function handleRevokeAllShareLinks() {
+    const count = myShareLinks.length
+    if (count === 0) return
+    const confirmed = confirm(
+      `This will immediately revoke all ${count} share link${count !== 1 ? 's' : ''}. Files will no longer be accessible to anyone with a link.`,
+    )
+    if (!confirmed) return
+    setRevokingAll(true)
+    const results = await Promise.allSettled(myShareLinks.map((s) => revokeShare(s.id)))
+    const failed = results.filter((r) => r.status === 'rejected').length
+    const succeeded = count - failed
+    setMyShareLinks([])
+    setExpandedShareId(null)
+    if (failed === 0) {
+      showToast({ icon: 'check', title: `All ${count} share link${count !== 1 ? 's' : ''} revoked` })
+    } else {
+      showToast({
+        icon: 'x',
+        title: `${succeeded} revoked, ${failed} failed`,
+        description: 'Some links could not be revoked. Refresh to see current state.',
+        danger: true,
+      })
+      fetchAll()
+    }
+    setRevokingAll(false)
+  }
+
   function copyShareLink(url: string) {
     navigator.clipboard.writeText(url).catch(() => {
       const ta = document.createElement('textarea')
@@ -632,6 +660,18 @@ export function Shared() {
                 Share links
               </span>
               <BBChip className="text-[9px]">{myShareLinks.length}</BBChip>
+              <div className="ml-auto">
+                <BBButton
+                  size="sm"
+                  variant="ghost"
+                  className="text-red hover:text-red border-red/20 hover:border-red/40 text-[11px] gap-1"
+                  onClick={() => void handleRevokeAllShareLinks()}
+                  disabled={revokingAll}
+                >
+                  <Icon name="trash" size={11} />
+                  {revokingAll ? 'Revoking…' : 'Revoke all links'}
+                </BBButton>
+              </div>
             </div>
             <div className="divide-y divide-line">
               {myShareLinks.map((share) => {
@@ -640,41 +680,55 @@ export function Shared() {
                 return (
                   <div key={share.id} className="border-b border-line last:border-b-0">
                     {/* Link row */}
-                    <button
-                      type="button"
-                      onClick={() => setExpandedShareId(isExpanded ? null : share.id)}
-                      className="w-full flex items-center gap-3 px-5 py-3 text-left hover:bg-paper-2 transition-colors"
-                    >
-                      <div className="w-7 h-7 rounded-lg bg-amber-bg border border-amber/20 flex items-center justify-center shrink-0">
-                        <Icon name="link" size={12} className="text-amber-deep" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-[13px] font-medium text-ink truncate">{name}</div>
-                        <div className="flex items-center gap-2 text-[11px] text-ink-3 mt-0.5">
-                          <span>{share.open_count ?? 0} opens</span>
-                          {share.max_opens && <><span>·</span><span>/ {share.max_opens} max</span></>}
-                          {share.has_passphrase && <><span>·</span><span className="text-amber-deep">Passphrase</span></>}
-                        </div>
-                      </div>
-                      {/* Expiry badge */}
-                      <span
-                        className={`shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10.5px] font-medium ${
-                          isExpired(share.expires_at)
-                            ? 'bg-red/10 text-red border border-red/20'
-                            : share.expires_at
-                              ? 'bg-amber-bg text-amber-deep border border-amber/30'
-                              : 'bg-paper-2 text-ink-3 border border-line'
-                        }`}
+                    <div className="group flex items-center gap-3 px-5 py-3 hover:bg-paper-2 transition-colors">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedShareId(isExpanded ? null : share.id)}
+                        className="flex items-center gap-3 flex-1 min-w-0 text-left"
                       >
-                        <Icon name="clock" size={9} />
-                        {formatExpiryDate(share.expires_at)}
-                      </span>
-                      <Icon
-                        name="chevron-down"
-                        size={13}
-                        className={`shrink-0 text-ink-3 transition-transform duration-150 ${isExpanded ? 'rotate-180' : ''}`}
-                      />
-                    </button>
+                        <div className="w-7 h-7 rounded-lg bg-amber-bg border border-amber/20 flex items-center justify-center shrink-0">
+                          <Icon name="link" size={12} className="text-amber-deep" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[13px] font-medium text-ink truncate">{name}</div>
+                          <div className="flex items-center gap-2 text-[11px] text-ink-3 mt-0.5">
+                            <span className="font-mono">{share.open_count ?? 0}</span>
+                            <span>{(share.open_count ?? 0) === 1 ? 'open' : 'opens'}</span>
+                            {share.max_opens && <><span>·</span><span className="font-mono">/ {share.max_opens} max</span></>}
+                            {share.has_passphrase && <><span>·</span><span className="text-amber-deep">Passphrase</span></>}
+                            <span>·</span>
+                            <span>Created {timeAgo(share.created_at)}</span>
+                          </div>
+                        </div>
+                        {/* Expiry badge */}
+                        <span
+                          className={`shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10.5px] font-medium ${
+                            isExpired(share.expires_at)
+                              ? 'bg-red/10 text-red border border-red/20'
+                              : share.expires_at
+                                ? 'bg-amber-bg text-amber-deep border border-amber/30'
+                                : 'bg-paper-2 text-ink-3 border border-line'
+                          }`}
+                        >
+                          <Icon name="clock" size={9} />
+                          {formatExpiryDate(share.expires_at)}
+                        </span>
+                        <Icon
+                          name="chevron-down"
+                          size={13}
+                          className={`shrink-0 text-ink-3 transition-transform duration-150 ${isExpanded ? 'rotate-180' : ''}`}
+                        />
+                      </button>
+                      {/* Quick copy button */}
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); copyShareLink(share.url) }}
+                        title="Copy link"
+                        className="shrink-0 p-1.5 rounded-md text-ink-3 hover:text-ink hover:bg-paper-3 transition-colors cursor-pointer md:opacity-0 md:group-hover:opacity-100"
+                      >
+                        <Icon name="copy" size={13} />
+                      </button>
+                    </div>
 
                     {/* Insights panel */}
                     {isExpanded && (
