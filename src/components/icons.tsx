@@ -42,6 +42,8 @@ export type IconName =
   | 'play'
   | 'menu'
   | 'info'
+  | 'camera'
+  | 'scan'
 
 interface IconProps extends SVGProps<SVGSVGElement> {
   name: IconName
@@ -122,6 +124,12 @@ const paths: Record<IconName, string> = {
   // Info: circle with an "i" (dot tittle + short body line). The dot uses the
   // standard zero-length-stroke trick so it renders as a round cap.
   info: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 16v-4M12 8h.01',
+  // Camera: classic camera body with lens circle
+  camera:
+    'M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
+  // Scan: document scanner / scan corners
+  scan:
+    'M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M8 12h8M12 8v8',
 }
 
 export function Icon({ name, size = 24, ...rest }: IconProps) {

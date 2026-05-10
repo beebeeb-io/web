@@ -75,6 +75,7 @@ const SettingsReferrals     = lazyNamed(() => import('./pages/settings/referrals
 const SettingsImport        = lazyNamed(() => import('./pages/settings/import'),        'SettingsImport')
 const DropboxCallback       = lazyNamed(() => import('./pages/settings/import/dropbox-callback'), 'DropboxCallback')
 const GoogleCallback        = lazyNamed(() => import('./pages/settings/import/google-callback'),  'GoogleCallback')
+const ScanPage              = lazyNamed(() => import('./pages/scan'),                             'ScanPage')
 
 // Admin pages live at admin.beebeeb.io now (own repo, own subdomain) —
 // see docs/superpowers/specs/2026-05-07-admin-portal-separation.md.
@@ -305,6 +306,14 @@ export function App() {
             element={
               <ProtectedRoute>
                 <Drive />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/scan"
+            element={
+              <ProtectedRoute>
+                <ScanPage />
               </ProtectedRoute>
             }
           />
