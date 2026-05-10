@@ -18,6 +18,7 @@ import { registerErrorNotifier, registerSessionExpiredHandler } from './lib/api'
 import { CommandPalette } from './components/command-palette'
 import { ShortcutsCheatsheet } from './components/shortcuts-cheatsheet'
 import { useKeyboardShortcuts } from './hooks/use-keyboard-shortcuts'
+import { SessionTimeoutWarning } from './components/session-timeout-warning'
 // ── Eager: needed on every first load ────────────────────────────────────────
 import { Signup } from './pages/signup'
 import { Login } from './pages/login'
@@ -100,7 +101,12 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
     return <Navigate to="/login" replace />
   }
 
-  return <WasmGuard>{children}</WasmGuard>
+  return (
+    <>
+      <SessionTimeoutWarning />
+      <WasmGuard>{children}</WasmGuard>
+    </>
+  )
 }
 
 /**
