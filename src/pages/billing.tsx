@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { SettingsShell, SettingsHeader } from '../components/settings-shell'
 import { BBButton } from '@beebeeb/shared'
 import { BBChip } from '@beebeeb/shared'
@@ -13,6 +13,7 @@ import {
   getInvoices,
   getStorageUsage,
   getPlans,
+  listFiles,
   createPortalSession,
   cancelSubscription,
   reactivateSubscription,
@@ -22,6 +23,7 @@ import {
   type Invoice,
   type Plan,
   type StorageUsage,
+  type DriveFile,
 } from '../lib/api'
 import { formatStorageSI } from '../lib/format'
 import { StorageBreakdown } from '../components/storage-breakdown'
@@ -159,10 +161,12 @@ function AnimatedProgress({ percent, className = '' }: { percent: number; classN
 export function Billing() {
   const [searchParams, setSearchParams] = useSearchParams()
   const { showToast } = useToast()
+  const navigate = useNavigate()
   const [sub, setSub] = useState<Subscription | null>(null)
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [storage, setStorage] = useState<StorageUsage | null>(null)
   const [plans, setPlans] = useState<Plan[] | null>(null)
+  const [files, setFiles] = useState<DriveFile[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [upgradeOpen, setUpgradeOpen] = useState(false)
@@ -171,6 +175,9 @@ export function Billing() {
   const [cancelConfirm, setCancelConfirm] = useState(false)
   const [cancelLoading, setCancelLoading] = useState(false)
   const [reactivateLoading, setReactivateLoading] = useState(false)
+  // Upgraded celebration card
+  const showUpgraded = searchParams.get('upgraded') === 'true' || Boolean(searchParams.get('session_id'))
+  const upgradedDismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Invoice preferences
   const [invoiceSendEmail, setInvoiceSendEmail] = useState(true)
@@ -183,17 +190,19 @@ export function Billing() {
     setLoading(true)
     setError(null)
     try {
-      const [subData, invData, storageData, invoicePref, plansData] = await Promise.all([
+      const [subData, invData, storageData, invoicePref, plansData, filesData] = await Promise.all([
         getSubscription(),
         getInvoices(),
         getStorageUsage().catch(() => null),
         getPreference<{ send_email: boolean; invoice_email: string }>('invoice_settings').catch(() => null),
         getPlans().catch(() => null),
+        listFiles(undefined, false).catch(() => null),
       ])
       setSub(subData)
       setInvoices(invData)
       setStorage(storageData)
       setPlans(plansData)
+      setFiles(filesData)
       if (invoicePref) {
         setInvoiceSendEmail(invoicePref.send_email ?? true)
         setInvoiceEmail(invoicePref.invoice_email ?? '')
@@ -226,6 +235,22 @@ export function Billing() {
   useEffect(() => {
     void loadData()
   }, [loadData])
+
+  // Auto-dismiss the upgraded celebration card after 10 s
+  useEffect(() => {
+    if (!showUpgraded) return
+    upgradedDismissTimer.current = setTimeout(() => {
+      setSearchParams({}, { replace: true })
+    }, 10_000)
+    return () => {
+      if (upgradedDismissTimer.current) clearTimeout(upgradedDismissTimer.current)
+    }
+  }, [showUpgraded, setSearchParams])
+
+  function dismissUpgraded() {
+    if (upgradedDismissTimer.current) clearTimeout(upgradedDismissTimer.current)
+    setSearchParams({}, { replace: true })
+  }
 
   // Use the effective plan for display: cancelled → show as free
   const effectivePlan = sub?.status === 'cancelled' ? 'free' : (sub?.plan ?? 'free')
@@ -415,7 +440,52 @@ function openUpgrade(plan: string) {
       />
 
       <div className="p-7 space-y-6">
-        {/* Success banner after Stripe checkout */}
+        {/* Upgraded celebration card — shown after Stripe redirect */}
+        {showUpgraded && (
+          <div className="relative rounded-xl border border-amber/60 bg-amber-bg overflow-hidden">
+            <div className="px-6 py-5">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep mb-1">
+                    Upgrade complete
+                  </div>
+                  <h2 className="text-xl font-bold text-ink leading-snug mb-1">
+                    Welcome to {meta.label}
+                  </h2>
+                  <p className="text-[13.5px] text-ink-2 leading-relaxed mb-4">
+                    Your vault just got bigger. You now have{' '}
+                    <span className="font-semibold text-ink">{formatStorageSI(totalStorageBytes)}</span>{' '}
+                    of encrypted storage — stored in Falkenstein, Hetzner.
+                  </p>
+                  <BBButton
+                    variant="amber"
+                    size="md"
+                    onClick={() => { void navigate('/') }}
+                  >
+                    Go to my vault
+                    <Icon name="chevron-right" size={13} className="ml-1.5" />
+                  </BBButton>
+                </div>
+                <button
+                  onClick={dismissUpgraded}
+                  className="text-ink-3 hover:text-ink transition-colors mt-0.5 shrink-0"
+                  aria-label="Dismiss"
+                >
+                  <Icon name="x" size={16} />
+                </button>
+              </div>
+            </div>
+            {/* Animated amber progress bar at bottom */}
+            <div className="h-0.5 bg-amber/30">
+              <div
+                className="h-full bg-amber-deep transition-all ease-linear"
+                style={{ width: '100%', animation: 'shrink-width 10s linear forwards' }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Success banner after Stripe checkout (legacy ?success=true) */}
         {showSuccess && (
           <div className="flex items-center gap-3 p-3.5 bg-green/10 border border-green/30 rounded-lg text-sm">
             <Icon name="check" size={14} className="text-green shrink-0" />
@@ -606,6 +676,7 @@ function openUpgrade(plan: string) {
               usageBytes={usedBytes}
               quotaBytes={totalStorageBytes}
               planName={effectivePlan}
+              files={files ?? undefined}
             />
           </div>
         )}

@@ -4,7 +4,11 @@ export interface StorageBreakdownProps {
   usageBytes: number
   quotaBytes: number
   planName: string
-  files?: Array<{ name: string; size_bytes: number }>
+  /**
+   * Optional: DriveFile-style objects for breakdown by file type.
+   * Only size_bytes and mime_type are used; encrypted names are never read.
+   */
+  files?: Array<{ size_bytes: number; mime_type: string | null; is_folder: boolean }>
   showUpgrade?: boolean
   onUpgrade?: () => void
 }
@@ -17,27 +21,48 @@ function formatBytes(bytes: number): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`
 }
 
-function categorizeFiles(files: Array<{ name: string; size_bytes: number }>) {
-  const categories = { Photos: 0, Documents: 0, Videos: 0, Other: 0 }
-  const photoExts = /\.(jpe?g|png|heic|webp|gif|svg|raw|cr2|nef)$/i
-  const docExts = /\.(pdf|docx?|xlsx?|pptx?|txt|md|csv|rtf|odt|ods)$/i
-  const videoExts = /\.(mp4|mov|avi|mkv|webm|m4v)$/i
+type CategoryKey = 'Images' | 'Videos' | 'Documents' | 'Other'
+
+function categorizeDriveFiles(
+  files: Array<{ size_bytes: number; mime_type: string | null; is_folder: boolean }>,
+): Record<CategoryKey, number> {
+  const totals: Record<CategoryKey, number> = { Images: 0, Videos: 0, Documents: 0, Other: 0 }
 
   for (const f of files) {
-    if (photoExts.test(f.name)) categories.Photos += f.size_bytes
-    else if (docExts.test(f.name)) categories.Documents += f.size_bytes
-    else if (videoExts.test(f.name)) categories.Videos += f.size_bytes
-    else categories.Other += f.size_bytes
+    if (f.is_folder) continue
+    const mime = f.mime_type ?? ''
+    if (mime.startsWith('image/')) {
+      totals.Images += f.size_bytes
+    } else if (mime.startsWith('video/')) {
+      totals.Videos += f.size_bytes
+    } else if (
+      mime.startsWith('text/') ||
+      mime === 'application/pdf' ||
+      mime.includes('word') ||
+      mime.includes('excel') ||
+      mime.includes('spreadsheet') ||
+      mime.includes('presentation') ||
+      mime.includes('powerpoint') ||
+      mime.includes('opendocument')
+    ) {
+      totals.Documents += f.size_bytes
+    } else {
+      totals.Other += f.size_bytes
+    }
   }
-  return categories
+  return totals
 }
 
-const CATEGORY_COLORS: Record<string, string> = {
-  Photos:    'oklch(0.75 0.12 72)',
-  Documents: 'oklch(0.65 0.12 250)',
-  Videos:    'oklch(0.65 0.12 300)',
-  Other:     'oklch(0.65 0.05 0)',
+// Category bar colors using design-system Tailwind classes
+// (rendered as inline className strings — Tailwind must see these statically)
+const CATEGORY_CONFIG: Record<CategoryKey, { label: string; barClass: string; dotClass: string }> = {
+  Images:    { label: 'Images',    barClass: 'bg-amber',    dotClass: 'bg-amber' },
+  Videos:    { label: 'Videos',    barClass: 'bg-ink-2',    dotClass: 'bg-ink-2' },
+  Documents: { label: 'Documents', barClass: 'bg-green',    dotClass: 'bg-green' },
+  Other:     { label: 'Other',     barClass: 'bg-ink-3',    dotClass: 'bg-ink-3' },
 }
+
+const CATEGORY_ORDER: CategoryKey[] = ['Images', 'Videos', 'Documents', 'Other']
 
 export function StorageBreakdown({
   usageBytes,
@@ -60,22 +85,28 @@ export function StorageBreakdown({
   const barColor = isHigh ? 'var(--color-red)' : 'var(--color-amber)'
   const availableBytes = Math.max(0, quotaBytes - usageBytes)
 
-  const categories = files ? categorizeFiles(files) : null
-  const categoryEntries = categories
-    ? (Object.entries(categories) as [string, number][]).filter(([, v]) => v > 0)
+  // Build breakdown rows only when files are available and there is actual usage
+  const breakdown = files ? categorizeDriveFiles(files) : null
+  const breakdownEntries = breakdown
+    ? CATEGORY_ORDER.filter((key) => breakdown[key] > 0).map((key) => ({
+        key,
+        bytes: breakdown[key],
+        pct: quotaBytes > 0 ? (breakdown[key] / quotaBytes) * 100 : 0,
+        ...CATEGORY_CONFIG[key],
+      }))
     : []
 
   return (
     <div className="w-full space-y-4">
-      {/* Progress bar */}
+      {/* Overall progress bar */}
       <div>
         <div className="flex items-baseline justify-between mb-2">
           <span className="text-sm font-semibold text-ink">
             {formatBytes(usageBytes)} of {formatBytes(quotaBytes)} used
           </span>
-          <span className="text-[11px] font-mono text-ink-4">{planName}</span>
+          <span className="text-[11px] font-mono text-ink-4 capitalize">{planName}</span>
         </div>
-        <div className="relative h-3 w-full rounded-full bg-paper-3 overflow-hidden">
+        <div className="relative h-2.5 w-full rounded-full bg-paper-3 overflow-hidden">
           <div
             className="h-full rounded-full transition-all duration-700 ease-out"
             style={{ width: mounted ? `${pct}%` : '0%', background: barColor }}
@@ -83,29 +114,26 @@ export function StorageBreakdown({
         </div>
       </div>
 
-      {/* Type breakdown */}
-      {categoryEntries.length > 0 && (
-        <div className="space-y-2">
-          {categoryEntries.map(([name, bytes]) => {
-            const rowPct = quotaBytes > 0 ? (bytes / quotaBytes) * 100 : 0
-            return (
-              <div key={name} className="flex items-center gap-3">
-                <span className="w-20 text-[12.5px] text-ink-2 shrink-0">{name}</span>
-                <div className="flex-1 h-1.5 rounded-full bg-paper-3 overflow-hidden">
-                  <div
-                    className="h-full rounded-full transition-all duration-700 ease-out"
-                    style={{
-                      width: mounted ? `${rowPct}%` : '0%',
-                      background: CATEGORY_COLORS[name] ?? CATEGORY_COLORS.Other,
-                    }}
-                  />
-                </div>
-                <span className="text-[12px] font-mono text-ink-3 w-16 text-right shrink-0">
-                  {formatBytes(bytes)}
-                </span>
+      {/* File-type breakdown */}
+      {breakdownEntries.length > 0 && (
+        <div className="space-y-2.5">
+          {breakdownEntries.map(({ key, bytes, pct: rowPct, label, barClass, dotClass }) => (
+            <div key={key} className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5 w-24 shrink-0">
+                <span className={`w-2 h-2 rounded-full shrink-0 ${dotClass}`} />
+                <span className="text-[12.5px] text-ink-2">{label}</span>
               </div>
-            )
-          })}
+              <div className="flex-1 h-1.5 rounded-full bg-paper-3 overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-700 ease-out ${barClass}`}
+                  style={{ width: mounted ? `${rowPct}%` : '0%' }}
+                />
+              </div>
+              <span className="text-[12px] font-mono text-ink-3 w-16 text-right shrink-0">
+                {formatBytes(bytes)}
+              </span>
+            </div>
+          ))}
         </div>
       )}
 

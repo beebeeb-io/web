@@ -277,6 +277,12 @@ select:focus-visible {
   animation: breadcrumb-enter 180ms ease-out both;
 }
 
+/* Upgrade celebration card — progress bar shrinks over 10 s */
+@keyframes shrink-width {
+  from { width: 100%; }
+  to   { width: 0%; }
+}
+
 /* 5. Star toggle: amber pulse */
 @keyframes star-pulse {
   0%   { transform: scale(1); filter: brightness(1); }
