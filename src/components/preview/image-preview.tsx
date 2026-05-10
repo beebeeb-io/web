@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTouchGestures } from '../../hooks/use-touch-gestures'
 
 interface ImagePreviewProps {
   blob: Blob
   zoom: number
   rotation: number
   onZoomChange: (zoom: number) => void
+  onClose?: () => void
   onPrev?: () => void
   onNext?: () => void
   hasPrev?: boolean
@@ -20,6 +22,7 @@ export function ImagePreview({
   zoom,
   rotation,
   onZoomChange,
+  onClose,
   onPrev,
   onNext,
   hasPrev,
@@ -28,6 +31,21 @@ export function ImagePreview({
   const [url, setUrl] = useState<string | null>(null)
   const [showIndicator, setShowIndicator] = useState(false)
   const indicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  // Double-tap toggles between 100% and 200% zoom
+  function handleDoubleTap() {
+    const next = zoom >= 1.9 ? 1 : 2
+    onZoomChange(next)
+    triggerIndicator()
+  }
+
+  useTouchGestures(containerRef, {
+    onSwipeLeft: onNext && hasNext ? onNext : undefined,
+    onSwipeRight: onPrev && hasPrev ? onPrev : undefined,
+    onSwipeDown: onClose,
+    onDoubleTap: handleDoubleTap,
+  })
 
   useEffect(() => {
     const objectUrl = URL.createObjectURL(blob)
@@ -62,6 +80,7 @@ export function ImagePreview({
 
   return (
     <div
+      ref={containerRef}
       className="relative flex h-full w-full items-center justify-center overflow-hidden"
       onWheel={handleWheel}
     >

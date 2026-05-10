@@ -162,6 +162,7 @@ interface ImageControlProps {
   zoom: number
   rotation: number
   onZoomChange: (zoom: number) => void
+  onClose?: () => void
   onPrev?: () => void
   onNext?: () => void
   hasPrev?: boolean
@@ -206,6 +207,7 @@ function pickRenderer(
         zoom={imageControls?.zoom ?? 1}
         rotation={imageControls?.rotation ?? 0}
         onZoomChange={imageControls?.onZoomChange ?? (() => {})}
+        onClose={imageControls?.onClose}
         onPrev={imageControls?.onPrev}
         onNext={imageControls?.onNext}
         hasPrev={imageControls?.hasPrev}
@@ -400,7 +402,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   }
 
   const imageControls: ImageControlProps | undefined = isImage
-    ? { zoom, rotation, onZoomChange: setZoom, onPrev, onNext, hasPrev, hasNext }
+    ? { zoom, rotation, onZoomChange: setZoom, onClose, onPrev, onNext, hasPrev, hasNext }
     : undefined
 
   const renderer = blob ? pickRenderer(effectiveMime, blob, name, imageControls) : null
