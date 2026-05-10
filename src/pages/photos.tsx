@@ -613,13 +613,22 @@ export function Photos() {
           </span>
         </div>
 
-        {previewFile && (
-          <FilePreview
-            file={previewFile}
-            decryptedName={decryptedNames[previewFile.id]}
-            onClose={closePreview}
-          />
-        )}
+        {previewFile && (() => {
+          const previewIdx = filteredFiles.findIndex((f) => f.id === previewFile.id)
+          const hasPrev = previewIdx > 0
+          const hasNext = previewIdx < filteredFiles.length - 1
+          return (
+            <FilePreview
+              file={previewFile}
+              decryptedName={decryptedNames[previewFile.id]}
+              onClose={closePreview}
+              hasPrev={hasPrev}
+              hasNext={hasNext}
+              onPrev={hasPrev ? () => openPreview(filteredFiles[previewIdx - 1]) : undefined}
+              onNext={hasNext ? () => openPreview(filteredFiles[previewIdx + 1]) : undefined}
+            />
+          )
+        })()}
     </DriveLayout>
   )
 }

@@ -17,6 +17,10 @@ interface PreviewChromeProps {
   onShare?: () => void
   onStar?: () => void
   isStarred?: boolean
+  /** Image-specific controls */
+  onZoomIn?: () => void
+  onZoomOut?: () => void
+  onRotate?: () => void
 }
 
 export function PreviewChrome({
@@ -32,6 +36,9 @@ export function PreviewChrome({
   onShare,
   onStar,
   isStarred = false,
+  onZoomIn,
+  onZoomOut,
+  onRotate,
 }: PreviewChromeProps) {
   const kindIcon = kind.startsWith('image') ? 'file' : 'file' as const
 
@@ -79,6 +86,42 @@ export function PreviewChrome({
         {/* Desktop action buttons — hidden on mobile (shown in bottom bar instead) */}
         <div className="hidden items-center gap-1.5 sm:flex">
           <span className="font-mono text-[11px] text-ink-3 mr-1">{size}</span>
+          {onZoomOut && (
+            <button
+              type="button"
+              onClick={onZoomOut}
+              className="flex h-7 w-7 items-center justify-center rounded-md bg-paper-2 text-ink-2 transition-colors hover:bg-paper-3"
+              aria-label="Zoom out"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/>
+              </svg>
+            </button>
+          )}
+          {onZoomIn && (
+            <button
+              type="button"
+              onClick={onZoomIn}
+              className="flex h-7 w-7 items-center justify-center rounded-md bg-paper-2 text-ink-2 transition-colors hover:bg-paper-3"
+              aria-label="Zoom in"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>
+              </svg>
+            </button>
+          )}
+          {onRotate && (
+            <button
+              type="button"
+              onClick={onRotate}
+              className="flex h-7 w-7 items-center justify-center rounded-md bg-paper-2 text-ink-2 transition-colors hover:bg-paper-3"
+              aria-label="Rotate clockwise"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38"/>
+              </svg>
+            </button>
+          )}
           {onShare && (
             <button
               type="button"

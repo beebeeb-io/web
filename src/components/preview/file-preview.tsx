@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { listVersions, restoreVersion, type DriveFile, type FileVersion } from '../../lib/api'
 import { decryptToBlob, decryptVersionToBlob } from '../../lib/encrypted-download'
 import { PreviewChrome } from './preview-chrome'
@@ -23,6 +23,11 @@ interface FilePreviewProps {
   onClose: () => void
   /** Fires after a successful "Restore this version" so the parent can refresh listings. */
   onVersionRestored?: () => void
+  /** Prev/next navigation callbacks for image galleries */
+  onPrev?: () => void
+  onNext?: () => void
+  hasPrev?: boolean
+  hasNext?: boolean
 }
 
 function formatSize(bytes: number): string {
@@ -153,10 +158,25 @@ const UNSUPPORTED_IMAGE_MIMES = new Set([
 ])
 const UNSUPPORTED_IMAGE_EXTS = new Set(['heic', 'heif'])
 
+interface ImageControlProps {
+  zoom: number
+  rotation: number
+  onZoomChange: (zoom: number) => void
+  onPrev?: () => void
+  onNext?: () => void
+  hasPrev?: boolean
+  hasNext?: boolean
+}
+
+const MIN_ZOOM = 0.5
+const MAX_ZOOM = 4.0
+const ZOOM_STEP = 0.2
+
 function pickRenderer(
   mimeType: string | null | undefined,
   blob: Blob,
   filename: string,
+  imageControls?: ImageControlProps,
 ): React.ReactNode {
   const ext = getExtension(filename)
 
@@ -180,7 +200,18 @@ function pickRenderer(
     if (UNSUPPORTED_IMAGE_MIMES.has(mimeType ?? '') || UNSUPPORTED_IMAGE_EXTS.has(ext)) {
       return null
     }
-    return <ImagePreview blob={blob} />
+    return (
+      <ImagePreview
+        blob={blob}
+        zoom={imageControls?.zoom ?? 1}
+        rotation={imageControls?.rotation ?? 0}
+        onZoomChange={imageControls?.onZoomChange ?? (() => {})}
+        onPrev={imageControls?.onPrev}
+        onNext={imageControls?.onNext}
+        hasPrev={imageControls?.hasPrev}
+        hasNext={imageControls?.hasNext}
+      />
+    )
   }
   if (mimeType === 'application/pdf' || ext === 'pdf') {
     return <PdfPreview blob={blob} />
@@ -206,13 +237,25 @@ function pickRenderer(
   return null
 }
 
-export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, onVersionRestored }: FilePreviewProps) {
+export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, onVersionRestored, onPrev, onNext, hasPrev, hasNext }: FilePreviewProps) {
   const { getFileKey, isUnlocked } = useKeys()
   const [blob, setBlob] = useState<Blob | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [localDecryptedName, setLocalDecryptedName] = useState<string | null>(null)
   /** MIME type extracted from encrypted metadata (null for legacy files) */
   const [localMimeType, setLocalMimeType] = useState<string | null>(null)
+
+  // Image zoom + rotation state — reset on each new file
+  const [zoom, setZoom] = useState(1)
+  const [rotation, setRotation] = useState(0)
+  const prevFileIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (prevFileIdRef.current !== file.id) {
+      setZoom(1)
+      setRotation(0)
+      prevFileIdRef.current = file.id
+    }
+  }, [file.id])
 
   // Version state — only populated for files with > 1 version.
   const [versions, setVersions] = useState<FileVersion[] | null>(null)
@@ -343,7 +386,24 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   const effectiveMime = file.mime_type ?? localMimeType
   const sizeStr = formatSize(file.size_bytes)
   const kindLabel = getKindLabel(effectiveMime, name)
-  const renderer = blob ? pickRenderer(effectiveMime, blob, name) : null
+
+  // Zoom helpers
+  const isImage = effectiveMime?.startsWith('image/') || IMAGE_EXTENSIONS_SET.has(getExtension(name))
+  function handleZoomIn() {
+    setZoom((z) => Math.min(MAX_ZOOM, +(z + ZOOM_STEP).toFixed(2)))
+  }
+  function handleZoomOut() {
+    setZoom((z) => Math.max(MIN_ZOOM, +(z - ZOOM_STEP).toFixed(2)))
+  }
+  function handleRotate() {
+    setRotation((r) => (r + 90) % 360)
+  }
+
+  const imageControls: ImageControlProps | undefined = isImage
+    ? { zoom, rotation, onZoomChange: setZoom, onPrev, onNext, hasPrev, hasNext }
+    : undefined
+
+  const renderer = blob ? pickRenderer(effectiveMime, blob, name, imageControls) : null
   const canPreview = renderer !== null
 
   function handleDownload() {
@@ -358,6 +418,25 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     URL.revokeObjectURL(url)
   }
 
+  // Keyboard navigation for prev/next (arrow keys)
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      // Don't intercept when typing in an input
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      if (e.key === 'ArrowLeft' && onPrev && hasPrev) {
+        e.preventDefault()
+        onPrev()
+      } else if (e.key === 'ArrowRight' && onNext && hasNext) {
+        e.preventDefault()
+        onNext()
+      } else if (e.key === 'Escape') {
+        onClose()
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onPrev, onNext, hasPrev, hasNext, onClose])
+
   return (
     <PreviewChrome
       filename={name}
@@ -367,6 +446,9 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
       decrypted={!!blob}
       onDownload={blob ? handleDownload : undefined}
       isStarred={file.is_starred}
+      onZoomIn={isImage && blob ? handleZoomIn : undefined}
+      onZoomOut={isImage && blob ? handleZoomOut : undefined}
+      onRotate={isImage && blob ? handleRotate : undefined}
       belowTopBar={
         versions && versions.length > 1 ? (
           <VersionScrubber

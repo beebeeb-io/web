@@ -57,6 +57,148 @@ const REGION_META: Record<string, { label: string; flag: string }> = {
 const PINNED_FOLDERS_PREF = 'pinned_folders'
 const LEGACY_PINNED_FOLDERS_PREF = 'pinned_shared_folders'
 
+// ─── Vault switcher ──────────────────────────────────────────────────────────
+
+function VaultSwitcher() {
+  const { user } = useAuth()
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onDown(e: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const email = user?.email ?? ''
+  const username = email.split('@')[0] ?? ''
+  const vaultName = username
+    ? `${username.charAt(0).toUpperCase()}${username.slice(1)}'s vault`
+    : 'My vault'
+
+  return (
+    <div ref={wrapRef} className="relative px-3 pb-2">
+      {open && (
+        <div
+          role="menu"
+          className="absolute top-full left-3 right-3 mt-1 z-50 rounded-md border border-line bg-paper shadow-2 p-1"
+        >
+          {/* Current vault — checked */}
+          <div
+            role="menuitem"
+            className="flex items-center gap-2 px-2 py-[7px] rounded-md text-[13px] text-ink cursor-default"
+          >
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="text-amber-deep shrink-0"
+            >
+              <path d="M20 6L9 17l-5-5" />
+            </svg>
+            <span className="flex-1 font-medium truncate">{vaultName}</span>
+          </div>
+
+          <div className="my-1 mx-1 h-px bg-line" />
+
+          {/* Create team vault — locked/upgrade */}
+          <div
+            role="menuitem"
+            className="flex flex-col gap-1 px-2 py-[7px] rounded-md text-[13px]"
+          >
+            <div className="flex items-center gap-2 text-ink-3">
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="shrink-0"
+              >
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+              <span className="font-medium">Create team vault</span>
+            </div>
+            <p className="text-[11px] text-ink-3 ml-[21px] leading-relaxed">
+              Invite your team. Starts at &euro;8/user/mo.
+            </p>
+            <div className="ml-[21px] mt-0.5">
+              <a
+                href="/settings/billing"
+                onClick={() => setOpen(false)}
+                className="inline-flex items-center px-2 py-1 rounded-md text-[11px] font-medium bg-amber-bg text-amber-deep hover:bg-amber-bg/80 transition-colors"
+              >
+                Upgrade
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-full border text-[13px] font-medium transition-colors cursor-pointer ${
+          open
+            ? 'border-line bg-paper-3 text-ink'
+            : 'border-line bg-paper-2 text-ink-2 hover:bg-paper-3/60 hover:text-ink'
+        }`}
+      >
+        <svg
+          width="13"
+          height="13"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="shrink-0 text-amber-deep"
+        >
+          <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
+          <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
+        </svg>
+        <span className="flex-1 text-left truncate">{vaultName}</span>
+        <svg
+          width="11"
+          height="11"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={`shrink-0 text-ink-3 transition-transform ${open ? 'rotate-180' : ''}`}
+        >
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+      </button>
+    </div>
+  )
+}
+
 function UserCard() {
   const { user, logout } = useAuth()
   const [open, setOpen] = useState(false)
@@ -460,6 +602,8 @@ export function DriveLayout({ children }: { children: ReactNode }) {
             <Icon name="x" size={16} />
           </button>
         </div>
+
+        <VaultSwitcher />
 
         <nav aria-label="Main navigation" className="px-3 py-1.5">
           {navItems.map((item) => {
