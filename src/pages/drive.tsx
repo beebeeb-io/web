@@ -616,12 +616,16 @@ export function Drive() {
 
       const fileKey = await getFileKey(match.fileId)
       try {
+        let resumeStartedAt: number | undefined
         await encryptedUpload(
           file,
           match.fileId,
           fileKey,
           match.parentId ?? undefined,
           (p) => {
+            if (p.stage === 'Uploading' && !resumeStartedAt) {
+              resumeStartedAt = Date.now()
+            }
             setUploads((prev) =>
               prev.map((u) =>
                 u.id === uploadId
@@ -634,6 +638,7 @@ export function Drive() {
                       totalChunks: p.totalChunks,
                       chunkSizeBytes: p.chunkSizeBytes,
                       storageRegion: p.region,
+                      startedAt: resumeStartedAt,
                     }
                   : u,
               ),

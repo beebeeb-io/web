@@ -14,6 +14,38 @@ import { Icon } from '@beebeeb/shared'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+function formatSpeed(bytesPerSecond: number): string {
+  if (bytesPerSecond < 1024) return `${bytesPerSecond.toFixed(0)} B/s`
+  if (bytesPerSecond < 1024 * 1024) return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`
+  return `${(bytesPerSecond / (1024 * 1024)).toFixed(1)} MB/s`
+}
+
+function formatEta(seconds: number): string {
+  if (!isFinite(seconds) || seconds <= 0) return '--'
+  if (seconds < 60) return `${Math.ceil(seconds)}s`
+  if (seconds < 3600) {
+    const m = Math.floor(seconds / 60)
+    const s = Math.ceil(seconds % 60)
+    return s > 0 ? `${m}m ${s}s` : `${m}m`
+  }
+  const h = Math.floor(seconds / 3600)
+  const m = Math.ceil((seconds % 3600) / 60)
+  return m > 0 ? `${h}h ${m}m` : `${h}h`
+}
+
+function computeSpeed(upload: UploadItem): number {
+  if (!upload.startedAt || !upload.bytesUploaded || upload.bytesUploaded === 0) return 0
+  const elapsed = (Date.now() - upload.startedAt) / 1000
+  if (elapsed <= 0) return 0
+  return upload.bytesUploaded / elapsed
+}
+
+function computeEta(upload: UploadItem, speed: number): number {
+  if (speed <= 0) return Infinity
+  const remaining = upload.size - (upload.bytesUploaded ?? 0)
+  return remaining / speed
+}
+
 function formatChunkSize(bytes?: number): string | null {
   if (!bytes || bytes <= 0) return null
   const mib = bytes / (1024 * 1024)
@@ -70,6 +102,8 @@ export function UploadCard({ upload, onCancel, onRetry }: UploadCardProps) {
   const isError = stage === 'Error'
   const chunkSize = formatChunkSize(upload.chunkSizeBytes)
   const region = regionLabel(upload.storageRegion)
+  const speed = computeSpeed(upload)
+  const eta = computeEta(upload, speed)
 
   // Done cards are removed from the list by the parent; nothing to show.
   if (stage === 'Done') return null
@@ -116,6 +150,11 @@ export function UploadCard({ upload, onCancel, onRetry }: UploadCardProps) {
           <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10.5px] text-ink-4 leading-tight">
             {chunkSize && <span>Chunk size: {chunkSize}</span>}
             {region && <span>Stored in {region}</span>}
+            {speed > 0 && (
+              <span className="font-mono tabular-nums">
+                {formatSpeed(speed)} · {formatEta(eta)} remaining
+              </span>
+            )}
           </div>
         )}
 
