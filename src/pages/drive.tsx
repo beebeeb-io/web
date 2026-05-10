@@ -48,6 +48,7 @@ import {
   type DriveFile,
   type MyShare,
   type StorageUsage,
+  type SyncNode,
 } from '../lib/api'
 import type { FileActivityEntry } from '../components/file-details-panel'
 import { timeAgo } from '../components/file-list'
@@ -207,50 +208,70 @@ export function Drive() {
 
   const currentParentId = breadcrumbs[breadcrumbs.length - 1]?.id ?? undefined
 
+  // Stable mapper — deps never change after mount.
+  const syncNodeToDriveFile = useCallback((n: SyncNode): DriveFile => ({
+    id: n.id,
+    name_encrypted: n.name_encrypted,
+    mime_type: n.mime_type ?? '',
+    size_bytes: n.size_bytes,
+    is_folder: n.is_folder,
+    parent_id: n.parent_id,
+    chunk_count: n.chunk_count ?? 1,
+    is_starred: n.is_starred,
+    has_thumbnail: n.has_thumbnail,
+    version_number: n.version_number,
+    created_at: n.created_at,
+    updated_at: n.updated_at,
+  }), [])
+
+  // refreshFromSync — reads sync.children() without an API call.
+  // Used by the treeVersion effect so SSE-pushed updates don't hit the server
+  // on every mutation event.
+  const refreshFromSync = useCallback(() => {
+    if (!isUnlocked || !sync.ready) return
+    const trashed = location.pathname === '/trash'
+    const nodes = sync
+      .children(currentParentId ?? null)
+      .filter((n) => Boolean(n.is_trashed) === trashed)
+      .map(syncNodeToDriveFile)
+    setFiles(nodes)
+    setShowingCached(false)
+    if (!trashed) cacheFileList(currentParentId ?? null, nodes)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentParentId, location.pathname, sync.ready, isUnlocked, syncNodeToDriveFile])
+
+  // fetchFiles — triggered on folder navigation (currentParentId change).
+  // When the sync engine is ready and the view is not trash, show the
+  // sync snapshot immediately (no spinner) then fall through to a background
+  // API call so the list is always fresh after back-navigation. This prevents
+  // stale data when SSE may have missed events for the revisited folder.
   const fetchFiles = useCallback(async () => {
-    // Guard: never fetch (and therefore never trigger decryption) until the vault
-    // is unlocked. The sync engine and API can return data at any time but the
-    // FileList cannot decrypt filenames without the master key.
     if (!isUnlocked) return
-    setLoading(true)
+    const trashed = location.pathname === '/trash'
+
+    if (sync.ready && !trashed) {
+      // Show sync snapshot immediately — drop the spinner right away.
+      const nodes = sync
+        .children(currentParentId ?? null)
+        .filter((n) => !n.is_trashed)
+        .map(syncNodeToDriveFile)
+      setFiles(nodes)
+      setShowingCached(false)
+      setLoading(false)
+      cacheFileList(currentParentId ?? null, nodes)
+      // Fall through to the API refresh — do NOT return here.
+    } else {
+      setLoading(true)
+    }
+
     try {
-      const trashed = location.pathname === '/trash'
-      // Prefer the sync engine's in-memory tree once it has booted.
-      // The legacy /api/v1/files listing remains the fallback for users
-      // on a server that doesn't yet expose /sync/snapshot.
-      if (sync.ready) {
-        const nodes = sync
-          .children(currentParentId ?? null)
-          .filter((n) => Boolean(n.is_trashed) === trashed)
-          .map<DriveFile>((n) => ({
-            id: n.id,
-            name_encrypted: n.name_encrypted,
-            mime_type: n.mime_type ?? '',
-            size_bytes: n.size_bytes,
-            is_folder: n.is_folder,
-            parent_id: n.parent_id,
-            chunk_count: n.chunk_count ?? 1,
-            is_starred: n.is_starred,
-            has_thumbnail: n.has_thumbnail,
-            version_number: n.version_number,
-            created_at: n.created_at,
-            updated_at: n.updated_at,
-          }))
-        setFiles(nodes)
-        setShowingCached(false)
-        // Cache the live result so it can be shown offline later
-        if (!trashed) cacheFileList(currentParentId ?? null, nodes)
-      } else {
-        const data = await listFiles(currentParentId ?? undefined, trashed)
-        setFiles(data)
-        setShowingCached(false)
-        // Cache the live result so it can be shown offline later
-        if (!trashed) cacheFileList(currentParentId ?? null, data)
-      }
+      const data = await listFiles(currentParentId ?? undefined, trashed)
+      setFiles(data)
+      setShowingCached(false)
+      if (!trashed) cacheFileList(currentParentId ?? null, data)
       setSyncedAgo(0)
     } catch (err) {
       console.error('[Drive] Failed to load files:', err)
-      // When offline, try to show cached data instead of a blank state
       const isOffline = !navigator.onLine
       const cached = getCachedFileList(currentParentId ?? null)
       if (isOffline && cached) {
@@ -265,7 +286,7 @@ export function Drive() {
       setLoading(false)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentParentId, location.pathname, sync.ready, isUnlocked])
+  }, [currentParentId, location.pathname, sync.ready, isUnlocked, syncNodeToDriveFile])
 
   useEffect(() => {
     fetchFiles()
@@ -382,12 +403,14 @@ export function Drive() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [files, loading, currentParentId, externalDecryptedNames])
 
-  // Re-derive when the sync engine pushes ops affecting the visible folder.
+  // Re-derive when the sync engine pushes an op affecting the visible folder.
+  // Uses refreshFromSync (sync tree only, no API call) — fetchFiles is reserved
+  // for navigation changes so SSE events don't hammer the server.
   useEffect(() => {
     if (!sync.ready) return
-    fetchFiles()
-    // Run on every tree mutation surfaced by the sync context.
-  }, [sync.treeVersion, sync.ready, fetchFiles])
+    refreshFromSync()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sync.treeVersion, sync.ready, refreshFromSync])
 
   // Deep-link into a folder when navigating from search results
   useEffect(() => {
