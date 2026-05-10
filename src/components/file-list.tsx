@@ -761,14 +761,24 @@ export function FileList({
               isStarred: file.is_starred ?? false,
             })
           }
-          // Arrow keys: move focus to adjacent rows
+          // Delete / Backspace: trash the focused file (single-file keyboard delete).
+          // stopPropagation prevents the global useKeyboardShortcuts handler from
+          // also firing onTrashSelected for the bulk-selection set.
+          else if (e.key === 'Delete' || e.key === 'Backspace') {
+            e.preventDefault()
+            e.stopPropagation()
+            onFileAction?.('trash', file)
+          }
+          // Arrow keys: move focus to adjacent rows + scroll into view
           else if (e.key === 'ArrowDown') {
             e.preventDefault()
-            ;(e.currentTarget.nextElementSibling as HTMLElement | null)?.focus()
+            const next = e.currentTarget.nextElementSibling as HTMLElement | null
+            if (next) { next.focus(); next.scrollIntoView({ block: 'nearest' }) }
           }
           else if (e.key === 'ArrowUp') {
             e.preventDefault()
-            ;(e.currentTarget.previousElementSibling as HTMLElement | null)?.focus()
+            const prev = e.currentTarget.previousElementSibling as HTMLElement | null
+            if (prev) { prev.focus(); prev.scrollIntoView({ block: 'nearest' }) }
           }
         }}
       >
