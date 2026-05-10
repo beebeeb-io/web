@@ -307,6 +307,23 @@ export function Trash() {
     setLoading(false)
   }
 
+  const handleRestoreSelected = async () => {
+    const ids = Array.from(selected)
+    if (ids.length === 0) return
+    setLoading(true)
+    try {
+      await Promise.all(ids.map((id) => restoreFile(id)))
+      setFiles((prev) => prev.filter((f) => !selected.has(f.id)))
+      setSelected(new Set())
+      showToast({ icon: 'check', title: `${ids.length} file${ids.length !== 1 ? 's' : ''} restored`, description: 'Moved back to your vault' })
+    } catch (err) {
+      showToast({ icon: 'x', title: 'Restore failed', description: err instanceof Error ? err.message : 'Some files could not be restored', danger: true })
+      fetchTrash()
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleRestoreAll = async () => {
     setLoading(true)
     try {
@@ -477,6 +494,13 @@ export function Trash() {
           {selected.size > 0 && !deleteProgress && (
             <span className="ml-auto flex items-center gap-2">
               <span className="font-mono">{selected.size} selected</span>
+              <BBButton
+                size="sm"
+                onClick={handleRestoreSelected}
+                disabled={loading}
+              >
+                Restore selected
+              </BBButton>
               <BBButton
                 size="sm"
                 variant="danger"
