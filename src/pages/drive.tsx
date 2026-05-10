@@ -904,6 +904,8 @@ export function Drive() {
       setPausedUploads((prev) => prev.filter((u) => u.fileId !== fileId))
       setLastUploadedFileId(uploadedFileId)
       showToast({ icon: 'check', title: 'Uploaded', description: file.name })
+      // Notify sidebar badge that a file was uploaded
+      window.dispatchEvent(new CustomEvent('beebeeb:file-uploaded'))
       // Record hash for duplicate detection in this session (fire-and-forget)
       hashFile(file).then((hash) => recordUpload(hash, file.name)).catch(() => {})
       // Refresh storage usage so quota warning updates
@@ -1142,6 +1144,8 @@ export function Drive() {
         title: 'Folder uploaded',
         description: `${rootFolderName}/ -- ${totalFiles} file${totalFiles !== 1 ? 's' : ''}`,
       })
+      // Notify sidebar badge that files were uploaded
+      window.dispatchEvent(new CustomEvent('beebeeb:file-uploaded', { detail: { count: totalFiles } }))
       refreshUsage()
       fetchFiles()
     } catch (err) {

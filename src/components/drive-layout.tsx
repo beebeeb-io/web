@@ -466,6 +466,55 @@ function StarredQuickAccess() {
   )
 }
 
+// ─── Recent-upload badge ─────────────────────────────────────────────────────
+// Each entry records when a batch completed; entries older than 10 min are
+// pruned on every new upload event and when the user visits /recent.
+const RECENT_BADGE_TTL_MS = 10 * 60 * 1000
+
+interface RecentUploadEntry {
+  count: number
+  at: number
+}
+
+function useRecentUploadBadge(pathname: string) {
+  const [entries, setEntries] = useState<RecentUploadEntry[]>([])
+
+  // Prune entries older than 10 minutes
+  function pruned(list: RecentUploadEntry[]): RecentUploadEntry[] {
+    const cutoff = Date.now() - RECENT_BADGE_TTL_MS
+    return list.filter((e) => e.at > cutoff)
+  }
+
+  // Listen for upload completion events
+  useEffect(() => {
+    function onFileUploaded(e: Event) {
+      const count = (e as CustomEvent<{ count?: number }>).detail?.count ?? 1
+      setEntries((prev) => pruned([...prev, { count, at: Date.now() }]))
+    }
+    window.addEventListener('beebeeb:file-uploaded', onFileUploaded)
+    return () => window.removeEventListener('beebeeb:file-uploaded', onFileUploaded)
+  }, [])
+
+  // Clear badge when user visits /recent
+  useEffect(() => {
+    if (pathname === '/recent') {
+      setEntries([])
+    }
+  }, [pathname])
+
+  // Also prune stale entries on a 60s interval so the badge disappears
+  // automatically after 10 minutes even if the user stays on the same page.
+  useEffect(() => {
+    const id = setInterval(() => {
+      setEntries((prev) => pruned(prev))
+    }, 60_000)
+    return () => clearInterval(id)
+  }, [])
+
+  const badgeCount = pruned(entries).reduce((sum, e) => sum + e.count, 0)
+  return badgeCount
+}
+
 export function DriveLayout({ children }: { children: ReactNode }) {
   const location = useLocation()
   const { isUnlocked, getMasterKey } = useKeys()
@@ -481,6 +530,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   const sidebarTrapRef = useFocusTrap<HTMLElement>(sidebarOpen)
   const [quickAccessDragOver, setQuickAccessDragOver] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
+  const recentUploadCount = useRecentUploadBadge(location.pathname)
 
   useEffect(() => {
     getAdminStats().then(() => setIsAdmin(true)).catch(() => setIsAdmin(false))
@@ -670,6 +720,11 @@ export function DriveLayout({ children }: { children: ReactNode }) {
               >
                 <Icon name={item.icon} size={13} className="shrink-0" />
                 <span className="flex-1">{item.label}</span>
+                {item.label === 'Recent' && recentUploadCount > 0 && (
+                  <span className="ml-auto flex h-4 min-w-4 items-center justify-center rounded-full bg-amber px-1 text-[10px] font-semibold text-paper">
+                    {recentUploadCount > 99 ? '99+' : recentUploadCount}
+                  </span>
+                )}
               </Link>
             )
           })}
