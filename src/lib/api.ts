@@ -1133,6 +1133,24 @@ export async function getStorageUsage(): Promise<StorageUsage> {
   return request<StorageUsage>('/api/v1/files/usage')
 }
 
+/**
+ * GET /api/v1/files/all-images
+ *
+ * Returns every non-trashed file the server knows is an image (mime_type LIKE
+ * 'image/%'), across all folders, in a single request. Replaces the recursive
+ * walk() pattern in the Photos page (N+1 requests) with a single round-trip.
+ *
+ * Note: ZK-uploaded files have null mime_type on the server, so they are NOT
+ * returned here. The Photos page falls back to the recursive walk for those
+ * files after decrypting their metadata from name_encrypted. The endpoint is
+ * best-effort: it catches the common case (legacy uploads and Camera Roll
+ * backups) while new ZK uploads still appear after decryption.
+ */
+export async function getAllImages(): Promise<DriveFile[]> {
+  const data = await request<{ files: DriveFile[] }>('/api/v1/files/all-images')
+  return data.files
+}
+
 export async function fetchUsage(): Promise<BillingUsage | null> {
   try {
     return await request<BillingUsage>('/api/v1/billing/usage')

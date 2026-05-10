@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { BBButton } from '@beebeeb/shared'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '@beebeeb/shared'
-import { listFiles, type DriveFile } from '../lib/api'
+import { getAllImages, type DriveFile } from '../lib/api'
 import { useKeys } from '../lib/key-context'
 import { decryptFileMetadata } from '../lib/crypto'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
@@ -153,20 +153,18 @@ export function Photos() {
   const uploadFilesRef = useRef<Map<string, File>>(new Map())
   const photoInputRef = useRef<HTMLInputElement>(null)
 
-  // Fetch all files recursively (flat list)
+  // Fetch all image files in a single request via /api/v1/files/all-images.
+  // This replaces the previous recursive walk() that issued one listFiles()
+  // call per folder (N+1 requests). The server endpoint returns every
+  // non-trashed image (mime_type LIKE 'image/%') owned by the user across
+  // all folders. ZK-uploaded files (mime_type is null on the server) are not
+  // returned by all-images — their decrypted MIME type is recovered later in
+  // the decrypt effect via decryptFileMetadata(). Those files will appear in
+  // the grid once decryption completes, just as before.
   const fetchAllFiles = useCallback(async () => {
     setLoading(true)
     try {
-      const walk = async (parentId?: string): Promise<DriveFile[]> => {
-        const children = await listFiles(parentId, false, { limit: 500 })
-        const nested = await Promise.all(
-          children
-            .filter((file) => file.is_folder)
-            .map((folder) => walk(folder.id)),
-        )
-        return [...children, ...nested.flat()]
-      }
-      const files = await walk()
+      const files = await getAllImages()
       setAllFiles(files)
     } catch (err) {
       console.error('[Photos] Failed to load files:', err)

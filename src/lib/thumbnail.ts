@@ -1,6 +1,14 @@
 import { getToken, getApiUrl, uploadThumbnail } from './api'
 
 const THUMB_SIZE = 256
+
+// ─── Module-level thumbnail cache ───────────────────
+// Shared across all components (Photos page, file-list, etc.) so a thumbnail
+// fetched in one view is not re-fetched when the same file appears in another.
+// Values are object URLs created via URL.createObjectURL — they stay valid for
+// the lifetime of the document and are never revoked (thumbnails are small JPEG
+// blobs; the total memory footprint is bounded by the number of distinct files).
+const thumbnailCache = new Map<string, string>() // fileId → object URL
 const THUMB_QUALITY = 0.7
 
 const IMAGE_TYPES = new Set([
@@ -70,6 +78,7 @@ export async function fetchAndDecryptThumbnail(
   fileId: string,
   fileKey: Uint8Array,
 ): Promise<string | null> {
+  if (thumbnailCache.has(fileId)) return thumbnailCache.get(fileId)!
   try {
     const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/thumbnail`, {
       headers: { Authorization: `Bearer ${getToken()}` },
@@ -97,7 +106,9 @@ export async function fetchAndDecryptThumbnail(
     )
 
     const blob = new Blob([plainBytes], { type: 'image/jpeg' })
-    return URL.createObjectURL(blob)
+    const url = URL.createObjectURL(blob)
+    thumbnailCache.set(fileId, url)
+    return url
   } catch {
     return null
   }
