@@ -21,6 +21,14 @@ interface PresenceAvatarsProps {
   maxVisible?: number
 }
 
+// Props for the compact folder-row badge
+interface FolderViewerBadgeProps {
+  /** Number of collaborators who have access (excluding owner). */
+  count: number
+  /** Representative emails to colour-code the mini-avatars. */
+  emails?: string[]
+}
+
 // ─── Colour palette for avatars ───────────────────────────────────────────────
 // Six amber/neutral tones that stay on-brand. Colour is derived from the
 // email string so it's stable across renders.
@@ -161,6 +169,48 @@ export function PresenceAvatars({
         shared
       </span>
     </div>
+  )
+}
+
+// ─── FolderViewerBadge ───────────────────────────────────────────────────────
+// Compact badge used inside file-list rows for shared folders.
+// Shows up to 3 stacked avatar dots + a count when > 3.
+
+export function FolderViewerBadge({ count, emails = [] }: FolderViewerBadgeProps) {
+  if (count <= 0) return null
+
+  const MAX_DOTS = 3
+  const visibleEmails = emails.slice(0, MAX_DOTS)
+  const overflow = count - MAX_DOTS
+
+  return (
+    <span
+      className="inline-flex items-center gap-0.5 ml-1"
+      title={`${count} collaborator${count !== 1 ? 's' : ''} have access`}
+      aria-label={`${count} collaborator${count !== 1 ? 's' : ''}`}
+    >
+      {/* Stacked mini-circles */}
+      <span className="flex -space-x-0.5">
+        {visibleEmails.map((email, i) => {
+          const [bg, fg] = colourFor(email)
+          return (
+            <span
+              key={i}
+              className="w-[12px] h-[12px] rounded-full ring-1 ring-paper inline-block shrink-0"
+              style={{ background: bg, color: fg }}
+            />
+          )
+        })}
+        {/* Fallback dot when no emails are provided */}
+        {visibleEmails.length === 0 && (
+          <span className="w-[12px] h-[12px] rounded-full ring-1 ring-paper bg-paper-3 inline-block shrink-0" />
+        )}
+      </span>
+      {/* Count label */}
+      <span className="font-mono text-[9px] text-ink-3 tabular-nums leading-none">
+        {count > MAX_DOTS && overflow > 0 ? `+${overflow}` : ''}
+      </span>
+    </span>
   )
 }
 

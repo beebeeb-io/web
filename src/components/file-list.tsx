@@ -14,6 +14,7 @@ import { modKey } from '../hooks/use-keyboard-shortcuts'
 import { formatBytes } from '../lib/format'
 import { getPreference, setPreference } from '../lib/api'
 import { SharePopover } from './share-popover'
+import { FolderViewerBadge } from './presence-avatars'
 import { useToast } from './toast'
 import type { DriveFile, MyShare } from '../lib/api'
 
@@ -129,6 +130,13 @@ export interface FileListProps {
    *  least one non-revoked share when `share_count` may not be populated yet
    *  (e.g. immediately after a share is created). */
   myShares?: MyShare[]
+
+  /**
+   * Viewer count per folder ID. When a folder has > 0 members, a compact
+   * presence badge is shown in its name cell.
+   * Shape: { [folderId]: { count: number; emails: string[] } }
+   */
+  folderViewerCounts?: Record<string, { count: number; emails: string[] }>
 }
 
 // ─── Component ───────────────────────────────────────
@@ -162,6 +170,7 @@ export function FileList({
   encryptionCity = 'Falkenstein',
   uploadCards,
   myShares,
+  folderViewerCounts,
 }: FileListProps) {
   const { getFileKey, isUnlocked } = useKeys()
   const { showToast } = useToast()
@@ -839,6 +848,14 @@ export function FileList({
             >
               <Icon name="star" size={11} />
             </button>
+
+            {/* Folder viewer badge — compact presence dots for shared folders */}
+            {file.is_folder && folderViewerCounts?.[file.id] && (folderViewerCounts[file.id].count > 0) && (
+              <FolderViewerBadge
+                count={folderViewerCounts[file.id].count}
+                emails={folderViewerCounts[file.id].emails}
+              />
+            )}
 
             {/* Share badge — shown when file has active share links.
                 Falls back to `myShares` when share_count is stale (e.g.

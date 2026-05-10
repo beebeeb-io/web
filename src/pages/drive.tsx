@@ -43,6 +43,7 @@ import {
   getStorageUsage,
   listVersions,
   getSharesForFile,
+  getFolderMembers,
   type DriveFile,
   type MyShare,
   type StorageUsage,
@@ -134,6 +135,12 @@ export function Drive() {
   const [recentlyUploaded, setRecentlyUploaded] = useState<Set<string>>(new Set())
   const [trashingIds, setTrashingIds] = useState<Set<string>>(new Set())
   const [starPulseId, setStarPulseId] = useState<string | null>(null)
+
+  // ─── Folder viewer counts (presence) ─────────────────
+  // Maps folderId → { count, emails } for shared folders visible in the current view.
+  const [folderViewerCounts, setFolderViewerCounts] = useState<
+    Record<string, { count: number; emails: string[] }>
+  >({})
 
   // ─── External selection + decrypted names (for keyboard shortcuts + dialogs) ─
   const [externalSelectedIds, setExternalSelectedIds] = useState<Set<string>>(new Set())
@@ -278,6 +285,60 @@ export function Drive() {
   useEffect(() => {
     fetchMyShares()
   }, [fetchMyShares])
+
+  // ─── Folder viewer counts (collaborative presence) ────
+  // For each shared folder visible in the current view, fetch how many
+  // collaborators have access. We batch-resolve after `files` settles.
+  // Throttled to avoid hammering the API on large directories.
+  useEffect(() => {
+    if (!isUnlocked || files.length === 0) {
+      setFolderViewerCounts({})
+      return
+    }
+    let cancelled = false
+
+    // Only look at folders that the current user has shared (myShares gives us
+    // the subset without needing to probe every folder row).
+    const sharedFolderIds = files
+      .filter((f) => f.is_folder)
+      .map((f) => f.id)
+      .filter((id) => myShares.some((s) => s.file_id === id))
+
+    if (sharedFolderIds.length === 0) {
+      setFolderViewerCounts({})
+      return
+    }
+
+    async function resolveViewerCounts() {
+      const counts: Record<string, { count: number; emails: string[] }> = {}
+      const currentUserId = user?.user_id ?? null
+
+      for (const folderId of sharedFolderIds) {
+        if (cancelled) return
+        try {
+          const { members } = await getFolderMembers(folderId)
+          // Exclude current user from the count
+          const others = members.filter((m) => m.user_id !== currentUserId)
+          if (others.length > 0) {
+            counts[folderId] = {
+              count: others.length,
+              emails: others.map((m) => m.email),
+            }
+          }
+        } catch {
+          // Non-fatal — skip this folder
+        }
+      }
+      if (!cancelled) {
+        setFolderViewerCounts(counts)
+      }
+    }
+
+    void resolveViewerCounts()
+    return () => { cancelled = true }
+  // Depend on files + myShares; re-run when files list or share list changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [files, myShares, isUnlocked])
 
   // ─── Smart folder suggestion analysis ─────────────────
   // Only active at root (no parent). Detect 5+ images or 5+ PDFs without
@@ -2035,6 +2096,7 @@ export function Drive() {
             recentlyUploadedIds={recentlyUploaded}
             onShowTrustDetails={(file) => setTrustFileId(file.id)}
             myShares={myShares}
+            folderViewerCounts={folderViewerCounts}
             uploadCards={
               <UploadCards
                 uploads={uploads}
