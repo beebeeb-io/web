@@ -18,6 +18,10 @@
  *
  * v1: bytes are saved as-is (encrypted with the transfer_key). When WASM
  * exposes HKDF + AES-GCM here we'll decrypt before saving.
+ *
+ * Save to vault: if the receiver is logged in with an unlocked vault,
+ * a "Save to my Beebeeb" button is shown. On click the blob is re-encrypted
+ * with the user's master key and uploaded via the standard chunked upload path.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -32,6 +36,9 @@ import {
   joinTransferByCode,
 } from '../lib/api'
 import { deriveSasWords } from '../lib/sas-words'
+import { useAuth } from '../lib/auth-context'
+import { useKeys } from '../lib/key-context'
+import { encryptedUpload } from '../lib/encrypted-upload'
 
 type Phase =
   | 'idle'        // code input shown
@@ -63,9 +70,14 @@ function friendlyError(err: unknown): string {
   return 'Something went wrong. Please try again.'
 }
 
+type VaultSavePhase = 'idle' | 'saving' | 'saved' | 'error'
+
 export function Receive() {
   const [searchParams] = useSearchParams()
   const initialCode = (searchParams.get('code') ?? '').replace(/\D/g, '').slice(0, 6)
+
+  const { user } = useAuth()
+  const { isUnlocked, getFileKey } = useKeys()
 
   const [phase, setPhase] = useState<Phase>('idle')
   const [errorText, setErrorText] = useState<string | null>(null)
@@ -78,6 +90,9 @@ export function Receive() {
 
   const [savedBlob, setSavedBlob] = useState<Blob | null>(null)
   const [savedFilename, setSavedFilename] = useState<string>('beebeeb-transfer')
+
+  const [vaultSavePhase, setVaultSavePhase] = useState<VaultSavePhase>('idle')
+  const [vaultSaveError, setVaultSaveError] = useState<string | null>(null)
 
   // Mirrors sessionId for the polling timer; lets the closure observe the
   // current session without rebinding every state change.
@@ -183,6 +198,29 @@ export function Receive() {
     URL.revokeObjectURL(url)
   }, [savedBlob, savedFilename])
 
+  const handleSaveToVault = useCallback(async () => {
+    if (!savedBlob || !user || !isUnlocked) return
+    setVaultSavePhase('saving')
+    setVaultSaveError(null)
+    try {
+      const fileId = crypto.randomUUID()
+      const fileKey = await getFileKey(fileId)
+      // Use savedFilename but strip the .enc suffix added by the v1 transfer
+      // path — the user's vault should show a friendlier name.
+      const cleanName = savedFilename.replace(/\.enc$/, '')
+      const file = new File([savedBlob], cleanName, {
+        type: savedBlob.type || 'application/octet-stream',
+      })
+      await encryptedUpload(file, fileId, fileKey, undefined, undefined, undefined, undefined, undefined, getFileKey)
+      setVaultSavePhase('saved')
+    } catch (err) {
+      setVaultSaveError(
+        err instanceof Error ? err.message : 'Upload failed. Please try again.',
+      )
+      setVaultSavePhase('error')
+    }
+  }, [savedBlob, savedFilename, user, isUnlocked, getFileKey])
+
   const sasWords = useMemo(() => {
     if (!sessionId || !senderPk || !receiverPk) return null
     return deriveSasWords(sessionId, senderPk, receiverPk)
@@ -226,6 +264,10 @@ export function Receive() {
               filename={savedFilename}
               size={savedBlob?.size ?? 0}
               onSave={handleSave}
+              isLoggedIn={!!user && isUnlocked}
+              vaultSavePhase={vaultSavePhase}
+              vaultSaveError={vaultSaveError}
+              onSaveToVault={() => { void handleSaveToVault() }}
             />
           )}
 
@@ -361,11 +403,22 @@ function Received({
   filename,
   size,
   onSave,
+  isLoggedIn,
+  vaultSavePhase,
+  vaultSaveError,
+  onSaveToVault,
 }: {
   filename: string
   size: number
   onSave: () => void
+  isLoggedIn: boolean
+  vaultSavePhase: VaultSavePhase
+  vaultSaveError: string | null
+  onSaveToVault: () => void
 }) {
+  // Strip the .enc suffix for display — it's a v1 transfer artifact.
+  const displayName = filename.replace(/\.enc$/, '')
+
   return (
     <div className="flex flex-col items-center text-center">
       <div className="w-14 h-14 rounded-2xl bg-amber/15 border border-amber/30 flex items-center justify-center mb-5">
@@ -381,20 +434,76 @@ function Received({
           <Icon name="file" size={18} className="text-white/60" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-white truncate">{filename}</div>
+          <div className="text-sm font-medium text-white truncate">{displayName}</div>
           <div className="text-xs text-white/50 mt-0.5">{formatBytes(size)}</div>
         </div>
       </div>
 
+      {/* Primary action: save to device */}
       <BBButton
         variant="amber"
         size="lg"
-        className="w-full justify-center gap-2"
+        className="w-full justify-center gap-2 mb-3"
         onClick={onSave}
       >
         <Icon name="download" size={14} />
         Save to device
       </BBButton>
+
+      {/* Save to vault — shown only when logged in with unlocked vault */}
+      {isLoggedIn && vaultSavePhase !== 'saved' && (
+        <BBButton
+          variant="default"
+          size="lg"
+          className="w-full justify-center gap-2 bg-amber/10 text-amber border-amber/25 hover:bg-amber/20"
+          onClick={onSaveToVault}
+          disabled={vaultSavePhase === 'saving'}
+        >
+          {vaultSavePhase === 'saving' ? (
+            <>
+              <Spinner />
+              Saving to vault…
+            </>
+          ) : (
+            <>
+              <Icon name="cloud" size={14} />
+              Save to my Beebeeb
+            </>
+          )}
+        </BBButton>
+      )}
+
+      {/* Vault save success */}
+      {isLoggedIn && vaultSavePhase === 'saved' && (
+        <div className="w-full flex flex-col items-center gap-2 mt-1">
+          <div className="flex items-center gap-2 text-sm text-amber">
+            <Icon name="check" size={14} />
+            <span>Saved to your vault</span>
+          </div>
+          <a
+            href="/drive"
+            className="text-xs text-white/50 hover:text-white/80 transition-colors underline underline-offset-2"
+          >
+            Open Drive
+          </a>
+        </div>
+      )}
+
+      {/* Vault save error */}
+      {vaultSavePhase === 'error' && vaultSaveError && (
+        <p className="mt-2 text-xs text-red-400 text-center">{vaultSaveError}</p>
+      )}
+
+      {/* Not logged in — prompt to sign up */}
+      {!isLoggedIn && (
+        <a
+          href="/signup?intent=save-constellation-file"
+          className="mt-2 w-full inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 px-4 py-2.5 text-sm text-white/70 hover:text-white hover:border-white/20 transition-colors"
+        >
+          <Icon name="cloud" size={14} />
+          Create free account to save this file
+        </a>
+      )}
     </div>
   )
 }
