@@ -70,6 +70,7 @@ import { useSearchIndex } from '../hooks/use-search-index'
 import { EmptyDrive } from '../components/empty-states/empty-drive'
 import { formatBytes } from '../lib/format'
 import { cacheFileList, getCachedFileList } from '../lib/offline-cache'
+import { hashFile, checkDuplicate, recordUpload } from '../lib/upload-dedup'
 
 // ─── Drive component ────────────────────────────────
 // Folders are always grouped before files; the chosen key only orders
@@ -145,6 +146,20 @@ export function Drive() {
     allFiles: File[]
   }
   const [pendingConflict, setPendingConflict] = useState<PendingConflictUpload | null>(null)
+
+  // ─── Dedup banner state ──────────────────────────────
+  // Shows when a file whose hash was already uploaded this session is selected.
+  interface DedupWarning {
+    /** The file that looks like a duplicate */
+    file: File
+    /** Hash used to look it up */
+    hash: string
+    /** Name of the previously uploaded file */
+    existingName: string
+    /** Remaining files that are not duplicates — queued if the user skips */
+    otherFiles: File[]
+  }
+  const [dedupWarning, setDedupWarning] = useState<DedupWarning | null>(null)
 
   // ─── Storage quota state ─────────────────────────
   const [storageUsage, setStorageUsage] = useState<StorageUsage | null>(null)
@@ -569,7 +584,7 @@ export function Drive() {
     })
   }
 
-  function handleFilesSelected(selectedFiles: File[]) {
+  async function handleFilesSelected(selectedFiles: File[]) {
     // ─── Quota check ──────────────────────────────
     const remaining = getRemainingBytes(storageUsage?.used_bytes, storageUsage?.plan_limit_bytes)
     if (remaining !== null) {
@@ -586,6 +601,33 @@ export function Drive() {
       }
     }
 
+    // ─── Smart duplicate detection (session-based, pre-encryption) ────────
+    // Hash each file with SHA-256 and check against files already uploaded
+    // this session. We check one duplicate at a time — if the user hits
+    // "Skip", we continue checking the rest. "Upload anyway" proceeds for
+    // that file and records the hash.
+    const toCheck = [...selectedFiles]
+    const cleared: File[] = []
+    for (const f of toCheck) {
+      let hash: string
+      try {
+        hash = await hashFile(f)
+      } catch {
+        // Hash failed (memory, permissions) — pass through without a check
+        cleared.push(f)
+        continue
+      }
+      const existing = checkDuplicate(hash)
+      if (existing) {
+        // Show the dedup banner for this file, passing the remaining files
+        // so the "Skip" path can still process them.
+        const otherFiles = toCheck.filter((x) => x !== f).concat(cleared)
+        setDedupWarning({ file: f, hash, existingName: existing.name, otherFiles })
+        return
+      }
+      cleared.push(f)
+    }
+
     // ─── Conflict detection ───────────────────────
     // Only check when the vault is unlocked and we have decrypted names.
     if (isUnlocked && Object.keys(externalDecryptedNames).length > 0) {
@@ -593,7 +635,7 @@ export function Drive() {
       const conflicts: ConflictItem[] = []
       const nonConflicting: File[] = []
 
-      for (const f of selectedFiles) {
+      for (const f of cleared) {
         const existing = nameToFile.get(f.name.toLowerCase())
         if (existing) {
           const existingName = externalDecryptedNames[existing.id] ?? f.name
@@ -609,13 +651,13 @@ export function Drive() {
 
       if (conflicts.length > 0) {
         // Pause and show the conflict dialog; uploads are queued on resolution.
-        setPendingConflict({ conflicts, nonConflicting, allFiles: selectedFiles })
+        setPendingConflict({ conflicts, nonConflicting, allFiles: cleared })
         return
       }
     }
 
     // ─── No conflicts — queue immediately ─────────
-    queueResolvedUploads(selectedFiles.map((f) => ({ file: f })))
+    queueResolvedUploads(cleared.map((f) => ({ file: f })))
   }
 
   // ─── Conflict dialog resolution ──────────────────
@@ -737,6 +779,8 @@ export function Drive() {
       setPausedUploads((prev) => prev.filter((u) => u.fileId !== fileId))
       setLastUploadedFileId(uploadedFileId)
       showToast({ icon: 'check', title: 'Uploaded', description: file.name })
+      // Record hash for duplicate detection in this session (fire-and-forget)
+      hashFile(file).then((hash) => recordUpload(hash, file.name)).catch(() => {})
       // Refresh storage usage so quota warning updates
       refreshUsage()
       // Advance onboarding state (first_upload_done might now be true)
@@ -1659,6 +1703,53 @@ export function Drive() {
           <div className="px-5 py-2 border-b border-amber/30 bg-amber-bg flex items-center gap-2 text-[12px] text-amber-deep">
             <Icon name="cloud" size={13} className="shrink-0" />
             Offline — showing cached files from your last visit
+          </div>
+        )}
+
+        {/* Duplicate file warning banner */}
+        {dedupWarning && (
+          <div className="px-5 py-2.5 border-b border-amber/40 bg-amber-bg/50 flex items-start gap-3 text-sm">
+            <Icon name="shield" size={14} className="text-amber-deep shrink-0 mt-0.5" />
+            <span className="flex-1 text-ink">
+              <span className="font-medium">
+                &apos;{dedupWarning.file.name}&apos;
+              </span>{' '}
+              looks like a file you already uploaded
+              {dedupWarning.existingName !== dedupWarning.file.name && (
+                <> (as &apos;{dedupWarning.existingName}&apos;)</>
+              )}
+              . Upload anyway?
+            </span>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <BBButton
+                size="sm"
+                variant="amber"
+                onClick={() => {
+                  const { file, hash, otherFiles } = dedupWarning
+                  setDedupWarning(null)
+                  // Mark as already-acknowledged so it won't re-trigger
+                  recordUpload(hash, file.name)
+                  // Queue this file directly (skip dedup for it — already confirmed)
+                  queueResolvedUploads([{ file }])
+                  // Check remaining files through the normal pipeline
+                  if (otherFiles.length > 0) void handleFilesSelected(otherFiles)
+                }}
+              >
+                Upload
+              </BBButton>
+              <BBButton
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  const { otherFiles } = dedupWarning
+                  setDedupWarning(null)
+                  // Skip this file and continue with remaining
+                  if (otherFiles.length > 0) void handleFilesSelected(otherFiles)
+                }}
+              >
+                Skip
+              </BBButton>
+            </div>
           </div>
         )}
 

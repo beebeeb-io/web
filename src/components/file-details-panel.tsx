@@ -1,8 +1,109 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { Icon } from '@beebeeb/shared'
 import type { IconName } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
 import { formatBytes } from '../lib/format'
+
+// ─── Local file notes (client-only, per-device) ──────────────────────────────
+
+function noteKey(fileId: string): string {
+  return `beebeeb.note.${fileId}`
+}
+
+function loadNote(fileId: string): string {
+  try {
+    return localStorage.getItem(noteKey(fileId)) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+function saveNote(fileId: string, text: string): void {
+  try {
+    if (text) {
+      localStorage.setItem(noteKey(fileId), text)
+    } else {
+      localStorage.removeItem(noteKey(fileId))
+    }
+  } catch {
+    // localStorage unavailable — silently ignore
+  }
+}
+
+// ─── Notes section component ────────────────────────────────────────────────
+
+function FileNotesSection({ fileId }: { fileId: string }) {
+  const [open, setOpen] = useState(true)
+  const [text, setText] = useState(() => loadNote(fileId))
+  const [saved, setSaved] = useState(false)
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Reload note when the selected file changes
+  useEffect(() => {
+    setText(loadNote(fileId))
+    setSaved(false)
+  }, [fileId])
+
+  const handleBlur = useCallback(() => {
+    saveNote(fileId, text)
+    setSaved(true)
+    if (savedTimerRef.current) clearTimeout(savedTimerRef.current)
+    savedTimerRef.current = setTimeout(() => setSaved(false), 1000)
+  }, [fileId, text])
+
+  useEffect(() => {
+    return () => {
+      if (savedTimerRef.current) clearTimeout(savedTimerRef.current)
+    }
+  }, [])
+
+  return (
+    <div className="border-b border-line">
+      {/* Section header — collapsible */}
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full px-xl pt-lg pb-2.5 flex items-center gap-1.5 text-left"
+      >
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 flex-1">
+          Notes
+        </span>
+        <span
+          className="text-ink-4 transition-transform duration-150"
+          style={{ transform: open ? 'rotate(0deg)' : 'rotate(-90deg)' }}
+        >
+          <Icon name="chevron-down" size={10} />
+        </span>
+      </button>
+
+      {open && (
+        <div className="px-xl pb-lg">
+          <div className="relative">
+            <textarea
+              rows={3}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onBlur={handleBlur}
+              placeholder="Add a note visible only on this device..."
+              className="w-full resize-none rounded-md border border-line bg-paper-2 px-2.5 py-2 text-[11.5px] text-ink placeholder:text-ink-4 outline-none focus:border-amber focus:ring-2 focus:ring-amber/20 transition-colors"
+              style={{ fontFamily: 'inherit', lineHeight: 1.5 }}
+            />
+            {/* Saved confirmation */}
+            <span
+              className="absolute bottom-2 right-2 text-[10px] text-ink-4 font-mono transition-opacity duration-300"
+              style={{ opacity: saved ? 1 : 0 }}
+            >
+              Saved
+            </span>
+          </div>
+          <div className="mt-1.5 text-[10px] text-ink-4 flex items-center gap-1">
+            <Icon name="lock" size={9} />
+            Stored locally — not synced or encrypted server-side
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 export interface FileDetailsMeta {
   id: string
@@ -307,7 +408,7 @@ export function FileDetailsPanel({
 
           {/* Recent activity */}
           {activity.length > 0 && (
-            <div className="px-xl py-lg">
+            <div className="px-xl py-lg border-b border-line">
               <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 mb-2.5">
                 Recent activity
               </div>
@@ -334,6 +435,9 @@ export function FileDetailsPanel({
               ))}
             </div>
           )}
+
+          {/* Notes — client-only, stored in localStorage per device */}
+          <FileNotesSection fileId={file.id} />
         </div>
 
         {/* Footer actions */}
