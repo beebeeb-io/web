@@ -34,6 +34,22 @@ function timeAgo(dateStr: string): string {
   return `${weeks}w ago`
 }
 
+// ─── Sort ────────────────────────────────────────
+
+type SortOrder = 'relevance' | 'newest' | 'oldest' | 'largest'
+
+const SORT_OPTIONS: { id: SortOrder; label: string }[] = [
+  { id: 'relevance', label: 'Relevance' },
+  { id: 'newest',    label: 'Newest' },
+  { id: 'oldest',    label: 'Oldest' },
+  { id: 'largest',   label: 'Largest' },
+]
+
+function parseSortParam(raw: string | null): SortOrder {
+  const valid = new Set<SortOrder>(SORT_OPTIONS.map((s) => s.id))
+  return raw && (valid as Set<string>).has(raw) ? (raw as SortOrder) : 'relevance'
+}
+
 // ─── Filter taxonomy ─────────────────────────────
 
 type Kind = 'pdf' | 'image' | 'video' | 'audio' | 'doc' | 'code' | 'archive' | 'folder'
@@ -164,6 +180,7 @@ export function Search() {
   const initialKinds = useMemo(() => parseKindsParam(searchParams.get('kind')), [searchParams])
   const initialDate = useMemo(() => parseDateParam(searchParams.get('modified')), [searchParams])
   const initialSize = useMemo(() => parseSizeParam(searchParams.get('size')), [searchParams])
+  const initialSort = useMemo(() => parseSortParam(searchParams.get('sort')), [searchParams])
 
   const { isUnlocked, getMasterKey } = useKeys()
 
@@ -172,6 +189,7 @@ export function Search() {
   const [kinds, setKinds] = useState<Set<Kind>>(initialKinds)
   const [dateRange, setDateRange] = useState<DateRange | null>(initialDate)
   const [sizeRange, setSizeRange] = useState<SizeRange | null>(initialSize)
+  const [sortOrder, setSortOrder] = useState<SortOrder>(initialSort)
   const [recent, setRecent] = useState<string[]>(() => loadRecent())
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -255,10 +273,12 @@ export function Search() {
     else next.delete('modified')
     if (sizeRange) next.set('size', sizeRange)
     else next.delete('size')
+    if (sortOrder !== 'relevance') next.set('sort', sortOrder)
+    else next.delete('sort')
     if (next.toString() !== searchParams.toString()) {
       setSearchParams(next, { replace: true })
     }
-  }, [kinds, dateRange, sizeRange, searchParams, setSearchParams])
+  }, [kinds, dateRange, sizeRange, sortOrder, searchParams, setSearchParams])
 
   function commitQuery(q: string) {
     const trimmed = q.trim()
@@ -282,6 +302,7 @@ export function Search() {
     setKinds(new Set())
     setDateRange(null)
     setSizeRange(null)
+    setSortOrder('relevance')
     setSearchParams({})
     inputRef.current?.focus()
   }
@@ -303,24 +324,37 @@ export function Search() {
     setSizeRange((cur) => (cur === s ? null : s))
   }
 
-  // Apply filters
-  const dateCutoff = dateRange ? dateRangeStart(dateRange) : null
-  const activeSizeFilter = sizeRange ? SIZE_FILTERS.find((f) => f.id === sizeRange) : null
-  const filteredResults = results.filter((r) => {
-    if (kinds.size > 0 && !kinds.has(entryKind(r.entry))) return false
-    if (dateCutoff !== null) {
-      const t = new Date(r.entry.modified).getTime()
-      if (Number.isNaN(t) || t < dateCutoff) return false
-    }
-    if (activeSizeFilter && r.entry.type !== 'folder') {
-      const sz = r.entry.size
-      if (activeSizeFilter.minBytes !== undefined && sz < activeSizeFilter.minBytes) return false
-      if (activeSizeFilter.maxBytes !== undefined && sz >= activeSizeFilter.maxBytes) return false
-    }
-    return true
-  })
+  // Apply filters + sort
+  const filteredResults = useMemo(() => {
+    const dateCutoff = dateRange ? dateRangeStart(dateRange) : null
+    const activeSizeFilter = sizeRange ? SIZE_FILTERS.find((f) => f.id === sizeRange) : null
 
-  const hasActiveFilters = kinds.size > 0 || dateRange !== null || sizeRange !== null
+    const filtered = results.filter((r) => {
+      if (kinds.size > 0 && !kinds.has(entryKind(r.entry))) return false
+      if (dateCutoff !== null) {
+        const t = new Date(r.entry.modified).getTime()
+        if (Number.isNaN(t) || t < dateCutoff) return false
+      }
+      if (activeSizeFilter && r.entry.type !== 'folder') {
+        const sz = r.entry.size
+        if (activeSizeFilter.minBytes !== undefined && sz < activeSizeFilter.minBytes) return false
+        if (activeSizeFilter.maxBytes !== undefined && sz >= activeSizeFilter.maxBytes) return false
+      }
+      return true
+    })
+
+    // Apply sort (relevance = original score order from searchIndex)
+    if (sortOrder === 'newest') {
+      return [...filtered].sort((a, b) => new Date(b.entry.modified).getTime() - new Date(a.entry.modified).getTime())
+    } else if (sortOrder === 'oldest') {
+      return [...filtered].sort((a, b) => new Date(a.entry.modified).getTime() - new Date(b.entry.modified).getTime())
+    } else if (sortOrder === 'largest') {
+      return [...filtered].sort((a, b) => b.entry.size - a.entry.size)
+    }
+    return filtered
+  }, [results, kinds, dateRange, sizeRange, sortOrder])
+
+  const hasActiveFilters = kinds.size > 0 || dateRange !== null || sizeRange !== null || sortOrder !== 'relevance'
 
   return (
     <DriveLayout>
@@ -362,10 +396,27 @@ export function Search() {
               Filters
               {hasActiveFilters && (
                 <span className="font-mono text-[10px] tabular-nums">
-                  · {kinds.size + (dateRange ? 1 : 0) + (sizeRange ? 1 : 0)}
+                  · {kinds.size + (dateRange ? 1 : 0) + (sizeRange ? 1 : 0) + (sortOrder !== 'relevance' ? 1 : 0)}
                 </span>
               )}
             </button>
+            {/* Sort dropdown */}
+            <div className="relative flex items-center gap-1.5 text-[12.5px] text-ink-2">
+              <Icon name="menu" size={12} className="text-ink-3 shrink-0" />
+              <select
+                value={sortOrder}
+                onChange={(e) => setSortOrder(e.target.value as SortOrder)}
+                className="appearance-none bg-transparent text-[12.5px] text-ink-2 outline-none cursor-pointer pr-3"
+                aria-label="Sort results"
+              >
+                {SORT_OPTIONS.map((opt) => (
+                  <option key={opt.id} value={opt.id}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <Icon name="chevron-down" size={10} className="text-ink-3 shrink-0 pointer-events-none absolute right-0" />
+            </div>
             <BBButton size="md" variant="amber" type="submit">
               Search
             </BBButton>
@@ -416,9 +467,20 @@ export function Search() {
                   </button>
                 )
               })()}
+              {sortOrder !== 'relevance' && (
+                <button
+                  type="button"
+                  onClick={() => setSortOrder('relevance')}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11.5px] bg-amber-bg text-amber-deep border border-amber-deep/40 hover:border-amber-deep transition-colors cursor-pointer"
+                >
+                  <Icon name="menu" size={10} />
+                  sort:{sortOrder}
+                  <Icon name="x" size={9} className="ml-0.5" />
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => { setKinds(new Set()); setDateRange(null); setSizeRange(null) }}
+                onClick={() => { setKinds(new Set()); setDateRange(null); setSizeRange(null); setSortOrder('relevance') }}
                 className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11.5px] text-ink-3 hover:text-ink-2 hover:bg-paper-2 transition-colors cursor-pointer"
               >
                 Clear filters
