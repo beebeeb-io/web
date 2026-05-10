@@ -17,6 +17,64 @@ import { decryptFilename, fromBase64, unwrapKeyFromShare, initCrypto } from '../
 import { decryptEncryptedBytes, inferChunkCountFromEncryptedSize } from '../lib/encrypted-download'
 import { formatBytes } from '../lib/format'
 
+// ─── Meta tag helpers ─────────────────────────────────────────────────────────
+
+/** Beebeeb lock icon as a data URI for og:image fallback. */
+const OG_IMAGE_DATA_URI =
+  'data:image/svg+xml,%3Csvg xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22 width%3D%221200%22 height%3D%22630%22 viewBox%3D%220 0 1200 630%22%3E%3Crect width%3D%221200%22 height%3D%22630%22 fill%3D%22%23fdf8f0%22%2F%3E%3Crect x%3D%22480%22 y%3D%22160%22 width%3D%22240%22 height%3D%22240%22 rx%3D%2240%22 fill%3D%22%23f5b800%22 opacity%3D%220.15%22%2F%3E%3Cpath d%3D%22M600 240 a60 60 0 0 1 60 60v70a10 10 0 0 1-10 10H550a10 10 0 0 1-10-10v-70a60 60 0 0 1 60-60z%22 fill%3D%22none%22 stroke%3D%22%23f5b800%22 stroke-width%3D%228%22%2F%3E%3Crect x%3D%22564%22 y%3D%22310%22 width%3D%2272%22 height%3D%2250%22 rx%3D%228%22 fill%3D%22%23f5b800%22%2F%3E%3Ccircle cx%3D%22600%22 cy%3D%22336%22 r%3D%228%22 fill%3D%22%23fdf8f0%22%2F%3E%3Ctext x%3D%22600%22 y%3D%22470%22 text-anchor%3D%22middle%22 font-family%3D%22Inter%2C sans-serif%22 font-size%3D%2232%22 font-weight%3D%22600%22 fill%3D%22%234a3f2f%22%3EEnd-to-end encrypted%3C%2Ftext%3E%3Ctext x%3D%22600%22 y%3D%22520%22 text-anchor%3D%22middle%22 font-family%3D%22Inter%2C sans-serif%22 font-size%3D%2224%22 fill%3D%22%238a7a62%22%3EBeebeeb%3C%2Ftext%3E%3C%2Fsvg%3E'
+
+function setMetaTag(property: string, content: string, attr: 'name' | 'property' = 'name'): void {
+  const selector = `meta[${attr}="${property}"]`
+  let el = document.querySelector<HTMLMetaElement>(selector)
+  if (!el) {
+    el = document.createElement('meta')
+    el.setAttribute(attr, property)
+    document.head.appendChild(el)
+  }
+  el.setAttribute('content', content)
+}
+
+function removeMetaTag(property: string, attr: 'name' | 'property' = 'name'): void {
+  const selector = `meta[${attr}="${property}"]`
+  document.querySelector(selector)?.remove()
+}
+
+/**
+ * Sets share-specific meta tags on mount and restores defaults on unmount.
+ * sharerName is used to personalise the title when available.
+ */
+function useShareMetaTags(sharerName?: string) {
+  useEffect(() => {
+    const prevTitle = document.title
+    const title = sharerName
+      ? `${sharerName} shared a file with you — Beebeeb`
+      : 'Shared file — Beebeeb'
+    const description = 'End-to-end encrypted file. Only you can decrypt it.'
+
+    document.title = title
+    setMetaTag('description', description)
+    setMetaTag('og:title', title, 'property')
+    setMetaTag('og:description', description, 'property')
+    setMetaTag('og:image', OG_IMAGE_DATA_URI, 'property')
+    setMetaTag('og:type', 'website', 'property')
+    setMetaTag('twitter:card', 'summary_large_image')
+    setMetaTag('twitter:title', title)
+    setMetaTag('twitter:description', description)
+
+    return () => {
+      document.title = prevTitle
+      setMetaTag('description', 'End-to-end encrypted cloud storage. Made in Europe.')
+      removeMetaTag('og:title', 'property')
+      removeMetaTag('og:description', 'property')
+      removeMetaTag('og:image', 'property')
+      removeMetaTag('og:type', 'property')
+      removeMetaTag('twitter:card')
+      removeMetaTag('twitter:title')
+      removeMetaTag('twitter:description')
+    }
+  }, [sharerName])
+}
+
 
 function formatExpiry(expiresAt: string | null | undefined): string {
   if (!expiresAt) return 'Never'
@@ -320,6 +378,14 @@ export function ShareViewPage() {
   const [keyAvailable, setKeyAvailable] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
 
+  // Derive sharer display name for meta tags
+  const sharerDisplay = shareData?.shared_by
+    ? shareData.shared_by.includes('@')
+      ? shareData.shared_by.split('@')[0]
+      : shareData.shared_by
+    : undefined
+  useShareMetaTags(sharerDisplay)
+
   /** Check if raw name looks like encrypted JSON (not a human-readable filename). */
   function isEncryptedName(raw: string | null | undefined): boolean {
     if (!raw) return false
@@ -576,35 +642,50 @@ export function ShareViewPage() {
 
   // Expired or max opens reached
   if (shareData?.error) {
+    const isExpired = shareData.error === 'expired'
     return (
       <div className="min-h-screen flex items-center justify-center bg-paper relative overflow-hidden">
         {honeycombBg}
         <div className="relative w-full max-w-[28rem] mx-4">
           <div className="text-center">
             <BBLogo size={16} />
-            <div className="mt-8 bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
+
+            {/* E2EE badge */}
+            <div className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-amber/30 bg-amber-bg text-[11.5px] font-medium text-amber-deep">
+              <Icon name="lock" size={11} className="shrink-0" />
+              Beebeeb — End-to-end encrypted
+            </div>
+
+            <div className="mt-6 bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
               <div className="p-8 text-center">
-                <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-red/10 flex items-center justify-center">
-                  {/* Map icon to error type — clock implies timing/expiry, but
-                      a non-expired error (revoked, max opens, etc.) is not a
-                      timing issue and shouldn't read like one. */}
+                <div className={`w-14 h-14 mx-auto mb-5 rounded-2xl flex items-center justify-center ${
+                  isExpired ? 'bg-amber-bg' : 'bg-red/10'
+                }`}>
                   <Icon
-                    name={shareData.error === 'expired' ? 'clock' : 'shield'}
-                    size={24}
-                    className="text-red"
+                    name={isExpired ? 'clock' : 'shield'}
+                    size={26}
+                    className={isExpired ? 'text-amber-deep' : 'text-red'}
                   />
                 </div>
-                <h2 className="text-lg font-semibold text-ink mb-2">
-                  {shareData.error === 'expired' ? 'This link has expired' : 'Link unavailable'}
+                <h2 className="text-[17px] font-semibold text-ink mb-2">
+                  {isExpired ? 'This link has expired' : 'Link unavailable'}
                 </h2>
-                <p className="text-sm text-ink-3">
-                  {shareData.message}
+                <p className="text-[13px] text-ink-3 leading-relaxed">
+                  {isExpired
+                    ? 'The sender set a time limit on this share. Ask them to send a new link.'
+                    : (shareData.message ?? 'This share link is no longer accessible.')}
                 </p>
+                <a
+                  href="https://app.beebeeb.io/signup"
+                  className="mt-6 inline-flex items-center gap-2 px-5 py-2 bg-amber text-ink text-[13px] font-semibold rounded-lg hover:brightness-105 transition-all no-underline"
+                >
+                  Get Beebeeb — free 5 GB
+                </a>
               </div>
-              <div className="px-8 py-4 bg-paper-2 border-t border-line">
+              <div className="px-8 py-3.5 bg-paper-2 border-t border-line">
                 <div className="flex items-center justify-center gap-1.5 text-[11px] text-ink-3">
                   <Icon name="shield" size={11} className="text-amber-deep" />
-                  End-to-end encrypted with Beebeeb
+                  End-to-end encrypted · Stored in Europe
                 </div>
               </div>
             </div>
@@ -700,8 +781,13 @@ export function ShareViewPage() {
     <div className="min-h-screen flex items-center justify-center bg-paper relative overflow-hidden py-8">
       {honeycombBg}
       <div className="relative w-full max-w-[28rem] mx-4">
-        <div className="text-center mb-6">
+        <div className="text-center mb-4">
           <BBLogo size={16} />
+          {/* Prominent E2EE badge below logo */}
+          <div className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-amber/30 bg-amber-bg text-[11.5px] font-medium text-amber-deep">
+            <Icon name="lock" size={11} className="shrink-0" />
+            Beebeeb — End-to-end encrypted
+          </div>
         </div>
 
         {/* ── Glassbox: zero-knowledge banner — only shown when key is present ── */}
@@ -745,14 +831,24 @@ export function ShareViewPage() {
                 <h2 className="text-[15px] font-semibold text-ink leading-snug break-all">
                   {displayName()}
                 </h2>
-                <p className="text-xs text-ink-3 mt-1">
-                  {shareData?.size_bytes != null ? formatBytes(shareData.size_bytes) : ''}
-                  {hasKey && decryptedName && shareData?.mime_type
-                    ? ` · ${shareData.mime_type}`
-                    : !hasKey || !decryptedName
-                      ? shareData?.size_bytes != null ? ' · Encrypted' : 'Encrypted'
-                      : ''}
-                </p>
+                <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                  {shareData?.size_bytes != null && (
+                    <span className="font-mono text-[11.5px] text-ink-3 bg-paper-2 border border-line rounded px-1.5 py-0.5">
+                      {formatBytes(shareData.size_bytes)}
+                    </span>
+                  )}
+                  {hasKey && decryptedName && shareData?.mime_type && (
+                    <span className="font-mono text-[11.5px] text-ink-3 bg-paper-2 border border-line rounded px-1.5 py-0.5">
+                      {shareData.mime_type}
+                    </span>
+                  )}
+                  {(!hasKey || !decryptedName) && (
+                    <span className="flex items-center gap-1 text-[11.5px] text-amber-deep font-medium">
+                      <Icon name="lock" size={10} className="shrink-0" />
+                      Encrypted
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 

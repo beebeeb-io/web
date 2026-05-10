@@ -33,6 +33,7 @@ import { QuotaWarning } from './quota-warning'
 import { QuickAccess } from './quick-access'
 import { EmailVerifyBanner } from './email-verify-banner'
 import { AnnouncementBanner } from './announcement-banner'
+import { IosAppBanner } from './ios-app-banner'
 // formatStorageSI used via StorageUsageBar; kept for potential direct use
 
 const navItems: { path: string; icon: IconName; label: string }[] = [
@@ -748,6 +749,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
           </button>
           <BBLogo size={12} />
         </div>
+        <IosAppBanner />
         <AnnouncementBanner />
         <EmailVerifyBanner />
         {isFrozen && (
