@@ -2052,6 +2052,7 @@ export function Drive() {
           <FileList
             files={files}
             loading={loading}
+            parentId={currentParentId ?? null}
             emptyState={
               currentParentId ? (
                 <div className="flex flex-col items-center justify-center h-full text-center py-20">

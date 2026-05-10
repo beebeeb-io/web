@@ -25,6 +25,7 @@ type SortKey =
   | 'modified-desc' | 'modified-asc'
   | 'size-desc' | 'size-asc'
   | 'type-asc'
+  | 'starred-first'
 
 const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: 'name-asc',      label: 'Name (A → Z)' },
@@ -34,7 +35,23 @@ const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: 'size-desc',     label: 'Size (largest)' },
   { key: 'size-asc',      label: 'Size (smallest)' },
   { key: 'type-asc',      label: 'Type' },
+  { key: 'starred-first', label: 'Starred first' },
 ]
+
+// Type-group rank: lower = earlier in the list
+function typeGroupRank(file: DriveFile, name: string): number {
+  if (file.is_folder) return 0
+  const ext = name.split('.').pop()?.toLowerCase() ?? ''
+  if (['jpg', 'jpeg', 'png', 'gif', 'heic', 'webp', 'svg', 'ico', 'bmp', 'tiff', 'tif', 'avif'].includes(ext)) return 1
+  if (['mp4', 'mov', 'avi', 'mkv', 'webm', 'flv', 'wmv', 'm4v'].includes(ext)) return 2
+  if (['mp3', 'wav', 'flac', 'aac', 'ogg', 'wma', 'm4a', 'aiff', 'opus'].includes(ext)) return 3
+  if (['pdf', 'doc', 'docx', 'odt', 'rtf', 'txt', 'pages', 'md', 'mdx', 'xls', 'xlsx', 'ods', 'numbers', 'ppt', 'pptx', 'odp', 'key'].includes(ext)) return 4
+  if (['zip', 'tar', 'gz', 'rar', '7z', 'bz2', 'xz', 'zst', 'dmg', 'iso'].includes(ext)) return 5
+  if (['js', 'jsx', 'ts', 'tsx', 'py', 'rs', 'go', 'rb', 'java', 'kt', 'swift', 'c', 'cpp', 'h', 'cs', 'php', 'sh', 'html', 'css', 'json', 'yaml', 'yml', 'toml', 'sql'].includes(ext)) return 6
+  return 7
+}
+
+const SORT_KEY_PREFIX = 'beebeeb.sort.'
 
 // ─── Helpers ─────────────────────────────────────────
 
@@ -79,6 +96,11 @@ export interface FileListProps {
   showDateGroups?: boolean
   /** Inline upload cards rendered at the top of the scrollable area (spec 024 §4). */
   uploadCards?: ReactNode
+  /**
+   * Current folder ID (or null / undefined for root). Used to key sort
+   * persistence in localStorage so each folder remembers its own sort order.
+   */
+  parentId?: string | null
 
   // Navigation
   onNavigateFolder?: (folder: DriveFile) => void
@@ -171,6 +193,7 @@ export function FileList({
   uploadCards,
   myShares,
   folderViewerCounts,
+  parentId,
 }: FileListProps) {
   const { getFileKey, isUnlocked } = useKeys()
   const { showToast } = useToast()
@@ -196,9 +219,14 @@ export function FileList({
   }, [myShares])
 
   // ─── Sort state ────────────────────────────────────
+  // Key per folder: beebeeb.sort.<folderId> or beebeeb.sort.root
+  // Falls back to the old global key for a smooth migration.
+  const sortLsKey = `${SORT_KEY_PREFIX}${parentId ?? 'root'}`
+
   const [sortKey, setSortKey] = useState<SortKey>(() => {
     try {
-      const raw = localStorage.getItem('bb_drive_sort')
+      // Try per-folder key first, then fall back to old global key
+      const raw = localStorage.getItem(sortLsKey) ?? localStorage.getItem('bb_drive_sort')
       if (raw) {
         const parsed = JSON.parse(raw) as { key?: string }
         if (parsed.key && SORT_OPTIONS.some((o) => o.key === parsed.key)) {
@@ -210,11 +238,29 @@ export function FileList({
   })
   const [sortMenuOpen, setSortMenuOpen] = useState(false)
 
+  // Re-read from localStorage when the folder changes (parentId changed)
+  const prevSortLsKeyRef = useRef(sortLsKey)
+  useEffect(() => {
+    if (prevSortLsKeyRef.current === sortLsKey) return
+    prevSortLsKeyRef.current = sortLsKey
+    try {
+      const raw = localStorage.getItem(sortLsKey) ?? localStorage.getItem('bb_drive_sort')
+      if (raw) {
+        const parsed = JSON.parse(raw) as { key?: string }
+        if (parsed.key && SORT_OPTIONS.some((o) => o.key === parsed.key)) {
+          setSortKey(parsed.key as SortKey)
+          return
+        }
+      }
+    } catch { /* ignore */ }
+    setSortKey('name-asc')
+  }, [sortLsKey])
+
   useEffect(() => {
     try {
-      localStorage.setItem('bb_drive_sort', JSON.stringify({ key: sortKey }))
+      localStorage.setItem(sortLsKey, JSON.stringify({ key: sortKey }))
     } catch { /* ignore */ }
-  }, [sortKey])
+  }, [sortKey, sortLsKey])
 
   // ─── Decrypted names ───────────────────────────────
   //
@@ -575,28 +621,39 @@ export function FileList({
     return ext ? ext.toUpperCase() : 'Encrypted file'
   }
 
-  const sortedFiles = useMemo(() => (
-    sortable
-      ? [...files].sort((a, b) => {
-          if (a.is_folder && !b.is_folder) return -1
-          if (!a.is_folder && b.is_folder) return 1
-          switch (sortKey) {
-            case 'name-asc':      return safeName(a).localeCompare(safeName(b))
-            case 'name-desc':     return safeName(b).localeCompare(safeName(a))
-            case 'modified-desc': return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-            case 'modified-asc':  return new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
-            case 'size-desc':     return b.size_bytes - a.size_bytes
-            case 'size-asc':      return a.size_bytes - b.size_bytes
-            case 'type-asc': {
-              const ta = (a.mime_type || safeName(a).split('.').pop() || '').toLowerCase()
-              const tb = (b.mime_type || safeName(b).split('.').pop() || '').toLowerCase()
-              if (ta !== tb) return ta.localeCompare(tb)
-              return safeName(a).localeCompare(safeName(b))
-            }
-          }
-        })
-      : files
-  ), [files, sortable, sortKey, decryptedNames])
+  const sortedFiles = useMemo(() => {
+    if (!sortable) return files
+    return [...files].sort((a, b) => {
+      // starred-first: starred items come before non-starred across the board
+      if (sortKey === 'starred-first') {
+        const starA = a.is_starred ? 0 : 1
+        const starB = b.is_starred ? 0 : 1
+        if (starA !== starB) return starA - starB
+        // Within same star group: folders first, then name
+        if (a.is_folder && !b.is_folder) return -1
+        if (!a.is_folder && b.is_folder) return 1
+        return safeName(a).localeCompare(safeName(b))
+      }
+      // type-asc: grouped by meaningful category (image, video, doc, …), no folder pinning override
+      if (sortKey === 'type-asc') {
+        const ra = typeGroupRank(a, safeName(a))
+        const rb = typeGroupRank(b, safeName(b))
+        if (ra !== rb) return ra - rb
+        return safeName(a).localeCompare(safeName(b))
+      }
+      // All other sorts: folders always come first
+      if (a.is_folder && !b.is_folder) return -1
+      if (!a.is_folder && b.is_folder) return 1
+      switch (sortKey) {
+        case 'name-asc':      return safeName(a).localeCompare(safeName(b))
+        case 'name-desc':     return safeName(b).localeCompare(safeName(a))
+        case 'modified-desc': return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+        case 'modified-asc':  return new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
+        case 'size-desc':     return b.size_bytes - a.size_bytes
+        case 'size-asc':      return a.size_bytes - b.size_bytes
+      }
+    })
+  }, [files, sortable, sortKey, decryptedNames])
 
   const allSelected = sortedFiles.length > 0 && selectedIds.size === sortedFiles.length
   const someSelected = selectedIds.size > 0 && selectedIds.size < sortedFiles.length
@@ -1059,9 +1116,42 @@ export function FileList({
               )}
             </span>
             <span />
-            <span className="text-[10px] font-medium uppercase tracking-wider text-ink-3">Name</span>
-            <span className="hidden md:inline text-[10px] font-medium uppercase tracking-wider text-ink-3">Size</span>
-            <span className="hidden md:inline text-[10px] font-medium uppercase tracking-wider text-ink-3">Modified</span>
+            {/* Name header — toggles name-asc / name-desc */}
+            <button
+              type="button"
+              onClick={() => setSortKey((k) => k === 'name-asc' ? 'name-desc' : 'name-asc')}
+              className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-ink-3 hover:text-ink transition-colors cursor-pointer select-none"
+              aria-label="Sort by name"
+            >
+              Name
+              <span className="text-[9px] leading-none">
+                {sortKey === 'name-asc' ? '↑' : sortKey === 'name-desc' ? '↓' : <span className="opacity-30">↕</span>}
+              </span>
+            </button>
+            {/* Size header — toggles size-desc / size-asc */}
+            <button
+              type="button"
+              onClick={() => setSortKey((k) => k === 'size-desc' ? 'size-asc' : 'size-desc')}
+              className="hidden md:flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-ink-3 hover:text-ink transition-colors cursor-pointer select-none"
+              aria-label="Sort by size"
+            >
+              Size
+              <span className="text-[9px] leading-none">
+                {sortKey === 'size-desc' ? '↓' : sortKey === 'size-asc' ? '↑' : <span className="opacity-30">↕</span>}
+              </span>
+            </button>
+            {/* Modified header — toggles modified-desc / modified-asc */}
+            <button
+              type="button"
+              onClick={() => setSortKey((k) => k === 'modified-desc' ? 'modified-asc' : 'modified-desc')}
+              className="hidden md:flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-ink-3 hover:text-ink transition-colors cursor-pointer select-none"
+              aria-label="Sort by modified date"
+            >
+              Modified
+              <span className="text-[9px] leading-none">
+                {sortKey === 'modified-desc' ? '↓' : sortKey === 'modified-asc' ? '↑' : <span className="opacity-30">↕</span>}
+              </span>
+            </button>
             <span className="hidden md:inline text-[10px] font-medium uppercase tracking-wider text-ink-3">Shared</span>
             <span />
           </div>
