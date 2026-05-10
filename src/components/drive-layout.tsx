@@ -43,6 +43,7 @@ const navItems: { path: string; icon: IconName; label: string }[] = [
   { path: '/recent', icon: 'clock', label: 'Recent' },
   { path: '/trash', icon: 'trash', label: 'Trash' },
   { path: '/scan', icon: 'camera', label: 'Scan document' },
+  { path: '/file-requests', icon: 'link', label: 'File requests' },
 ]
 
 const REGION_META: Record<string, { label: string; flag: string }> = {

@@ -76,6 +76,8 @@ const SettingsImport        = lazyNamed(() => import('./pages/settings/import'),
 const DropboxCallback       = lazyNamed(() => import('./pages/settings/import/dropbox-callback'), 'DropboxCallback')
 const GoogleCallback        = lazyNamed(() => import('./pages/settings/import/google-callback'),  'GoogleCallback')
 const ScanPage              = lazyNamed(() => import('./pages/scan'),                             'ScanPage')
+const FileRequestPage       = lazyNamed(() => import('./pages/file-request'),                     'FileRequestPage')
+const UploadRequestPage     = lazyNamed(() => import('./pages/upload-request'),                   'UploadRequestPage')
 
 // Admin pages live at admin.beebeeb.io now (own repo, own subdomain) —
 // see docs/superpowers/specs/2026-05-07-admin-portal-separation.md.
@@ -448,6 +450,17 @@ export function App() {
           <Route path="/join/:code" element={<JoinPage />} />
           <Route path="/cookies" element={<Cookies />} />
           <Route path="/receive" element={<Receive />} />
+          {/* E2EE File Requests — creation page (auth required) */}
+          <Route
+            path="/file-requests"
+            element={
+              <ProtectedRoute>
+                <FileRequestPage />
+              </ProtectedRoute>
+            }
+          />
+          {/* E2EE File Requests — public upload page (no auth) */}
+          <Route path="/r/:token" element={<UploadRequestPage />} />
           <Route path="/500" element={<ServerError />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

@@ -2223,3 +2223,95 @@ export async function updatePublicProfile(params: {
     body: JSON.stringify(params),
   })
 }
+
+// ─── E2EE File Requests ──────────────────────────────────────────────────────
+
+export interface FileRequest {
+  id: string
+  title: string
+  description: string | null
+  ephemeral_public_key: string
+  target_folder_id: string | null
+  max_files: number
+  files_received: number
+  expires_at: string | null
+  created_at: string
+  request_url: string
+}
+
+export interface FileRequestPublic {
+  id: string
+  title: string
+  description: string | null
+  ephemeral_public_key: string
+  max_files: number
+  files_received: number
+  expires_at: string | null
+}
+
+export interface CreateFileRequestParams {
+  title: string
+  description?: string
+  ephemeral_public_key: string
+  target_folder_id?: string
+  max_files?: number
+  /** Seconds from now until this request expires.  Omit for no expiry. */
+  expires_in_secs?: number
+}
+
+/**
+ * POST /api/v1/file-requests — create a new file request (auth required).
+ */
+export async function createFileRequest(params: CreateFileRequestParams): Promise<FileRequest> {
+  return request<FileRequest>('/api/v1/file-requests', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
+/**
+ * GET /api/v1/file-requests — list the current user's file requests (auth required).
+ */
+export async function listFileRequests(): Promise<{ file_requests: FileRequest[] }> {
+  return request<{ file_requests: FileRequest[] }>('/api/v1/file-requests')
+}
+
+/**
+ * GET /api/v1/r/:token — public info for the upload page (no auth).
+ */
+export async function getFileRequestPublic(token: string): Promise<FileRequestPublic> {
+  const res = await fetch(`${API_URL}/api/v1/r/${encodeURIComponent(token)}`)
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: 'Not found' })) as Record<string, unknown>
+    throw new ApiError(
+      (body.message ?? body.error ?? res.statusText) as string,
+      res.status,
+    )
+  }
+  return res.json() as Promise<FileRequestPublic>
+}
+
+/**
+ * POST /api/v1/r/:token/upload — upload an already-encrypted file (no auth).
+ *
+ * The FormData must contain:
+ *   - `metadata`: JSON string { name_encrypted, size_bytes }
+ *   - `chunk_0`, `chunk_1`, … : binary ArrayBuffers of the encrypted chunks
+ */
+export async function uploadToFileRequest(
+  token: string,
+  formData: FormData,
+): Promise<{ file_id: string; message: string }> {
+  const res = await fetch(`${API_URL}/api/v1/r/${encodeURIComponent(token)}/upload`, {
+    method: 'POST',
+    body: formData,
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: 'Upload failed' })) as Record<string, unknown>
+    throw new ApiError(
+      (body.message ?? body.error ?? res.statusText) as string,
+      res.status,
+    )
+  }
+  return res.json() as Promise<{ file_id: string; message: string }>
+}
