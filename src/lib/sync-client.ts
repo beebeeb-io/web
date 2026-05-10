@@ -358,6 +358,8 @@ export class SyncClient {
             (payload.version_number as number | undefined) ?? existing.version_number,
           content_hash:
             (payload.content_hash as string | undefined) ?? existing.content_hash,
+          has_thumbnail:
+            (payload.has_thumbnail as boolean | undefined) ?? existing.has_thumbnail,
           updated_at: new Date().toISOString(),
         })
         break
@@ -530,7 +532,7 @@ function payloadToNode(
     mime_type: (payload.mime_type as string | null | undefined) ?? null,
     content_hash: (payload.content_hash as string | null | undefined) ?? null,
     version_number: (payload.version_number as number | undefined) ?? 1,
-    has_thumbnail: false,
+    has_thumbnail: (payload.has_thumbnail as boolean | undefined) ?? false,
     storage_pool_id: (payload.storage_pool_id as string | null | undefined) ?? null,
     is_trashed: false,
     is_starred: false,
