@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react'
-import { getToken, getApiUrl } from '../lib/api'
+import { getToken, getApiUrl, getStreamToken } from '../lib/api'
 
 export interface WsEvent {
   type: string
@@ -23,9 +23,22 @@ export function useWebSocket({ onEvent, enabled = true }: UseWebSocketOptions) {
   const onEventRef = useRef(onEvent)
   onEventRef.current = onEvent
 
-  const connect = useCallback(() => {
-    const token = getToken()
-    if (!token) return
+  const connect = useCallback(async () => {
+    if (!getToken()) return
+
+    // Exchange session token for a short-lived stream token so the full
+    // session token never appears in the WebSocket upgrade URL (and access logs).
+    let streamToken: string
+    try {
+      const { stream_token } = await getStreamToken()
+      streamToken = stream_token
+    } catch {
+      // If token exchange fails, retry after backoff — same as a normal reconnect.
+      const delay = backoffRef.current
+      backoffRef.current = Math.min(backoffRef.current * 2, MAX_BACKOFF_MS)
+      reconnectTimerRef.current = setTimeout(() => { void connect() }, delay)
+      return
+    }
 
     // Clean up any existing connection
     if (wsRef.current) {
@@ -33,7 +46,7 @@ export function useWebSocket({ onEvent, enabled = true }: UseWebSocketOptions) {
       wsRef.current = null
     }
 
-    const ws = new WebSocket(`${WS_URL}?token=${encodeURIComponent(token)}`)
+    const ws = new WebSocket(`${WS_URL}?token=${encodeURIComponent(streamToken)}`)
     wsRef.current = ws
 
     ws.onopen = () => {
@@ -56,7 +69,7 @@ export function useWebSocket({ onEvent, enabled = true }: UseWebSocketOptions) {
 
       const delay = backoffRef.current
       backoffRef.current = Math.min(backoffRef.current * 2, MAX_BACKOFF_MS)
-      reconnectTimerRef.current = setTimeout(connect, delay)
+      reconnectTimerRef.current = setTimeout(() => { void connect() }, delay)
     }
 
     ws.onerror = () => {
@@ -81,7 +94,7 @@ export function useWebSocket({ onEvent, enabled = true }: UseWebSocketOptions) {
     if (!enabled) return disconnect
     if (mountedRef.current && wsRef.current) return disconnect
     mountedRef.current = true
-    connect()
+    void connect()
     return disconnect
   }, [enabled, connect, disconnect])
 
