@@ -27,6 +27,7 @@ export function Login() {
   const [partialToken, setPartialToken] = useState<string | null>(null)
   const [passkeyLoading, setPasskeyLoading] = useState(false)
   const [devLoading, setDevLoading] = useState(false)
+  const showPasskeyLogin = false
 
   const handleDevSkip = useCallback(async () => {
     if (!import.meta.env.DEV) return
@@ -258,25 +259,29 @@ export function Login() {
           )}
         </BBButton>
 
-        {/* OR divider */}
-        <div className="flex items-center gap-3 my-5 text-[11px] text-ink-4 select-none">
-          <div className="flex-1 h-px bg-line" />
-          <span className="tracking-wider uppercase">or</span>
-          <div className="flex-1 h-px bg-line" />
-        </div>
+        {showPasskeyLogin && (
+          <>
+            {/* OR divider */}
+            <div className="flex items-center gap-3 my-5 text-[11px] text-ink-4 select-none">
+              <div className="flex-1 h-px bg-line" />
+              <span className="tracking-wider uppercase">or</span>
+              <div className="flex-1 h-px bg-line" />
+            </div>
 
-        {/* Passkey — first-class option with distinct styling */}
-        <button
-          type="button"
-          className="w-full flex items-center justify-center gap-2.5 px-lg py-2.5 text-sm font-medium text-ink border border-line-2 rounded-lg bg-paper hover:bg-paper-2 active:bg-paper-3 transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-amber-deep focus-visible:ring-offset-2"
-          onClick={handlePasskeyLogin}
-          disabled={passkeyLoading}
-        >
-          <span className="flex items-center justify-center w-6 h-6 rounded-md bg-amber-bg">
-            <Icon name="key" size={13} className="text-amber-deep" />
-          </span>
-          {passkeyLoading ? 'Waiting for device...' : 'Sign in with passkey'}
-        </button>
+            {/* Passkey — first-class option with distinct styling */}
+            <button
+              type="button"
+              className="w-full flex items-center justify-center gap-2.5 px-lg py-2.5 text-sm font-medium text-ink border border-line-2 rounded-lg bg-paper hover:bg-paper-2 active:bg-paper-3 transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-amber-deep focus-visible:ring-offset-2"
+              onClick={handlePasskeyLogin}
+              disabled={passkeyLoading}
+            >
+              <span className="flex items-center justify-center w-6 h-6 rounded-md bg-amber-bg">
+                <Icon name="key" size={13} className="text-amber-deep" />
+              </span>
+              {passkeyLoading ? 'Waiting for device...' : 'Sign in with passkey'}
+            </button>
+          </>
+        )}
 
         {/* Dev-mode bypass — only rendered when Vite DEV flag is true (tree-shaken in prod) */}
         {import.meta.env.DEV && (

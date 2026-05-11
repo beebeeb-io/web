@@ -226,6 +226,9 @@ export type {
   WorkspaceMembersResponse,
 } from '@beebeeb/shared'
 
+// DEPRECATED: legacy JSON-password signup bypasses OPAQUE. It still has an
+// active caller in auth-context and must be removed when signup migrates fully
+// to the OPAQUE register flow.
 export async function signup(
   email: string,
   password: string,
@@ -983,15 +986,10 @@ export async function downloadSharedFile(
   token: string,
   passphrase?: string,
 ): Promise<SharedFileDownload & { chunkSize: number | null }> {
-  // The server accepts the passphrase via a ?passphrase= query parameter as
-  // an alternative to the X-Share-Passphrase header. Using the query param
-  // keeps the request a simple GET (no custom headers) so no CORS preflight
-  // is triggered — the X-Share-Passphrase header is not in the server's
-  // CORS allow_headers list and would cause a preflight rejection.
-  const url = passphrase
-    ? `${API_URL}/api/v1/shares/${token}/download?passphrase=${encodeURIComponent(passphrase)}`
-    : `${API_URL}/api/v1/shares/${token}/download`
-  const res = await fetch(url)
+  const headers: HeadersInit = passphrase
+    ? { 'X-Share-Passphrase': passphrase }
+    : {}
+  const res = await fetch(`${API_URL}/api/v1/shares/${token}/download`, { headers })
   if (!res.ok) {
     // Try to read the server's JSON error body so we surface the real message
     // (e.g. "link has expired", "incorrect passphrase") instead of the opaque
@@ -1024,14 +1022,13 @@ export async function fetchShareCiphertextPreview(
   passphrase?: string,
   byteCount = 80,
 ): Promise<Uint8Array> {
-  // Use the query-param passphrase path to avoid CORS preflight (same reason
-  // as downloadSharedFile). Omit the Range header: it is a non-simple header
-  // that also triggers a preflight, and the server doesn't support range
-  // requests on the share download endpoint anyway. We slice client-side.
-  const url = passphrase
-    ? `${API_URL}/api/v1/shares/${token}/download?passphrase=${encodeURIComponent(passphrase)}`
-    : `${API_URL}/api/v1/shares/${token}/download`
-  const res = await fetch(url)
+  // Omit the Range header: it is a non-simple header that triggers a preflight,
+  // and the server doesn't support range requests on the share download endpoint
+  // anyway. We slice client-side.
+  const headers: HeadersInit = passphrase
+    ? { 'X-Share-Passphrase': passphrase }
+    : {}
+  const res = await fetch(`${API_URL}/api/v1/shares/${token}/download`, { headers })
   if (!res.ok) {
     throw new ApiError(res.statusText, res.status)
   }
@@ -1714,8 +1711,12 @@ export async function listVersions(fileId: string): Promise<{
 }
 
 export async function downloadVersion(fileId: string, versionId: string): Promise<Blob> {
+  const token = getToken()
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
   const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/versions/${versionId}/download`, {
-    headers: { Authorization: `Bearer ${getToken()}` },
+    headers,
   })
   if (!res.ok) throw new ApiError('download failed', res.status)
   return res.blob()

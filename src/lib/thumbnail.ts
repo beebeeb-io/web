@@ -80,8 +80,12 @@ export async function fetchAndDecryptThumbnail(
 ): Promise<string | null> {
   if (thumbnailCache.has(fileId)) return thumbnailCache.get(fileId)!
   try {
+    const token = getToken()
+    const headers: Record<string, string> = {}
+    if (token) headers['Authorization'] = `Bearer ${token}`
+
     const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/thumbnail`, {
-      headers: { Authorization: `Bearer ${getToken()}` },
+      headers,
     })
     if (!res.ok) return null
 

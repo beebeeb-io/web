@@ -68,8 +68,8 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
     const all: PaletteItem[] = []
 
     all.push(
-      { id: 'upload', icon: 'upload', label: 'Upload files...', shortcut: `${modLabel} U`, group: 'actions', action: () => { onClose() } },
-      { id: 'new-folder', icon: 'folder', label: 'New folder', shortcut: `${modLabel} N`, group: 'actions', action: () => { onClose() } },
+      { id: 'upload', icon: 'upload', label: 'Upload files...', shortcut: `${modLabel} U`, group: 'actions', action: () => { onClose(); window.dispatchEvent(new Event('beebeeb:upload-trigger')) } },
+      { id: 'new-folder', icon: 'folder', label: 'New folder', shortcut: `${modLabel} N`, group: 'actions', action: () => { onClose(); window.dispatchEvent(new Event('beebeeb:new-folder-trigger')) } },
       { id: 'search', icon: 'search', label: 'Search files', shortcut: `${modLabel} F`, group: 'actions', action: () => { navigate('/search'); onClose() } },
     )
 

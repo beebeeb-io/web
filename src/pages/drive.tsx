@@ -600,6 +600,18 @@ export function Drive() {
   // Browse files hook
   const { browse, HiddenInput } = useBrowseFiles(handleFilesSelected)
   const { browseFolder, HiddenFolderInput } = useBrowseFolders(handleFolderFilesSelected)
+  const openNewFolderDialog = useCallback(() => setFolderDialogOpen(true), [])
+
+  useEffect(() => {
+    const handleUploadTrigger = () => browse()
+    const handleNewFolderTrigger = () => openNewFolderDialog()
+    window.addEventListener('beebeeb:upload-trigger', handleUploadTrigger)
+    window.addEventListener('beebeeb:new-folder-trigger', handleNewFolderTrigger)
+    return () => {
+      window.removeEventListener('beebeeb:upload-trigger', handleUploadTrigger)
+      window.removeEventListener('beebeeb:new-folder-trigger', handleNewFolderTrigger)
+    }
+  }, [browse, openNewFolderDialog])
 
   // Resume upload handler
   async function handleResumeFile(selectedFiles: File[]) {
@@ -1746,7 +1758,7 @@ export function Drive() {
 
   useKeyboardShortcuts({
     onUpload: browse,
-    onNewFolder: () => setFolderDialogOpen(true),
+    onNewFolder: openNewFolderDialog,
     onSelectAll: () => {}, // handled inside FileList
     onTrashSelected: () => {
       if (externalSelectedIds.size > 0) handleBulkTrash(Array.from(externalSelectedIds))
@@ -2114,7 +2126,7 @@ export function Drive() {
                   </div>
                 </div>
               ) : (
-                <EmptyDrive onUpload={browse} onCreateFolder={() => setFolderDialogOpen(true)} />
+                <EmptyDrive onUpload={browse} onCreateFolder={openNewFolderDialog} />
               )
             }
             onNavigateFolder={handleFolderOpen}

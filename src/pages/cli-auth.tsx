@@ -1,20 +1,10 @@
 /**
- * CLI web-auth page — route: /cli-auth?nonce=<uuid>&port=<port>
- *                      or: /cli-auth?code=XXXX-XXXX
+ * CLI web-auth page — route: /cli-auth?code=XXXX-XXXX
  *
  * Lets an authenticated browser session authorize the Beebeeb CLI without
  * typing a password into a terminal. UX mirrors `gh auth login --web`.
  *
- * Legacy flow (nonce + port):
- *   1. `bb login --browser` starts a local HTTP server on a random port.
- *   2. It opens https://app.beebeeb.io/cli-auth?nonce=<uuid>&port=<port>.
- *   3. This page checks the params, shows the auth prompt to the signed-in
- *      user, and on "Authorize" POSTs the session token + master key (b64)
- *      to http://localhost:<port>/callback.
- *   4. The CLI receives the callback, stores the credentials, and shuts the
- *      local server down.
- *
- * New WebSocket device-auth flow (code):
+ * WebSocket device-auth flow (code):
  *   1. CLI opens a WebSocket to the server and receives a short user_code.
  *   2. It opens https://app.beebeeb.io/cli-auth?code=XXXX-XXXX.
  *   3. This page fetches the CLI's ECDH public key from the server.
@@ -23,11 +13,8 @@
  *   5. The server forwards the encrypted payload to the CLI over the WebSocket.
  *
  * Security notes:
- * - Legacy: nonce validated as UUID, port in unprivileged range (1024-65535).
- * - New: AES-256-GCM encryption with ephemeral P-256 ECDH — server never sees
+ * - AES-256-GCM encryption with ephemeral P-256 ECDH — server never sees
  *   plaintext credentials. Code is short-lived and single-use.
- * - Modern browsers allow fetch() to http://localhost from HTTPS pages
- *   as an exception to mixed-content rules (same as GitHub CLI, Vercel CLI, etc.).
  */
 
 import { useState, useEffect } from 'react'
@@ -42,21 +29,7 @@ import { toBase64 } from '../lib/crypto'
 
 // ─── Param validation ─────────────────────────────────────────────────────────
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const CODE_RE = /^[A-Z0-9]{4}-[A-Z0-9]{4}$/
-
-function parsePort(raw: string | null): number | null {
-  if (!raw) return null
-  const n = parseInt(raw, 10)
-  if (isNaN(n) || n < 1024 || n > 65535) return null
-  return n
-}
-
-function parseNonce(raw: string | null): string | null {
-  if (!raw) return null
-  if (!UUID_RE.test(raw)) return null
-  return raw
-}
 
 function parseCode(raw: string | null): string | null {
   if (!raw) return null
@@ -67,9 +40,8 @@ function parseCode(raw: string | null): string | null {
 // ─── Flow discriminator ───────────────────────────────────────────────────────
 
 type Flow =
-  | { kind: 'legacy'; nonce: string; port: number }
   | { kind: 'code'; code: string }
-  | { kind: 'invalid' }
+  | { kind: 'invalid'; message: string }
 
 // ─── States ───────────────────────────────────────────────────────────────────
 
@@ -145,14 +117,13 @@ export function CliAuth() {
 
   // Determine which flow we're in
   const code = parseCode(params.get('code'))
-  const nonce = parseNonce(params.get('nonce'))
-  const port = parsePort(params.get('port'))
+  const hasLegacyParams = params.has('nonce') && params.has('port')
 
   const flow: Flow = code
     ? { kind: 'code', code }
-    : nonce && port
-      ? { kind: 'legacy', nonce, port }
-      : { kind: 'invalid' }
+    : hasLegacyParams
+      ? { kind: 'invalid', message: 'This version of the bb CLI is outdated. Please upgrade to v0.1.1 or later.' }
+      : { kind: 'invalid', message: 'This authorization link is missing required parameters or has an invalid format. Please run bb login --browser again to get a fresh link.' }
 
   // CLI ECDH public key fetched from server (code flow)
   const [cliEcdhPublicB64, setCliEcdhPublicB64] = useState<string | null>(null)
@@ -161,9 +132,7 @@ export function CliAuth() {
   const [state, setState] = useState<PageState>(
     flow.kind === 'code'
       ? { kind: 'loading' }
-      : flow.kind === 'invalid'
-        ? { kind: 'error', message: 'This authorization link is missing required parameters or has an invalid format. Please run bb login --browser again to get a fresh link.' }
-        : { kind: 'prompt' },
+      : { kind: 'error', message: flow.message },
   )
 
   // Redirect to login if not authenticated
@@ -216,27 +185,7 @@ export function CliAuth() {
       const masterKey = getMasterKey()
       const masterKeyB64 = toBase64(masterKey)
 
-      if (flow.kind === 'legacy') {
-        // ── Legacy flow: POST directly to CLI's local HTTP server ──────────────
-        const res = await fetch(`http://localhost:${flow.port}/callback`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            nonce: flow.nonce,
-            session_token: sessionToken,
-            master_key_b64: masterKeyB64,
-            email: user.email,
-          }),
-          signal: AbortSignal.timeout(5000),
-        })
-
-        if (!res.ok) {
-          const body = await res.text().catch(() => 'No response body')
-          throw new Error(`CLI returned ${res.status}: ${body}`)
-        }
-
-        setState({ kind: 'success' })
-      } else if (flow.kind === 'code') {
+      if (flow.kind === 'code') {
         // ── New WebSocket device-auth flow: ECDH encrypt + POST to server ──────
         if (!cliEcdhPublicB64) throw new Error('CLI public key not loaded — please refresh and try again.')
 
@@ -273,18 +222,9 @@ export function CliAuth() {
         setState({ kind: 'success' })
       }
     } catch (err) {
-      const isLegacyNetworkError =
-        flow.kind === 'legacy' &&
-        err instanceof Error &&
-        (err.message.includes('Failed to fetch') ||
-          err.message.includes('NetworkError') ||
-          err.message.includes('Load failed'))
-
-      const msg = isLegacyNetworkError
-        ? `Could not reach the CLI on port ${(flow as { kind: 'legacy'; port: number }).port}. Make sure \`bb login --browser\` is still running and try again.`
-        : err instanceof Error
-          ? err.message
-          : 'Authorization failed. Try running `bb login` again.'
+      const msg = err instanceof Error
+        ? err.message
+        : 'Authorization failed. Try running `bb login` again.'
 
       setState({ kind: 'error', message: msg })
     }
@@ -320,7 +260,7 @@ export function CliAuth() {
               <div className="px-6 py-4 border-b border-line flex items-center gap-2.5">
                 <Icon name="shield" size={14} className="text-amber-deep" />
                 <span className="text-sm font-semibold text-ink">
-                  {flow.kind === 'code' ? 'Authorizing CLI device' : 'Authorize Beebeeb CLI'}
+                  Authorizing CLI device
                 </span>
               </div>
               <div className="p-6">
@@ -370,20 +310,6 @@ export function CliAuth() {
                   </div>
                 </div>
 
-                {/* Legacy flow: port/nonce strip */}
-                {flow.kind === 'legacy' && (
-                  <div className="mb-5 p-3 rounded-lg border border-line-2 bg-paper-2 text-[11.5px] text-ink-3">
-                    <div className="flex items-center gap-1.5 font-mono">
-                      <Icon name="link" size={10} className="text-ink-4 shrink-0" />
-                      <span className="text-ink-4">Callback: </span>
-                      <span className="text-ink-2">http://localhost:<span className="text-amber-deep font-semibold">{flow.port}</span>/callback</span>
-                    </div>
-                    <div className="mt-1 text-[10.5px] text-ink-4 font-mono truncate">
-                      Nonce: {flow.nonce}
-                    </div>
-                  </div>
-                )}
-
                 {/* Vault lock warning */}
                 {!isUnlocked && (
                   <div className="mb-4 px-3 py-2.5 bg-amber-bg border border-amber/30 rounded-lg text-[12px] text-ink-2">
@@ -404,9 +330,7 @@ export function CliAuth() {
                 </BBButton>
 
                 <p className="mt-3 text-center text-[11px] text-ink-4">
-                  {flow.kind === 'code'
-                    ? 'Your credentials are end-to-end encrypted before leaving this page.'
-                    : 'This sends your session token and master key to the CLI process running on your machine.'}
+                  Your credentials are end-to-end encrypted before leaving this page.
                 </p>
               </div>
             </>
@@ -420,7 +344,7 @@ export function CliAuth() {
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
               <span className="text-sm text-ink-3">
-                {flow.kind === 'code' ? 'Encrypting and sending credentials…' : 'Sending credentials to CLI…'}
+                Encrypting and sending credentials…
               </span>
             </div>
           )}
@@ -462,7 +386,7 @@ export function CliAuth() {
                     variant="default"
                     size="md"
                     className="w-full justify-center"
-                    onClick={() => setState({ kind: flow.kind === 'code' ? 'loading' : 'prompt' })}
+                    onClick={() => setState({ kind: 'loading' })}
                   >
                     Try again
                   </BBButton>
@@ -475,9 +399,7 @@ export function CliAuth() {
           <div className="px-6 py-3 bg-paper-2 border-t border-line">
             <div className="flex items-center justify-center gap-1.5 text-[11px] text-ink-3">
               <Icon name="shield" size={11} className="text-amber-deep" />
-              {flow.kind === 'code'
-                ? 'Credentials encrypted end-to-end — the server sees only ciphertext'
-                : 'Credentials stay on this machine — beebeeb.io never sees them'}
+              Credentials encrypted end-to-end — the server sees only ciphertext
             </div>
           </div>
         </div>

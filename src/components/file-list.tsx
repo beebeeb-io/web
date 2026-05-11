@@ -342,16 +342,9 @@ export function FileList({
           names[file.id] = resolved
         } else {
           names[file.id] = null
-          // Capture a small ciphertext prefix so we can correlate which client
-          // (iOS vs web) wrote the metadata when investigating "Encrypted file"
-          // placeholders. Only logged on failure — never on success — so we do
-          // not leak ciphertext into the console for healthy items.
           // eslint-disable-next-line no-console
           console.error('[file-list] decryption failed', {
             fileId: file.id,
-            isFolder: file.is_folder,
-            mimeType: file.mime_type,
-            nameEncryptedPrefix: file.name_encrypted?.slice(0, 64),
             error: lastErr instanceof Error ? lastErr.message : String(lastErr),
           })
         }

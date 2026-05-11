@@ -434,7 +434,7 @@ export function Team() {
                 <div
                   key={inv.id}
                   className="grid items-center px-6 py-3"
-                  style={{ gridTemplateColumns: '1.4fr 0.8fr 1fr 80px' }}
+                  style={{ gridTemplateColumns: '1.4fr 0.8fr 1fr' }}
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
                     <div className="w-8 h-8 rounded-full flex items-center justify-center bg-paper-2 border border-line-2 text-ink-4 text-[11px] font-semibold shrink-0">
@@ -460,12 +460,6 @@ export function Team() {
                       day: 'numeric',
                       month: 'short',
                     })}
-                  </div>
-
-                  <div className="flex justify-end">
-                    <BBButton size="sm" variant="ghost">
-                      Resend
-                    </BBButton>
                   </div>
                 </div>
               ))}
