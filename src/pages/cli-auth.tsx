@@ -97,11 +97,11 @@ async function ecdhEncryptPayload(
     ['deriveKey'],
   )
 
-  // Import CLI's DER-encoded SPKI public key
-  const cliPubKeyDer = Uint8Array.from(atob(cliEcdhPublicB64), c => c.charCodeAt(0))
+  // Import CLI's raw uncompressed P-256 public key (65 bytes: 0x04 || x || y)
+  const cliPubKeyRaw = Uint8Array.from(atob(cliEcdhPublicB64), c => c.charCodeAt(0))
   const cliPubKey = await crypto.subtle.importKey(
-    'spki',
-    cliPubKeyDer,
+    'raw',
+    cliPubKeyRaw,
     { name: 'ECDH', namedCurve: 'P-256' },
     false,
     ['deriveKey'],
@@ -124,9 +124,9 @@ async function ecdhEncryptPayload(
     new TextEncoder().encode(payload),
   )
 
-  // Export browser's ephemeral public key
-  const browserPubDer = await crypto.subtle.exportKey('spki', keyPair.publicKey)
-  const browserPubB64 = btoa(String.fromCharCode(...new Uint8Array(browserPubDer)))
+  // Export browser's ephemeral public key as raw uncompressed point (matches CLI's from_sec1_bytes)
+  const browserPubRaw = await crypto.subtle.exportKey('raw', keyPair.publicKey)
+  const browserPubB64 = btoa(String.fromCharCode(...new Uint8Array(browserPubRaw)))
 
   return {
     nonce_b64: btoa(String.fromCharCode(...nonce)),
