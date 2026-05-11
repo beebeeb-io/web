@@ -152,7 +152,6 @@ const navItems: { path: string; icon: IconName; label: string }[] = [
   { path: '/recent', icon: 'clock', label: 'Recent' },
   { path: '/trash', icon: 'trash', label: 'Trash' },
   { path: '/scan', icon: 'camera', label: 'Scan document' },
-  { path: '/file-requests', icon: 'link', label: 'File requests' },
 ]
 
 const REGION_META: Record<string, { label: string; flag: string }> = {
@@ -226,39 +225,29 @@ function VaultSwitcher() {
 
           <div className="my-1 mx-1 h-px bg-line" />
 
-          {/* Team vaults — Business plan upgrade */}
+          {/* Business vaults — coming soon */}
           <div
             role="menuitem"
-            className="flex flex-col gap-1 px-2 py-[7px] rounded-md text-[13px]"
+            aria-disabled="true"
+            className="flex items-center gap-2 px-2 py-[7px] rounded-md text-[13px] text-ink-4 cursor-default select-none"
           >
-            <div className="flex items-center gap-2 text-ink-3">
-              <svg
-                width="13"
-                height="13"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="shrink-0"
-              >
-                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
-              </svg>
-              <span className="font-medium">Team vaults</span>
-            </div>
-            <p className="text-[11px] text-ink-3 ml-[21px] leading-relaxed">
-              Available on the Business plan.
-            </p>
-            <div className="ml-[21px] mt-0.5">
-              <a
-                href="/billing"
-                onClick={() => setOpen(false)}
-                className="inline-flex items-center px-2 py-1 rounded-md text-[11px] font-medium bg-amber-bg text-amber-deep hover:bg-amber-bg/80 transition-colors"
-              >
-                Upgrade to Business
-              </a>
-            </div>
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="shrink-0"
+            >
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+            </svg>
+            <span className="flex-1 truncate">Business</span>
+            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-line text-ink-3 shrink-0">
+              Coming soon
+            </span>
           </div>
         </div>
       )}
