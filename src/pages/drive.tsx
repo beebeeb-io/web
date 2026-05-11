@@ -208,6 +208,12 @@ export function Drive() {
 
   const currentParentId = breadcrumbs[breadcrumbs.length - 1]?.id ?? undefined
 
+  // Ref-tracked sync.ready so fetchFiles/refreshFromSync can read the current
+  // value without listing it as a dep (which would re-create the callbacks and
+  // re-fire the useEffect on every sync state transition, causing API storms).
+  const syncReadyRef = useRef(sync.ready)
+  useEffect(() => { syncReadyRef.current = sync.ready }, [sync.ready])
+
   // Stable mapper — deps never change after mount.
   const syncNodeToDriveFile = useCallback((n: SyncNode): DriveFile => ({
     id: n.id,
@@ -228,7 +234,7 @@ export function Drive() {
   // Used by the treeVersion effect so SSE-pushed updates don't hit the server
   // on every mutation event.
   const refreshFromSync = useCallback(() => {
-    if (!isUnlocked || !sync.ready) return
+    if (!isUnlocked || !syncReadyRef.current) return
     const trashed = location.pathname === '/trash'
     const nodes = sync
       .children(currentParentId ?? null)
@@ -238,7 +244,7 @@ export function Drive() {
     setShowingCached(false)
     if (!trashed) cacheFileList(currentParentId ?? null, nodes)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentParentId, location.pathname, sync.ready, isUnlocked, syncNodeToDriveFile])
+  }, [currentParentId, location.pathname, isUnlocked, syncNodeToDriveFile])
 
   // fetchFiles — triggered on folder navigation (currentParentId change).
   // When the sync engine is ready and the view is not trash, show the
@@ -249,7 +255,7 @@ export function Drive() {
     if (!isUnlocked) return
     const trashed = location.pathname === '/trash'
 
-    if (sync.ready && !trashed) {
+    if (syncReadyRef.current && !trashed) {
       // Show sync snapshot immediately — drop the spinner right away.
       const nodes = sync
         .children(currentParentId ?? null)
@@ -285,12 +291,23 @@ export function Drive() {
     } finally {
       setLoading(false)
     }
+  // sync.ready intentionally read via syncReadyRef to avoid infinite re-fetch
+  // loop: listing sync.ready as a dep would recreate fetchFiles on every sync
+  // state transition and re-trigger this effect, hammering the API.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentParentId, location.pathname, sync.ready, isUnlocked, syncNodeToDriveFile])
+  }, [currentParentId, location.pathname, isUnlocked, syncNodeToDriveFile])
 
   useEffect(() => {
     fetchFiles()
   }, [fetchFiles])
+
+  // When sync becomes ready, show the live snapshot without an extra API call.
+  // fetchFiles already ran the API call on mount; this just swaps in fresh
+  // in-memory data once the sync engine has its first snapshot.
+  useEffect(() => {
+    if (sync.ready && isUnlocked) refreshFromSync()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sync.ready])
 
   // ─── My active shares ──────────────────────────────
   // Loaded once per drive session and refreshed when the user creates,
