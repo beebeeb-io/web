@@ -710,7 +710,7 @@ function Received({
             <span>Saved to your vault</span>
           </div>
           <a
-            href="/drive"
+            href="/"
             className="text-xs text-white/50 hover:text-white/80 transition-colors underline underline-offset-2"
           >
             Open Drive
