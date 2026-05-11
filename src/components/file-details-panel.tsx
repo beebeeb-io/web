@@ -212,6 +212,9 @@ function FileNotesSection({ fileId }: { fileId: string }) {
         <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 flex-1">
           Notes
         </span>
+        <span className="text-[9px] text-ink-4 font-normal normal-case tracking-normal mr-1">
+          Not encrypted · this device only
+        </span>
         <span
           className="text-ink-4 transition-transform duration-150"
           style={{ transform: open ? 'rotate(0deg)' : 'rotate(-90deg)' }}

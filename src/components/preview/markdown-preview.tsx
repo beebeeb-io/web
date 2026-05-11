@@ -82,16 +82,20 @@ export function MarkdownPreview({ blob }: MarkdownPreviewProps) {
             </blockquote>
           ),
           hr: () => <hr className="my-6 border-line" />,
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              className="text-amber-deep underline underline-offset-2"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              {children}
-            </a>
-          ),
+          a: ({ href, children }) => {
+            // Only allow http(s) links — strip javascript:, data:, etc.
+            const safeHref = href && /^https?:\/\//i.test(href) ? href : undefined
+            return (
+              <a
+                href={safeHref}
+                className="text-amber-deep underline underline-offset-2"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {children}
+              </a>
+            )
+          },
         }}
       >
         {text}
