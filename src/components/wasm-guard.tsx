@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { type ReactNode } from 'react'
 import { useKeys } from '../lib/key-context'
 import { BBLogo } from '@beebeeb/shared'
 

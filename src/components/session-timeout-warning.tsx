@@ -8,6 +8,11 @@ import { useNavigate } from 'react-router-dom'
 // How many ms before expiry to show the warning dialog.
 const WARN_BEFORE_MS = 5 * 60 * 1000 // 5 minutes
 
+// JS setTimeout delay is stored as a 32-bit signed int. Delays > 2^31-1 ms
+// (~24.8 days) silently overflow and fire immediately. Cap timers at this limit;
+// the 30-minute liveness ping will reschedule if the expiry is further out.
+const MAX_TIMEOUT_MS = 2147483647
+
 // How often to re-check the session expiry (when no expiry is known, we fall
 // back to a liveness ping via getMe to catch silent 401s).
 const LIVENESS_INTERVAL_MS = 30 * 60 * 1000 // 30 minutes
@@ -72,11 +77,13 @@ export function SessionTimeoutWarning() {
     countdownTimerRef.current = setInterval(updateSeconds, TICK_MS)
 
     const msUntilExpiry = expiresAt.getTime() - Date.now()
-    expireTimerRef.current = setTimeout(() => {
-      // Session has expired — close the dialog and redirect to login.
-      setOpen(false)
-      navigate('/login', { replace: true })
-    }, Math.max(0, msUntilExpiry))
+    if (msUntilExpiry > 0 && msUntilExpiry <= MAX_TIMEOUT_MS) {
+      expireTimerRef.current = setTimeout(() => {
+        // Session has expired — close the dialog and redirect to login.
+        setOpen(false)
+        navigate('/login', { replace: true })
+      }, msUntilExpiry)
+    }
   }, [navigate])
 
   // Schedule the warning dialog and expiry redirect from a known expiry time.
@@ -99,12 +106,15 @@ export function SessionTimeoutWarning() {
       // Less than 5 minutes left — show warning immediately.
       setOpen(true)
       startCountdown(expiresAt)
-    } else {
+    } else if (msUntilWarn <= MAX_TIMEOUT_MS) {
+      // Warn time is within the safe setTimeout range — schedule it.
       warnTimerRef.current = setTimeout(() => {
         setOpen(true)
         startCountdown(expiresAt)
       }, msUntilWarn)
     }
+    // else: expiry is > ~24.8 days out; the 30-min liveness ping will
+    // reschedule before we need to show a warning.
   }, [clearAll, navigate, startCountdown])
 
   // Fetch the current session's expiry from the server and schedule timers.

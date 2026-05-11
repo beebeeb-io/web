@@ -93,13 +93,7 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
 
   if (loading || !vaultChecked) return null
   if (!user) return <Navigate to="/login" replace />
-
-  if (!isUnlocked) {
-    if (vaultExists) {
-      return <VaultUnlock />
-    }
-    return <Navigate to="/login" replace />
-  }
+  if (!isUnlocked) return vaultExists ? <VaultUnlock /> : <Navigate to="/login" replace />
 
   return (
     <>
