@@ -196,8 +196,6 @@ export function QuickAccess() {
     window.dispatchEvent(new Event('beebeeb:pins-changed'))
   }, [pinnedIds])
 
-  if (folders.length === 0) return null
-
   const currentFolder = new URLSearchParams(location.search).get('folder')
 
   return (
@@ -211,21 +209,27 @@ export function QuickAccess() {
           </div>
         </div>
       </div>
-      <nav className="px-3 pb-1.5">
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <SortableContext items={pinnedIds} strategy={verticalListSortingStrategy}>
-            {folders.map(folder => (
-              <SortablePinnedFolder
-                key={folder.id}
-                folder={folder}
-                isActive={currentFolder === folder.id}
-                onUnpin={handleUnpin}
-                colorDot={folderColorDots[folder.id]}
-              />
-            ))}
-          </SortableContext>
-        </DndContext>
-      </nav>
+      {folders.length === 0 ? (
+        <div className="px-4 pb-2 text-[11px] text-ink-4 leading-relaxed">
+          Drag a folder here to pin it
+        </div>
+      ) : (
+        <nav className="px-3 pb-1.5">
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={pinnedIds} strategy={verticalListSortingStrategy}>
+              {folders.map(folder => (
+                <SortablePinnedFolder
+                  key={folder.id}
+                  folder={folder}
+                  isActive={currentFolder === folder.id}
+                  onUnpin={handleUnpin}
+                  colorDot={folderColorDots[folder.id]}
+                />
+              ))}
+            </SortableContext>
+          </DndContext>
+        </nav>
+      )}
     </>
   )
 }

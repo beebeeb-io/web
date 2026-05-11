@@ -635,10 +635,8 @@ export function DriveLayout({ children }: { children: ReactNode }) {
     setQuickAccessDragOver(false)
     const folderId = e.dataTransfer.getData('application/beebeeb-folder')
     if (!folderId) return
-    const pref = await getPreference<{ folder_ids: string[] }>(PINNED_FOLDERS_PREF).catch(() => null)
-    const current = pref?.folder_ids ?? []
-    if (!current.includes(folderId)) {
-      await setPreference(PINNED_FOLDERS_PREF, { folder_ids: [...current, folderId] }).catch(() => {})
+    if (!pinnedFolderIds.includes(folderId)) {
+      await setPreference(PINNED_FOLDERS_PREF, { folder_ids: [...pinnedFolderIds, folderId] }).catch(() => {})
       window.dispatchEvent(new Event('beebeeb:pins-changed'))
     }
   }
