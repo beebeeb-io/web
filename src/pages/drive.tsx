@@ -24,6 +24,7 @@ import { OnboardingGuide } from '../components/onboarding-guide'
 import { OnboardingTour } from '../components/onboarding-tour'
 import { useOnboarding } from '../lib/onboarding-context'
 import { getPreference, setPreference } from '../lib/api'
+import { useDriveData } from '../lib/drive-data-context'
 import { useToast } from '../components/toast'
 import { useWsEvent } from '../lib/ws-context'
 import { useSync } from '../lib/sync-context'
@@ -38,10 +39,8 @@ import {
   updateFile,
   deleteFile,
   getFile,
-  getIncomingInvites,
   getPendingApprovals,
   listMyShares,
-  getStorageUsage,
   listVersions,
   getSharesForFile,
   getFolderMembers,
@@ -83,6 +82,7 @@ export function Drive() {
   const { isFrozen } = useFrozen()
   const { user } = useAuth()
   const { getFileKey, isUnlocked, cryptoReady, cryptoError } = useKeys()
+  const { usage: driveUsage, incomingCount: driveIncomingCount, refreshUsage: refreshDriveUsage } = useDriveData()
   const { indexFile, unindexFile } = useSearchIndex()
   const sync = useSync()
   const { refresh: refreshOnboarding } = useOnboarding()
@@ -124,7 +124,8 @@ export function Drive() {
   const [showingCached, setShowingCached] = useState(false)
 
   // ─── Pending shares state ────────────────────────────
-  const [incomingInviteCount, setIncomingInviteCount] = useState(0)
+  // incomingInviteCount comes from DriveDataContext (deduplicated).
+  const incomingInviteCount = driveIncomingCount
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0)
   const [bulkZipProgress, setBulkZipProgress] = useState<{ done: number; total: number } | null>(null)
   const [pendingSharesDismissed, setPendingSharesDismissed] = useState(false)
@@ -199,8 +200,8 @@ export function Drive() {
   }
   const [dedupWarning, setDedupWarning] = useState<DedupWarning | null>(null)
 
-  // ─── Storage quota state ─────────────────────────
-  const [storageUsage, setStorageUsage] = useState<StorageUsage | null>(null)
+  // ─── Storage quota state (from shared DriveDataContext) ──────────────────
+  const storageUsage: StorageUsage | null = driveUsage
   const [showUpgradeNudge, setShowUpgradeNudge] = useState(false)
 
   // ─── File activity feed (for FileDetailsPanel right rail) ────────────────
@@ -521,20 +522,12 @@ export function Drive() {
       })
   }, [])
 
-  // Fetch storage usage for quota checks
-  const refreshUsage = useCallback(() => {
-    getStorageUsage().then(usage => {
-      setStorageUsage(usage)
-      // Show upgrade nudge once per session when approaching quota limit
-      if (shouldShowUpgradeNudge(usage.used_bytes, usage.plan_limit_bytes)) {
-        setShowUpgradeNudge(true)
-      }
-    }).catch(() => {})
-  }, [])
-
+  // Show upgrade nudge once per session when approaching quota limit
   useEffect(() => {
-    refreshUsage()
-  }, [refreshUsage])
+    if (storageUsage && shouldShowUpgradeNudge(storageUsage.used_bytes, storageUsage.plan_limit_bytes)) {
+      setShowUpgradeNudge(true)
+    }
+  }, [storageUsage])
 
   // Warn before leaving if uploads are still in flight
   useEffect(() => {
@@ -548,15 +541,11 @@ export function Drive() {
     return () => window.removeEventListener('beforeunload', handler)
   }, [uploads])
 
-  // Check for pending share invites on mount
+  // Check for pending admin approvals on mount (incoming invites come from context)
   useEffect(() => {
-    Promise.all([
-      getIncomingInvites().catch(() => []),
-      getPendingApprovals().catch(() => []),
-    ]).then(([incoming, approvals]) => {
-      setIncomingInviteCount(incoming.length)
-      setPendingApprovalCount(approvals.length)
-    })
+    getPendingApprovals()
+      .then((approvals) => setPendingApprovalCount(approvals.length))
+      .catch(() => {})
   }, [])
 
   const { showToast } = useToast()
@@ -956,7 +945,7 @@ export function Drive() {
       // Record hash for duplicate detection in this session (fire-and-forget)
       hashFile(file).then((hash) => recordUpload(hash, file.name)).catch(() => {})
       // Refresh storage usage so quota warning updates
-      refreshUsage()
+      refreshDriveUsage()
       // Advance onboarding state (first_upload_done might now be true)
       void refreshOnboarding()
       // Mark as recently uploaded for glow animation
@@ -1193,7 +1182,7 @@ export function Drive() {
       })
       // Notify sidebar badge that files were uploaded
       window.dispatchEvent(new CustomEvent('beebeeb:file-uploaded', { detail: { count: totalFiles } }))
-      refreshUsage()
+      refreshDriveUsage()
       fetchFiles()
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Something went wrong'

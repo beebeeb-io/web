@@ -17,9 +17,10 @@ import { CSS } from '@dnd-kit/utilities'
 import { Link, useLocation } from 'react-router-dom'
 import { Icon } from './icons'
 import { useKeys } from '../lib/key-context'
-import { getPreference, setPreference, getFile } from '../lib/api'
+import { setPreference, getFile } from '../lib/api'
 import { decryptFileMetadata } from '../lib/crypto'
 import { getFolderColorDot } from '../lib/folder-colors'
+import { useDriveData } from '../lib/drive-data-context'
 
 interface PinnedFolder {
   id: string
@@ -121,28 +122,19 @@ function SortablePinnedFolder({ folder, isActive, onUnpin, colorDot }: {
 }
 
 export function QuickAccess() {
-  const [pinnedIds, setPinnedIds] = useState<string[]>([])
+  const { pinnedFolderIds: contextPinnedIds } = useDriveData()
+  // Local copy for optimistic drag-to-reorder; synced from context on change.
+  const [pinnedIds, setPinnedIds] = useState<string[]>(() => contextPinnedIds.slice(0, 10))
   const [folders, setFolders] = useState<PinnedFolder[]>([])
   const [folderColorDots, setFolderColorDots] = useState<Record<string, string | null>>({})
   const { getFileKey, isUnlocked } = useKeys()
   const location = useLocation()
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
+  // Sync local list from context whenever the server-side list changes.
   useEffect(() => {
-    getPreference<{ folder_ids: string[] }>('pinned_folders')
-      .then(pref => setPinnedIds((pref?.folder_ids ?? []).slice(0, 10)))
-      .catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    function onPinEvent() {
-      getPreference<{ folder_ids: string[] }>('pinned_folders')
-        .then(pref => setPinnedIds((pref?.folder_ids ?? []).slice(0, 10)))
-        .catch(() => {})
-    }
-    window.addEventListener('beebeeb:pins-changed', onPinEvent)
-    return () => window.removeEventListener('beebeeb:pins-changed', onPinEvent)
-  }, [])
+    setPinnedIds(contextPinnedIds.slice(0, 10))
+  }, [contextPinnedIds])
 
   useEffect(() => {
     if (!isUnlocked || pinnedIds.length === 0) {

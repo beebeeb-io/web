@@ -86,6 +86,7 @@ const UploadRequestPage     = lazyNamed(() => import('./pages/upload-request'), 
 import { ThemeProvider } from './lib/theme-context'
 import { DisplayProvider } from './lib/display-context'
 import { CookieBanner } from './components/cookie-banner'
+import { DriveDataProvider } from './lib/drive-data-context'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
@@ -230,6 +231,7 @@ export function App() {
         <WsProvider>
         <SyncProvider>
         <ToastProvider>
+        <DriveDataProvider>
         <DisplayProvider>
         {/* Skip link — first focusable element; visible only on keyboard focus */}
         <a href="#main-content" className="skip-to-content">
@@ -466,6 +468,7 @@ export function App() {
         </Routes>
         </Suspense>
         </DisplayProvider>
+        </DriveDataProvider>
         </ToastProvider>
         </SyncProvider>
         </WsProvider>

@@ -13,7 +13,8 @@ import { onDecrypted } from '../lib/decrypt-events'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { modKey } from '../hooks/use-keyboard-shortcuts'
 import { formatBytes } from '../lib/format'
-import { getPreference, setPreference } from '../lib/api'
+import { setPreference } from '../lib/api'
+import { useDriveData } from '../lib/drive-data-context'
 import { SharePopover } from './share-popover'
 import { FolderViewerBadge } from './presence-avatars'
 import { useToast } from './toast'
@@ -479,30 +480,14 @@ export function FileList({
     }
   }, [])
 
-  // ─── Pinned folders ────────────────────────────────
-  const [pinnedFolderIds, setPinnedFolderIds] = useState<Set<string>>(new Set())
-
-  useEffect(() => {
-    getPreference<{ folder_ids: string[] }>('pinned_folders')
-      .then(pref => setPinnedFolderIds(new Set(pref?.folder_ids ?? [])))
-      .catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    function onPinChanged() {
-      getPreference<{ folder_ids: string[] }>('pinned_folders')
-        .then(pref => setPinnedFolderIds(new Set(pref?.folder_ids ?? [])))
-        .catch(() => {})
-    }
-    window.addEventListener('beebeeb:pins-changed', onPinChanged)
-    return () => window.removeEventListener('beebeeb:pins-changed', onPinChanged)
-  }, [])
+  // ─── Pinned folders (from shared DriveDataContext) ────────────────────────
+  const { pinnedFolderIds: contextPinnedIds } = useDriveData()
+  const pinnedFolderIds = new Set(contextPinnedIds)
 
   const MAX_PINS = 10
 
   async function handleTogglePin(folderId: string) {
-    const pref = await getPreference<{ folder_ids: string[] }>('pinned_folders').catch(() => null)
-    const current = pref?.folder_ids ?? []
+    const current = contextPinnedIds
     const isPinning = !current.includes(folderId)
     if (isPinning && current.length >= MAX_PINS) {
       showToast({

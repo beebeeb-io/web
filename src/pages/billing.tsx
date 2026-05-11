@@ -11,7 +11,6 @@ import { useToast } from '../components/toast'
 import {
   getSubscription,
   getInvoices,
-  getStorageUsage,
   getPlans,
   listFiles,
   createPortalSession,
@@ -22,9 +21,9 @@ import {
   type Subscription,
   type Invoice,
   type Plan,
-  type StorageUsage,
   type DriveFile,
 } from '../lib/api'
+import { useDriveData } from '../lib/drive-data-context'
 import { formatStorageSI } from '../lib/format'
 import { StorageBreakdown } from '../components/storage-breakdown'
 
@@ -162,9 +161,10 @@ export function Billing() {
   const [searchParams, setSearchParams] = useSearchParams()
   const { showToast } = useToast()
   const navigate = useNavigate()
-  const [sub, setSub] = useState<Subscription | null>(null)
+  const { usage: contextUsage, planDetails: contextPlanDetails, refreshPlanDetails } = useDriveData()
+  // sub comes from context; re-synced after cancel/reactivate via loadData
+  const [sub, setSub] = useState<Subscription | null>(contextPlanDetails.subscription)
   const [invoices, setInvoices] = useState<Invoice[]>([])
-  const [storage, setStorage] = useState<StorageUsage | null>(null)
   const [plans, setPlans] = useState<Plan[] | null>(null)
   const [files, setFiles] = useState<DriveFile[] | null>(null)
   const [loading, setLoading] = useState(true)
@@ -190,17 +190,18 @@ export function Billing() {
     setLoading(true)
     setError(null)
     try {
-      const [subData, invData, storageData, invoicePref, plansData, filesData] = await Promise.all([
+      // getSubscription is fetched fresh here so cancel/reactivate flows see
+      // the updated status immediately. getPlans is needed for the upgrade
+      // cards section (context only stores the matched current-user plan).
+      const [subData, invData, invoicePref, plansData, filesData] = await Promise.all([
         getSubscription(),
         getInvoices(),
-        getStorageUsage().catch(() => null),
         getPreference<{ send_email: boolean; invoice_email: string }>('invoice_settings').catch(() => null),
         getPlans().catch(() => null),
         listFiles(undefined, false).catch(() => null),
       ])
       setSub(subData)
       setInvoices(invData)
-      setStorage(storageData)
       setPlans(plansData)
       setFiles(filesData)
       if (invoicePref) {
@@ -257,7 +258,7 @@ export function Billing() {
   const meta = planMeta[effectivePlan] ?? planMeta.free
   const totalStorageGB = meta.storageGB
   const totalStorageBytes = totalStorageGB * 1024 * 1024 * 1024
-  const usedBytes = storage?.used_bytes ?? 0
+  const usedBytes = contextUsage?.used_bytes ?? 0
   const usedPercent = totalStorageBytes > 0 ? (usedBytes / totalStorageBytes) * 100 : 0
 
 function openUpgrade(plan: string) {
@@ -280,6 +281,7 @@ function openUpgrade(plan: string) {
         description: 'Your plan remains active until the end of the billing period.',
       })
       window.dispatchEvent(new Event('beebeeb:plan-changed'))
+      refreshPlanDetails()
       await loadData()
     } catch (err) {
       showToast({
@@ -303,6 +305,7 @@ function openUpgrade(plan: string) {
       }
       showToast({ icon: 'check', title: 'Plan reactivated' })
       window.dispatchEvent(new Event('beebeeb:plan-changed'))
+      refreshPlanDetails()
       await loadData()
     } catch (err) {
       showToast({

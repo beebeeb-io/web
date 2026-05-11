@@ -8,10 +8,6 @@ import { Icon, type IconName } from './icons'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
 import {
-  getSubscription,
-  getPlans,
-  getStorageUsage,
-  fetchUsage,
   getIncomingInvites,
   getFolderKeys,
   getPreference,
@@ -19,12 +15,10 @@ import {
   getAdminStats,
   requestAdminHandoff,
   listFiles,
-  type Plan,
   type ShareInvite,
-  type StorageUsage,
-  type BillingUsage,
   type DriveFile,
 } from '../lib/api'
+import { useDriveData } from '../lib/drive-data-context'
 import { StorageUsageBar } from './storage-usage-bar'
 import { decryptFolderKey, decryptChildFileKey } from '../lib/folder-share-crypto'
 import { decryptFilename, decryptFileMetadata, fromBase64 } from '../lib/crypto'
@@ -170,7 +164,6 @@ const REGION_META: Record<string, { label: string; flag: string }> = {
 }
 
 const PINNED_FOLDERS_PREF = 'pinned_folders'
-const LEGACY_PINNED_FOLDERS_PREF = 'pinned_shared_folders'
 
 // ─── Vault switcher ──────────────────────────────────────────────────────────
 
@@ -586,11 +579,8 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   const { isUnlocked, getMasterKey } = useKeys()
   const { isFrozen } = useFrozen()
   const adminUrl = import.meta.env.VITE_ADMIN_URL ?? 'https://admin.beebeeb.io'
-  const [planDetails, setPlanDetails] = useState<Plan | null>(null)
+  const { usage, planDetails: contextPlanDetails, pinnedFolderIds } = useDriveData()
   const [sharedFolders, setSharedFolders] = useState<(ShareInvite & { decryptedName?: string })[]>([])
-  const [pinnedIds, setPinnedIds] = useState<string[]>([])
-  const [usage, setUsage] = useState<StorageUsage | null>(null)
-  const [billingUsage, setBillingUsage] = useState<BillingUsage | null>(null)
   const [storageRegion, setStorageRegion] = useState<string>('auto')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const sidebarTrapRef = useFocusTrap<HTMLElement>(sidebarOpen)
@@ -609,50 +599,19 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   }, [location.pathname])
 
   useEffect(() => {
-    getStorageUsage().then(setUsage).catch((err) => console.error('[DriveLayout] Failed to load storage usage:', err))
-    // Try the billing usage endpoint; null = not yet deployed (404), fall back to getStorageUsage data.
-    fetchUsage().then((b) => { if (b) setBillingUsage(b) }).catch(() => {})
-    getPlans().then((plans) => {
-      getSubscription().then((s) => {
-        const match = plans.find((p) => p.id === s.plan)
-        if (match) setPlanDetails(match)
-      }).catch((err) => console.error('[DriveLayout] Failed to load subscription for plan match:', err))
-    }).catch((err) => console.error('[DriveLayout] Failed to load plans:', err))
-  }, [])
-
-  useEffect(() => {
-    getPreference<{ folder_ids: string[] }>(PINNED_FOLDERS_PREF)
-      .then(async (pref) => {
-        if (pref?.folder_ids?.length) {
-          setPinnedIds(pref.folder_ids)
-          return
-        }
-        const legacy = await getPreference<{ folder_ids: string[] }>(LEGACY_PINNED_FOLDERS_PREF).catch(() => null)
-        const folderIds = legacy?.folder_ids ?? []
-        setPinnedIds(folderIds)
-        if (folderIds.length) {
-          await setPreference(PINNED_FOLDERS_PREF, { folder_ids: folderIds }).catch(() => {})
-        }
-      })
-      .catch((err) => console.error('[DriveLayout] Failed to load pinned folders:', err))
     getPreference<{ pool_name: string }>('storage_region')
       .then(pref => { if (pref?.pool_name) setStorageRegion(pref.pool_name) })
       .catch(() => {})
   }, [])
 
   useEffect(() => {
-    function onPlanChanged() {
-      getStorageUsage().then(setUsage).catch(() => {})
-    }
     function onRegionChanged() {
       getPreference<{ pool_name: string }>('storage_region')
         .then(pref => { if (pref?.pool_name) setStorageRegion(pref.pool_name) })
         .catch(() => {})
     }
-    window.addEventListener('beebeeb:plan-changed', onPlanChanged)
     window.addEventListener('beebeeb:region-changed', onRegionChanged)
     return () => {
-      window.removeEventListener('beebeeb:plan-changed', onPlanChanged)
       window.removeEventListener('beebeeb:region-changed', onRegionChanged)
     }
   }, [])
@@ -685,11 +644,11 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   }
 
   async function togglePin(folderId: string) {
-    const newIds = pinnedIds.includes(folderId)
-      ? pinnedIds.filter(id => id !== folderId)
-      : [...pinnedIds, folderId]
-    setPinnedIds(newIds)
+    const newIds = pinnedFolderIds.includes(folderId)
+      ? pinnedFolderIds.filter(id => id !== folderId)
+      : [...pinnedFolderIds, folderId]
     await setPreference(PINNED_FOLDERS_PREF, { folder_ids: newIds }).catch((err) => console.error('[DriveLayout] Failed to save pinned folders:', err))
+    window.dispatchEvent(new Event('beebeeb:pins-changed'))
   }
 
   useEffect(() => {
@@ -730,11 +689,12 @@ export function DriveLayout({ children }: { children: ReactNode }) {
     })
   }, [isUnlocked, getMasterKey])
 
-  const storageLimit = usage?.plan_limit_bytes ?? planDetails?.storage_bytes ?? 5_368_709_120
-  // Prefer billing usage endpoint (when live); fall back to files/usage.
-  const resolvedUsedBytes  = billingUsage?.used_bytes  ?? usage?.used_bytes  ?? 0
-  const resolvedQuotaBytes = billingUsage?.quota_bytes ?? storageLimit
-  const planName = usage?.plan_name ?? planDetails?.name ?? 'Free'
+  // Derive storage display values from the context's usage object.
+  // The context already merges billing-endpoint overrides when available.
+  const storageLimit = usage?.plan_limit_bytes ?? contextPlanDetails.plan?.storage_bytes ?? 5_368_709_120
+  const resolvedUsedBytes  = usage?.used_bytes  ?? 0
+  const resolvedQuotaBytes = storageLimit
+  const planName = usage?.plan_name ?? contextPlanDetails.plan?.name ?? 'Free'
 
   return (
     <div className="h-screen flex overflow-hidden bg-paper">
@@ -842,9 +802,9 @@ export function DriveLayout({ children }: { children: ReactNode }) {
                     <span className="flex-1 truncate">{folder.decryptedName}</span>
                     <button
                       onClick={(e) => { e.preventDefault(); e.stopPropagation(); togglePin(folder.file_id) }}
-                      className={`shrink-0 transition-opacity ${pinnedIds.includes(folder.file_id) ? 'opacity-100 text-amber-deep' : 'opacity-0 group-hover:opacity-100 text-ink-3 hover:text-ink'}`}
-                      title={pinnedIds.includes(folder.file_id) ? 'Unpin from drive' : 'Pin to drive'}
-                      aria-label={pinnedIds.includes(folder.file_id) ? 'Unpin from drive' : 'Pin to drive'}
+                      className={`shrink-0 transition-opacity ${pinnedFolderIds.includes(folder.file_id) ? 'opacity-100 text-amber-deep' : 'opacity-0 group-hover:opacity-100 text-ink-3 hover:text-ink'}`}
+                      title={pinnedFolderIds.includes(folder.file_id) ? 'Unpin from drive' : 'Pin to drive'}
+                      aria-label={pinnedFolderIds.includes(folder.file_id) ? 'Unpin from drive' : 'Pin to drive'}
                     >
                       <Icon name="star" size={11} />
                     </button>
