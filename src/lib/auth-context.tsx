@@ -8,6 +8,7 @@ import {
 } from 'react'
 import type { ReactNode } from 'react'
 import {
+  ApiError,
   type AuthUser,
   type LoginResult,
   type SignupResult,
@@ -51,8 +52,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     getMe()
       .then(setUser)
-      .catch(() => {
-        clearToken()
+      .catch((err) => {
+        // Only clear session on genuine 401 expiry — not network errors or 5xx.
+        // For transient failures, keep the token so the user can retry.
+        if (err instanceof ApiError && err.status === 401) {
+          clearToken()
+        }
       })
       .finally(() => setLoading(false))
   }, [])

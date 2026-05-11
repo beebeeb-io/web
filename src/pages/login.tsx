@@ -90,12 +90,16 @@ export function Login() {
 
   async function handle2faVerify(code: string) {
     if (!partialToken) return
-    const result = await verify2fa(partialToken, code)
-    if (result?.salt) {
-      const salt = hexToBytes(result.salt)
-      await unlock(password, salt)
+    try {
+      const result = await verify2fa(partialToken, code)
+      if (result?.salt) {
+        const salt = hexToBytes(result.salt)
+        await unlock(password, salt)
+      }
+      navigate('/')
+    } catch {
+      setError('Incorrect code or session expired. Please try again.')
     }
-    navigate('/')
   }
 
   async function handlePasskeyLogin() {

@@ -852,6 +852,19 @@ export function SettingsImport() {
   const gdTokenRef = useRef<string | null>(gdToken)
   useEffect(() => { gdTokenRef.current = gdToken }, [gdToken])
 
+  // ── Security: purge OAuth tokens from sessionStorage immediately after reading into state.
+  // Tokens are held in React state for the session; sessionStorage is only used as a
+  // callback handoff and must not persist (any XSS could steal live tokens from storage).
+  useEffect(() => {
+    sessionStorage.removeItem(TOKEN_KEY)
+    sessionStorage.removeItem(ACCOUNT_KEY)
+  }, [])
+  useEffect(() => {
+    sessionStorage.removeItem(GD_TOKEN_KEY)
+    // GD_REFRESH_KEY is intentionally kept until disconnect — it is re-read during
+    // token refresh inside the import loop. It is removed in handleDisconnectGDrive.
+  }, [])
+
   // ── Import pipeline state (shared across providers) ─────────────────────────
   type ImportPhase = 'idle' | 'building-queue' | 'importing' | 'paused' | 'done'
 

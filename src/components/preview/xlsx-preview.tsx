@@ -180,13 +180,11 @@ export function XlsxPreview({ blob, filename }: XlsxPreviewProps) {
 
       {/* Sheet iframe — scrollable */}
       <div className="flex-1 overflow-hidden">
-        {/* allow-same-origin is intentional — SheetJS needs DOM access to render.
-            DO NOT add allow-scripts: it would let user-uploaded xlsx content execute JS
-            in the main origin. */}
+        {/* No allow-same-origin: static srcDoc HTML does not need origin access. */}
         <iframe
           key={activeSheet}
           srcDoc={srcDoc}
-          sandbox="allow-same-origin"
+          sandbox="allow-popups"
           className="w-full h-full border-0 bg-white"
           title={`${currentSheet?.name ?? 'Sheet'} — ${filename}`}
         />

@@ -562,12 +562,12 @@ function TrustedContactSection() {
       {contact ? (
         <div className="flex items-center gap-2">
           <span className="text-sm text-ink font-mono">{contact}</span>
-          <Link to="/settings/account" className="text-xs text-amber-deep hover:underline">
+          <Link to="/settings/profile" className="text-xs text-amber-deep hover:underline">
             Change
           </Link>
         </div>
       ) : (
-        <Link to="/settings/account" className="text-sm text-amber-deep hover:underline">
+        <Link to="/settings/profile" className="text-sm text-amber-deep hover:underline">
           Set up in Account settings
         </Link>
       )}

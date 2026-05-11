@@ -45,6 +45,83 @@ function RoleChip({ role }: { role: string }) {
 
 /* ── Invite dialog ──────────────────────────────── */
 
+function CreateWorkspaceDialog({
+  open,
+  onClose,
+  onCreate,
+}: {
+  open: boolean
+  onClose: () => void
+  onCreate: (name: string) => Promise<void>
+}) {
+  const [name, setName] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const handleSubmit = async () => {
+    if (!name.trim()) return
+    setError('')
+    setLoading(true)
+    try {
+      await onCreate(name.trim())
+      setName('')
+      onClose()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to create workspace')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (!open) return null
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30">
+      <div
+        className="bg-paper rounded-xl border border-line-2 shadow-3 overflow-hidden"
+        style={{ width: 420 }}
+      >
+        <div className="flex items-center gap-2.5 px-5 py-3.5 border-b border-line">
+          <Icon name="users" size={14} className="text-ink-2" />
+          <span className="text-sm font-semibold text-ink">New workspace</span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="ml-auto p-1 text-ink-3 hover:text-ink cursor-pointer"
+          >
+            <Icon name="x" size={14} />
+          </button>
+        </div>
+
+        <div className="px-5 py-4">
+          <BBInput
+            label="Workspace name"
+            icon="folder"
+            placeholder="e.g. Marketing team"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            error={error || undefined}
+          />
+        </div>
+
+        <div className="px-5 py-3.5 border-t border-line bg-paper-2 flex justify-end gap-2">
+          <BBButton size="sm" variant="ghost" onClick={onClose}>
+            Cancel
+          </BBButton>
+          <BBButton
+            size="sm"
+            variant="amber"
+            onClick={handleSubmit}
+            disabled={loading || !name.trim()}
+          >
+            {loading ? 'Creating...' : 'Create'}
+          </BBButton>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function InviteDialog({
   open,
   onClose,
@@ -168,6 +245,7 @@ export function Team() {
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([])
   const [search, setSearch] = useState('')
   const [inviteOpen, setInviteOpen] = useState(false)
+  const [createWsOpen, setCreateWsOpen] = useState(false)
   const [loading, setLoading] = useState(true)
 
   const loadWorkspaces = useCallback(async () => {
@@ -225,16 +303,14 @@ export function Team() {
     }
   }
 
-  const handleCreateWorkspace = async () => {
-    const name = prompt('Workspace name:')
-    if (!name?.trim()) return
-    try {
-      const ws = await createWorkspace(name.trim())
-      setActiveWs(ws)
-      showToast({ icon: 'check', title: `Workspace "${name.trim()}" created` })
-    } catch (err) {
-      showToast({ icon: 'x', title: 'Failed to create workspace', description: err instanceof Error ? err.message : 'Something went wrong', danger: true })
-    }
+  const handleCreateWorkspace = () => {
+    setCreateWsOpen(true)
+  }
+
+  const handleConfirmCreateWorkspace = async (name: string) => {
+    const ws = await createWorkspace(name)
+    setActiveWs(ws)
+    showToast({ icon: 'check', title: `Workspace "${name}" created` })
   }
 
   const handleRoleChange = async (userId: string, newRole: string) => {
@@ -480,6 +556,11 @@ export function Team() {
         open={inviteOpen}
         onClose={() => setInviteOpen(false)}
         onInvite={handleInvite}
+      />
+      <CreateWorkspaceDialog
+        open={createWsOpen}
+        onClose={() => setCreateWsOpen(false)}
+        onCreate={handleConfirmCreateWorkspace}
       />
     </div>
   )

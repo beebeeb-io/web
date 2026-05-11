@@ -134,12 +134,10 @@ export function DocxPreview({ blob, filename }: DocxPreviewProps) {
   return (
     <div className="flex flex-col h-full w-full">
       <PreviewBanner onDownload={handleDownload} />
-      {/* allow-same-origin is intentional — the iframe needs DOM access for mammoth to render.
-          DO NOT add allow-scripts: it would let user-uploaded docx content execute JS
-          in the main origin. The text-preview fallback was audited in task 0112. */}
+      {/* No allow-same-origin: static srcDoc HTML does not need origin access. */}
       <iframe
         srcDoc={srcDoc}
-        sandbox="allow-same-origin"
+        sandbox="allow-popups"
         className="flex-1 w-full border-0 bg-white"
         title={`Preview of ${filename}`}
       />

@@ -333,13 +333,13 @@ function UserCard() {
           className="absolute bottom-full left-3 right-3 mb-1 rounded-md border border-line bg-paper-2 shadow-2 p-1"
         >
           <Link
-            to="/settings/account"
+            to="/settings/profile"
             role="menuitem"
             onClick={() => setOpen(false)}
             className={itemClass}
           >
             <Icon name="settings" size={13} className="shrink-0 text-ink-3" />
-            <span className="flex-1">Account</span>
+            <span className="flex-1">Profile</span>
           </Link>
           <Link
             to="/settings/billing"
