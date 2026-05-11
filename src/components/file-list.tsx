@@ -294,6 +294,10 @@ export function FileList({
     // to retry. Avoids the silent "Encrypted file" placeholder that the
     // shared decryptFileMetadata helper returns on error.
     async function decryptOne(file: DriveFile): Promise<string> {
+      // Legacy format (iOS before 930c61a): plain-text name, not JSON-encrypted.
+      if (!file.name_encrypted.startsWith('{')) {
+        return file.name_encrypted
+      }
       const fileKey = await getFileKey(file.id)
       const outer = JSON.parse(file.name_encrypted) as { nonce: string; ciphertext: string }
       const plain = await decryptFilename(fileKey, fromBase64(outer.nonce), fromBase64(outer.ciphertext))
