@@ -42,12 +42,10 @@ function SortablePinnedFolder({ folder, isActive, onUnpin, colorDot }: {
   // event streams don't collide.
   function handleDragOver(e: React.DragEvent) {
     if (!e.dataTransfer.types.includes('text/plain')) return
-    // Don't accept the folder itself (pinning self into self).
-    if (e.dataTransfer.types.includes('application/beebeeb-folder')) {
-      try {
-        // We can't read getData on dragover, so trust the move on drop.
-      } catch { /* ignore */ }
-    }
+    // A folder drag (application/beebeeb-folder) means the user wants to PIN
+    // to Quick Access — let it bubble to the outer drop zone, don't treat it
+    // as "move files into this folder".
+    if (e.dataTransfer.types.includes('application/beebeeb-folder')) return
     e.preventDefault()
     e.dataTransfer.dropEffect = 'move'
     setDragOver(true)
@@ -60,6 +58,8 @@ function SortablePinnedFolder({ folder, isActive, onUnpin, colorDot }: {
   }
 
   function handleDrop(e: React.DragEvent) {
+    // Folder drags are handled by the outer Quick Access pin zone — don't intercept.
+    if (e.dataTransfer.types.includes('application/beebeeb-folder')) return
     e.preventDefault()
     setDragOver(false)
     let fileIds: string[]
