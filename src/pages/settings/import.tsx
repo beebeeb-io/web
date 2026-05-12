@@ -476,6 +476,13 @@ function DropboxTree({
         </button>
       </div>
 
+      <div className="flex items-start gap-2 px-5 py-2.5 border-b border-line bg-paper-2/50">
+        <Icon name="info" size={12} className="text-ink-4 shrink-0 mt-0.5" />
+        <p className="text-[11px] text-ink-4 leading-relaxed">
+          Connects to Dropbox (US service). Files are downloaded directly to your browser and encrypted before upload to Beebeeb. Dropbox does not receive your encryption keys.
+        </p>
+      </div>
+
       {loadingRoot ? (
         <div className="flex items-center justify-center py-12 gap-2 text-ink-3">
           <svg className="animate-spin h-5 w-5 text-amber" viewBox="0 0 24 24" fill="none">
@@ -664,6 +671,13 @@ function GoogleDriveTree({
         </button>
       </div>
 
+      <div className="flex items-start gap-2 px-5 py-2.5 border-b border-line bg-paper-2/50">
+        <Icon name="info" size={12} className="text-ink-4 shrink-0 mt-0.5" />
+        <p className="text-[11px] text-ink-4 leading-relaxed">
+          Connects to Google (US service). Files are downloaded directly to your browser and encrypted before upload to Beebeeb. Google does not receive your encryption keys.
+        </p>
+      </div>
+
       {loadingRoot ? (
         <div className="flex items-center justify-center py-12 gap-2 text-ink-3">
           <svg className="animate-spin h-5 w-5 text-amber" viewBox="0 0 24 24" fill="none">
@@ -756,7 +770,7 @@ function findNode(nodes: TreeNode[], path: string): TreeNode | null {
 // ── Provider card ─────────────────────────────────────────────────────────────
 
 function ProviderCard({
-  name, logo, status, onConnect, disabled, comingSoon,
+  name, logo, status, onConnect, disabled, comingSoon, usDisclosure,
 }: {
   name: string
   logo: React.ReactNode
@@ -764,6 +778,7 @@ function ProviderCard({
   onConnect?: () => void
   disabled?: boolean
   comingSoon?: boolean
+  usDisclosure?: string
 }) {
   return (
     <div className={`rounded-xl border p-5 bg-paper flex flex-col gap-4 ${
@@ -798,6 +813,10 @@ function ProviderCard({
             <><Icon name="link" size={12} /> Connect {name}</>
           )}
         </BBButton>
+      )}
+
+      {!comingSoon && usDisclosure && (
+        <p className="text-[11px] text-ink-4 leading-relaxed">{usDisclosure}</p>
       )}
 
       {comingSoon && (
@@ -1263,6 +1282,7 @@ export function SettingsImport() {
                   logo={<DropboxLogo />}
                   status={dbxConnecting ? 'connecting' : 'disconnected'}
                   onConnect={() => void handleConnectDropbox()}
+                  usDisclosure="Connects to Dropbox (US service). Files are downloaded directly to your browser and encrypted before upload to Beebeeb. Dropbox does not receive your encryption keys."
                 />
               )}
               {gdClientId && (
@@ -1271,6 +1291,7 @@ export function SettingsImport() {
                   logo={<GoogleDriveLogo />}
                   status={gdConnecting ? 'connecting' : 'disconnected'}
                   onConnect={() => void handleConnectGDrive()}
+                  usDisclosure="Connects to Google (US service). Files are downloaded directly to your browser and encrypted before upload to Beebeeb. Google does not receive your encryption keys."
                 />
               )}
             </div>
