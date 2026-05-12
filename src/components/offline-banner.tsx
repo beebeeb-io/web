@@ -34,8 +34,26 @@ export function OfflineBanner() {
       }, 3000)
     }
 
+    const handleWsDisconnected = () => {
+      setStatus((prev) => (prev === 'offline' ? prev : 'flaky'))
+    }
+
+    const handleWsConnected = () => {
+      setStatus((prev) => {
+        if (prev !== 'flaky') return prev
+        clearReconnectedTimer()
+        reconnectedTimer = setTimeout(() => {
+          setStatus('online')
+          reconnectedTimer = null
+        }, 3000)
+        return 'reconnected'
+      })
+    }
+
     window.addEventListener('offline', handleOffline)
     window.addEventListener('online', handleOnline)
+    window.addEventListener('beebeeb:ws-disconnected', handleWsDisconnected)
+    window.addEventListener('beebeeb:ws-connected', handleWsConnected)
 
     registerConnectionStatusHandler((s) => {
       setStatus((prev) => {
@@ -58,6 +76,8 @@ export function OfflineBanner() {
     return () => {
       window.removeEventListener('offline', handleOffline)
       window.removeEventListener('online', handleOnline)
+      window.removeEventListener('beebeeb:ws-disconnected', handleWsDisconnected)
+      window.removeEventListener('beebeeb:ws-connected', handleWsConnected)
       clearReconnectedTimer()
     }
   }, [])
@@ -77,7 +97,7 @@ export function OfflineBanner() {
     flaky: {
       className: 'bg-amber-bg text-amber-deep',
       icon: 'cloud',
-      text: 'Connection issues — retrying...',
+      text: 'Reconnecting to Beebeeb...',
     },
     reconnected: {
       className: 'bg-green/10 text-green',
@@ -93,7 +113,13 @@ export function OfflineBanner() {
       role="status"
       className={`w-full px-md py-1.5 flex items-center justify-center gap-sm text-xs font-medium transition-colors duration-200 ${c.className}`}
     >
-      <Icon name={c.icon} size={14} />
+      {status === 'flaky' ? (
+        <svg className="animate-spin" width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round">
+          <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+        </svg>
+      ) : (
+        <Icon name={c.icon} size={14} />
+      )}
       <span>{c.text}</span>
     </div>
   )

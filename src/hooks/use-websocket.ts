@@ -51,6 +51,7 @@ export function useWebSocket({ onEvent, enabled = true }: UseWebSocketOptions) {
 
     ws.onopen = () => {
       backoffRef.current = BASE_BACKOFF_MS
+      window.dispatchEvent(new CustomEvent('beebeeb:ws-connected'))
     }
 
     ws.onmessage = (event) => {
@@ -67,6 +68,7 @@ export function useWebSocket({ onEvent, enabled = true }: UseWebSocketOptions) {
       // Don't reconnect on intentional close (code 1000) or auth failure (4001)
       if (event.code === 1000 || event.code === 4001) return
 
+      window.dispatchEvent(new CustomEvent('beebeeb:ws-disconnected'))
       const delay = backoffRef.current
       backoffRef.current = Math.min(backoffRef.current * 2, MAX_BACKOFF_MS)
       reconnectTimerRef.current = setTimeout(() => { void connect() }, delay)

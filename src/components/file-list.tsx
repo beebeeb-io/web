@@ -8,12 +8,12 @@ import { getBadgeStyle } from '../lib/file-colors'
 import { ContextMenu } from './context-menu'
 import { FileRowSkeleton } from '@beebeeb/shared'
 import { useKeys } from '../lib/key-context'
-import { decryptFilename, fromBase64 } from '../lib/crypto'
+import { decryptFilename, fromBase64, encryptFilename, toBase64 } from '../lib/crypto'
 import { onDecrypted } from '../lib/decrypt-events'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { modKey } from '../hooks/use-keyboard-shortcuts'
 import { formatBytes } from '../lib/format'
-import { setPreference } from '../lib/api'
+import { setPreference, updateFile } from '../lib/api'
 import { useDriveData } from '../lib/drive-data-context'
 import { SharePopover } from './share-popover'
 import { FolderViewerBadge } from './presence-avatars'
@@ -197,6 +197,7 @@ export function FileList({
   myShares,
   folderViewerCounts,
   parentId,
+  onRefresh,
 }: FileListProps) {
   const { getFileKey, isUnlocked } = useKeys()
   const { showToast } = useToast()
@@ -437,6 +438,18 @@ export function FileList({
   // ─── Selection ─────────────────────────────────────
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set<string>())
   const lastClickedIdRef = useRef<string | null>(null)
+
+  const [inlineRenameId, setInlineRenameId] = useState<string | null>(null)
+  const [inlineRenameValue, setInlineRenameValue] = useState('')
+  const inlineRenameInputRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => {
+    if (inlineRenameId && inlineRenameInputRef.current) {
+      inlineRenameInputRef.current.focus()
+      const dotIdx = inlineRenameValue.lastIndexOf('.')
+      inlineRenameInputRef.current.setSelectionRange(0, dotIdx > 0 ? dotIdx : inlineRenameValue.length)
+    }
+  }, [inlineRenameId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateSelection = useCallback((next: Set<string>) => {
     setSelectedIds(next)
@@ -745,6 +758,26 @@ export function FileList({
       })()
     : null
 
+  async function commitInlineRename(file: DriveFile) {
+    const newName = inlineRenameValue.trim()
+    setInlineRenameId(null)
+    const currentName = displayName(file)
+    if (!newName || newName === currentName) return
+    if (!isUnlocked) {
+      showToast({ icon: 'lock', title: 'Vault is locked', description: 'Unlock to rename files.', danger: true })
+      return
+    }
+    try {
+      const fileKey = await getFileKey(file.id)
+      const enc = await encryptFilename(fileKey, newName)
+      const nameEncrypted = JSON.stringify({ nonce: toBase64(enc.nonce), ciphertext: toBase64(enc.ciphertext) })
+      await updateFile(file.id, { name_encrypted: nameEncrypted })
+      onRefresh?.()
+    } catch {
+      showToast({ icon: 'x', title: 'Rename failed', description: 'Could not rename the file.', danger: true })
+    }
+  }
+
   // ─── Row renderer ──────────────────────────────────
   function renderRow(file: DriveFile) {
     // null = decryption still running for this file — show skeleton in name cell
@@ -792,8 +825,12 @@ export function FileList({
           isRecentUpload ? 'upload-glow' : '',
         ].filter(Boolean).join(' ')}
         onClick={(e) => handleRowClick(file, e)}
-        onDoubleClick={() => {
-          if (!file.is_folder) onFileAction?.('open', file)
+        onDoubleClick={(e) => {
+          e.stopPropagation()
+          const currentName = displayName(file)
+          if (currentName === null) return
+          setInlineRenameId(file.id)
+          setInlineRenameValue(currentName)
         }}
         onContextMenu={(e) => {
           e.preventDefault()
@@ -925,7 +962,20 @@ export function FileList({
         {/* Name column */}
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
-            {name !== null
+            {inlineRenameId === file.id ? (
+              <input
+                ref={inlineRenameInputRef}
+                className="font-medium bg-transparent border border-amber-deep rounded px-1 outline-none min-w-0 flex-1"
+                value={inlineRenameValue}
+                onChange={(e) => setInlineRenameValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); void commitInlineRename(file) }
+                  if (e.key === 'Escape') { e.preventDefault(); setInlineRenameId(null) }
+                }}
+                onBlur={() => { void commitInlineRename(file) }}
+                onClick={(e) => e.stopPropagation()}
+              />
+            ) : name !== null
               ? <span className="font-medium truncate">{name}</span>
               : <span
                   className="inline-block rounded bg-paper-3 animate-pulse shrink-0"
