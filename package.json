@@ -1,14 +1,32 @@
 {
   "name": "web",
   "version": "1.0.0",
-  "description": "",
+  "description": "End-to-end encrypted cloud storage web client",
+  "homepage": "https://beebeeb.io",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/beebeeb-io/web.git"
+  },
+  "bugs": {
+    "url": "https://github.com/beebeeb-io/web/issues",
+    "email": "security@beebeeb.io"
+  },
+  "keywords": [
+    "encryption",
+    "zero-knowledge",
+    "cloud-storage",
+    "e2e",
+    "privacy"
+  ],
   "main": "index.js",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build && node gen-wasm-sri.mjs",
     "preview": "vite preview"
   },
-  "keywords": [],
   "author": "Initlabs B.V.",
   "license": "AGPL-3.0-or-later",
   "dependencies": {

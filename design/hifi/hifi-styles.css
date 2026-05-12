@@ -1,6 +1,6 @@
 /* Beebeeb.io — hi-fi design tokens & components */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* Fonts: self-hosted via @fontsource/inter and @fontsource/jetbrains-mono in the app. */
 
 :root {
   --density: 1;
