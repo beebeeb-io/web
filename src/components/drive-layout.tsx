@@ -608,7 +608,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   function handleQuickAccessDragOver(e: DragEvent<HTMLDivElement>) {
     if (e.dataTransfer.types.includes('application/beebeeb-folder')) {
       e.preventDefault()
-      e.dataTransfer.dropEffect = 'link'
+      e.dataTransfer.dropEffect = 'move'
       setQuickAccessDragOver(true)
     }
   }
