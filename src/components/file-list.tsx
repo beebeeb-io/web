@@ -537,8 +537,8 @@ export function FileList({
 
   // ─── Context menu ──────────────────────────────────
   const [ctxMenu, setCtxMenu] = useState<{
-    open: boolean; x: number; y: number; fileId: string; fileName: string; isFolder: boolean; versionNumber: number; isStarred: boolean
-  }>({ open: false, x: 0, y: 0, fileId: '', fileName: '', isFolder: false, versionNumber: 1, isStarred: false })
+    open: boolean; x: number; y: number; fileId: string; fileName: string; isFolder: boolean; versionNumber: number; isStarred: boolean; mimeType: string | null
+  }>({ open: false, x: 0, y: 0, fileId: '', fileName: '', isFolder: false, versionNumber: 1, isStarred: false, mimeType: null })
 
   // ─── Share popover ────────────────────────────────
   const [sharePopover, setSharePopover] = useState<{
@@ -843,8 +843,8 @@ export function FileList({
             isFolder: file.is_folder,
             versionNumber: file.version_number ?? 1,
             isStarred: file.is_starred ?? false,
+            mimeType: file.mime_type ?? null,
           })
-
         }}
         onKeyDown={(e) => {
           // Enter: open folder or preview file
@@ -871,6 +871,7 @@ export function FileList({
               isFolder: file.is_folder,
               versionNumber: file.version_number ?? 1,
               isStarred: file.is_starred ?? false,
+              mimeType: file.mime_type ?? null,
             })
           }
           // Delete / Backspace: trash the focused file (single-file keyboard delete).
@@ -1161,6 +1162,7 @@ export function FileList({
                   isFolder: file.is_folder,
                   versionNumber: file.version_number ?? 1,
                   isStarred: file.is_starred ?? false,
+                  mimeType: file.mime_type ?? null,
                 })
               }}
             >
@@ -1392,6 +1394,7 @@ export function FileList({
         fileId={ctxMenu.fileId}
         fileName={ctxMenu.fileName}
         isFolder={ctxMenu.isFolder}
+        mimeType={ctxMenu.mimeType}
         isStarred={ctxMenu.isStarred}
         isPinned={pinnedFolderIds.has(ctxMenu.fileId)}
         hasVersions={!ctxMenu.isFolder}
@@ -1405,8 +1408,10 @@ export function FileList({
             onToggleStar?.(fileId)
             return
           }
+          // 'preview' opens the same panel as 'open' for files
+          const resolvedAction = action === 'preview' ? 'open' : action
           const file = files.find((f) => f.id === fileId)
-          if (file) onFileAction?.(action, file)
+          if (file) onFileAction?.(resolvedAction, file)
         }}
         onColorChange={handleFolderColorChange}
       />

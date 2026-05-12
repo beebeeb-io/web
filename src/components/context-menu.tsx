@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Icon } from '@beebeeb/shared'
 import type { IconName } from '@beebeeb/shared'
 import { FOLDER_COLORS, getFolderColor, setFolderColor } from '../lib/folder-colors'
+import { isPreviewable } from '../lib/preview'
 
 interface ContextMenuItem {
   id: string
@@ -13,6 +14,7 @@ interface ContextMenuItem {
 }
 
 const MENU_ITEMS: ContextMenuItem[] = [
+  { id: 'preview', label: 'Preview', icon: 'file' },
   { id: 'open', label: 'Open', icon: 'file', shortcut: 'Enter' },
   { id: 'share', label: 'Share', icon: 'share', shortcut: 'S' },
   { id: 'manage-shares', label: 'Manage shares', icon: 'link' },
@@ -31,6 +33,8 @@ interface ContextMenuProps {
   fileId: string
   fileName: string
   isFolder: boolean
+  /** MIME type of the file — used to enable/disable the Preview action */
+  mimeType?: string | null
   /** Whether this file is currently starred — controls Star vs Unstar label */
   isStarred?: boolean
   isPinned?: boolean
@@ -49,6 +53,7 @@ export function ContextMenu({
   fileId,
   fileName,
   isFolder,
+  mimeType,
   isStarred,
   isPinned,
   hasVersions,
@@ -152,8 +157,12 @@ export function ContextMenu({
 
   if (!open) return null
 
+  const canPreview = !isFolder && isPreviewable(mimeType)
+
   const visibleItems = MENU_ITEMS
     .filter((item) => item.id !== 'versions' || hasVersions)
+    // Hide preview from folders — Preview is file-only
+    .filter((item) => item.id !== 'preview' || !isFolder)
     .map((item) => {
       // Dynamic star/unstar label based on current starred state
       if (item.id === 'star') {
@@ -173,38 +182,48 @@ export function ContextMenu({
       className="fixed z-[60] min-w-[220px] bg-paper border border-line-2 rounded-lg shadow-3 overflow-hidden py-1 ctx-menu-enter"
       style={{ left: x, top: y, transformOrigin: '0 0' }}
     >
-      {visibleItems.map((item) => (
-        <div key={item.id}>
-          <button
-            type="button"
-            role="menuitem"
-            className={`w-full text-left flex items-center gap-2.5 px-3 py-[7px] text-[13px] transition-colors focus-visible:outline-none focus-visible:bg-paper-2 ${
-              item.danger
-                ? 'text-red hover:bg-red/5 focus-visible:bg-red/5'
-                : 'text-ink hover:bg-paper-2'
-            }`}
-            onClick={() => {
-              onAction(item.id, fileId)
-              onClose()
-            }}
-          >
-            <Icon
-              name={item.icon}
-              size={13}
-              className={item.danger ? 'text-red' : 'text-ink-3'}
-            />
-            <span className="flex-1">{item.label}</span>
-            {item.shortcut && (
-              <kbd className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-mono text-ink-4 bg-paper-2 border border-line rounded">
-                {item.shortcut}
-              </kbd>
+      {visibleItems.map((item) => {
+        const isPreviewItem = item.id === 'preview'
+        const disabled = isPreviewItem && !canPreview
+        return (
+          <div key={item.id}>
+            <button
+              type="button"
+              role="menuitem"
+              aria-disabled={disabled || undefined}
+              title={isPreviewItem && !canPreview ? 'Preview not available for this file type' : undefined}
+              disabled={disabled}
+              className={`w-full text-left flex items-center gap-2.5 px-3 py-[7px] text-[13px] transition-colors focus-visible:outline-none focus-visible:bg-paper-2 ${
+                disabled
+                  ? 'text-ink-4 cursor-not-allowed'
+                  : item.danger
+                    ? 'text-red hover:bg-red/5 focus-visible:bg-red/5'
+                    : 'text-ink hover:bg-paper-2'
+              }`}
+              onClick={() => {
+                if (disabled) return
+                onAction(item.id, fileId)
+                onClose()
+              }}
+            >
+              <Icon
+                name={item.icon}
+                size={13}
+                className={disabled ? 'text-ink-4' : item.danger ? 'text-red' : 'text-ink-3'}
+              />
+              <span className="flex-1">{item.label}</span>
+              {item.shortcut && (
+                <kbd className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-mono text-ink-4 bg-paper-2 border border-line rounded">
+                  {item.shortcut}
+                </kbd>
+              )}
+            </button>
+            {item.dividerAfter && (
+              <div className="mx-2 my-1 h-px bg-line" role="separator" />
             )}
-          </button>
-          {item.dividerAfter && (
-            <div className="mx-2 my-1 h-px bg-line" role="separator" />
-          )}
-        </div>
-      ))}
+          </div>
+        )
+      })}
       {isFolder && (
         <>
           <div className="mx-2 my-1 h-px bg-line" role="separator" />

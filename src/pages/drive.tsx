@@ -22,6 +22,8 @@ import { ShortcutsCheatsheet } from '../components/shortcuts-cheatsheet'
 import { WelcomeTour } from '../components/welcome-tour'
 import { OnboardingGuide } from '../components/onboarding-guide'
 import { OnboardingTour } from '../components/onboarding-tour'
+import { FilePreview } from '../components/preview/file-preview'
+import { useFilePreview } from '../hooks/use-file-preview'
 import { useOnboarding } from '../lib/onboarding-context'
 import { getPreference, setPreference } from '../lib/api'
 import { useDriveData } from '../lib/drive-data-context'
@@ -125,6 +127,7 @@ export function Drive() {
   const { indexFile, unindexFile } = useSearchIndex()
   const sync = useSync()
   const { refresh: refreshOnboarding } = useOnboarding()
+  const { previewFile, openPreview, closePreview } = useFilePreview()
   const location = useLocation()
   const navigate = useNavigate()
   const [files, setFiles] = useState<DriveFile[]>([])
@@ -1521,6 +1524,7 @@ export function Drive() {
       mimeType: file.mime_type || null,
       sizeBytes: file.size_bytes,
       isFolder: file.is_folder,
+      hasThumbnail: file.has_thumbnail ?? false,
       createdAt: file.created_at,
       updatedAt: file.updated_at,
       location: locationPath || '/',
@@ -1615,6 +1619,9 @@ export function Drive() {
       case 'open':
         if (file.is_folder) handleFolderOpen(file)
         else setSelectedFileId(file.id)
+        break
+      case 'preview':
+        if (!file.is_folder) openPreview(file)
         break
       case 'share':
         setShareFileId(file.id)
@@ -2283,7 +2290,31 @@ export function Drive() {
             setSelectedFileId(null)
           }
         }}
+        onPreview={() => {
+          if (selectedFile && !selectedFile.is_folder) {
+            openPreview(selectedFile)
+            setSelectedFileId(null)
+          }
+        }}
       />
+
+      {/* Full-screen file preview overlay */}
+      {previewFile && (() => {
+        const previewIdx = files.findIndex((f) => f.id === previewFile.id)
+        const hasPrev = previewIdx > 0
+        const hasNext = previewIdx < files.length - 1
+        return (
+          <FilePreview
+            file={previewFile}
+            decryptedName={externalDecryptedNames[previewFile.id] ?? undefined}
+            onClose={closePreview}
+            hasPrev={hasPrev}
+            hasNext={hasNext}
+            onPrev={hasPrev ? () => openPreview(files[previewIdx - 1]) : undefined}
+            onNext={hasNext ? () => openPreview(files[previewIdx + 1]) : undefined}
+          />
+        )
+      })()}
 
       <TrustDetailsPanel
         open={trustFileId !== null}

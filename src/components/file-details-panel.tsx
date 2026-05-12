@@ -5,6 +5,9 @@ import type { FileVersion } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
 import { formatBytes } from '../lib/format'
 import { listVersions } from '../lib/api'
+import { useKeys } from '../lib/key-context'
+import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
+import { isPreviewable } from '../lib/preview'
 
 // ─── Versions tab (inline, inside the detail panel) ─────────────────────────
 
@@ -261,6 +264,7 @@ export interface FileDetailsMeta {
   sizeBytes: number
   sizeOnDisk?: number
   isFolder: boolean
+  hasThumbnail?: boolean
   createdAt: string
   updatedAt: string
   location: string
@@ -293,6 +297,7 @@ interface FileDetailsPanelProps {
   onStar?: () => void
   onTrash?: () => void
   onVersionHistory?: () => void
+  onPreview?: () => void
   isStarred?: boolean
 }
 
@@ -352,15 +357,41 @@ export function FileDetailsPanel({
   onStar,
   onTrash,
   onVersionHistory,
+  onPreview,
   isStarred = false,
 }: FileDetailsPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null)
   const [activeTab, setActiveTab] = useState<'info' | 'versions'>('info')
+  const { getFileKey, isUnlocked } = useKeys()
+
+  // ─── Thumbnail loading ────────────────────────────
+  const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null)
+  const [thumbnailLoading, setThumbnailLoading] = useState(false)
 
   // Reset tab to info when the selected file changes
   useEffect(() => {
     setActiveTab('info')
+    setThumbnailUrl(null)
   }, [file?.id])
+
+  // Load thumbnail when file has one and vault is unlocked
+  useEffect(() => {
+    if (!file || !file.hasThumbnail || file.isFolder || !isUnlocked || !open) return
+    let cancelled = false
+    setThumbnailLoading(true)
+    getFileKey(file.id)
+      .then((fileKey) => fetchAndDecryptThumbnail(file.id, fileKey))
+      .then((url) => {
+        if (!cancelled) {
+          setThumbnailUrl(url)
+          setThumbnailLoading(false)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setThumbnailLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [file?.id, file?.hasThumbnail, isUnlocked, open, getFileKey])
 
   // Close on Escape
   useEffect(() => {
@@ -405,21 +436,60 @@ export function FileDetailsPanel({
       >
         {/* Header: file icon + name + close */}
         <div className="px-xl py-lg border-b border-line">
-          <div className="flex items-start gap-3">
-            {/* File type badge */}
-            <div
-              className="w-[44px] h-[52px] rounded-md border flex items-center justify-center shrink-0"
-              style={{
-                background: `color-mix(in oklch, ${color} 8%, var(--color-paper))`,
-                borderColor: `color-mix(in oklch, ${color} 25%, var(--color-line))`,
-                color,
-                fontSize: 10,
-                fontWeight: 700,
-                letterSpacing: 0.5,
-              }}
-            >
-              {ext.slice(0, 4)}
+          {/* Thumbnail hero — full-width when available */}
+          {!file.isFolder && file.hasThumbnail && (
+            <div className="w-full rounded-md overflow-hidden mb-3 bg-paper-3 border border-line" style={{ aspectRatio: '16/9' }}>
+              {thumbnailLoading ? (
+                <div className="w-full h-full animate-pulse bg-paper-3" />
+              ) : thumbnailUrl ? (
+                <img
+                  src={thumbnailUrl}
+                  alt=""
+                  className="w-full h-full object-contain"
+                />
+              ) : (
+                /* Fallback: file type badge at larger size */
+                <div
+                  className="w-full h-full flex items-center justify-center"
+                  style={{ color }}
+                >
+                  <div
+                    className="rounded-md border flex items-center justify-center"
+                    style={{
+                      width: 56,
+                      height: 68,
+                      background: `color-mix(in oklch, ${color} 8%, var(--color-paper))`,
+                      borderColor: `color-mix(in oklch, ${color} 25%, var(--color-line))`,
+                      color,
+                      fontSize: 11,
+                      fontWeight: 700,
+                      letterSpacing: 0.5,
+                    }}
+                  >
+                    {ext.slice(0, 4)}
+                  </div>
+                </div>
+              )}
             </div>
+          )}
+
+          <div className="flex items-start gap-3">
+            {/* File type badge — only shown when no thumbnail hero above */}
+            {(file.isFolder || !file.hasThumbnail) && (
+              <div
+                className="w-[44px] h-[52px] rounded-md border flex items-center justify-center shrink-0"
+                style={{
+                  background: `color-mix(in oklch, ${color} 8%, var(--color-paper))`,
+                  borderColor: `color-mix(in oklch, ${color} 25%, var(--color-line))`,
+                  color,
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: 0.5,
+                }}
+              >
+                {ext.slice(0, 4)}
+              </div>
+            )}
             <div className="flex-1 min-w-0">
               <div className="text-sm font-semibold text-ink leading-tight break-words">
                 {file.name}
@@ -439,6 +509,31 @@ export function FileDetailsPanel({
 
           {/* Action buttons */}
           <div className="flex gap-1.5 mt-3">
+            {/* Preview button — only for non-folder files */}
+            {!file.isFolder && (
+              isPreviewable(file.mimeType) ? (
+                <BBButton
+                  size="sm"
+                  variant="ghost"
+                  className="gap-1.5"
+                  onClick={onPreview}
+                  aria-label="Preview"
+                >
+                  <Icon name="file" size={11} /> Preview
+                </BBButton>
+              ) : (
+                <BBButton
+                  size="sm"
+                  variant="ghost"
+                  className="gap-1.5 opacity-40 cursor-not-allowed"
+                  disabled
+                  aria-label="Preview not available for this file type"
+                  title="Preview not available for this file type"
+                >
+                  <Icon name="file" size={11} /> Preview
+                </BBButton>
+              )
+            )}
             <BBButton
               variant="amber"
               size="sm"
