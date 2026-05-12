@@ -78,6 +78,45 @@ import { hashFile, checkDuplicate, recordUpload } from '../lib/upload-dedup'
 // Folders are always grouped before files; the chosen key only orders
 // within each group. localStorage key: 'bb_drive_sort'.
 
+function inferMimeFromName(name: string): string | null {
+  const ext = name.toLowerCase().split('.').pop()
+  switch (ext) {
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg'
+    case 'png':
+      return 'image/png'
+    case 'webp':
+      return 'image/webp'
+    case 'gif':
+      return 'image/gif'
+    case 'heic':
+      return 'image/heic'
+    case 'heif':
+      return 'image/heif'
+    case 'pdf':
+      return 'application/pdf'
+    case 'txt':
+      return 'text/plain'
+    case 'md':
+      return 'text/markdown'
+    case 'csv':
+      return 'text/csv'
+    case 'json':
+      return 'application/json'
+    case 'docx':
+      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    case 'xlsx':
+      return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    case 'mp4':
+      return 'video/mp4'
+    case 'mov':
+      return 'video/quicktime'
+    default:
+      return null
+  }
+}
+
 export function Drive() {
   const { isFrozen } = useFrozen()
   const { user } = useAuth()
@@ -150,8 +189,10 @@ export function Drive() {
   const [externalDecryptedNames, setExternalDecryptedNames] = useState<Record<string, string | null>>({})
 
   // ─── Duplicate-file conflict dialog ─────────────────
+  type ResolvedUpload = { file: File; replaceFileId?: string; finalName?: string }
   interface PendingConflictUpload {
     conflicts: ConflictItem[]
+    autoVersioned: ResolvedUpload[]
     nonConflicting: File[]
     allFiles: File[]
   }
@@ -724,6 +765,14 @@ export function Drive() {
     return map
   }
 
+  function shouldAutoVersionUpload(existingFile: DriveFile, incomingFile: File): boolean {
+    const existingName = externalDecryptedNames[existingFile.id] ?? existingFile.name_encrypted
+    const existingMime = existingFile.mime_type || inferMimeFromName(existingName)
+    const incomingMime = incomingFile.type || inferMimeFromName(incomingFile.name)
+    const sameType = !existingMime || !incomingMime || existingMime.toLowerCase() === incomingMime.toLowerCase()
+    return sameType && existingFile.size_bytes !== incomingFile.size
+  }
+
   /**
    * Queue a resolved list of uploads.
    * Each item carries the File to upload, an optional replaceFileId for the
@@ -731,7 +780,7 @@ export function Drive() {
    * the "Keep both" path where we rename with a suffix).
    */
   function queueResolvedUploads(
-    resolved: Array<{ file: File; replaceFileId?: string; finalName?: string }>,
+    resolved: ResolvedUpload[],
   ) {
     if (resolved.length === 0) return
 
@@ -806,25 +855,39 @@ export function Drive() {
     if (isUnlocked && Object.keys(externalDecryptedNames).length > 0) {
       const nameToFile = buildNameToFileMap()
       const conflicts: ConflictItem[] = []
+      const autoVersioned: ResolvedUpload[] = []
       const nonConflicting: File[] = []
 
       for (const f of cleared) {
         const existing = nameToFile.get(f.name.toLowerCase())
         if (existing) {
-          const existingName = externalDecryptedNames[existing.id] ?? f.name
-          conflicts.push({
-            newFile: f,
-            existingFileId: existing.id,
-            existingName: existingName ?? f.name,
-          })
+          if (shouldAutoVersionUpload(existing, f)) {
+            autoVersioned.push({ file: f, replaceFileId: existing.id })
+          } else {
+            const existingName = externalDecryptedNames[existing.id] ?? f.name
+            conflicts.push({
+              newFile: f,
+              existingFileId: existing.id,
+              existingName: existingName ?? f.name,
+            })
+          }
         } else {
           nonConflicting.push(f)
         }
       }
 
       if (conflicts.length > 0) {
-        // Pause and show the conflict dialog; uploads are queued on resolution.
-        setPendingConflict({ conflicts, nonConflicting, allFiles: cleared })
+        // Pause only unresolved conflicts. Same-name, same-type changed files
+        // are already resolved as version uploads.
+        setPendingConflict({ conflicts, autoVersioned, nonConflicting, allFiles: cleared })
+        return
+      }
+
+      if (autoVersioned.length > 0) {
+        queueResolvedUploads([
+          ...nonConflicting.map((f) => ({ file: f })),
+          ...autoVersioned,
+        ])
         return
       }
     }
@@ -837,17 +900,18 @@ export function Drive() {
 
   function handleConflictReplace() {
     if (!pendingConflict) return
-    const { conflicts, nonConflicting } = pendingConflict
+    const { conflicts, autoVersioned, nonConflicting } = pendingConflict
     setPendingConflict(null)
     queueResolvedUploads([
       ...nonConflicting.map((f) => ({ file: f })),
+      ...autoVersioned,
       ...conflicts.map((c) => ({ file: c.newFile, replaceFileId: c.existingFileId })),
     ])
   }
 
   function handleConflictKeepBoth() {
     if (!pendingConflict) return
-    const { conflicts, nonConflicting } = pendingConflict
+    const { conflicts, autoVersioned, nonConflicting } = pendingConflict
     setPendingConflict(null)
 
     // Build the set of existing lowercase names for suffix generation.
@@ -863,6 +927,7 @@ export function Drive() {
 
     const resolved = [
       ...nonConflicting.map((f) => ({ file: f })),
+      ...autoVersioned,
       ...conflicts.map((c) => {
         const finalName = getUniqueName(c.newFile.name, existingNames, usedInBatch)
         usedInBatch.add(finalName.toLowerCase())
