@@ -702,6 +702,8 @@ export function FileList({
     }
     if (file.is_folder) {
       onNavigateFolder?.(file)
+    } else if (isPreviewable(file.mime_type)) {
+      onFileAction?.('preview', file)
     } else {
       onSelectFile?.(file)
     }
