@@ -63,7 +63,7 @@ docker compose up -d postgres
 In another terminal:
 
 ```sh
-cd /Users/guuslangelaar/Development/Beebeeb/beebeeb.io/repos/server
+cd repos/server
 cp .env.example .env
 cargo run -p beebeeb-api
 ```
@@ -71,7 +71,7 @@ cargo run -p beebeeb-api
 In the web repo:
 
 ```sh
-cd /Users/guuslangelaar/Development/Beebeeb/beebeeb.io/repos/web
+cd repos/web
 bun install
 bun dev
 ```
@@ -85,7 +85,7 @@ In development mode, `DevAuthGate` attempts to auto-authenticate through `POST /
 Local production build:
 
 ```sh
-cd /Users/guuslangelaar/Development/Beebeeb/beebeeb.io/repos/web
+cd repos/web
 bun run build
 ```
 
@@ -100,7 +100,6 @@ node gen-wasm-sri.mjs
 Docker build from the workspace root:
 
 ```sh
-cd /Users/guuslangelaar/Development/Beebeeb/beebeeb.io
 docker build -f repos/web/Dockerfile .
 ```
 
@@ -130,21 +129,21 @@ Copy `.env.example` to `.env` for local overrides. Do not commit real test crede
 Type-check:
 
 ```sh
-cd /Users/guuslangelaar/Development/Beebeeb/beebeeb.io/repos/web
+cd repos/web
 bunx tsc --noEmit
 ```
 
 Production build check:
 
 ```sh
-cd /Users/guuslangelaar/Development/Beebeeb/beebeeb.io/repos/web
+cd repos/web
 bun run build
 ```
 
 E2E tests:
 
 ```sh
-cd /Users/guuslangelaar/Development/Beebeeb/beebeeb.io/repos/web
+cd repos/web
 bunx playwright test
 ```
 
