@@ -9,7 +9,7 @@
  *   5. Your Rights  — plain-language GDPR summary
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { SettingsShell, SettingsHeader } from '../../components/settings-shell'
 import { BBButton } from '@beebeeb/shared'
@@ -21,6 +21,7 @@ import {
   freezeAccount,
   unfreezeAccount,
   getToken,
+  requestDataExport,
   ApiError,
   type DataExportStatus,
 } from '../../lib/api'
@@ -71,6 +72,23 @@ function DataExportCard() {
   const { logout } = useAuth()
   const [exportStatus, setExportStatus] = useState<DataExportStatus | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
+
+  const handleExport = useCallback(async () => {
+    try {
+      const result = await requestDataExport()
+      setExportStatus(result)
+    } catch {
+      showToast({ icon: 'x', title: 'Export request failed', danger: true })
+    }
+  }, [showToast])
+
+  useEffect(() => {
+    if (localStorage.getItem('bb_pending_export')) {
+      localStorage.removeItem('bb_pending_export')
+      void handleExport()
+    }
+  }, []) // run once on mount — handleExport is stable via useCallback
+
   const downloadExport = useCallback(async (url: string) => {
     const token = getToken()
     try {
@@ -134,7 +152,7 @@ function DataExportCard() {
                 <BBButton
                   size="md"
                   variant="amber"
-                  onClick={() => { setConfirmOpen(false); logout() }}
+                  onClick={() => { setConfirmOpen(false); localStorage.setItem('bb_pending_export', '1'); logout() }}
                 >
                   Sign out &amp; continue
                 </BBButton>
