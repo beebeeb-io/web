@@ -60,7 +60,7 @@ const plans: PlanDef[] = [
     features: [
       { label: 'Everything in Free' },
       { label: '1 TB encrypted storage', strong: true },
-      { label: 'Photo library · EXIF stripped' },
+      { label: 'Photo library backup' },
       { label: 'Recovery via trusted contact' },
       { label: 'EU jurisdiction of choice' },
       { label: '30-day version history' },
