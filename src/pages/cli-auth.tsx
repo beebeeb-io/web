@@ -76,7 +76,7 @@ async function ecdhEncryptPayload(
     cliPubKeyRaw,
     { name: 'ECDH', namedCurve: 'P-256' },
     false,
-    ['deriveKey'],
+    [],
   )
 
   // Derive shared AES-256-GCM key via ECDH
