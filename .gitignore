@@ -11,6 +11,8 @@ build/
 .next/
 .astro/
 *.wasm
+# But do track the vendored beebeeb-wasm package (workspace dep for CI standalone clones)
+!packages/beebeeb-wasm/*.wasm
 
 # Environment & secrets
 .env

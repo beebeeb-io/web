@@ -1,0 +1,15 @@
+{
+  "name": "beebeeb-wasm",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "beebeeb_wasm_bg.wasm",
+    "beebeeb_wasm.js",
+    "beebeeb_wasm.d.ts"
+  ],
+  "main": "beebeeb_wasm.js",
+  "types": "beebeeb_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
