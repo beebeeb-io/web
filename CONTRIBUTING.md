@@ -33,12 +33,26 @@ bunx tsc --noEmit
 bun run build
 ```
 
+## Browser and Playwright checks
+
+Use Playwright for user-visible UI changes. Start the API server on
+`localhost:3001`, start the web client with `bun dev`, then run the relevant
+Playwright spec or capture browser evidence for the changed flow before opening
+a pull request.
+
 ## Pull request process
 
 1. Fork the repository and create a feature branch from `main`.
 2. Make your changes, ensuring all checks above pass.
-3. Test UI changes visually in the browser.
+3. Test UI changes visually in the browser, using Playwright for interactive or
+   visual behavior.
 4. Open a pull request with a clear description of what and why.
+
+## Contributor license
+
+Beebeeb does not require a separate Contributor License Agreement at this time.
+By opening a pull request, you confirm you have the right to submit the work and
+agree that it is licensed under AGPL-3.0-or-later.
 
 ## Security
 
