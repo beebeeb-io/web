@@ -9,13 +9,14 @@ import { DeviceProvision } from '../components/device-provision'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
 import { devAutoAuth } from '../lib/dev-auth'
-import { startPasskeyLogin, finishPasskeyLogin, setToken, hexToBytes, opaqueLoginStart as apiOpaqueLoginStart, opaqueLoginFinish as apiOpaqueLoginFinish, serverOptsToGetOptions, credentialToAuthenticationJSON } from '../lib/api'
-import { opaqueLoginStart, opaqueLoginFinish, toBase64 } from '../lib/crypto'
+import { startPasskeyLogin, finishPasskeyLogin, setToken, hexToBytes, opaqueLoginStart as apiOpaqueLoginStart, opaqueLoginFinish as apiOpaqueLoginFinish, serverOptsToGetOptions, credentialToAuthenticationJSON, getVaultKeyEscrow } from '../lib/api'
+import { opaqueLoginStart, opaqueLoginFinish, toBase64, fromBase64 } from '../lib/crypto'
+import { prfExtensionInputs, extractPrfOutput, getVaultWrapKey, decryptVaultBlob } from '../lib/passkey-vault'
 
 export function Login() {
   const navigate = useNavigate()
   const { refreshUser, verify2fa } = useAuth()
-  const { unlock, unlockVault, vaultExists, cryptoReady, cryptoError, isUnlocked } = useKeys()
+  const { unlock, unlockVault, vaultExists, cryptoReady, cryptoError, isUnlocked, setMasterKeyDirect } = useKeys()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -27,7 +28,8 @@ export function Login() {
   const [partialToken, setPartialToken] = useState<string | null>(null)
   const [passkeyLoading, setPasskeyLoading] = useState(false)
   const [devLoading, setDevLoading] = useState(false)
-  const showPasskeyLogin = false
+  // Show passkey login if the browser supports WebAuthn
+  const showPasskeyLogin = typeof window !== 'undefined' && !!window.PublicKeyCredential
 
   const handleDevSkip = useCallback(async () => {
     if (!import.meta.env.DEV) return
@@ -118,9 +120,16 @@ export function Login() {
       // Step 2: Convert server options to browser-compatible format
       const getOptions = serverOptsToGetOptions(startRes.publicKey)
 
-      // Step 3: Call WebAuthn API with converted options
+      // Step 3: Call WebAuthn API with PRF extension for vault key derivation
+      const prfExt = prfExtensionInputs()
       const credential = await navigator.credentials.get({
-        publicKey: getOptions,
+        publicKey: {
+          ...getOptions,
+          extensions: {
+            ...getOptions.extensions,
+            ...prfExt,
+          },
+        },
       }) as PublicKeyCredential | null
 
       if (!credential) {
@@ -141,14 +150,37 @@ export function Login() {
       if (result.session_token) {
         setToken(result.session_token)
         await refreshUser()
+
         if (isUnlocked) {
           navigate('/')
           return
         }
 
-        // TODO(passkey-vault-unlock): passkey login currently returns only an auth
-        // session, not a wrapped vault key or device-provision payload. Add server
-        // support for passkey-bound vault key unwrap, then set the master key here.
+        // Step 5: Attempt passkey vault unlock via escrow
+        const credentialId = credential.id
+        const extensionResults = credential.getClientExtensionResults()
+        const prfOutput = extractPrfOutput(extensionResults)
+
+        // Retrieve vault wrap key (from PRF output or localStorage fallback)
+        const wrapKey = await getVaultWrapKey(credentialId, prfOutput, false)
+
+        if (wrapKey) {
+          // Retrieve the encrypted vault blob from the server
+          const escrowBlob = await getVaultKeyEscrow(credentialId)
+
+          if (escrowBlob) {
+            const encryptedBlob = fromBase64(escrowBlob)
+            const masterKey = await decryptVaultBlob(wrapKey, encryptedBlob)
+
+            if (masterKey) {
+              setMasterKeyDirect(masterKey)
+              navigate('/')
+              return
+            }
+          }
+        }
+
+        // Vault unlock failed — fall back to password entry
         setError('Passkey sign-in succeeded, but this device still needs your password to unlock the vault.')
       }
     } catch (err) {

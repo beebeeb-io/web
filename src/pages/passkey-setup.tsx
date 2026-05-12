@@ -11,8 +11,18 @@ import {
   deletePasskey,
   serverOptsToCreateOptions,
   credentialToRegistrationJSON,
+  storeVaultKeyEscrow,
   type PasskeyInfo,
 } from '../lib/api'
+import { useKeys } from '../lib/key-context'
+import { toBase64 } from '../lib/crypto'
+import {
+  prfExtensionInputs,
+  extractPrfOutput,
+  getVaultWrapKey,
+  encryptVaultBlob,
+  removeVaultWrapKey,
+} from '../lib/passkey-vault'
 
 // ─── Device detection ──────────────────────────────
 
@@ -68,6 +78,7 @@ function detectDevice(): DeviceInfo {
 
 export function PasskeySetup() {
   const navigate = useNavigate()
+  const { getMasterKey, isUnlocked } = useKeys()
   const [device] = useState(detectDevice)
   const [passkeys, setPasskeys] = useState<PasskeyInfo[]>([])
   const [registering, setRegistering] = useState(false)
@@ -100,9 +111,16 @@ export function PasskeySetup() {
       // (base64url strings → ArrayBuffers for challenge, user.id, excludeCredentials[].id)
       const createOptions = serverOptsToCreateOptions(startRes.publicKey)
 
-      // Step 3: Call WebAuthn API with converted options
+      // Step 3: Call WebAuthn API with PRF extension for vault key derivation
+      const prfExt = prfExtensionInputs()
       const credential = await navigator.credentials.create({
-        publicKey: createOptions,
+        publicKey: {
+          ...createOptions,
+          extensions: {
+            ...createOptions.extensions,
+            ...prfExt,
+          },
+        },
       }) as PublicKeyCredential | null
 
       if (!credential) {
@@ -117,6 +135,31 @@ export function PasskeySetup() {
 
       // Step 5: Send to server to complete registration
       await finishPasskeyRegistration(credentialData, startRes.reg_state, device.name)
+
+      // Step 6: Wrap the master key for passkey vault unlock (if vault is unlocked)
+      if (isUnlocked) {
+        try {
+          const credentialId = credential.id
+          const extensionResults = credential.getClientExtensionResults()
+          const prfOutput = extractPrfOutput(extensionResults)
+
+          // Get or generate the vault wrap key
+          const wrapKey = await getVaultWrapKey(credentialId, prfOutput, true)
+
+          if (wrapKey) {
+            const masterKey = getMasterKey()
+            const encryptedBlob = await encryptVaultBlob(wrapKey, masterKey)
+            await storeVaultKeyEscrow(credentialId, toBase64(encryptedBlob))
+          }
+        } catch (escrowErr) {
+          // Vault key escrow is non-critical — passkey auth still works,
+          // user just needs password for vault unlock on this device
+          if (import.meta.env.DEV) {
+            console.warn('[passkey-setup] Vault key escrow failed:', escrowErr)
+          }
+        }
+      }
+
       setSuccess('Passkey created successfully')
       loadPasskeys()
     } catch (err) {
@@ -129,6 +172,7 @@ export function PasskeySetup() {
   async function handleDelete(id: string) {
     try {
       await deletePasskey(id)
+      removeVaultWrapKey(id) // Clean up localStorage fallback key
       setPasskeys((prev) => prev.filter((p) => p.id !== id))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to remove passkey')

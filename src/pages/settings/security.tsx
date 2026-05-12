@@ -13,12 +13,21 @@ import {
   listSessions, revokeSession,
   listPasskeys, deletePasskey,
   startPasskeyRegistration, finishPasskeyRegistration,
+  storeVaultKeyEscrow,
   setup2fa, enable2fa, disable2fa,
   getMe,
   getMySignIns,
   serverOptsToCreateOptions, credentialToRegistrationJSON,
   type Session, type PasskeyInfo, type MySignIn,
 } from '../../lib/api'
+import { toBase64 } from '../../lib/crypto'
+import {
+  prfExtensionInputs,
+  extractPrfOutput,
+  getVaultWrapKey,
+  encryptVaultBlob,
+  removeVaultWrapKey,
+} from '../../lib/passkey-vault'
 import QRCode from 'qrcode'
 
 /* ── Recovery phrase ────────────────────────────── */
@@ -189,6 +198,7 @@ function MasterPasswordSection() {
 
 function PasskeysSection() {
   const { showToast } = useToast()
+  const { getMasterKey, isUnlocked } = useKeys()
   const [passkeys, setPasskeys] = useState<PasskeyInfo[]>([])
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [addingPasskey, setAddingPasskey] = useState(false)
@@ -202,13 +212,45 @@ function PasskeysSection() {
     try {
       const { publicKey, reg_state } = await startPasskeyRegistration()
       const createOpts = serverOptsToCreateOptions(publicKey)
-      const credential = await navigator.credentials.create({ publicKey: createOpts }) as PublicKeyCredential | null
+
+      // Request PRF extension for vault key derivation
+      const prfExt = prfExtensionInputs()
+      const credential = await navigator.credentials.create({
+        publicKey: {
+          ...createOpts,
+          extensions: {
+            ...createOpts.extensions,
+            ...prfExt,
+          },
+        },
+      }) as PublicKeyCredential | null
       if (!credential) {
         showToast({ icon: 'x', title: 'Passkey creation cancelled', danger: true })
         return
       }
       const json = credentialToRegistrationJSON(credential)
       const info = await finishPasskeyRegistration(json, reg_state)
+
+      // Wrap master key for passkey vault unlock
+      if (isUnlocked) {
+        try {
+          const credentialId = credential.id
+          const extensionResults = credential.getClientExtensionResults()
+          const prfOutput = extractPrfOutput(extensionResults)
+          const wrapKey = await getVaultWrapKey(credentialId, prfOutput, true)
+
+          if (wrapKey) {
+            const masterKey = getMasterKey()
+            const encryptedBlob = await encryptVaultBlob(wrapKey, masterKey)
+            await storeVaultKeyEscrow(credentialId, toBase64(encryptedBlob))
+          }
+        } catch (escrowErr) {
+          if (import.meta.env.DEV) {
+            console.warn('[settings/security] Vault key escrow failed:', escrowErr)
+          }
+        }
+      }
+
       setPasskeys((prev) => [...prev, info])
       showToast({ icon: 'check', title: 'Passkey added' })
     } catch (err) {
@@ -217,11 +259,12 @@ function PasskeysSection() {
     } finally {
       setAddingPasskey(false)
     }
-  }, [showToast])
+  }, [showToast, isUnlocked, getMasterKey])
 
   const handleDelete = useCallback(async (id: string) => {
     try {
       await deletePasskey(id)
+      removeVaultWrapKey(id) // Clean up localStorage fallback key
       setPasskeys((prev) => prev.filter((p) => p.id !== id))
       setDeletingId(null)
       showToast({ icon: 'check', title: 'Passkey removed' })

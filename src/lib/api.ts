@@ -1606,6 +1606,44 @@ export async function deletePasskey(id: string): Promise<void> {
   await request<void>(`/api/v1/auth/passkeys/${id}`, { method: 'DELETE' })
 }
 
+// ─── Vault key escrow (passkey vault unlock) ──────
+
+/**
+ * Store an encrypted vault key blob on the server, keyed by passkey credential ID.
+ * The blob is AES-256-GCM ciphertext — the server cannot decrypt it.
+ */
+export async function storeVaultKeyEscrow(
+  credentialId: string,
+  encryptedVaultKey: string,
+): Promise<void> {
+  await request<void>('/api/v1/auth/vault-key-escrow', {
+    method: 'POST',
+    body: JSON.stringify({
+      credential_id: credentialId,
+      encrypted_vault_key: encryptedVaultKey,
+    }),
+  })
+}
+
+/**
+ * Retrieve the encrypted vault key blob for a given credential ID.
+ * Returns the base64-encoded encrypted blob, or null if no escrow exists.
+ */
+export async function getVaultKeyEscrow(
+  credentialId: string,
+): Promise<string | null> {
+  try {
+    const data = await request<{ encrypted_vault_key: string }>(
+      `/api/v1/auth/vault-key-escrow/${encodeURIComponent(credentialId)}`,
+    )
+    return data.encrypted_vault_key
+  } catch (err) {
+    // 404 = no escrow for this credential — not an error
+    if (err instanceof ApiError && err.status === 404) return null
+    throw err
+  }
+}
+
 export async function listActivity(
   page?: number,
   type?: string,

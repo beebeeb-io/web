@@ -43,6 +43,8 @@ interface KeyState {
   vaultChecked: boolean
   /** Set the master key and wrap it with password into IndexedDB vault. */
   setMasterKey: (key: Uint8Array, password: string) => Promise<void>
+  /** Set the master key directly without password wrapping (passkey vault unlock). */
+  setMasterKeyDirect: (key: Uint8Array) => void
   /** Unwrap the master key from IndexedDB using password. Returns true if successful. */
   unlockVault: (password: string) => Promise<boolean>
   /** Derive master key from password + salt (legacy path). */
@@ -173,6 +175,19 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     handoffToTauri(key)
   }, [cacheKey, handoffToTauri])
 
+  // Set the master key directly without password wrapping.
+  // Used by passkey vault unlock where the key comes from server escrow,
+  // not from a password-derived local vault. The key is cached in the
+  // session vault so it survives soft-navigations within the tab, but
+  // no persistent IndexedDB vault is created (the passkey is the
+  // persistent unlock mechanism for this device).
+  const setMasterKeyDirect = useCallback((key: Uint8Array) => {
+    masterKeyRef.current = key
+    setIsUnlocked(true)
+    cacheKey(key)
+    handoffToTauri(key)
+  }, [cacheKey, handoffToTauri])
+
   const unlockVault = useCallback(async (password: string): Promise<boolean> => {
     const key = await unwrap(password)
     if (!key) return false
@@ -236,6 +251,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       vaultExists,
       vaultChecked,
       setMasterKey,
+      setMasterKeyDirect,
       unlockVault,
       unlock,
       getFileKey,
@@ -243,7 +259,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       lock,
       fullLogout,
     }),
-    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, vaultExists, vaultChecked, setMasterKey, unlockVault, unlock, getFileKey, getMasterKey, lock, fullLogout],
+    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, vaultExists, vaultChecked, setMasterKey, setMasterKeyDirect, unlockVault, unlock, getFileKey, getMasterKey, lock, fullLogout],
   )
 
   return <KeyContext.Provider value={value}>{children}</KeyContext.Provider>
