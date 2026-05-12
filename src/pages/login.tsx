@@ -11,6 +11,7 @@ import { useKeys } from '../lib/key-context'
 import { devAutoAuth } from '../lib/dev-auth'
 import { startPasskeyLogin, finishPasskeyLogin, setToken, hexToBytes, opaqueLoginStart as apiOpaqueLoginStart, opaqueLoginFinish as apiOpaqueLoginFinish, serverOptsToGetOptions, credentialToAuthenticationJSON, getVaultKeyEscrow } from '../lib/api'
 import { opaqueLoginStart, opaqueLoginFinish, toBase64, fromBase64 } from '../lib/crypto'
+import { getPostLoginPath } from '../lib/export-intent'
 import { prfExtensionInputs, extractPrfOutput, getVaultWrapKey, decryptVaultBlob } from '../lib/passkey-vault'
 
 export function Login() {
@@ -31,16 +32,20 @@ export function Login() {
   // Show passkey login if the browser supports WebAuthn
   const showPasskeyLogin = typeof window !== 'undefined' && !!window.PublicKeyCredential
 
+  const navigateAfterLogin = useCallback(() => {
+    navigate(getPostLoginPath())
+  }, [navigate])
+
   const handleDevSkip = useCallback(async () => {
     if (!import.meta.env.DEV) return
     setDevLoading(true)
     const ok = await devAutoAuth()
     if (ok) {
-      navigate('/')
+      navigateAfterLogin()
     } else {
       setDevLoading(false)
     }
-  }, [navigate])
+  }, [navigateAfterLogin])
 
   // Device provisioning state — shown when OPAQUE auth succeeds but no vault exists on this device
   const [needsProvision, setNeedsProvision] = useState(false)
@@ -75,7 +80,7 @@ export function Login() {
           setSubmitting(false)
           return
         }
-        navigate('/')
+        navigateAfterLogin()
       } else {
         // No vault on this device — needs mnemonic provisioning
         setNeedsProvision(true)
@@ -98,7 +103,7 @@ export function Login() {
         const salt = hexToBytes(result.salt)
         await unlock(password, salt)
       }
-      navigate('/')
+      navigateAfterLogin()
     } catch {
       setError('Incorrect code or session expired. Please try again.')
     }
@@ -152,7 +157,7 @@ export function Login() {
         await refreshUser()
 
         if (isUnlocked) {
-          navigate('/')
+          navigateAfterLogin()
           return
         }
 
@@ -174,7 +179,7 @@ export function Login() {
 
             if (masterKey) {
               setMasterKeyDirect(masterKey)
-              navigate('/')
+              navigateAfterLogin()
               return
             }
           }
@@ -213,7 +218,7 @@ export function Login() {
     return (
       <DeviceProvision
         password={password}
-        onProvisioned={() => navigate('/')}
+        onProvisioned={navigateAfterLogin}
       />
     )
   }

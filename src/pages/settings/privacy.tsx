@@ -18,6 +18,11 @@ import { useToast } from '../../components/toast'
 import { useAuth } from '../../lib/auth-context'
 import { useFrozen } from '../../hooks/use-frozen'
 import {
+  consumePendingExport,
+  dataExportDownloadFilename,
+  markPendingExport,
+} from '../../lib/export-intent'
+import {
   freezeAccount,
   unfreezeAccount,
   getToken,
@@ -83,11 +88,10 @@ function DataExportCard() {
   }, [showToast])
 
   useEffect(() => {
-    if (localStorage.getItem('bb_pending_export')) {
-      localStorage.removeItem('bb_pending_export')
+    if (consumePendingExport()) {
       void handleExport()
     }
-  }, []) // run once on mount — handleExport is stable via useCallback
+  }, [handleExport])
 
   const downloadExport = useCallback(async (url: string) => {
     const token = getToken()
@@ -103,7 +107,7 @@ function DataExportCard() {
       const objectUrl = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = objectUrl
-      a.download = `beebeeb-export-${new Date().toISOString().slice(0, 10)}.json`
+      a.download = dataExportDownloadFilename()
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -152,7 +156,7 @@ function DataExportCard() {
                 <BBButton
                   size="md"
                   variant="amber"
-                  onClick={() => { setConfirmOpen(false); localStorage.setItem('bb_pending_export', '1'); logout() }}
+                  onClick={() => { setConfirmOpen(false); markPendingExport(); void logout() }}
                 >
                   Sign out &amp; continue
                 </BBButton>
@@ -405,7 +409,7 @@ function YourRightsCard() {
     { article: 'Art. 16', text: 'Correction — contact us to fix inaccurate data.' },
     { article: 'Art. 17', text: 'Erasure — delete your account and we cannot recover your data.' },
     { article: 'Art. 18', text: 'Restriction — freeze your account to suspend all processing.' },
-    { article: 'Art. 20', text: 'Portability — data export is available in machine-readable JSON.' },
+    { article: 'Art. 20', text: 'Portability — data export is available as a machine-readable ZIP archive.' },
     { article: 'Art. 21', text: 'Objection — we do not use your data for marketing or automated decisions.' },
   ]
 
