@@ -6,11 +6,9 @@ import { BBInput } from '@beebeeb/shared'
 import { BBLogo } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { MnemonicVerify } from '../components/mnemonic-verify'
-import { Turnstile, type TurnstileHandle } from '../components/turnstile'
 import {
   opaqueRegisterStart,
   opaqueRegisterFinish,
-  ApiError,
 } from '../lib/api'
 import { REFERRAL_SOURCE_KEY, REFERRAL_SHARER_KEY, REFERRAL_CODE_KEY } from './signup'
 import { generateRecoveryKitPDF } from '../lib/recovery-kit-pdf'
@@ -149,9 +147,6 @@ export function Onboarding() {
   const [error, setError] = useState('')
   const [processingStatus, setProcessingStatus] = useState('')
 
-  // Turnstile ref — exposes getToken() + reset()
-  const turnstileRef = useRef<TurnstileHandle>(null)
-
   const strength = evaluatePassword(password)
   const passwordsMatch =
     password.length > 0 && confirmPassword.length > 0 && password === confirmPassword
@@ -198,11 +193,9 @@ export function Onboarding() {
 
     try {
       // 1. OPAQUE registration (2-round-trip)
-      // Grab the Turnstile token (null in dev mode / if widget hasn't fired yet)
-      const cfToken = turnstileRef.current?.getToken() ?? null
       setProcessingStatus('Setting up account encryption...')
       const regStart = await opaqueRegistrationStart(password)
-      const serverResp = await opaqueRegisterStart(email, toBase64(regStart.message), cfToken)
+      const serverResp = await opaqueRegisterStart(email, toBase64(regStart.message))
       const serverMsg = Uint8Array.from(atob(serverResp.server_message), c => c.charCodeAt(0))
       const regUpload = await opaqueRegistrationFinish(regStart.state, password, serverMsg)
 
@@ -281,13 +274,7 @@ export function Onboarding() {
       await refreshUser()
       navigate('/', { replace: true })
     } catch (err) {
-      // 403 captcha_verification_failed → reset widget and prompt retry
-      if (err instanceof ApiError && err.status === 403) {
-        turnstileRef.current?.reset()
-        setError('Verification failed. Please try again.')
-      } else {
-        setError(err instanceof Error ? err.message : 'Something went wrong')
-      }
+      setError(err instanceof Error ? err.message : 'Something went wrong')
       setStep('password')
     }
   }, [masterKeyBytes, email, password, confirmPassword, cryptoReady, cryptoError, setMasterKey, refreshUser, navigate])
@@ -296,14 +283,8 @@ export function Onboarding() {
 
   const stepNumber = STEP_NUMBER[step]
 
-  // Turnstile is invisible — mount it early so the widget has time to complete
-  // the challenge before the user reaches the password step.
-  const turnstileWidget = <Turnstile ref={turnstileRef} />
-
   return (
     <div className="min-h-screen flex items-center justify-center bg-paper px-4 py-6 sm:p-xl">
-      {/* Invisible Turnstile widget — renders a zero-size hidden div */}
-      {turnstileWidget}
       <div className="w-full max-w-[820px] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
         {/* Header */}
         <div className="flex items-center gap-4 px-5 py-4 sm:px-xl sm:py-lg border-b border-line">
