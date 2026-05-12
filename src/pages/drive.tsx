@@ -1622,7 +1622,7 @@ export function Drive() {
     switch (action) {
       case 'open':
         if (file.is_folder) handleFolderOpen(file)
-        else setSelectedFileId(file.id)
+        else openPreview(file)
         break
       case 'preview':
         if (!file.is_folder) openPreview(file)

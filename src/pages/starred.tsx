@@ -4,9 +4,11 @@ import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '@beebeeb/shared'
 import { FileList } from '../components/file-list'
 import { FileDetailsPanel, type FileDetailsMeta } from '../components/file-details-panel'
+import { FilePreview } from '../components/preview/file-preview'
 import { ShareDialog } from '../components/share-dialog'
 import { MoveModal } from '../components/move-modal'
 import { RenameDialog } from '../components/rename-dialog'
+import { useFilePreview } from '../hooks/use-file-preview'
 import { useToast } from '../components/toast'
 import { useKeys } from '../lib/key-context'
 import { encryptFilename, toBase64 } from '../lib/crypto'
@@ -25,6 +27,7 @@ export function Starred() {
   const { getFileKey, isUnlocked, cryptoReady } = useKeys()
   const { showToast } = useToast()
   const navigate = useNavigate()
+  const { previewFile, openPreview, closePreview } = useFilePreview()
 
   const [files, setFiles] = useState<DriveFile[]>([])
   const [loading, setLoading] = useState(true)
@@ -117,6 +120,10 @@ export function Starred() {
     switch (action) {
       case 'open':
         if (file.is_folder) navigate('/')
+        else openPreview(file)
+        break
+      case 'preview':
+        if (!file.is_folder) openPreview(file)
         break
       case 'share':
         setShareFileId(file.id)
@@ -176,6 +183,7 @@ export function Starred() {
       mimeType: file.mime_type || null,
       sizeBytes: file.size_bytes,
       isFolder: file.is_folder,
+      hasThumbnail: file.has_thumbnail ?? false,
       createdAt: file.created_at,
       updatedAt: file.updated_at,
       location: 'Starred',
@@ -264,7 +272,30 @@ export function Starred() {
             setSelectedFileId(null)
           }
         }}
+        onPreview={() => {
+          if (selectedFile && !selectedFile.is_folder) {
+            openPreview(selectedFile)
+            setSelectedFileId(null)
+          }
+        }}
       />
+
+      {previewFile && (() => {
+        const previewIdx = files.findIndex((f) => f.id === previewFile.id)
+        const hasPrev = previewIdx > 0
+        const hasNext = previewIdx < files.length - 1
+        return (
+          <FilePreview
+            file={previewFile}
+            decryptedName={decryptedNames[previewFile.id] ?? undefined}
+            onClose={closePreview}
+            hasPrev={hasPrev}
+            hasNext={hasNext}
+            onPrev={hasPrev ? () => openPreview(files[previewIdx - 1]) : undefined}
+            onNext={hasNext ? () => openPreview(files[previewIdx + 1]) : undefined}
+          />
+        )
+      })()}
     </DriveLayout>
   )
 }

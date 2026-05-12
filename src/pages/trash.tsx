@@ -15,6 +15,8 @@ import { EmptyTrash } from '../components/empty-states/empty-trash'
 import { ConfirmPasswordModal } from '../components/confirm-password-modal'
 import { formatBytes } from '../lib/format'
 import { FileDetailsPanel, type FileDetailsMeta } from '../components/file-details-panel'
+import { FilePreview } from '../components/preview/file-preview'
+import { useFilePreview } from '../hooks/use-file-preview'
 
 // ─── Helpers ─────────────────────────────────────
 
@@ -103,6 +105,7 @@ export function Trash() {
   const navigate = useNavigate()
   const { showToast } = useToast()
   const { getFileKey, isUnlocked } = useKeys()
+  const { previewFile, openPreview, closePreview } = useFilePreview()
   const [files, setFiles] = useState<(DriveFile & { was_in: string })[]>([])
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({})
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -351,6 +354,7 @@ export function Trash() {
       mimeType: file.mime_type || null,
       sizeBytes: file.size_bytes,
       isFolder: file.is_folder,
+      hasThumbnail: file.has_thumbnail ?? false,
       createdAt: file.created_at,
       updatedAt: file.updated_at,
       location: 'Trash',
@@ -504,7 +508,30 @@ export function Trash() {
           open={selectedFile !== null}
           onClose={() => setSelectedFileId(null)}
           file={selectedFile ? buildDetailsMeta(selectedFile) : null}
+          onPreview={() => {
+            if (selectedFile && !selectedFile.is_folder) {
+              openPreview(selectedFile)
+              setSelectedFileId(null)
+            }
+          }}
         />
+
+        {previewFile && (() => {
+          const previewIdx = files.findIndex((f) => f.id === previewFile.id)
+          const hasPrev = previewIdx > 0
+          const hasNext = previewIdx < files.length - 1
+          return (
+            <FilePreview
+              file={previewFile}
+              decryptedName={decryptedNames[previewFile.id] ?? undefined}
+              onClose={closePreview}
+              hasPrev={hasPrev}
+              hasNext={hasNext}
+              onPrev={hasPrev ? () => openPreview(files[previewIdx - 1]) : undefined}
+              onNext={hasNext ? () => openPreview(files[previewIdx + 1]) : undefined}
+            />
+          )
+        })()}
 
         {/* Status bar */}
         <div className="px-5 py-2 border-t border-line bg-paper-2 flex items-center gap-3.5 text-[11px] text-ink-3">

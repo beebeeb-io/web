@@ -11,6 +11,7 @@ import { useKeys } from '../lib/key-context'
 import { decryptFilename, fromBase64, encryptFilename, toBase64 } from '../lib/crypto'
 import { onDecrypted } from '../lib/decrypt-events'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
+import { isPreviewable } from '../lib/preview'
 import { modKey } from '../hooks/use-keyboard-shortcuts'
 import { formatBytes } from '../lib/format'
 import { setPreference, updateFile } from '../lib/api'
@@ -827,10 +828,19 @@ export function FileList({
         onClick={(e) => handleRowClick(file, e)}
         onDoubleClick={(e) => {
           e.stopPropagation()
-          const currentName = displayName(file)
-          if (currentName === null) return
-          setInlineRenameId(file.id)
-          setInlineRenameValue(currentName)
+          if (file.is_folder) {
+            onNavigateFolder?.(file)
+            return
+          }
+          if (isPreviewable(file.mime_type)) {
+            onFileAction?.('preview', file)
+            return
+          }
+          showToast({
+            icon: 'file',
+            title: "This file type can't be previewed",
+            description: 'Use Open to download it.',
+          })
         }}
         onContextMenu={(e) => {
           e.preventDefault()
@@ -851,7 +861,7 @@ export function FileList({
           if (e.key === 'Enter') {
             e.preventDefault()
             if (file.is_folder) onNavigateFolder?.(file)
-            else onSelectFile?.(file)
+            else onFileAction?.('open', file)
           }
           // Space: toggle selection
           else if (e.key === ' ') {
@@ -1408,10 +1418,8 @@ export function FileList({
             onToggleStar?.(fileId)
             return
           }
-          // 'preview' opens the same panel as 'open' for files
-          const resolvedAction = action === 'preview' ? 'open' : action
           const file = files.find((f) => f.id === fileId)
-          if (file) onFileAction?.(resolvedAction, file)
+          if (file) onFileAction?.(action, file)
         }}
         onColorChange={handleFolderColorChange}
       />
