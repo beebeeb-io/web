@@ -1534,6 +1534,7 @@ export function Drive() {
       cipher: isUnlocked ? 'AES-256-GCM' : undefined,
       keyId: isUnlocked ? file.id : undefined,
       region: undefined,
+      noteEncrypted: file.note_encrypted ?? null,
     }
   }
 

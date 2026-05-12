@@ -4,10 +4,11 @@ import type { IconName } from '@beebeeb/shared'
 import type { FileVersion } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
 import { formatBytes } from '../lib/format'
-import { listVersions } from '../lib/api'
+import { listVersions, updateFile } from '../lib/api'
 import { useKeys } from '../lib/key-context'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { isPreviewable } from '../lib/preview'
+import { encryptFilename, decryptFilename, toBase64, fromBase64 } from '../lib/crypto'
 
 // ─── Versions tab (inline, inside the detail panel) ─────────────────────────
 
@@ -256,6 +257,81 @@ function FileNotesSection({ fileId }: { fileId: string }) {
   )
 }
 
+// ─── Encrypted note section (server-synced, E2EE) ────────────────────────────
+
+function EncryptedNoteSection({
+  fileId,
+  noteEncrypted,
+  getFileKey,
+}: {
+  fileId: string
+  noteEncrypted: string | null | undefined
+  getFileKey: (id: string) => Promise<Uint8Array>
+}) {
+  const [text, setText] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  // Decrypt the note on mount / when the file changes
+  useEffect(() => {
+    setText('')
+    if (!noteEncrypted) return
+    let cancelled = false
+    getFileKey(fileId)
+      .then(async (fileKey) => {
+        try {
+          const parsed = JSON.parse(noteEncrypted) as { nonce: string; ciphertext: string }
+          const plain = await decryptFilename(fileKey, fromBase64(parsed.nonce), fromBase64(parsed.ciphertext))
+          if (!cancelled) setText(plain)
+        } catch {
+          // Decryption failed — leave blank
+        }
+      })
+      .catch(() => { /* key not available */ })
+    return () => { cancelled = true }
+  }, [fileId, noteEncrypted, getFileKey])
+
+  const handleBlur = useCallback(async () => {
+    if (saving) return
+    setSaving(true)
+    try {
+      if (text.trim() === '') {
+        await updateFile(fileId, { note_encrypted: null })
+      } else {
+        const fileKey = await getFileKey(fileId)
+        const enc = await encryptFilename(fileKey, text)
+        const stored = JSON.stringify({ nonce: toBase64(enc.nonce), ciphertext: toBase64(enc.ciphertext) })
+        await updateFile(fileId, { note_encrypted: stored })
+      }
+    } catch {
+      // Save failed silently — user can retry by blurring again
+    } finally {
+      setSaving(false)
+    }
+  }, [fileId, text, saving, getFileKey])
+
+  return (
+    <div className="px-xl pt-lg pb-lg border-b border-line">
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 mb-2">
+        Note
+      </div>
+      <textarea
+        rows={3}
+        value={text}
+        maxLength={254}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={() => { void handleBlur() }}
+        placeholder="Add a note..."
+        className="w-full resize-none rounded-md border border-line bg-paper-2 px-2.5 py-2 font-sans text-sm text-ink placeholder:text-ink-4 outline-none focus:border-amber focus:ring-2 focus:ring-amber/20 transition-colors"
+        style={{ lineHeight: 1.5 }}
+      />
+      <div className="mt-1.5 text-[10px] text-ink-4 flex items-center gap-1">
+        <Icon name="lock" size={9} />
+        {saving ? 'Saving...' : 'Encrypted · synced across devices'}
+      </div>
+    </div>
+  )
+}
+
 export interface FileDetailsMeta {
   id: string
   name: string
@@ -271,6 +347,7 @@ export interface FileDetailsMeta {
   cipher?: string
   keyId?: string
   region?: string
+  noteEncrypted?: string | null
 }
 
 export interface FileAccessEntry {
@@ -713,6 +790,13 @@ export function FileDetailsPanel({
                   ))}
                 </div>
               )}
+
+              {/* Encrypted note — synced server-side, decrypted with file key */}
+              <EncryptedNoteSection
+                fileId={file.id}
+                noteEncrypted={file.noteEncrypted}
+                getFileKey={getFileKey}
+              />
 
               {/* Notes — client-only, stored in localStorage per device */}
               <FileNotesSection fileId={file.id} />

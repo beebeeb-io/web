@@ -172,6 +172,7 @@ export function Recent() {
       location: 'Recent',
       cipher: isUnlocked ? 'AES-256-GCM' : undefined,
       keyId: isUnlocked ? file.id : undefined,
+      noteEncrypted: file.note_encrypted ?? null,
     }
   }
 
