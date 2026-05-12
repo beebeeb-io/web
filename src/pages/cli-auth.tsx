@@ -24,7 +24,7 @@ import { BBLogo } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
-import { getToken } from '../lib/api'
+import { getToken, getApiUrl } from '../lib/api'
 import { toBase64 } from '../lib/crypto'
 
 // ─── Param validation ─────────────────────────────────────────────────────────
@@ -148,7 +148,7 @@ export function CliAuth() {
     if (flow.kind !== 'code') return
 
     const controller = new AbortController()
-    fetch(`/api/v1/auth/cli-pubkey?code=${encodeURIComponent(flow.code)}`, {
+    fetch(`${getApiUrl()}/api/v1/auth/cli-pubkey?code=${encodeURIComponent(flow.code)}`, {
       signal: controller.signal,
     })
       .then(async (res) => {
@@ -197,7 +197,7 @@ export function CliAuth() {
 
         const encrypted = await ecdhEncryptPayload(cliEcdhPublicB64, payload)
 
-        const res = await fetch('/api/v1/auth/cli-authorize', {
+        const res = await fetch(`${getApiUrl()}/api/v1/auth/cli-authorize`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
