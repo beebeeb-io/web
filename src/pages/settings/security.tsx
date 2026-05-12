@@ -237,24 +237,24 @@ function PasskeysSection() {
     >
       <div className="flex flex-col gap-2 max-w-[420px]">
         {passkeys.map((pk) => (
-          <div key={pk.id} className="flex flex-col gap-1">
+          <div key={pk.id ?? ''} className="flex flex-col gap-1">
             <div className="flex items-center gap-2 px-3 py-2 bg-paper-2 border border-line rounded-md">
               <Icon name="key" size={13} className="text-amber-deep shrink-0" />
               <div className="flex-1 min-w-0">
-                <div className="text-[13px] font-medium text-ink truncate">{pk.name}</div>
+                <div className="text-[13px] font-medium text-ink truncate">{pk.name ?? '—'}</div>
                 <div className="text-[11px] font-mono text-ink-3">
-                  Added {new Date(pk.created_at).toLocaleDateString()}
+                  Added {pk.created_at ? new Date(pk.created_at).toLocaleDateString() : '—'}
                 </div>
               </div>
               <BBButton
                 size="sm"
                 variant="ghost"
-                onClick={() => setDeletingId(pk.id)}
+                onClick={() => setDeletingId(pk.id ?? null)}
               >
                 Remove
               </BBButton>
             </div>
-            {deletingId === pk.id && (
+            {pk.id && deletingId === pk.id && (
               <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-red/30 bg-red/5">
                 <span className="text-xs text-ink-2 flex-1">Remove this passkey?</span>
                 <BBButton size="sm" variant="danger" onClick={() => handleDelete(pk.id)}>

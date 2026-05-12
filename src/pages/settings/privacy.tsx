@@ -9,18 +9,15 @@
  *   5. Your Rights  — plain-language GDPR summary
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { SettingsShell, SettingsHeader } from '../../components/settings-shell'
 import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useToast } from '../../components/toast'
-import { StepUpAuth } from '../../components/step-up-auth'
 import { useAuth } from '../../lib/auth-context'
 import { useFrozen } from '../../hooks/use-frozen'
 import {
-  requestDataExport,
-  getDataExportStatus,
   freezeAccount,
   unfreezeAccount,
   getToken,
@@ -71,36 +68,9 @@ function Card({
 
 function DataExportCard() {
   const { showToast } = useToast()
-  const [requesting, setRequesting] = useState(false)
+  const { logout } = useAuth()
   const [exportStatus, setExportStatus] = useState<DataExportStatus | null>(null)
-  const [endpointMissing, setEndpointMissing] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
-  const stopPolling = useCallback(() => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current)
-      pollRef.current = null
-    }
-  }, [])
-
-  const pollStatus = useCallback((exportId: string) => {
-    stopPolling()
-    pollRef.current = setInterval(async () => {
-      try {
-        const s = await getDataExportStatus(exportId)
-        setExportStatus(s)
-        if (s.status === 'ready' || s.status === 'failed') {
-          stopPolling()
-        }
-      } catch {
-        stopPolling()
-      }
-    }, 5000)
-  }, [stopPolling])
-
-  useEffect(() => () => stopPolling(), [stopPolling])
-
   const downloadExport = useCallback(async (url: string) => {
     const token = getToken()
     try {
@@ -125,65 +95,54 @@ function DataExportCard() {
     }
   }, [showToast])
 
-  const handleRequest = useCallback(async (confirmToken: string) => {
-    setConfirmOpen(false)
-    setRequesting(true)
-    setEndpointMissing(false)
-    try {
-      // The server may return a resumed job (200 with resumed:true) when an
-      // export already exists. The response carries the same fields as the
-      // status endpoint, so we copy any populated fields straight in.
-      const res = await requestDataExport(confirmToken)
-      const initial: DataExportStatus = {
-        export_id: res.export_id,
-        status: res.status,
-        file_count: res.file_count,
-        total_bytes: res.total_bytes,
-        download_url: res.download_url,
-        expires_at: res.expires_at,
-      }
-      setExportStatus(initial)
-      if (res.status !== 'ready' && res.status !== 'failed') {
-        pollStatus(res.export_id)
-      } else if (res.status === 'ready' && !res.download_url) {
-        // Resumed-ready response without download_url — fetch full status
-        // so the download button has somewhere to go.
-        try {
-          const full = await getDataExportStatus(res.export_id)
-          setExportStatus(full)
-        } catch {
-          // Non-fatal — user can refresh
-        }
-      } else if (res.status === 'ready' && res.download_url) {
-        await downloadExport(res.download_url)
-      }
-    } catch (err) {
-      if (err instanceof ApiError && (err.status === 404 || err.status === 501)) {
-        setEndpointMissing(true)
-      } else {
-        showToast({
-          icon: 'x',
-          title: 'Export request failed',
-          description: err instanceof Error ? err.message : 'Please try again.',
-          danger: true,
-        })
-      }
-    } finally {
-      setRequesting(false)
-    }
-  }, [downloadExport, pollStatus, showToast])
-
   const status = exportStatus?.status
 
   return (
     <Card title="Your data">
-      <StepUpAuth
-        open={confirmOpen}
-        description="Enter your password to request a copy of your data."
-        submitLabel="Export my data"
-        onConfirmed={(token) => void handleRequest(token)}
-        onClose={() => setConfirmOpen(false)}
-      />
+      {confirmOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          onClick={() => setConfirmOpen(false)}
+        >
+          <div className="absolute inset-0 bg-ink/20" />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Verify your identity"
+            onClick={(e) => e.stopPropagation()}
+            className="relative w-full max-w-[420px] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden mx-4"
+          >
+            <div className="px-5 py-4 border-b border-line flex items-center gap-2.5">
+              <Icon name="lock" size={14} className="text-ink" />
+              <span className="text-sm font-semibold text-ink">Verify your identity</span>
+              <button
+                onClick={() => setConfirmOpen(false)}
+                aria-label="Close"
+                className="ml-auto text-ink-3 hover:text-ink transition-colors cursor-pointer"
+              >
+                <Icon name="x" size={14} />
+              </button>
+            </div>
+            <div className="p-5">
+              <p className="text-[12.5px] text-ink-2 leading-relaxed mb-5">
+                To download your data, we need to confirm it's you. You'll be signed out and prompted to sign back in — after signing in, your export will start automatically.
+              </p>
+              <div className="flex gap-2 justify-end">
+                <BBButton size="md" onClick={() => setConfirmOpen(false)}>
+                  Cancel
+                </BBButton>
+                <BBButton
+                  size="md"
+                  variant="amber"
+                  onClick={() => { setConfirmOpen(false); logout() }}
+                >
+                  Sign out &amp; continue
+                </BBButton>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="flex flex-col gap-3">
         <p className="text-[13px] text-ink-2 leading-relaxed">
           Download a copy of everything Beebeeb holds about you: file metadata, share history, activity logs, and account settings. File contents are exported encrypted.
@@ -234,20 +193,10 @@ function DataExportCard() {
               variant="default"
               size="md"
               onClick={() => setConfirmOpen(true)}
-              disabled={requesting}
               className="gap-1.5"
             >
-              {requesting ? (
-                <>
-                  <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin shrink-0" />
-                  Requesting…
-                </>
-              ) : (
-                <>
-                  <Icon name="download" size={13} />
-                  Download my data
-                </>
-              )}
+              <Icon name="download" size={13} />
+              Download my data
             </BBButton>
           </div>
         )}
@@ -261,19 +210,6 @@ function DataExportCard() {
           >
             Try again
           </BBButton>
-        )}
-
-        {endpointMissing && (
-          <div className="flex items-start gap-2 p-3 rounded-md bg-paper-2 border border-line">
-            <Icon name="cloud" size={12} className="text-ink-4 shrink-0 mt-0.5" />
-            <p className="text-[11.5px] text-ink-3 leading-relaxed">
-              Data exports require the latest server update. Contact{' '}
-              <a href="mailto:privacy@beebeeb.io" className="text-amber-deep hover:underline">
-                privacy@beebeeb.io
-              </a>{' '}
-              in the meantime.
-            </p>
-          </div>
         )}
 
         <div className="flex flex-col gap-1">

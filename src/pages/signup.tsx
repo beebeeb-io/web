@@ -108,9 +108,7 @@ export function Signup() {
         {/* Footer */}
         <div className="border-t border-line mt-[18px] pt-3.5 flex items-center gap-2 text-[11px] text-ink-3">
           <Icon name="shield" size={14} className="text-amber-deep shrink-0" />
-          <span>Stored in Falkenstein. Hetzner. EU jurisdiction.{' '}
-            <a href="https://beebeeb.io/privacy" target="_blank" rel="noopener noreferrer" className="hover:underline">Privacy Policy</a>.
-          </span>
+          <span>End-to-end encrypted · EU servers · Zero-knowledge</span>
         </div>
       </form>
     </AuthShell>

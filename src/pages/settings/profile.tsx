@@ -9,7 +9,7 @@ import { useAuth } from '../../lib/auth-context'
 import { useToast } from '../../components/toast'
 import {
   getPreference, setPreference,
-  deleteAccountPermanently, exportAccountData,
+  deleteAccountPermanently,
   emailChangeStart, emailChangeFinish,
   getTrackingPreference, setTrackingPreference,
   getMyProfile, updatePublicProfile,
@@ -43,9 +43,6 @@ export function SettingsProfile() {
   const [newEmailForChange, setNewEmailForChange] = useState('')
   const [emailChangeError, setEmailChangeError] = useState<string | null>(null)
   const [emailChangeProcessing, setEmailChangeProcessing] = useState(false)
-
-  const [showExport, setShowExport] = useState(false)
-  const [exporting, setExporting] = useState(false)
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleteConfirmEmail, setDeleteConfirmEmail] = useState('')
@@ -165,25 +162,6 @@ export function SettingsProfile() {
       setEmailChangeProcessing(false)
     }
   }, [newEmailForChange, emailChangeProcessing, emailChangePendingPw, emailChangePendingToken, getMasterKey, refreshUser, showToast])
-
-  const handleExport = useCallback(async () => {
-    setExporting(true)
-    try {
-      const data = await exportAccountData()
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `beebeeb-export-${new Date().toISOString().slice(0, 10)}.json`
-      a.click()
-      URL.revokeObjectURL(url)
-      showToast({ icon: 'check', title: 'Export downloaded' })
-    } catch {
-      showToast({ icon: 'x', title: 'Export failed', danger: true })
-    } finally {
-      setExporting(false)
-    }
-  }, [showToast])
 
   const handleTrackingToggle = useCallback((newValue: boolean) => {
     if (!newValue) {
@@ -501,33 +479,6 @@ export function SettingsProfile() {
           <BBButton size="sm" variant="ghost" onClick={() => setEmailChangePwOpen(true)}>
             Change email
           </BBButton>
-        </SettingsRow>
-
-        <SettingsRow label="Export data" hint="Download a copy of your account data and file metadata." danger>
-          {showExport ? (
-            <div className="flex flex-col gap-2 max-w-[360px]">
-              <div className="text-[12.5px] text-ink-2">
-                Downloads your preferences, shares, and file metadata as JSON. Art. 20 GDPR.
-              </div>
-              <div className="flex gap-2">
-                <BBButton
-                  size="sm"
-                  onClick={handleExport}
-                  disabled={exporting}
-                >
-                  <Icon name="download" size={12} className="mr-1.5" />
-                  {exporting ? 'Exporting...' : 'Download JSON'}
-                </BBButton>
-                <BBButton size="sm" variant="ghost" onClick={() => setShowExport(false)}>
-                  Cancel
-                </BBButton>
-              </div>
-            </div>
-          ) : (
-            <BBButton size="sm" variant="ghost" onClick={() => setShowExport(true)}>
-              Export data
-            </BBButton>
-          )}
         </SettingsRow>
 
         <SettingsRow
