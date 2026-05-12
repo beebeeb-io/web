@@ -97,6 +97,10 @@ export async function encryptedUpload(
 
   const mimeType = file.type || null
   const metadataPlain = JSON.stringify({ name: file.name, mime_type: mimeType })
+  // Detect media at upload time — MIME types are encrypted so the server cannot
+  // infer this itself. is_media is stored unencrypted so the /files/media endpoint
+  // can return all media files without decrypting anything.
+  const isMedia = (mimeType?.startsWith('image/') || mimeType?.startsWith('video/')) ?? false
   let activeFileKey = fileKey
   let nameEncrypted = await encryptMetadata(activeFileKey)
 
@@ -132,6 +136,7 @@ export async function encryptedUpload(
       size_bytes: file.size,
       chunk_count: fallbackChunkCount,
       parent_id: parentId ?? null,
+      is_media: isMedia,
     }), signal)
 
     serverFileId = init.file_id

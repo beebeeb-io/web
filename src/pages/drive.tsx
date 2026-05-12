@@ -854,8 +854,11 @@ export function Drive() {
     }
 
     // ─── Conflict detection ───────────────────────
-    // Only check when the vault is unlocked and we have decrypted names.
-    if (isUnlocked && Object.keys(externalDecryptedNames).length > 0) {
+    // Run whenever the vault is unlocked. buildNameToFileMap() only includes
+    // files that have already decrypted names — files not yet decrypted are
+    // simply absent from the map (treating them as non-conflicting is the
+    // correct safe default; false conflicts are worse than missed conflicts here).
+    if (isUnlocked) {
       const nameToFile = buildNameToFileMap()
       const conflicts: ConflictItem[] = []
       const autoVersioned: ResolvedUpload[] = []

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { BBButton } from '@beebeeb/shared'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '@beebeeb/shared'
-import { getAllImages, type DriveFile } from '../lib/api'
+import { getMediaFiles, type DriveFile } from '../lib/api'
 import { useKeys } from '../lib/key-context'
 import { decryptFileMetadata } from '../lib/crypto'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
@@ -153,18 +153,16 @@ export function Photos() {
   const uploadFilesRef = useRef<Map<string, File>>(new Map())
   const photoInputRef = useRef<HTMLInputElement>(null)
 
-  // Fetch all image files in a single request via /api/v1/files/all-images.
-  // This replaces the previous recursive walk() that issued one listFiles()
-  // call per folder (N+1 requests). The server endpoint returns every
-  // non-trashed image (mime_type LIKE 'image/%') owned by the user across
-  // all folders. ZK-uploaded files (mime_type is null on the server) are not
-  // returned by all-images — their decrypted MIME type is recovered later in
-  // the decrypt effect via decryptFileMetadata(). Those files will appear in
-  // the grid once decryption completes, just as before.
+  // Fetch media files via /api/v1/files/media (is_media=true flag).
+  // Unlike /all-images (which filters by mime_type LIKE 'image/%' and misses
+  // ZK-uploaded files), /media returns every file the client flagged as media
+  // at upload time — including fully zero-knowledge uploads where MIME type
+  // is encrypted and the server stores null. The client sets is_media based
+  // on file.type before encryption, so no decryption is needed here.
   const fetchAllFiles = useCallback(async () => {
     setLoading(true)
     try {
-      const files = await getAllImages()
+      const files = await getMediaFiles()
       setAllFiles(files)
     } catch (err) {
       console.error('[Photos] Failed to load files:', err)
@@ -369,15 +367,11 @@ export function Photos() {
     return raw
   }
 
-  // Filter to media files only.
-  // Prefer decrypted MIME type (from encrypted metadata) over f.mime_type
-  // (which is null for ZK-uploaded files where the server doesn't know the type).
-  const mediaFiles = allFiles.filter((f) => {
-    if (f.is_folder) return false
-    const name = displayName(f)
-    const mime = decryptedMimeTypes[f.id] ?? f.mime_type
-    return isMediaFile(name, mime)
-  })
+  // All files returned by /api/v1/files/media already have is_media=true —
+  // the server filters on the flag set at upload time, so no client-side
+  // media detection is needed. We just exclude folders (should be none, but
+  // be defensive) and preserve the server-provided order (newest first).
+  const mediaFiles = allFiles.filter((f) => !f.is_folder)
 
   // Apply date range filter
   const filteredFiles = mediaFiles.filter((f) => {

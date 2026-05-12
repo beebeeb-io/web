@@ -610,6 +610,9 @@ export async function initUpload(metadata: {
   size_bytes: number
   chunk_count: number
   parent_id?: string | null
+  /** True when the file is an image or video. Set by the client at upload time
+   *  because MIME types are encrypted — the server cannot infer media type. */
+  is_media?: boolean
 }): Promise<UploadInitResponse> {
   try {
     const v2 = await request<UploadInitV2Response>('/api/v1/uploads/init', {
@@ -620,6 +623,7 @@ export async function initUpload(metadata: {
         mime_type: metadata.mime_type,
         parent_id: metadata.parent_id,
         profile: 'web',
+        is_media: metadata.is_media ?? false,
       }),
     })
     return { ...v2, protocol: 'v2' }
@@ -1159,6 +1163,22 @@ export async function getStorageUsage(): Promise<StorageUsage> {
  */
 export async function getAllImages(): Promise<DriveFile[]> {
   const data = await request<{ files: DriveFile[] }>('/api/v1/files/all-images')
+  return data.files
+}
+
+/**
+ * GET /api/v1/files/media
+ *
+ * Returns every non-trashed file the client flagged as media (is_media=true)
+ * at upload time, ordered newest first. Works for fully zero-knowledge uploads
+ * where the MIME type is encrypted — the server does not need to decrypt anything.
+ *
+ * Replaces the /all-images endpoint for the Photos tab. The client sets is_media
+ * based on the file's MIME type before encryption so both legacy mime_type-based
+ * and new ZK-encrypted uploads appear in the same grid.
+ */
+export async function getMediaFiles(): Promise<DriveFile[]> {
+  const data = await request<{ files: DriveFile[] }>('/api/v1/files/media')
   return data.files
 }
 
