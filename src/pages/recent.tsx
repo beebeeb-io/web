@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '@beebeeb/shared'
 import { FileList } from '../components/file-list'
+import { FileDetailsPanel, type FileDetailsMeta } from '../components/file-details-panel'
 import { ShareDialog } from '../components/share-dialog'
 import { MoveModal } from '../components/move-modal'
 import { RenameDialog } from '../components/rename-dialog'
@@ -28,6 +29,7 @@ export function Recent() {
   const [files, setFiles] = useState<DriveFile[]>([])
   const [loading, setLoading] = useState(true)
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string | null>>({})
+  const [selectedFileId, setSelectedFileId] = useState<string | null>(null)
 
   // Dialog state
   const [shareFileId, setShareFileId] = useState<string | null>(null)
@@ -155,6 +157,25 @@ export function Recent() {
     }
   }
 
+  function buildDetailsMeta(file: DriveFile): FileDetailsMeta {
+    const name = displayName(file)
+    const ext = name.includes('.') ? name.split('.').pop() ?? '' : ''
+    return {
+      id: file.id,
+      name,
+      extension: ext,
+      mimeType: file.mime_type || null,
+      sizeBytes: file.size_bytes,
+      isFolder: file.is_folder,
+      createdAt: file.created_at,
+      updatedAt: file.updated_at,
+      location: 'Recent',
+      cipher: isUnlocked ? 'AES-256-GCM' : undefined,
+      keyId: isUnlocked ? file.id : undefined,
+    }
+  }
+
+  const selectedFile = files.find((f) => f.id === selectedFileId) ?? null
   const shareFile = files.find((f) => f.id === shareFileId) ?? null
   const moveFile = files.find((f) => f.id === moveFileId) ?? null
   const renameFile = files.find((f) => f.id === renameFileId) ?? null
@@ -181,6 +202,9 @@ export function Recent() {
         onNavigateFolder={() => navigate('/')}
         onFileAction={handleFileAction}
         onDecryptedNamesChange={setDecryptedNames}
+        externalDecryptedNames={Object.fromEntries(Object.entries(decryptedNames).filter((e): e is [string, string] => e[1] !== null))}
+        selectedFileId={selectedFileId}
+        onSelectFile={(file) => file && setSelectedFileId(file.id)}
         onBulkTrash={handleBulkTrash}
         onBulkDownload={handleBulkDownload}
       />
@@ -211,6 +235,31 @@ export function Recent() {
         onClose={() => setRenameFileId(null)}
         currentName={renameFile ? displayName(renameFile) : ''}
         onRename={handleRenameConfirm}
+      />
+
+      <FileDetailsPanel
+        open={selectedFile !== null}
+        onClose={() => setSelectedFileId(null)}
+        file={selectedFile ? buildDetailsMeta(selectedFile) : null}
+        onDownload={() => selectedFile && handleFileDownload(selectedFile)}
+        onShare={() => {
+          if (selectedFile) {
+            setShareFileId(selectedFile.id)
+            setSelectedFileId(null)
+          }
+        }}
+        onStar={() => {
+          if (selectedFile) {
+            handleFileAction('star', selectedFile)
+          }
+        }}
+        isStarred={selectedFile?.is_starred ?? false}
+        onTrash={() => {
+          if (selectedFile) {
+            handleFileAction('trash', selectedFile)
+            setSelectedFileId(null)
+          }
+        }}
       />
     </DriveLayout>
   )

@@ -14,6 +14,7 @@ import { useWsEvent } from '../lib/ws-context'
 import { EmptyTrash } from '../components/empty-states/empty-trash'
 import { ConfirmPasswordModal } from '../components/confirm-password-modal'
 import { formatBytes } from '../lib/format'
+import { FileDetailsPanel, type FileDetailsMeta } from '../components/file-details-panel'
 
 // ─── Helpers ─────────────────────────────────────
 
@@ -106,6 +107,7 @@ export function Trash() {
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({})
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
+  const [selectedFileId, setSelectedFileId] = useState<string | null>(null)
   const [confirmDialog, setConfirmDialog] = useState<{
     open: boolean
     fileIds: string[]
@@ -339,6 +341,26 @@ export function Trash() {
     }
   }
 
+  function buildDetailsMeta(file: DriveFile): FileDetailsMeta {
+    const name = displayName(file)
+    const ext = name.includes('.') ? name.split('.').pop() ?? '' : ''
+    return {
+      id: file.id,
+      name,
+      extension: ext,
+      mimeType: file.mime_type || null,
+      sizeBytes: file.size_bytes,
+      isFolder: file.is_folder,
+      createdAt: file.created_at,
+      updatedAt: file.updated_at,
+      location: 'Trash',
+      cipher: isUnlocked ? 'AES-256-GCM' : undefined,
+      keyId: isUnlocked ? file.id : undefined,
+    }
+  }
+
+  const selectedFile = files.find((f) => f.id === selectedFileId) ?? null
+
   return (
     <DriveLayout>
         {/* Confirmation dialog */}
@@ -417,7 +439,8 @@ export function Trash() {
               return (
                 <div
                   key={file.id}
-                  className="group hover:bg-paper-2 transition-colors"
+                  className={`group hover:bg-paper-2 transition-colors cursor-pointer${selectedFileId === file.id ? ' bg-paper-2' : ''}`}
+                  onClick={() => setSelectedFileId(selectedFileId === file.id ? null : file.id)}
                   style={{
                     display: 'grid',
                     gridTemplateColumns: '24px 1.4fr 1fr 110px 110px 110px 100px',
@@ -427,10 +450,12 @@ export function Trash() {
                     borderBottom: i < arr.length - 1 ? '1px solid var(--color-line)' : 'none',
                   }}
                 >
-                  <BBCheckbox
-                    checked={selected.has(file.id)}
-                    onChange={() => toggleSelect(file.id)}
-                  />
+                  <div onClick={(e) => e.stopPropagation()}>
+                    <BBCheckbox
+                      checked={selected.has(file.id)}
+                      onChange={() => toggleSelect(file.id)}
+                    />
+                  </div>
                   <div className="flex items-center gap-2.5 min-w-0">
                     <Icon
                       name={iconName}
@@ -451,7 +476,7 @@ export function Trash() {
                   <span className="font-mono text-[11px] text-ink-3">
                     {file.is_folder ? '--' : formatBytes(file.size_bytes)}
                   </span>
-                  <div className="flex gap-1.5 justify-end">
+                  <div className="flex gap-1.5 justify-end" onClick={(e) => e.stopPropagation()}>
                     <button
                       onClick={() => handleRestore(file.id)}
                       disabled={loading}
@@ -473,6 +498,12 @@ export function Trash() {
             })
           )}
         </div>
+
+        <FileDetailsPanel
+          open={selectedFile !== null}
+          onClose={() => setSelectedFileId(null)}
+          file={selectedFile ? buildDetailsMeta(selectedFile) : null}
+        />
 
         {/* Status bar */}
         <div className="px-5 py-2 border-t border-line bg-paper-2 flex items-center gap-3.5 text-[11px] text-ink-3">
