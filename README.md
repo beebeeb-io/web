@@ -1,5 +1,11 @@
 # Beebeeb Web
 
+[![CI](https://github.com/beebeeb-io/web/actions/workflows/ci.yml/badge.svg)](https://github.com/beebeeb-io/web/actions/workflows/ci.yml)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
+![React](https://img.shields.io/badge/react-19-61dafb)
+![TypeScript](https://img.shields.io/badge/typescript-5-3178c6)
+![Vite](https://img.shields.io/badge/vite-6-646cff)
+
 Beebeeb Web is the browser client for Beebeeb, an end-to-end encrypted, zero-knowledge cloud storage product made in Europe and operated by Initlabs B.V. (KvK 95157565), Wijchen, Netherlands.
 
 The web app is where users sign in, unlock their vault, manage encrypted files and folders, create shares, review security settings, and manage billing. File content, file names, and most metadata are encrypted in the browser before they reach the API. The server stores ciphertext and operational metadata.
