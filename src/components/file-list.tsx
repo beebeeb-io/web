@@ -640,8 +640,8 @@ export function FileList({
   function typeLabel(file: DriveFile): string {
     if (file.is_folder) return 'Folder'
     if (file.mime_type) return file.mime_type
-    const ext = safeName(file).split('.').pop()?.trim()
-    return ext ? ext.toUpperCase() : 'Encrypted file'
+    // Extension is already shown in the colored badge — don't repeat it
+    return ''
   }
 
   const sortedFiles = useMemo(() => {
@@ -702,7 +702,7 @@ export function FileList({
     }
     if (file.is_folder) {
       onNavigateFolder?.(file)
-    } else if (isPreviewable(file.mime_type)) {
+    } else if (isPreviewable(file.mime_type, decryptedNames[file.id])) {
       onFileAction?.('preview', file)
     } else {
       onSelectFile?.(file)
@@ -834,7 +834,7 @@ export function FileList({
             onNavigateFolder?.(file)
             return
           }
-          if (isPreviewable(file.mime_type)) {
+          if (isPreviewable(file.mime_type, decryptedNames[file.id])) {
             onFileAction?.('preview', file)
             return
           }

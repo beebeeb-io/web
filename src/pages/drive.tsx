@@ -75,7 +75,6 @@ import { EmptyDrive } from '../components/empty-states/empty-drive'
 import { formatBytes } from '../lib/format'
 import { cacheFileList, getCachedFileList } from '../lib/offline-cache'
 import { hashFile, checkDuplicate, recordUpload } from '../lib/upload-dedup'
-import { isPreviewable } from '../lib/preview'
 
 // ─── Drive component ────────────────────────────────
 // Folders are always grouped before files; the chosen key only orders
@@ -1849,14 +1848,7 @@ export function Drive() {
       const file = files.find((f) => f.id === ids[0])
       if (!file) return
       if (file.is_folder) handleFolderOpen(file)
-      else if (isPreviewable(file.mime_type)) openPreview(file)
-      else {
-        showToast({
-          icon: 'file',
-          title: "This file type can't be previewed",
-          description: 'Use Open to download it.',
-        })
-      }
+      else openPreview(file)
     },
     onEscape: () => {
       if (showShortcuts) setShowShortcuts(false)

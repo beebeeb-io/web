@@ -588,7 +588,7 @@ export function FileDetailsPanel({
           <div className="flex gap-1.5 mt-3">
             {/* Preview button — only for non-folder files */}
             {!file.isFolder && (
-              isPreviewable(file.mimeType) ? (
+              isPreviewable(file.mimeType, file.name) ? (
                 <BBButton
                   size="sm"
                   variant="ghost"

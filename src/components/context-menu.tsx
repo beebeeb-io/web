@@ -157,7 +157,7 @@ export function ContextMenu({
 
   if (!open) return null
 
-  const canPreview = !isFolder && isPreviewable(mimeType)
+  const canPreview = !isFolder && isPreviewable(mimeType, fileName)
 
   const visibleItems = MENU_ITEMS
     .filter((item) => item.id !== 'versions' || hasVersions)
