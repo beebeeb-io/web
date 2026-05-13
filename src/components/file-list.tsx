@@ -1294,7 +1294,7 @@ export function FileList({
       <div
         role="rowgroup"
         aria-label="Files and folders"
-        className="flex-1 overflow-y-auto"
+        className="flex-1 overflow-y-auto min-h-0"
         onClick={(e) => {
           if (e.target === e.currentTarget && selectedIds.size > 0) clearSelection()
         }}
