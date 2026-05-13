@@ -21,6 +21,7 @@ import {
   type Session, type PasskeyInfo, type MySignIn,
 } from '../../lib/api'
 import { toBase64 } from '../../lib/crypto'
+import { getVaultTTL, setVaultTTL, TTL_OPTIONS } from '../../lib/session-persist'
 import {
   prfExtensionInputs,
   extractPrfOutput,
@@ -191,6 +192,41 @@ function MasterPasswordSection() {
         }}
       />
     </>
+  )
+}
+
+/* ── Vault timeout ──────────────────────────────── */
+
+function VaultTimeoutSection() {
+  const [ttl, setTtl] = useState(() => getVaultTTL())
+  const { showToast } = useToast()
+
+  const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = parseInt(e.target.value, 10)
+    setTtl(val)
+    setVaultTTL(val)
+    showToast({
+      icon: 'check',
+      title: 'Vault timeout updated',
+      description: val === 0 ? 'Password required on every refresh' : `Session persists for ${TTL_OPTIONS.find(o => o.value === val)?.label ?? 'custom duration'}`,
+    })
+  }
+
+  return (
+    <SettingsRow
+      label="Vault timeout"
+      hint="How long to remember your password across page refreshes. Longer = more convenient, shorter = more secure."
+    >
+      <select
+        value={ttl}
+        onChange={handleChange}
+        className="rounded-md border border-line bg-paper px-3 py-2 text-[13px] text-ink font-sans focus:outline-none focus:ring-2 focus:ring-amber/30 focus:border-amber cursor-pointer"
+      >
+        {TTL_OPTIONS.map(opt => (
+          <option key={opt.value} value={opt.value}>{opt.label}</option>
+        ))}
+      </select>
+    </SettingsRow>
   )
 }
 
@@ -732,6 +768,7 @@ export function SettingsSecurity() {
       <RecoveryPhraseSection />
       <RecentSignInsSection />
       <MasterPasswordSection />
+      <VaultTimeoutSection />
       <PasskeysSection />
       <TotpSection />
       <DevicesSessionsSection />

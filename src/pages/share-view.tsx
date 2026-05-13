@@ -493,14 +493,12 @@ export function ShareViewPage() {
         const fileKey = await resolveFileKey(shareData)
         if (!fileKey || cancelled) return
         const parsed = JSON.parse(shareData!.name_encrypted!) as {
-          nonce: string
-          ciphertext: string
+          nonce: string | number[]
+          ciphertext: string | number[]
         }
-        const name = await decryptFilename(
-          fileKey,
-          fromBase64(parsed.nonce),
-          fromBase64(parsed.ciphertext),
-        )
+        const nonce = Array.isArray(parsed.nonce) ? new Uint8Array(parsed.nonce) : fromBase64(parsed.nonce)
+        const ct = Array.isArray(parsed.ciphertext) ? new Uint8Array(parsed.ciphertext) : fromBase64(parsed.ciphertext)
+        const name = await decryptFilename(fileKey, nonce, ct)
         if (!cancelled) setDecryptedName(name)
       } catch {
         // Can't decrypt -- will show encrypted placeholder

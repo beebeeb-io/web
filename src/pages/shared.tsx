@@ -206,8 +206,10 @@ export function Shared() {
             const efkBytes = fromBase64(invite.encrypted_file_key)
             const fileKey = await decryptChunk(shareKey, efkBytes.slice(0, 12), efkBytes.slice(12))
 
-            const parsed = JSON.parse(invite.file_name_encrypted) as { nonce: string; ciphertext: string }
-            names[invite.id] = await decryptFilename(fileKey, fromBase64(parsed.nonce), fromBase64(parsed.ciphertext))
+            const parsed = JSON.parse(invite.file_name_encrypted) as { nonce: string | number[]; ciphertext: string | number[] }
+            const nonce = Array.isArray(parsed.nonce) ? new Uint8Array(parsed.nonce) : fromBase64(parsed.nonce)
+            const ct = Array.isArray(parsed.ciphertext) ? new Uint8Array(parsed.ciphertext) : fromBase64(parsed.ciphertext)
+            names[invite.id] = await decryptFilename(fileKey, nonce, ct)
 
             zeroize(myPrivate)
             zeroize(sharedSecret)

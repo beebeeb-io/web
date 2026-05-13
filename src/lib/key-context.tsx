@@ -25,6 +25,11 @@ import {
   getVaultKey,
   clearVaultKey,
 } from './session-vault-cache'
+import {
+  persistSession,
+  restoreSession,
+  clearSession,
+} from './session-persist'
 import { getEmail, getToken } from './api'
 import { pushTauriSession, clearTauriSession } from './tauri-bridge'
 
@@ -78,18 +83,32 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     try {
       await cacheVaultKey(key)
     } catch { /* best effort */ }
+    try {
+      await persistSession(key)
+    } catch { /* best effort */ }
   }, [])
 
   const restoreCachedKey = useCallback(async (): Promise<Uint8Array | null> => {
+    // Try in-tab session cache first (fastest, same-tab only)
     try {
-      return await getVaultKey()
-    } catch {
-      return null
-    }
+      const tabKey = await getVaultKey()
+      if (tabKey) return tabKey
+    } catch { /* fall through */ }
+    // Try persistent session (survives refresh, TTL-bounded)
+    try {
+      const persisted = await restoreSession()
+      if (persisted) {
+        // Re-cache in the tab session for faster subsequent access
+        try { await cacheVaultKey(persisted) } catch { /* ok */ }
+        return persisted
+      }
+    } catch { /* fall through */ }
+    return null
   }, [])
 
   const clearCachedKey = useCallback(() => {
     void clearVaultKey()
+    void clearSession()
   }, [])
 
   // Initialize WASM on mount + check if vault exists + restore cached key.

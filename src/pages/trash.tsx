@@ -167,11 +167,9 @@ export function Trash() {
             ciphertext: string
           }
           const fileKey = await getFileKey(file.id)
-          names[file.id] = await decryptFilename(
-            fileKey,
-            fromBase64(parsed.nonce),
-            fromBase64(parsed.ciphertext),
-          )
+          const nonce = Array.isArray(parsed.nonce) ? new Uint8Array(parsed.nonce) : fromBase64(parsed.nonce)
+          const ciphertext = Array.isArray(parsed.ciphertext) ? new Uint8Array(parsed.ciphertext) : fromBase64(parsed.ciphertext)
+          names[file.id] = await decryptFilename(fileKey, nonce, ciphertext)
         } catch {
           // Decryption failed — never fall back to file.name_encrypted, which
           // is `{"nonce":"…","ciphertext":"…"}` JSON for ZK files and would
