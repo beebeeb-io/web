@@ -11,7 +11,7 @@ import {
   CHUNK_SIZE,
   encryptChunk,
   encryptFilename,
-  toBase64,
+  serializeEncryptedBlob,
 } from './crypto'
 import { initUpload, uploadChunk, completeUpload, getUploadStatus, updateFile, ApiError } from './api'
 import type { DriveFile } from './api'
@@ -122,10 +122,7 @@ export async function encryptedUpload(
     // encrypts {"name":"filename","mime_type":"image/jpeg"}. Both formats are
     // handled by decryptFileMetadata() on the read side.
     const encName = await encryptFilename(key, metadataPlain)
-    return JSON.stringify({
-      nonce: toBase64(encName.nonce),
-      ciphertext: toBase64(encName.ciphertext),
-    })
+    return serializeEncryptedBlob(encName.nonce, encName.ciphertext)
   }
 
   async function startUpload(): Promise<void> {

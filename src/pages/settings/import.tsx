@@ -32,7 +32,7 @@ import {
 } from '../../lib/google-import'
 import { encryptedUpload } from '../../lib/encrypted-upload'
 import { createFolder, googleTokenRefresh } from '../../lib/api'
-import { deriveFileKey, encryptFilename, toBase64 } from '../../lib/crypto'
+import { deriveFileKey, encryptFilename, serializeEncryptedBlob } from '../../lib/crypto'
 import {
   GD_TOKEN_KEY,
   GD_REFRESH_KEY,
@@ -955,7 +955,7 @@ export function SettingsImport() {
 
     const folderKey = await deriveFileKey(masterKey, folderId)
     const encName = await encryptFilename(folderKey, name)
-    const nameEncrypted = JSON.stringify({ nonce: toBase64(encName.nonce), ciphertext: toBase64(encName.ciphertext) })
+    const nameEncrypted = serializeEncryptedBlob(encName.nonce, encName.ciphertext)
 
     try {
       const folder = await createFolder(nameEncrypted, parentId, folderId)

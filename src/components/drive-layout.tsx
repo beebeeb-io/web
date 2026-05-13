@@ -19,7 +19,7 @@ import {
 import { useDriveData } from '../lib/drive-data-context'
 import { StorageUsageBar } from './storage-usage-bar'
 import { decryptFolderKey, decryptChildFileKey } from '../lib/folder-share-crypto'
-import { decryptFilename, fromBase64 } from '../lib/crypto'
+import { decryptFilename, fromBase64, parseEncryptedBlob } from '../lib/crypto'
 import { QuotaWarning } from './quota-warning'
 import { QuickAccess } from './quick-access'
 import { EmailVerifyBanner } from './email-verify-banner'
@@ -532,9 +532,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
           const folderEntry = keys.find(k => k.file_id === invite.file_id)
           if (folderEntry) {
             const fileKey = await decryptChildFileKey(folderKey, folderEntry.encrypted_file_key)
-            const parsed = JSON.parse(invite.file_name_encrypted) as { nonce: string | number[]; ciphertext: string | number[] }
-            const nonce = Array.isArray(parsed.nonce) ? new Uint8Array(parsed.nonce) : fromBase64(parsed.nonce)
-            const ciphertext = Array.isArray(parsed.ciphertext) ? new Uint8Array(parsed.ciphertext) : fromBase64(parsed.ciphertext)
+            const { nonce, ciphertext } = parseEncryptedBlob(invite.file_name_encrypted)
             const name = await decryptFilename(fileKey, nonce, ciphertext)
             return { ...invite, decryptedName: name }
           }

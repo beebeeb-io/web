@@ -5,7 +5,7 @@ import { BBChip } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { listFiles, createFolder } from '../lib/api'
 import { useKeys } from '../lib/key-context'
-import { decryptFileMetadata, encryptFilename, toBase64 } from '../lib/crypto'
+import { decryptFileMetadata, encryptFilename, serializeEncryptedBlob } from '../lib/crypto'
 
 interface MoveModalProps {
   open: boolean
@@ -131,10 +131,7 @@ export function MoveModal({
       if (isUnlocked) {
         const folderKey = await getFileKey(folderId)
         const enc = await encryptFilename(folderKey, name)
-        nameEncrypted = JSON.stringify({
-          nonce: toBase64(enc.nonce),
-          ciphertext: toBase64(enc.ciphertext),
-        })
+        nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
       }
       const created = await createFolder(nameEncrypted, parentId, folderId)
       setDecryptedNames((prev) => ({ ...prev, [created.id]: name }))

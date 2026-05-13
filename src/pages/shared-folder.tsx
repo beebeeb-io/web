@@ -16,7 +16,7 @@ import {
   type ShareInvite,
 } from '../lib/api'
 import { useKeys } from '../lib/key-context'
-import { decryptFilename, fromBase64, zeroize } from '../lib/crypto'
+import { decryptFilename, fromBase64, parseEncryptedBlob, zeroize } from '../lib/crypto'
 import { decryptFolderKey, decryptChildFileKey } from '../lib/folder-share-crypto'
 import { encryptedDownload } from '../lib/encrypted-download'
 import { formatBytes } from '../lib/format'
@@ -98,9 +98,7 @@ export function SharedFolder() {
             const encKey = keysMap[file.id]
             if (encKey && file.name_encrypted) {
               const fileKey = await decryptChildFileKey(fk, encKey)
-              const parsed = JSON.parse(file.name_encrypted) as { nonce: string | number[]; ciphertext: string | number[] }
-              const nonce = Array.isArray(parsed.nonce) ? new Uint8Array(parsed.nonce) : fromBase64(parsed.nonce)
-              const ct = Array.isArray(parsed.ciphertext) ? new Uint8Array(parsed.ciphertext) : fromBase64(parsed.ciphertext)
+              const { nonce, ciphertext: ct } = parseEncryptedBlob(file.name_encrypted)
               names[file.id] = await decryptFilename(fileKey, nonce, ct)
               zeroize(fileKey)
             } else {

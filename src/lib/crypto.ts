@@ -126,9 +126,7 @@ export async function decryptFileMetadata(
   let name = 'Encrypted file'
   let mimeType: string | null = null
   try {
-    const outer = JSON.parse(nameEncrypted) as { nonce: string | number[]; ciphertext: string | number[] }
-    const nonce = Array.isArray(outer.nonce) ? new Uint8Array(outer.nonce) : fromBase64(outer.nonce)
-    const ciphertext = Array.isArray(outer.ciphertext) ? new Uint8Array(outer.ciphertext) : fromBase64(outer.ciphertext)
+    const { nonce, ciphertext } = parseEncryptedBlob(nameEncrypted)
     const plain = await decryptFilename(fileKey, nonce, ciphertext)
     try {
       const meta = JSON.parse(plain) as { name?: string; mime_type?: string }
@@ -238,6 +236,51 @@ export async function encryptFileKeyForSharing(
   zeroize(sharedSecret)
   zeroize(shareKey)
   return { encryptedFileKey: result.ciphertext, nonce: result.nonce }
+}
+
+// ─── Encrypted blob serialization ──────────────────
+//
+// Canonical wire format (used by CLI, mobile, and now web):
+//   {"cipher_suite":"V1Aes256Gcm","nonce":[byte_array],"ciphertext":[byte_array]}
+//
+// Legacy web format (still accepted on read, no longer produced):
+//   {"nonce":"base64string","ciphertext":"base64string"}
+
+/**
+ * Parse an encrypted blob JSON string into raw nonce + ciphertext bytes.
+ *
+ * Tolerant reader: accepts canonical format (cipher_suite + byte arrays),
+ * legacy web format (base64 strings), or a mix.
+ */
+export function parseEncryptedBlob(json: string): { nonce: Uint8Array; ciphertext: Uint8Array } {
+  const parsed = JSON.parse(json) as {
+    cipher_suite?: string
+    nonce: string | number[]
+    ciphertext: string | number[]
+  }
+
+  const nonce = Array.isArray(parsed.nonce)
+    ? new Uint8Array(parsed.nonce)
+    : fromBase64(parsed.nonce)
+
+  const ciphertext = Array.isArray(parsed.ciphertext)
+    ? new Uint8Array(parsed.ciphertext)
+    : fromBase64(parsed.ciphertext)
+
+  return { nonce, ciphertext }
+}
+
+/**
+ * Serialize nonce + ciphertext into the canonical encrypted blob JSON format.
+ *
+ * All new writes use canonical format so CLI, mobile, and web are interoperable.
+ */
+export function serializeEncryptedBlob(nonce: Uint8Array, ciphertext: Uint8Array): string {
+  return JSON.stringify({
+    cipher_suite: 'V1Aes256Gcm',
+    nonce: Array.from(nonce),
+    ciphertext: Array.from(ciphertext),
+  })
 }
 
 // ─── Helpers ────────────────────────────────────────

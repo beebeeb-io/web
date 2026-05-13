@@ -9,7 +9,7 @@ import { listFiles, restoreFile, permanentDeleteFile, confirmAction, ApiError, t
 import { useToast } from '../components/toast'
 import { useKeys } from '../lib/key-context'
 import { TrashRowSkeleton } from '@beebeeb/shared'
-import { decryptFilename, fromBase64 } from '../lib/crypto'
+import { decryptFilename, parseEncryptedBlob } from '../lib/crypto'
 import { useWsEvent } from '../lib/ws-context'
 import { EmptyTrash } from '../components/empty-states/empty-trash'
 import { ConfirmPasswordModal } from '../components/confirm-password-modal'
@@ -162,13 +162,8 @@ export function Trash() {
       for (const file of files) {
         if (cancelled) return
         try {
-          const parsed = JSON.parse(file.name_encrypted) as {
-            nonce: string
-            ciphertext: string
-          }
           const fileKey = await getFileKey(file.id)
-          const nonce = Array.isArray(parsed.nonce) ? new Uint8Array(parsed.nonce) : fromBase64(parsed.nonce)
-          const ciphertext = Array.isArray(parsed.ciphertext) ? new Uint8Array(parsed.ciphertext) : fromBase64(parsed.ciphertext)
+          const { nonce, ciphertext } = parseEncryptedBlob(file.name_encrypted)
           names[file.id] = await decryptFilename(fileKey, nonce, ciphertext)
         } catch {
           // Decryption failed — never fall back to file.name_encrypted, which

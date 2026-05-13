@@ -8,7 +8,7 @@ import { getBadgeStyle } from '../lib/file-colors'
 import { ContextMenu } from './context-menu'
 import { FileRowSkeleton } from '@beebeeb/shared'
 import { useKeys } from '../lib/key-context'
-import { decryptFilename, fromBase64, encryptFilename, toBase64 } from '../lib/crypto'
+import { decryptFilename, parseEncryptedBlob, encryptFilename, serializeEncryptedBlob } from '../lib/crypto'
 import { onDecrypted } from '../lib/decrypt-events'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { isPreviewable } from '../lib/preview'
@@ -302,9 +302,7 @@ export function FileList({
         return file.name_encrypted
       }
       const fileKey = await getFileKey(file.id)
-      const outer = JSON.parse(file.name_encrypted) as { nonce: string | number[]; ciphertext: string | number[]; cipher_suite?: string }
-      const nonce = Array.isArray(outer.nonce) ? new Uint8Array(outer.nonce) : fromBase64(outer.nonce)
-      const ciphertext = Array.isArray(outer.ciphertext) ? new Uint8Array(outer.ciphertext) : fromBase64(outer.ciphertext)
+      const { nonce, ciphertext } = parseEncryptedBlob(file.name_encrypted)
       const plain = await decryptFilename(fileKey, nonce, ciphertext)
       try {
         const meta = JSON.parse(plain) as { name?: string }
@@ -775,7 +773,7 @@ export function FileList({
     try {
       const fileKey = await getFileKey(file.id)
       const enc = await encryptFilename(fileKey, newName)
-      const nameEncrypted = JSON.stringify({ nonce: toBase64(enc.nonce), ciphertext: toBase64(enc.ciphertext) })
+      const nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
       await updateFile(file.id, { name_encrypted: nameEncrypted })
       onRefresh?.()
     } catch {

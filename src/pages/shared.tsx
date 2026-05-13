@@ -28,7 +28,7 @@ import {
   type MyShare,
 } from '../lib/api'
 import { useKeys } from '../lib/key-context'
-import { decryptFilename, decryptFileMetadata, decryptChunk, fromBase64, x25519SharedSecret, deriveShareKey, deriveX25519Private, zeroize } from '../lib/crypto'
+import { decryptFilename, decryptFileMetadata, decryptChunk, fromBase64, parseEncryptedBlob, x25519SharedSecret, deriveShareKey, deriveX25519Private, zeroize } from '../lib/crypto'
 import { encryptedDownload } from '../lib/encrypted-download'
 import { encryptedUpload } from '../lib/encrypted-upload'
 import { SharedRowSkeleton } from '@beebeeb/shared'
@@ -206,9 +206,7 @@ export function Shared() {
             const efkBytes = fromBase64(invite.encrypted_file_key)
             const fileKey = await decryptChunk(shareKey, efkBytes.slice(0, 12), efkBytes.slice(12))
 
-            const parsed = JSON.parse(invite.file_name_encrypted) as { nonce: string | number[]; ciphertext: string | number[] }
-            const nonce = Array.isArray(parsed.nonce) ? new Uint8Array(parsed.nonce) : fromBase64(parsed.nonce)
-            const ct = Array.isArray(parsed.ciphertext) ? new Uint8Array(parsed.ciphertext) : fromBase64(parsed.ciphertext)
+            const { nonce, ciphertext: ct } = parseEncryptedBlob(invite.file_name_encrypted)
             names[invite.id] = await decryptFilename(fileKey, nonce, ct)
 
             zeroize(myPrivate)

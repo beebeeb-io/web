@@ -11,7 +11,7 @@ import { RenameDialog } from '../components/rename-dialog'
 import { useFilePreview } from '../hooks/use-file-preview'
 import { useToast } from '../components/toast'
 import { useKeys } from '../lib/key-context'
-import { encryptFilename, toBase64 } from '../lib/crypto'
+import { encryptFilename, serializeEncryptedBlob } from '../lib/crypto'
 import { encryptedDownload } from '../lib/encrypted-download'
 import {
   listFiles,
@@ -92,7 +92,7 @@ export function Recent() {
     try {
       const fileKey = await getFileKey(renameFileId)
       const enc = await encryptFilename(fileKey, newName)
-      await updateFile(renameFileId, { name_encrypted: JSON.stringify({ nonce: toBase64(enc.nonce), ciphertext: toBase64(enc.ciphertext) }) })
+      await updateFile(renameFileId, { name_encrypted: serializeEncryptedBlob(enc.nonce, enc.ciphertext) })
       showToast({ icon: 'check', title: 'Renamed', description: `Renamed to "${newName}".` })
       fetchFiles()
     } catch (err) {

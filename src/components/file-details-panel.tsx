@@ -8,7 +8,7 @@ import { listVersions, updateFile } from '../lib/api'
 import { useKeys } from '../lib/key-context'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { isPreviewable } from '../lib/preview'
-import { encryptFilename, decryptFilename, toBase64, fromBase64 } from '../lib/crypto'
+import { encryptFilename, decryptFilename, parseEncryptedBlob, serializeEncryptedBlob } from '../lib/crypto'
 
 // ─── Versions tab (inline, inside the detail panel) ─────────────────────────
 
@@ -279,9 +279,7 @@ function EncryptedNoteSection({
     getFileKey(fileId)
       .then(async (fileKey) => {
         try {
-          const parsed = JSON.parse(noteEncrypted) as { nonce: string | number[]; ciphertext: string | number[] }
-          const nonce = Array.isArray(parsed.nonce) ? new Uint8Array(parsed.nonce) : fromBase64(parsed.nonce)
-          const ciphertext = Array.isArray(parsed.ciphertext) ? new Uint8Array(parsed.ciphertext) : fromBase64(parsed.ciphertext)
+          const { nonce, ciphertext } = parseEncryptedBlob(noteEncrypted)
           const plain = await decryptFilename(fileKey, nonce, ciphertext)
           if (!cancelled) setText(plain)
         } catch {
@@ -301,7 +299,7 @@ function EncryptedNoteSection({
       } else {
         const fileKey = await getFileKey(fileId)
         const enc = await encryptFilename(fileKey, text)
-        const stored = JSON.stringify({ nonce: toBase64(enc.nonce), ciphertext: toBase64(enc.ciphertext) })
+        const stored = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
         await updateFile(fileId, { note_encrypted: stored })
       }
     } catch {

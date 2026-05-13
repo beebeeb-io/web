@@ -14,7 +14,7 @@ import {
   ApiError,
   type ShareView as ShareViewData,
 } from '../lib/api'
-import { decryptFilename, fromBase64, unwrapKeyFromShare, initCrypto } from '../lib/crypto'
+import { decryptFilename, fromBase64, parseEncryptedBlob, unwrapKeyFromShare, initCrypto } from '../lib/crypto'
 import { decryptEncryptedBytes, inferChunkCountFromEncryptedSize } from '../lib/encrypted-download'
 import { formatBytes } from '../lib/format'
 
@@ -492,12 +492,7 @@ export function ShareViewPage() {
         await initCrypto()
         const fileKey = await resolveFileKey(shareData)
         if (!fileKey || cancelled) return
-        const parsed = JSON.parse(shareData!.name_encrypted!) as {
-          nonce: string | number[]
-          ciphertext: string | number[]
-        }
-        const nonce = Array.isArray(parsed.nonce) ? new Uint8Array(parsed.nonce) : fromBase64(parsed.nonce)
-        const ct = Array.isArray(parsed.ciphertext) ? new Uint8Array(parsed.ciphertext) : fromBase64(parsed.ciphertext)
+        const { nonce, ciphertext: ct } = parseEncryptedBlob(shareData!.name_encrypted!)
         const name = await decryptFilename(fileKey, nonce, ct)
         if (!cancelled) setDecryptedName(name)
       } catch {

@@ -69,7 +69,7 @@ import {
   removeUploadState,
   type UploadState,
 } from '../lib/upload-resume'
-import { encryptFilename, toBase64, decryptFileMetadata } from '../lib/crypto'
+import { encryptFilename, serializeEncryptedBlob, decryptFileMetadata } from '../lib/crypto'
 import { useSearchIndex } from '../hooks/use-search-index'
 import { EmptyDrive } from '../components/empty-states/empty-drive'
 import { formatBytes } from '../lib/format'
@@ -1174,10 +1174,7 @@ export function Drive() {
         const folderId = crypto.randomUUID()
         const folderKey = await getFileKey(folderId)
         const enc = await encryptFilename(folderKey, folderName)
-        const nameEncrypted = JSON.stringify({
-          nonce: toBase64(enc.nonce),
-          ciphertext: toBase64(enc.ciphertext),
-        })
+        const nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
 
         const result = await createFolder(nameEncrypted, parentId, folderId)
         folderIdMap[folderPath] = result.id
@@ -1328,10 +1325,7 @@ export function Drive() {
       if (isUnlocked && cryptoReady) {
         const folderKey = await getFileKey(folderId)
         const enc = await encryptFilename(folderKey, name)
-        nameEncrypted = JSON.stringify({
-          nonce: toBase64(enc.nonce),
-          ciphertext: toBase64(enc.ciphertext),
-        })
+        nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
       }
       const result = await createFolder(nameEncrypted, currentParentId, folderId)
 
@@ -1375,10 +1369,7 @@ export function Drive() {
       const folderId = crypto.randomUUID()
       const folderKey = await getFileKey(folderId)
       const enc = await encryptFilename(folderKey, folderName)
-      const nameEncrypted = JSON.stringify({
-        nonce: toBase64(enc.nonce),
-        ciphertext: toBase64(enc.ciphertext),
-      })
+      const nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
       const result = await createFolder(nameEncrypted, undefined, folderId)
 
       // Move all matching files into it
@@ -1598,10 +1589,7 @@ export function Drive() {
     try {
       const fileKey = await getFileKey(renameFileId)
       const enc = await encryptFilename(fileKey, newName)
-      const nameEncrypted = JSON.stringify({
-        nonce: toBase64(enc.nonce),
-        ciphertext: toBase64(enc.ciphertext),
-      })
+      const nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
       await updateFile(renameFileId, { name_encrypted: nameEncrypted })
       showToast({ icon: 'check', title: 'Renamed', description: `Renamed to "${newName}".` })
       fetchFiles()
