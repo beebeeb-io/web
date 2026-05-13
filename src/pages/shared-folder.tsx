@@ -220,7 +220,7 @@ export function SharedFolder() {
             <span />
           </div>
 
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto min-h-0">
             {files.map((file, i, arr) => (
               <div
                 key={file.id}

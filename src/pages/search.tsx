@@ -604,7 +604,7 @@ export function Search() {
         )}
 
         {/* Results area */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto min-h-0">
           {!searched ? (
             /* Empty state: no search yet */
             <EmptyState

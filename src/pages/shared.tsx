@@ -647,7 +647,7 @@ export function Shared() {
       byMeNames[i.id] = i.file_name_encrypted ?? 'Encrypted file'
     }
     return (
-      <div className="flex-1 flex flex-col overflow-y-auto">
+      <div className="flex-1 flex flex-col overflow-y-auto min-h-0">
         {/* ── Share links section ─────────────────────────── */}
         {myShareLinks.length > 0 && (
           <div className="border-b border-line">
@@ -840,7 +840,7 @@ export function Shared() {
     if (!hasWaiting && !hasIncomingInvited && !hasWaitingSender) {
       // Only show ShareApprove section — it handles its own empty state
       return (
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto min-h-0">
           <SectionHeader title="Needs your action" count={0} />
           <div className="px-5 py-4">
             <ShareApprove onUpdate={fetchAll} />
@@ -851,7 +851,7 @@ export function Shared() {
     }
 
     return (
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto min-h-0">
         {/* Section: Needs your action (ShareApprove) */}
         <SectionHeader title="Needs your action" count={0} />
         <div className="px-5 py-4">

@@ -422,7 +422,7 @@ export function Trash() {
         </div>
 
         {/* File list */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto min-h-0">
           {loading ? (
             <div>{Array.from({ length: 6 }, (_, i) => <TrashRowSkeleton key={i} />)}</div>
           ) : files.length === 0 ? (
