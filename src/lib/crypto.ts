@@ -126,8 +126,10 @@ export async function decryptFileMetadata(
   let name = 'Encrypted file'
   let mimeType: string | null = null
   try {
-    const outer = JSON.parse(nameEncrypted) as { nonce: string; ciphertext: string }
-    const plain = await decryptFilename(fileKey, fromBase64(outer.nonce), fromBase64(outer.ciphertext))
+    const outer = JSON.parse(nameEncrypted) as { nonce: string | number[]; ciphertext: string | number[] }
+    const nonce = Array.isArray(outer.nonce) ? new Uint8Array(outer.nonce) : fromBase64(outer.nonce)
+    const ciphertext = Array.isArray(outer.ciphertext) ? new Uint8Array(outer.ciphertext) : fromBase64(outer.ciphertext)
+    const plain = await decryptFilename(fileKey, nonce, ciphertext)
     try {
       const meta = JSON.parse(plain) as { name?: string; mime_type?: string }
       name = meta.name ?? plain

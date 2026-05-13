@@ -279,8 +279,10 @@ function EncryptedNoteSection({
     getFileKey(fileId)
       .then(async (fileKey) => {
         try {
-          const parsed = JSON.parse(noteEncrypted) as { nonce: string; ciphertext: string }
-          const plain = await decryptFilename(fileKey, fromBase64(parsed.nonce), fromBase64(parsed.ciphertext))
+          const parsed = JSON.parse(noteEncrypted) as { nonce: string | number[]; ciphertext: string | number[] }
+          const nonce = Array.isArray(parsed.nonce) ? new Uint8Array(parsed.nonce) : fromBase64(parsed.nonce)
+          const ciphertext = Array.isArray(parsed.ciphertext) ? new Uint8Array(parsed.ciphertext) : fromBase64(parsed.ciphertext)
+          const plain = await decryptFilename(fileKey, nonce, ciphertext)
           if (!cancelled) setText(plain)
         } catch {
           // Decryption failed — leave blank
