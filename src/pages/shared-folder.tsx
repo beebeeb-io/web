@@ -102,10 +102,10 @@ export function SharedFolder() {
               names[file.id] = await decryptFilename(fileKey, nonce, ct)
               zeroize(fileKey)
             } else {
-              names[file.id] = file.name_encrypted ?? 'Encrypted file'
+              names[file.id] = 'Encrypted file'
             }
           } catch {
-            names[file.id] = file.name_encrypted ?? 'Encrypted file'
+            names[file.id] = 'Encrypted file'
           }
         }
         setDecryptedNames(names)
@@ -240,7 +240,7 @@ export function SharedFolder() {
                   className={file.is_folder ? 'text-amber-deep self-center' : 'text-ink-2 self-center'}
                 />
                 <span className="text-[13px] font-medium truncate self-center">
-                  {decryptedNames[file.id] ?? file.name_encrypted ?? 'Encrypted'}
+                  {decryptedNames[file.id] ?? 'Encrypted file'}
                 </span>
                 <span className="text-[11px] text-ink-3 self-center font-mono truncate">
                   {file.is_folder ? 'Folder' : (file.mime_type ?? '--')}

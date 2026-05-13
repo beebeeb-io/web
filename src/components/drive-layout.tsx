@@ -538,7 +538,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
           }
           return { ...invite, decryptedName: 'Shared folder' }
         } catch {
-          return { ...invite, decryptedName: invite.file_name_encrypted ?? 'Shared folder' }
+          return { ...invite, decryptedName: 'Shared folder' }
         }
       }))
       setSharedFolders(withNames)

@@ -40,13 +40,6 @@ async function encryptBytes(
   return { nonce, ciphertext: new Uint8Array(ct) }
 }
 
-/** base64url-encode a byte array. */
-function toBase64Url(bytes: Uint8Array): string {
-  let binary = ''
-  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i])
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')
-}
-
 /** Concatenate Uint8Arrays into one. */
 function concat(...arrays: Uint8Array<ArrayBuffer>[]): Uint8Array<ArrayBuffer> {
   const total = arrays.reduce((n, a) => n + a.length, 0)
@@ -125,8 +118,9 @@ export function UploadRequestPage() {
       const encodedName = new TextEncoder().encode(file.name) as Uint8Array<ArrayBuffer>
       const { nonce: nn, ciphertext: nc } = await encryptBytes(nameKey, encodedName)
       const nameEncrypted = JSON.stringify({
-        nonce: toBase64Url(nn),
-        ciphertext: toBase64Url(nc),
+        cipher_suite: 'V1Aes256Gcm',
+        nonce: Array.from(nn),
+        ciphertext: Array.from(nc),
         // Include the ephemeral_public_key so the owner's client can identify
         // which key was used to wrap this file.
         request_public_key: requestInfo.ephemeral_public_key,
