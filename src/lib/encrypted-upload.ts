@@ -9,6 +9,7 @@
 
 import {
   CHUNK_SIZE,
+  planChunks,
   encryptChunk,
   encryptFilename,
   serializeEncryptedBlob,
@@ -22,7 +23,11 @@ import {
   removeUploadState,
 } from './upload-resume'
 
-const FALLBACK_CHUNK_SIZE_BYTES = CHUNK_SIZE
+/**
+ * Legacy fallback — only used when WASM plan_chunks is unavailable.
+ * New uploads call planChunks() to get the adaptive chunk size.
+ */
+const LEGACY_FALLBACK_CHUNK_SIZE_BYTES = CHUNK_SIZE
 
 /**
  * Long-form retry delay for transient network failures, layered on top of
@@ -104,14 +109,26 @@ export async function encryptedUpload(
   let activeFileKey = fileKey
   let nameEncrypted = await encryptMetadata(activeFileKey)
 
-  const fallbackChunkCount = Math.max(1, Math.ceil(file.size / FALLBACK_CHUNK_SIZE_BYTES))
+  // Use the core adaptive chunk-size ladder for the initial client proposal.
+  // The server may override this during v2 init — the client proposes, server decides.
+  let fallbackPlan: { chunk_size_bytes: number; chunk_count: number }
+  try {
+    fallbackPlan = await planChunks(file.size, 'web')
+  } catch {
+    // WASM not available (e.g. worker not initialized yet) — use legacy constant
+    fallbackPlan = {
+      chunk_size_bytes: LEGACY_FALLBACK_CHUNK_SIZE_BYTES,
+      chunk_count: Math.max(1, Math.ceil(file.size / LEGACY_FALLBACK_CHUNK_SIZE_BYTES)),
+    }
+  }
+  const fallbackChunkCount = fallbackPlan.chunk_count
 
   // ── Resume detection ──────────────────────────────
   let serverFileId = fileId
   let skipChunks = new Set<number>()
   let uploadSessionId: string | null = null
   let objectVersionId: string | null = null
-  let chunkBytes = FALLBACK_CHUNK_SIZE_BYTES
+  let chunkBytes = fallbackPlan.chunk_size_bytes
   let totalChunks = fallbackChunkCount
   let region: string | null = null
 
@@ -164,12 +181,12 @@ export async function encryptedUpload(
     if (existing?.fileId === resumeFileId && existing.upload_session_id) {
       uploadSessionId = existing.upload_session_id
       objectVersionId = existing.object_version_id ?? null
-      chunkBytes = existing.chunk_size_bytes ?? FALLBACK_CHUNK_SIZE_BYTES
+      chunkBytes = existing.chunk_size_bytes ?? LEGACY_FALLBACK_CHUNK_SIZE_BYTES
       totalChunks = existing.chunk_count ?? existing.totalChunks
       region = existing.region ?? null
     } else {
       if (existing?.fileId === resumeFileId) {
-        chunkBytes = existing.chunk_size_bytes ?? FALLBACK_CHUNK_SIZE_BYTES
+        chunkBytes = existing.chunk_size_bytes ?? LEGACY_FALLBACK_CHUNK_SIZE_BYTES
         totalChunks = existing.chunk_count ?? existing.totalChunks
         region = existing.region ?? null
       }
@@ -194,7 +211,7 @@ export async function encryptedUpload(
     ) {
       // Found a prior upload — check server status
       serverFileId = existing.fileId
-      chunkBytes = existing.chunk_size_bytes ?? FALLBACK_CHUNK_SIZE_BYTES
+      chunkBytes = existing.chunk_size_bytes ?? LEGACY_FALLBACK_CHUNK_SIZE_BYTES
       totalChunks = existing.chunk_count ?? existing.totalChunks
       region = existing.region ?? null
       if (existing.upload_session_id) {

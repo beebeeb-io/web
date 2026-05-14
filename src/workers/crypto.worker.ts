@@ -232,6 +232,12 @@ const cryptoWorker = {
     const wasm = await ensureWasm()
     return wasm.derive_share_key(sharedSecret, fileId) as Uint8Array
   },
+
+  /** Plan chunks for a file using the core adaptive chunk-size ladder. */
+  async planChunks(fileSizeBytes: number, profile: string): Promise<{ chunk_size_bytes: number; chunk_count: number }> {
+    const wasm = await ensureWasm()
+    return wasm.plan_chunks(BigInt(fileSizeBytes), profile) as { chunk_size_bytes: number; chunk_count: number }
+  },
 }
 
 export type CryptoWorker = typeof cryptoWorker

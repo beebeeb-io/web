@@ -84,6 +84,14 @@ export function opaque_registration_finish(client_state: Uint8Array, password: U
 export function opaque_registration_start(password: Uint8Array): any;
 
 /**
+ * Plan how to split a file into chunks for upload based on the client profile.
+ *
+ * `profile` must be one of: `"desktop"`, `"web"`, `"mobile"`, `"backup"`.
+ * Returns `{ chunk_size_bytes: number, chunk_count: number }`.
+ */
+export function plan_chunks(file_size_bytes: bigint, profile: string): any;
+
+/**
  * Recover a master key from a 12-word BIP39 recovery phrase.
  * Returns the 32-byte master key as `Uint8Array`.
  */
@@ -113,6 +121,7 @@ export interface InitOutput {
     readonly opaque_login_start: (a: number, b: number) => [number, number, number];
     readonly opaque_registration_finish: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly opaque_registration_start: (a: number, b: number) => [number, number, number];
+    readonly plan_chunks: (a: bigint, b: number, c: number) => [number, number, number];
     readonly recover_from_phrase: (a: number, b: number) => [number, number, number, number];
     readonly x25519_shared_secret: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;

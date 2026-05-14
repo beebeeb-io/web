@@ -283,8 +283,28 @@ export function serializeEncryptedBlob(nonce: Uint8Array, ciphertext: Uint8Array
   })
 }
 
+// ─── Chunk planning ────────────────────────────────
+
+/**
+ * Plan chunks for a file using the core adaptive chunk-size ladder.
+ * Returns { chunk_size_bytes, chunk_count } based on file size and profile.
+ *
+ * Profiles: "desktop", "web", "mobile", "backup".
+ * The server may override this during v2 init — the client proposes, server decides.
+ */
+export async function planChunks(
+  fileSizeBytes: number,
+  profile: 'desktop' | 'web' | 'mobile' | 'backup' = 'web',
+): Promise<{ chunk_size_bytes: number; chunk_count: number }> {
+  return getProxy().planChunks(fileSizeBytes, profile)
+}
+
 // ─── Helpers ────────────────────────────────────────
 
+/**
+ * Legacy 4 MB constant — kept only for the `chunkFile` helper below (used by
+ * some older callers). New upload code should use `planChunks()` instead.
+ */
 export const CHUNK_SIZE = 4 * 1024 * 1024 // 4 MB
 
 /** Split a file into 4MB chunks. */

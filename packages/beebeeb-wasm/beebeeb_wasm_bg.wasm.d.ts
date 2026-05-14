@@ -16,6 +16,7 @@ export const opaque_login_finish: (a: number, b: number, c: number, d: number, e
 export const opaque_login_start: (a: number, b: number) => [number, number, number];
 export const opaque_registration_finish: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
 export const opaque_registration_start: (a: number, b: number) => [number, number, number];
+export const plan_chunks: (a: bigint, b: number, c: number) => [number, number, number];
 export const recover_from_phrase: (a: number, b: number) => [number, number, number, number];
 export const x25519_shared_secret: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const __wbindgen_malloc: (a: number, b: number) => number;

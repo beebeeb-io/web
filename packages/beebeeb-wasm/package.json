@@ -1,6 +1,7 @@
 {
   "name": "beebeeb-wasm",
   "type": "module",
+  "description": "WebAssembly bindings for Beebeeb cryptographic core",
   "version": "0.1.0",
   "files": [
     "beebeeb_wasm_bg.wasm",
