@@ -493,8 +493,17 @@ export function ShareViewPage() {
         const fileKey = await resolveFileKey(shareData)
         if (!fileKey || cancelled) return
         const { nonce, ciphertext: ct } = parseEncryptedBlob(shareData!.name_encrypted!)
-        const name = await decryptFilename(fileKey, nonce, ct)
-        if (!cancelled) setDecryptedName(name)
+        const raw = await decryptFilename(fileKey, nonce, ct)
+        // The decrypted plaintext may be JSON metadata: {"name":"file.jpg","mime_type":"image/jpeg"}
+        // or a legacy bare filename string. Parse JSON and extract the name field.
+        let displayName = raw
+        try {
+          const meta = JSON.parse(raw) as { name?: string; mime_type?: string }
+          if (meta && typeof meta.name === 'string') displayName = meta.name
+        } catch {
+          // Legacy format — raw is just the filename string, use as-is
+        }
+        if (!cancelled) setDecryptedName(displayName)
       } catch {
         // Can't decrypt -- will show encrypted placeholder
       }
