@@ -1054,6 +1054,26 @@ export async function revokeShare(id: string): Promise<void> {
   await request<void>(`/api/v1/shares/${id}`, { method: 'DELETE' })
 }
 
+export interface SharingContact {
+  user_id: string
+  email: string
+  username?: string | null
+  display_name?: string | null
+  x25519_public_key?: string | null
+}
+
+export async function listSharingContacts(): Promise<SharingContact[]> {
+  const data = await request<{ contacts: SharingContact[] }>('/api/v1/contacts')
+  return data.contacts ?? []
+}
+
+export async function resolveSharingContact(query: string): Promise<SharingContact | null> {
+  const data = await request<{ contact: SharingContact | null }>(
+    `/api/v1/contacts/resolve?query=${encodeURIComponent(query)}`,
+  )
+  return data.contact ?? null
+}
+
 export async function createInvite(
   fileId: string,
   recipientEmail: string,

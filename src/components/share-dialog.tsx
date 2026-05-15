@@ -8,6 +8,7 @@ import { FeedbackDialog } from './feedback-dialog'
 import {
   createShare,
   createInvite,
+  resolveSharingContact,
   approveInvite,
   revokeShare,
   type ShareInfo,
@@ -209,9 +210,13 @@ function InviteForm({
 
   const [progress, setProgress] = useState<string | null>(null)
 
+  function isEmail(value: string): boolean {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+  }
+
   const handleInvite = useCallback(async () => {
-    const trimmed = email.trim().toLowerCase()
-    if (!trimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+    const raw = email.trim()
+    if (!raw) {
       setError('Enter a valid email address.')
       return
     }
@@ -222,6 +227,20 @@ function InviteForm({
     setProgress(null)
 
     try {
+      let recipientEmail = raw.toLowerCase()
+      let resolvedLabel: string | null = null
+
+      if (!isEmail(raw)) {
+        const contact = await resolveSharingContact(raw)
+        if (!contact) {
+          setError('Use an email address to invite someone new.')
+          setLoading(false)
+          return
+        }
+        recipientEmail = contact.email.toLowerCase()
+        resolvedLabel = contact.username ? `@${contact.username} · ${contact.email}` : contact.email
+      }
+
       if (isFolder) {
         // Folder sharing flow — generate folder_key, encrypt children, create invite
         const masterKey = getMasterKey()
@@ -242,7 +261,7 @@ function InviteForm({
         // We can only encrypt for the recipient once their public key is known — either
         // immediately on auto-claim below, or when the sender approves after the
         // recipient signs up and claims.
-        const result = await createInvite(fileId, trimmed, {
+        const result = await createInvite(fileId, recipientEmail, {
           is_folder_share: true,
           encrypted_folder_key: '',
           encrypted_owner_folder_key: toBase64(encOwnerFK),
@@ -266,7 +285,7 @@ function InviteForm({
         zeroize(folderKey)
       } else {
         // Single file sharing flow
-        const result = await createInvite(fileId, trimmed)
+        const result = await createInvite(fileId, recipientEmail)
 
         if (result.recipient_public_key && result.status === 'claimed') {
           try {
@@ -293,7 +312,7 @@ function InviteForm({
         }
       }
 
-      onSuccess(trimmed)
+      onSuccess(resolvedLabel ?? recipientEmail)
     } catch (e) {
       const rateLimit = parseRateLimitError(e)
       if (rateLimit) {
@@ -347,13 +366,13 @@ function InviteForm({
     <div>
       {/* Email input */}
       <label className="block text-xs font-medium text-ink-2 mb-1.5">
-        Recipient email
+        Recipient email or handle
       </label>
       <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 mb-4 focus-within:border-line-2 transition-colors">
         <Icon name="mail" size={13} className="text-ink-3 shrink-0" />
         <input
           ref={inputRef}
-          type="email"
+          type="text"
           value={email}
           onChange={(e) => {
             setEmail(e.target.value)
@@ -361,7 +380,7 @@ function InviteForm({
             setRateLimitInfo(null)
           }}
           onKeyDown={handleKeyDown}
-          placeholder="colleague@example.com"
+          placeholder="colleague@example.com or @username"
           className="flex-1 bg-transparent text-[13px] text-ink outline-none placeholder:text-ink-4"
         />
       </div>
