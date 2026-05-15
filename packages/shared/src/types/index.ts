@@ -64,6 +64,10 @@ export interface DriveFile {
   parent_id: string | null
   chunk_count: number
   is_starred?: boolean
+  /** True when the file is an image or video. Set by the client at upload time
+   *  because MIME types are encrypted — the server cannot infer media type.
+   *  Returned by the server on all file-list responses. */
+  is_media?: boolean
   has_thumbnail?: boolean
   version_number?: number
   /** Number of active (non-revoked, non-expired) share links for this file.

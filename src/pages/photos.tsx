@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { BBButton } from '@beebeeb/shared'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '@beebeeb/shared'
-import { getMediaFiles, type DriveFile } from '../lib/api'
+import { getMediaFiles, listFiles, type DriveFile } from '../lib/api'
 import { useKeys } from '../lib/key-context'
 import { decryptFileMetadata } from '../lib/crypto'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
@@ -159,14 +159,23 @@ export function Photos() {
   // at upload time — including fully zero-knowledge uploads where MIME type
   // is encrypted and the server stores null. The client sets is_media based
   // on file.type before encryption, so no decryption is needed here.
+  //
+  // Fallback: if /files/media returns 404 (server not yet deployed with the
+  // endpoint), fetch all files and filter by is_media on the client side.
   const fetchAllFiles = useCallback(async () => {
     setLoading(true)
     try {
       const files = await getMediaFiles()
       setAllFiles(files)
     } catch (err) {
-      console.error('[Photos] Failed to load files:', err)
-      setAllFiles([])
+      console.error('[Photos] /files/media failed, falling back to listFiles + is_media filter:', err)
+      try {
+        const allFiles = await listFiles(undefined, false)
+        setAllFiles(allFiles.filter((f) => f.is_media && !f.is_folder))
+      } catch (fallbackErr) {
+        console.error('[Photos] Fallback listFiles also failed:', fallbackErr)
+        setAllFiles([])
+      }
     } finally {
       setLoading(false)
     }
