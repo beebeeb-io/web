@@ -102,6 +102,31 @@ export function recover_from_phrase(phrase: string): Uint8Array;
  */
 export function x25519_shared_secret(my_private: Uint8Array, their_public: Uint8Array): Uint8Array;
 
+/**
+ * Effective storage quota in bytes for a plan with add-ons.
+ */
+export function plan_effective_quota(plan_slug: string, extra_tb: bigint, bonus_bytes: bigint): bigint;
+
+/**
+ * Maximum additional TB a plan may purchase.
+ */
+export function plan_max_extra_tb(plan_slug: string): bigint;
+
+/**
+ * Whether the plan supports purchasing extra storage.
+ */
+export function plan_can_add_storage(plan_slug: string): boolean;
+
+/**
+ * Monthly cost in cents for a plan with optional add-ons.
+ */
+export function plan_monthly_cost_cents(plan_slug: string, extra_tb: bigint, extra_users: bigint): bigint;
+
+/**
+ * Format a byte count as a human-readable SI string (e.g. "5.0 TB").
+ */
+export function storage_format_si(bytes: bigint): string;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {

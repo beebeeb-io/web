@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Icon } from '@beebeeb/shared'
 import { formatStorageSI } from '../lib/format'
+import { planCanAddStorage } from '../lib/plan-pricing'
 
 const DISMISS_KEY = 'bb_quota_warning_dismissed_at'
 const DISMISS_DURATION_MS = 24 * 60 * 60 * 1000 // 24 hours
@@ -9,9 +10,11 @@ const DISMISS_DURATION_MS = 24 * 60 * 60 * 1000 // 24 hours
 interface QuotaWarningProps {
   usedBytes: number
   limitBytes: number
+  /** Current plan slug, e.g. "pro", "business" — used to show "Add storage" for eligible plans. */
+  planSlug?: string
 }
 
-export function QuotaWarning({ usedBytes, limitBytes }: QuotaWarningProps) {
+export function QuotaWarning({ usedBytes, limitBytes, planSlug }: QuotaWarningProps) {
   const [dismissed, setDismissed] = useState(false)
 
   const usedPct = limitBytes > 0 ? (usedBytes / limitBytes) * 100 : 0
@@ -89,7 +92,7 @@ export function QuotaWarning({ usedBytes, limitBytes }: QuotaWarningProps) {
             : 'bg-amber text-ink hover:bg-amber/90'
         }`}
       >
-        Upgrade
+        {planSlug && planCanAddStorage(planSlug) ? 'Add storage' : 'Upgrade'}
       </Link>
 
       {/* Dismiss button -- not shown when storage is full */}

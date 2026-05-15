@@ -774,6 +774,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
           <QuotaWarning
             usedBytes={usage.used_bytes}
             limitBytes={usage.plan_limit_bytes}
+            planSlug={contextPlanDetails.subscription?.plan}
           />
         )}
         {children}

@@ -18,14 +18,24 @@ import {
   reactivateSubscription,
   getPreference,
   setPreference,
+  getStorageAddons,
+  updateStorageAddons,
   type Subscription,
   type Invoice,
   type Plan,
   type DriveFile,
+  type StorageAddonState,
 } from '../lib/api'
 import { useDriveData } from '../lib/drive-data-context'
 import { formatStorageSI } from '../lib/format'
 import { StorageBreakdown } from '../components/storage-breakdown'
+import {
+  planCanAddStorage,
+  planMaxExtraTB,
+  planBaseTB,
+  planMonthlyCostCents,
+  formatCentsAsEur,
+} from '../lib/plan-pricing'
 
 /* ── Plan metadata ─────────────────────────────────────── */
 
@@ -179,6 +189,11 @@ export function Billing() {
   const showUpgraded = searchParams.get('upgraded') === 'true' || Boolean(searchParams.get('session_id'))
   const upgradedDismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Storage add-on state
+  const [addonState, setAddonState] = useState<StorageAddonState | null>(null)
+  const [sliderTB, setSliderTB] = useState<number>(0)
+  const [addonSaving, setAddonSaving] = useState(false)
+
   // Invoice preferences
   const [invoiceSendEmail, setInvoiceSendEmail] = useState(true)
   const [invoiceEmail, setInvoiceEmail] = useState('')
@@ -193,17 +208,22 @@ export function Billing() {
       // getSubscription is fetched fresh here so cancel/reactivate flows see
       // the updated status immediately. getPlans is needed for the upgrade
       // cards section (context only stores the matched current-user plan).
-      const [subData, invData, invoicePref, plansData, filesData] = await Promise.all([
+      const [subData, invData, invoicePref, plansData, filesData, addonsData] = await Promise.all([
         getSubscription(),
         getInvoices(),
         getPreference<{ send_email: boolean; invoice_email: string }>('invoice_settings').catch(() => null),
         getPlans().catch(() => null),
         listFiles(undefined, false).catch(() => null),
+        getStorageAddons().catch(() => null),
       ])
       setSub(subData)
       setInvoices(invData)
       setPlans(plansData)
       setFiles(filesData)
+      if (addonsData) {
+        setAddonState(addonsData)
+        setSliderTB(addonsData.extra_storage_tb)
+      }
       if (invoicePref) {
         setInvoiceSendEmail(invoicePref.send_email ?? true)
         setInvoiceEmail(invoicePref.invoice_email ?? '')
@@ -256,10 +276,26 @@ export function Billing() {
   // Use the effective plan for display: cancelled → show as free
   const effectivePlan = sub?.status === 'cancelled' ? 'free' : (sub?.plan ?? 'free')
   const meta = planMeta[effectivePlan] ?? planMeta.free
-  const totalStorageGB = meta.storageGB
-  const totalStorageBytes = totalStorageGB * 1024 * 1024 * 1024
+  // When addon data is available, use the effective storage (base + extra).
+  // Otherwise fall back to the plan-level storage.
+  const totalStorageBytes = addonState
+    ? addonState.effective_storage_bytes
+    : meta.storageGB * 1_000_000_000
   const usedBytes = contextUsage?.used_bytes ?? 0
   const usedPercent = totalStorageBytes > 0 ? (usedBytes / totalStorageBytes) * 100 : 0
+
+  // Storage slider derived values
+  const canAddStorage = planCanAddStorage(effectivePlan)
+  const baseTB = addonState?.base_storage_tb ?? planBaseTB(effectivePlan)
+  const maxExtraTB = addonState
+    ? addonState.max_storage_tb - addonState.base_storage_tb
+    : planMaxExtraTB(effectivePlan)
+  const maxTotalTB = baseTB + maxExtraTB
+  const currentExtraTB = addonState?.extra_storage_tb ?? 0
+  const sliderChanged = sliderTB !== currentExtraTB
+  const currentCostCents = planMonthlyCostCents(effectivePlan, currentExtraTB)
+  const newCostCents = planMonthlyCostCents(effectivePlan, sliderTB)
+  const wouldReduceBelowUsage = (baseTB + sliderTB) * 1_000_000_000_000 < usedBytes
 
 function openUpgrade(plan: string) {
     setUpgradePlan(plan)
@@ -343,6 +379,30 @@ function openUpgrade(plan: string) {
         danger: true,
       })
       setPortalLoading(false)
+    }
+  }
+
+  async function handleUpdateStorageAddon() {
+    setAddonSaving(true)
+    try {
+      const result = await updateStorageAddons({ extra_storage_tb: sliderTB })
+      setAddonState(result)
+      showToast({
+        icon: 'check',
+        title: 'Storage updated',
+        description: `Your vault is now ${formatStorageSI(result.effective_storage_bytes)}.`,
+      })
+      window.dispatchEvent(new Event('beebeeb:plan-changed'))
+      refreshPlanDetails()
+    } catch (err) {
+      showToast({
+        icon: 'x',
+        title: 'Could not update storage',
+        description: err instanceof Error ? err.message : 'Please try again.',
+        danger: true,
+      })
+    } finally {
+      setAddonSaving(false)
     }
   }
 
@@ -557,13 +617,20 @@ function openUpgrade(plan: string) {
                 <div className="text-[11px] text-ink-4 font-medium">Storage</div>
                 <div className="font-mono text-sm font-semibold">
                   {formatStorageSI(usedBytes)}
-                  <span className="text-ink-3 font-normal"> / {formatStorageSI(totalStorageGB * 1_000_000_000)}</span>
+                  <span className="text-ink-3 font-normal"> / {formatStorageSI(totalStorageBytes)}</span>
                 </div>
               </div>
+              {currentExtraTB > 0 && (
+                <div className="text-[11px] text-ink-3 mb-1.5">
+                  {formatStorageSI(baseTB * 1_000_000_000_000)} base + {formatStorageSI(currentExtraTB * 1_000_000_000_000)} extra
+                </div>
+              )}
               <AnimatedProgress percent={usedPercent} />
               {usedPercent > 90 && (
                 <div className="text-[11px] text-red mt-1.5">
-                  Storage almost full. Consider upgrading your plan.
+                  {canAddStorage
+                    ? 'Storage almost full. Add more storage below.'
+                    : 'Storage almost full. Consider upgrading your plan.'}
                 </div>
               )}
             </div>
@@ -681,6 +748,117 @@ function openUpgrade(plan: string) {
               planName={effectivePlan}
               files={files ?? undefined}
             />
+          </div>
+        )}
+
+        {/* ── Manage Storage slider ───────────────────── */}
+        {canAddStorage && effectivePlan !== 'free' && (
+          <div className="border border-line rounded-xl overflow-hidden bg-paper">
+            <div className="px-5 py-4 border-b border-line">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-4 mb-1">
+                Manage storage
+              </div>
+              <div className="text-sm text-ink-2">
+                Add extra encrypted storage to your {meta.label} plan.
+              </div>
+            </div>
+            <div className="px-5 py-5 space-y-5">
+              {/* Current allocation */}
+              <div className="flex items-baseline justify-between">
+                <span className="text-[13px] text-ink-2">Current total</span>
+                <span className="font-mono text-sm font-semibold text-ink">
+                  {formatStorageSI((baseTB + currentExtraTB) * 1_000_000_000_000)}
+                  {currentExtraTB > 0 && (
+                    <span className="text-ink-3 font-normal ml-1.5">
+                      ({formatStorageSI(baseTB * 1_000_000_000_000)} base + {formatStorageSI(currentExtraTB * 1_000_000_000_000)} extra)
+                    </span>
+                  )}
+                </span>
+              </div>
+
+              {/* Slider */}
+              <div>
+                <div className="flex items-baseline justify-between mb-2">
+                  <span className="text-[12px] text-ink-3">Total storage</span>
+                  <span className="font-mono text-sm font-bold text-ink">
+                    {formatStorageSI((baseTB + sliderTB) * 1_000_000_000_000)}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={maxExtraTB}
+                  step={1}
+                  value={sliderTB}
+                  onChange={(e) => setSliderTB(Number(e.target.value))}
+                  className="w-full h-2 rounded-full appearance-none cursor-pointer bg-paper-3 accent-amber"
+                  style={{
+                    background: `linear-gradient(to right, oklch(0.82 0.17 84) 0%, oklch(0.82 0.17 84) ${maxExtraTB > 0 ? (sliderTB / maxExtraTB) * 100 : 0}%, var(--color-paper-3) ${maxExtraTB > 0 ? (sliderTB / maxExtraTB) * 100 : 0}%, var(--color-paper-3) 100%)`,
+                  }}
+                />
+                <div className="flex justify-between text-[10px] text-ink-4 font-mono mt-1">
+                  <span>{formatStorageSI(baseTB * 1_000_000_000_000)}</span>
+                  <span>{formatStorageSI(maxTotalTB * 1_000_000_000_000)}</span>
+                </div>
+              </div>
+
+              {/* Live price preview */}
+              {sliderChanged && (
+                <div className="rounded-lg bg-paper-2 border border-line px-4 py-3">
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-[12px] text-ink-2">Monthly price</span>
+                    <div className="text-right">
+                      <span className="font-mono text-[13px] text-ink-3 line-through mr-2">
+                        EUR {formatCentsAsEur(currentCostCents)}/mo
+                      </span>
+                      <span className="font-mono text-[15px] font-bold text-ink">
+                        EUR {formatCentsAsEur(newCostCents)}/mo
+                      </span>
+                    </div>
+                  </div>
+                  {sliderTB > currentExtraTB && (
+                    <div className="text-[11px] text-ink-3 mt-1 font-mono">
+                      +{sliderTB - currentExtraTB} TB x EUR {formatCentsAsEur(addonState?.storage_addon_price_cents ?? planMonthlyCostCents(effectivePlan, 1) - planMonthlyCostCents(effectivePlan, 0))}/TB
+                    </div>
+                  )}
+                  {sliderTB < currentExtraTB && (
+                    <div className="text-[11px] text-ink-3 mt-1 font-mono">
+                      -{currentExtraTB - sliderTB} TB removed
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Warning if reducing below usage */}
+              {wouldReduceBelowUsage && sliderChanged && (
+                <div className="flex items-center gap-2.5 px-3.5 py-2.5 bg-red/10 border border-red/20 rounded-lg">
+                  <Icon name="shield" size={13} className="text-red shrink-0" />
+                  <span className="text-[12px] text-red leading-snug">
+                    You are using {formatStorageSI(usedBytes)} — reducing to {formatStorageSI((baseTB + sliderTB) * 1_000_000_000_000)} would exceed your new quota. Delete or move files first.
+                  </span>
+                </div>
+              )}
+
+              {/* Action */}
+              <div className="flex items-center gap-3">
+                <BBButton
+                  variant="amber"
+                  size="md"
+                  onClick={() => void handleUpdateStorageAddon()}
+                  disabled={!sliderChanged || addonSaving || wouldReduceBelowUsage}
+                >
+                  {addonSaving ? 'Updating...' : 'Update storage'}
+                </BBButton>
+                {sliderChanged && (
+                  <button
+                    className="text-[12px] text-ink-3 hover:text-ink transition-colors"
+                    onClick={() => setSliderTB(currentExtraTB)}
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         )}
 

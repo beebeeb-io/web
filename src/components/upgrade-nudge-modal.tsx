@@ -16,6 +16,7 @@ import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { createCheckoutSession } from '../lib/api'
 import { formatBytes } from '../lib/format'
+import { planCanAddStorage } from '../lib/plan-pricing'
 
 // ── Plan metadata ────────────────────────────────────────────────────────────
 // Mirrors billing.tsx planMeta — keep in sync if prices change.
@@ -99,6 +100,7 @@ export function UpgradeNudgeModal({
   const nextSlug = UPGRADE_CHAIN[currentPlan] ?? null
   const currentInfo = PLAN_INFO[currentPlan] ?? PLAN_INFO.free
   const nextInfo = nextSlug ? PLAN_INFO[nextSlug] : null
+  const canAddAddonStorage = planCanAddStorage(currentPlan)
 
   const pctUsed = quotaBytes > 0 ? Math.min(100, Math.round((usedBytes / quotaBytes) * 100)) : 0
 
@@ -126,15 +128,21 @@ export function UpgradeNudgeModal({
     }
   }, [nextSlug, navigate])
 
+  const handleAddStorage = useCallback(() => {
+    dismiss()
+    navigate('/billing')
+  }, [dismiss, navigate])
+
   const handleViewPlans = useCallback(() => {
     dismiss()
     navigate('/billing')
   }, [dismiss, navigate])
 
-  // Can't upgrade beyond top tier
-  if (!nextInfo) return null
+  // For plans that can add storage (pro/business), show add-storage option
+  // even if there is no next plan tier.
+  if (!nextInfo && !canAddAddonStorage) return null
 
-  const mult = multiplierLabel(currentInfo.storageGB, nextInfo.storageGB)
+  const mult = nextInfo ? multiplierLabel(currentInfo.storageGB, nextInfo.storageGB) : ''
 
   return (
     <>
@@ -150,7 +158,7 @@ export function UpgradeNudgeModal({
         className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none"
         role="dialog"
         aria-modal="true"
-        aria-label={`Upgrade to ${nextInfo.label}`}
+        aria-label={nextInfo ? `Upgrade to ${nextInfo.label}` : 'Add more storage'}
       >
         <div className="pointer-events-auto w-full max-w-[460px] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
 
@@ -165,7 +173,7 @@ export function UpgradeNudgeModal({
                 {' '}{currentInfo.label} storage
               </p>
               <h2 className="text-[17px] font-bold text-ink">
-                Upgrade to {nextInfo.label}
+                {nextInfo ? `Upgrade to ${nextInfo.label}` : 'Add more storage'}
               </h2>
             </div>
             <button
@@ -177,38 +185,50 @@ export function UpgradeNudgeModal({
             </button>
           </div>
 
-          {/* Plan callout */}
-          <div className="mx-5 mb-4 rounded-lg bg-amber-bg border border-amber/30 px-4 py-3.5">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="text-[15px] font-bold text-ink">{nextInfo.label}</div>
-                <div className="text-[13px] text-ink-2 mt-0.5">
-                  {storageLabel(nextInfo.storageGB)} storage
-                  {mult && (
-                    <span className="ml-1.5 text-[11px] font-semibold text-amber-deep">
-                      — {mult}
-                    </span>
-                  )}
-                </div>
-                <div className="text-[12px] text-ink-3 mt-1.5">
-                  Same encryption. Same EU hosting.
-                </div>
-              </div>
-              <div className="text-right shrink-0">
-                <div className="font-mono text-[18px] font-bold text-ink leading-none">
-                  {nextInfo.priceMonthly === 0 ? 'Free' : `€${nextInfo.priceMonthly.toFixed(2)}`}
-                  {nextInfo.priceMonthly > 0 && (
-                    <span className="text-[12px] font-normal text-ink-3">/mo</span>
-                  )}
-                </div>
-                {nextInfo.priceYearly > 0 && (
-                  <div className="font-mono text-[10.5px] text-ink-4 mt-1">
-                    €{nextInfo.priceYearly.toFixed(2)}/yr billed annually
+          {/* Plan callout — show next plan tier or add-storage option */}
+          {nextInfo ? (
+            <div className="mx-5 mb-4 rounded-lg bg-amber-bg border border-amber/30 px-4 py-3.5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="text-[15px] font-bold text-ink">{nextInfo.label}</div>
+                  <div className="text-[13px] text-ink-2 mt-0.5">
+                    {storageLabel(nextInfo.storageGB)} storage
+                    {mult && (
+                      <span className="ml-1.5 text-[11px] font-semibold text-amber-deep">
+                        — {mult}
+                      </span>
+                    )}
                   </div>
-                )}
+                  <div className="text-[12px] text-ink-3 mt-1.5">
+                    Same encryption. Same EU hosting.
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="font-mono text-[18px] font-bold text-ink leading-none">
+                    {nextInfo.priceMonthly === 0 ? 'Free' : `€${nextInfo.priceMonthly.toFixed(2)}`}
+                    {nextInfo.priceMonthly > 0 && (
+                      <span className="text-[12px] font-normal text-ink-3">/mo</span>
+                    )}
+                  </div>
+                  {nextInfo.priceYearly > 0 && (
+                    <div className="font-mono text-[10.5px] text-ink-4 mt-1">
+                      €{nextInfo.priceYearly.toFixed(2)}/yr billed annually
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
+          ) : canAddAddonStorage ? (
+            <div className="mx-5 mb-4 rounded-lg bg-amber-bg border border-amber/30 px-4 py-3.5">
+              <div className="text-[15px] font-bold text-ink">Add more storage</div>
+              <div className="text-[13px] text-ink-2 mt-0.5">
+                Expand your {currentInfo.label} plan up to 99 TB.
+              </div>
+              <div className="text-[12px] text-ink-3 mt-1.5">
+                Same encryption. Same EU hosting.
+              </div>
+            </div>
+          ) : null}
 
           {/* Error */}
           {checkoutError && (
@@ -217,24 +237,35 @@ export function UpgradeNudgeModal({
 
           {/* Actions */}
           <div className="flex items-center gap-2.5 px-5 pb-5">
-            <BBButton
-              variant="amber"
-              size="lg"
-              className="flex-1 justify-center"
-              onClick={() => void handleUpgrade()}
-              disabled={loading}
-            >
-              {loading ? (
-                <>
-                  <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin mr-2 inline-block shrink-0" />
-                  Redirecting…
-                </>
-              ) : (
-                'Upgrade now'
-              )}
-            </BBButton>
+            {nextInfo ? (
+              <BBButton
+                variant="amber"
+                size="lg"
+                className="flex-1 justify-center"
+                onClick={() => void handleUpgrade()}
+                disabled={loading}
+              >
+                {loading ? (
+                  <>
+                    <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin mr-2 inline-block shrink-0" />
+                    Redirecting...
+                  </>
+                ) : (
+                  'Upgrade now'
+                )}
+              </BBButton>
+            ) : canAddAddonStorage ? (
+              <BBButton
+                variant="amber"
+                size="lg"
+                className="flex-1 justify-center"
+                onClick={handleAddStorage}
+              >
+                Add storage
+              </BBButton>
+            ) : null}
             <BBButton variant="ghost" size="lg" onClick={handleViewPlans} disabled={loading}>
-              View all plans
+              {canAddAddonStorage && !nextInfo ? 'View plans' : 'View all plans'}
             </BBButton>
           </div>
         </div>
@@ -258,6 +289,7 @@ export function StorageFullBanner({ currentPlan, onUpgrade }: StorageFullBannerP
   const navigate = useNavigate()
   const nextSlug = UPGRADE_CHAIN[currentPlan] ?? null
   const nextInfo = nextSlug ? PLAN_INFO[nextSlug] : null
+  const canAddAddon = planCanAddStorage(currentPlan)
 
   return (
     <div
@@ -268,7 +300,14 @@ export function StorageFullBanner({ currentPlan, onUpgrade }: StorageFullBannerP
       <span className="text-[13px] font-medium text-ink flex-1">
         Storage full — uploads are paused.
       </span>
-      {nextInfo ? (
+      {canAddAddon ? (
+        <button
+          onClick={() => navigate('/billing')}
+          className="shrink-0 text-[12.5px] font-semibold text-ink underline underline-offset-2 hover:opacity-80 transition-opacity"
+        >
+          Add storage
+        </button>
+      ) : nextInfo ? (
         <button
           onClick={onUpgrade}
           className="shrink-0 text-[12.5px] font-semibold text-ink underline underline-offset-2 hover:opacity-80 transition-opacity"

@@ -1276,6 +1276,37 @@ export async function createSetupIntent(): Promise<{ client_secret: string }> {
   return request<{ client_secret: string }>('/api/v1/billing/setup-intent', { method: 'POST' })
 }
 
+// ─── Storage add-on endpoints ──────────────────────
+
+export interface StorageAddonState {
+  plan: string
+  extra_storage_tb: number
+  max_storage_tb: number
+  storage_addon_price_cents: number
+  base_storage_tb: number
+  effective_storage_bytes: number
+}
+
+/** GET /api/v1/billing/addons — current add-on state */
+export async function getStorageAddons(): Promise<StorageAddonState | null> {
+  try {
+    return await request<StorageAddonState>('/api/v1/billing/addons')
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null
+    throw err
+  }
+}
+
+/** POST /api/v1/billing/addons — update storage add-on */
+export async function updateStorageAddons(params: {
+  extra_storage_tb: number
+}): Promise<StorageAddonState> {
+  return request<StorageAddonState>('/api/v1/billing/addons', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
 /**
  * Returns the user's referral code + summary stats.
  * Returns null on 404 — caller falls back to client-side code derivation.
