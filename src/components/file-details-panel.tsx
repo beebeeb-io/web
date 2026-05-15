@@ -153,127 +153,28 @@ function VersionsTab({
   )
 }
 
-// ─── Local file notes (client-only, per-device) ──────────────────────────────
-
-function noteKey(fileId: string): string {
-  return `beebeeb.note.${fileId}`
-}
-
-function loadNote(fileId: string): string {
-  try {
-    return localStorage.getItem(noteKey(fileId)) ?? ''
-  } catch {
-    return ''
-  }
-}
-
-function saveNote(fileId: string, text: string): void {
-  try {
-    if (text) {
-      localStorage.setItem(noteKey(fileId), text)
-    } else {
-      localStorage.removeItem(noteKey(fileId))
-    }
-  } catch {
-    // localStorage unavailable — silently ignore
-  }
-}
-
-// ─── Notes section component ────────────────────────────────────────────────
-
-function FileNotesSection({ fileId }: { fileId: string }) {
-  const [open, setOpen] = useState(true)
-  const [text, setText] = useState(() => loadNote(fileId))
-  const [saved, setSaved] = useState(false)
-  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  // Reload note when the selected file changes
-  useEffect(() => {
-    setText(loadNote(fileId))
-    setSaved(false)
-  }, [fileId])
-
-  const handleBlur = useCallback(() => {
-    saveNote(fileId, text)
-    setSaved(true)
-    if (savedTimerRef.current) clearTimeout(savedTimerRef.current)
-    savedTimerRef.current = setTimeout(() => setSaved(false), 1000)
-  }, [fileId, text])
-
-  useEffect(() => {
-    return () => {
-      if (savedTimerRef.current) clearTimeout(savedTimerRef.current)
-    }
-  }, [])
-
-  return (
-    <div className="border-b border-line">
-      {/* Section header — collapsible */}
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="w-full px-xl pt-lg pb-2.5 flex items-center gap-1.5 text-left"
-      >
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 flex-1">
-          Notes
-        </span>
-        <span className="text-[9px] text-ink-4 font-normal normal-case tracking-normal mr-1">
-          Not encrypted · this device only
-        </span>
-        <span
-          className="text-ink-4 transition-transform duration-150"
-          style={{ transform: open ? 'rotate(0deg)' : 'rotate(-90deg)' }}
-        >
-          <Icon name="chevron-down" size={10} />
-        </span>
-      </button>
-
-      {open && (
-        <div className="px-xl pb-lg">
-          <div className="relative">
-            <textarea
-              rows={3}
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onBlur={handleBlur}
-              placeholder="Add a note visible only on this device..."
-              className="w-full resize-none rounded-md border border-line bg-paper-2 px-2.5 py-2 text-[11.5px] text-ink placeholder:text-ink-4 outline-none focus:border-amber focus:ring-2 focus:ring-amber/20 transition-colors"
-              style={{ fontFamily: 'inherit', lineHeight: 1.5 }}
-            />
-            {/* Saved confirmation */}
-            <span
-              className="absolute bottom-2 right-2 text-[10px] text-ink-4 font-mono transition-opacity duration-300"
-              style={{ opacity: saved ? 1 : 0 }}
-            >
-              Saved
-            </span>
-          </div>
-          <div className="mt-1.5 text-[10px] text-ink-4 flex items-center gap-1">
-            <Icon name="lock" size={9} />
-            Stored locally — not synced or encrypted server-side
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ─── Encrypted note section (server-synced, E2EE) ────────────────────────────
 
 function EncryptedNoteSection({
   fileId,
   noteEncrypted,
   getFileKey,
+  onNoteUpdated,
 }: {
   fileId: string
   noteEncrypted: string | null | undefined
   getFileKey: (id: string) => Promise<Uint8Array>
+  onNoteUpdated?: (fileId: string, noteEncrypted: string | null) => void
 }) {
   const [text, setText] = useState('')
   const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Decrypt the note on mount / when the file changes
   useEffect(() => {
     setText('')
+    setSaved(false)
     if (!noteEncrypted) return
     let cancelled = false
     getFileKey(fileId)
@@ -290,40 +191,61 @@ function EncryptedNoteSection({
     return () => { cancelled = true }
   }, [fileId, noteEncrypted, getFileKey])
 
+  // Clean up saved timer on unmount
+  useEffect(() => {
+    return () => {
+      if (savedTimerRef.current) clearTimeout(savedTimerRef.current)
+    }
+  }, [])
+
   const handleBlur = useCallback(async () => {
     if (saving) return
     setSaving(true)
     try {
       if (text.trim() === '') {
         await updateFile(fileId, { note_encrypted: null })
+        onNoteUpdated?.(fileId, null)
       } else {
         const fileKey = await getFileKey(fileId)
         const enc = await encryptFilename(fileKey, text)
         const stored = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
         await updateFile(fileId, { note_encrypted: stored })
+        onNoteUpdated?.(fileId, stored)
       }
+      setSaved(true)
+      if (savedTimerRef.current) clearTimeout(savedTimerRef.current)
+      savedTimerRef.current = setTimeout(() => setSaved(false), 1500)
     } catch {
       // Save failed silently — user can retry by blurring again
     } finally {
       setSaving(false)
     }
-  }, [fileId, text, saving, getFileKey])
+  }, [fileId, text, saving, getFileKey, onNoteUpdated])
 
   return (
     <div className="px-xl pt-lg pb-lg border-b border-line">
       <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 mb-2">
         Note
       </div>
-      <textarea
-        rows={3}
-        value={text}
-        maxLength={254}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={() => { void handleBlur() }}
-        placeholder="Add a note..."
-        className="w-full resize-none rounded-md border border-line bg-paper-2 px-2.5 py-2 font-sans text-sm text-ink placeholder:text-ink-4 outline-none focus:border-amber focus:ring-2 focus:ring-amber/20 transition-colors"
-        style={{ lineHeight: 1.5 }}
-      />
+      <div className="relative">
+        <textarea
+          rows={3}
+          value={text}
+          maxLength={254}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={() => { void handleBlur() }}
+          placeholder="Add a note..."
+          className="w-full resize-none rounded-md border border-line bg-paper-2 px-2.5 py-2 font-sans text-[11.5px] text-ink placeholder:text-ink-4 outline-none focus:border-amber focus:ring-2 focus:ring-amber/20 transition-colors"
+          style={{ lineHeight: 1.5 }}
+        />
+        {/* Saved confirmation */}
+        <span
+          className="absolute bottom-2 right-2 text-[10px] text-ink-4 font-mono transition-opacity duration-300"
+          style={{ opacity: saved ? 1 : 0 }}
+        >
+          Saved
+        </span>
+      </div>
       <div className="mt-1.5 text-[10px] text-ink-4 flex items-center gap-1">
         <Icon name="lock" size={9} />
         {saving ? 'Saving...' : 'Encrypted · synced across devices'}
@@ -376,6 +298,7 @@ interface FileDetailsPanelProps {
   onVersionHistory?: () => void
   onPreview?: () => void
   isStarred?: boolean
+  onNoteUpdated?: (fileId: string, noteEncrypted: string | null) => void
 }
 
 function typeLabel(ext: string, mime: string | null): string {
@@ -436,6 +359,7 @@ export function FileDetailsPanel({
   onVersionHistory,
   onPreview,
   isStarred = false,
+  onNoteUpdated,
 }: FileDetailsPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null)
   const [activeTab, setActiveTab] = useState<'info' | 'versions'>('info')
@@ -796,10 +720,8 @@ export function FileDetailsPanel({
                 fileId={file.id}
                 noteEncrypted={file.noteEncrypted}
                 getFileKey={getFileKey}
+                onNoteUpdated={onNoteUpdated}
               />
-
-              {/* Notes — client-only, stored in localStorage per device */}
-              <FileNotesSection fileId={file.id} />
             </>
           )}
         </div>

@@ -2288,6 +2288,11 @@ export function Drive() {
             setSelectedFileId(null)
           }
         }}
+        onNoteUpdated={(fid, enc) => {
+          setFiles((prev) =>
+            prev.map((f) => (f.id === fid ? { ...f, note_encrypted: enc } : f)),
+          )
+        }}
       />
 
       {/* Full-screen file preview overlay */}

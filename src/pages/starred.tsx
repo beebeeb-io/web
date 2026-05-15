@@ -278,6 +278,11 @@ export function Starred() {
             setSelectedFileId(null)
           }
         }}
+        onNoteUpdated={(fid, enc) => {
+          setFiles((prev) =>
+            prev.map((f) => (f.id === fid ? { ...f, note_encrypted: enc } : f)),
+          )
+        }}
       />
 
       {previewFile && (() => {
