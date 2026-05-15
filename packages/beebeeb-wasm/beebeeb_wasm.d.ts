@@ -118,6 +118,11 @@ export function plan_max_extra_tb(plan_slug: string): bigint;
 export function plan_can_add_storage(plan_slug: string): boolean;
 
 /**
+ * Base storage in bytes (SI) for a plan slug.
+ */
+export function plan_base_storage_bytes(plan_slug: string): bigint;
+
+/**
  * Monthly cost in cents for a plan with optional add-ons.
  */
 export function plan_monthly_cost_cents(plan_slug: string, extra_tb: bigint, extra_users: bigint): bigint;
