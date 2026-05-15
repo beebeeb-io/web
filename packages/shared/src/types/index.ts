@@ -497,6 +497,8 @@ export interface AdminUserDetail {
   subscription_source?: string | null
   /** Free-text justification when source = 'admin_override'. */
   subscription_admin_note?: string | null
+  /** Extra TB purchased as add-ons on Pro/Business plans (0 when no add-ons). */
+  extra_storage_tb?: number
 }
 
 export interface AdminUserFile {
@@ -795,6 +797,8 @@ export interface AdminStatsStorageByPlan {
   plan: string
   users: number
   used_bytes: number
+  /** Total extra TB purchased as add-ons across all users on this plan. */
+  total_extra_storage_tb?: number
 }
 
 export interface AdminStatsRevenuePlan {
