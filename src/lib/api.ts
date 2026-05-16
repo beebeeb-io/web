@@ -1310,7 +1310,11 @@ export interface StorageAddonState {
 /** GET /api/v1/billing/addons — current add-on state */
 export async function getStorageAddons(): Promise<StorageAddonState | null> {
   try {
-    return await request<StorageAddonState>('/api/v1/billing/addons')
+    const raw = await request<StorageAddonState & { total_storage_tb?: number }>('/api/v1/billing/addons')
+    if (raw.effective_storage_bytes == null && raw.total_storage_tb != null) {
+      raw.effective_storage_bytes = raw.total_storage_tb * 1_000_000_000_000
+    }
+    return raw
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) return null
     throw err
