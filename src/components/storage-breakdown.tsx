@@ -117,7 +117,7 @@ export function StorageBreakdown({
     return () => clearTimeout(t)
   }, [])
 
-  if (quotaBytes <= 0) return null
+  if (!Number.isFinite(quotaBytes) || quotaBytes <= 0) return null
 
   const pct = Math.min(100, (usageBytes / quotaBytes) * 100)
   const isHigh = pct > 90

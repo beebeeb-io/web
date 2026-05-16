@@ -98,6 +98,7 @@ function invoicePdfUrl(invoice: Invoice): string | undefined {
 }
 
 function formatEuro(amount: number): string {
+  if (!Number.isFinite(amount)) return '€0.00'
   return `€${amount % 1 === 0 ? amount.toFixed(0) : amount.toFixed(2)}`
 }
 
@@ -277,19 +278,24 @@ export function Billing() {
   const effectivePlan = sub?.status === 'cancelled' ? 'free' : (sub?.plan ?? 'free')
   const meta = planMeta[effectivePlan] ?? planMeta.free
   // When addon data is available, use the effective storage (base + extra).
-  // Otherwise fall back to the plan-level storage.
-  const totalStorageBytes = addonState
+  // Otherwise fall back to the plan-level storage from planMeta.
+  const rawTotalStorageBytes = addonState
     ? addonState.effective_storage_bytes
+    : meta.storageGB * 1_000_000_000
+  // Guard against NaN/undefined — show 0 rather than NaN in the UI
+  const totalStorageBytes = Number.isFinite(rawTotalStorageBytes) && rawTotalStorageBytes > 0
+    ? rawTotalStorageBytes
     : meta.storageGB * 1_000_000_000
   const usedBytes = contextUsage?.used_bytes ?? 0
   const usedPercent = totalStorageBytes > 0 ? (usedBytes / totalStorageBytes) * 100 : 0
 
   // Storage slider derived values
   const canAddStorage = planCanAddStorage(effectivePlan)
-  const baseTB = addonState?.base_storage_tb ?? planBaseTB(effectivePlan)
-  const maxExtraTB = addonState
+  const baseTB = addonState?.base_storage_tb || planBaseTB(effectivePlan)
+  const rawMaxExtraTB = addonState
     ? addonState.max_storage_tb - addonState.base_storage_tb
     : planMaxExtraTB(effectivePlan)
+  const maxExtraTB = Number.isFinite(rawMaxExtraTB) && rawMaxExtraTB > 0 ? rawMaxExtraTB : 0
   const maxTotalTB = baseTB + maxExtraTB
   const currentExtraTB = addonState?.extra_storage_tb ?? 0
   const sliderChanged = sliderTB !== currentExtraTB
@@ -471,11 +477,10 @@ function openUpgrade(plan: string) {
     ? upgradeCardFromApiPlan(selectedApiPlan, 0)
     : upgradeCardFromPlanMeta(upgradePlan)
 
-  const priceDisplay = effectivePlan === 'free'
-    ? null
-    : sub?.billing_cycle === 'yearly'
-      ? `${meta.priceYearly.toFixed(2)} / year`
-      : `${meta.priceMonthly.toFixed(2)} / month`
+  const billingInterval = sub?.billing_cycle === 'yearly' ? 'year' : 'month'
+  const basePriceCents = currentCostCents > 0 ? currentCostCents : (sub?.billing_cycle === 'yearly' ? Math.round(meta.priceYearly * 100) : Math.round(meta.priceMonthly * 100))
+  const extraStorageCostCents = currentExtraTB > 0 ? currentExtraTB * 1099 : 0
+  const basePlanCents = basePriceCents - extraStorageCostCents
 
   /* ── Status badge ──────────────────────────────────── */
 
@@ -518,7 +523,7 @@ function openUpgrade(plan: string) {
                   <p className="text-[13.5px] text-ink-2 leading-relaxed mb-4">
                     Your vault just got bigger. You now have{' '}
                     <span className="font-semibold text-ink">{formatStorageSI(totalStorageBytes)}</span>{' '}
-                    of encrypted storage — stored in Falkenstein, Hetzner.
+                    of encrypted storage — stored in Falkenstein, Germany.
                   </p>
                   <BBButton
                     variant="amber"
@@ -602,9 +607,22 @@ function openUpgrade(plan: string) {
                     <BBChip>Monthly</BBChip>
                   )}
                 </div>
-                {priceDisplay && (
-                  <div className="text-xs text-ink-3 mt-1 font-mono">
-                    EUR {priceDisplay}
+                {effectivePlan !== 'free' && (
+                  <div className="mt-1.5 space-y-0.5">
+                    {currentExtraTB > 0 ? (
+                      <>
+                        <div className="font-mono text-sm font-semibold">
+                          EUR {formatCentsAsEur(basePriceCents)} / {billingInterval}
+                        </div>
+                        <div className="text-[11px] text-ink-3 font-mono">
+                          {meta.label} EUR {formatCentsAsEur(basePlanCents)} + {currentExtraTB} TB x EUR 10.99
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-xs text-ink-3 font-mono">
+                        EUR {formatCentsAsEur(basePriceCents)} / {billingInterval}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -818,7 +836,7 @@ function openUpgrade(plan: string) {
                   </div>
                   {sliderTB > currentExtraTB && (
                     <div className="text-[11px] text-ink-3 mt-1 font-mono">
-                      +{sliderTB - currentExtraTB} TB x EUR {formatCentsAsEur(addonState?.storage_addon_price_cents ?? planMonthlyCostCents(effectivePlan, 1) - planMonthlyCostCents(effectivePlan, 0))}/TB
+                      +{sliderTB - currentExtraTB} TB x EUR {formatCentsAsEur(addonState?.storage_addon_price_cents ?? (planMonthlyCostCents(effectivePlan, 1) - planMonthlyCostCents(effectivePlan, 0)))}/TB
                     </div>
                   )}
                   {sliderTB < currentExtraTB && (
