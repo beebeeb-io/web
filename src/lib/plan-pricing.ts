@@ -20,29 +20,29 @@ let wasmInitPromise: Promise<void> | null = null
 async function ensureWasm(): Promise<void> {
   if (wasmReady) return
   if (!wasmInitPromise) {
-    wasmInitPromise = init().then(() => { wasmReady = true })
+    wasmInitPromise = init().then(() => { wasmReady = true }).catch(() => {
+      wasmInitPromise = null
+    })
   }
   await wasmInitPromise
 }
 
-function assertWasm(): void {
-  if (!wasmReady) {
-    throw new Error('WASM not loaded — quota functions require beebeeb-wasm to be initialized')
-  }
-}
+// Start WASM init immediately on module load — don't wait for first call
+ensureWasm()
+
 
 export function planCanAddStorage(planSlug: string): boolean {
-  assertWasm()
+  if (!wasmReady) return false
   return plan_can_add_storage(planSlug)
 }
 
 export function planMaxExtraTB(planSlug: string): number {
-  assertWasm()
+  if (!wasmReady) return 0
   return Number(plan_max_extra_tb(planSlug))
 }
 
 export function planBaseTB(planSlug: string): number {
-  assertWasm()
+  if (!wasmReady) return 0
   return Number(plan_base_storage_bytes(planSlug)) / 1_000_000_000_000
 }
 
@@ -51,7 +51,7 @@ export function planMonthlyCostCents(
   extraTB: number,
   extraUsers: number = 0,
 ): number {
-  assertWasm()
+  if (!wasmReady) return 0
   return Number(plan_monthly_cost_cents(planSlug, BigInt(extraTB), BigInt(extraUsers)))
 }
 
@@ -60,7 +60,7 @@ export function planEffectiveQuota(
   extraTB: number,
   bonusBytes: number = 0,
 ): number {
-  assertWasm()
+  if (!wasmReady) return 0
   return Number(plan_effective_quota(planSlug, BigInt(extraTB), BigInt(bonusBytes)))
 }
 
@@ -70,8 +70,12 @@ export function formatCentsAsEur(cents: number): string {
 }
 
 export function formatStorageSI(bytes: number): string {
-  assertWasm()
+  if (!wasmReady) return `${bytes} B`
   return storage_format_si(BigInt(bytes))
+}
+
+export function isWasmReady(): boolean {
+  return wasmReady
 }
 
 export { ensureWasm }
