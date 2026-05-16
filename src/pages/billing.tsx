@@ -210,14 +210,14 @@ export function Billing() {
       // cards section (context only stores the matched current-user plan).
       const [subData, invData, invoicePref, plansData, filesData, addonsData] = await Promise.all([
         getSubscription(),
-        getInvoices(),
+        getInvoices().catch(() => [] as Invoice[]),
         getPreference<{ send_email: boolean; invoice_email: string }>('invoice_settings').catch(() => null),
         getPlans().catch(() => null),
         listFiles(undefined, false).catch(() => null),
         getStorageAddons().catch(() => null),
       ])
       setSub(subData)
-      setInvoices(invData)
+      setInvoices(invData ?? [])
       setPlans(plansData)
       setFiles(filesData)
       if (addonsData) {
