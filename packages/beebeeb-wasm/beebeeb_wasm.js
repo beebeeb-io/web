@@ -42,6 +42,26 @@ export function decrypt_chunk(key, nonce, ciphertext) {
 }
 
 /**
+ * Decrypt a sequence of encrypted chunks and return the concatenated plaintext.
+ * Each chunk is a JS object `{ nonce: Uint8Array, ciphertext: Uint8Array }`.
+ * Returns the full plaintext as `Uint8Array`.
+ * @param {Uint8Array} key
+ * @param {any} chunks
+ * @returns {Uint8Array}
+ */
+export function decrypt_chunks(key, chunks) {
+    const ptr0 = passArray8ToWasm0(key, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decrypt_chunks(ptr0, len0, chunks);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v2;
+}
+
+/**
  * Decrypt a metadata blob back to a UTF-8 string.
  * @param {Uint8Array} key
  * @param {Uint8Array} nonce
@@ -220,6 +240,30 @@ export function generate_recovery_phrase() {
 }
 
 /**
+ * Returns `true` if the given MIME type can be previewed in-app.
+ * @param {string | null} [mime_type]
+ * @returns {boolean}
+ */
+export function is_previewable(mime_type) {
+    var ptr0 = isLikeNone(mime_type) ? 0 : passStringToWasm0(mime_type, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    var len0 = WASM_VECTOR_LEN;
+    const ret = wasm.is_previewable(ptr0, len0);
+    return ret !== 0;
+}
+
+/**
+ * Returns `true` if the file extension indicates a previewable file.
+ * @param {string} filename
+ * @returns {boolean}
+ */
+export function is_previewable_by_extension(filename) {
+    const ptr0 = passStringToWasm0(filename, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.is_previewable_by_extension(ptr0, len0);
+    return ret !== 0;
+}
+
+/**
  * Finish OPAQUE client login. Returns `{ message: Uint8Array, session_key: Uint8Array, export_key: Uint8Array }`.
  * @param {Uint8Array} client_state
  * @param {Uint8Array} password
@@ -294,6 +338,30 @@ export function opaque_registration_start(password) {
 }
 
 /**
+ * Return the base storage quota (in bytes) for a plan slug.
+ * @param {string} plan_slug
+ * @returns {bigint}
+ */
+export function plan_base_storage_bytes(plan_slug) {
+    const ptr0 = passStringToWasm0(plan_slug, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.plan_base_storage_bytes(ptr0, len0);
+    return ret;
+}
+
+/**
+ * Whether the plan supports purchasing extra storage.
+ * @param {string} plan_slug
+ * @returns {boolean}
+ */
+export function plan_can_add_storage(plan_slug) {
+    const ptr0 = passStringToWasm0(plan_slug, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.plan_can_add_storage(ptr0, len0);
+    return ret !== 0;
+}
+
+/**
  * Plan how to split a file into chunks for upload based on the client profile.
  *
  * `profile` must be one of: `"desktop"`, `"web"`, `"mobile"`, `"backup"`.
@@ -313,6 +381,46 @@ export function plan_chunks(file_size_bytes, profile) {
 }
 
 /**
+ * Compute the effective quota after add-ons and bonus bytes.
+ * @param {string} plan_slug
+ * @param {bigint} extra_tb
+ * @param {bigint} bonus_bytes
+ * @returns {bigint}
+ */
+export function plan_effective_quota(plan_slug, extra_tb, bonus_bytes) {
+    const ptr0 = passStringToWasm0(plan_slug, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.plan_effective_quota(ptr0, len0, extra_tb, bonus_bytes);
+    return ret;
+}
+
+/**
+ * Maximum additional TB a plan may purchase.
+ * @param {string} plan_slug
+ * @returns {bigint}
+ */
+export function plan_max_extra_tb(plan_slug) {
+    const ptr0 = passStringToWasm0(plan_slug, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.plan_max_extra_tb(ptr0, len0);
+    return ret;
+}
+
+/**
+ * Monthly cost in cents for a plan with optional add-ons.
+ * @param {string} plan_slug
+ * @param {bigint} extra_tb
+ * @param {bigint} extra_users
+ * @returns {bigint}
+ */
+export function plan_monthly_cost_cents(plan_slug, extra_tb, extra_users) {
+    const ptr0 = passStringToWasm0(plan_slug, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.plan_monthly_cost_cents(ptr0, len0, extra_tb, extra_users);
+    return ret;
+}
+
+/**
  * Recover a master key from a 12-word BIP39 recovery phrase.
  * Returns the 32-byte master key as `Uint8Array`.
  * @param {string} phrase
@@ -328,6 +436,24 @@ export function recover_from_phrase(phrase) {
     var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
     return v2;
+}
+
+/**
+ * Format a byte count as a human-readable SI string (e.g. "5.0 TB").
+ * @param {bigint} bytes
+ * @returns {string}
+ */
+export function storage_format_si(bytes) {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.storage_format_si(bytes);
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
 }
 
 /**
@@ -398,15 +524,35 @@ function __wbg_get_imports() {
             const ret = arg0.crypto;
             return ret;
         },
+        __wbg_from_0dbf29f09e7fb200: function(arg0) {
+            const ret = Array.from(arg0);
+            return ret;
+        },
         __wbg_getRandomValues_c44a50d8cfdaebeb: function() { return handleError(function (arg0, arg1) {
             arg0.getRandomValues(arg1);
         }, arguments); },
+        __wbg_get_6011fa3a58f61074: function() { return handleError(function (arg0, arg1) {
+            const ret = Reflect.get(arg0, arg1);
+            return ret;
+        }, arguments); },
+        __wbg_get_8360291721e2339f: function(arg0, arg1) {
+            const ret = arg0[arg1 >>> 0];
+            return ret;
+        },
+        __wbg_length_3d4ecd04bd8d22f1: function(arg0) {
+            const ret = arg0.length;
+            return ret;
+        },
         __wbg_length_9f1775224cf1d815: function(arg0) {
             const ret = arg0.length;
             return ret;
         },
         __wbg_msCrypto_bd5a034af96bcba6: function(arg0) {
             const ret = arg0.msCrypto;
+            return ret;
+        },
+        __wbg_new_0c7403db6e782f19: function(arg0) {
+            const ret = new Uint8Array(arg0);
             return ret;
         },
         __wbg_new_34d45cc8e36aaead: function() {

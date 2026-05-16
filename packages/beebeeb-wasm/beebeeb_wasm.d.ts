@@ -13,6 +13,13 @@ export function compute_recovery_check(master_key: Uint8Array): Uint8Array;
 export function decrypt_chunk(key: Uint8Array, nonce: Uint8Array, ciphertext: Uint8Array): Uint8Array;
 
 /**
+ * Decrypt a sequence of encrypted chunks and return the concatenated plaintext.
+ * Each chunk is a JS object `{ nonce: Uint8Array, ciphertext: Uint8Array }`.
+ * Returns the full plaintext as `Uint8Array`.
+ */
+export function decrypt_chunks(key: Uint8Array, chunks: any): Uint8Array;
+
+/**
  * Decrypt a metadata blob back to a UTF-8 string.
  */
 export function decrypt_metadata(key: Uint8Array, nonce: Uint8Array, ciphertext: Uint8Array): string;
@@ -64,6 +71,16 @@ export function encrypt_metadata(key: Uint8Array, metadata: string): any;
 export function generate_recovery_phrase(): any;
 
 /**
+ * Returns `true` if the given MIME type can be previewed in-app.
+ */
+export function is_previewable(mime_type?: string | null): boolean;
+
+/**
+ * Returns `true` if the file extension indicates a previewable file.
+ */
+export function is_previewable_by_extension(filename: string): boolean;
+
+/**
  * Finish OPAQUE client login. Returns `{ message: Uint8Array, session_key: Uint8Array, export_key: Uint8Array }`.
  */
 export function opaque_login_finish(client_state: Uint8Array, password: Uint8Array, server_response: Uint8Array): any;
@@ -84,6 +101,16 @@ export function opaque_registration_finish(client_state: Uint8Array, password: U
 export function opaque_registration_start(password: Uint8Array): any;
 
 /**
+ * Return the base storage quota (in bytes) for a plan slug.
+ */
+export function plan_base_storage_bytes(plan_slug: string): bigint;
+
+/**
+ * Whether the plan supports purchasing extra storage.
+ */
+export function plan_can_add_storage(plan_slug: string): boolean;
+
+/**
  * Plan how to split a file into chunks for upload based on the client profile.
  *
  * `profile` must be one of: `"desktop"`, `"web"`, `"mobile"`, `"backup"`.
@@ -92,18 +119,7 @@ export function opaque_registration_start(password: Uint8Array): any;
 export function plan_chunks(file_size_bytes: bigint, profile: string): any;
 
 /**
- * Recover a master key from a 12-word BIP39 recovery phrase.
- * Returns the 32-byte master key as `Uint8Array`.
- */
-export function recover_from_phrase(phrase: string): Uint8Array;
-
-/**
- * Compute X25519 shared secret for sharing. Returns 32-byte `Uint8Array`.
- */
-export function x25519_shared_secret(my_private: Uint8Array, their_public: Uint8Array): Uint8Array;
-
-/**
- * Effective storage quota in bytes for a plan with add-ons.
+ * Compute the effective quota after add-ons and bonus bytes.
  */
 export function plan_effective_quota(plan_slug: string, extra_tb: bigint, bonus_bytes: bigint): bigint;
 
@@ -113,24 +129,25 @@ export function plan_effective_quota(plan_slug: string, extra_tb: bigint, bonus_
 export function plan_max_extra_tb(plan_slug: string): bigint;
 
 /**
- * Whether the plan supports purchasing extra storage.
- */
-export function plan_can_add_storage(plan_slug: string): boolean;
-
-/**
- * Base storage in bytes (SI) for a plan slug.
- */
-export function plan_base_storage_bytes(plan_slug: string): bigint;
-
-/**
  * Monthly cost in cents for a plan with optional add-ons.
  */
 export function plan_monthly_cost_cents(plan_slug: string, extra_tb: bigint, extra_users: bigint): bigint;
 
 /**
+ * Recover a master key from a 12-word BIP39 recovery phrase.
+ * Returns the 32-byte master key as `Uint8Array`.
+ */
+export function recover_from_phrase(phrase: string): Uint8Array;
+
+/**
  * Format a byte count as a human-readable SI string (e.g. "5.0 TB").
  */
 export function storage_format_si(bytes: bigint): string;
+
+/**
+ * Compute X25519 shared secret for sharing. Returns 32-byte `Uint8Array`.
+ */
+export function x25519_shared_secret(my_private: Uint8Array, their_public: Uint8Array): Uint8Array;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
@@ -138,6 +155,7 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly compute_recovery_check: (a: number, b: number) => [number, number, number, number];
     readonly decrypt_chunk: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+    readonly decrypt_chunks: (a: number, b: number, c: any) => [number, number, number, number];
     readonly decrypt_metadata: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly derive_file_key: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly derive_master_key: (a: number, b: number, c: number, d: number) => [number, number, number];
@@ -147,12 +165,20 @@ export interface InitOutput {
     readonly encrypt_chunk: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly encrypt_metadata: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly generate_recovery_phrase: () => [number, number, number];
+    readonly is_previewable: (a: number, b: number) => number;
+    readonly is_previewable_by_extension: (a: number, b: number) => number;
     readonly opaque_login_finish: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly opaque_login_start: (a: number, b: number) => [number, number, number];
     readonly opaque_registration_finish: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly opaque_registration_start: (a: number, b: number) => [number, number, number];
+    readonly plan_base_storage_bytes: (a: number, b: number) => bigint;
+    readonly plan_can_add_storage: (a: number, b: number) => number;
     readonly plan_chunks: (a: bigint, b: number, c: number) => [number, number, number];
+    readonly plan_effective_quota: (a: number, b: number, c: bigint, d: bigint) => bigint;
+    readonly plan_max_extra_tb: (a: number, b: number) => bigint;
+    readonly plan_monthly_cost_cents: (a: number, b: number, c: bigint, d: bigint) => bigint;
     readonly recover_from_phrase: (a: number, b: number) => [number, number, number, number];
+    readonly storage_format_si: (a: bigint) => [number, number];
     readonly x25519_shared_secret: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
