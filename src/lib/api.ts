@@ -1229,8 +1229,28 @@ export async function subscribe(params: {
 }
 
 export async function getInvoices(): Promise<Invoice[]> {
-  const data = await request<{ invoices: Invoice[] }>('/api/v1/billing/invoices')
-  return data.invoices
+  interface RawInvoice {
+    id: string
+    number: string
+    amount_paid: number
+    created: number
+    period_start: number
+    period_end: number
+    status: string
+    hosted_invoice_url?: string
+    invoice_pdf?: string
+  }
+  const data = await request<{ invoices: RawInvoice[] }>('/api/v1/billing/invoices')
+  return data.invoices.map((raw) => ({
+    id: raw.id,
+    number: raw.number,
+    amount_eur: raw.amount_paid / 100,
+    date: new Date(raw.created * 1000).toISOString(),
+    period: `${new Date(raw.period_start * 1000).toLocaleDateString()} – ${new Date(raw.period_end * 1000).toLocaleDateString()}`,
+    status: raw.status,
+    url: raw.hosted_invoice_url,
+    pdf_url: raw.invoice_pdf,
+  }))
 }
 
 export async function createCheckoutSession(params: {
