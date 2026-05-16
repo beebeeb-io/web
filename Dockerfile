@@ -33,6 +33,11 @@ RUN sed -i 's|../../repos/core/beebeeb-wasm/pkg|/wasm-pkg|' package.json && \
 ARG VITE_API_URL=https://api.beebeeb.io
 ENV VITE_API_URL=$VITE_API_URL
 
+# Copy PDF.js worker to public/ so it's served at /pdf.worker.min.mjs.
+# The `new URL('pdfjs-dist/...', import.meta.url)` pattern doesn't survive
+# Vite's production build with bun's hoisted module layout.
+RUN find node_modules -name "pdf.worker.min.mjs" -path "*/pdfjs-dist/build/*" -exec cp {} public/pdf.worker.min.mjs \;
+
 # Skip the `tsc --noEmit` step that ships in package.json's `build` script.
 # Type-checking belongs in CI, not in the production image — and tsc here
 # fails to resolve `react` from `/shared/src/*.tsx` because /shared has no
