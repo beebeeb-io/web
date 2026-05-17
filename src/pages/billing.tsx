@@ -305,6 +305,8 @@ export function Billing() {
   const sliderChanged = sliderTB !== currentExtraTB
   const currentCostCents = planMonthlyCostCents(effectivePlan, currentExtraTB)
   const newCostCents = planMonthlyCostCents(effectivePlan, sliderTB)
+  const usedTB = Math.ceil(usedBytes / 1_000_000_000_000)
+  const sliderMin = Math.max(0, usedTB - baseTB)
   const wouldReduceBelowUsage = (baseTB + sliderTB) * 1_000_000_000_000 < usedBytes
 
 function openUpgrade(plan: string) {
@@ -845,7 +847,7 @@ function openUpgrade(plan: string) {
                 </div>
                 <input
                   type="range"
-                  min={0}
+                  min={sliderMin}
                   max={maxExtraTB}
                   step={1}
                   value={sliderTB}
@@ -859,6 +861,11 @@ function openUpgrade(plan: string) {
                   <span>{formatStorageSI(baseTB * 1_000_000_000_000)}</span>
                   <span>{formatStorageSI(maxTotalTB * 1_000_000_000_000)}</span>
                 </div>
+                {usedTB > baseTB && (
+                  <div className="text-[11px] text-ink-3 mt-1">
+                    You're using {formatStorageSI(usedBytes)}. Delete files to reduce below {formatStorageSI(usedTB * 1_000_000_000_000)}.
+                  </div>
+                )}
               </div>
 
               {/* Live price preview */}
