@@ -501,6 +501,14 @@ export interface AdminUserDetail {
   subscription_admin_note?: string | null
   /** Extra TB purchased as add-ons on Pro/Business plans (0 when no add-ons). */
   extra_storage_tb?: number
+  /** Billing lifecycle state: active, grace, read_only, suspended, terminated. */
+  billing_state?: string | null
+  /** ISO timestamp when the subscription became past-due. */
+  past_due_since?: string | null
+  /** Stripe customer ID for linking to the Stripe dashboard. */
+  stripe_customer_id?: string | null
+  /** Stripe subscription ID for the active subscription. */
+  stripe_subscription_id?: string | null
 }
 
 export interface AdminUserFile {
