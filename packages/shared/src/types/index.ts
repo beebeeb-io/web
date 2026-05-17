@@ -330,6 +330,8 @@ export interface Subscription {
   is_mock?: boolean
   created_at: string | null
   current_period_end: string | null
+  billing_state?: string | null
+  past_due_since?: string | null
 }
 
 export interface Invoice {
