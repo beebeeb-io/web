@@ -773,9 +773,16 @@ function openUpgrade(plan: string) {
                     After that, your storage drops to <strong>5 GB</strong> (Free tier).
                   </p>
                   {usedBytes > 5_000_000_000 && (
-                    <p className="text-sm text-red mb-4">
-                      You're currently using {formatStorageSI(usedBytes)} — make sure to export anything you need before your plan ends.
-                    </p>
+                    <>
+                      <p className="text-sm text-red mb-3">
+                        You're currently using {formatStorageSI(usedBytes)} — make sure to export anything you need before your plan ends.
+                      </p>
+                      <div className="flex gap-2 mb-3">
+                        <BBButton size="sm" variant="ghost" onClick={() => { navigate('/?sort=size&order=desc'); setCancelConfirm(false); }}>
+                          Review my files
+                        </BBButton>
+                      </div>
+                    </>
                   )}
                   <div className="flex gap-2">
                     <BBButton size="sm" onClick={() => setCancelConfirm(false)}>
@@ -907,9 +914,16 @@ function openUpgrade(plan: string) {
               {wouldReduceBelowUsage && sliderChanged && (
                 <div className="flex items-center gap-2.5 px-3.5 py-2.5 bg-red/10 border border-red/20 rounded-lg">
                   <Icon name="shield" size={13} className="text-red shrink-0" />
-                  <span className="text-[12px] text-red leading-snug">
-                    You are using {formatStorageSI(usedBytes)} — reducing to {formatStorageSI((baseTB + sliderTB) * 1_000_000_000_000)} would exceed your new quota. Delete or move files first.
-                  </span>
+                  <div className="flex-1">
+                    <span className="text-[12px] text-red leading-snug">
+                      You are using {formatStorageSI(usedBytes)} — reducing to {formatStorageSI((baseTB + sliderTB) * 1_000_000_000_000)} would exceed your new quota. Delete or move files first.
+                    </span>
+                    <div className="mt-1">
+                      <button className="text-[11px] underline text-ink-3 hover:text-ink" onClick={() => navigate('/?sort=size&order=desc')}>
+                        Review files by size
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
 
