@@ -85,6 +85,7 @@ const UploadRequestPage     = lazyNamed(() => import('./pages/upload-request'), 
 // The /admin/* catch-all below redirects any leftover deep links there.
 import { ThemeProvider } from './lib/theme-context'
 import { DisplayProvider } from './lib/display-context'
+import { BillingBanner } from './components/billing-banner'
 import { CookieBanner } from './components/cookie-banner'
 import { DriveDataProvider } from './lib/drive-data-context'
 
@@ -241,6 +242,7 @@ export function App() {
         <OnboardingResetHandler />
         <ImpersonationBanner />
         <OfflineBanner />
+        <BillingBanner />
         <GlobalShortcuts />
         <CookieBanner />
         <Suspense fallback={
