@@ -38,6 +38,7 @@ import {
   planMonthlyCostCents,
   formatCentsAsEur,
 } from '../lib/plan-pricing'
+import { PlanComparisonTable } from '../components/plan-comparison'
 
 /* ── Plan metadata ─────────────────────────────────────── */
 
@@ -188,6 +189,7 @@ export function Billing() {
   const [cancelConfirm, setCancelConfirm] = useState(false)
   const [cancelLoading, setCancelLoading] = useState(false)
   const [reactivateLoading, setReactivateLoading] = useState(false)
+  const [showComparison, setShowComparison] = useState(false)
   // Upgraded celebration card
   const showUpgraded = searchParams.get('upgraded') === 'true' || Boolean(searchParams.get('session_id'))
   const upgradedDismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -937,14 +939,27 @@ function openUpgrade(plan: string) {
         {/* ── Upgrade CTAs ───────────────────────────── */}
         {upgradePlans.length > 0 && (
           <div className="border border-line rounded-xl overflow-hidden bg-paper">
-            <div className="px-5 py-4 border-b border-line">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-4 mb-1">
-                Unlock more
+            <div className="px-5 py-4 border-b border-line flex items-center justify-between">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-4 mb-1">
+                  Unlock more
+                </div>
+                <div className="text-sm text-ink-2">
+                  All paid plans include encrypted storage, photo library, and EU data residency.
+                </div>
               </div>
-              <div className="text-sm text-ink-2">
-                All paid plans include encrypted storage, photo library, and EU data residency.
-              </div>
+              <button
+                onClick={() => setShowComparison(!showComparison)}
+                className="text-[12px] text-amber-deep hover:text-amber font-medium transition-colors shrink-0 ml-4"
+              >
+                {showComparison ? 'Hide comparison' : 'Compare all plans'}
+              </button>
             </div>
+            {showComparison ? (
+              <div className="p-5">
+                <PlanComparisonTable currentPlan={effectivePlan} onUpgrade={openUpgrade} />
+              </div>
+            ) : (
             <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-line">
               {upgradePlans.map((plan) => (
                 <button
@@ -979,6 +994,7 @@ function openUpgrade(plan: string) {
                 </button>
               ))}
             </div>
+            )}
           </div>
         )}
 
