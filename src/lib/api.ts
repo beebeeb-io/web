@@ -1344,6 +1344,29 @@ export async function getStorageAddons(): Promise<StorageAddonState | null> {
   }
 }
 
+/** Preview response for storage add-on changes */
+export interface StorageAddonPreview {
+  immediate_charge_cents: number
+  credit_cents: number
+  new_monthly_total_cents: number
+  base_plan_cents: number
+  extra_storage_cents: number
+  extra_storage_tb: number
+  remaining_days: number
+  is_upgrade: boolean
+  requires_payment_method?: boolean
+}
+
+/** POST /api/v1/billing/addons/preview — preview proration without modifying */
+export async function previewStorageAddons(params: {
+  extra_storage_tb: number
+}): Promise<StorageAddonPreview> {
+  return request<StorageAddonPreview>('/api/v1/billing/addons/preview', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
 /** POST /api/v1/billing/addons — update storage add-on */
 export async function updateStorageAddons(params: {
   extra_storage_tb: number
