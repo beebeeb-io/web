@@ -765,10 +765,16 @@ function openUpgrade(plan: string) {
               cancelConfirm ? (
                 <div className="mt-3 p-3.5 bg-red/5 border border-red/20 rounded-lg">
                   <div className="text-[12px] font-medium text-ink mb-1">Cancel your plan?</div>
-                  <div className="text-[11.5px] text-ink-3 mb-3 leading-relaxed">
-                    Your plan will remain active until {formatDate(sub?.current_period_end ?? null)}.
-                    After that, your account will be downgraded to Free.
-                  </div>
+                  <p className="text-sm text-ink-3 mb-4">
+                    Your plan{currentExtraTB > 0 ? ` and ${currentExtraTB} TB of extra storage` : ''} will
+                    end on <strong>{formatDate(sub?.current_period_end ?? null)}</strong>.
+                    After that, your storage drops to <strong>5 GB</strong> (Free tier).
+                  </p>
+                  {usedBytes > 5_000_000_000 && (
+                    <p className="text-sm text-red mb-4">
+                      You're currently using {formatStorageSI(usedBytes)} — make sure to export anything you need before your plan ends.
+                    </p>
+                  )}
                   <div className="flex gap-2">
                     <BBButton size="sm" onClick={() => setCancelConfirm(false)}>
                       Keep plan
