@@ -1292,6 +1292,13 @@ export async function reactivateSubscription(): Promise<{ message?: string; acti
   return request<{ message: string }>('/api/v1/billing/reactivate', { method: 'POST' })
 }
 
+export async function switchBillingCycle(billing_cycle: 'monthly' | 'yearly'): Promise<{ billing_cycle: string }> {
+  return request<{ billing_cycle: string }>('/api/v1/billing/switch-cycle', {
+    method: 'POST',
+    body: JSON.stringify({ billing_cycle }),
+  })
+}
+
 export async function createSetupIntent(): Promise<{ client_secret: string }> {
   return request<{ client_secret: string }>('/api/v1/billing/setup-intent', { method: 'POST' })
 }

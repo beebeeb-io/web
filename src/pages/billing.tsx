@@ -16,6 +16,7 @@ import {
   createPortalSession,
   cancelSubscription,
   reactivateSubscription,
+  switchBillingCycle,
   getPreference,
   setPreference,
   getStorageAddons,
@@ -810,6 +811,37 @@ function openUpgrade(plan: string) {
               )
             )}
           </div>
+
+          {/* Annual savings prompt — shown to monthly paid subscribers */}
+          {sub?.billing_cycle === 'monthly' && effectivePlan !== 'free' && (
+            <div className="border border-amber/30 bg-amber-bg/30 rounded-xl p-5">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep mb-1">
+                Save on your plan
+              </div>
+              <p className="text-sm text-ink-2 mb-3">
+                Switch to annual billing and save{' '}
+                <span className="font-semibold text-ink">
+                  EUR {((meta.priceMonthly * 12 - meta.priceYearly) || 0).toFixed(2)}
+                </span>{' '}
+                per year.
+              </p>
+              <div className="flex items-center gap-4 text-xs font-mono text-ink-3 mb-3">
+                <span>Monthly: EUR {meta.priceMonthly.toFixed(2)}/mo</span>
+                <span>Annual: EUR {(meta.priceYearly / 12).toFixed(2)}/mo</span>
+              </div>
+              <BBButton size="sm" variant="amber" onClick={async () => {
+                try {
+                  await switchBillingCycle('yearly')
+                  showToast({ icon: 'check', title: 'Switched to annual billing' })
+                  await loadData()
+                } catch (e) {
+                  showToast({ icon: 'x', title: 'Failed to switch', description: e instanceof Error ? e.message : 'Try again', danger: true })
+                }
+              }}>
+                Switch to annual
+              </BBButton>
+            </div>
+          )}
         </div>
 
         {/* ── Storage breakdown ──────────────────────── */}
