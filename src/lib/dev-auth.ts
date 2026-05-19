@@ -24,7 +24,7 @@ import { initSessionVault, cacheVaultKey } from './session-vault-cache'
 
 const DEV_SESSION_FLAG = 'bb_dev_authed'
 const DEV_EMAIL = 'dev@beebeeb.dev'
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+const API_URL = import.meta.env.VITE_API_URL || 'https://api.beebeeb.io'
 
 interface DevAutoLoginResponse {
   session_token: string
