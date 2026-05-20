@@ -11,7 +11,6 @@ import { MarkdownPreview } from './markdown-preview'
 import { TextPreview } from './text-preview'
 import { DocxPreview } from './docx-preview'
 import { XlsxPreview } from './xlsx-preview'
-import { HeicPreview } from './heic-preview'
 import { UnsupportedPreview } from './unsupported-preview'
 import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
@@ -226,21 +225,9 @@ function pickRenderer(
     return <UnsupportedPreview blob={blob} filename={filename} />
   }
 
-  // HEIC/HEIF — decode client-side via heic2any
+  // HEIC/HEIF — heic2any uses eval() which CSP blocks. Show download card.
   if (HEIC_IMAGE_MIMES.has(mimeType ?? '') || HEIC_IMAGE_EXTS.has(ext)) {
-    return (
-      <HeicPreview
-        blob={blob}
-        zoom={imageControls?.zoom ?? 1}
-        rotation={imageControls?.rotation ?? 0}
-        onZoomChange={imageControls?.onZoomChange ?? (() => {})}
-        onClose={imageControls?.onClose}
-        onPrev={imageControls?.onPrev}
-        onNext={imageControls?.onNext}
-        hasPrev={imageControls?.hasPrev}
-        hasNext={imageControls?.hasNext}
-      />
-    )
+    return <UnsupportedPreview blob={blob} filename={filename} />
   }
 
   if (mimeType?.startsWith('image/') || IMAGE_EXTENSIONS_SET.has(ext)) {

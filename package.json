@@ -42,7 +42,6 @@
     "beebeeb-wasm": "workspace:*",
     "comlink": "^4.4.2",
     "fflate": "^0.8.2",
-    "heic2any": "^0.0.4",
     "i18next": "^26.0.8",
     "jsqr": "^1.4.0",
     "mammoth": "^1.12.0",
