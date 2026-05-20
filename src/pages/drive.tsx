@@ -773,7 +773,9 @@ export function Drive() {
     const existingMime = existingFile.mime_type || inferMimeFromName(existingName)
     const incomingMime = incomingFile.type || inferMimeFromName(incomingFile.name)
     const sameType = !existingMime || !incomingMime || existingMime.toLowerCase() === incomingMime.toLowerCase()
-    return sameType && existingFile.size_bytes !== incomingFile.size
+    // Same name + same type → always auto-version (regardless of size).
+    // Same name + different type → show dialog (ambiguous intent).
+    return sameType
   }
 
   /**
