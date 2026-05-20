@@ -948,10 +948,6 @@ export interface AdminConfig {
     configured: boolean
     webhook_url_prefix: string | null
   }
-  turnstile: {
-    configured: boolean
-    sitekey_prefix: string | null
-  }
   /** Flat boolean: live billing is wired up (`STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET`). */
   stripe_configured?: boolean
   /** Flat boolean: webhook secret is set so signatures are verified instead of skipped. */
