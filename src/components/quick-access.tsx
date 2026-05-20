@@ -156,8 +156,15 @@ export function QuickAccess() {
             const file = await getFile(id)
             const fileKey = await getFileKey(id)
             const { name } = await decryptFileMetadata(fileKey, file.name_encrypted)
-            resolved = name
-            break
+            if (name !== 'Encrypted file') {
+              resolved = name
+              break
+            }
+            // decryptFileMetadata returned placeholder — treat as failure and retry
+            if (attempt < MAX_ATTEMPTS - 1) {
+              await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * (attempt + 1)))
+              continue
+            }
           } catch {
             if (attempt < MAX_ATTEMPTS - 1) {
               await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * (attempt + 1)))

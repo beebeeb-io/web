@@ -133,11 +133,16 @@ export async function decryptFileMetadata(
       name = meta.name ?? plain
       mimeType = meta.mime_type ?? null
     } catch {
-      // Legacy format — plain is just the filename string
       name = plain
     }
-  } catch {
-    // Decryption failed — return placeholder
+  } catch (err) {
+    if (import.meta.env.DEV) {
+      console.warn('[crypto] decryptFileMetadata failed', {
+        nameEncryptedPrefix: nameEncrypted.slice(0, 60),
+        keyLength: fileKey.length,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
   }
   return { name, mimeType }
 }
