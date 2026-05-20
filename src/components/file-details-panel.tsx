@@ -203,7 +203,9 @@ function EncryptedNoteSection({
     setSaving(true)
     try {
       if (text.trim() === '') {
-        await updateFile(fileId, { note_encrypted: null })
+        // Send empty string to clear — JSON null is deserialized as "absent"
+        // by the server's serde (Option<String>), so it would be a no-op.
+        await updateFile(fileId, { note_encrypted: '' })
         onNoteUpdated?.(fileId, null)
       } else {
         const fileKey = await getFileKey(fileId)
