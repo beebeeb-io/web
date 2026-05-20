@@ -1,29 +1,58 @@
 /**
  * Settings — Referrals
  *
- * "Give 10 GB, get 10 GB" — each user gets a unique referral link.
- * When a friend signs up via it, both accounts receive +10 GB storage.
- *
- * Referral code: derived deterministically from user_id (first 8 hex chars
- * without dashes) until the server-side /api/v1/referrals/stats endpoint
- * is deployed. The landing page at beebeeb.io/r/<code> captures the code
- * and forwards it to the signup page.
+ * "Give 10 GB, get 10 GB" — coming soon placeholder.
+ * The full referral UI is preserved below as _SettingsReferralsFull
+ * and can be re-enabled when the backend is ready.
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react'
 import { SettingsShell, SettingsHeader } from '../../components/settings-shell'
+import { Icon } from '@beebeeb/shared'
+
+// ─── Coming soon placeholder ─────────────────────────────────────────────────
+
+export function SettingsReferrals() {
+  return (
+    <SettingsShell activeSection="referrals">
+      <SettingsHeader
+        title="Referrals"
+        subtitle="Invite friends and earn extra storage."
+      />
+
+      <div className="flex flex-col items-center justify-center text-center py-20 px-6">
+        <div
+          className="w-14 h-14 mb-4 rounded-2xl flex items-center justify-center"
+          style={{
+            background: 'var(--color-amber-bg)',
+            border: '1.5px solid var(--color-line-2)',
+          }}
+        >
+          <Icon name="users" size={24} className="text-amber-deep" />
+        </div>
+
+        <h2 className="text-[15px] font-semibold text-ink mb-1.5">Coming soon</h2>
+
+        <p className="text-[13px] text-ink-3 max-w-[360px] leading-relaxed">
+          Share your personal referral link and both you and your friend will get +10 GB of
+          free encrypted storage. Track your referrals and earned storage right here.
+        </p>
+      </div>
+    </SettingsShell>
+  )
+}
+
+// ─── Original referral UI (preserved for re-enablement) ─────────────────────
+// To restore: rename _SettingsReferralsFull back to SettingsReferrals and
+// uncomment its imports.
+
+/*
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { BBButton } from '@beebeeb/shared'
 import { BBChip } from '@beebeeb/shared'
-import { Icon } from '@beebeeb/shared'
 import { useAuth } from '../../lib/auth-context'
 import { getReferralStats, listReferrals, type ReferralEntry } from '../../lib/api'
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-/** Derive a short, URL-safe referral code from a UUID-style user_id. */
 function deriveCode(userId: string): string {
-  // Take the first 8 hex chars of the UUID (before/without dashes).
-  // Deterministic, readable, hard enough to guess.
   return userId.replace(/-/g, '').slice(0, 8)
 }
 
@@ -34,8 +63,6 @@ function formatDate(iso: string): string {
     year: 'numeric',
   })
 }
-
-// ─── Share channel helpers ───────────────────────────────────────────────────
 
 function twitterShareUrl(url: string): string {
   const text = encodeURIComponent(
@@ -59,19 +86,15 @@ function mailtoUrl(url: string): string {
   return `mailto:?subject=${subject}&body=${body}`
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
-
-export function SettingsReferrals() {
+function _SettingsReferralsFull() {
   const { user } = useAuth()
 
-  // Referral code — from server if available, otherwise derived from user_id
   const [code, setCode] = useState<string | null>(null)
   const [earnedGb, setEarnedGb] = useState(0)
   const [referralCount, setReferralCount] = useState(0)
   const [referrals, setReferrals] = useState<ReferralEntry[]>([])
   const [loading, setLoading] = useState(true)
 
-  // Copy state
   const [copied, setCopied] = useState(false)
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -90,7 +113,6 @@ export function SettingsReferrals() {
         setEarnedGb(stats.earned_gb)
         setReferralCount(stats.referral_count)
       } else {
-        // Endpoint not deployed — derive code client-side
         setCode(deriveCode(user.user_id))
       }
       setReferrals(entries)
@@ -111,8 +133,6 @@ export function SettingsReferrals() {
     copyTimer.current = setTimeout(() => setCopied(false), 2500)
   }
 
-  // ── Render ──────────────────────────────────────────────────────────────────
-
   return (
     <SettingsShell activeSection="referrals">
       <SettingsHeader
@@ -121,8 +141,6 @@ export function SettingsReferrals() {
       />
 
       <div className="p-7 space-y-6">
-
-        {/* ── Hero stats ── */}
         <div className="grid grid-cols-2 gap-3">
           <div className="rounded-xl border border-line bg-paper p-5">
             <div className="text-[11px] font-semibold uppercase tracking-widest text-ink-4 mb-2">
@@ -149,7 +167,6 @@ export function SettingsReferrals() {
           </div>
         </div>
 
-        {/* ── Referral link ── */}
         <div>
           <div className="text-[11px] font-semibold uppercase tracking-widest text-ink-4 mb-2">
             Your referral link
@@ -175,7 +192,6 @@ export function SettingsReferrals() {
               </BBButton>
             </div>
 
-            {/* Share channels */}
             <div className="flex items-center gap-2 px-4 py-2.5 bg-paper-2 flex-wrap">
               <span className="text-[11.5px] text-ink-4 shrink-0">Share via:</span>
               {referralUrl && (
@@ -193,7 +209,6 @@ export function SettingsReferrals() {
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[12px] text-ink-2 border border-line rounded-md hover:border-ink-3 hover:text-ink transition-colors no-underline bg-paper"
                   >
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
                     WhatsApp
                   </a>
                   <a
@@ -202,7 +217,6 @@ export function SettingsReferrals() {
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[12px] text-ink-2 border border-line rounded-md hover:border-ink-3 hover:text-ink transition-colors no-underline bg-paper"
                   >
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.737-8.835L1.254 2.25H8.08l4.261 5.635 5.902-5.635zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
                     Post on X
                   </a>
                 </>
@@ -211,7 +225,6 @@ export function SettingsReferrals() {
           </div>
         </div>
 
-        {/* ── Referral list ── */}
         <div>
           <div className="flex items-center justify-between mb-2">
             <div className="text-[11px] font-semibold uppercase tracking-widest text-ink-4">
@@ -266,7 +279,6 @@ export function SettingsReferrals() {
           )}
         </div>
 
-        {/* ── Terms note ── */}
         <div className="text-[12px] text-ink-4 flex items-start gap-2 pt-1">
           <Icon name="shield" size={12} className="text-ink-4 shrink-0 mt-0.5" />
           <span>
@@ -278,3 +290,4 @@ export function SettingsReferrals() {
     </SettingsShell>
   )
 }
+*/
