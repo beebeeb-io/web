@@ -96,6 +96,33 @@ function formatDate(iso: string | null): string {
   })
 }
 
+/** Compute remaining time until a future ISO date as a human-readable string. */
+function formatRemainingTime(iso: string | null): string | null {
+  if (!iso) return null
+  const now = new Date()
+  const end = new Date(iso)
+  const diffMs = end.getTime() - now.getTime()
+  if (diffMs <= 0) return null
+
+  const totalDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24))
+  const months = Math.floor(totalDays / 30)
+  const days = totalDays - months * 30
+
+  if (months >= 1 && days > 0) return `${months} month${months !== 1 ? 's' : ''}, ${days} day${days !== 1 ? 's' : ''} remaining`
+  if (months >= 1) return `${months} month${months !== 1 ? 's' : ''} remaining`
+  return `${totalDays} day${totalDays !== 1 ? 's' : ''} remaining`
+}
+
+/** Get the number of remaining days until an ISO date. */
+function remainingDays(iso: string | null): number {
+  if (!iso) return 0
+  const diffMs = new Date(iso).getTime() - Date.now()
+  return diffMs > 0 ? Math.ceil(diffMs / (1000 * 60 * 60 * 24)) : 0
+}
+
+/** Plans ordered by tier, used for downgrade suggestions. */
+const orderedPaidPlans = ['basic', 'pro', 'business'] as const
+
 function invoicePdfUrl(invoice: Invoice): string | undefined {
   // TODO: Remove this fallback once the billing API settles on one invoice PDF field.
   return invoice.pdf_url ?? invoice.url
@@ -700,25 +727,49 @@ function openUpgrade(plan: string) {
             </div>
 
             {/* Next billing / cancels on */}
-            {sub?.current_period_end && effectivePlan !== 'free' && (
+            {sub?.current_period_end && effectivePlan !== 'free' && sub.status !== 'cancelling' && (
               <div className="flex items-center gap-3 p-3 bg-paper-2 border border-line rounded-lg text-xs">
                 <Icon name="clock" size={13} className="text-ink-3 shrink-0" />
                 <span className="flex-1">
-                  {sub.status === 'cancelling'
-                    ? <>Cancels <strong>{formatDate(sub.current_period_end)}</strong></>
-                    : <>Renews <strong>{formatDate(sub.current_period_end)}</strong></>
-                  }
+                  Renews <strong>{formatDate(sub.current_period_end)}</strong>
                 </span>
-                {sub.status === 'cancelling' && (
+              </div>
+            )}
+
+            {/* Cancelling state — prominent remaining period display */}
+            {sub?.current_period_end && sub.status === 'cancelling' && (
+              <div className="rounded-lg border border-amber/40 bg-amber-bg/40 p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <Icon name="clock" size={14} className="text-amber-deep shrink-0" />
+                      <span className="text-sm font-semibold text-ink">
+                        {formatRemainingTime(sub.current_period_end) ?? 'Expires soon'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-ink-2 leading-relaxed">
+                      Your {meta.label} plan is active until{' '}
+                      <strong className="font-mono">{formatDate(sub.current_period_end)}</strong>.
+                      {sub.billing_cycle === 'yearly' && remainingDays(sub.current_period_end) > 30 && (
+                        <> You have pre-paid for the full year.</>
+                      )}
+                    </p>
+                    <p className="text-xs text-ink-3">
+                      After {formatDate(sub.current_period_end)}, your account drops to Free (5 GB).
+                      {usedBytes > 5_000_000_000 && (
+                        <> Make sure to export files above the limit.</>
+                      )}
+                    </p>
+                  </div>
                   <BBButton
                     size="sm"
-                    variant="ghost"
+                    variant="amber"
                     onClick={() => void handleReactivate()}
                     disabled={reactivateLoading}
                   >
                     {reactivateLoading ? 'Reactivating...' : 'Reactivate'}
                   </BBButton>
-                )}
+                </div>
               </div>
             )}
 
@@ -766,25 +817,84 @@ function openUpgrade(plan: string) {
             {/* Cancel plan — paid plans only, not already cancelling */}
             {effectivePlan !== 'free' && sub?.status !== 'cancelling' && (
               cancelConfirm ? (
-                <div className="mt-3 p-3.5 bg-red/5 border border-red/20 rounded-lg">
-                  <div className="text-[12px] font-medium text-ink mb-1">Cancel your plan?</div>
-                  <p className="text-sm text-ink-3 mb-4">
+                <div className="mt-3 p-3.5 bg-red/5 border border-red/20 rounded-lg space-y-4">
+                  <div className="text-[12px] font-medium text-ink">Cancel your plan?</div>
+
+                  {/* Current plan + price summary */}
+                  <div className="rounded-md bg-paper-2 border border-line px-3.5 py-3 space-y-1">
+                    <div className="flex items-baseline justify-between text-xs">
+                      <span className="text-ink-2">{meta.label} plan</span>
+                      <span className="font-mono font-semibold text-ink">
+                        EUR {formatCentsAsEur(basePriceCents)} / {billingInterval}
+                      </span>
+                    </div>
+                    {sub?.billing_cycle === 'yearly' && sub.current_period_end && remainingDays(sub.current_period_end) > 0 && (
+                      <div className="text-[11px] text-ink-3">
+                        You have pre-paid EUR {meta.priceYearly.toFixed(2)} for the year.
+                        Your access continues until <strong className="font-mono">{formatDate(sub.current_period_end)}</strong>.
+                      </div>
+                    )}
+                    {sub?.billing_cycle !== 'yearly' && sub?.current_period_end && (
+                      <div className="text-[11px] text-ink-3">
+                        Your access continues until <strong className="font-mono">{formatDate(sub.current_period_end)}</strong>.
+                      </div>
+                    )}
+                  </div>
+
+                  <p className="text-xs text-ink-3">
                     Your plan{currentExtraTB > 0 ? ` and ${currentExtraTB} TB of extra storage` : ''} will
                     end on <strong>{formatDate(sub?.current_period_end ?? null)}</strong>.
                     After that, your storage drops to <strong>5 GB</strong> (Free tier).
                   </p>
+
                   {usedBytes > 5_000_000_000 && (
                     <>
-                      <p className="text-sm text-red mb-3">
-                        You're currently using {formatStorageSI(usedBytes)} — make sure to export anything you need before your plan ends.
+                      <p className="text-xs text-red">
+                        You are currently using {formatStorageSI(usedBytes)} — make sure to export anything you need before your plan ends.
                       </p>
-                      <div className="flex gap-2 mb-3">
+                      <div className="flex gap-2">
                         <BBButton size="sm" variant="ghost" onClick={() => { navigate('/?sort=size&order=desc'); setCancelConfirm(false); }}>
                           Review my files
                         </BBButton>
                       </div>
                     </>
                   )}
+
+                  {/* Downgrade suggestion — offer lower paid tiers instead of cancelling */}
+                  {(() => {
+                    const currentRank = planRank[effectivePlan] ?? 0
+                    const lowerPlans = orderedPaidPlans
+                      .filter((p) => (planRank[p] ?? 0) < currentRank && (planRank[p] ?? 0) > 0)
+                      .map((p) => ({ id: p, ...(planMeta[p] ?? planMeta.free) }))
+                    if (lowerPlans.length === 0) return null
+                    return (
+                      <div className="rounded-md border border-amber/30 bg-amber-bg/30 px-3.5 py-3">
+                        <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep mb-2">
+                          Instead of cancelling
+                        </div>
+                        <div className="space-y-2">
+                          {lowerPlans.map((lp) => (
+                            <button
+                              key={lp.id}
+                              onClick={() => { setCancelConfirm(false); openUpgrade(lp.id); }}
+                              className="w-full flex items-center justify-between rounded-md border border-line bg-paper px-3 py-2.5 text-left hover:border-amber/50 hover:bg-amber-bg/20 transition-colors group"
+                            >
+                              <div>
+                                <div className="text-xs font-semibold text-ink group-hover:text-amber-deep transition-colors">
+                                  Switch to {lp.label}
+                                </div>
+                                <div className="text-[11px] text-ink-3 font-mono mt-0.5">
+                                  EUR {lp.priceMonthly.toFixed(2)}/mo — {formatStorageSI(lp.storageGB * 1_000_000_000)}
+                                </div>
+                              </div>
+                              <Icon name="chevron-right" size={12} className="text-ink-4 group-hover:text-amber-deep transition-colors shrink-0" />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })()}
+
                   <div className="flex gap-2">
                     <BBButton size="sm" onClick={() => setCancelConfirm(false)}>
                       Keep plan
