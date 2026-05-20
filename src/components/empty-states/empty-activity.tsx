@@ -7,16 +7,16 @@ interface EmptyActivityProps {
 export function EmptyActivity({ onGoToDrive }: EmptyActivityProps) {
   return (
     <EmptyState
-      icon="clock"
-      heading="No activity yet"
-      subtitle="Your encrypted activity log will record uploads, shares, security events, and more as you use Beebeeb."
+      icon="shield"
+      heading="No security events yet"
+      subtitle="Sign-ins, device registrations, password changes, and other security events will appear here."
       cta={{
         label: 'Go to drive',
         icon: 'folder',
         onClick: onGoToDrive,
         variant: 'default',
       }}
-      hint="Activity events are encrypted per-entry. Only you can read them."
+      hint="Security events are encrypted per-entry. Only you can read them."
     />
   )
 }

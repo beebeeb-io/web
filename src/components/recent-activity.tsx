@@ -1,7 +1,7 @@
-// Compact "Recent activity" widget — shows the last few events from the
-// /api/v1/activity endpoint. Used in settings/account as a trust-building
-// surface ("we logged this and so should you"). The full log lives at
-// /activity; this is the at-a-glance digest.
+// Compact "Recent activity" widget — shows the last few security events
+// from the /api/v1/activity endpoint. Used in settings/account as a
+// trust-building surface. File operations are excluded — only sign-ins,
+// device registrations, and other security-relevant events appear here.
 
 import { useEffect, useState } from 'react'
 // Link import removed when /activity route was hidden (spec TBD)
@@ -12,22 +12,42 @@ import { SkeletonLine } from '@beebeeb/shared'
 import { listActivity } from '../lib/api'
 import type { ActivityEvent } from '../lib/api'
 
+/** Security event types. File operations are filtered out. */
+const SECURITY_EVENT_TYPES = new Set([
+  'session.created',
+  'session.revoke',
+  'device.new',
+  'password.changed',
+  'totp.enabled',
+  'totp.disabled',
+  'recovery.used',
+  'export.requested',
+  'export.downloaded',
+  'account.delete_requested',
+  'key.rotate',
+  'impersonation.start',
+  'impersonation.end',
+])
+
 interface EventMeta {
   icon: IconName
   dot: string
 }
 
 const EVENT_MAP: Record<string, EventMeta> = {
-  'file.save':      { icon: 'file',   dot: 'var(--color-green)' },
-  'file.upload':    { icon: 'upload', dot: 'var(--color-green)' },
-  'file.restore':   { icon: 'file',   dot: 'var(--color-green)' },
-  'file.delete':    { icon: 'trash',  dot: 'var(--color-ink-3)' },
-  'share.create':   { icon: 'share',  dot: 'var(--color-amber)' },
-  'share.open':     { icon: 'share',  dot: 'var(--color-amber)' },
-  'share.revoke':   { icon: 'lock',   dot: 'var(--color-ink)' },
-  'key.rotate':     { icon: 'key',    dot: 'var(--color-amber)' },
-  'device.new':     { icon: 'shield', dot: 'var(--color-green)' },
-  'session.revoke': { icon: 'lock',   dot: 'var(--color-ink)' },
+  'session.created':          { icon: 'shield',   dot: 'var(--color-amber)' },
+  'session.revoke':           { icon: 'lock',     dot: 'var(--color-ink)' },
+  'device.new':               { icon: 'shield',   dot: 'var(--color-amber)' },
+  'password.changed':         { icon: 'key',      dot: 'var(--color-amber)' },
+  'totp.enabled':             { icon: 'shield',   dot: 'var(--color-green)' },
+  'totp.disabled':            { icon: 'shield',   dot: 'var(--color-red)' },
+  'recovery.used':            { icon: 'key',      dot: 'var(--color-red)' },
+  'export.requested':         { icon: 'download', dot: 'var(--color-amber)' },
+  'export.downloaded':        { icon: 'download', dot: 'var(--color-ink-3)' },
+  'account.delete_requested': { icon: 'trash',    dot: 'var(--color-red)' },
+  'key.rotate':               { icon: 'key',      dot: 'var(--color-amber)' },
+  'impersonation.start':      { icon: 'eye',      dot: 'var(--color-red)' },
+  'impersonation.end':        { icon: 'eye-off',  dot: 'var(--color-ink-3)' },
 }
 
 const DEFAULT_META: EventMeta = { icon: 'clock', dot: 'var(--color-ink-3)' }
@@ -61,7 +81,8 @@ export function RecentActivity({ limit = 5 }: RecentActivityProps) {
     listActivity(1)
       .then((res) => {
         if (cancelled) return
-        setEvents(res.events.slice(0, limit))
+        const securityOnly = res.events.filter(e => SECURITY_EVENT_TYPES.has(e.type))
+        setEvents(securityOnly.slice(0, limit))
       })
       .catch((e: unknown) => {
         if (cancelled) return
@@ -74,7 +95,7 @@ export function RecentActivity({ limit = 5 }: RecentActivityProps) {
     <div className="rounded-lg border border-line bg-paper">
       <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
         <Icon name="clock" size={12} className="text-ink-3" />
-        <span className="text-[12px] font-medium text-ink-2">Recent activity</span>
+        <span className="text-[12px] font-medium text-ink-2">Recent security activity</span>
         {/* "See all" link to /activity hidden until the Activity page is
             routed and shows real data — it currently resolves to NotFound.
             Hidden until Activity (spec TBD) ships.
@@ -107,7 +128,7 @@ export function RecentActivity({ limit = 5 }: RecentActivityProps) {
 
       {events && events.length === 0 && (
         <div className="px-4 py-4 text-[12px] text-ink-3">
-          No activity yet — events will land here as you and your devices use Beebeeb.
+          No security events yet — sign-ins, device registrations, and security changes will appear here.
         </div>
       )}
 
