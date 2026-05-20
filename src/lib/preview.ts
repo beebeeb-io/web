@@ -1,8 +1,16 @@
 const PREVIEWABLE_EXTENSIONS = new Set([
-  'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif', 'heic', 'tiff', 'tif',
-  'mp4', 'mov', 'webm', 'mkv',
+  // Images (native browser + HEIC via heic2any)
+  'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif', 'heic', 'heif', 'tiff', 'tif',
+  // Camera RAW (download-only preview card)
+  'dng', 'cr2', 'cr3', 'nef', 'arw', 'orf', 'rw2', 'raf',
+  // Video (including HEVC)
+  'mp4', 'mov', 'webm', 'mkv', 'hevc',
+  // Text / code
   'txt', 'md', 'csv', 'json', 'xml', 'html', 'css', 'js', 'ts', 'py', 'rs', 'go', 'sh',
-  'pdf',
+  // Documents
+  'pdf', 'docx', 'xlsx',
+  // Presentations (download-only preview card)
+  'pptx', 'ppt', 'odp', 'key',
 ])
 
 export function isPreviewable(mimeType: string | null | undefined, fileName?: string | null): boolean {
@@ -13,7 +21,9 @@ export function isPreviewable(mimeType: string | null | undefined, fileName?: st
       mimeType.startsWith('text/') ||
       mimeType === 'application/pdf' ||
       mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-      mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+      mimeType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation' ||
+      mimeType === 'application/vnd.ms-powerpoint'
     )
   }
   if (fileName) {

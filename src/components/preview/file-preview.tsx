@@ -11,6 +11,8 @@ import { MarkdownPreview } from './markdown-preview'
 import { TextPreview } from './text-preview'
 import { DocxPreview } from './docx-preview'
 import { XlsxPreview } from './xlsx-preview'
+import { HeicPreview } from './heic-preview'
+import { UnsupportedPreview } from './unsupported-preview'
 import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useKeys } from '../../lib/key-context'
@@ -69,7 +71,7 @@ const IMAGE_EXTENSIONS_SET = new Set([
   'jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'bmp', 'tiff', 'tif', 'svg', 'ico',
 ])
 const VIDEO_EXTENSIONS_SET = new Set([
-  'mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'ogv',
+  'mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'ogv', 'hevc',
 ])
 
 /** Extensions that should render as plain text (no syntax coloring) */
@@ -147,16 +149,36 @@ function getKindLabel(mimeType: string | null | undefined, filename: string): st
   return mimeType ?? (ext.toUpperCase() || 'File')
 }
 
-// Image formats that no current desktop browser decodes natively.
-// These fall through to the "preview not available" fallback so the user
-// gets a download prompt instead of a silently broken <img>.
-const UNSUPPORTED_IMAGE_MIMES = new Set([
+// HEIC/HEIF — decoded client-side via heic2any (lazy-loaded).
+// These are routed to HeicPreview instead of the native <img> tag.
+const HEIC_IMAGE_MIMES = new Set([
   'image/heic',
   'image/heif',
   'image/heic-sequence',
   'image/heif-sequence',
 ])
-const UNSUPPORTED_IMAGE_EXTS = new Set(['heic', 'heif'])
+const HEIC_IMAGE_EXTS = new Set(['heic', 'heif'])
+
+// Camera RAW formats — no in-browser decoder exists.
+// Show the "unsupported preview" card with download button.
+const RAW_IMAGE_EXTS = new Set(['dng', 'cr2', 'cr3', 'nef', 'arw', 'orf', 'rw2', 'raf'])
+const RAW_IMAGE_MIMES = new Set([
+  'image/x-adobe-dng',
+  'image/x-canon-cr2',
+  'image/x-canon-cr3',
+  'image/x-nikon-nef',
+  'image/x-sony-arw',
+  'image/x-olympus-orf',
+  'image/x-panasonic-rw2',
+  'image/x-fuji-raf',
+])
+
+// PPTX — no reliable in-browser renderer exists.
+const PPTX_MIMES = new Set([
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/vnd.ms-powerpoint',
+])
+const PPTX_EXTS = new Set(['pptx', 'ppt', 'odp', 'key'])
 
 interface ImageControlProps {
   zoom: number
@@ -194,13 +216,34 @@ function pickRenderer(
   ) {
     return <XlsxPreview blob={blob} filename={filename} />
   }
-  // Unsupported office types (.pptx, .odt, etc.) fall through to the
-  // "preview not available" state and show a prominent download button.
+  // Presentation formats — show download card
+  if (PPTX_MIMES.has(mimeType ?? '') || PPTX_EXTS.has(ext)) {
+    return <UnsupportedPreview blob={blob} filename={filename} />
+  }
+
+  // Camera RAW — no in-browser decoder, show download card
+  if (RAW_IMAGE_MIMES.has(mimeType ?? '') || RAW_IMAGE_EXTS.has(ext)) {
+    return <UnsupportedPreview blob={blob} filename={filename} />
+  }
+
+  // HEIC/HEIF — decode client-side via heic2any
+  if (HEIC_IMAGE_MIMES.has(mimeType ?? '') || HEIC_IMAGE_EXTS.has(ext)) {
+    return (
+      <HeicPreview
+        blob={blob}
+        zoom={imageControls?.zoom ?? 1}
+        rotation={imageControls?.rotation ?? 0}
+        onZoomChange={imageControls?.onZoomChange ?? (() => {})}
+        onClose={imageControls?.onClose}
+        onPrev={imageControls?.onPrev}
+        onNext={imageControls?.onNext}
+        hasPrev={imageControls?.hasPrev}
+        hasNext={imageControls?.hasNext}
+      />
+    )
+  }
 
   if (mimeType?.startsWith('image/') || IMAGE_EXTENSIONS_SET.has(ext)) {
-    if (UNSUPPORTED_IMAGE_MIMES.has(mimeType ?? '') || UNSUPPORTED_IMAGE_EXTS.has(ext)) {
-      return null
-    }
     return (
       <ImagePreview
         blob={blob}
