@@ -33,10 +33,10 @@ RUN sed -i 's|../../repos/core/beebeeb-wasm/pkg|/wasm-pkg|' package.json && \
 ARG VITE_API_URL=https://api.beebeeb.io
 ENV VITE_API_URL=$VITE_API_URL
 
-# Copy PDF.js worker to public/ so it's served at /pdf.worker.min.mjs.
-# The `new URL('pdfjs-dist/...', import.meta.url)` pattern doesn't survive
-# Vite's production build with bun's hoisted module layout.
-RUN find node_modules -name "pdf.worker.min.mjs" -path "*/pdfjs-dist/build/*" -exec cp {} public/pdf.worker.min.mjs \;
+# Copy PDF.js worker to public/ as .js so nginx serves it with the correct
+# MIME type. Nginx doesn't know .mjs → application/javascript, and with
+# X-Content-Type-Options: nosniff browsers refuse to execute it as a module.
+RUN find node_modules -name "pdf.worker.min.mjs" -path "*/pdfjs-dist/build/*" -exec cp {} public/pdf.worker.min.js \;
 
 # Skip the `tsc --noEmit` step that ships in package.json's `build` script.
 # Type-checking belongs in CI, not in the production image — and tsc here
