@@ -86,6 +86,7 @@ import type {
 } from '@beebeeb/shared'
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.beebeeb.io'
+const STATUS_URL = import.meta.env.VITE_STATUS_URL || 'https://status.beebeeb.io'
 
 setApiUrl(API_URL)
 registerOnTokenCleared(() => {
@@ -2538,4 +2539,40 @@ export async function uploadToFileRequest(
     )
   }
   return res.json() as Promise<{ file_id: string; message: string }>
+}
+
+// ─── Incident types & status API ──────────────────
+
+export interface IncidentUpdate {
+  id: string
+  message: string
+  status: string | null
+  created_at: string
+}
+
+export interface ActiveIncident {
+  id: string
+  title: string
+  message: string
+  status: string
+  severity: string
+  started_at: string
+  published_at?: string | null
+  resolved_at?: string | null
+  updates: IncidentUpdate[]
+}
+
+/**
+ * Fetch active incidents from the public status API.
+ * No auth needed — works on login page and unauthenticated contexts.
+ * Uses a direct fetch to the status service (different origin from the main API).
+ */
+export async function getActiveIncidents(): Promise<ActiveIncident[]> {
+  const res = await fetch(`${STATUS_URL}/api/v1/status/incidents`)
+  if (!res.ok) return []
+  const body = (await res.json()) as { incidents: ActiveIncident[] }
+  // Filter to only non-resolved, non-draft incidents
+  return (body.incidents ?? []).filter(
+    (i) => i.status !== 'resolved' && i.status !== 'completed' && i.status !== 'draft',
+  )
 }
