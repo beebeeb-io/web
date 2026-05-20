@@ -157,20 +157,58 @@ export function Trash() {
       return
     }
     let cancelled = false
+
+    // Decrypt a single file's name, handling both new JSON metadata format
+    // and legacy bare-string format. Mirrors the reference implementation in
+    // file-list.tsx.
+    async function decryptOne(file: DriveFile): Promise<string> {
+      // Legacy format (iOS before 930c61a): plain-text name, not JSON-encrypted.
+      if (!file.name_encrypted.startsWith('{')) {
+        return file.name_encrypted
+      }
+      const fileKey = await getFileKey(file.id)
+      const { nonce, ciphertext } = parseEncryptedBlob(file.name_encrypted)
+      const plain = await decryptFilename(fileKey, nonce, ciphertext)
+      try {
+        const meta = JSON.parse(plain) as { name?: string }
+        if (meta && typeof meta === 'object' && typeof meta.name === 'string' && meta.name.trim()) {
+          return meta.name.trim()
+        }
+      } catch {
+        // Legacy format — `plain` is the bare filename.
+      }
+      return plain
+    }
+
     async function decryptAll() {
       const names: Record<string, string> = {}
+      // Retry transient failures (WASM init race, key cache warm-up).
+      const MAX_ATTEMPTS = 4
+      const RETRY_DELAY_MS = 300
       for (const file of files) {
         if (cancelled) return
-        try {
-          const fileKey = await getFileKey(file.id)
-          const { nonce, ciphertext } = parseEncryptedBlob(file.name_encrypted)
-          names[file.id] = await decryptFilename(fileKey, nonce, ciphertext)
-        } catch {
-          // Decryption failed — never fall back to file.name_encrypted, which
-          // is `{"nonce":"…","ciphertext":"…"}` JSON for ZK files and would
-          // expose raw ciphertext to the user. The displayName() helper below
-          // already substitutes "Encrypted file" when a name is missing.
+        let lastErr: unknown
+        let resolved: string | null = null
+        for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+          try {
+            resolved = await decryptOne(file)
+            break
+          } catch (err) {
+            lastErr = err
+            if (attempt < MAX_ATTEMPTS - 1) {
+              await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * (attempt + 1)))
+            }
+          }
+          if (cancelled) return
+        }
+        if (resolved !== null) {
+          names[file.id] = resolved
+        } else {
           names[file.id] = 'Encrypted file'
+          console.error('[trash] decryption failed', {
+            fileId: file.id,
+            error: lastErr instanceof Error ? lastErr.message : String(lastErr),
+          })
         }
       }
       if (!cancelled) setDecryptedNames(names)

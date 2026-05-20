@@ -61,7 +61,10 @@ export function Recent() {
   )
 
   function displayName(file: DriveFile): string {
-    return decryptedNames[file.id] ?? file.name_encrypted
+    const cached = decryptedNames[file.id]
+    if (cached === undefined) return 'Encrypted file' // pending — never expose raw name_encrypted
+    if (cached === null) return 'Encrypted file'      // decryption failed
+    return cached                                     // success
   }
 
   async function handleFileDownload(file: DriveFile) {

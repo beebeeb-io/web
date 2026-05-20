@@ -144,15 +144,27 @@ export function QuickAccess() {
     let cancelled = false
     async function loadNames() {
       const results: PinnedFolder[] = []
+      // Retry transient failures (WASM init race, key cache warm-up for
+      // iOS-uploaded backup folders). Mirrors the retry pattern in file-list.tsx.
+      const MAX_ATTEMPTS = 4
+      const RETRY_DELAY_MS = 300
       for (const id of pinnedIds) {
-        try {
-          const file = await getFile(id)
-          const fileKey = await getFileKey(id)
-          const { name } = await decryptFileMetadata(fileKey, file.name_encrypted)
-          results.push({ id, name })
-        } catch {
-          results.push({ id, name: 'Folder' })
+        let resolved: string | null = null
+        for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+          if (cancelled) return
+          try {
+            const file = await getFile(id)
+            const fileKey = await getFileKey(id)
+            const { name } = await decryptFileMetadata(fileKey, file.name_encrypted)
+            resolved = name
+            break
+          } catch {
+            if (attempt < MAX_ATTEMPTS - 1) {
+              await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * (attempt + 1)))
+            }
+          }
         }
+        results.push({ id, name: resolved ?? 'Folder' })
       }
       if (!cancelled) setFolders(results)
     }
