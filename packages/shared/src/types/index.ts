@@ -1164,7 +1164,56 @@ export interface MyActivityResponse {
   events: ActivityEvent[]
 }
 
+/** Per-channel toggle for a single notification type. */
+export interface NotificationChannel {
+  in_app: boolean
+  email: boolean
+}
+
+/**
+ * Expanded notification preferences — each type has per-channel toggles.
+ *
+ * Security types (new_device_login, password_changed, two_fa_changes,
+ * recovery_phrase_used) always have email=true enforced client-side.
+ */
 export interface NotificationPreferences {
+  // Security
+  new_device_login: NotificationChannel
+  password_changed: NotificationChannel
+  two_fa_changes: NotificationChannel
+  recovery_phrase_used: NotificationChannel
+  // Sharing
+  share_received: NotificationChannel
+  share_link_opened: NotificationChannel
+  share_access_revoked: NotificationChannel
+  // Storage
+  storage_warning: NotificationChannel
+  storage_critical: NotificationChannel
+  storage_full: NotificationChannel
+  // Backup
+  backup_complete: NotificationChannel
+  backup_failed: NotificationChannel
+  // Account
+  payment_failed: NotificationChannel
+  plan_expiring: NotificationChannel
+  data_export_ready: NotificationChannel
+}
+
+/** Keys that belong to the security section — email is always on. */
+export type SecurityNotificationType =
+  | 'new_device_login'
+  | 'password_changed'
+  | 'two_fa_changes'
+  | 'recovery_phrase_used'
+
+/** All valid notification type keys. */
+export type NotificationType = keyof NotificationPreferences
+
+/**
+ * Legacy flat boolean preferences (pre-expansion).
+ * Used only for migration on first load.
+ */
+export interface LegacyNotificationPreferences {
   share_received: boolean
   storage_warning: boolean
   new_device_login: boolean
