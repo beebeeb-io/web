@@ -2,40 +2,96 @@ import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { SettingsShell, SettingsHeader } from '../../components/settings-shell'
 import { Icon } from '@beebeeb/shared'
+import type { IconName } from '@beebeeb/shared'
 import { getMyActivity, ApiError, type ActivityEvent } from '../../lib/api'
 
 const PAGE_SIZE = 50
 
-const FILTER_OPTIONS = [
-  { label: 'All', value: '' },
-  { label: 'Uploaded', value: 'file_uploaded' },
-  { label: 'Deleted', value: 'file_deleted' },
-  { label: 'Shared', value: 'share_created' },
-  { label: 'Downloaded', value: 'file_downloaded' },
-]
+/** Security event types shown on this page. File operations are excluded. */
+const SECURITY_EVENT_TYPES = new Set([
+  'session.created',
+  'session.revoke',
+  'device.new',
+  'password.changed',
+  'totp.enabled',
+  'totp.disabled',
+  'recovery.used',
+  'export.requested',
+  'export.downloaded',
+  'account.delete_requested',
+  'key.rotate',
+  'impersonation.start',
+  'impersonation.end',
+  // Legacy underscore-style event names from older server versions
+  'session_created',
+  'session_revoked',
+  'device_new',
+  'password_changed',
+  'totp_enabled',
+  'totp_disabled',
+  'recovery_used',
+  'export_requested',
+  'export_downloaded',
+  'account_delete_requested',
+  'key_rotated',
+])
+
+/** Events that warrant visual warning (amber highlight). */
+const ALARMING_EVENTS = new Set([
+  'session.created', 'session_created',
+  'device.new', 'device_new',
+  'recovery.used', 'recovery_used',
+  'impersonation.start',
+  'account.delete_requested', 'account_delete_requested',
+])
 
 type ActionMeta = {
   label: string
-  icon: 'upload' | 'trash' | 'link' | 'download' | 'folder' | 'clock'
+  icon: IconName
   badgeClass: string
 }
 
 function actionMeta(type: string): ActionMeta {
   switch (type) {
-    case 'file_uploaded':
-      return { label: 'Uploaded', icon: 'upload', badgeClass: 'bg-green/10 text-green' }
-    case 'file_deleted':
-      return { label: 'Deleted', icon: 'trash', badgeClass: 'bg-red/10 text-red' }
-    case 'share_created':
-      return { label: 'Shared', icon: 'link', badgeClass: 'bg-amber-bg text-amber-deep' }
-    case 'share_revoked':
-      return { label: 'Unshared', icon: 'link', badgeClass: 'bg-paper-2 text-ink-2 border border-line' }
-    case 'file_downloaded':
-      return { label: 'Downloaded', icon: 'download', badgeClass: 'bg-paper-3 text-ink-2 border border-line' }
-    case 'folder_created':
-      return { label: 'Folder', icon: 'folder', badgeClass: 'bg-paper-2 text-ink-2 border border-line' }
+    case 'session.created':
+    case 'session_created':
+      return { label: 'Sign-in', icon: 'shield', badgeClass: 'bg-amber-bg text-amber-deep' }
+    case 'session.revoke':
+    case 'session_revoked':
+      return { label: 'Session revoked', icon: 'lock', badgeClass: 'bg-paper-2 text-ink-2 border border-line' }
+    case 'device.new':
+    case 'device_new':
+      return { label: 'New device', icon: 'shield', badgeClass: 'bg-amber-bg text-amber-deep' }
+    case 'password.changed':
+    case 'password_changed':
+      return { label: 'Password changed', icon: 'key', badgeClass: 'bg-amber-bg text-amber-deep' }
+    case 'totp.enabled':
+    case 'totp_enabled':
+      return { label: '2FA enabled', icon: 'shield', badgeClass: 'bg-green/10 text-green' }
+    case 'totp.disabled':
+    case 'totp_disabled':
+      return { label: '2FA disabled', icon: 'shield', badgeClass: 'bg-red/10 text-red' }
+    case 'recovery.used':
+    case 'recovery_used':
+      return { label: 'Recovery used', icon: 'key', badgeClass: 'bg-red/10 text-red' }
+    case 'export.requested':
+    case 'export_requested':
+      return { label: 'Export requested', icon: 'download', badgeClass: 'bg-amber-bg text-amber-deep' }
+    case 'export.downloaded':
+    case 'export_downloaded':
+      return { label: 'Export downloaded', icon: 'download', badgeClass: 'bg-paper-2 text-ink-2 border border-line' }
+    case 'account.delete_requested':
+    case 'account_delete_requested':
+      return { label: 'Delete requested', icon: 'trash', badgeClass: 'bg-red/10 text-red' }
+    case 'key.rotate':
+    case 'key_rotated':
+      return { label: 'Key rotation', icon: 'key', badgeClass: 'bg-amber-bg text-amber-deep' }
+    case 'impersonation.start':
+      return { label: 'Admin access', icon: 'eye', badgeClass: 'bg-red/10 text-red' }
+    case 'impersonation.end':
+      return { label: 'Admin left', icon: 'eye-off', badgeClass: 'bg-paper-2 text-ink-2 border border-line' }
     default:
-      return { label: type.replace(/_/g, ' '), icon: 'clock', badgeClass: 'bg-paper-2 text-ink-2 border border-line' }
+      return { label: type.replace(/[._]/g, ' '), icon: 'clock', badgeClass: 'bg-paper-2 text-ink-2 border border-line' }
   }
 }
 
@@ -60,9 +116,8 @@ export function SettingsActivity() {
   const [events, setEvents] = useState<ActivityEvent[]>([])
   const [hasMore, setHasMore] = useState(false)
   const [offset, setOffset] = useState(0)
-  const [typeFilter, setTypeFilter] = useState('')
 
-  const load = useCallback(async (newFilter: string, newOffset: number, append: boolean) => {
+  const load = useCallback(async (newOffset: number, append: boolean) => {
     if (newOffset === 0) setLoading(true)
     else setLoadingMore(true)
 
@@ -70,10 +125,11 @@ export function SettingsActivity() {
       const res = await getMyActivity({
         limit: PAGE_SIZE,
         offset: newOffset,
-        type: newFilter || undefined,
       })
       setOptedIn(res.opted_in)
-      setEvents(prev => append ? [...prev, ...res.events] : res.events)
+      // Filter to security events only — file operations are excluded
+      const securityEvents = res.events.filter(e => SECURITY_EVENT_TYPES.has(e.type))
+      setEvents(prev => append ? [...prev, ...securityEvents] : securityEvents)
       setHasMore(res.events.length === PAGE_SIZE)
       setOffset(newOffset + res.events.length)
     } catch (err) {
@@ -87,26 +143,18 @@ export function SettingsActivity() {
   }, [])
 
   useEffect(() => {
-    load(typeFilter, 0, false)
+    load(0, false)
   }, [])
 
-  function handleFilterChange(value: string) {
-    setTypeFilter(value)
-    setEvents([])
-    setOffset(0)
-    setHasMore(false)
-    load(value, 0, false)
-  }
-
   function handleLoadMore() {
-    load(typeFilter, offset, true)
+    load(offset, true)
   }
 
   return (
     <SettingsShell activeSection="activity">
       <SettingsHeader
-        title="Activity"
-        subtitle="A timeline of file events on your account. Encrypted file contents are never logged."
+        title="Security activity"
+        subtitle="Sign-ins, device registrations, and security changes on your account."
       />
 
       <div className="px-7 py-6">
@@ -137,41 +185,32 @@ export function SettingsActivity() {
           </div>
         ) : (
           <div className="max-w-[860px]">
-            <div className="mb-3 flex items-center gap-2">
-              <label className="text-[12px] text-ink-3">Filter:</label>
-              <select
-                value={typeFilter}
-                onChange={e => handleFilterChange(e.target.value)}
-                className="text-[12.5px] text-ink-2 bg-paper border border-line rounded-[4px] px-2 py-1 focus:outline-none focus:border-ink-3"
-              >
-                {FILTER_OPTIONS.map(opt => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
-            </div>
-
             <div className="border border-line rounded-md overflow-hidden">
               <table className="w-full text-[12.5px]">
                 <thead className="bg-paper-2 border-b border-line">
                   <tr className="text-left text-[11px] text-ink-3 uppercase tracking-wider">
                     <th className="px-3 py-2 font-medium">Time</th>
-                    <th className="px-3 py-2 font-medium">Action</th>
-                    <th className="px-3 py-2 font-medium">File</th>
+                    <th className="px-3 py-2 font-medium">Event</th>
                     <th className="px-3 py-2 font-medium">Details</th>
+                    <th className="px-3 py-2 font-medium">Location</th>
                   </tr>
                 </thead>
                 <tbody>
                   {events.length === 0 ? (
                     <tr>
                       <td colSpan={4} className="px-3 py-6 text-center text-ink-3">
-                        No activity recorded yet.
+                        No security events recorded yet.
                       </td>
                     </tr>
                   ) : (
                     events.map(ev => {
                       const meta = actionMeta(ev.type)
+                      const alarming = ALARMING_EVENTS.has(ev.type)
                       return (
-                        <tr key={ev.id} className="border-b border-line last:border-b-0">
+                        <tr key={ev.id} className={[
+                          'border-b border-line last:border-b-0',
+                          alarming ? 'bg-amber-bg/20' : '',
+                        ].join(' ')}>
                           <td className="px-3 py-2 font-mono text-[11.5px] text-ink-3 whitespace-nowrap">
                             {relativeTime(ev.created_at)}
                           </td>
@@ -181,11 +220,16 @@ export function SettingsActivity() {
                               {meta.label}
                             </span>
                           </td>
-                          <td className="px-3 py-2 font-mono text-[12px] text-ink-2 max-w-[240px] truncate">
-                            {ev.subject ?? '—'}
+                          <td className="px-3 py-2 text-ink-2 max-w-[260px] truncate">
+                            {ev.subject && <span className="font-mono text-[12px]">{ev.subject}</span>}
+                            {ev.subject && ev.details && <span className="text-ink-4"> · </span>}
+                            {ev.details && <span className="text-ink-3">{ev.details}</span>}
+                            {!ev.subject && !ev.details && '—'}
                           </td>
-                          <td className="px-3 py-2 text-ink-3 max-w-[220px] truncate">
-                            {ev.details ?? ev.where ?? '—'}
+                          <td className="px-3 py-2 text-ink-3 max-w-[180px] truncate">
+                            {ev.where ? (
+                              <span className="text-amber-deep">{ev.where}</span>
+                            ) : '—'}
                           </td>
                         </tr>
                       )
