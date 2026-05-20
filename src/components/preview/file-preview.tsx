@@ -12,6 +12,7 @@ import { TextPreview } from './text-preview'
 import { DocxPreview } from './docx-preview'
 import { XlsxPreview } from './xlsx-preview'
 import { UnsupportedPreview } from './unsupported-preview'
+import { RawPreview } from './raw-preview'
 import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useKeys } from '../../lib/key-context'
@@ -220,14 +221,40 @@ function pickRenderer(
     return <UnsupportedPreview blob={blob} filename={filename} />
   }
 
-  // Camera RAW — no in-browser decoder, show download card
+  // Camera RAW — extract embedded JPEG preview, fall back to download card
   if (RAW_IMAGE_MIMES.has(mimeType ?? '') || RAW_IMAGE_EXTS.has(ext)) {
-    return <UnsupportedPreview blob={blob} filename={filename} />
+    return (
+      <RawPreview
+        blob={blob}
+        filename={filename}
+        zoom={imageControls?.zoom ?? 1}
+        rotation={imageControls?.rotation ?? 0}
+        onZoomChange={imageControls?.onZoomChange ?? (() => {})}
+        onClose={imageControls?.onClose}
+        onPrev={imageControls?.onPrev}
+        onNext={imageControls?.onNext}
+        hasPrev={imageControls?.hasPrev}
+        hasNext={imageControls?.hasNext}
+      />
+    )
   }
 
-  // HEIC/HEIF — heic2any uses eval() which CSP blocks. Show download card.
+  // HEIC/HEIF — extract embedded JPEG preview via exifr, fall back to download
   if (HEIC_IMAGE_MIMES.has(mimeType ?? '') || HEIC_IMAGE_EXTS.has(ext)) {
-    return <UnsupportedPreview blob={blob} filename={filename} />
+    return (
+      <RawPreview
+        blob={blob}
+        filename={filename}
+        zoom={imageControls?.zoom ?? 1}
+        rotation={imageControls?.rotation ?? 0}
+        onZoomChange={imageControls?.onZoomChange ?? (() => {})}
+        onClose={imageControls?.onClose}
+        onPrev={imageControls?.onPrev}
+        onNext={imageControls?.onNext}
+        hasPrev={imageControls?.hasPrev}
+        hasNext={imageControls?.hasNext}
+      />
+    )
   }
 
   if (mimeType?.startsWith('image/') || IMAGE_EXTENSIONS_SET.has(ext)) {
