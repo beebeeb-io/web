@@ -30,6 +30,8 @@ import {
   type StorageAddonPreview,
 } from '../lib/api'
 import { useDriveData } from '../lib/drive-data-context'
+import { useKeys } from '../lib/key-context'
+import { decryptFileMetadata } from '../lib/crypto'
 import { formatStorageSI } from '../lib/format'
 import { StorageBreakdown } from '../components/storage-breakdown'
 import {
@@ -204,11 +206,18 @@ export function Billing() {
   const { showToast } = useToast()
   const navigate = useNavigate()
   const { usage: contextUsage, planDetails: contextPlanDetails, refreshPlanDetails } = useDriveData()
+  const { getFileKey, isUnlocked } = useKeys()
   // sub comes from context; re-synced after cancel/reactivate via loadData
   const [sub, setSub] = useState<Subscription | null>(contextPlanDetails.subscription)
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [plans, setPlans] = useState<Plan[] | null>(null)
+  /** Raw file list from the server (encrypted MIME types). */
+  const [rawFiles, setRawFiles] = useState<DriveFile[] | null>(null)
+  /** Files with decrypted MIME types patched in, for StorageBreakdown. */
   const [files, setFiles] = useState<DriveFile[] | null>(null)
+  /** Map of file ID → decrypted filename. Used by StorageBreakdown to
+   *  categorize files by extension (Images / Videos / Documents / Other). */
+  const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [upgradeOpen, setUpgradeOpen] = useState(false)
@@ -254,6 +263,7 @@ export function Billing() {
       setSub(subData)
       setInvoices(invData ?? [])
       setPlans(plansData)
+      setRawFiles(filesData)
       setFiles(filesData)
       if (addonsData) {
         setAddonState(addonsData)
@@ -291,6 +301,46 @@ export function Billing() {
   useEffect(() => {
     void loadData()
   }, [loadData])
+
+  // Decrypt file metadata so StorageBreakdown can categorize by extension + MIME type.
+  // The server returns encrypted MIME types (zero-knowledge) so we must decrypt client-side.
+  // Depends on rawFiles (the untouched server response) to avoid re-triggering when we
+  // patch files with decrypted MIME types.
+  useEffect(() => {
+    if (!rawFiles || rawFiles.length === 0 || !isUnlocked) return
+    let cancelled = false
+
+    async function decryptAll() {
+      const names: Record<string, string> = {}
+      const updatedFiles = [...rawFiles!]
+
+      for (let i = 0; i < updatedFiles.length; i++) {
+        if (cancelled) return
+        const f = updatedFiles[i]
+        if (f.is_folder) continue
+        try {
+          const fileKey = await getFileKey(f.id)
+          const { name, mimeType } = await decryptFileMetadata(fileKey, f.name_encrypted)
+          names[f.id] = name
+          // Patch the file's mime_type with the decrypted value so
+          // StorageBreakdown's MIME-based categorization also works.
+          if (mimeType) {
+            updatedFiles[i] = { ...f, mime_type: mimeType }
+          }
+        } catch {
+          // Decryption failed — file stays as "Other", no crash.
+        }
+      }
+
+      if (!cancelled) {
+        setDecryptedNames(names)
+        setFiles(updatedFiles)
+      }
+    }
+
+    void decryptAll()
+    return () => { cancelled = true }
+  }, [rawFiles, isUnlocked, getFileKey])
 
   // Auto-dismiss the upgraded celebration card after 10 s
   useEffect(() => {
@@ -965,6 +1015,7 @@ function openUpgrade(plan: string) {
               quotaBytes={totalStorageBytes}
               planName={effectivePlan}
               files={files ?? undefined}
+              decryptedNames={decryptedNames}
             />
           </div>
         )}
