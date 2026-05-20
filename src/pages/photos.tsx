@@ -26,7 +26,7 @@ const IMAGE_EXTENSIONS = new Set([
 ])
 
 const VIDEO_EXTENSIONS = new Set([
-  'mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v',
+  'mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', '3gp', '3g2',
 ])
 
 const MEDIA_MIME_PREFIXES = ['image/', 'video/']
@@ -541,12 +541,30 @@ export function Photos() {
                     >
                       {!thumbUrl && (
                         <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 p-1.5">
-                          <Icon name={photo.isVideo ? 'file' : 'image'} size={20} className="text-ink/30" />
+                          <Icon name={photo.isVideo ? 'play' : 'image'} size={20} className="text-ink/30" />
                           <span
                             className="text-[8px] leading-tight text-ink/40 font-medium text-center line-clamp-2 max-w-full break-all"
                           >
                             {photo.name}
                           </span>
+                        </div>
+                      )}
+
+                      {/* Video play icon overlay — visible on all videos regardless of thumbnail */}
+                      {photo.isVideo && (
+                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                          <div
+                            className="flex items-center justify-center"
+                            style={{
+                              width: 32,
+                              height: 32,
+                              borderRadius: 999,
+                              background: 'rgba(0,0,0,0.50)',
+                              boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
+                            }}
+                          >
+                            <Icon name="play" size={14} className="text-white ml-0.5" />
+                          </div>
                         </div>
                       )}
 
@@ -568,8 +586,8 @@ export function Photos() {
                         </div>
                       )}
 
-                      {/* Video duration badge */}
-                      {photo.isVideo && photo.duration && (
+                      {/* Video badge — shows duration when available, otherwise "Video" label */}
+                      {photo.isVideo && (
                         <div
                           className="absolute left-1 bottom-1 flex items-center gap-1 px-1.5 py-0.5 rounded"
                           style={{
@@ -579,7 +597,7 @@ export function Photos() {
                             fontFamily: 'var(--font-mono)',
                           }}
                         >
-                          {photo.duration}
+                          {photo.duration ?? 'Video'}
                         </div>
                       )}
 
