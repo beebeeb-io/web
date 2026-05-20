@@ -11,7 +11,6 @@ import { useKeys } from '../lib/key-context'
 import { devAutoAuth } from '../lib/dev-auth'
 import { startPasskeyLogin, finishPasskeyLogin, setToken, hexToBytes, opaqueLoginStart as apiOpaqueLoginStart, opaqueLoginFinish as apiOpaqueLoginFinish, serverOptsToGetOptions, credentialToAuthenticationJSON, getVaultKeyEscrow } from '../lib/api'
 import { opaqueLoginStart, opaqueLoginFinish, toBase64, fromBase64 } from '../lib/crypto'
-import { getPostLoginPath } from '../lib/export-intent'
 import { prfExtensionInputs, extractPrfOutput, getVaultWrapKey, decryptVaultBlob } from '../lib/passkey-vault'
 
 export function Login() {
@@ -33,7 +32,7 @@ export function Login() {
   const showPasskeyLogin = typeof window !== 'undefined' && !!window.PublicKeyCredential
 
   const navigateAfterLogin = useCallback(() => {
-    navigate(getPostLoginPath())
+    navigate('/')
   }, [navigate])
 
   const handleDevSkip = useCallback(async () => {

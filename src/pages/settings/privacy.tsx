@@ -9,7 +9,7 @@
  *   5. Your Rights  — plain-language GDPR summary
  */
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { SettingsShell, SettingsHeader } from '../../components/settings-shell'
 import { BBButton } from '@beebeeb/shared'
@@ -17,10 +17,9 @@ import { Icon } from '@beebeeb/shared'
 import { useToast } from '../../components/toast'
 import { useAuth } from '../../lib/auth-context'
 import { useFrozen } from '../../hooks/use-frozen'
+import { ConfirmPasswordModal } from '../../components/confirm-password-modal'
 import {
-  consumePendingExport,
   dataExportDownloadFilename,
-  markPendingExport,
 } from '../../lib/export-intent'
 import {
   freezeAccount,
@@ -74,9 +73,8 @@ function Card({
 
 function DataExportCard() {
   const { showToast } = useToast()
-  const { logout } = useAuth()
   const [exportStatus, setExportStatus] = useState<DataExportStatus | null>(null)
-  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [pwModalOpen, setPwModalOpen] = useState(false)
 
   const handleExport = useCallback(async () => {
     try {
@@ -87,10 +85,9 @@ function DataExportCard() {
     }
   }, [showToast])
 
-  useEffect(() => {
-    if (consumePendingExport()) {
-      void handleExport()
-    }
+  const handlePasswordConfirmed = useCallback((_token: string, _password: string) => {
+    setPwModalOpen(false)
+    void handleExport()
   }, [handleExport])
 
   const downloadExport = useCallback(async (url: string) => {
@@ -121,50 +118,15 @@ function DataExportCard() {
 
   return (
     <Card title="Your data">
-      {confirmOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center"
-          onClick={() => setConfirmOpen(false)}
-        >
-          <div className="absolute inset-0 bg-ink/20" />
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label="Verify your identity"
-            onClick={(e) => e.stopPropagation()}
-            className="relative w-full max-w-[420px] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden mx-4"
-          >
-            <div className="px-5 py-4 border-b border-line flex items-center gap-2.5">
-              <Icon name="lock" size={14} className="text-ink" />
-              <span className="text-sm font-semibold text-ink">Verify your identity</span>
-              <button
-                onClick={() => setConfirmOpen(false)}
-                aria-label="Close"
-                className="ml-auto text-ink-3 hover:text-ink transition-colors cursor-pointer"
-              >
-                <Icon name="x" size={14} />
-              </button>
-            </div>
-            <div className="p-5">
-              <p className="text-[12.5px] text-ink-2 leading-relaxed mb-5">
-                To download your data, we need to confirm it's you. You'll be signed out and prompted to sign back in — after signing in, your export will start automatically.
-              </p>
-              <div className="flex gap-2 justify-end">
-                <BBButton size="md" onClick={() => setConfirmOpen(false)}>
-                  Cancel
-                </BBButton>
-                <BBButton
-                  size="md"
-                  variant="amber"
-                  onClick={() => { setConfirmOpen(false); markPendingExport(); void logout() }}
-                >
-                  Sign out &amp; continue
-                </BBButton>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmPasswordModal
+        open={pwModalOpen}
+        title="Confirm data export"
+        description="Enter your password to confirm you want to download a copy of your data."
+        confirmLabel="Export my data"
+        onConfirmed={handlePasswordConfirmed}
+        onCancel={() => setPwModalOpen(false)}
+      />
+
       <div className="flex flex-col gap-3">
         <p className="text-[13px] text-ink-2 leading-relaxed">
           Download a copy of everything Beebeeb holds about you: file metadata, share history, activity logs, and account settings. File contents are exported encrypted.
@@ -214,7 +176,7 @@ function DataExportCard() {
             <BBButton
               variant="default"
               size="md"
-              onClick={() => setConfirmOpen(true)}
+              onClick={() => setPwModalOpen(true)}
               className="gap-1.5"
             >
               <Icon name="download" size={13} />
