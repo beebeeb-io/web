@@ -1,15 +1,12 @@
 import { getToken, getApiUrl, uploadThumbnail } from './api'
 
-const THUMB_SIZE = 256
+const THUMB_SIZE = 200
+const THUMB_QUALITY = 0.5
+const THUMB_FORMAT = 'image/webp'
+const CACHE_NAME = 'beebeeb-thumbnails'
+const MAX_CACHE_ENTRIES = 10000
 
-// ─── Module-level thumbnail cache ───────────────────
-// Shared across all components (Photos page, file-list, etc.) so a thumbnail
-// fetched in one view is not re-fetched when the same file appears in another.
-// Values are object URLs created via URL.createObjectURL — they stay valid for
-// the lifetime of the document and are never revoked (thumbnails are small JPEG
-// blobs; the total memory footprint is bounded by the number of distinct files).
-const thumbnailCache = new Map<string, string>() // fileId → object URL
-const THUMB_QUALITY = 0.7
+const thumbnailCache = new Map<string, string>()
 
 const IMAGE_TYPES = new Set([
   'image/jpeg',
@@ -40,7 +37,7 @@ export async function generateThumbnail(file: File): Promise<Blob | null> {
     ctx.drawImage(bitmap, 0, 0, w, h)
     bitmap.close()
 
-    return await canvas.convertToBlob({ type: 'image/jpeg', quality: THUMB_QUALITY })
+    return await canvas.convertToBlob({ type: THUMB_FORMAT, quality: THUMB_QUALITY })
   } catch {
     return null
   }
@@ -74,11 +71,46 @@ export async function encryptAndUploadThumbnail(
   await uploadThumbnail(fileId, new Blob([encrypted]))
 }
 
+async function getCachedBlob(fileId: string): Promise<string | null> {
+  try {
+    const cache = await caches.open(CACHE_NAME)
+    const resp = await cache.match(`/thumb/${fileId}`)
+    if (!resp) return null
+    const blob = await resp.blob()
+    const url = URL.createObjectURL(blob)
+    thumbnailCache.set(fileId, url)
+    return url
+  } catch {
+    return null
+  }
+}
+
+async function putCachedBlob(fileId: string, data: ArrayBuffer): Promise<void> {
+  try {
+    const cache = await caches.open(CACHE_NAME)
+    const keys = await cache.keys()
+    if (keys.length >= MAX_CACHE_ENTRIES) {
+      const toDelete = keys.slice(0, keys.length - MAX_CACHE_ENTRIES + 100)
+      await Promise.all(toDelete.map((k) => cache.delete(k)))
+    }
+    await cache.put(
+      `/thumb/${fileId}`,
+      new Response(data, { headers: { 'Content-Type': THUMB_FORMAT } }),
+    )
+  } catch {
+    // Cache write is best-effort
+  }
+}
+
 export async function fetchAndDecryptThumbnail(
   fileId: string,
   fileKey: Uint8Array,
 ): Promise<string | null> {
   if (thumbnailCache.has(fileId)) return thumbnailCache.get(fileId)!
+
+  const cached = await getCachedBlob(fileId)
+  if (cached) return cached
+
   try {
     const token = getToken()
     const headers: Record<string, string> = {}
@@ -109,7 +141,9 @@ export async function fetchAndDecryptThumbnail(
       ciphertext.buffer as ArrayBuffer,
     )
 
-    const blob = new Blob([plainBytes], { type: 'image/jpeg' })
+    await putCachedBlob(fileId, plainBytes)
+
+    const blob = new Blob([plainBytes], { type: THUMB_FORMAT })
     const url = URL.createObjectURL(blob)
     thumbnailCache.set(fileId, url)
     return url
