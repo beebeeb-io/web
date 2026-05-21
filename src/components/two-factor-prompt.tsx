@@ -18,42 +18,48 @@ export function TwoFactorPrompt({
   const [backupCode, setBackupCode] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
-  const inputRef = useRef<HTMLInputElement>(null)
+  const hiddenRef = useRef<HTMLInputElement>(null)
+  const submitted = useRef(false)
 
   useEffect(() => {
     if (externalError) setError(externalError)
   }, [externalError])
 
   useEffect(() => {
-    inputRef.current?.focus()
+    hiddenRef.current?.focus()
   }, [])
 
-  // Watch for password manager autofill via native input events
+  // Poll the hidden input for password manager autofill (they write to DOM
+  // without triggering React onChange). Check every 100ms.
   useEffect(() => {
-    const el = inputRef.current
-    if (!el) return
-    function onInput() {
-      const digits = (el!.value ?? '').replace(/\D/g, '').slice(0, 6)
-      setCode(digits)
-      setError('')
-      if (digits.length === 6) {
-        void submitCode(digits)
+    const interval = setInterval(() => {
+      const el = hiddenRef.current
+      if (!el) return
+      const val = el.value.replace(/\D/g, '').slice(0, 6)
+      if (val.length > 0 && val !== code) {
+        setCode(val)
+        setError('')
+        if (val.length === 6 && !submitted.current) {
+          submitted.current = true
+          void doSubmit(val)
+        }
       }
-    }
-    el.addEventListener('input', onInput)
-    return () => el.removeEventListener('input', onInput)
-  }, [])
+    }, 100)
+    return () => clearInterval(interval)
+  }, [code])
 
   const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const digits = e.target.value.replace(/\D/g, '').slice(0, 6)
     setCode(digits)
     setError('')
+    submitted.current = false
     if (digits.length === 6) {
-      void submitCode(digits)
+      submitted.current = true
+      void doSubmit(digits)
     }
   }, [])
 
-  async function submitCode(c: string) {
+  async function doSubmit(c: string) {
     setSubmitting(true)
     setError('')
     try {
@@ -61,7 +67,8 @@ export function TwoFactorPrompt({
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Invalid code')
       setCode('')
-      inputRef.current?.focus()
+      submitted.current = false
+      hiddenRef.current?.focus()
     } finally {
       setSubmitting(false)
     }
@@ -131,15 +138,18 @@ export function TwoFactorPrompt({
     )
   }
 
+  const digits = code.padEnd(6, ' ').split('')
+
   return (
     <div>
       <p className="text-[13px] text-ink-3 leading-relaxed mb-5">
         Enter the 6-digit code from your authenticator app.
       </p>
 
-      <form onSubmit={(e) => { e.preventDefault(); if (code.length === 6) void submitCode(code) }}>
+      {/* Hidden input catches password manager autofill + keyboard input */}
+      <div className="relative">
         <input
-          ref={inputRef}
+          ref={hiddenRef}
           type="text"
           inputMode="numeric"
           pattern="[0-9]*"
@@ -148,13 +158,31 @@ export function TwoFactorPrompt({
           id="totp-code"
           value={code}
           onChange={handleChange}
+          onKeyDown={(e) => { if (e.key === 'Enter' && code.length === 6) void doSubmit(code) }}
           maxLength={6}
-          placeholder="000000"
           disabled={submitting}
-          className="w-full text-center font-mono text-3xl font-semibold tracking-[0.5em] border border-line rounded-lg bg-paper px-4 py-3 outline-none transition-all focus:border-amber-deep focus:ring-2 focus:ring-amber/30 placeholder:text-ink-4/30 mb-3.5"
+          className="absolute inset-0 w-full h-full opacity-0 z-10 cursor-text"
           aria-label="6-digit verification code"
         />
-      </form>
+
+        {/* 6 visual digit boxes */}
+        <div className="flex gap-2 justify-center mb-3.5" aria-hidden="true">
+          {digits.map((d, i) => (
+            <div
+              key={i}
+              className={`w-11 h-[52px] flex items-center justify-center font-mono text-2xl font-semibold border rounded-md bg-paper transition-all select-none ${
+                d.trim()
+                  ? 'border-line-2 text-ink'
+                  : i === code.length
+                    ? 'border-amber-deep ring-2 ring-amber/30 text-ink-4'
+                    : 'border-line text-ink-4'
+              }`}
+            >
+              {d.trim() || ''}
+            </div>
+          ))}
+        </div>
+      </div>
 
       {error && <p className="text-xs text-red mb-3 text-center">{error}</p>}
 
