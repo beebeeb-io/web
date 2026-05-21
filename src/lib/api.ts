@@ -300,13 +300,15 @@ export async function opaqueLoginFinish(
   email: string,
   clientMessage: string,
   serverState: string,
-): Promise<{ user_id: string; session_token: string }> {
-  const data = await request<{ user_id: string; session_token: string }>('/api/v1/opaque/login-finish', {
+): Promise<{ user_id: string; session_token: string; requires_2fa?: boolean; partial_token?: string }> {
+  const data = await request<{ user_id: string; session_token: string; requires_2fa?: boolean; partial_token?: string }>('/api/v1/opaque/login-finish', {
     method: 'POST',
     body: JSON.stringify({ email, client_message: clientMessage, server_state: serverState }),
   })
-  setToken(data.session_token)
-  setEmail(email)
+  if (!data.requires_2fa && data.session_token) {
+    setToken(data.session_token)
+    setEmail(email)
+  }
   return data
 }
 

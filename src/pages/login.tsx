@@ -9,14 +9,14 @@ import { DeviceProvision } from '../components/device-provision'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
 import { devAutoAuth } from '../lib/dev-auth'
-import { startPasskeyLogin, finishPasskeyLogin, setToken, hexToBytes, opaqueLoginStart as apiOpaqueLoginStart, opaqueLoginFinish as apiOpaqueLoginFinish, serverOptsToGetOptions, credentialToAuthenticationJSON, getVaultKeyEscrow } from '../lib/api'
+import { startPasskeyLogin, finishPasskeyLogin, setToken, opaqueLoginStart as apiOpaqueLoginStart, opaqueLoginFinish as apiOpaqueLoginFinish, serverOptsToGetOptions, credentialToAuthenticationJSON, getVaultKeyEscrow } from '../lib/api'
 import { opaqueLoginStart, opaqueLoginFinish, toBase64, fromBase64 } from '../lib/crypto'
 import { prfExtensionInputs, extractPrfOutput, getVaultWrapKey, decryptVaultBlob } from '../lib/passkey-vault'
 
 export function Login() {
   const navigate = useNavigate()
   const { refreshUser, verify2fa } = useAuth()
-  const { unlock, unlockVault, vaultExists, cryptoReady, cryptoError, isUnlocked, setMasterKeyDirect } = useKeys()
+  const { unlockVault, vaultExists, cryptoReady, cryptoError, isUnlocked, setMasterKeyDirect } = useKeys()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -75,7 +75,14 @@ export function Login() {
       const serverResp = await apiOpaqueLoginStart(email, toBase64(loginStart.message))
       const serverMsg = Uint8Array.from(atob(serverResp.server_message), c => c.charCodeAt(0))
       const loginFinish = await opaqueLoginFinish(loginStart.state, password, serverMsg)
-      await apiOpaqueLoginFinish(email, toBase64(loginFinish.message), serverResp.server_state)
+      const loginResult = await apiOpaqueLoginFinish(email, toBase64(loginFinish.message), serverResp.server_state)
+
+      // Check if 2FA is required before completing login
+      if (loginResult.requires_2fa && loginResult.partial_token) {
+        setPartialToken(loginResult.partial_token)
+        setSubmitting(false)
+        return
+      }
 
       // OPAQUE auth succeeded — refresh user session
       await refreshUser()
@@ -106,10 +113,20 @@ export function Login() {
   async function handle2faVerify(code: string) {
     if (!partialToken) return
     try {
-      const result = await verify2fa(partialToken, code)
-      if (result?.salt) {
-        const salt = hexToBytes(result.salt)
-        await unlock(password, salt)
+      await verify2fa(partialToken, code)
+
+      // 2FA verified — now unlock the vault with the password from the first step
+      if (vaultExists) {
+        const ok = await unlockVault(password)
+        if (!ok) {
+          setError('Could not unlock vault. Try logging in again.')
+          setPartialToken(null)
+          return
+        }
+      } else {
+        setNeedsProvision(true)
+        setPartialToken(null)
+        return
       }
       navigateAfterLogin()
     } catch {
