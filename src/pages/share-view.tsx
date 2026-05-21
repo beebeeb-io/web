@@ -285,9 +285,10 @@ function ServerViewPanel({
             <span className="ml-1 text-[10px] font-mono text-ink-4">beebeeb-server · share/{token.slice(0, 8)}…</span>
           </div>
 
-          <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-line">
-            {/* Left: server's view — raw ciphertext */}
-            <div className="flex-1 p-3.5">
+          {/* Stacked layout — always vertical for clarity on all viewports */}
+          <div className="divide-y divide-line">
+            {/* Server's view — raw ciphertext */}
+            <div className="p-3.5">
               <div className="text-[10px] font-semibold uppercase tracking-wide text-ink-3 mb-2">
                 What the server stored
               </div>
@@ -300,41 +301,40 @@ function ServerViewPanel({
                   Fetching ciphertext…
                 </div>
               ) : fetchError ? (
-                <p className="text-[11px] text-ink-4 italic">Could not fetch</p>
+                <p className="text-[11px] text-ink-4 italic">Could not fetch ciphertext preview</p>
               ) : hexDump ? (
                 <>
-                  <pre className="font-mono text-[10px] text-ink-3 leading-relaxed whitespace-pre overflow-x-auto bg-paper-3 rounded-md p-2">
+                  <pre className="font-mono text-[10px] text-ink-3 leading-relaxed whitespace-pre overflow-x-auto bg-paper-3 rounded-md p-2 max-w-full">
                     {hexDump}
                   </pre>
                   <p className="text-[10px] text-ink-4 mt-1.5 italic">
-                    First 64 bytes of AES-256-GCM ciphertext
+                    AES-256-GCM ciphertext — meaningless without your key
                   </p>
                 </>
               ) : null}
             </div>
 
-            {/* Right: your view — decrypted */}
-            <div className="flex-1 p-3.5">
+            {/* Your view — decrypted */}
+            <div className="p-3.5">
               <div className="text-[10px] font-semibold uppercase tracking-wide text-ink-3 mb-2">
                 What you see
               </div>
-              <div className="flex items-center gap-2 bg-paper-3 rounded-md px-3 py-2.5">
+              <div className="flex items-center gap-2 bg-paper-3 rounded-md px-3 py-2.5 min-w-0">
                 <Icon name="file" size={14} className="text-ink-3 shrink-0" />
-                <span className="text-[12px] font-medium text-ink truncate">
+                <span className="text-[12px] font-medium text-ink truncate min-w-0">
                   {decryptedName ?? 'Decrypting…'}
                 </span>
               </div>
               <p className="text-[10px] text-ink-4 mt-1.5 italic">
-                Your browser ran AES-256-GCM in WebAssembly
+                Decrypted in your browser via WebAssembly
               </p>
             </div>
           </div>
 
-          {/* Footer explanation */}
+          {/* Footer */}
           <div className="px-3.5 py-2.5 bg-paper-2 border-t border-line text-[11px] text-ink-3 leading-relaxed">
-            The math between these two columns is{' '}
-            <span className="font-mono text-[10.5px] text-ink-2">AES-256-GCM</span> decryption,
-            running entirely in your browser's WebAssembly engine. Beebeeb never holds the key.
+            The difference is <span className="font-mono text-[10.5px] text-ink-2">AES-256-GCM</span> decryption,
+            running entirely in your browser. Beebeeb never holds the key.
           </div>
         </div>
       )}
