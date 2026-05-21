@@ -69,7 +69,7 @@ import {
   removeUploadState,
   type UploadState,
 } from '../lib/upload-resume'
-import { encryptFilename, serializeEncryptedBlob, decryptFileMetadata } from '../lib/crypto'
+import { encryptFilename, encryptFileMetadata, serializeEncryptedBlob, decryptFileMetadata } from '../lib/crypto'
 import { useSearchIndex } from '../hooks/use-search-index'
 import { EmptyDrive } from '../components/empty-states/empty-drive'
 import { formatBytes } from '../lib/format'
@@ -1174,7 +1174,7 @@ export function Drive() {
 
         const folderId = crypto.randomUUID()
         const folderKey = await getFileKey(folderId)
-        const enc = await encryptFilename(folderKey, folderName)
+        const enc = await encryptFileMetadata(folderKey, folderName)
         const nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
 
         const result = await createFolder(nameEncrypted, parentId, folderId)
@@ -1325,7 +1325,7 @@ export function Drive() {
       let nameEncrypted = name
       if (isUnlocked && cryptoReady) {
         const folderKey = await getFileKey(folderId)
-        const enc = await encryptFilename(folderKey, name)
+        const enc = await encryptFileMetadata(folderKey, name)
         nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
       }
       const result = await createFolder(nameEncrypted, currentParentId, folderId)
@@ -1369,7 +1369,7 @@ export function Drive() {
       // Create the folder
       const folderId = crypto.randomUUID()
       const folderKey = await getFileKey(folderId)
-      const enc = await encryptFilename(folderKey, folderName)
+      const enc = await encryptFileMetadata(folderKey, folderName)
       const nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
       const result = await createFolder(nameEncrypted, undefined, folderId)
 

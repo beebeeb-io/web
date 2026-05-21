@@ -100,6 +100,20 @@ export async function encryptFilename(
   }
 }
 
+/**
+ * Encrypt a filename + optional MIME type as JSON metadata.
+ * Produces the same format as iOS: `{"name":"...","mime_type":"..."}` encrypted
+ * inside the canonical blob envelope. Use this for all new files/folders.
+ */
+export async function encryptFileMetadata(
+  fileKey: Uint8Array,
+  filename: string,
+  mimeType?: string | null,
+): Promise<EncryptedMetadata> {
+  const metadataJson = JSON.stringify({ name: filename, mime_type: mimeType ?? null })
+  return encryptFilename(fileKey, metadataJson)
+}
+
 /** Decrypt a filename / metadata string. */
 export async function decryptFilename(
   fileKey: Uint8Array,
@@ -136,13 +150,11 @@ export async function decryptFileMetadata(
       name = plain
     }
   } catch (err) {
-    if (import.meta.env.DEV) {
-      console.warn('[crypto] decryptFileMetadata failed', {
-        nameEncryptedPrefix: nameEncrypted.slice(0, 60),
-        keyLength: fileKey.length,
-        error: err instanceof Error ? err.message : String(err),
-      })
-    }
+    console.warn('[crypto] decryptFileMetadata failed', {
+      nameEncryptedPrefix: nameEncrypted.slice(0, 60),
+      keyLength: fileKey.length,
+      error: err instanceof Error ? err.message : String(err),
+    })
   }
   return { name, mimeType }
 }
