@@ -28,11 +28,26 @@ export function TwoFactorPrompt({
     inputRef.current?.focus()
   }, [])
 
-  const handleCodeChange = useCallback((value: string) => {
-    const digits = value.replace(/\D/g, '').slice(0, 6)
+  // Watch for password manager autofill via native input events
+  useEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    function onInput() {
+      const digits = (el!.value ?? '').replace(/\D/g, '').slice(0, 6)
+      setCode(digits)
+      setError('')
+      if (digits.length === 6) {
+        void submitCode(digits)
+      }
+    }
+    el.addEventListener('input', onInput)
+    return () => el.removeEventListener('input', onInput)
+  }, [])
+
+  const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const digits = e.target.value.replace(/\D/g, '').slice(0, 6)
     setCode(digits)
     setError('')
-
     if (digits.length === 6) {
       void submitCode(digits)
     }
@@ -116,48 +131,30 @@ export function TwoFactorPrompt({
     )
   }
 
-  const digits = code.padEnd(6, ' ').split('')
-
   return (
     <div>
       <p className="text-[13px] text-ink-3 leading-relaxed mb-5">
         Enter the 6-digit code from your authenticator app.
       </p>
 
-      {/* Single input for password manager autofill — visually hidden behind the digit boxes */}
-      <div className="relative">
+      <form onSubmit={(e) => { e.preventDefault(); if (code.length === 6) void submitCode(code) }}>
         <input
           ref={inputRef}
           type="text"
           inputMode="numeric"
           pattern="[0-9]*"
           autoComplete="one-time-code"
+          name="totp-code"
+          id="totp-code"
           value={code}
-          onChange={(e) => handleCodeChange(e.target.value)}
+          onChange={handleChange}
           maxLength={6}
+          placeholder="000000"
           disabled={submitting}
-          className="absolute inset-0 w-full h-full opacity-0 z-10 cursor-text"
+          className="w-full text-center font-mono text-3xl font-semibold tracking-[0.5em] border border-line rounded-lg bg-paper px-4 py-3 outline-none transition-all focus:border-amber-deep focus:ring-2 focus:ring-amber/30 placeholder:text-ink-4/30 mb-3.5"
           aria-label="6-digit verification code"
         />
-
-        {/* Visual digit boxes */}
-        <div className="flex gap-2 justify-center mb-3.5 pointer-events-none" aria-hidden="true">
-          {digits.map((d, i) => (
-            <div
-              key={i}
-              className={`w-11 h-[52px] flex items-center justify-center font-mono text-2xl font-semibold border rounded-md bg-paper transition-all ${
-                d.trim()
-                  ? 'border-line-2 text-ink'
-                  : i === code.length
-                    ? 'border-amber-deep ring-2 ring-amber/30 text-ink-4'
-                    : 'border-line text-ink-4'
-              }`}
-            >
-              {d.trim() || ''}
-            </div>
-          ))}
-        </div>
-      </div>
+      </form>
 
       {error && <p className="text-xs text-red mb-3 text-center">{error}</p>}
 
