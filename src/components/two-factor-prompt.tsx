@@ -13,72 +13,40 @@ export function TwoFactorPrompt({
   onCancel,
   error: externalError,
 }: TwoFactorPromptProps) {
-  const [digits, setDigits] = useState<string[]>(['', '', '', '', '', ''])
+  const [code, setCode] = useState('')
   const [useBackup, setUseBackup] = useState(false)
   const [backupCode, setBackupCode] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
-  const inputRefs = useRef<(HTMLInputElement | null)[]>([])
+  const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (externalError) setError(externalError)
   }, [externalError])
 
-  // Auto-submit when all 6 digits are entered
-  const handleDigitChange = useCallback(
-    (index: number, value: string) => {
-      const char = value.replace(/\D/g, '').slice(-1)
-      const next = [...digits]
-      next[index] = char
-      setDigits(next)
-      setError('')
+  useEffect(() => {
+    inputRef.current?.focus()
+  }, [])
 
-      if (char && index < 5) {
-        inputRefs.current[index + 1]?.focus()
-      }
-
-      // Auto-submit when all filled
-      if (char && next.every((d) => d !== '')) {
-        const code = next.join('')
-        void submitCode(code)
-      }
-    },
-    [digits],
-  )
-
-  const handleKeyDown = useCallback(
-    (index: number, e: React.KeyboardEvent) => {
-      if (e.key === 'Backspace' && !digits[index] && index > 0) {
-        inputRefs.current[index - 1]?.focus()
-      }
-    },
-    [digits],
-  )
-
-  const handlePaste = useCallback((e: React.ClipboardEvent) => {
-    e.preventDefault()
-    const text = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6)
-    if (text.length === 0) return
-    const next = [...Array(6)].map((_, i) => text[i] ?? '')
-    setDigits(next)
+  const handleCodeChange = useCallback((value: string) => {
+    const digits = value.replace(/\D/g, '').slice(0, 6)
+    setCode(digits)
     setError('')
 
-    if (text.length === 6) {
-      void submitCode(text)
-    } else {
-      inputRefs.current[text.length]?.focus()
+    if (digits.length === 6) {
+      void submitCode(digits)
     }
   }, [])
 
-  async function submitCode(code: string) {
+  async function submitCode(c: string) {
     setSubmitting(true)
     setError('')
     try {
-      await onVerify(code)
+      await onVerify(c)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Invalid code')
-      setDigits(['', '', '', '', '', ''])
-      inputRefs.current[0]?.focus()
+      setCode('')
+      inputRef.current?.focus()
     } finally {
       setSubmitting(false)
     }
@@ -148,35 +116,47 @@ export function TwoFactorPrompt({
     )
   }
 
+  const digits = code.padEnd(6, ' ').split('')
+
   return (
     <div>
       <p className="text-[13px] text-ink-3 leading-relaxed mb-5">
         Enter the 6-digit code from your authenticator app.
       </p>
 
-      {/* 6-digit code input */}
-      <div className="flex gap-2 justify-center mb-3.5" onPaste={handlePaste}>
-        {digits.map((d, i) => (
-          <input
-            key={i}
-            ref={(el) => { inputRefs.current[i] = el }}
-            type="text"
-            inputMode="numeric"
-            pattern="[0-9]*"
-            maxLength={1}
-            autoComplete={i === 0 ? 'one-time-code' : 'off'}
-            value={d}
-            onChange={(e) => handleDigitChange(i, e.target.value)}
-            onKeyDown={(e) => handleKeyDown(i, e)}
-            autoFocus={i === 0}
-            disabled={submitting}
-            className={`w-11 h-[52px] text-center font-mono text-2xl font-semibold border rounded-md bg-paper outline-none transition-all ${
-              d
-                ? 'border-line-2 text-ink'
-                : 'border-line text-ink-4'
-            } focus:border-amber-deep focus:ring-2 focus:ring-amber/30`}
-          />
-        ))}
+      {/* Single input for password manager autofill — visually hidden behind the digit boxes */}
+      <div className="relative">
+        <input
+          ref={inputRef}
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          autoComplete="one-time-code"
+          value={code}
+          onChange={(e) => handleCodeChange(e.target.value)}
+          maxLength={6}
+          disabled={submitting}
+          className="absolute inset-0 w-full h-full opacity-0 z-10 cursor-text"
+          aria-label="6-digit verification code"
+        />
+
+        {/* Visual digit boxes */}
+        <div className="flex gap-2 justify-center mb-3.5 pointer-events-none" aria-hidden="true">
+          {digits.map((d, i) => (
+            <div
+              key={i}
+              className={`w-11 h-[52px] flex items-center justify-center font-mono text-2xl font-semibold border rounded-md bg-paper transition-all ${
+                d.trim()
+                  ? 'border-line-2 text-ink'
+                  : i === code.length
+                    ? 'border-amber-deep ring-2 ring-amber/30 text-ink-4'
+                    : 'border-line text-ink-4'
+              }`}
+            >
+              {d.trim() || ''}
+            </div>
+          ))}
+        </div>
       </div>
 
       {error && <p className="text-xs text-red mb-3 text-center">{error}</p>}
