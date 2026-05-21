@@ -162,7 +162,9 @@ export function TwoFactorPrompt({
             ref={(el) => { inputRefs.current[i] = el }}
             type="text"
             inputMode="numeric"
+            pattern="[0-9]*"
             maxLength={1}
+            autoComplete={i === 0 ? 'one-time-code' : 'off'}
             value={d}
             onChange={(e) => handleDigitChange(i, e.target.value)}
             onKeyDown={(e) => handleKeyDown(i, e)}

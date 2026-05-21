@@ -32,6 +32,10 @@ export function OnboardingGuide({ onPickFile, onOpenShare, lastUploadedFileId }:
     skipAll()
   }, [skipAll])
 
+  // Don't show while the cookie banner is visible — avoids popup stacking
+  const cookieConsent = typeof localStorage !== 'undefined' && localStorage.getItem('bb_cookie_consent')
+  if (!cookieConsent) return null
+
   if (step === 'loading' || step === 'done') return null
 
   const content = (() => {

@@ -73,7 +73,9 @@ export function WelcomeTour({
   const navigate = useNavigate()
   const [activeId, setActiveId] = useState<string | null>(null)
 
-  if (!open) return null
+  // Don't show while the cookie banner is visible — avoids popup stacking
+  const cookieConsent = typeof localStorage !== 'undefined' && localStorage.getItem('bb_cookie_consent')
+  if (!open || !cookieConsent) return null
 
   const steps: TourStep[] = ALL_STEPS.map((s) => ({
     ...s,
