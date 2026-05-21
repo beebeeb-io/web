@@ -139,6 +139,13 @@ export async function decryptFileMetadata(
 ): Promise<{ name: string; mimeType: string | null }> {
   let name = 'Encrypted file'
   let mimeType: string | null = null
+
+  // Legacy: some folders were stored with plaintext names before encryption
+  // was implemented. If the value doesn't look like JSON, return it as-is.
+  if (!nameEncrypted.startsWith('{')) {
+    return { name: nameEncrypted, mimeType: null }
+  }
+
   try {
     const { nonce, ciphertext } = parseEncryptedBlob(nameEncrypted)
     const plain = await decryptFilename(fileKey, nonce, ciphertext)
