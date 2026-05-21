@@ -221,10 +221,12 @@ function ServerViewPanel({
   token,
   passphrase,
   decryptedName,
+  nameEncrypted,
 }: {
   token: string
   passphrase?: string
   decryptedName: string | null
+  nameEncrypted?: string | null
 }) {
   const [open, setOpen] = useState(false)
   const [ciphertext, setCiphertext] = useState<Uint8Array | null>(null)
@@ -237,7 +239,22 @@ function ServerViewPanel({
     setFetchError(false)
     fetchShareCiphertextPreview(token, passphrase)
       .then(bytes => setCiphertext(bytes))
-      .catch(() => setFetchError(true))
+      .catch(() => {
+        // Fallback: use name_encrypted ciphertext bytes as the demo
+        if (nameEncrypted && nameEncrypted.startsWith('{')) {
+          try {
+            const parsed = JSON.parse(nameEncrypted)
+            if (parsed.ciphertext) {
+              const ct = Array.isArray(parsed.ciphertext)
+                ? new Uint8Array(parsed.ciphertext)
+                : new Uint8Array(atob(parsed.ciphertext).split('').map(c => c.charCodeAt(0)))
+              setCiphertext(ct)
+              return
+            }
+          } catch { /* ignore */ }
+        }
+        setFetchError(true)
+      })
       .finally(() => setLoading(false))
   }, [open, ciphertext, loading, token, passphrase])
 
@@ -489,19 +506,25 @@ export function ShareViewPage() {
     let cancelled = false
     async function decrypt() {
       try {
+        const nameEnc = shareData!.name_encrypted!
+
+        // Legacy plaintext name (stored before encryption was added)
+        if (!nameEnc.startsWith('{')) {
+          if (!cancelled) setDecryptedName(nameEnc)
+          return
+        }
+
         await initCrypto()
         const fileKey = await resolveFileKey(shareData)
         if (!fileKey || cancelled) return
-        const { nonce, ciphertext: ct } = parseEncryptedBlob(shareData!.name_encrypted!)
+        const { nonce, ciphertext: ct } = parseEncryptedBlob(nameEnc)
         const raw = await decryptFilename(fileKey, nonce, ct)
-        // The decrypted plaintext may be JSON metadata: {"name":"file.jpg","mime_type":"image/jpeg"}
-        // or a legacy bare filename string. Parse JSON and extract the name field.
         let displayName = raw
         try {
           const meta = JSON.parse(raw) as { name?: string; mime_type?: string }
           if (meta && typeof meta.name === 'string') displayName = meta.name
         } catch {
-          // Legacy format — raw is just the filename string, use as-is
+          // Legacy format — raw is just the filename string
         }
         if (!cancelled) setDecryptedName(displayName)
       } catch {
@@ -960,6 +983,7 @@ export function ShareViewPage() {
                   token={token}
                   passphrase={passphrase || undefined}
                   decryptedName={decryptedName}
+                  nameEncrypted={shareData?.name_encrypted}
                 />
               </>
             )}
