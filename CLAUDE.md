@@ -88,6 +88,12 @@ export async function myFunction(param: string): Promise<MyType> {
 }
 ```
 
+## Thumbnails
+
+Thumbnails are WebP format, generated client-side in `src/lib/thumbnail.ts`. The generation uses a quality cascade (768px width, quality 0.82→0.5) targeting max 50 KB before encryption. Encrypted with the file's AES-256-GCM key, uploaded via `PUT /api/v1/files/:id/thumbnail`.
+
+Decrypted thumbnails are cached persistently via the Cache API (`beebeeb-thumbnails-v2`, max 10,000 entries) so they survive page reloads. In-memory `Map<string, string>` of object URLs provides the hot cache for the current session.
+
 ## Critical prop chains
 
 When opening the ShareDialog, ALWAYS pass `isFolder={file.is_folder}`. Folder sharing generates a folder_key and encrypts all children — without this prop, folder shares silently create regular file shares that don't work.
