@@ -1,9 +1,16 @@
 import { getToken, getApiUrl, uploadThumbnail } from './api'
 
-const THUMB_SIZE = 200
-const THUMB_QUALITY = 0.5
+const THUMB_SIZE = 768
+const MAX_THUMB_BYTES = 50 * 1024
+const THUMB_VARIANTS = [
+  { size: THUMB_SIZE, quality: 0.82 },
+  { size: THUMB_SIZE, quality: 0.74 },
+  { size: THUMB_SIZE, quality: 0.66 },
+  { size: THUMB_SIZE, quality: 0.58 },
+  { size: THUMB_SIZE, quality: 0.5 },
+] as const
 const THUMB_FORMAT = 'image/webp'
-const CACHE_NAME = 'beebeeb-thumbnails'
+const CACHE_NAME = 'beebeeb-thumbnails-v2'
 const MAX_CACHE_ENTRIES = 10000
 
 const thumbnailCache = new Map<string, string>()
@@ -26,18 +33,26 @@ export async function generateThumbnail(file: File): Promise<Blob | null> {
 
   try {
     const bitmap = await createImageBitmap(file)
-    const scale = Math.min(THUMB_SIZE / bitmap.width, THUMB_SIZE / bitmap.height, 1)
-    const w = Math.round(bitmap.width * scale)
-    const h = Math.round(bitmap.height * scale)
+    try {
+      let fallback: Blob | null = null
+      for (const variant of THUMB_VARIANTS) {
+        const scale = Math.min(variant.size / bitmap.width, variant.size / bitmap.height, 1)
+        const w = Math.max(1, Math.round(bitmap.width * scale))
+        const h = Math.max(1, Math.round(bitmap.height * scale))
 
-    const canvas = new OffscreenCanvas(w, h)
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return null
+        const canvas = new OffscreenCanvas(w, h)
+        const ctx = canvas.getContext('2d')
+        if (!ctx) continue
 
-    ctx.drawImage(bitmap, 0, 0, w, h)
-    bitmap.close()
-
-    return await canvas.convertToBlob({ type: THUMB_FORMAT, quality: THUMB_QUALITY })
+        ctx.drawImage(bitmap, 0, 0, w, h)
+        const blob = await canvas.convertToBlob({ type: THUMB_FORMAT, quality: variant.quality })
+        fallback = blob
+        if (blob.size <= MAX_THUMB_BYTES) return blob
+      }
+      return fallback
+    } finally {
+      bitmap.close()
+    }
   } catch {
     return null
   }
