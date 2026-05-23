@@ -1,5 +1,10 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { Icon } from '@beebeeb/shared'
+import type {
+  HighlighterCore,
+  LanguageRegistration,
+  ThemeRegistrationRaw,
+} from '@shikijs/types'
 
 interface TextPreviewProps {
   blob: Blob
@@ -26,15 +31,73 @@ interface ShikiResult {
 const SHIKI_THEME = 'github-dark'
 const MAX_LINES = 500
 
-// ─── Shiki loader (lazy, cached singleton per session) ────────────────────────
+// ─── Lazy grammar registry ────────────────────────────────────────────────────
+// Each entry is a function that returns a dynamic import for ONE TextMate
+// grammar. Splitting them as individual import calls lets Vite/Rollup emit a
+// separate chunk per language, so previewing a `.json` never downloads the
+// 600 kB C++ grammar (the audit's P6 finding).
 
-let shikiPromise: Promise<typeof import('shiki/bundle/web')> | null = null
+type LangImport = () => Promise<{ default: LanguageRegistration[] }>
 
-function loadShiki() {
-  if (!shikiPromise) {
-    shikiPromise = import('shiki/bundle/web')
-  }
-  return shikiPromise
+const LANG_LOADERS: Record<string, LangImport> = {
+  // Web / scripting
+  javascript: () => import('@shikijs/langs/javascript'),
+  typescript: () => import('@shikijs/langs/typescript'),
+  jsx: () => import('@shikijs/langs/jsx'),
+  tsx: () => import('@shikijs/langs/tsx'),
+  html: () => import('@shikijs/langs/html'),
+  css: () => import('@shikijs/langs/css'),
+  scss: () => import('@shikijs/langs/scss'),
+  vue: () => import('@shikijs/langs/vue'),
+  svelte: () => import('@shikijs/langs/svelte'),
+  astro: () => import('@shikijs/langs/astro'),
+
+  // Systems
+  rust: () => import('@shikijs/langs/rust'),
+  go: () => import('@shikijs/langs/go'),
+  c: () => import('@shikijs/langs/c'),
+  cpp: () => import('@shikijs/langs/cpp'),
+  zig: () => import('@shikijs/langs/zig'),
+
+  // JVM
+  java: () => import('@shikijs/langs/java'),
+  kotlin: () => import('@shikijs/langs/kotlin'),
+  scala: () => import('@shikijs/langs/scala'),
+
+  // High-level
+  python: () => import('@shikijs/langs/python'),
+  ruby: () => import('@shikijs/langs/ruby'),
+  php: () => import('@shikijs/langs/php'),
+  lua: () => import('@shikijs/langs/lua'),
+  perl: () => import('@shikijs/langs/perl'),
+  swift: () => import('@shikijs/langs/swift'),
+  dart: () => import('@shikijs/langs/dart'),
+  r: () => import('@shikijs/langs/r'),
+  elixir: () => import('@shikijs/langs/elixir'),
+  erlang: () => import('@shikijs/langs/erlang'),
+  haskell: () => import('@shikijs/langs/haskell'),
+  ocaml: () => import('@shikijs/langs/ocaml'),
+  nim: () => import('@shikijs/langs/nim'),
+  v: () => import('@shikijs/langs/v'),
+
+  // Shells
+  bash: () => import('@shikijs/langs/bash'),
+  powershell: () => import('@shikijs/langs/powershell'),
+
+  // Data / config / markup
+  json: () => import('@shikijs/langs/json'),
+  yaml: () => import('@shikijs/langs/yaml'),
+  toml: () => import('@shikijs/langs/toml'),
+  xml: () => import('@shikijs/langs/xml'),
+  markdown: () => import('@shikijs/langs/markdown'),
+  sql: () => import('@shikijs/langs/sql'),
+  graphql: () => import('@shikijs/langs/graphql'),
+
+  // DevOps
+  dockerfile: () => import('@shikijs/langs/docker'),
+  makefile: () => import('@shikijs/langs/make'),
+  cmake: () => import('@shikijs/langs/cmake'),
+  hcl: () => import('@shikijs/langs/hcl'),
 }
 
 // ─── Normalise language names to Shiki IDs ────────────────────────────────────
@@ -49,6 +112,46 @@ const LANG_MAP: Record<string, string> = {
 
 function toShikiLang(lang: string): string {
   return LANG_MAP[lang] ?? lang
+}
+
+// ─── Highlighter core (lazy singleton) ────────────────────────────────────────
+// We deliberately do NOT use `shiki/bundle/web`. That bundle would ship a
+// ~120 kB registry of every language and theme up-front. Instead we build a
+// minimal core highlighter on first use and load individual grammars on
+// demand via the LANG_LOADERS table above.
+
+let highlighterPromise: Promise<HighlighterCore> | null = null
+const loadedLangs = new Set<string>()
+
+async function getHighlighter(): Promise<HighlighterCore> {
+  if (!highlighterPromise) {
+    highlighterPromise = (async () => {
+      const [{ createHighlighterCore }, { createOnigurumaEngine }, wasm, theme] =
+        await Promise.all([
+          import('shiki/core'),
+          import('shiki/engine/oniguruma'),
+          import('shiki/wasm'),
+          import('@shikijs/themes/github-dark'),
+        ])
+      return createHighlighterCore({
+        themes: [theme.default as ThemeRegistrationRaw],
+        langs: [],
+        engine: createOnigurumaEngine(wasm.default),
+      })
+    })()
+  }
+  return highlighterPromise
+}
+
+async function ensureLang(shikiLang: string): Promise<boolean> {
+  const loader = LANG_LOADERS[shikiLang]
+  if (!loader) return false
+  if (loadedLangs.has(shikiLang)) return true
+  const highlighter = await getHighlighter()
+  const mod = await loader()
+  await highlighter.loadLanguage(mod.default as LanguageRegistration[])
+  loadedLangs.add(shikiLang)
+  return true
 }
 
 // ─── Render helpers ───────────────────────────────────────────────────────────
@@ -119,22 +222,30 @@ export function TextPreview({ blob, language, filename }: TextPreviewProps) {
     const shikiLang = toShikiLang(language)
     let cancelled = false
     setShikiLoading(true)
-    loadShiki()
-      .then(async (shikiMod) => {
-        const result = await shikiMod.codeToTokens(text, {
-          lang: shikiLang as Parameters<typeof shikiMod.codeToTokens>[1]['lang'],
-          theme: SHIKI_THEME,
-        })
-        if (!cancelled) {
-          setShiki({
-            lines: result.tokens as ShikiToken[][],
-            bg: result.bg ?? '#0d1117',
-            fg: result.fg ?? '#e6edf3',
-          })
-        }
+    ;(async () => {
+      const supported = await ensureLang(shikiLang)
+      if (cancelled) return
+      if (!supported) {
+        // Unknown grammar — leave plain text. No chunk fetched.
+        return
+      }
+      const highlighter = await getHighlighter()
+      if (cancelled) return
+      const result = highlighter.codeToTokens(text, {
+        lang: shikiLang,
+        theme: SHIKI_THEME,
       })
+      if (!cancelled) {
+        setShiki({
+          lines: result.tokens as ShikiToken[][],
+          bg: result.bg ?? '#0d1117',
+          fg: result.fg ?? '#e6edf3',
+        })
+      }
+    })()
       .catch(() => {
-        // Shiki failed (unsupported language, etc.) — regex fallback stays visible
+        // Shiki failed (network error, unsupported grammar internals) —
+        // the plain-text fallback stays visible.
       })
       .finally(() => {
         if (!cancelled) setShikiLoading(false)
@@ -196,11 +307,14 @@ export function TextPreview({ blob, language, filename }: TextPreviewProps) {
           </span>
         )}
         {shikiLoading && (
-          <svg className="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none"
-            style={{ color: '#58a6ff' }}>
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
+          <span className="flex items-center gap-1 shrink-0" title="Loading highlighter…">
+            <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"
+              style={{ color: '#58a6ff' }} role="img" aria-label="Loading highlighter">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            <span className="text-[10px]" style={{ color: '#8b949e' }}>Loading highlighter…</span>
+          </span>
         )}
       </div>
 
