@@ -609,8 +609,6 @@ export type UploadInitResponse =
 export async function initUpload(metadata: {
   file_id?: string
   name_encrypted: string
-  /** Pass null — MIME type is now encrypted inside name_encrypted metadata. */
-  mime_type: string | null
   size_bytes: number
   chunk_count: number
   parent_id?: string | null
@@ -624,7 +622,6 @@ export async function initUpload(metadata: {
       body: JSON.stringify({
         file_name: metadata.name_encrypted,
         file_size_bytes: metadata.size_bytes,
-        mime_type: metadata.mime_type,
         parent_id: metadata.parent_id,
         profile: 'web',
         is_media: metadata.is_media ?? false,

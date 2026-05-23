@@ -159,7 +159,6 @@ export async function encryptedUpload(
     const init = await withNetworkRetry(() => initUpload({
       file_id: fileId,
       name_encrypted: nameEncrypted,
-      mime_type: null, // MIME is now encrypted in name_encrypted metadata
       size_bytes: file.size,
       chunk_count: fallbackChunkCount,
       parent_id: parentId ?? null,

@@ -479,11 +479,13 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
   const [shareResult, setShareResult] = useState<ShareInfo | null>(null)
   const [decryptionKey, setDecryptionKey] = useState<string>('')
   const [copied, setCopied] = useState<'full-link' | 'split-link' | 'split-key' | null>(null)
-  const [shareMode, setShareMode] = useState<'full' | 'split'>('full')
+  const [shareMode, setShareMode] = useState<'full' | 'split'>('split')
   const [error, setError] = useState<string | null>(null)
   const [inviteDone, setInviteDone] = useState<string | null>(null)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
-  const [doubleEncrypted, setDoubleEncrypted] = useState(false)
+  // Default to double-encrypted: even Beebeeb cannot decrypt. Users can opt out
+  // via the "Advanced" toggle below for assisted recovery.
+  const [doubleEncrypted, setDoubleEncrypted] = useState(true)
   // Spec 024 §1.8: URL is generated immediately on modal open — no "click to generate" step.
   const [autoGenPending, setAutoGenPending] = useState(false)
 
@@ -515,7 +517,11 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       setLoading(false)
       setInviteDone(null)
       setFeedbackOpen(false)
-      setDoubleEncrypted(false)
+      // Default to double-encrypted with the split-view pre-selected so the
+      // user sees two distinct things (URL + key) to send through separate
+      // channels — the maximum-security path.
+      setDoubleEncrypted(true)
+      setShareMode('split')
       setAutoGenPending(true) // trigger auto-generate after state resets
     }
   }, [open])
@@ -954,35 +960,56 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
                       )}
                     </div>
 
-                    {/* Double-encryption toggle */}
+                    {/* End-to-end encrypted lead-in + advanced opt-out toggle */}
                     <div className="mb-[18px]">
+                      {/* Lead with the truth: we can't decrypt this share. */}
+                      <div className="px-3 py-2.5 bg-amber-bg border border-amber/30 rounded-md mb-3">
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <Icon name="shield" size={12} className="text-amber-deep" />
+                          <span className="text-[12px] font-semibold text-amber-deep">
+                            End-to-end encrypted — Beebeeb cannot decrypt this share.
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-ink-2 leading-relaxed">
+                          Send the link <span className="font-medium">and</span> the key through separate channels for maximum security.
+                        </p>
+                      </div>
+
+                      {/* Opt-out: assisted recovery (less secure). */}
                       <label className="flex items-start gap-3 cursor-pointer group">
                         <div className="relative mt-0.5 shrink-0">
                           <input
                             type="checkbox"
-                            checked={doubleEncrypted}
-                            onChange={(e) => setDoubleEncrypted(e.target.checked)}
+                            checked={!doubleEncrypted}
+                            onChange={(e) => setDoubleEncrypted(!e.target.checked)}
                             className="sr-only peer"
                           />
-                          <div className={`w-9 h-5 rounded-full transition-colors ${doubleEncrypted ? 'bg-amber' : 'bg-line-2'}`} />
-                          <div className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-paper shadow-sm transition-transform ${doubleEncrypted ? 'translate-x-4' : 'translate-x-0'}`} />
+                          <div className={`w-9 h-5 rounded-full transition-colors ${!doubleEncrypted ? 'bg-amber' : 'bg-line-2'}`} />
+                          <div className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-paper shadow-sm transition-transform ${!doubleEncrypted ? 'translate-x-4' : 'translate-x-0'}`} />
                         </div>
                         <div>
                           <div className="flex items-center gap-1.5">
-                            <span className="text-[13px] font-medium text-ink">Double encrypted</span>
-                            {doubleEncrypted && (
-                              <span className="inline-flex items-center gap-1 px-1.5 py-px bg-amber-bg border border-amber/40 rounded text-[9.5px] font-semibold text-amber-deep uppercase tracking-wide">
-                                <Icon name="shield" size={9} /> Active
-                              </span>
-                            )}
+                            <span className="text-[13px] font-medium text-ink">
+                              Advanced: allow Beebeeb to assist with recovery (less secure)
+                            </span>
                           </div>
                           <p className="text-[11px] text-ink-3 mt-0.5 leading-relaxed">
-                            {doubleEncrypted
-                              ? 'Even Beebeeb cannot decrypt this link. Only someone with the exact URL can access the file.'
-                              : 'Beebeeb holds a wrapped copy of the key for revocation. Enable for full client-side control.'}
+                            Stores a server-wrapped copy of the share's key so Beebeeb can unwrap it if the recipient loses the link.
                           </p>
                         </div>
                       </label>
+
+                      {/* Warning when double-encrypt is toggled OFF. */}
+                      {!doubleEncrypted && (
+                        <div className="mt-2 px-3 py-2 bg-red/5 border border-red/20 rounded-md">
+                          <div className="flex items-start gap-1.5">
+                            <Icon name="info" size={11} className="text-red mt-0.5 shrink-0" />
+                            <p className="text-[11px] text-red leading-relaxed">
+                              With this on, Beebeeb's servers can technically decrypt this share's contents.
+                            </p>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {error && (
