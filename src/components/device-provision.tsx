@@ -20,7 +20,7 @@ interface DeviceProvisionProps {
 }
 
 export function DeviceProvision({ password, email: propEmail, onProvisioned }: DeviceProvisionProps) {
-  const { setMasterKey, setMasterKeyDirect } = useKeys()
+  const { setMasterKey, setMasterKeyFromPasskey } = useKeys()
 
   const showPasskey = typeof window !== 'undefined' && !!window.PublicKeyCredential && !!propEmail
   const [activeTab, setActiveTab] = useState<Tab>('phrase')
@@ -66,10 +66,9 @@ export function DeviceProvision({ password, email: propEmail, onProvisioned }: D
         if (escrowBlob) {
           const masterKey = await decryptVaultBlob(wrapKey, fromBase64(escrowBlob))
           if (masterKey) {
+            await setMasterKeyFromPasskey(masterKey, wrapKey)
             if (password) {
-              await setMasterKey(masterKey, password)
-            } else {
-              setMasterKeyDirect(masterKey)
+              try { await setMasterKey(masterKey, password) } catch { /* best effort */ }
             }
             onProvisioned()
             return
@@ -81,7 +80,7 @@ export function DeviceProvision({ password, email: propEmail, onProvisioned }: D
     } finally {
       setPasskeyLoading(false)
     }
-  }, [propEmail, password, setMasterKey, setMasterKeyDirect, onProvisioned])
+  }, [propEmail, password, setMasterKey, setMasterKeyFromPasskey, onProvisioned])
 
   async function handlePasskeyUnlock() {
     if (!propEmail) return
@@ -112,10 +111,9 @@ export function DeviceProvision({ password, email: propEmail, onProvisioned }: D
         if (escrowBlob) {
           const masterKey = await decryptVaultBlob(wrapKey, fromBase64(escrowBlob))
           if (masterKey) {
+            await setMasterKeyFromPasskey(masterKey, wrapKey)
             if (password) {
-              await setMasterKey(masterKey, password)
-            } else {
-              setMasterKeyDirect(masterKey)
+              try { await setMasterKey(masterKey, password) } catch { /* best effort */ }
             }
             onProvisioned()
             return

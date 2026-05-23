@@ -22,7 +22,7 @@ import {
 } from '../lib/passkey-vault'
 
 export function VaultUnlock() {
-  const { unlockVault, vaultExists, setMasterKeyDirect } = useKeys()
+  const { unlockVault, unlockVaultWithPasskey, vaultExists, setMasterKeyFromPasskey } = useKeys()
   const { logout, refreshUser } = useAuth()
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -113,27 +113,30 @@ export function VaultUnlock() {
         return
       }
 
+      // Try local passkey vault first
+      const localOk = await unlockVaultWithPasskey(wrapKey)
+      if (localOk) return
+
+      // Fall back to server escrow
       const escrowBlob = await getVaultKeyEscrow(credentialId)
       if (!escrowBlob) {
-        setError('Passkey verified, but no vault key found on the server. Use your password.')
+        setError('Passkey verified, but no vault key found. Use your password.')
         return
       }
 
-      const encryptedBlob = fromBase64(escrowBlob)
-      const masterKey = await decryptVaultBlob(wrapKey, encryptedBlob)
-
+      const masterKey = await decryptVaultBlob(wrapKey, fromBase64(escrowBlob))
       if (!masterKey) {
-        setError('Failed to decrypt vault key. The escrow may be corrupted. Use your password.')
+        setError('Failed to decrypt vault key. Use your password.')
         return
       }
 
-      setMasterKeyDirect(masterKey)
+      await setMasterKeyFromPasskey(masterKey, wrapKey)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Passkey unlock failed.')
     } finally {
       setPasskeyLoading(false)
     }
-  }, [setMasterKeyDirect, refreshUser])
+  }, [unlockVaultWithPasskey, setMasterKeyFromPasskey, refreshUser])
 
   if (!vaultExists) return null
 

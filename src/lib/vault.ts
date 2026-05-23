@@ -13,7 +13,7 @@ const SALT_BYTES = 16
 const NONCE_BYTES = 12 // AES-GCM standard
 
 interface VaultEntry {
-  id: 'master'
+  id: string
   wrappedKey: ArrayBuffer
   salt: Uint8Array
   nonce: Uint8Array
@@ -200,12 +200,14 @@ export async function unwrap(password: string): Promise<Uint8Array | null> {
   return masterKey
 }
 
-/** Check if IndexedDB has a wrapped key. */
+/** Check if IndexedDB has a wrapped key (password or passkey). */
 export async function hasVault(): Promise<boolean> {
   const db = await openDB()
   try {
-    const entry = await dbGet(db, 'master')
-    return entry !== undefined
+    const pw = await dbGet(db, 'master')
+    if (pw) return true
+    const pk = await dbGet(db, PASSKEY_VAULT_ID)
+    return pk !== undefined
   } finally {
     db.close()
   }
@@ -219,4 +221,60 @@ export async function clearVault(): Promise<void> {
   } finally {
     db.close()
   }
+}
+
+// ─── Passkey vault (PRF-wrapped) ──────────────────
+
+const PASSKEY_VAULT_ID = 'master-passkey'
+
+async function importAesKey(raw: Uint8Array, usage: 'encrypt' | 'decrypt'): Promise<CryptoKey> {
+  return crypto.subtle.importKey('raw', raw.buffer as ArrayBuffer, { name: 'AES-GCM' }, false, [usage])
+}
+
+export async function wrapAndStoreWithPasskey(masterKey: Uint8Array, wrapKey: Uint8Array): Promise<void> {
+  const nonce = crypto.getRandomValues(new Uint8Array(NONCE_BYTES))
+  const cryptoKey = await importAesKey(wrapKey, 'encrypt')
+  const wrappedKey = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: nonce as unknown as BufferSource },
+    cryptoKey,
+    masterKey as unknown as BufferSource,
+  )
+  const keyCheck = await computeKeyCheck(masterKey)
+  const db = await openDB()
+  try {
+    await dbPut(db, { id: PASSKEY_VAULT_ID, wrappedKey, salt: new Uint8Array(0), nonce, keyCheck })
+  } finally {
+    db.close()
+  }
+}
+
+export async function unwrapWithPasskey(wrapKey: Uint8Array): Promise<Uint8Array | null> {
+  const db = await openDB()
+  let entry: VaultEntry | undefined
+  try {
+    entry = await dbGet(db, PASSKEY_VAULT_ID)
+  } finally {
+    db.close()
+  }
+  if (!entry) return null
+
+  const cryptoKey = await importAesKey(wrapKey, 'decrypt')
+  let decrypted: ArrayBuffer
+  try {
+    decrypted = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: entry.nonce as unknown as BufferSource },
+      cryptoKey,
+      entry.wrappedKey,
+    )
+  } catch {
+    return null
+  }
+
+  const masterKey = new Uint8Array(decrypted)
+  const check = await computeKeyCheck(masterKey)
+  if (check.length !== entry.keyCheck.length) { masterKey.fill(0); return null }
+  for (let i = 0; i < check.length; i++) {
+    if (check[i] !== entry.keyCheck[i]) { masterKey.fill(0); return null }
+  }
+  return masterKey
 }

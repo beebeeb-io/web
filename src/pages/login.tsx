@@ -16,7 +16,7 @@ import { prfExtensionInputs, extractPrfOutput, getVaultWrapKey, decryptVaultBlob
 export function Login() {
   const navigate = useNavigate()
   const { refreshUser, verify2fa } = useAuth()
-  const { unlockVault, vaultExists, cryptoReady, cryptoError, isUnlocked, setMasterKeyDirect } = useKeys()
+  const { unlockVault, unlockVaultWithPasskey, vaultExists, cryptoReady, cryptoError, isUnlocked, setMasterKeyFromPasskey } = useKeys()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -243,15 +243,18 @@ export function Login() {
           const wrapKey = await getVaultWrapKey(credentialId, prfOutput, false)
 
           if (wrapKey) {
-            // Retrieve the encrypted vault blob from the server
+            // Try local passkey vault first, then server escrow
+            const localOk = await unlockVaultWithPasskey(wrapKey)
+            if (localOk) {
+              navigateAfterLogin()
+              return
+            }
+
             const escrowBlob = await getVaultKeyEscrow(credentialId)
-
             if (escrowBlob) {
-              const encryptedBlob = fromBase64(escrowBlob)
-              const masterKey = await decryptVaultBlob(wrapKey, encryptedBlob)
-
+              const masterKey = await decryptVaultBlob(wrapKey, fromBase64(escrowBlob))
               if (masterKey) {
-                setMasterKeyDirect(masterKey)
+                await setMasterKeyFromPasskey(masterKey, wrapKey)
                 navigateAfterLogin()
                 return
               }

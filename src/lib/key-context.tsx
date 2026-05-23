@@ -18,7 +18,7 @@ import {
   zeroize,
 } from './crypto'
 import { registerLogoutCallback } from './auth-context'
-import { wrapAndStore, unwrap, hasVault, clearVault } from './vault'
+import { wrapAndStore, unwrap, hasVault, clearVault, wrapAndStoreWithPasskey, unwrapWithPasskey } from './vault'
 import {
   initSessionVault,
   cacheVaultKey,
@@ -50,8 +50,12 @@ interface KeyState {
   setMasterKey: (key: Uint8Array, password: string) => Promise<void>
   /** Set the master key directly without password wrapping (passkey vault unlock). */
   setMasterKeyDirect: (key: Uint8Array) => void
+  /** Set the master key and wrap it with a passkey-derived key into IndexedDB. */
+  setMasterKeyFromPasskey: (key: Uint8Array, wrapKey: Uint8Array) => Promise<void>
   /** Unwrap the master key from IndexedDB using password. Returns true if successful. */
   unlockVault: (password: string) => Promise<boolean>
+  /** Unwrap the master key from IndexedDB using a passkey-derived wrap key. Returns true if successful. */
+  unlockVaultWithPasskey: (wrapKey: Uint8Array) => Promise<boolean>
   /** Derive master key from password + salt (legacy path). */
   unlock: (password: string, salt: Uint8Array) => Promise<void>
   /** Derive a per-file key from the master key (async — runs in worker). */
@@ -207,6 +211,25 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     handoffToTauri(key)
   }, [cacheKey, handoffToTauri])
 
+  const setMasterKeyFromPasskey = useCallback(async (key: Uint8Array, wrapKey: Uint8Array) => {
+    masterKeyRef.current = key
+    await wrapAndStoreWithPasskey(key, wrapKey)
+    setVaultExists(true)
+    setIsUnlocked(true)
+    cacheKey(key)
+    handoffToTauri(key)
+  }, [cacheKey, handoffToTauri])
+
+  const unlockVaultWithPasskey = useCallback(async (wrapKey: Uint8Array): Promise<boolean> => {
+    const key = await unwrapWithPasskey(wrapKey)
+    if (!key) return false
+    masterKeyRef.current = key
+    setIsUnlocked(true)
+    cacheKey(key)
+    handoffToTauri(key)
+    return true
+  }, [cacheKey, handoffToTauri])
+
   const unlockVault = useCallback(async (password: string): Promise<boolean> => {
     const key = await unwrap(password)
     if (!key) return false
@@ -271,14 +294,16 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       vaultChecked,
       setMasterKey,
       setMasterKeyDirect,
+      setMasterKeyFromPasskey,
       unlockVault,
+      unlockVaultWithPasskey,
       unlock,
       getFileKey,
       getMasterKey,
       lock,
       fullLogout,
     }),
-    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, vaultExists, vaultChecked, setMasterKey, setMasterKeyDirect, unlockVault, unlock, getFileKey, getMasterKey, lock, fullLogout],
+    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, vaultExists, vaultChecked, setMasterKey, setMasterKeyDirect, setMasterKeyFromPasskey, unlockVault, unlockVaultWithPasskey, unlock, getFileKey, getMasterKey, lock, fullLogout],
   )
 
   return <KeyContext.Provider value={value}>{children}</KeyContext.Provider>
