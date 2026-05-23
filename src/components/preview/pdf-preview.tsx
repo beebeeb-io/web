@@ -17,6 +17,7 @@ export function PdfPreview({ blob }: PdfPreviewProps) {
   return (
     <iframe
       src={url}
+      sandbox="allow-popups"
       className="w-full h-full border-0 rounded"
       title="PDF preview"
     />

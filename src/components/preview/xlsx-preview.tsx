@@ -4,6 +4,7 @@
  */
 
 import { useEffect, useState } from 'react'
+import DOMPurify from 'dompurify'
 import { Icon } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
 
@@ -170,8 +171,9 @@ export function XlsxPreview({ blob, filename }: XlsxPreviewProps) {
   }
 
   const currentSheet = sheets[activeSheet]
+  const sanitizedHtml = currentSheet ? DOMPurify.sanitize(currentSheet.html) : ''
   const srcDoc = currentSheet
-    ? `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${TABLE_STYLES}</style></head><body>${currentSheet.html}</body></html>`
+    ? `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${TABLE_STYLES}</style></head><body>${sanitizedHtml}</body></html>`
     : ''
 
   return (
