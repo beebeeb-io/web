@@ -1618,17 +1618,19 @@ export function bufferToBase64url(buffer: ArrayBuffer): string {
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function serverOptsToCreateOptions(publicKey: any): PublicKeyCredentialCreationOptions {
+  // webauthn-rs wraps options in a publicKey field; unwrap if present
+  const pk = publicKey.challenge ? publicKey : publicKey.publicKey
   const opts: PublicKeyCredentialCreationOptions = {
-    ...publicKey,
-    challenge: base64urlToBuffer(publicKey.challenge),
+    ...pk,
+    challenge: base64urlToBuffer(pk.challenge),
     user: {
-      ...publicKey.user,
-      id: base64urlToBuffer(publicKey.user.id),
+      ...pk.user,
+      id: base64urlToBuffer(pk.user.id),
     },
   }
-  if (publicKey.excludeCredentials) {
+  if (pk.excludeCredentials) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    opts.excludeCredentials = publicKey.excludeCredentials.map((cred: any) => ({
+    opts.excludeCredentials = pk.excludeCredentials.map((cred: any) => ({
       ...cred,
       id: base64urlToBuffer(cred.id),
     }))
@@ -1643,13 +1645,15 @@ export function serverOptsToCreateOptions(publicKey: any): PublicKeyCredentialCr
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function serverOptsToGetOptions(publicKey: any): PublicKeyCredentialRequestOptions {
+  // webauthn-rs wraps options in a publicKey field; unwrap if present
+  const pk = publicKey.challenge ? publicKey : publicKey.publicKey
   const opts: PublicKeyCredentialRequestOptions = {
-    ...publicKey,
-    challenge: base64urlToBuffer(publicKey.challenge),
+    ...pk,
+    challenge: base64urlToBuffer(pk.challenge),
   }
-  if (publicKey.allowCredentials) {
+  if (pk.allowCredentials) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    opts.allowCredentials = publicKey.allowCredentials.map((cred: any) => ({
+    opts.allowCredentials = pk.allowCredentials.map((cred: any) => ({
       ...cred,
       id: base64urlToBuffer(cred.id),
     }))
