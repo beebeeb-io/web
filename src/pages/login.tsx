@@ -27,8 +27,8 @@ export function Login() {
   // 2FA state
   const [partialToken, setPartialToken] = useState<string | null>(null)
   const [passkeyLoading, setPasskeyLoading] = useState(false)
+  const [passkeyMode, setPasskeyMode] = useState(false)
   const [devLoading, setDevLoading] = useState(false)
-  // Show passkey login if the browser supports WebAuthn
   const showPasskeyLogin = typeof window !== 'undefined' && !!window.PublicKeyCredential
 
   const navigateAfterLogin = useCallback(() => {
@@ -184,6 +184,7 @@ export function Login() {
       document.getElementById('login-email')?.focus()
       return
     }
+    setError('')
 
     setPasskeyLoading(true)
     try {
@@ -378,7 +379,7 @@ export function Login() {
       title="Welcome back"
       subtitle="Sign in to unlock your encrypted vault."
     >
-      <form onSubmit={handleSubmit} data-crypto-ready={cryptoReady ? 'true' : 'false'}>
+      <form onSubmit={passkeyMode ? (e) => { e.preventDefault(); handlePasskeyLogin() } : handleSubmit} data-crypto-ready={cryptoReady ? 'true' : 'false'}>
         <BBInput
           id="login-email"
           label="Email"
@@ -389,42 +390,47 @@ export function Login() {
           icon="mail"
           className="mb-3.5"
           autoComplete="email"
+          autoFocus={passkeyMode}
           required
         />
 
-        {/* Password field with show/hide toggle and Forgot link */}
-        <div className="mb-1.5">
-          <div className="flex items-baseline mb-1.5">
-            <label className="text-xs font-medium text-ink-2">Password</label>
-            <Link
-              to="/forgot-password"
-              className="ml-auto text-[11px] text-amber-deep hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-deep rounded"
-            >
-              Forgot?
-            </Link>
-          </div>
-          <div
-            className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 transition-all focus-within:ring-2 focus-within:ring-amber/30 focus-within:border-amber-deep"
-          >
-            <input
-              type={showPassword ? 'text' : 'password'}
-              placeholder="Your password"
-              value={password}
-              onChange={(e) => setPassword(e.currentTarget.value)}
-              className="flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-4"
-              autoComplete="current-password"
-              required
-            />
-            <button
-              type="button"
-              className="password-toggle text-ink-3 hover:text-ink-2 p-0.5 rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-deep"
-              onClick={() => setShowPassword(!showPassword)}
-              aria-label={showPassword ? 'Hide password' : 'Show password'}
-            >
-              <Icon name={showPassword ? 'eye-off' : 'eye'} size={15} />
-            </button>
-          </div>
-        </div>
+        {!passkeyMode && (
+          <>
+            {/* Password field with show/hide toggle and Forgot link */}
+            <div className="mb-1.5">
+              <div className="flex items-baseline mb-1.5">
+                <label className="text-xs font-medium text-ink-2">Password</label>
+                <Link
+                  to="/forgot-password"
+                  className="ml-auto text-[11px] text-amber-deep hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-deep rounded"
+                >
+                  Forgot?
+                </Link>
+              </div>
+              <div
+                className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 transition-all focus-within:ring-2 focus-within:ring-amber/30 focus-within:border-amber-deep"
+              >
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder="Your password"
+                  value={password}
+                  onChange={(e) => setPassword(e.currentTarget.value)}
+                  className="flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-4"
+                  autoComplete="current-password"
+                  required
+                />
+                <button
+                  type="button"
+                  className="password-toggle text-ink-3 hover:text-ink-2 p-0.5 rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-deep"
+                  onClick={() => setShowPassword(!showPassword)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  <Icon name={showPassword ? 'eye-off' : 'eye'} size={15} />
+                </button>
+              </div>
+            </div>
+          </>
+        )}
 
         {/* Error message */}
         {error && (
@@ -434,44 +440,75 @@ export function Login() {
           </div>
         )}
 
-        <BBButton
-          type="submit"
-          variant="amber"
-          size="lg"
-          className="w-full mt-3"
-          disabled={submitting}
-        >
-          {submitting ? (
-            <span className="flex items-center gap-2">
-              <span className="inline-block w-3.5 h-3.5 border-2 border-ink/20 border-t-ink rounded-full animate-spin" />
-              Unlocking vault...
-            </span>
-          ) : (
-            'Sign in'
-          )}
-        </BBButton>
-
-        {showPasskeyLogin && (
+        {passkeyMode ? (
           <>
-            {/* OR divider */}
-            <div className="flex items-center gap-3 my-5 text-[11px] text-ink-4 select-none">
-              <div className="flex-1 h-px bg-line" />
-              <span className="tracking-wider uppercase">or</span>
-              <div className="flex-1 h-px bg-line" />
-            </div>
+            <BBButton
+              type="submit"
+              variant="amber"
+              size="lg"
+              className="w-full mt-3"
+              disabled={passkeyLoading || !email}
+            >
+              {passkeyLoading ? (
+                <span className="flex items-center gap-2">
+                  <span className="inline-block w-3.5 h-3.5 border-2 border-ink/20 border-t-ink rounded-full animate-spin" />
+                  Waiting for device...
+                </span>
+              ) : (
+                <span className="flex items-center gap-2">
+                  <Icon name="key" size={14} />
+                  Continue with passkey
+                </span>
+              )}
+            </BBButton>
 
-            {/* Passkey — first-class option with distinct styling */}
             <button
               type="button"
-              className="w-full flex items-center justify-center gap-2.5 px-lg py-2.5 text-sm font-medium text-ink border border-line-2 rounded-lg bg-paper hover:bg-paper-2 active:bg-paper-3 transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-amber-deep focus-visible:ring-offset-2"
-              onClick={handlePasskeyLogin}
-              disabled={passkeyLoading}
+              className="w-full mt-4 text-xs text-ink-3 hover:text-ink-2 transition-colors cursor-pointer"
+              onClick={() => { setPasskeyMode(false); setError('') }}
             >
-              <span className="flex items-center justify-center w-6 h-6 rounded-md bg-amber-bg">
-                <Icon name="key" size={13} className="text-amber-deep" />
-              </span>
-              {passkeyLoading ? 'Waiting for device...' : 'Sign in with passkey'}
+              Sign in with password instead
             </button>
+          </>
+        ) : (
+          <>
+            <BBButton
+              type="submit"
+              variant="amber"
+              size="lg"
+              className="w-full mt-3"
+              disabled={submitting}
+            >
+              {submitting ? (
+                <span className="flex items-center gap-2">
+                  <span className="inline-block w-3.5 h-3.5 border-2 border-ink/20 border-t-ink rounded-full animate-spin" />
+                  Unlocking vault...
+                </span>
+              ) : (
+                'Sign in'
+              )}
+            </BBButton>
+
+            {showPasskeyLogin && (
+              <>
+                <div className="flex items-center gap-3 my-5 text-[11px] text-ink-4 select-none">
+                  <div className="flex-1 h-px bg-line" />
+                  <span className="tracking-wider uppercase">or</span>
+                  <div className="flex-1 h-px bg-line" />
+                </div>
+
+                <button
+                  type="button"
+                  className="w-full flex items-center justify-center gap-2.5 px-lg py-2.5 text-sm font-medium text-ink border border-line-2 rounded-lg bg-paper hover:bg-paper-2 active:bg-paper-3 transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-amber-deep focus-visible:ring-offset-2"
+                  onClick={() => { setPasskeyMode(true); setError('') }}
+                >
+                  <span className="flex items-center justify-center w-6 h-6 rounded-md bg-amber-bg">
+                    <Icon name="key" size={13} className="text-amber-deep" />
+                  </span>
+                  Sign in with passkey
+                </button>
+              </>
+            )}
           </>
         )}
 
