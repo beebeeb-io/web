@@ -8,10 +8,26 @@ interface MnemonicVerifyProps {
   onBack: () => void
 }
 
-function pickRandomIndices(wordCount: number, count: number): number[] {
+// djb2-style string hash — deterministic, synchronous, no crypto dep.
+// Returns an unsigned 32-bit integer.
+function hashString(s: string): number {
+  let h = 5381
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) + h + s.charCodeAt(i)) | 0
+  }
+  return h >>> 0
+}
+
+// Derive `count` distinct indices in [0, wordCount) deterministically from
+// the phrase content. Using multiple hashes of the phrase + a salt keeps the
+// indices stable across remounts so a user who navigates away and back is
+// asked to verify the SAME words.
+function pickIndicesFromPhrase(phrase: string, wordCount: number, count: number): number[] {
   const indices = new Set<number>()
-  while (indices.size < count) {
-    indices.add(Math.floor(Math.random() * wordCount))
+  let salt = 0
+  while (indices.size < count && salt < wordCount * 10) {
+    indices.add(hashString(`${phrase}|${salt}`) % wordCount)
+    salt++
   }
   return Array.from(indices).sort((a, b) => a - b)
 }
@@ -20,9 +36,9 @@ export function MnemonicVerify({ phrase, onVerified, onBack }: MnemonicVerifyPro
   const words = phrase.split(' ').filter(Boolean)
 
   const indices = useMemo(
-    () => pickRandomIndices(words.length, Math.min(3, words.length)),
+    () => pickIndicesFromPhrase(phrase, words.length, Math.min(3, words.length)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [words.length],
+    [phrase, words.length],
   )
 
   const [inputs, setInputs] = useState<Record<number, string>>({})

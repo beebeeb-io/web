@@ -159,6 +159,7 @@ export function Drive() {
   const [tourOpen, setTourOpen] = useState(false)
   const [tourCompleted, setTourCompleted] = useState<Set<string>>(new Set())
   const [pausedUploads, setPausedUploads] = useState<UploadState[]>([])
+  const [uploadMenuOpen, setUploadMenuOpen] = useState(false)
 
   // Track the last uploaded file id for the onboarding guide's first-share step.
   const [lastUploadedFileId, setLastUploadedFileId] = useState<string | null>(null)
@@ -1957,6 +1958,41 @@ export function Drive() {
             <BBButton size="sm" onClick={browseFolder} className="hidden sm:inline-flex gap-1.5" disabled={isFrozen} title={isFrozen ? 'Account is frozen' : undefined}>
               <Icon name="folder" size={13} /> Upload folder
             </BBButton>
+            {/* Mobile-only overflow: surfaces "Upload folder" below sm where the
+                dedicated button is hidden. Keeps the toolbar from getting wider. */}
+            <div className="relative sm:hidden">
+              <button
+                type="button"
+                onClick={() => setUploadMenuOpen((v) => !v)}
+                disabled={isFrozen}
+                aria-label="More upload options"
+                aria-haspopup="menu"
+                aria-expanded={uploadMenuOpen}
+                title={isFrozen ? 'Account is frozen' : undefined}
+                className="h-7 w-7 inline-flex items-center justify-center rounded-md border border-line bg-paper text-ink-2 hover:text-ink hover:bg-paper-2 transition-colors disabled:opacity-50"
+              >
+                <Icon name="chevron-down" size={11} />
+              </button>
+              {uploadMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setUploadMenuOpen(false)} />
+                  <div
+                    role="menu"
+                    className="absolute right-0 top-full mt-1 z-40 bg-paper border border-line-2 rounded-md shadow-2 py-1 min-w-[180px]"
+                  >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => { setUploadMenuOpen(false); browseFolder() }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left text-ink-2 hover:bg-paper-2 hover:text-ink transition-colors"
+                    >
+                      <Icon name="folder" size={11} />
+                      Upload folder
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
 
         </div>

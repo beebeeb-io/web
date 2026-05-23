@@ -4,6 +4,7 @@ import { formatBytes } from '../lib/format'
 import { Icon } from '@beebeeb/shared'
 import { useToast } from './toast'
 import { useKeys } from '../lib/key-context'
+import { useFocusTrap } from '../hooks/use-focus-trap'
 import { decryptVersionToBlob } from '../lib/encrypted-download'
 import {
   listVersions,
@@ -48,6 +49,7 @@ export function VersionHistory({
   const [loading, setLoading] = useState(false)
   const { showToast } = useToast()
   const { getFileKey } = useKeys()
+  const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
 
   const fetchVersions = useCallback(async () => {
     if (!fileId) return
@@ -137,6 +139,7 @@ export function VersionHistory({
       <div className="absolute inset-0 bg-ink/20" />
 
       <div
+        ref={focusTrapRef}
         role="dialog"
         aria-modal="true"
         aria-label="Version history"
