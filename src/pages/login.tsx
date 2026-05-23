@@ -181,7 +181,8 @@ export function Login() {
     setError('')
 
     if (!email) {
-      setError('Enter your email first to sign in with passkey')
+      document.getElementById('login-email')?.focus()
+      setError('Enter your email, then try passkey again')
       return
     }
 
@@ -262,8 +263,11 @@ export function Login() {
           }
         }
 
-        // Vault unlock failed — show password fallback prompt
-        setPasskeyNeedsPassword(true)
+        if (vaultExists) {
+          setPasskeyNeedsPassword(true)
+        } else {
+          setNeedsProvision(true)
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Passkey authentication failed')
@@ -364,6 +368,7 @@ export function Login() {
     return (
       <DeviceProvision
         password={password}
+        email={email}
         onProvisioned={navigateAfterLogin}
       />
     )
@@ -376,6 +381,7 @@ export function Login() {
     >
       <form onSubmit={handleSubmit} data-crypto-ready={cryptoReady ? 'true' : 'false'}>
         <BBInput
+          id="login-email"
           label="Email"
           type="email"
           placeholder="you@example.com"

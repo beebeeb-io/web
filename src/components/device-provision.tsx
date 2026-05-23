@@ -5,20 +5,25 @@ import { Icon } from '@beebeeb/shared'
 import { recoverFromPhrase } from '../lib/crypto'
 import { useKeys } from '../lib/key-context'
 import { decryptFromQr } from '../lib/qr-crypto'
+import { startPasskeyLogin, finishPasskeyLogin, serverOptsToGetOptions, credentialToAuthenticationJSON, getVaultKeyEscrow } from '../lib/api'
+import { prfExtensionInputs, extractPrfOutput, getVaultWrapKey, decryptVaultBlob } from '../lib/passkey-vault'
+import { fromBase64 } from '../lib/crypto'
 import jsQR from 'jsqr'
 
-type Tab = 'phrase' | 'qr'
+type Tab = 'passkey' | 'phrase' | 'qr'
 type QrStep = 'scanning' | 'enter-code' | 'decrypting'
 
 interface DeviceProvisionProps {
   password: string
+  email?: string
   onProvisioned: () => void
 }
 
-export function DeviceProvision({ password, onProvisioned }: DeviceProvisionProps) {
-  const { setMasterKey } = useKeys()
+export function DeviceProvision({ password, email: propEmail, onProvisioned }: DeviceProvisionProps) {
+  const { setMasterKey, setMasterKeyDirect } = useKeys()
 
-  const [activeTab, setActiveTab] = useState<Tab>('phrase')
+  const showPasskey = typeof window !== 'undefined' && !!window.PublicKeyCredential && !!propEmail
+  const [activeTab, setActiveTab] = useState<Tab>(showPasskey ? 'passkey' : 'phrase')
   const [phrase, setPhrase] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -32,6 +37,55 @@ export function DeviceProvision({ password, onProvisioned }: DeviceProvisionProp
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const animFrameRef = useRef<number>(0)
+
+  const [passkeyLoading, setPasskeyLoading] = useState(false)
+  const [passkeyError, setPasskeyError] = useState('')
+
+  async function handlePasskeyUnlock() {
+    if (!propEmail) return
+    setPasskeyError('')
+    setPasskeyLoading(true)
+    try {
+      const startRes = await startPasskeyLogin(propEmail)
+      const getOptions = serverOptsToGetOptions(startRes.publicKey)
+      const prfExt = prfExtensionInputs()
+      const credential = await navigator.credentials.get({
+        publicKey: { ...getOptions, extensions: { ...getOptions.extensions, ...prfExt } },
+      }) as PublicKeyCredential | null
+      if (!credential) {
+        setPasskeyError('Passkey authentication was cancelled.')
+        setPasskeyLoading(false)
+        return
+      }
+      const credentialData = credentialToAuthenticationJSON(credential)
+      await finishPasskeyLogin(credentialData, startRes.auth_state, startRes.user_id)
+
+      const credentialId = credential.id
+      const extensionResults = credential.getClientExtensionResults()
+      const prfOutput = extractPrfOutput(extensionResults)
+      const wrapKey = await getVaultWrapKey(credentialId, prfOutput, false)
+      if (wrapKey) {
+        const escrowBlob = await getVaultKeyEscrow(credentialId)
+        if (escrowBlob) {
+          const masterKey = await decryptVaultBlob(wrapKey, fromBase64(escrowBlob))
+          if (masterKey) {
+            if (password) {
+              await setMasterKey(masterKey, password)
+            } else {
+              setMasterKeyDirect(masterKey)
+            }
+            onProvisioned()
+            return
+          }
+        }
+      }
+      setPasskeyError('Could not decrypt vault keys from this passkey. Try your recovery phrase or re-register the passkey from a device where you are already signed in.')
+    } catch (err) {
+      setPasskeyError(err instanceof Error ? err.message : 'Passkey vault unlock failed.')
+    } finally {
+      setPasskeyLoading(false)
+    }
+  }
 
   // ─── Recovery phrase handler ──────────────────────
 
@@ -199,12 +253,22 @@ export function DeviceProvision({ password, onProvisioned }: DeviceProvisionProp
     >
       {/* Tab bar */}
       <div className="flex border-b border-line mb-5">
+        {showPasskey && (
+          <button
+            type="button"
+            onClick={() => { setActiveTab('passkey'); setError(''); setPasskeyError('') }}
+            className={`flex-1 pb-2.5 text-sm font-medium transition-colors cursor-pointer ${
+              activeTab === 'passkey'
+                ? 'text-ink border-b-2 border-amber'
+                : 'text-ink-3 hover:text-ink-2'
+            }`}
+          >
+            Passkey
+          </button>
+        )}
         <button
           type="button"
-          onClick={() => {
-            setActiveTab('phrase')
-            setError('')
-          }}
+          onClick={() => { setActiveTab('phrase'); setError('') }}
           className={`flex-1 pb-2.5 text-sm font-medium transition-colors cursor-pointer ${
             activeTab === 'phrase'
               ? 'text-ink border-b-2 border-amber'
@@ -215,10 +279,7 @@ export function DeviceProvision({ password, onProvisioned }: DeviceProvisionProp
         </button>
         <button
           type="button"
-          onClick={() => {
-            setActiveTab('qr')
-            setError('')
-          }}
+          onClick={() => { setActiveTab('qr'); setError('') }}
           className={`flex-1 pb-2.5 text-sm font-medium transition-colors cursor-pointer ${
             activeTab === 'qr'
               ? 'text-ink border-b-2 border-amber'
@@ -228,6 +289,42 @@ export function DeviceProvision({ password, onProvisioned }: DeviceProvisionProp
           Scan QR
         </button>
       </div>
+
+      {activeTab === 'passkey' && (
+        <div className="flex flex-col items-center gap-4 py-4">
+          <div className="flex items-center justify-center w-14 h-14 rounded-xl bg-amber-bg">
+            <Icon name="key" size={24} className="text-amber-deep" />
+          </div>
+          <div className="text-center">
+            <p className="text-sm font-medium text-ink mb-1">Unlock with passkey</p>
+            <p className="text-xs text-ink-3 leading-relaxed max-w-[280px]">
+              Use your passkey to decrypt your vault keys on this device.
+            </p>
+          </div>
+          {passkeyError && (
+            <div className="w-full flex items-start gap-2 px-3 py-2.5 rounded-md bg-red/5 border border-red/15">
+              <Icon name="shield" size={14} className="text-red shrink-0 mt-px" />
+              <p className="text-xs text-red leading-relaxed">{passkeyError}</p>
+            </div>
+          )}
+          <BBButton
+            variant="amber"
+            size="lg"
+            className="w-full"
+            onClick={handlePasskeyUnlock}
+            disabled={passkeyLoading}
+          >
+            {passkeyLoading ? (
+              <span className="flex items-center gap-2">
+                <span className="inline-block w-3.5 h-3.5 border-2 border-ink/20 border-t-ink rounded-full animate-spin" />
+                Waiting for device...
+              </span>
+            ) : (
+              'Unlock with passkey'
+            )}
+          </BBButton>
+        </div>
+      )}
 
       {activeTab === 'phrase' && (
         <form onSubmit={handleRestore}>
