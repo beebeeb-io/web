@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { BBCheckbox } from '@beebeeb/shared'
 import { BBChip } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
@@ -761,6 +762,80 @@ export function FileList({
       })()
     : null
 
+  // ─── Virtualization ────────────────────────────────
+  // Window the file rows so 10k+ files render at 60fps. Only visible rows + a
+  // small overscan are mounted in the DOM at any time. We virtualize a flat
+  // list of items — either a date-group header (in showDateGroups mode) or a
+  // file row — keyed by index. The scroll container is the body div below.
+  type VirtualItem =
+    | { kind: 'header'; label: string }
+    | { kind: 'row'; file: DriveFile; rowIndex: number }
+
+  const virtualItems = useMemo<VirtualItem[]>(() => {
+    if (grouped) {
+      const out: VirtualItem[] = []
+      let rowIdx = 0
+      for (const { label, files: groupFiles } of grouped) {
+        out.push({ kind: 'header', label })
+        for (const file of groupFiles) {
+          out.push({ kind: 'row', file, rowIndex: rowIdx++ })
+        }
+      }
+      return out
+    }
+    return sortedFiles.map((file, i) => ({ kind: 'row', file, rowIndex: i }))
+  }, [grouped, sortedFiles])
+
+  // Map from sortedFiles index → virtualItems index. Used by keyboard arrow
+  // navigation to translate a file's position into the right virtual item to
+  // scroll/focus.
+  const fileIndexToVirtualIndex = useMemo(() => {
+    const map = new Map<number, number>()
+    for (let i = 0; i < virtualItems.length; i++) {
+      const item = virtualItems[i]
+      if (item.kind === 'row') map.set(item.rowIndex, i)
+    }
+    return map
+  }, [virtualItems])
+
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null)
+
+  // Rough estimate from the row's styling: py-[11px] (22px vertical padding) +
+  // ~50px content (name, type/badge subline, AES line). measureElement
+  // refines this per-row once mounted, so the estimate only affects initial
+  // scroll positioning.
+  const ROW_HEIGHT_ESTIMATE = 72
+  const HEADER_HEIGHT_ESTIMATE = 32
+
+  const rowVirtualizer = useVirtualizer({
+    count: virtualItems.length,
+    getScrollElement: () => scrollContainerRef.current,
+    estimateSize: (i) => virtualItems[i]?.kind === 'header' ? HEADER_HEIGHT_ESTIMATE : ROW_HEIGHT_ESTIMATE,
+    overscan: 8,
+    // Stable keys so re-orderings (sort changes) don't remount unrelated rows.
+    getItemKey: (i) => {
+      const item = virtualItems[i]
+      return item?.kind === 'header' ? `header:${item.label}` : `row:${item.file.id}`
+    },
+  })
+
+  // Focus the row at the given sortedFiles index. With virtualization the
+  // target row may not be in the DOM yet — scroll the virtualizer to it first,
+  // then focus on the next paint once the row mounts. Used by ArrowUp/Down.
+  const focusRowAtIndex = useCallback((targetRowIndex: number) => {
+    if (targetRowIndex < 0 || targetRowIndex >= sortedFiles.length) return
+    const virtualIdx = fileIndexToVirtualIndex.get(targetRowIndex)
+    if (virtualIdx == null) return
+    rowVirtualizer.scrollToIndex(virtualIdx, { align: 'auto' })
+    // Defer focus to next frame so the row has time to mount after scrolling.
+    requestAnimationFrame(() => {
+      const el = scrollContainerRef.current?.querySelector<HTMLElement>(
+        `[data-row-index="${targetRowIndex}"]`,
+      )
+      if (el) el.focus()
+    })
+  }, [sortedFiles.length, fileIndexToVirtualIndex, rowVirtualizer])
+
   async function commitInlineRename(file: DriveFile) {
     const newName = inlineRenameValue.trim()
     setInlineRenameId(null)
@@ -782,7 +857,10 @@ export function FileList({
   }
 
   // ─── Row renderer ──────────────────────────────────
-  function renderRow(file: DriveFile) {
+  // `rowIndex` is the file's index into `sortedFiles`. With virtualization, the
+  // DOM no longer contains adjacent rows for nextElementSibling-style traversal,
+  // so we use data-row-index to look up rows by position instead.
+  function renderRow(file: DriveFile, rowIndex: number) {
     // null = decryption still running for this file — show skeleton in name cell
     const name = displayName(file)
     const fileType = getFileType(name ?? '', file.is_folder)
@@ -797,6 +875,7 @@ export function FileList({
     return (
       <div
         key={file.id}
+        data-row-index={rowIndex}
         draggable={!isTrashing}
         tabIndex={0}
         role="row"
@@ -894,16 +973,18 @@ export function FileList({
             e.stopPropagation()
             onFileAction?.('trash', file)
           }
-          // Arrow keys: move focus to adjacent rows + scroll into view
+          // Arrow keys: move focus to adjacent rows + scroll into view.
+          // With virtualization, adjacent rows may not be in the DOM (only
+          // visible + overscan are mounted), so we navigate by row index and
+          // ask the virtualizer to scroll the target into view, then focus it
+          // after it mounts.
           else if (e.key === 'ArrowDown') {
             e.preventDefault()
-            const next = e.currentTarget.nextElementSibling as HTMLElement | null
-            if (next) { next.focus(); next.scrollIntoView({ block: 'nearest' }) }
+            focusRowAtIndex(rowIndex + 1)
           }
           else if (e.key === 'ArrowUp') {
             e.preventDefault()
-            const prev = e.currentTarget.previousElementSibling as HTMLElement | null
-            if (prev) { prev.focus(); prev.scrollIntoView({ block: 'nearest' }) }
+            focusRowAtIndex(rowIndex - 1)
           }
         }}
       >
@@ -1290,8 +1371,12 @@ export function FileList({
         </>
       )}
 
-      {/* File list body — role=rowgroup + aria-label lets screen readers announce the list */}
+      {/* File list body — role=rowgroup + aria-label lets screen readers announce the list.
+          This div is the scroll container; the virtualizer measures it. Upload
+          cards and loading/empty fallbacks render normally above the virtualized
+          rows — only the file rows themselves are windowed. */}
       <div
+        ref={scrollContainerRef}
         role="rowgroup"
         aria-label="Files and folders"
         className="flex-1 overflow-y-auto min-h-0"
@@ -1305,17 +1390,48 @@ export function FileList({
           <div aria-busy="true" aria-label="Loading files">{Array.from({ length: 8 }, (_, i) => <FileRowSkeleton key={i} />)}</div>
         ) : sortedFiles.length === 0 ? (
           emptyState
-        ) : grouped ? (
-          grouped.map(({ label, files: groupFiles }) => (
-            <div key={label}>
-              <div className="px-3 md:px-5 py-2 text-[11px] font-semibold text-ink-3 uppercase tracking-wider bg-paper-2 border-b border-line sticky top-0 z-10">
-                {label}
-              </div>
-              {groupFiles.map(renderRow)}
-            </div>
-          ))
         ) : (
-          sortedFiles.map(renderRow)
+          // Spacer div sized to the total virtual content height; absolutely
+          // positioned children are placed at their respective y-offsets.
+          // Clicking the spacer (between rows or below the last row) clears
+          // the selection, matching the pre-virtualization behaviour.
+          <div
+            onClick={(e) => {
+              if (e.target === e.currentTarget && selectedIds.size > 0) clearSelection()
+            }}
+            style={{
+              height: `${rowVirtualizer.getTotalSize()}px`,
+              width: '100%',
+              position: 'relative',
+            }}
+          >
+            {rowVirtualizer.getVirtualItems().map((vi) => {
+              const item = virtualItems[vi.index]
+              if (!item) return null
+              return (
+                <div
+                  key={vi.key}
+                  data-index={vi.index}
+                  ref={rowVirtualizer.measureElement}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    transform: `translateY(${vi.start}px)`,
+                  }}
+                >
+                  {item.kind === 'header' ? (
+                    <div className="px-3 md:px-5 py-2 text-[11px] font-semibold text-ink-3 uppercase tracking-wider bg-paper-2 border-b border-line">
+                      {item.label}
+                    </div>
+                  ) : (
+                    renderRow(item.file, item.rowIndex)
+                  )}
+                </div>
+              )
+            })}
+          </div>
         )}
       </div>
 

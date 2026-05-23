@@ -38,6 +38,7 @@
     "@fontsource/jetbrains-mono": "^5.2.8",
     "@stripe/react-stripe-js": "^6.3.0",
     "@stripe/stripe-js": "^9.4.0",
+    "@tanstack/react-virtual": "^3.13.25",
     "beebeeb-wasm": "workspace:*",
     "comlink": "^4.4.2",
     "dompurify": "^3.4.5",
