@@ -23,7 +23,7 @@ export function DeviceProvision({ password, email: propEmail, onProvisioned }: D
   const { setMasterKey, setMasterKeyDirect } = useKeys()
 
   const showPasskey = typeof window !== 'undefined' && !!window.PublicKeyCredential && !!propEmail
-  const [activeTab, setActiveTab] = useState<Tab>(showPasskey ? 'passkey' : 'phrase')
+  const [activeTab, setActiveTab] = useState<Tab>('phrase')
   const [phrase, setPhrase] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -40,11 +40,54 @@ export function DeviceProvision({ password, email: propEmail, onProvisioned }: D
 
   const [passkeyLoading, setPasskeyLoading] = useState(false)
   const [passkeyError, setPasskeyError] = useState('')
+  const passkeyAttempted = useRef(false)
+
+  const attemptPasskeyUnlock = useCallback(async () => {
+    if (!propEmail || passkeyAttempted.current) return
+    passkeyAttempted.current = true
+    setPasskeyLoading(true)
+    try {
+      const startRes = await startPasskeyLogin(propEmail)
+      const getOptions = serverOptsToGetOptions(startRes.publicKey)
+      const prfExt = prfExtensionInputs()
+      const credential = await navigator.credentials.get({
+        publicKey: { ...getOptions, extensions: { ...getOptions.extensions, ...prfExt } },
+      }) as PublicKeyCredential | null
+      if (!credential) { setPasskeyLoading(false); return }
+      const credentialData = credentialToAuthenticationJSON(credential)
+      await finishPasskeyLogin(credentialData, startRes.auth_state, startRes.user_id)
+
+      const credentialId = credential.id
+      const extensionResults = credential.getClientExtensionResults()
+      const prfOutput = extractPrfOutput(extensionResults)
+      const wrapKey = await getVaultWrapKey(credentialId, prfOutput, false)
+      if (wrapKey) {
+        const escrowBlob = await getVaultKeyEscrow(credentialId)
+        if (escrowBlob) {
+          const masterKey = await decryptVaultBlob(wrapKey, fromBase64(escrowBlob))
+          if (masterKey) {
+            if (password) {
+              await setMasterKey(masterKey, password)
+            } else {
+              setMasterKeyDirect(masterKey)
+            }
+            onProvisioned()
+            return
+          }
+        }
+      }
+    } catch {
+      // passkey vault unlock failed silently
+    } finally {
+      setPasskeyLoading(false)
+    }
+  }, [propEmail, password, setMasterKey, setMasterKeyDirect, onProvisioned])
 
   async function handlePasskeyUnlock() {
     if (!propEmail) return
     setPasskeyError('')
     setPasskeyLoading(true)
+    passkeyAttempted.current = false
     try {
       const startRes = await startPasskeyLogin(propEmail)
       const getOptions = serverOptsToGetOptions(startRes.publicKey)
@@ -79,13 +122,17 @@ export function DeviceProvision({ password, email: propEmail, onProvisioned }: D
           }
         }
       }
-      setPasskeyError('Could not decrypt vault keys from this passkey. Try your recovery phrase or re-register the passkey from a device where you are already signed in.')
+      setPasskeyError('Could not decrypt vault keys. Try your recovery phrase, or re-register this passkey from a device where you are already signed in.')
     } catch (err) {
       setPasskeyError(err instanceof Error ? err.message : 'Passkey vault unlock failed.')
     } finally {
       setPasskeyLoading(false)
     }
   }
+
+  useEffect(() => {
+    if (showPasskey) void attemptPasskeyUnlock()
+  }, [showPasskey, attemptPasskeyUnlock])
 
   // ─── Recovery phrase handler ──────────────────────
 
