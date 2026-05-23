@@ -182,7 +182,6 @@ export function Login() {
 
     if (!email) {
       document.getElementById('login-email')?.focus()
-      setError('Enter your email, then try passkey again')
       return
     }
 
