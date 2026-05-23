@@ -99,6 +99,19 @@ export type CanonicalPlanSlug = (typeof CANONICAL_PLAN_SLUGS)[number]
 
 export const CANONICAL_PAID_PLAN_SLUGS = ['basic', 'pro', 'business'] as const
 
+export function isDowngrade(from: string, to: string): boolean {
+  const fromRank = PLAN_RANK[from] ?? 0
+  const toRank = PLAN_RANK[to] ?? 0
+  return toRank < fromRank && toRank > 0
+}
+
+export function getDowngradeOptions(currentPlan: string): string[] {
+  const currentRank = PLAN_RANK[currentPlan] ?? 0
+  return CANONICAL_PAID_PLAN_SLUGS.filter(
+    (slug) => (PLAN_RANK[slug] ?? 0) < currentRank && (PLAN_RANK[slug] ?? 0) > 0
+  )
+}
+
 // ── Upgrade chain ────────────────────────────────────────────────────────────
 // Maps a plan slug to the next tier up. Absent = no upgrade available.
 

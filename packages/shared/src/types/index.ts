@@ -332,6 +332,9 @@ export interface Subscription {
   current_period_end: string | null
   billing_state?: string | null
   past_due_since?: string | null
+  pending_downgrade_plan?: string | null
+  downgrade_cooldown_until?: string | null
+  storage_grace_deadline?: string | null
 }
 
 export interface Invoice {

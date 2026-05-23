@@ -7,6 +7,7 @@ import { BBToggle } from '@beebeeb/shared'
 import { BBInput } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { UpgradeDialog } from '../components/upgrade-dialog'
+import { DowngradeDialog } from '../components/downgrade-dialog'
 import { useToast } from '../components/toast'
 import {
   getSubscription,
@@ -28,6 +29,7 @@ import {
   type DriveFile,
   type StorageAddonState,
   type StorageAddonPreview,
+  cancelDowngrade,
 } from '../lib/api'
 import { useDriveData } from '../lib/drive-data-context'
 import { useKeys } from '../lib/key-context'
@@ -42,7 +44,7 @@ import {
   formatCentsAsEur,
 } from '../lib/plan-pricing'
 import { PlanComparisonTable } from '../components/plan-comparison'
-import { PLAN_META, PLAN_RANK } from '../lib/plan-constants'
+import { PLAN_META, PLAN_RANK, getDowngradeOptions } from '../lib/plan-constants'
 
 /* ── Plan metadata (imported from plan-constants.ts) ──── */
 
@@ -214,6 +216,10 @@ export function Billing() {
   const [addonSaving, setAddonSaving] = useState(false)
   const [addonPreview, setAddonPreview] = useState<StorageAddonPreview | null>(null)
   const [addonPreviewLoading, setAddonPreviewLoading] = useState(false)
+
+  // Downgrade state
+  const [downgradeTarget, setDowngradeTarget] = useState<string | null>(null)
+  const [cancellingDowngrade, setCancellingDowngrade] = useState(false)
 
   // Invoice preferences
   const [invoiceSendEmail, setInvoiceSendEmail] = useState(true)
@@ -834,6 +840,45 @@ function openUpgrade(plan: string) {
               </div>
             )}
 
+            {/* Pending downgrade status */}
+            {sub?.pending_downgrade_plan && sub?.status !== 'cancelling' && (
+              <div className="rounded-lg border border-line-2 bg-paper-2 p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <Icon name="clock" size={14} className="text-ink-3 shrink-0" />
+                      <span className="text-sm font-semibold text-ink">
+                        Switching to {planMeta[sub.pending_downgrade_plan]?.label ?? sub.pending_downgrade_plan} on {formatDate(sub.current_period_end)}
+                      </span>
+                    </div>
+                    <p className="text-xs text-ink-2">
+                      You keep full {meta.label} access until then.
+                    </p>
+                  </div>
+                  <BBButton
+                    variant="default"
+                    size="sm"
+                    onClick={async () => {
+                      setCancellingDowngrade(true)
+                      try {
+                        await cancelDowngrade()
+                        showToast({ icon: 'check', title: `Staying on ${meta.label}` })
+                        window.dispatchEvent(new Event('beebeeb:plan-changed'))
+                        loadData()
+                      } catch (err) {
+                        showToast({ icon: 'x', title: 'Could not cancel downgrade', description: err instanceof Error ? err.message : '', danger: true })
+                      } finally {
+                        setCancellingDowngrade(false)
+                      }
+                    }}
+                    disabled={cancellingDowngrade}
+                  >
+                    {cancellingDowngrade ? 'Keeping...' : `Keep ${meta.label}`}
+                  </BBButton>
+                </div>
+              </div>
+            )}
+
             {/* Actions */}
             <div className="mt-4 flex gap-2">
               {effectivePlan === 'free' ? (
@@ -937,7 +982,7 @@ function openUpgrade(plan: string) {
                           {lowerPlans.map((lp) => (
                             <button
                               key={lp.id}
-                              onClick={() => { setCancelConfirm(false); openUpgrade(lp.id); }}
+                              onClick={() => { setCancelConfirm(false); setDowngradeTarget(lp.id); }}
                               className="w-full flex items-center justify-between rounded-md border border-line bg-paper px-3 py-2.5 text-left hover:border-amber/50 hover:bg-amber-bg/20 transition-colors group"
                             >
                               <div>
@@ -1308,6 +1353,68 @@ function openUpgrade(plan: string) {
           </div>
         )}
 
+        {/* ── Downgrade options ────────────────────── */}
+        {(() => {
+          if (effectivePlan === 'free') return null
+          if (sub?.pending_downgrade_plan) return null
+          if (sub?.status === 'cancelling') return null
+
+          const cooldownUntil = sub?.downgrade_cooldown_until
+          const inCooldown = cooldownUntil ? new Date(cooldownUntil).getTime() > Date.now() : false
+
+          const downgradeOptions = getDowngradeOptions(effectivePlan)
+            .filter((slug) => slug !== 'business')
+
+          if (downgradeOptions.length === 0) return null
+
+          return (
+            <div className="border border-line rounded-xl overflow-hidden bg-paper">
+              <div className="px-5 py-4 border-b border-line">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-4 mb-1">
+                  {inCooldown ? 'Downgrade unavailable' : 'Switch to a smaller plan'}
+                </div>
+                {inCooldown && (
+                  <div className="text-sm text-ink-2">
+                    You can downgrade again after {formatDate(cooldownUntil!)}.
+                  </div>
+                )}
+              </div>
+              {!inCooldown && (
+                <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-line">
+                  {downgradeOptions.map((slug) => {
+                    const pm = planMeta[slug]
+                    if (!pm) return null
+                    return (
+                      <button
+                        key={slug}
+                        onClick={() => setDowngradeTarget(slug)}
+                        className="p-5 text-left hover:bg-paper-2 transition-colors cursor-pointer group"
+                      >
+                        <div className="text-sm font-semibold mb-0.5 group-hover:text-ink transition-colors">
+                          {pm.label}
+                        </div>
+                        <div className="flex items-baseline gap-1 mb-2">
+                          <span className="font-mono text-lg font-bold">
+                            {formatEuro(pm.priceMonthly)}
+                          </span>
+                          <span className="text-xs text-ink-3">/mo</span>
+                        </div>
+                        <div className="text-xs text-ink-3 mb-3">
+                          {formatStorageSI(pm.storageGB * 1_000_000_000)}
+                        </div>
+                        <span className="inline-flex items-center gap-1 text-xs font-medium text-ink-3 group-hover:text-ink transition-colors">
+                          Switch plan
+                          <Icon name="chevron-right" size={10} />
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )
+        })()}
+
         {/* ── Invoices ───────────────────────────────── */}
         <div>
           <div className="flex items-center gap-2.5 mb-2.5">
@@ -1586,6 +1693,22 @@ function openUpgrade(plan: string) {
           window.dispatchEvent(new Event('beebeeb:plan-changed'))
         }}
       />
+
+      {/* Downgrade dialog */}
+      {downgradeTarget && (
+        <DowngradeDialog
+          currentPlan={effectivePlan}
+          targetPlan={downgradeTarget}
+          currentUsageBytes={usedBytes}
+          effectiveDate={sub?.current_period_end ?? null}
+          open={!!downgradeTarget}
+          onClose={() => setDowngradeTarget(null)}
+          onSuccess={() => {
+            window.dispatchEvent(new Event('beebeeb:plan-changed'))
+            loadData()
+          }}
+        />
+      )}
     </SettingsShell>
   )
 }

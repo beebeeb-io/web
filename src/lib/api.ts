@@ -1306,6 +1306,29 @@ export async function switchBillingCycle(billing_cycle: 'monthly' | 'yearly'): P
   })
 }
 
+export async function downgradePlan(params: {
+  plan: string
+}): Promise<{
+  effective_date: string
+  current_plan: string
+  new_plan: string
+  storage_warning: {
+    current_bytes: number
+    new_quota_bytes: number
+    grace_days: number
+    auto_delete_date: string
+  } | null
+}> {
+  return request('/api/v1/billing/downgrade', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
+export async function cancelDowngrade(): Promise<{ plan: string; message: string }> {
+  return request('/api/v1/billing/downgrade/cancel', { method: 'POST' })
+}
+
 export async function createSetupIntent(): Promise<{ client_secret: string }> {
   return request<{ client_secret: string }>('/api/v1/billing/setup-intent', { method: 'POST' })
 }
