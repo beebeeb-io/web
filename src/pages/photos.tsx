@@ -17,6 +17,8 @@ import { UploadCards } from '../components/upload-progress-card'
 import { UploadZone } from '../components/upload-zone'
 import { encryptedUpload } from '../lib/encrypted-upload'
 import { useToast } from '../components/toast'
+import { useDriveData } from '../lib/drive-data-context'
+import { UpgradeNudge } from '../components/upgrade-nudge'
 
 // ─── Constants ──────────────────────────────────
 
@@ -130,6 +132,9 @@ export function Photos() {
   const navigate = useNavigate()
   const { getFileKey, isUnlocked, cryptoReady } = useKeys()
   const { showToast } = useToast()
+  const { planDetails } = useDriveData()
+  const planSlug = planDetails.subscription?.plan ?? 'free'
+  const isFree = planSlug === 'free'
   const { previewFile, openPreview, closePreview } = useFilePreview()
   const [dateRange, setDateRange] = useState<(typeof DATE_RANGES)[number]>('All time')
   const [dateDropdownOpen, setDateDropdownOpen] = useState(false)
@@ -483,6 +488,17 @@ export function Photos() {
         {/* Photo grid */}
         <UploadZone onFiles={handleFilesSelected}>
         <div className="flex-1 overflow-y-auto px-5 py-[18px]">
+          {isFree && (
+            <div className="mb-3">
+              <UpgradeNudge
+                surface="photos"
+                targetPlan="basic"
+                heading="Photo backup needs a paid plan."
+                body="Basic gives you 1 TB of encrypted storage and full photo and video sync from the apps."
+                onUpgrade={() => navigate('/pricing?plan=basic')}
+              />
+            </div>
+          )}
           <UploadCards uploads={uploads} onCancel={handleCancelUpload} onRetry={handleRetryUpload} />
           {loading ? (
             <div>
