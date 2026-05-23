@@ -18,6 +18,8 @@ import {
   createCheckoutSession,
   cancelSubscription,
   reactivateSubscription,
+  getWinbackEligible,
+  claimWinback,
   getPreference,
   setPreference,
   getStorageAddons,
@@ -216,8 +218,18 @@ export function Billing() {
   const [upgradeOpen, setUpgradeOpen] = useState(false)
   const [upgradePlan, setUpgradePlan] = useState<string>('pro')
   const [portalLoading, setPortalLoading] = useState(false)
-  const [cancelConfirm, setCancelConfirm] = useState(false)
+  // Cancel flow is a three-step machine:
+  //   'idle'    — initial state, "Cancel plan" link is visible
+  //   'offer'   — win-back offer card (50% off / 3 months); only when eligible
+  //   'confirm' — final cancel-confirmation panel
+  // `cancelConfirm` is derived as `cancelStep === 'confirm'` so the existing
+  // JSX condition keeps working unchanged.
+  const [cancelStep, setCancelStep] = useState<'idle' | 'offer' | 'confirm'>('idle')
+  const cancelConfirm = cancelStep === 'confirm'
+  const setCancelConfirm = (v: boolean) => setCancelStep(v ? 'confirm' : 'idle')
   const [cancelLoading, setCancelLoading] = useState(false)
+  const [winbackStartingLoading, setWinbackStartingLoading] = useState(false)
+  const [winbackAcceptLoading, setWinbackAcceptLoading] = useState(false)
   const [reactivateLoading, setReactivateLoading] = useState(false)
   const [showComparison, setShowComparison] = useState(false)
   // Billing cycle switch confirmation
@@ -399,6 +411,48 @@ function openUpgrade(plan: string) {
       })
     } finally {
       setCancelLoading(false)
+    }
+  }
+
+  // Entry point for the cancel flow. Checks win-back eligibility before
+  // jumping straight to the cancel-confirmation panel. If the user has not
+  // previously claimed the discount (and has an active paid sub), they see
+  // the offer step first — otherwise it's a no-op and we skip to confirm.
+  async function startCancelFlow() {
+    setWinbackStartingLoading(true)
+    try {
+      const { eligible } = await getWinbackEligible()
+      setCancelStep(eligible ? 'offer' : 'confirm')
+    } catch {
+      // Don't block cancel if eligibility check fails — just skip the offer.
+      setCancelStep('confirm')
+    } finally {
+      setWinbackStartingLoading(false)
+    }
+  }
+
+  async function handleAcceptWinback() {
+    setWinbackAcceptLoading(true)
+    try {
+      const result = await claimWinback()
+      setCancelStep('idle')
+      showToast({
+        icon: 'check',
+        title: 'Discount applied',
+        description: `${result.discount_pct}% off for the next ${result.months} months — it shows up on your next invoice.`,
+      })
+      window.dispatchEvent(new Event('beebeeb:plan-changed'))
+      refreshPlanDetails()
+      await loadData()
+    } catch (err) {
+      showToast({
+        icon: 'x',
+        title: 'Could not apply discount',
+        description: err instanceof Error ? err.message : 'Please try again.',
+        danger: true,
+      })
+    } finally {
+      setWinbackAcceptLoading(false)
     }
   }
 
@@ -925,9 +979,45 @@ function openUpgrade(plan: string) {
               )}
             </div>
 
-            {/* Cancel plan — paid plans only, not already cancelling */}
+            {/* Cancel plan — paid plans only, not already cancelling.
+                Three steps:
+                  idle  → "Cancel plan" link
+                  offer → win-back 50%-off-3-months card (only when eligible)
+                  confirm → existing cancel-confirmation panel
+            */}
             {effectivePlan !== 'free' && sub?.status !== 'cancelling' && (
-              cancelConfirm ? (
+              cancelStep === 'offer' ? (
+                <div className="mt-3 p-3.5 bg-amber-bg/40 border border-amber/30 rounded-lg space-y-4">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep">
+                    Before you go
+                  </div>
+                  <div className="text-sm text-ink">
+                    Wait — stay with us. Get 50% off for the next 3 months.
+                  </div>
+                  <p className="text-xs text-ink-3">
+                    One-time offer, applied to your next invoice. If it still
+                    isn&apos;t the right fit after that, you can cancel any
+                    time.
+                  </p>
+                  <div className="flex gap-2">
+                    <BBButton
+                      size="sm"
+                      onClick={() => void handleAcceptWinback()}
+                      disabled={winbackAcceptLoading}
+                    >
+                      {winbackAcceptLoading ? 'Applying...' : 'Accept offer'}
+                    </BBButton>
+                    <BBButton
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setCancelStep('confirm')}
+                      disabled={winbackAcceptLoading}
+                    >
+                      No thanks, cancel my plan
+                    </BBButton>
+                  </div>
+                </div>
+              ) : cancelConfirm ? (
                 <div className="mt-3 p-3.5 bg-red/5 border border-red/20 rounded-lg space-y-4">
                   <div className="text-[12px] font-medium text-ink">Cancel your plan?</div>
 
@@ -1023,10 +1113,11 @@ function openUpgrade(plan: string) {
               ) : (
                 <div className="mt-3">
                   <button
-                    className="text-[11.5px] text-ink-4 hover:text-red transition-colors"
-                    onClick={() => setCancelConfirm(true)}
+                    className="text-[11.5px] text-ink-4 hover:text-red transition-colors disabled:opacity-50"
+                    onClick={() => void startCancelFlow()}
+                    disabled={winbackStartingLoading}
                   >
-                    Cancel plan
+                    {winbackStartingLoading ? 'Cancel plan...' : 'Cancel plan'}
                   </button>
                 </div>
               )

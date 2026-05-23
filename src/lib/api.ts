@@ -1296,6 +1296,21 @@ export async function reactivateSubscription(): Promise<{ message?: string; acti
   return request<{ message: string }>('/api/v1/billing/reactivate', { method: 'POST' })
 }
 
+/** GET /api/v1/billing/winback-eligible — is the user eligible for the one-time win-back offer? */
+export async function getWinbackEligible(): Promise<{ eligible: boolean }> {
+  return request<{ eligible: boolean }>('/api/v1/billing/winback-eligible')
+}
+
+export interface WinbackClaimResponse {
+  discount_pct: number
+  months: number
+}
+
+/** POST /api/v1/billing/winback-claim — apply the 50%-off-3-months coupon. 409 if already claimed. */
+export async function claimWinback(): Promise<WinbackClaimResponse> {
+  return request<WinbackClaimResponse>('/api/v1/billing/winback-claim', { method: 'POST' })
+}
+
 export async function switchBillingCycle(billing_cycle: 'monthly' | 'yearly'): Promise<{ billing_cycle: string }> {
   return request<{ billing_cycle: string }>('/api/v1/billing/switch-cycle', {
     method: 'POST',
