@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useCallback, useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { BBLogo } from '@beebeeb/shared'
+import { BBButton, BBLogo } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { getPublicProfile, type PublicProfile, type PublicProfileShare } from '../lib/api'
 import { formatBytes } from '../lib/format'
+import { userFriendlyError } from '../lib/user-friendly-error'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -187,16 +188,23 @@ function NotFoundState() {
   )
 }
 
-function ErrorState({ message }: { message: string }) {
+function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
     <div className="flex flex-col items-center gap-3 py-24 text-center">
       <div className="w-14 h-14 rounded-full bg-red/5 border border-red/20 flex items-center justify-center mb-2">
         <Icon name="x" size={22} className="text-red" />
       </div>
-      <p className="text-[16px] font-semibold text-ink">Something went wrong</p>
+      <p className="text-[16px] font-semibold text-ink">Couldn't load profile</p>
       <p className="text-[13px] text-ink-3 max-w-[30ch] leading-relaxed">
         {message}
       </p>
+      {onRetry && (
+        <div className="mt-2">
+          <BBButton onClick={onRetry} size="sm" variant="default">
+            Try again
+          </BBButton>
+        </div>
+      )}
     </div>
   )
 }
@@ -210,7 +218,7 @@ export function PublicProfilePage() {
   const [notFound, setNotFound] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
+  const loadProfile = useCallback(() => {
     if (!username) return
     setLoading(true)
     setNotFound(false)
@@ -226,11 +234,15 @@ export function PublicProfilePage() {
         ) {
           setNotFound(true)
         } else {
-          setError(e instanceof Error ? e.message : 'Failed to load profile')
+          setError(userFriendlyError(e))
         }
       })
       .finally(() => setLoading(false))
   }, [username])
+
+  useEffect(() => {
+    loadProfile()
+  }, [loadProfile])
 
   return (
     <div className="min-h-screen bg-paper-2 flex flex-col">
@@ -260,7 +272,7 @@ export function PublicProfilePage() {
       <main id="main-content" className="flex-1 w-full max-w-2xl mx-auto px-4 pb-12">
         {loading && <LoadingState />}
         {notFound && <NotFoundState />}
-        {error && <ErrorState message={error} />}
+        {error && <ErrorState message={error} onRetry={loadProfile} />}
 
         {profile && (
           <>

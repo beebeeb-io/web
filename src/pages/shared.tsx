@@ -28,6 +28,7 @@ import {
   type MyShare,
 } from '../lib/api'
 import { useKeys } from '../lib/key-context'
+import { userFriendlyError } from '../lib/user-friendly-error'
 import { decryptFilename, decryptFileMetadata, decryptChunk, fromBase64, parseEncryptedBlob, x25519SharedSecret, deriveShareKey, deriveX25519Private, zeroize } from '../lib/crypto'
 import { encryptedDownload } from '../lib/encrypted-download'
 import { encryptedUpload } from '../lib/encrypted-upload'
@@ -297,7 +298,7 @@ export function Shared() {
       setSentInvited((prev) => prev.filter((i) => i.id !== invite.id))
       showToast({ icon: 'check', title: 'Invite cancelled', description: `Invite to ${invite.recipient_email} was cancelled.` })
     } catch (e) {
-      showToast({ icon: 'x', title: 'Failed to cancel', description: e instanceof Error ? e.message : 'Something went wrong.', danger: true })
+      showToast({ icon: 'x', title: 'Failed to cancel', description: userFriendlyError(e), danger: true })
     }
   }, [showToast])
 
@@ -389,7 +390,7 @@ export function Shared() {
           showToast({ icon: 'check', title: 'Removed', description: 'Removed from your shared list.' })
           fetchAll()
         } catch (e) {
-          showToast({ icon: 'x', title: 'Failed', description: e instanceof Error ? e.message : 'Something went wrong.', danger: true })
+          showToast({ icon: 'x', title: 'Failed', description: userFriendlyError(e), danger: true })
         }
         break
       case 'share-settings': {
@@ -415,7 +416,7 @@ export function Shared() {
             setSentApproved((prev) => prev.filter((i) => i.id !== inviteId))
             showToast({ icon: 'check', title: 'Access revoked', description: invite.recipient_email })
           } catch (e) {
-            showToast({ icon: 'x', title: 'Failed to revoke', description: e instanceof Error ? e.message : 'Something went wrong.', danger: true })
+            showToast({ icon: 'x', title: 'Failed to revoke', description: userFriendlyError(e), danger: true })
           }
         }
         break
@@ -425,7 +426,7 @@ export function Shared() {
           await resendInvite(inviteId)
           showToast({ icon: 'mail', title: 'Email resent', description: 'Invite email was resent.' })
         } catch (e) {
-          showToast({ icon: 'x', title: 'Failed to resend', description: e instanceof Error ? e.message : 'Something went wrong.', danger: true })
+          showToast({ icon: 'x', title: 'Failed to resend', description: userFriendlyError(e), danger: true })
         }
         break
       case 'cancel-invite':
@@ -438,7 +439,7 @@ export function Shared() {
           showToast({ icon: 'check', title: 'Claim withdrawn', description: 'You withdrew your claim.' })
           fetchAll()
         } catch (e) {
-          showToast({ icon: 'x', title: 'Failed to withdraw', description: e instanceof Error ? e.message : 'Something went wrong.', danger: true })
+          showToast({ icon: 'x', title: 'Failed to withdraw', description: userFriendlyError(e), danger: true })
         }
         break
     }
@@ -453,7 +454,7 @@ export function Shared() {
       setSelectedIds(new Set())
       fetchAll()
     } catch (e) {
-      showToast({ icon: 'x', title: 'Bulk revoke failed', description: e instanceof Error ? e.message : 'Something went wrong.', danger: true })
+      showToast({ icon: 'x', title: 'Bulk revoke failed', description: userFriendlyError(e), danger: true })
     }
   }
 
@@ -465,7 +466,7 @@ export function Shared() {
       setSelectedIds(new Set())
       fetchAll()
     } catch (e) {
-      showToast({ icon: 'x', title: 'Bulk remove failed', description: e instanceof Error ? e.message : 'Something went wrong.', danger: true })
+      showToast({ icon: 'x', title: 'Bulk remove failed', description: userFriendlyError(e), danger: true })
     }
   }
 
@@ -477,7 +478,7 @@ export function Shared() {
       setSelectedIds(new Set())
       fetchAll()
     } catch (e) {
-      showToast({ icon: 'x', title: 'Bulk cancel failed', description: e instanceof Error ? e.message : 'Something went wrong.', danger: true })
+      showToast({ icon: 'x', title: 'Bulk cancel failed', description: userFriendlyError(e), danger: true })
     }
   }
 
@@ -889,7 +890,7 @@ export function Shared() {
                         showToast({ icon: 'check', title: 'Claimed', description: 'Waiting for sender to approve access.' })
                         fetchAll()
                       } catch (e) {
-                        showToast({ icon: 'x', title: 'Failed to claim', description: e instanceof Error ? e.message : 'Something went wrong.', danger: true })
+                        showToast({ icon: 'x', title: 'Failed to claim', description: userFriendlyError(e), danger: true })
                       }
                     }}
                   >

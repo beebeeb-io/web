@@ -21,6 +21,7 @@ import {
   type DriveFile,
 } from '../lib/api'
 import { useWsEvent } from '../lib/ws-context'
+import { userFriendlyError } from '../lib/user-friendly-error'
 import { EmptyRecent } from '../components/empty-states/empty-recent'
 
 export function Recent() {
@@ -132,7 +133,7 @@ export function Recent() {
           const result = await toggleStar(file.id)
           setFiles((prev) => prev.map((f) => f.id === file.id ? { ...f, is_starred: result.is_starred } : f))
         } catch (err) {
-          showToast({ icon: 'star', title: 'Failed to update star', description: err instanceof Error ? err.message : 'Something went wrong', danger: true })
+          showToast({ icon: 'star', title: 'Failed to update star', description: userFriendlyError(err), danger: true })
         }
         break
       case 'download':
@@ -144,7 +145,7 @@ export function Recent() {
           showToast({ icon: 'trash', title: 'Moved to trash', description: displayName(file) })
           setFiles((prev) => prev.filter((f) => f.id !== file.id))
         } catch (err) {
-          showToast({ icon: 'trash', title: 'Failed to trash', description: err instanceof Error ? err.message : 'Something went wrong', danger: true })
+          showToast({ icon: 'trash', title: 'Failed to trash', description: userFriendlyError(err), danger: true })
         }
         break
     }
@@ -156,7 +157,7 @@ export function Recent() {
       setFiles((prev) => prev.filter((f) => !ids.includes(f.id)))
       showToast({ icon: 'trash', title: 'Moved to trash', description: `${ids.length} file${ids.length !== 1 ? 's' : ''} moved to trash` })
     } catch (err) {
-      showToast({ icon: 'trash', title: 'Failed to trash', description: err instanceof Error ? err.message : 'Something went wrong', danger: true })
+      showToast({ icon: 'trash', title: 'Failed to trash', description: userFriendlyError(err), danger: true })
     }
   }
 

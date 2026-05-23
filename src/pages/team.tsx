@@ -16,6 +16,7 @@ import {
   removeWorkspaceMember,
   updateMemberRole,
 } from '../lib/api'
+import { userFriendlyError } from '../lib/user-friendly-error'
 
 /* ── Avatar ─────────────────────────────────────── */
 
@@ -299,7 +300,7 @@ export function Team() {
       showToast({ icon: 'check', title: 'Member removed' })
       loadMembers(activeWs.id)
     } catch (err) {
-      showToast({ icon: 'x', title: 'Failed to remove member', description: err instanceof Error ? err.message : 'Something went wrong', danger: true })
+      showToast({ icon: 'x', title: 'Failed to remove member', description: userFriendlyError(err), danger: true })
     }
   }
 
@@ -320,7 +321,7 @@ export function Team() {
       showToast({ icon: 'check', title: 'Role updated' })
       loadMembers(activeWs.id)
     } catch (err) {
-      showToast({ icon: 'x', title: 'Failed to update role', description: err instanceof Error ? err.message : 'Something went wrong', danger: true })
+      showToast({ icon: 'x', title: 'Failed to update role', description: userFriendlyError(err), danger: true })
     }
   }
 

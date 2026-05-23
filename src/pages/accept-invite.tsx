@@ -5,7 +5,8 @@ import { BBButton } from '@beebeeb/shared'
 import { BBChip } from '@beebeeb/shared'
 import { BBLogo } from '@beebeeb/shared'
 import { useAuth } from '../lib/auth-context'
-import { type AcceptInviteResponse, ApiError, acceptWorkspaceInvite } from '../lib/api'
+import { type AcceptInviteResponse, acceptWorkspaceInvite } from '../lib/api'
+import { userFriendlyError } from '../lib/user-friendly-error'
 
 type InviteState =
   | { kind: 'loading' }
@@ -38,11 +39,7 @@ export function AcceptInvite() {
       const result = await acceptWorkspaceInvite(token)
       setState({ kind: 'accepted', data: result })
     } catch (e) {
-      const message =
-        e instanceof ApiError
-          ? e.message
-          : 'Something went wrong. The invite may have expired.'
-      setState({ kind: 'error', message })
+      setState({ kind: 'error', message: userFriendlyError(e) })
     } finally {
       setAccepting(false)
     }

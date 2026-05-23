@@ -5,6 +5,7 @@ import { BBChip } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useToast } from './toast'
 import { createCheckoutSession } from '../lib/api'
+import { userFriendlyError } from '../lib/user-friendly-error'
 
 type BillingCycle = 'monthly' | 'yearly'
 
@@ -65,7 +66,7 @@ export function UpgradeDialog({
         onClose()
         return
       }
-      setError(checkoutErr instanceof Error ? checkoutErr.message : 'Something went wrong')
+      setError(userFriendlyError(checkoutErr))
     } finally {
       setLoading(false)
     }

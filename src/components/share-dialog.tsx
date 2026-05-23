@@ -29,6 +29,7 @@ import {
   encryptAllChildrenKeys,
 } from '../lib/folder-share-crypto'
 import { useKeys } from '../lib/key-context'
+import { userFriendlyError } from '../lib/user-friendly-error'
 
 interface ShareDialogProps {
   open: boolean
@@ -317,10 +318,8 @@ function InviteForm({
       const rateLimit = parseRateLimitError(e)
       if (rateLimit) {
         setRateLimitInfo(rateLimit)
-      } else if (e instanceof Error) {
-        setError(e.message)
       } else {
-        setError('Failed to send invite. Try again.')
+        setError(userFriendlyError(e))
       }
     } finally {
       setLoading(false)
@@ -588,7 +587,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
         onShareCreated({ fileId, shareUrl: url })
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to create share link')
+      setError(userFriendlyError(e))
     } finally {
       setLoading(false)
     }

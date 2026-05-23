@@ -51,6 +51,7 @@ import {
   type StorageUsage,
   type SyncNode,
 } from '../lib/api'
+import { userFriendlyError } from '../lib/user-friendly-error'
 import type { FileActivityEntry } from '../components/file-details-panel'
 import { timeAgo } from '../components/file-list'
 import { getRemainingBytes } from '../components/quota-warning'
@@ -164,6 +165,10 @@ export function Drive() {
 
   // ─── Offline cache state ─────────────────────────────
   const [showingCached, setShowingCached] = useState(false)
+  // Inline banner for a failed initial list load when no cache is available.
+  // Surfaced beside the file grid with a Try again button so the user is not
+  // stranded on an empty page after a flaky load.
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   // ─── Pending shares state ────────────────────────────
   // incomingInviteCount comes from DriveDataContext (deduplicated).
@@ -319,6 +324,7 @@ export function Drive() {
       const data = await listFiles(currentParentId ?? undefined, trashed)
       setFiles(data)
       setShowingCached(false)
+      setLoadError(null)
       if (!trashed) cacheFileList(currentParentId ?? null, data)
       setSyncedAgo(0)
     } catch (err) {
@@ -328,8 +334,11 @@ export function Drive() {
       if (isOffline && cached) {
         setFiles(cached)
         setShowingCached(true)
+        setLoadError(null)
       } else {
-        showToast({ icon: 'x', title: 'Failed to load files', danger: true })
+        // Show an inline banner with a Try again button instead of (only)
+        // toasting — the page would otherwise be a silent empty state.
+        setLoadError(userFriendlyError(err))
         setFiles([])
         setShowingCached(false)
       }
@@ -741,7 +750,7 @@ export function Drive() {
         showToast({
           icon: 'upload',
           title: 'Resume failed',
-          description: err instanceof Error ? err.message : 'Something went wrong',
+          description: userFriendlyError(err),
           danger: true,
         })
         setUploads((prev) =>
@@ -1051,7 +1060,7 @@ export function Drive() {
         uploadFilesRef.current.delete(uploadId)
         return
       }
-      const errorMessage = err instanceof Error ? err.message : 'Something went wrong'
+      const errorMessage = userFriendlyError(err)
       showToast({
         icon: 'upload',
         title: 'Upload failed',
@@ -1267,7 +1276,7 @@ export function Drive() {
       refreshDriveUsage()
       fetchFiles()
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Something went wrong'
+      const errorMessage = userFriendlyError(err)
       showToast({
         icon: 'upload',
         title: 'Folder upload failed',
@@ -1349,7 +1358,7 @@ export function Drive() {
       showToast({
         icon: 'folder',
         title: 'Failed to create folder',
-        description: err instanceof Error ? err.message : 'Something went wrong',
+        description: userFriendlyError(err),
         danger: true,
       })
     }
@@ -1387,7 +1396,7 @@ export function Drive() {
       showToast({
         icon: 'x',
         title: 'Could not create folder',
-        description: err instanceof Error ? err.message : 'Something went wrong.',
+        description: userFriendlyError(err),
         danger: true,
       })
     } finally {
@@ -1548,7 +1557,7 @@ export function Drive() {
       showToast({
         icon: 'star',
         title: 'Failed to update star',
-        description: err instanceof Error ? err.message : 'Something went wrong',
+        description: userFriendlyError(err),
         danger: true,
       })
     }
@@ -1658,7 +1667,7 @@ export function Drive() {
             unindexFile(file.id)
             fetchFiles()
           } catch (err) {
-            showToast({ icon: 'trash', title: 'Failed to trash', description: err instanceof Error ? err.message : 'Something went wrong', danger: true })
+            showToast({ icon: 'trash', title: 'Failed to trash', description: userFriendlyError(err), danger: true })
           } finally {
             setTrashingIds((prev) => { const next = new Set(prev); next.delete(file.id); return next })
           }
@@ -1728,7 +1737,7 @@ export function Drive() {
           showToast({ icon: 'trash', title: 'Moved to trash', description: `${count} file${count !== 1 ? 's' : ''} moved to trash` })
           fetchFiles()
         } catch (err) {
-          showToast({ icon: 'trash', title: 'Failed to trash', description: err instanceof Error ? err.message : 'Something went wrong', danger: true })
+          showToast({ icon: 'trash', title: 'Failed to trash', description: userFriendlyError(err), danger: true })
         } finally {
           setTrashingIds(new Set())
           resolve()
@@ -1993,6 +2002,19 @@ export function Drive() {
           <div className="px-5 py-2 border-b border-amber/30 bg-amber-bg flex items-center gap-2 text-[12px] text-amber-deep">
             <Icon name="cloud" size={13} className="shrink-0" />
             Offline — showing cached files from your last visit
+          </div>
+        )}
+
+        {/* Inline failure + retry — the toast alone left the page empty. */}
+        {loadError && (
+          <div className="px-5 py-2 border-b border-red/30 bg-red/5 flex items-center justify-between gap-3 text-[12px] text-red">
+            <div className="flex items-center gap-2 min-w-0">
+              <Icon name="x" size={13} className="shrink-0" />
+              <span className="truncate">Couldn't load files. {loadError}</span>
+            </div>
+            <BBButton size="sm" variant="default" onClick={fetchFiles}>
+              Try again
+            </BBButton>
           </div>
         )}
 

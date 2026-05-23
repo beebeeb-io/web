@@ -10,6 +10,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useAuth } from '../lib/auth-context'
 import { useToast } from './toast'
 import { verifyEmail, resendVerification } from '../lib/api'
+import { userFriendlyError } from '../lib/user-friendly-error'
 import { Icon } from '@beebeeb/shared'
 
 const DISMISSED_KEY = 'bb_email_verify_dismissed'
@@ -96,7 +97,7 @@ export function EmailVerifyBanner() {
       showToast({
         icon: 'x',
         title: 'Could not resend',
-        description: err instanceof Error ? err.message : 'Something went wrong. Try again in a moment.',
+        description: userFriendlyError(err),
         danger: true,
       })
     } finally {

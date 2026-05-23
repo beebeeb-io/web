@@ -23,6 +23,7 @@ import {
   deriveFileKey,
   toBase64,
 } from '../lib/crypto'
+import { userFriendlyError } from '../lib/user-friendly-error'
 import { encryptedUpload } from '../lib/encrypted-upload'
 
 type Step = 'display' | 'verify' | 'password' | 'processing'
@@ -274,7 +275,7 @@ export function Onboarding() {
       await refreshUser()
       navigate('/', { replace: true })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong')
+      setError(userFriendlyError(err))
       setStep('password')
     }
   }, [masterKeyBytes, email, password, confirmPassword, cryptoReady, cryptoError, setMasterKey, refreshUser, navigate])

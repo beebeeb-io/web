@@ -6,6 +6,7 @@ import { useToast } from './toast'
 import { downgradePlan } from '../lib/api'
 import { PLAN_META } from '../lib/plan-constants'
 import { formatStorageSI } from '../lib/format'
+import { userFriendlyError } from '../lib/user-friendly-error'
 
 interface DowngradeDialogProps {
   currentPlan: string
@@ -56,7 +57,7 @@ export function DowngradeDialog({
       onSuccess()
       onClose()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong')
+      setError(userFriendlyError(err))
     } finally {
       setLoading(false)
     }

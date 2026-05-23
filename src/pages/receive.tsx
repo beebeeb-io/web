@@ -40,6 +40,7 @@ import { deriveSasWords } from '../lib/sas-words'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
 import { encryptedUpload } from '../lib/encrypted-upload'
+import { userFriendlyError } from '../lib/user-friendly-error'
 
 type Phase =
   | 'idle'        // code input shown
@@ -76,11 +77,6 @@ async function sha256Hex(blob: Blob): Promise<string> {
   return Array.from(new Uint8Array(hashBuf))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('')
-}
-
-function friendlyError(err: unknown): string {
-  if (err instanceof Error && err.message) return err.message
-  return 'Something went wrong. Please try again.'
 }
 
 type VaultSavePhase = 'idle' | 'saving' | 'saved' | 'error'
@@ -136,7 +132,7 @@ export function Receive() {
       activeSessionRef.current = res.session_id
       setPhase('verifying')
     } catch (err) {
-      setErrorText(friendlyError(err))
+      setErrorText(userFriendlyError(err))
       setPhase('error')
     }
   }, [codeInput])
@@ -213,7 +209,7 @@ export function Receive() {
         setPhase('received')
       } catch (err) {
         if (cancelled) return
-        setErrorText(friendlyError(err))
+        setErrorText(userFriendlyError(err))
         setPhase('error')
       }
     })()
@@ -322,7 +318,7 @@ export function Receive() {
 
           {phase === 'error' && (
             <ErrorState
-              title="Something went wrong"
+              title="Transfer failed"
               message={errorText ?? 'Please try again.'}
               onReset={() => {
                 setPhase('idle')

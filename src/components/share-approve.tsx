@@ -15,6 +15,7 @@ import {
   toBase64,
   zeroize,
 } from '../lib/crypto'
+import { userFriendlyError } from '../lib/user-friendly-error'
 
 interface ShareApproveProps {
   onUpdate?: () => void
@@ -117,7 +118,7 @@ export function ShareApprove({ onUpdate }: ShareApproveProps) {
         showToast({
           icon: 'x',
           title: 'Failed to approve',
-          description: e instanceof Error ? e.message : 'Something went wrong. Try again.',
+          description: userFriendlyError(e),
           danger: true,
         })
       } finally {
@@ -148,7 +149,7 @@ export function ShareApprove({ onUpdate }: ShareApproveProps) {
         showToast({
           icon: 'x',
           title: 'Failed to deny',
-          description: e instanceof Error ? e.message : 'Something went wrong. Try again.',
+          description: userFriendlyError(e),
           danger: true,
         })
       } finally {
