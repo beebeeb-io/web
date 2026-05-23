@@ -12,8 +12,55 @@ const THUMB_VARIANTS = [
 const THUMB_FORMAT = 'image/webp'
 const CACHE_NAME = 'beebeeb-thumbnails-v2'
 const MAX_CACHE_ENTRIES = 10000
+const MAX_MEMORY_THUMBS = 200
 
-const thumbnailCache = new Map<string, string>()
+/**
+ * Minimal LRU keyed by fileId → object-URL string. Capped at MAX_MEMORY_THUMBS;
+ * on eviction the underlying blob's object URL is revoked so it can be garbage
+ * collected. The Cache API persistence layer remains the source of truth for
+ * re-hydration on the next session.
+ *
+ * Implementation: Map preserves insertion order, so we re-insert on read to
+ * move the entry to "most recently used", and pop the oldest key when over cap.
+ */
+class ThumbnailLRU {
+  private readonly map = new Map<string, string>()
+  constructor(private readonly limit: number) {}
+
+  get(key: string): string | undefined {
+    const value = this.map.get(key)
+    if (value === undefined) return undefined
+    // Refresh recency: delete + re-insert moves to tail.
+    this.map.delete(key)
+    this.map.set(key, value)
+    return value
+  }
+
+  has(key: string): boolean {
+    return this.map.has(key)
+  }
+
+  set(key: string, value: string): void {
+    // If the key already has a different URL, revoke the old one before overwriting.
+    const prev = this.map.get(key)
+    if (prev !== undefined && prev !== value) {
+      this.map.delete(key)
+      try { URL.revokeObjectURL(prev) } catch { /* noop */ }
+    }
+    this.map.set(key, value)
+    while (this.map.size > this.limit) {
+      const oldestKey = this.map.keys().next().value
+      if (oldestKey === undefined) break
+      const oldestValue = this.map.get(oldestKey)
+      this.map.delete(oldestKey)
+      if (oldestValue !== undefined) {
+        try { URL.revokeObjectURL(oldestValue) } catch { /* noop */ }
+      }
+    }
+  }
+}
+
+const thumbnailCache = new ThumbnailLRU(MAX_MEMORY_THUMBS)
 
 const IMAGE_TYPES = new Set([
   'image/jpeg',

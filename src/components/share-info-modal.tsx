@@ -133,6 +133,8 @@ export function ShareInfoModal({
       const keyB64 = toBase64(fileKey)
       const url = `${window.location.origin}/s/${share.token}#key=${encodeURIComponent(keyB64)}`
       await navigator.clipboard.writeText(url)
+      // Auto-clear clipboard after 60s — URL contains the decryption key in the fragment.
+      setTimeout(() => { navigator.clipboard.writeText('').catch(() => {}) }, 60000)
       showToast({
         icon: 'check',
         title: 'Share link copied',

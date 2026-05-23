@@ -82,7 +82,7 @@ export function UpgradeDialog({
       />
 
       {/* Dialog */}
-      <div ref={focusTrapRef} role="dialog" aria-modal="true" aria-label={`Upgrade to ${planName}`} className="relative w-[600px] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
+      <div ref={focusTrapRef} role="dialog" aria-modal="true" aria-label={`Upgrade to ${planName}`} className="relative w-full max-w-[600px] mx-4 bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
         {/* Header */}
         <div className="flex items-center gap-2.5 px-[22px] py-3.5 border-b border-line">
           <h3 className="text-base font-bold">Upgrade to {planName}</h3>

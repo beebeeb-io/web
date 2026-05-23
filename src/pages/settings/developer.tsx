@@ -118,6 +118,8 @@ function NewTokenBox({ result, onDismiss }: { result: CreateTokenResponse; onDis
 
   async function handleCopy() {
     await navigator.clipboard.writeText(result.token)
+    // Auto-clear clipboard after 60s to limit exposure of the API token (shown only once).
+    setTimeout(() => { navigator.clipboard.writeText('').catch(() => {}) }, 60000)
     setCopied(true)
     if (copyRef.current) clearTimeout(copyRef.current)
     copyRef.current = setTimeout(() => setCopied(false), 2500)
@@ -179,6 +181,8 @@ function NewWebhookSecretBox({
 
   async function handleCopy() {
     await navigator.clipboard.writeText(result.secret)
+    // Auto-clear clipboard after 60s to limit exposure of the webhook signing secret (shown only once).
+    setTimeout(() => { navigator.clipboard.writeText('').catch(() => {}) }, 60000)
     setCopied(true)
     if (copyTimer.current) clearTimeout(copyTimer.current)
     copyTimer.current = setTimeout(() => setCopied(false), 2500)

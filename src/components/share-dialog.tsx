@@ -620,6 +620,8 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       document.execCommand('copy')
       document.body.removeChild(ta)
     }
+    // Auto-clear clipboard after 60s to limit exposure of the share password
+    setTimeout(() => { navigator.clipboard.writeText('').catch(() => {}) }, 60000)
     setPasswordCopied(true)
     setTimeout(() => setPasswordCopied(false), 2000)
   }, [])
@@ -641,6 +643,11 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       document.body.removeChild(ta)
       setCopied(type)
       setTimeout(() => setCopied(null), 2000)
+    }
+    // Auto-clear clipboard after 60s for sensitive payloads (full link contains #key=, split-key is the raw key).
+    // 'split-link' is the URL without the key and is not sensitive.
+    if (type === 'full-link' || type === 'split-key') {
+      setTimeout(() => { navigator.clipboard.writeText('').catch(() => {}) }, 60000)
     }
   }, [])
 

@@ -23,7 +23,6 @@ import { SessionTimeoutWarning } from './components/session-timeout-warning'
 import { Signup } from './pages/signup'
 import { Login } from './pages/login'
 import { Onboarding } from './pages/onboarding'
-import { Drive } from './pages/drive'
 
 // ── Lazy: split into separate chunks, loaded on demand ───────────────────────
 // Named-export helper: React.lazy requires a default export
@@ -31,6 +30,7 @@ function lazyNamed<T>(factory: () => Promise<{ [K in keyof T]: T[K] }>, name: ke
   return lazy(() => factory().then(m => ({ default: m[name] as React.ComponentType })))
 }
 
+const Drive          = lazyNamed(() => import('./pages/drive'),          'Drive')
 const Starred        = lazyNamed(() => import('./pages/starred'),        'Starred')
 const Recent         = lazyNamed(() => import('./pages/recent'),         'Recent')
 const Shared         = lazyNamed(() => import('./pages/shared'),         'Shared')

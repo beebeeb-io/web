@@ -480,10 +480,12 @@ function TotpSection() {
   }
 
   if (step === 'backup') {
-    const copyBackupCodes = () => {
+    const copyBackupCodes = async () => {
       const text = backupCodes.map((c, i) => `${String(i + 1).padStart(2, '0')}. ${c}`).join('\n')
       const full = `Beebeeb — 2FA Backup Codes\n${'─'.repeat(30)}\n\n${text}\n\nEach code can only be used once.\nGenerated: ${new Date().toISOString()}`
-      navigator.clipboard.writeText(full)
+      await navigator.clipboard.writeText(full)
+      // Auto-clear clipboard after 60s to limit exposure of backup codes
+      setTimeout(() => { navigator.clipboard.writeText('').catch(() => {}) }, 60000)
       showToast({ icon: 'check', title: 'Backup codes copied to clipboard' })
     }
 

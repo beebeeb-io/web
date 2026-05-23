@@ -344,7 +344,11 @@ export function Onboarding() {
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        <BBButton size="sm" onClick={() => navigator.clipboard.writeText(phrase)}>
+                        <BBButton size="sm" onClick={async () => {
+                          await navigator.clipboard.writeText(phrase)
+                          // Auto-clear clipboard after 60s to limit exposure of the recovery phrase
+                          setTimeout(() => { navigator.clipboard.writeText('').catch(() => {}) }, 60000)
+                        }}>
                           <Icon name="copy" size={14} className="mr-1.5" /> Copy
                         </BBButton>
                         <BBButton size="sm" onClick={() => {

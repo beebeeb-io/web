@@ -42,6 +42,12 @@ export function Signup() {
       return
     }
 
+    const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!EMAIL_RE.test(email.trim())) {
+      setError('Please enter a valid email address.')
+      return
+    }
+
     navigate('/onboarding', { state: { email } })
   }
 

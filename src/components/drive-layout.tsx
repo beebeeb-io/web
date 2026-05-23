@@ -153,10 +153,10 @@ const navItems: { path: string; icon: IconName; label: string }[] = [
 
 const REGION_META: Record<string, { label: string; flag: string }> = {
   auto: { label: 'Europe', flag: '' },
-  falkenstein: { label: 'Falkenstein, DE · Hetzner', flag: '' },
-  helsinki: { label: 'Helsinki, FIN · Hetzner', flag: '' },
-  ede: { label: 'Ede, NL · Beebeeb', flag: '' },
-  nuremberg: { label: 'Nuremberg, DE · Hetzner', flag: '' },
+  falkenstein: { label: 'Falkenstein, Germany', flag: '' },
+  helsinki: { label: 'Helsinki, Finland', flag: '' },
+  ede: { label: 'Ede, Netherlands', flag: '' },
+  nuremberg: { label: 'Nuremberg, Germany', flag: '' },
 }
 
 const PINNED_FOLDERS_PREF = 'pinned_folders'

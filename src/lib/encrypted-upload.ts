@@ -30,35 +30,48 @@ import {
 const LEGACY_FALLBACK_CHUNK_SIZE_BYTES = CHUNK_SIZE
 
 /**
- * Long-form retry delay for transient network failures, layered on top of
- * the 800ms retry already inside `api.ts request()`. Together they give an
- * upload three chances spaced ~3.8s apart — enough to ride out a typical
- * cargo-watch / API restart window without surfacing the blip to the user.
+ * Exponential backoff for transient network failures, layered on top of the
+ * 800ms retry already inside `api.ts request()`. Together they give an upload
+ * up to four chances (initial + 3 retries) with 1s/2s/4s base delays and ±20%
+ * jitter — enough to ride out short outages and API restart windows without
+ * surfacing the blip to the user.
  */
-const NETWORK_RETRY_DELAY_MS = 3000
+const NETWORK_RETRY_MAX_ATTEMPTS = 3
+const NETWORK_RETRY_BASE_DELAY_MS = 1000
+const NETWORK_RETRY_JITTER = 0.2
 
 /**
  * Wrap a network call so a network-class failure (`ApiError(_, status === 0)`,
- * i.e. `fetch` itself threw before getting any response) gets one extra retry
- * after a longer delay. HTTP errors (4xx/5xx) bubble immediately — those are
+ * i.e. `fetch` itself threw before getting any response) is retried with
+ * exponential backoff. HTTP errors (4xx/5xx) bubble immediately — those are
  * deterministic, not transient.
  *
- * Honours an optional AbortSignal: if the user cancels during the delay window
+ * Honours an optional AbortSignal: if the user cancels during a delay window
  * we throw an AbortError instead of retrying.
  */
 async function withNetworkRetry<T>(
   fn: () => Promise<T>,
   signal?: AbortSignal,
 ): Promise<T> {
-  try {
-    return await fn()
-  } catch (err) {
-    const isNetwork = err instanceof ApiError && err.status === 0
-    if (!isNetwork || signal?.aborted) throw err
-    await new Promise<void>((resolve) => setTimeout(resolve, NETWORK_RETRY_DELAY_MS))
-    if (signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError')
-    return await fn()
+  let lastErr: unknown
+  for (let attempt = 0; attempt <= NETWORK_RETRY_MAX_ATTEMPTS; attempt++) {
+    try {
+      return await fn()
+    } catch (err) {
+      lastErr = err
+      const isNetwork = err instanceof ApiError && err.status === 0
+      const hasAttemptsLeft = attempt < NETWORK_RETRY_MAX_ATTEMPTS
+      if (!isNetwork || signal?.aborted || !hasAttemptsLeft) throw err
+      // Exponential backoff: 1s, 2s, 4s base, with ±20% jitter.
+      const base = NETWORK_RETRY_BASE_DELAY_MS * Math.pow(2, attempt)
+      const jitterFactor = 1 + (Math.random() * 2 - 1) * NETWORK_RETRY_JITTER
+      const delay = Math.round(base * jitterFactor)
+      await new Promise<void>((resolve) => setTimeout(resolve, delay))
+      if (signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError')
+    }
   }
+  // Unreachable — loop either returns or throws. Satisfies TS control-flow analysis.
+  throw lastErr
 }
 
 export interface UploadProgress {

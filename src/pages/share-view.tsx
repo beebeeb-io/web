@@ -42,14 +42,14 @@ function removeMetaTag(property: string, attr: 'name' | 'property' = 'name'): vo
 
 /**
  * Sets share-specific meta tags on mount and restores defaults on unmount.
- * sharerName is used to personalise the title when available.
+ *
+ * The title is intentionally generic — anonymous recipients must not learn
+ * any identifier of the share creator (task 0452).
  */
-function useShareMetaTags(sharerName?: string) {
+function useShareMetaTags() {
   useEffect(() => {
     const prevTitle = document.title
-    const title = sharerName
-      ? `${sharerName} shared a file with you — Beebeeb`
-      : 'Shared file — Beebeeb'
+    const title = 'Shared file — Beebeeb'
     const description = 'End-to-end encrypted file. Only you can decrypt it.'
 
     document.title = title
@@ -73,7 +73,7 @@ function useShareMetaTags(sharerName?: string) {
       removeMetaTag('twitter:title')
       removeMetaTag('twitter:description')
     }
-  }, [sharerName])
+  }, [])
 }
 
 
@@ -347,21 +347,20 @@ function ServerViewPanel({
 /**
  * Subtle sign-up nudge shown below the share card to unauthenticated visitors.
  * The file is the star — this is a quiet footnote, not a modal.
+ *
+ * We do NOT take a sharer name: anonymous recipients must never see any
+ * identifier of the creator (task 0452).
  */
 function AcquisitionCTA({
-  sharerName,
   signupUrl,
 }: {
-  sharerName?: string
   signupUrl: string
 }) {
   return (
     <div className="mt-6 text-center px-4">
       <p className="text-[12.5px] text-ink-4 mb-1">Liked how this worked?</p>
       <p className="text-[13px] text-ink-3 mb-4 leading-relaxed max-w-[320px] mx-auto">
-        {sharerName
-          ? <><span className="text-ink-2 font-medium">{sharerName}</span> sent you this with end-to-end encryption — nobody else could read it.</>
-          : 'This file was shared with end-to-end encryption — only you can read it.'}
+        This file was shared with end-to-end encryption — only you can read it.
         {' '}Get the same for your own files.
       </p>
       <a
@@ -397,13 +396,9 @@ export function ShareViewPage() {
   const [keyAvailable, setKeyAvailable] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
 
-  // Derive sharer display name for meta tags
-  const sharerDisplay = shareData?.shared_by
-    ? shareData.shared_by.includes('@')
-      ? shareData.shared_by.split('@')[0]
-      : shareData.shared_by
-    : undefined
-  useShareMetaTags(sharerDisplay)
+  // Recipients are anonymous — we never display the share creator's name.
+  // See task 0452.
+  useShareMetaTags()
 
   /** Check if raw name looks like encrypted JSON (not a human-readable filename). */
   function isEncryptedName(raw: string | null | undefined): boolean {
@@ -891,13 +886,10 @@ export function ShareViewPage() {
             </div>
 
             {/* Details */}
+            {/* Recipients are anonymous — we deliberately do not show "Shared
+                by …" here. The creator's identity is never exposed to
+                unauthenticated viewers. See task 0452. */}
             <div className="flex flex-col gap-2 mb-5">
-              {shareData?.shared_by && (
-                <div className="flex items-center text-[12px] gap-3">
-                  <span className="text-ink-3 w-[80px] shrink-0">Shared by</span>
-                  <span className="text-ink-2">{shareData.shared_by}</span>
-                </div>
-              )}
               {shareData?.expires_at !== undefined && (
                 <div className="flex items-center text-[12px] gap-3">
                   <span className="text-ink-3 w-[80px] shrink-0">Expires</span>
@@ -1025,22 +1017,16 @@ export function ShareViewPage() {
           />
         )}
 
-        {/* Acquisition CTA — only for unauthenticated visitors */}
+        {/* Acquisition CTA — only for unauthenticated visitors.
+            We do NOT pass a sharer name: the server no longer returns one,
+            and we deliberately keep the recipient anonymous. See task 0452. */}
         {!getToken() && (() => {
           const sharerId = shareData?.sharer_id
-          const sharerDisplay = shareData?.shared_by
-            ? shareData.shared_by.includes('@')
-              ? shareData.shared_by.split('@')[0]  // use name-part of email
-              : shareData.shared_by
-            : undefined
           const params = new URLSearchParams({ ref: 'share' })
           if (sharerId) params.set('sharer', sharerId)
           const signupUrl = `https://app.beebeeb.io/signup?${params.toString()}`
           return (
-            <AcquisitionCTA
-              sharerName={sharerDisplay}
-              signupUrl={signupUrl}
-            />
+            <AcquisitionCTA signupUrl={signupUrl} />
           )
         })()}
       </div>

@@ -181,7 +181,11 @@ export interface ShareView {
   size_bytes?: number
   chunk_count?: number
   mime_type?: string
-  shared_by?: string
+  /**
+   * Removed by task 0452 — the server intentionally no longer returns any
+   * identifier of the share creator to anonymous recipients. Keep this comment
+   * so future agents don't try to plumb it back through.
+   */
   /** User ID of the person who created the share — for referral attribution. */
   sharer_id?: string
   expires_at?: string | null
