@@ -15,9 +15,9 @@ import {
   getPlans,
   listFiles,
   createPortalSession,
+  createCheckoutSession,
   cancelSubscription,
   reactivateSubscription,
-  switchBillingCycle,
   getPreference,
   setPreference,
   getStorageAddons,
@@ -492,26 +492,18 @@ function openUpgrade(plan: string) {
   async function handleSwitchBillingCycle(cycle: 'monthly' | 'yearly') {
     setCycleSwitchLoading(true)
     try {
-      await switchBillingCycle(cycle)
-      setCycleSwitchConfirm(null)
-      showToast({
-        icon: 'check',
-        title: cycle === 'yearly' ? 'Switched to annual billing' : 'Switched to monthly billing',
-        description: cycle === 'yearly'
-          ? 'Your savings start with the next billing period.'
-          : 'You will be billed monthly from the next billing period.',
+      const { url } = await createCheckoutSession({
+        plan: effectivePlan,
+        billing_cycle: cycle,
       })
-      window.dispatchEvent(new Event('beebeeb:plan-changed'))
-      refreshPlanDetails()
-      await loadData()
+      window.location.href = url
     } catch (e) {
       showToast({
         icon: 'x',
-        title: 'Failed to switch billing cycle',
+        title: 'Failed to start checkout',
         description: e instanceof Error ? e.message : 'Please try again.',
         danger: true,
       })
-    } finally {
       setCycleSwitchLoading(false)
     }
   }
