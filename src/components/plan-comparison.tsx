@@ -7,7 +7,7 @@ interface PlanComparisonProps {
 }
 
 const features: Array<{ name: string; free: boolean | string; basic: boolean | string; pro: boolean | string; business: boolean | string }> = [
-  { name: 'Encrypted storage', free: '5 GB', basic: '1 TB', pro: '5 TB', business: '20 TB' },
+  { name: 'Encrypted storage', free: '5 GB', basic: '1 TB', pro: '5 TB', business: '10 TB' },
   { name: 'Extra storage add-on', free: false, basic: false, pro: true, business: true },
   { name: 'Version history', free: false, basic: '30 days', pro: 'Unlimited', business: 'Unlimited' },
   { name: 'Link sharing', free: true, basic: true, pro: true, business: true },
@@ -18,7 +18,7 @@ const features: Array<{ name: string; free: boolean | string; basic: boolean | s
 
 const plans = ['free', 'basic', 'pro', 'business'] as const
 const planLabels: Record<string, string> = { free: 'Free', basic: 'Basic', pro: 'Pro', business: 'Business' }
-const planPrices: Record<string, string> = { free: 'EUR 0', basic: 'EUR 10.99', pro: 'EUR 54.95', business: 'EUR 109.90' }
+const planPrices: Record<string, string> = { free: 'EUR 0', basic: 'EUR 10.99', pro: 'EUR 54.95', business: 'Coming soon' }
 
 export function PlanComparisonTable({ currentPlan, onUpgrade }: PlanComparisonProps) {
   return (
@@ -28,10 +28,10 @@ export function PlanComparisonTable({ currentPlan, onUpgrade }: PlanComparisonPr
           <tr className="border-b border-line">
             <th className="text-left py-3 px-3 text-ink-3 font-medium text-xs">Feature</th>
             {plans.map((p) => (
-              <th key={p} className={`text-center py-3 px-3 text-xs font-semibold ${p === currentPlan ? 'text-amber-deep' : 'text-ink'}`}>
+              <th key={p} className={`text-center py-3 px-3 text-xs font-semibold ${p === 'business' ? 'text-ink-4' : p === currentPlan ? 'text-amber-deep' : 'text-ink'}`}>
                 {planLabels[p]}
                 {p === currentPlan && <div className="text-[10px] text-amber-deep font-normal">Current</div>}
-                <div className="font-mono text-[10px] text-ink-3 font-normal mt-0.5">{planPrices[p]}/mo</div>
+                <div className="font-mono text-[10px] text-ink-3 font-normal mt-0.5">{p === 'business' ? 'Coming soon' : `${planPrices[p]}/mo`}</div>
               </th>
             ))}
           </tr>
@@ -58,11 +58,13 @@ export function PlanComparisonTable({ currentPlan, onUpgrade }: PlanComparisonPr
             <td />
             {plans.map((p) => (
               <td key={p} className="text-center py-3 px-3">
-                {p !== currentPlan && p !== 'free' && (
+                {p === 'business' ? (
+                  <span className="text-[10px] text-ink-4 font-mono uppercase">Coming soon</span>
+                ) : p !== currentPlan && p !== 'free' ? (
                   <BBButton size="sm" variant={p === 'pro' ? 'amber' : 'default'} onClick={() => onUpgrade(p)}>
                     Upgrade
                   </BBButton>
-                )}
+                ) : null}
               </td>
             ))}
           </tr>

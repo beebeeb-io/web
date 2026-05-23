@@ -253,7 +253,7 @@ function _SettingsReferralsFull() {
               </div>
             </div>
           ) : (
-            <div className="rounded-xl border border-line overflow-hidden">
+            <div className="rounded-xl border border-line overflow-x-auto">
               <div
                 className="grid gap-4 px-5 py-2.5 bg-paper-2 border-b border-line text-[11px] font-semibold uppercase tracking-wider text-ink-4"
                 style={{ gridTemplateColumns: '2fr 1fr 80px' }}

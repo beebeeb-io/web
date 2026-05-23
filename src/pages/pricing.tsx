@@ -1,10 +1,10 @@
-import { useState } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { BBButton } from '@beebeeb/shared'
 import { BBChip } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useToast } from '../components/toast'
-import { getToken, createCheckoutSession } from '../lib/api'
+import { getToken, createCheckoutSession, getPlans, type Plan } from '../lib/api'
 
 type BillingCycle = 'monthly' | 'yearly'
 
@@ -23,10 +23,11 @@ interface PlanDef {
   ctaVariant: 'amber' | 'default' | 'ghost'
   highlight?: boolean
   badge?: string
+  comingSoon?: boolean
   features: { label: string; strong?: boolean }[]
 }
 
-const plans: PlanDef[] = [
+const fallbackPlans: PlanDef[] = [
   {
     id: 'free',
     name: 'Free',
@@ -49,12 +50,12 @@ const plans: PlanDef[] = [
   {
     id: 'basic',
     name: 'Basic',
-    priceMonthly: 8.99,
-    priceYearly: 7.19,
+    priceMonthly: 10.99,
+    priceYearly: 9.16,
     seat: '/ month',
-    note: '1 TB · €8.99/TB',
+    note: '1 TB · €10.99/TB',
     storage: '1 TB',
-    perTb: '€8.99/TB',
+    perTb: '€10.99/TB',
     cta: 'Subscribe',
     ctaVariant: 'default',
     features: [
@@ -70,12 +71,12 @@ const plans: PlanDef[] = [
   {
     id: 'pro',
     name: 'Pro',
-    priceMonthly: 39.95,
-    priceYearly: 31.96,
+    priceMonthly: 54.95,
+    priceYearly: 45.79,
     seat: '/ month',
-    note: '5 TB · €7.99/TB',
+    note: '5 TB · €10.99/TB',
     storage: '5 TB',
-    perTb: '€7.99/TB',
+    perTb: '€10.99/TB',
     cta: 'Subscribe',
     ctaVariant: 'amber',
     highlight: true,
@@ -91,19 +92,20 @@ const plans: PlanDef[] = [
   {
     id: 'business',
     name: 'Business',
-    priceMonthly: 139.80,
-    priceYearly: 111.84,
+    priceMonthly: 109.90,
+    priceYearly: 91.58,
     seat: '/ month',
-    note: '20 TB · €6.99/TB · lowest per-TB',
-    storage: '20 TB',
-    perTb: '€6.99/TB',
-    cta: 'Subscribe',
-    ctaVariant: 'default',
-    badge: 'Best value',
+    note: '10 TB · coming soon',
+    storage: '10 TB',
+    perTb: '€10.99/TB',
+    cta: 'Coming soon',
+    ctaVariant: 'ghost',
+    badge: 'Coming soon',
+    comingSoon: true,
     features: [
       { label: 'Everything in Pro' },
-      { label: '20 TB encrypted storage', strong: true },
-      { label: 'Lowest per-TB price (€6.99/TB)', strong: true },
+      { label: '10 TB encrypted storage', strong: true },
+      { label: 'Team management', strong: true },
       { label: 'Dedicated support channel' },
       { label: 'Custom data retention policies' },
       { label: 'Priority egress bandwidth' },
@@ -188,7 +190,9 @@ function PlanCard({
   return (
     <div
       className={`flex flex-col gap-3.5 p-[22px] rounded-lg border relative overflow-visible transition-shadow duration-200 ${
-        plan.highlight
+        plan.comingSoon
+          ? 'border-line bg-paper opacity-60'
+          : plan.highlight
           ? 'border-amber bg-gradient-to-b from-amber-bg to-paper shadow-[0_12px_32px_-12px_oklch(0.78_0.17_84_/_0.35)]'
           : 'border-line-2 bg-paper shadow-1 hover:shadow-2'
       }`}
@@ -262,7 +266,8 @@ function PlanCard({
           variant={plan.ctaVariant}
           size="lg"
           className="w-full justify-center"
-          onClick={() => onSelect(plan.id)}
+          onClick={() => !plan.comingSoon && onSelect(plan.id)}
+          disabled={plan.comingSoon}
         >
           {plan.cta}
         </BBButton>
@@ -313,9 +318,39 @@ function FaqEntry({
 export function Pricing() {
   const [cycle, setCycle] = useState<BillingCycle>('yearly')
   const [openFaq, setOpenFaq] = useState<number | null>(null)
+  const [apiPlans, setApiPlans] = useState<Plan[] | null>(null)
   const navigate = useNavigate()
   const { showToast } = useToast()
   const isLoggedIn = !!getToken()
+
+  useEffect(() => {
+    getPlans().then(setApiPlans).catch(() => {})
+  }, [])
+
+  const plans = useMemo(() => {
+    if (!apiPlans) return fallbackPlans
+    return fallbackPlans.map(fp => {
+      const ap = apiPlans.find(p => p.id === fp.id)
+      if (!ap || fp.comingSoon) return fp
+      const monthlyEq = ap.price_yearly_eur > 0 ? ap.price_yearly_eur / 12 : 0
+      const tbCount = Math.round(ap.storage_bytes / 1_000_000_000_000)
+      const perTbMonthly = tbCount > 0
+        ? ap.price_eur / tbCount
+        : 0
+      return {
+        ...fp,
+        priceMonthly: ap.price_eur,
+        priceYearly: Math.round(monthlyEq * 100) / 100,
+        storage: ap.storage_label,
+        note: tbCount > 0
+          ? `${ap.storage_label} · €${perTbMonthly % 1 === 0 ? perTbMonthly.toFixed(0) : perTbMonthly.toFixed(2)}/TB`
+          : fp.note,
+        perTb: tbCount > 0
+          ? `€${perTbMonthly % 1 === 0 ? perTbMonthly.toFixed(0) : perTbMonthly.toFixed(2)}/TB`
+          : fp.perTb,
+      }
+    })
+  }, [apiPlans])
 
   async function handleSelect(planId: string) {
     if (planId === 'free') {

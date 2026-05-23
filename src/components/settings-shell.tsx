@@ -123,7 +123,7 @@ interface SettingsHeaderProps {
 
 export function SettingsHeader({ title, subtitle }: SettingsHeaderProps) {
   return (
-    <div className="px-7 pt-5 pb-4 border-b border-line">
+    <div className="px-4 md:px-7 pt-5 pb-4 border-b border-line">
       <h2 className="text-xl font-bold text-ink">{title}</h2>
       {subtitle && (
         <p className="text-[13px] text-ink-3 mt-0.5 leading-relaxed">{subtitle}</p>
@@ -141,7 +141,7 @@ interface SettingsRowProps {
 
 export function SettingsRow({ label, hint, danger, children }: SettingsRowProps) {
   return (
-    <div className="grid gap-5 px-7 py-4 border-b border-line" style={{ gridTemplateColumns: '240px 1fr' }}>
+    <div className="grid grid-cols-1 md:grid-cols-[240px_1fr] gap-1 md:gap-5 px-4 md:px-7 py-4 border-b border-line">
       <div>
         <div className={`text-[13px] font-medium ${danger ? 'text-red' : 'text-ink'}`}>{label}</div>
         {hint && (

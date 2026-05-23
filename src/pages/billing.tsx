@@ -55,14 +55,11 @@ const planMeta: Record<string, {
   features: string[]
 }> = {
   free:     { label: 'Free',     priceMonthly: 0,      priceYearly: 0,       storageGB: 5,     tagline: 'Get started with encrypted storage', features: ['Encrypted storage', 'Photo library'] },
-  basic:    { label: 'Basic',    priceMonthly: 8.99,   priceYearly: 86.30,   storageGB: 1000,  tagline: '1 TB of truly private storage', features: ['Everything in Free', '30-day version history'] },
-  pro:      { label: 'Pro',      priceMonthly: 39.95,  priceYearly: 383.52,  storageGB: 5000,  tagline: '5 TB for power users and creators', features: ['Everything in Basic', '5 TB encrypted storage', 'Unlimited version history', 'Advanced sharing controls'] },
-  business: { label: 'Business', priceMonthly: 139.80, priceYearly: 1342.08, storageGB: 20000, tagline: '20 TB — lowest per-TB price', features: ['Everything in Pro', '20 TB encrypted storage'] },
-  // Legacy plan IDs kept for users on old subscriptions. The server is migrating
-  // personal → basic and data_hoarder → business; aliases keep the UI rendering
-  // a sensible label even if a live response still carries the old slug.
-  personal:     { label: 'Basic',    priceMonthly: 8.99,   priceYearly: 86.30,   storageGB: 1000,  tagline: '1 TB of truly private storage', features: ['Everything in Free', '30-day version history'] },
-  data_hoarder: { label: 'Business', priceMonthly: 139.80, priceYearly: 1342.08, storageGB: 20000, tagline: '20 TB — lowest per-TB price', features: ['Everything in Pro', '20 TB encrypted storage'] },
+  basic:    { label: 'Basic',    priceMonthly: 10.99,  priceYearly: 109.92,  storageGB: 1000,  tagline: '1 TB of truly private storage', features: ['Everything in Free', '30-day version history'] },
+  pro:      { label: 'Pro',      priceMonthly: 54.95,  priceYearly: 549.48,  storageGB: 5000,  tagline: '5 TB for power users and creators', features: ['Everything in Basic', '5 TB encrypted storage', 'Unlimited version history', 'Advanced sharing controls'] },
+  business: { label: 'Business', priceMonthly: 109.90, priceYearly: 1099.00, storageGB: 10000, tagline: '10 TB for teams and heavy storage', features: ['Everything in Pro', '10 TB encrypted storage'] },
+  personal:     { label: 'Basic',    priceMonthly: 10.99,  priceYearly: 109.92,  storageGB: 1000,  tagline: '1 TB of truly private storage', features: ['Everything in Free', '30-day version history'] },
+  data_hoarder: { label: 'Business', priceMonthly: 109.90, priceYearly: 1099.00, storageGB: 10000, tagline: '10 TB for teams and heavy storage', features: ['Everything in Pro', '10 TB encrypted storage'] },
   team:         { label: 'Team',     priceMonthly: 6,      priceYearly: 58,      storageGB: 2000,  tagline: 'Legacy team plan', features: ['Legacy team storage'] },
 }
 
@@ -76,7 +73,7 @@ type UpgradePlanCard = {
   sortOrder: number
 }
 
-const fallbackUpgradePlanIds = ['basic', 'pro', 'business'] as const
+const fallbackUpgradePlanIds = ['basic', 'pro'] as const
 const planRank: Record<string, number> = {
   free: 0,
   basic: 1,
@@ -361,6 +358,9 @@ export function Billing() {
   // Use the effective plan for display: cancelled → show as free
   const effectivePlan = sub?.status === 'cancelled' ? 'free' : (sub?.plan ?? 'free')
   const meta = planMeta[effectivePlan] ?? planMeta.free
+  const apiPlan = plans?.find(p => p.id === effectivePlan)
+  const currentPriceMonthly = apiPlan?.price_eur ?? meta.priceMonthly
+  const currentPriceYearly = apiPlan?.price_yearly_eur ?? meta.priceYearly
   // When addon data is available, use the effective storage (base + extra).
   // Otherwise fall back to the plan-level storage from planMeta.
   const rawTotalStorageBytes = addonState
@@ -581,12 +581,11 @@ function openUpgrade(plan: string) {
 
   const nextPlan =
     effectivePlan === 'free' ? 'basic' :
-    effectivePlan === 'basic' || effectivePlan === 'personal' ? 'pro' :
-    effectivePlan === 'pro' ? 'business' : 'business'
+    effectivePlan === 'basic' || effectivePlan === 'personal' ? 'pro' : 'pro'
 
   const allUpgradePlans = plans?.length
     ? plans
-        .filter((plan) => plan.id !== 'free' && plan.is_active !== false)
+        .filter((plan) => plan.id !== 'free' && plan.id !== 'business' && plan.is_active !== false)
         .map(upgradeCardFromApiPlan)
     : fallbackUpgradePlanIds.map(upgradeCardFromFallback)
   const currentSortOrder = allUpgradePlans.find((plan) => plan.id === effectivePlan)?.sortOrder ?? planRank[effectivePlan]
@@ -601,7 +600,7 @@ function openUpgrade(plan: string) {
     : upgradeCardFromPlanMeta(upgradePlan)
 
   const billingInterval = sub?.billing_cycle === 'yearly' ? 'year' : 'month'
-  const basePriceCents = currentCostCents > 0 ? currentCostCents : (sub?.billing_cycle === 'yearly' ? Math.round(meta.priceYearly * 100) : Math.round(meta.priceMonthly * 100))
+  const basePriceCents = currentCostCents > 0 ? currentCostCents : (sub?.billing_cycle === 'yearly' ? Math.round(currentPriceYearly * 100) : Math.round(currentPriceMonthly * 100))
   const extraStorageCostCents = currentExtraTB > 0 ? currentExtraTB * 1099 : 0
   const basePlanCents = basePriceCents - extraStorageCostCents
 
@@ -880,7 +879,7 @@ function openUpgrade(plan: string) {
                     </div>
                     {sub?.billing_cycle === 'yearly' && sub.current_period_end && remainingDays(sub.current_period_end) > 0 && (
                       <div className="text-[11px] text-ink-3">
-                        You have pre-paid EUR {meta.priceYearly.toFixed(2)} for the year.
+                        You have pre-paid EUR {currentPriceYearly.toFixed(2)} for the year.
                         Your access continues until <strong className="font-mono">{formatDate(sub.current_period_end)}</strong>.
                       </div>
                     )}
@@ -981,13 +980,13 @@ function openUpgrade(plan: string) {
               <p className="text-sm text-ink-2 mb-3">
                 Switch to annual billing and save{' '}
                 <span className="font-semibold text-ink">
-                  EUR {((meta.priceMonthly * 12 - meta.priceYearly) || 0).toFixed(2)}
+                  EUR {((currentPriceMonthly * 12 - currentPriceYearly) || 0).toFixed(2)}
                 </span>{' '}
                 per year.
               </p>
               <div className="flex items-center gap-4 text-xs font-mono text-ink-3 mb-3">
-                <span>Monthly: EUR {meta.priceMonthly.toFixed(2)}/mo</span>
-                <span>Annual: EUR {(meta.priceYearly / 12).toFixed(2)}/mo</span>
+                <span>Monthly: EUR {currentPriceMonthly.toFixed(2)}/mo</span>
+                <span>Annual: EUR {(currentPriceYearly / 12).toFixed(2)}/mo</span>
               </div>
               <BBButton size="sm" variant="amber" onClick={async () => {
                 try {
@@ -1230,9 +1229,9 @@ function openUpgrade(plan: string) {
               </div>
             </div>
           ) : (
-            <div className="border border-line rounded-xl overflow-hidden">
+            <div className="border border-line rounded-xl overflow-x-auto">
               <div
-                className="grid gap-4 px-5 py-2.5 border-b border-line bg-paper-2 text-[11px] font-semibold uppercase tracking-wider text-ink-4"
+                className="grid gap-4 px-5 py-2.5 border-b border-line bg-paper-2 text-[11px] font-semibold uppercase tracking-wider text-ink-4 min-w-[500px]"
                 style={{ gridTemplateColumns: '1.2fr 1fr 100px 100px 40px' }}
               >
                 <span>Number</span>
@@ -1248,7 +1247,7 @@ function openUpgrade(plan: string) {
                 return (
                   <div
                     key={inv.id}
-                    className="grid gap-4 px-5 py-3 border-b border-line items-center last:border-b-0 hover:bg-paper-2/50 transition-colors"
+                    className="grid gap-4 px-5 py-3 border-b border-line items-center last:border-b-0 hover:bg-paper-2/50 transition-colors min-w-[500px]"
                     style={{ gridTemplateColumns: '1.2fr 1fr 100px 100px 40px' }}
                   >
                     <span className="font-mono text-xs font-medium">{inv.number}</span>
@@ -1368,7 +1367,7 @@ function openUpgrade(plan: string) {
             role="dialog"
             aria-modal="true"
             aria-label={addonPreview.is_upgrade ? 'Confirm storage upgrade' : 'Confirm storage change'}
-            className="relative w-[440px] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden"
+            className="relative w-full max-w-[440px] mx-4 bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden"
           >
             {/* Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-line">

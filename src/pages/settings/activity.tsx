@@ -185,7 +185,7 @@ export function SettingsActivity() {
           </div>
         ) : (
           <div className="max-w-[860px]">
-            <div className="border border-line rounded-md overflow-hidden">
+            <div className="border border-line rounded-md overflow-x-auto">
               <table className="w-full text-[12.5px]">
                 <thead className="bg-paper-2 border-b border-line">
                   <tr className="text-left text-[11px] text-ink-3 uppercase tracking-wider">
