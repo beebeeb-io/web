@@ -17,31 +17,14 @@ import { Icon } from '@beebeeb/shared'
 import { createCheckoutSession } from '../lib/api'
 import { formatBytes } from '../lib/format'
 import { planCanAddStorage } from '../lib/plan-pricing'
+import {
+  PLAN_META,
+  UPGRADE_CHAIN,
+} from '../lib/plan-constants'
 
-// ── Plan metadata ────────────────────────────────────────────────────────────
-// Mirrors billing.tsx planMeta — keep in sync if prices change.
+// ── Plan metadata (imported from plan-constants.ts) ──────────────────────────
 
-interface PlanInfo {
-  label: string
-  priceMonthly: number
-  priceYearly: number
-  storageGB: number
-}
-
-const PLAN_INFO: Record<string, PlanInfo> = {
-  free:     { label: 'Free',     priceMonthly: 0,      priceYearly: 0,        storageGB: 5 },
-  basic:    { label: 'Basic',    priceMonthly: 10.99,  priceYearly: 109.92,   storageGB: 1000 },
-  pro:      { label: 'Pro',      priceMonthly: 54.95,  priceYearly: 549.48,   storageGB: 5000 },
-  business: { label: 'Business', priceMonthly: 109.90, priceYearly: 1099.00,  storageGB: 10000 },
-  personal:     { label: 'Basic',    priceMonthly: 10.99,  priceYearly: 109.92,   storageGB: 1000 },
-  data_hoarder: { label: 'Business', priceMonthly: 109.90, priceYearly: 1099.00,  storageGB: 10000 },
-}
-
-const UPGRADE_CHAIN: Record<string, string> = {
-  free:  'basic',
-  basic: 'pro',
-  personal:     'pro',
-}
+const PLAN_INFO = PLAN_META
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

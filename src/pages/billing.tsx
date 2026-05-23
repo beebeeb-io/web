@@ -42,26 +42,12 @@ import {
   formatCentsAsEur,
 } from '../lib/plan-pricing'
 import { PlanComparisonTable } from '../components/plan-comparison'
+import { PLAN_META, PLAN_RANK } from '../lib/plan-constants'
 
-/* ── Plan metadata ─────────────────────────────────────── */
+/* ── Plan metadata (imported from plan-constants.ts) ──── */
 
-const planMeta: Record<string, {
-  label: string
-  priceMonthly: number
-  priceYearly: number
-  /** Storage in GB (for display — passed to formatStorageSI) */
-  storageGB: number
-  tagline: string
-  features: string[]
-}> = {
-  free:     { label: 'Free',     priceMonthly: 0,      priceYearly: 0,       storageGB: 5,     tagline: 'Get started with encrypted storage', features: ['Encrypted storage', 'Photo library'] },
-  basic:    { label: 'Basic',    priceMonthly: 10.99,  priceYearly: 109.92,  storageGB: 1000,  tagline: '1 TB of truly private storage', features: ['Everything in Free', '30-day version history'] },
-  pro:      { label: 'Pro',      priceMonthly: 54.95,  priceYearly: 549.48,  storageGB: 5000,  tagline: '5 TB for power users and creators', features: ['Everything in Basic', '5 TB encrypted storage', 'Unlimited version history', 'Advanced sharing controls'] },
-  business: { label: 'Business', priceMonthly: 109.90, priceYearly: 1099.00, storageGB: 10000, tagline: '10 TB for teams and heavy storage', features: ['Everything in Pro', '10 TB encrypted storage'] },
-  personal:     { label: 'Basic',    priceMonthly: 10.99,  priceYearly: 109.92,  storageGB: 1000,  tagline: '1 TB of truly private storage', features: ['Everything in Free', '30-day version history'] },
-  data_hoarder: { label: 'Business', priceMonthly: 109.90, priceYearly: 1099.00, storageGB: 10000, tagline: '10 TB for teams and heavy storage', features: ['Everything in Pro', '10 TB encrypted storage'] },
-  team:         { label: 'Team',     priceMonthly: 6,      priceYearly: 58,      storageGB: 2000,  tagline: 'Legacy team plan', features: ['Legacy team storage'] },
-}
+const planMeta = PLAN_META
+const planRank = PLAN_RANK
 
 type UpgradePlanCard = {
   id: string
@@ -74,15 +60,6 @@ type UpgradePlanCard = {
 }
 
 const fallbackUpgradePlanIds = ['basic', 'pro'] as const
-const planRank: Record<string, number> = {
-  free: 0,
-  basic: 1,
-  personal: 1, // legacy alias
-  team: 1.5,
-  pro: 2,
-  business: 3,
-  data_hoarder: 3, // legacy alias
-}
 
 /* ── Helpers ────────────────────────────────────────────── */
 
@@ -224,6 +201,9 @@ export function Billing() {
   const [cancelLoading, setCancelLoading] = useState(false)
   const [reactivateLoading, setReactivateLoading] = useState(false)
   const [showComparison, setShowComparison] = useState(false)
+  // Billing cycle switch confirmation
+  const [cycleSwitchConfirm, setCycleSwitchConfirm] = useState<'monthly' | 'yearly' | null>(null)
+  const [cycleSwitchLoading, setCycleSwitchLoading] = useState(false)
   // Upgraded celebration card
   const showUpgraded = searchParams.get('upgraded') === 'true' || Boolean(searchParams.get('session_id'))
   const upgradedDismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -355,8 +335,13 @@ export function Billing() {
     setSearchParams({}, { replace: true })
   }
 
-  // Use the effective plan for display: cancelled → show as free
-  const effectivePlan = sub?.status === 'cancelled' ? 'free' : (sub?.plan ?? 'free')
+  // Use the effective plan for display:
+  // - 'cancelling' = user cancelled but still has access until current_period_end → show actual plan
+  // - 'cancelled'  = subscription has ended (period expired) → show as free
+  const effectivePlan =
+    sub?.status === 'cancelled' ? 'free' :
+    sub?.status === 'cancelling' ? (sub.plan ?? 'free') :
+    (sub?.plan ?? 'free')
   const meta = planMeta[effectivePlan] ?? planMeta.free
   const apiPlan = plans?.find(p => p.id === effectivePlan)
   const currentPriceMonthly = apiPlan?.price_eur ?? meta.priceMonthly
@@ -544,6 +529,33 @@ function openUpgrade(plan: string) {
       showToast({ icon: 'x', title: 'Failed to save preferences', danger: true })
     } finally {
       setSavingInvoicePrefs(false)
+    }
+  }
+
+  async function handleSwitchBillingCycle(cycle: 'monthly' | 'yearly') {
+    setCycleSwitchLoading(true)
+    try {
+      await switchBillingCycle(cycle)
+      setCycleSwitchConfirm(null)
+      showToast({
+        icon: 'check',
+        title: cycle === 'yearly' ? 'Switched to annual billing' : 'Switched to monthly billing',
+        description: cycle === 'yearly'
+          ? 'Your savings start with the next billing period.'
+          : 'You will be billed monthly from the next billing period.',
+      })
+      window.dispatchEvent(new Event('beebeeb:plan-changed'))
+      refreshPlanDetails()
+      await loadData()
+    } catch (e) {
+      showToast({
+        icon: 'x',
+        title: 'Failed to switch billing cycle',
+        description: e instanceof Error ? e.message : 'Please try again.',
+        danger: true,
+      })
+    } finally {
+      setCycleSwitchLoading(false)
     }
   }
 
@@ -988,17 +1000,109 @@ function openUpgrade(plan: string) {
                 <span>Monthly: EUR {currentPriceMonthly.toFixed(2)}/mo</span>
                 <span>Annual: EUR {(currentPriceYearly / 12).toFixed(2)}/mo</span>
               </div>
-              <BBButton size="sm" variant="amber" onClick={async () => {
-                try {
-                  await switchBillingCycle('yearly')
-                  showToast({ icon: 'check', title: 'Switched to annual billing' })
-                  await loadData()
-                } catch (e) {
-                  showToast({ icon: 'x', title: 'Failed to switch', description: e instanceof Error ? e.message : 'Try again', danger: true })
-                }
-              }}>
-                Switch to annual
-              </BBButton>
+              {cycleSwitchConfirm === 'yearly' ? (
+                <div className="rounded-lg bg-paper border border-line px-4 py-3.5 space-y-3">
+                  <div className="text-[12px] font-medium text-ink">Switch to annual billing?</div>
+                  <div className="rounded-md bg-paper-2 border border-line px-3.5 py-3 space-y-1">
+                    <div className="flex items-baseline justify-between text-xs">
+                      <span className="text-ink-2">New price</span>
+                      <span className="font-mono font-semibold text-ink">
+                        EUR {currentPriceYearly.toFixed(2)} / year
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-ink-3">
+                      That is EUR {(currentPriceYearly / 12).toFixed(2)}/mo instead of EUR {currentPriceMonthly.toFixed(2)}/mo.
+                    </div>
+                  </div>
+                  <p className="text-xs text-ink-3">
+                    The change takes effect at the start of your next billing period.
+                  </p>
+                  <div className="flex gap-2">
+                    <BBButton
+                      size="sm"
+                      onClick={() => setCycleSwitchConfirm(null)}
+                      disabled={cycleSwitchLoading}
+                    >
+                      Cancel
+                    </BBButton>
+                    <BBButton
+                      size="sm"
+                      variant="amber"
+                      onClick={() => void handleSwitchBillingCycle('yearly')}
+                      disabled={cycleSwitchLoading}
+                    >
+                      {cycleSwitchLoading ? 'Switching...' : 'Confirm switch to annual'}
+                    </BBButton>
+                  </div>
+                </div>
+              ) : (
+                <BBButton size="sm" variant="amber" onClick={() => setCycleSwitchConfirm('yearly')}>
+                  Switch to annual
+                </BBButton>
+              )}
+            </div>
+          )}
+
+          {/* Monthly switch prompt — shown to yearly paid subscribers */}
+          {sub?.billing_cycle === 'yearly' && effectivePlan !== 'free' && sub.status !== 'cancelling' && (
+            <div className="border border-line rounded-xl p-5 bg-paper">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-4 mb-1">
+                Billing cycle
+              </div>
+              <p className="text-sm text-ink-2 mb-3">
+                Currently on annual billing at{' '}
+                <span className="font-semibold text-ink font-mono">
+                  EUR {currentPriceYearly.toFixed(2)}/yr
+                </span>
+                .{' '}
+                You can switch to monthly billing at{' '}
+                <span className="font-semibold text-ink font-mono">
+                  EUR {currentPriceMonthly.toFixed(2)}/mo
+                </span>
+                .
+              </p>
+              {cycleSwitchConfirm === 'monthly' ? (
+                <div className="rounded-lg bg-paper-2 border border-line px-4 py-3.5 space-y-3">
+                  <div className="text-[12px] font-medium text-ink">Switch to monthly billing?</div>
+                  <div className="rounded-md bg-paper border border-line px-3.5 py-3 space-y-1">
+                    <div className="flex items-baseline justify-between text-xs">
+                      <span className="text-ink-2">New price</span>
+                      <span className="font-mono font-semibold text-ink">
+                        EUR {currentPriceMonthly.toFixed(2)} / month
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-ink-3">
+                      Annual cost: EUR {(currentPriceMonthly * 12).toFixed(2)}/yr instead of EUR {currentPriceYearly.toFixed(2)}/yr.
+                    </div>
+                  </div>
+                  <p className="text-xs text-ink-3">
+                    The change takes effect at the start of your next billing period.
+                    Your current annual period remains active until{' '}
+                    <strong className="font-mono">{formatDate(sub.current_period_end ?? null)}</strong>.
+                  </p>
+                  <div className="flex gap-2">
+                    <BBButton
+                      size="sm"
+                      onClick={() => setCycleSwitchConfirm(null)}
+                      disabled={cycleSwitchLoading}
+                    >
+                      Cancel
+                    </BBButton>
+                    <BBButton
+                      size="sm"
+                      variant="amber"
+                      onClick={() => void handleSwitchBillingCycle('monthly')}
+                      disabled={cycleSwitchLoading}
+                    >
+                      {cycleSwitchLoading ? 'Switching...' : 'Confirm switch to monthly'}
+                    </BBButton>
+                  </div>
+                </div>
+              ) : (
+                <BBButton size="sm" onClick={() => setCycleSwitchConfirm('monthly')}>
+                  Switch to monthly
+                </BBButton>
+              )}
             </div>
           )}
         </div>

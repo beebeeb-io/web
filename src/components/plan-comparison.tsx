@@ -1,5 +1,6 @@
 import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
+import { CANONICAL_PLAN_SLUGS, PLAN_LABELS, PLAN_PRICE_LABELS } from '../lib/plan-constants'
 
 interface PlanComparisonProps {
   currentPlan: string
@@ -16,9 +17,9 @@ const features: Array<{ name: string; free: boolean | string; basic: boolean | s
   { name: 'EU data residency', free: true, basic: true, pro: true, business: true },
 ]
 
-const plans = ['free', 'basic', 'pro', 'business'] as const
-const planLabels: Record<string, string> = { free: 'Free', basic: 'Basic', pro: 'Pro', business: 'Business' }
-const planPrices: Record<string, string> = { free: 'EUR 0', basic: 'EUR 10.99', pro: 'EUR 54.95', business: 'Coming soon' }
+const plans = CANONICAL_PLAN_SLUGS
+const planLabels = PLAN_LABELS
+const planPrices = PLAN_PRICE_LABELS
 
 export function PlanComparisonTable({ currentPlan, onUpgrade }: PlanComparisonProps) {
   return (

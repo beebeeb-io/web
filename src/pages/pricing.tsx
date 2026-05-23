@@ -5,113 +5,13 @@ import { BBChip } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useToast } from '../components/toast'
 import { getToken, createCheckoutSession, getPlans, type Plan } from '../lib/api'
+import { PRICING_PAGE_PLANS, type PricingPlanDef } from '../lib/plan-constants'
 
 type BillingCycle = 'monthly' | 'yearly'
 
-interface PlanDef {
-  id: string
-  name: string
-  /** Monthly price when billed monthly */
-  priceMonthly: number
-  /** Monthly equivalent price when billed yearly (annual total / 12) */
-  priceYearly: number
-  seat: string | null
-  note: string
-  storage: string
-  perTb?: string
-  cta: string
-  ctaVariant: 'amber' | 'default' | 'ghost'
-  highlight?: boolean
-  badge?: string
-  comingSoon?: boolean
-  features: { label: string; strong?: boolean }[]
-}
+type PlanDef = PricingPlanDef
 
-const fallbackPlans: PlanDef[] = [
-  {
-    id: 'free',
-    name: 'Free',
-    priceMonthly: 0,
-    priceYearly: 0,
-    seat: null,
-    note: 'Forever. No card needed.',
-    storage: '5 GB',
-    cta: 'Create account',
-    ctaVariant: 'default',
-    features: [
-      { label: 'E2E encryption · zero-knowledge' },
-      { label: 'Unlimited devices' },
-      { label: 'Link sharing · passphrase · expiry' },
-      { label: 'Photos & drive' },
-      { label: 'Web, desktop & mobile apps' },
-      { label: 'Community support' },
-    ],
-  },
-  {
-    id: 'basic',
-    name: 'Basic',
-    priceMonthly: 10.99,
-    priceYearly: 9.16,
-    seat: '/ month',
-    note: '1 TB · €10.99/TB',
-    storage: '1 TB',
-    perTb: '€10.99/TB',
-    cta: 'Subscribe',
-    ctaVariant: 'default',
-    features: [
-      { label: 'Everything in Free' },
-      { label: '1 TB encrypted storage', strong: true },
-      { label: 'Photo library backup' },
-      { label: 'Recovery via trusted contact' },
-      { label: 'EU jurisdiction of choice' },
-      { label: '30-day version history' },
-      { label: 'Priority email support' },
-    ],
-  },
-  {
-    id: 'pro',
-    name: 'Pro',
-    priceMonthly: 54.95,
-    priceYearly: 45.79,
-    seat: '/ month',
-    note: '5 TB · €10.99/TB',
-    storage: '5 TB',
-    perTb: '€10.99/TB',
-    cta: 'Subscribe',
-    ctaVariant: 'amber',
-    highlight: true,
-    features: [
-      { label: 'Everything in Basic' },
-      { label: '5 TB encrypted storage', strong: true },
-      { label: 'Unlimited version history', strong: true },
-      { label: 'Desktop sync · CLI access' },
-      { label: 'Shared folders' },
-      { label: 'Priority support · 24h response' },
-    ],
-  },
-  {
-    id: 'business',
-    name: 'Business',
-    priceMonthly: 109.90,
-    priceYearly: 91.58,
-    seat: '/ month',
-    note: '10 TB · coming soon',
-    storage: '10 TB',
-    perTb: '€10.99/TB',
-    cta: 'Coming soon',
-    ctaVariant: 'ghost',
-    badge: 'Coming soon',
-    comingSoon: true,
-    features: [
-      { label: 'Everything in Pro' },
-      { label: '10 TB encrypted storage', strong: true },
-      { label: 'Team management', strong: true },
-      { label: 'Dedicated support channel' },
-      { label: 'Custom data retention policies' },
-      { label: 'Priority egress bandwidth' },
-    ],
-  },
-]
+const fallbackPlans = PRICING_PAGE_PLANS
 
 const trustPoints: [string, string, string][] = [
   ['shield', 'All plans E2E encrypted', 'AES-256-GCM · keys never leave your device'],
