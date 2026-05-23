@@ -116,8 +116,8 @@ export function XlsxPreview({ blob, filename }: XlsxPreviewProps) {
     async function render() {
       try {
         const arrayBuffer = await blob.arrayBuffer()
-        // Lazy-load xlsx (SheetJS) — only fetched when a spreadsheet is opened
-        const XLSX = await import('xlsx')
+        // Lazy-load xlsx (community-maintained @e965/xlsx fork) — only fetched when a spreadsheet is opened
+        const XLSX = await import('@e965/xlsx')
         const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' })
 
         const parsed: SheetData[] = workbook.SheetNames.map(name => ({
