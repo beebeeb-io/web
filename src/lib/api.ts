@@ -1304,6 +1304,21 @@ export async function reactivateSubscription(): Promise<{ message?: string; acti
   return request<{ message: string }>('/api/v1/billing/reactivate', { method: 'POST' })
 }
 
+/** POST /api/v1/billing/pause — pause billing for 30, 60, or 90 days (task 0544, B3). */
+export async function pauseSubscription(
+  duration_days: 30 | 60 | 90,
+): Promise<{ message: string; duration_days: number; pause_until: string }> {
+  return request('/api/v1/billing/pause', {
+    method: 'POST',
+    body: JSON.stringify({ duration_days }),
+  })
+}
+
+/** POST /api/v1/billing/resume — clear pause_collection and restart billing now. */
+export async function resumeSubscription(): Promise<{ message: string }> {
+  return request('/api/v1/billing/resume', { method: 'POST' })
+}
+
 /** GET /api/v1/billing/winback-eligible — is the user eligible for the one-time win-back offer? */
 export async function getWinbackEligible(): Promise<{ eligible: boolean }> {
   return request<{ eligible: boolean }>('/api/v1/billing/winback-eligible')

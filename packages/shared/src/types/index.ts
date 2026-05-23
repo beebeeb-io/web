@@ -339,6 +339,8 @@ export interface Subscription {
   pending_downgrade_plan?: string | null
   downgrade_cooldown_until?: string | null
   storage_grace_deadline?: string | null
+  /** Set when status === 'paused' (task 0544). ISO timestamp when billing resumes. */
+  pause_until?: string | null
 }
 
 export interface Invoice {

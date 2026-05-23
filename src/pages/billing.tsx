@@ -18,6 +18,8 @@ import {
   createCheckoutSession,
   cancelSubscription,
   reactivateSubscription,
+  pauseSubscription,
+  resumeSubscription,
   getWinbackEligible,
   claimWinback,
   getPreference,
@@ -218,19 +220,23 @@ export function Billing() {
   const [upgradeOpen, setUpgradeOpen] = useState(false)
   const [upgradePlan, setUpgradePlan] = useState<string>('pro')
   const [portalLoading, setPortalLoading] = useState(false)
-  // Cancel flow is a three-step machine:
+  // Cancel flow is a four-step machine (task 0544 added 'pause'):
   //   'idle'    — initial state, "Cancel plan" link is visible
   //   'offer'   — win-back offer card (50% off / 3 months); only when eligible
+  //   'pause'   — "Pause instead?" card with 30/60/90-day options
   //   'confirm' — final cancel-confirmation panel
   // `cancelConfirm` is derived as `cancelStep === 'confirm'` so the existing
   // JSX condition keeps working unchanged.
-  const [cancelStep, setCancelStep] = useState<'idle' | 'offer' | 'confirm'>('idle')
+  const [cancelStep, setCancelStep] = useState<'idle' | 'offer' | 'pause' | 'confirm'>('idle')
   const cancelConfirm = cancelStep === 'confirm'
   const setCancelConfirm = (v: boolean) => setCancelStep(v ? 'confirm' : 'idle')
   const [cancelLoading, setCancelLoading] = useState(false)
   const [winbackStartingLoading, setWinbackStartingLoading] = useState(false)
   const [winbackAcceptLoading, setWinbackAcceptLoading] = useState(false)
   const [reactivateLoading, setReactivateLoading] = useState(false)
+  // Pause flow (task 0544)
+  const [pauseLoading, setPauseLoading] = useState<30 | 60 | 90 | null>(null)
+  const [resumeLoading, setResumeLoading] = useState(false)
   const [showComparison, setShowComparison] = useState(false)
   // Billing cycle switch confirmation
   const [cycleSwitchConfirm, setCycleSwitchConfirm] = useState<'monthly' | 'yearly' | null>(null)
@@ -415,19 +421,66 @@ function openUpgrade(plan: string) {
   }
 
   // Entry point for the cancel flow. Checks win-back eligibility before
-  // jumping straight to the cancel-confirmation panel. If the user has not
-  // previously claimed the discount (and has an active paid sub), they see
-  // the offer step first — otherwise it's a no-op and we skip to confirm.
+  // jumping straight to the cancel-confirmation panel. The full sequence is
+  //   offer (if eligible) → pause → confirm
+  // — each step has a "no thanks" link to the next, so users always have a
+  // softer landing before committing to cancel.
   async function startCancelFlow() {
     setWinbackStartingLoading(true)
     try {
       const { eligible } = await getWinbackEligible()
-      setCancelStep(eligible ? 'offer' : 'confirm')
+      setCancelStep(eligible ? 'offer' : 'pause')
     } catch {
-      // Don't block cancel if eligibility check fails — just skip the offer.
-      setCancelStep('confirm')
+      // Don't block cancel if eligibility check fails — just skip the offer
+      // and go straight to the pause card.
+      setCancelStep('pause')
     } finally {
       setWinbackStartingLoading(false)
+    }
+  }
+
+  async function handlePauseSubscription(days: 30 | 60 | 90) {
+    setPauseLoading(days)
+    try {
+      const result = await pauseSubscription(days)
+      setCancelStep('idle')
+      showToast({
+        icon: 'check',
+        title: `Plan paused for ${days} days`,
+        description: `Billing resumes on ${formatDate(result.pause_until)}. Your data stays accessible.`,
+      })
+      window.dispatchEvent(new Event('beebeeb:plan-changed'))
+      refreshPlanDetails()
+      await loadData()
+    } catch (err) {
+      showToast({
+        icon: 'x',
+        title: 'Could not pause plan',
+        description: err instanceof Error ? err.message : 'Please try again.',
+        danger: true,
+      })
+    } finally {
+      setPauseLoading(null)
+    }
+  }
+
+  async function handleResumeSubscription() {
+    setResumeLoading(true)
+    try {
+      await resumeSubscription()
+      showToast({ icon: 'check', title: 'Plan resumed', description: 'Billing has restarted.' })
+      window.dispatchEvent(new Event('beebeeb:plan-changed'))
+      refreshPlanDetails()
+      await loadData()
+    } catch (err) {
+      showToast({
+        icon: 'x',
+        title: 'Could not resume plan',
+        description: err instanceof Error ? err.message : 'Please try again.',
+        danger: true,
+      })
+    } finally {
+      setResumeLoading(false)
     }
   }
 
@@ -664,6 +717,7 @@ function openUpgrade(plan: string) {
     const cfg =
       sub?.status === 'cancelling' ? { bg: 'bg-amber-bg', text: 'text-amber-deep', dot: 'bg-amber-deep', label: 'Cancelling' } :
       sub?.status === 'past_due'   ? { bg: 'bg-red/10',   text: 'text-red',        dot: 'bg-red',        label: 'Past due' }   :
+      sub?.status === 'paused'     ? { bg: 'bg-paper-3',  text: 'text-ink-2',      dot: 'bg-ink-3',      label: 'Paused' }     :
                                      { bg: 'bg-green/10', text: 'text-green',       dot: 'bg-green',      label: 'Active' }
     return (
       <div className={`flex items-center gap-1.5 px-2 py-1 rounded-md ${cfg.bg} ${cfg.text} text-[11px] font-medium`}>
@@ -853,12 +907,45 @@ function openUpgrade(plan: string) {
             </div>
 
             {/* Next billing / cancels on */}
-            {sub?.current_period_end && effectivePlan !== 'free' && sub.status !== 'cancelling' && (
+            {sub?.current_period_end && effectivePlan !== 'free' && sub.status !== 'cancelling' && sub.status !== 'paused' && (
               <div className="flex items-center gap-3 p-3 bg-paper-2 border border-line rounded-lg text-xs">
                 <Icon name="clock" size={13} className="text-ink-3 shrink-0" />
                 <span className="flex-1">
                   Renews <strong>{formatDate(sub.current_period_end)}</strong>
                 </span>
+              </div>
+            )}
+
+            {/* Paused state — billing collection paused via Stripe pause_collection (task 0544) */}
+            {sub?.status === 'paused' && (
+              <div className="rounded-lg border border-line-2 bg-paper-2 p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <Icon name="clock" size={14} className="text-ink-3 shrink-0" />
+                      <span className="text-sm font-semibold text-ink">
+                        Plan paused
+                      </span>
+                    </div>
+                    <p className="text-xs text-ink-2 leading-relaxed">
+                      No charges while paused. Your files stay encrypted and
+                      accessible.
+                      {sub.pause_until && (
+                        <> Billing resumes on{' '}
+                          <strong className="font-mono">{formatDate(sub.pause_until)}</strong>.
+                        </>
+                      )}
+                    </p>
+                  </div>
+                  <BBButton
+                    size="sm"
+                    variant="amber"
+                    onClick={() => void handleResumeSubscription()}
+                    disabled={resumeLoading}
+                  >
+                    {resumeLoading ? 'Resuming...' : 'Resume now'}
+                  </BBButton>
+                </div>
               </div>
             )}
 
@@ -967,7 +1054,7 @@ function openUpgrade(plan: string) {
                     <Icon name="settings" size={13} className="mr-1.5" />
                     {portalLoading ? 'Redirecting...' : 'Manage billing'}
                   </BBButton>
-                  {effectivePlan !== 'business' && sub?.status !== 'cancelling' && (
+                  {effectivePlan !== 'business' && sub?.status !== 'cancelling' && sub?.status !== 'paused' && (
                     <BBButton
                       size="md"
                       onClick={() => openUpgrade(nextPlan)}
@@ -979,13 +1066,14 @@ function openUpgrade(plan: string) {
               )}
             </div>
 
-            {/* Cancel plan — paid plans only, not already cancelling.
-                Three steps:
-                  idle  → "Cancel plan" link
-                  offer → win-back 50%-off-3-months card (only when eligible)
+            {/* Cancel plan — paid plans only, not already cancelling or paused.
+                Four steps (task 0544 added 'pause'):
+                  idle    → "Cancel plan" link
+                  offer   → win-back 50%-off-3-months card (only when eligible)
+                  pause   → "Pause instead?" card with 30/60/90-day options
                   confirm → existing cancel-confirmation panel
             */}
-            {effectivePlan !== 'free' && sub?.status !== 'cancelling' && (
+            {effectivePlan !== 'free' && sub?.status !== 'cancelling' && sub?.status !== 'paused' && (
               cancelStep === 'offer' ? (
                 <div className="mt-3 p-3.5 bg-amber-bg/40 border border-amber/30 rounded-lg space-y-4">
                   <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep">
@@ -1010,8 +1098,44 @@ function openUpgrade(plan: string) {
                     <BBButton
                       size="sm"
                       variant="ghost"
-                      onClick={() => setCancelStep('confirm')}
+                      onClick={() => setCancelStep('pause')}
                       disabled={winbackAcceptLoading}
+                    >
+                      No thanks
+                    </BBButton>
+                  </div>
+                </div>
+              ) : cancelStep === 'pause' ? (
+                <div className="mt-3 p-3.5 bg-paper-2 border border-line rounded-lg space-y-4">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">
+                    Pause instead?
+                  </div>
+                  <div className="text-sm text-ink">
+                    Take a break without losing your data. We stop charging,
+                    your files stay encrypted and accessible.
+                  </div>
+                  <p className="text-xs text-ink-3">
+                    Billing resumes automatically when the pause ends. You can
+                    resume anytime before then.
+                  </p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {([30, 60, 90] as const).map((days) => (
+                      <BBButton
+                        key={days}
+                        size="sm"
+                        onClick={() => void handlePauseSubscription(days)}
+                        disabled={pauseLoading !== null}
+                      >
+                        {pauseLoading === days ? 'Pausing...' : `Pause ${days} days`}
+                      </BBButton>
+                    ))}
+                  </div>
+                  <div>
+                    <BBButton
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setCancelStep('confirm')}
+                      disabled={pauseLoading !== null}
                     >
                       No thanks, cancel my plan
                     </BBButton>
