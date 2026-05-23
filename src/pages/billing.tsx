@@ -174,6 +174,31 @@ function AnimatedProgress({ percent, className = '' }: { percent: number; classN
   )
 }
 
+/* ── Checkout watchdog ─────────────────────────────────── */
+
+const PENDING_CHECKOUT_KEY = 'bb_pending_checkout'
+
+function setPendingCheckout(plan: string, cycle: string) {
+  localStorage.setItem(PENDING_CHECKOUT_KEY, JSON.stringify({ plan, cycle, ts: Date.now() }))
+}
+
+function clearPendingCheckout() {
+  localStorage.removeItem(PENDING_CHECKOUT_KEY)
+}
+
+function getPendingCheckout(): { plan: string; cycle: string; ts: number } | null {
+  try {
+    const raw = localStorage.getItem(PENDING_CHECKOUT_KEY)
+    if (!raw) return null
+    const data = JSON.parse(raw)
+    if (Date.now() - data.ts > 24 * 60 * 60 * 1000) {
+      localStorage.removeItem(PENDING_CHECKOUT_KEY)
+      return null
+    }
+    return data
+  } catch { return null }
+}
+
 /* ── Main component ────────────────────────────────────── */
 
 export function Billing() {
@@ -201,6 +226,18 @@ export function Billing() {
   // Upgraded celebration card
   const showUpgraded = searchParams.get('upgraded') === 'true' || Boolean(searchParams.get('session_id'))
   const upgradedDismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Checkout watchdog — detects abandoned Stripe checkouts
+  const [pendingCheckout, setPendingCheckoutState] = useState<{ plan: string; cycle: string } | null>(null)
+
+  useEffect(() => {
+    if (showUpgraded || searchParams.get('cancelled') === 'true') {
+      clearPendingCheckout()
+      setPendingCheckoutState(null)
+    } else {
+      const pending = getPendingCheckout()
+      if (pending) setPendingCheckoutState(pending)
+    }
+  }, [showUpgraded, searchParams])
 
   // Storage add-on state
   const [addonState, setAddonState] = useState<StorageAddonState | null>(null)
@@ -496,6 +533,7 @@ function openUpgrade(plan: string) {
         plan: effectivePlan,
         billing_cycle: cycle,
       })
+      setPendingCheckout(effectivePlan, cycle)
       window.location.href = url
     } catch (e) {
       showToast({
@@ -644,6 +682,30 @@ function openUpgrade(plan: string) {
             <button
               onClick={dismissSuccess}
               className="text-ink-3 hover:text-ink transition-colors"
+            >
+              <Icon name="x" size={14} />
+            </button>
+          </div>
+        )}
+
+        {/* Abandoned checkout watchdog */}
+        {pendingCheckout && !showUpgraded && (
+          <div className="flex items-center gap-3 p-3.5 bg-amber-bg border border-amber/30 rounded-lg text-sm">
+            <Icon name="clock" size={14} className="text-amber-deep shrink-0" />
+            <span className="flex-1 text-ink-2">
+              You started switching to <span className="font-semibold text-ink">{pendingCheckout.cycle}</span> billing but didn't complete checkout.
+            </span>
+            <BBButton
+              size="sm"
+              variant="amber"
+              onClick={() => void handleSwitchBillingCycle(pendingCheckout.cycle as 'monthly' | 'yearly')}
+            >
+              Continue
+            </BBButton>
+            <button
+              onClick={() => { clearPendingCheckout(); setPendingCheckoutState(null) }}
+              className="text-ink-3 hover:text-ink transition-colors shrink-0"
+              aria-label="Dismiss"
             >
               <Icon name="x" size={14} />
             </button>

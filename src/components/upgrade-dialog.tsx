@@ -52,6 +52,7 @@ export function UpgradeDialog({
         billing_cycle: cycle,
         seats: 1,
       })
+      try { localStorage.setItem('bb_pending_checkout', JSON.stringify({ plan: planId, cycle, ts: Date.now() })) } catch { /* ok */ }
       window.location.href = url
     } catch (checkoutErr) {
       if (checkoutErr instanceof Error && 'status' in checkoutErr && (checkoutErr as { status: number }).status === 400) {
