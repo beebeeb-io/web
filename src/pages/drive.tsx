@@ -124,7 +124,7 @@ export function Drive() {
   const { isFrozen } = useFrozen()
   const { user } = useAuth()
   const { getFileKey, isUnlocked, cryptoReady, cryptoError } = useKeys()
-  const { usage: driveUsage, incomingCount: driveIncomingCount, refreshUsage: refreshDriveUsage } = useDriveData()
+  const { usage: driveUsage, incomingCount: driveIncomingCount, refreshUsage: refreshDriveUsage, setOffline: setDriveOffline } = useDriveData()
   const { indexFile, unindexFile } = useSearchIndex()
   const sync = useSync()
   const { refresh: refreshOnboarding } = useOnboarding()
@@ -168,7 +168,10 @@ export function Drive() {
   const [lastUploadedFileId, setLastUploadedFileId] = useState<string | null>(null)
 
   // ─── Offline cache state ─────────────────────────────
-  const [showingCached, setShowingCached] = useState(false)
+  // The "is the drive serving cached data right now?" flag lives in
+  // DriveDataContext (isOffline / setOffline). The DriveLayout reads it to
+  // render the offline banner so the indicator is consistent across routes.
+  //
   // Inline banner for a failed initial list load when no cache is available.
   // Surfaced beside the file grid with a Try again button so the user is not
   // stranded on an empty page after a flaky load.
@@ -199,6 +202,13 @@ export function Drive() {
   // ─── External selection + decrypted names (for keyboard shortcuts + dialogs) ─
   const [externalSelectedIds, setExternalSelectedIds] = useState<Set<string>>(new Set())
   const [externalDecryptedNames, setExternalDecryptedNames] = useState<Record<string, string | null>>({})
+  // Tracked via ref so fetchFiles/refreshFromSync can read the current map
+  // when persisting to the offline cache without listing the names in their
+  // dep arrays (which would re-run them on every decrypted name update).
+  const externalDecryptedNamesRef = useRef(externalDecryptedNames)
+  useEffect(() => {
+    externalDecryptedNamesRef.current = externalDecryptedNames
+  }, [externalDecryptedNames])
 
   // ─── Duplicate-file conflict dialog ─────────────────
   type ResolvedUpload = { file: File; replaceFileId?: string; finalName?: string }
@@ -295,10 +305,18 @@ export function Drive() {
       .filter((n) => Boolean(n.is_trashed) === trashed)
       .map(syncNodeToDriveFile)
     setFiles(nodes)
-    setShowingCached(false)
-    if (!trashed) cacheFileList(currentParentId ?? null, nodes)
+    setDriveOffline(false)
+    if (!trashed) {
+      // Persist current decryptedNames map alongside so a cold offline reload
+      // can display names without re-running the crypto bootstrap.
+      const names: Record<string, string> = {}
+      for (const [id, name] of Object.entries(externalDecryptedNamesRef.current)) {
+        if (typeof name === 'string') names[id] = name
+      }
+      void cacheFileList(currentParentId ?? null, nodes, names)
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentParentId, location.pathname, isUnlocked, syncNodeToDriveFile])
+  }, [currentParentId, location.pathname, isUnlocked, syncNodeToDriveFile, setDriveOffline])
 
   // fetchFiles — triggered on folder navigation (currentParentId change).
   // When the sync engine is ready and the view is not trash, show the
@@ -316,9 +334,9 @@ export function Drive() {
         .filter((n) => !n.is_trashed)
         .map(syncNodeToDriveFile)
       setFiles(nodes)
-      setShowingCached(false)
+      setDriveOffline(false)
       setLoading(false)
-      cacheFileList(currentParentId ?? null, nodes)
+      void cacheFileList(currentParentId ?? null, nodes)
       // Fall through to the API refresh — do NOT return here.
     } else {
       setLoading(true)
@@ -327,24 +345,51 @@ export function Drive() {
     try {
       const data = await listFiles(currentParentId ?? undefined, trashed)
       setFiles(data)
-      setShowingCached(false)
+      setDriveOffline(false)
       setLoadError(null)
-      if (!trashed) cacheFileList(currentParentId ?? null, data)
+      if (!trashed) {
+        // Persist alongside whatever decrypted names the previous render
+        // produced — the new file set may be a superset of the cached entries.
+        const names: Record<string, string> = {}
+        for (const [id, name] of Object.entries(externalDecryptedNamesRef.current)) {
+          if (typeof name === 'string') names[id] = name
+        }
+        void cacheFileList(currentParentId ?? null, data, names)
+      }
       setSyncedAgo(0)
     } catch (err) {
       console.error('[Drive] Failed to load files:', err)
-      const isOffline = !navigator.onLine
-      const cached = getCachedFileList(currentParentId ?? null)
-      if (isOffline && cached) {
-        setFiles(cached)
-        setShowingCached(true)
+      // 4xx errors are real failures (auth, permission, not found) — surface
+      // them. Network errors (status 0, TypeError, offline navigator) and
+      // transient 5xx fall back to the offline cache for this parent_id.
+      const apiStatus = (err instanceof Error && 'status' in err)
+        ? (err as { status?: number }).status
+        : undefined
+      const isNetworkOrServerError =
+        !navigator.onLine ||
+        apiStatus === 0 ||
+        apiStatus === undefined ||
+        (typeof apiStatus === 'number' && apiStatus >= 500)
+      const cached = isNetworkOrServerError
+        ? await getCachedFileList(currentParentId ?? null)
+        : null
+      // Treat stale entries as missing — task spec says > 7d entries become a
+      // "couldn't load files" error rather than misleadingly old data.
+      if (cached && !cached.stale) {
+        setFiles(cached.files)
+        setDriveOffline(true)
         setLoadError(null)
+        if (Object.keys(cached.decryptedNames).length) {
+          // Hydrate decrypted names so the offline cold-reload doesn't need
+          // crypto bootstrap to show readable file names.
+          setExternalDecryptedNames((prev) => ({ ...cached.decryptedNames, ...prev }))
+        }
       } else {
         // Show an inline banner with a Try again button instead of (only)
         // toasting — the page would otherwise be a silent empty state.
         setLoadError(userFriendlyError(err))
         setFiles([])
-        setShowingCached(false)
+        setDriveOffline(false)
       }
     } finally {
       setLoading(false)
@@ -353,7 +398,7 @@ export function Drive() {
   // loop: listing sync.ready as a dep would recreate fetchFiles on every sync
   // state transition and re-trigger this effect, hammering the API.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentParentId, location.pathname, isUnlocked, syncNodeToDriveFile])
+  }, [currentParentId, location.pathname, isUnlocked, syncNodeToDriveFile, setDriveOffline])
 
   useEffect(() => {
     fetchFiles()
@@ -2068,13 +2113,7 @@ export function Drive() {
           </div>
         )}
 
-        {/* Offline cached data banner */}
-        {showingCached && (
-          <div className="px-5 py-2 border-b border-amber/30 bg-amber-bg flex items-center gap-2 text-[12px] text-amber-deep">
-            <Icon name="cloud" size={13} className="shrink-0" />
-            Offline — showing cached files from your last visit
-          </div>
-        )}
+        {/* Offline banner now rendered by DriveLayout via useDriveData().isOffline. */}
 
         {/* Inline failure + retry — the toast alone left the page empty. */}
         {loadError && (

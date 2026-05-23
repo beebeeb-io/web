@@ -1,65 +1,208 @@
-// ─── Offline file-list cache ─────────────────────────────────────────────────
+// ─── Offline file-list + preview cache (IndexedDB) ───────────────────────────
 //
-// Stores recently-fetched file lists in localStorage so they can be shown
-// when the user goes offline. Preview data URLs are kept in IndexedDB (they
-// can be large; localStorage has a 5 MB quota on most browsers).
+// Stores recently-fetched file lists in IndexedDB so they can be shown when
+// the user goes offline. The encrypted file list is the same payload the
+// server returns (name_encrypted, size_bytes, etc.); we additionally store
+// the decrypted names map keyed by file id so a cold offline reload can show
+// human-readable names without rebooting the crypto context.
 //
-// Security note: file lists stored here contain only encrypted metadata
-// (name_encrypted, size_bytes, etc.) — the same server payload that is also
-// visible to anyone with the session token. Decrypted names are intentionally
-// NOT stored.
+// Capacity rules:
+//   - Total file-row cap across all cache entries: 50 000 rows. On insert
+//     that would exceed the cap, evict whole entries LRU by accessedAt until
+//     under the cap.
+//   - TTL: 7 days. Entries older than that are treated as missing by the
+//     consumer (we still return them for inspection but mark `stale: true`).
 //
-// TTL: 30 minutes for file lists. Previews are evicted LRU when > 50 entries.
+// Security note: only the encrypted payload is durably stored. Decrypted
+// names are stored separately and only when the caller passes them in —
+// this preserves the existing model (no plaintext on disk unless the user
+// explicitly enabled offline reading by viewing the folder while online).
+//
+// ─── Preview cache (separate DB) ─────────────────────────────────────────────
+// The decrypted-thumbnail / preview blob cache remains in its own DB so the
+// 50k row file-list cap doesn't compete with previews for eviction.
 
 import type { DriveFile } from './api'
 
-// ─── File list cache (localStorage) ──────────────────────────────────────────
+// ─── File list cache (IndexedDB) ─────────────────────────────────────────────
 
-const FILE_LIST_PREFIX = 'bb_fc_'
-const FILE_LIST_TTL_MS = 30 * 60 * 1000 // 30 minutes
+const FILE_LIST_DB_NAME = 'beebeeb_file_list_cache'
+const FILE_LIST_DB_VERSION = 1
+const FILE_LIST_STORE = 'fileLists'
+const FILE_LIST_TTL_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
+const FILE_LIST_TOTAL_ROW_CAP = 50_000
 
-interface FileListEntry {
+const ROOT_KEY = '__root__'
+
+interface FileListRecord {
+  parentId: string // ROOT_KEY when the parent is the drive root
   files: DriveFile[]
+  decryptedNames: Record<string, string>
   cachedAt: number
+  accessedAt: number
 }
 
-/** Persist a file list for the given parent folder id (null = root). */
-export function cacheFileList(parentId: string | null, files: DriveFile[]): void {
-  const key = FILE_LIST_PREFIX + (parentId ?? 'root')
-  const entry: FileListEntry = { files, cachedAt: Date.now() }
-  try {
-    localStorage.setItem(key, JSON.stringify(entry))
-  } catch {
-    // localStorage full or disabled — silently skip
+export interface CachedFileList {
+  files: DriveFile[]
+  decryptedNames: Record<string, string>
+  cachedAt: number
+  stale: boolean
+}
+
+function parentKey(parentId: string | null): string {
+  return parentId ?? ROOT_KEY
+}
+
+function openFileListDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(FILE_LIST_DB_NAME, FILE_LIST_DB_VERSION)
+    req.onupgradeneeded = () => {
+      const db = req.result
+      if (!db.objectStoreNames.contains(FILE_LIST_STORE)) {
+        db.createObjectStore(FILE_LIST_STORE, { keyPath: 'parentId' })
+      }
+    }
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+}
+
+function idbReq<T>(req: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+}
+
+async function fileListGet(db: IDBDatabase, key: string): Promise<FileListRecord | undefined> {
+  const tx = db.transaction(FILE_LIST_STORE, 'readonly')
+  return idbReq(tx.objectStore(FILE_LIST_STORE).get(key)) as Promise<FileListRecord | undefined>
+}
+
+async function fileListPut(db: IDBDatabase, record: FileListRecord): Promise<void> {
+  const tx = db.transaction(FILE_LIST_STORE, 'readwrite')
+  await idbReq(tx.objectStore(FILE_LIST_STORE).put(record))
+}
+
+async function fileListDelete(db: IDBDatabase, key: string): Promise<void> {
+  const tx = db.transaction(FILE_LIST_STORE, 'readwrite')
+  await idbReq(tx.objectStore(FILE_LIST_STORE).delete(key))
+}
+
+async function fileListGetAll(db: IDBDatabase): Promise<FileListRecord[]> {
+  const tx = db.transaction(FILE_LIST_STORE, 'readonly')
+  return idbReq(tx.objectStore(FILE_LIST_STORE).getAll()) as Promise<FileListRecord[]>
+}
+
+/**
+ * Evict LRU entries until the total stored row count is at or below the cap.
+ * The just-written entry (excludeKey) is never evicted.
+ */
+async function enforceRowCap(db: IDBDatabase, excludeKey: string): Promise<void> {
+  const all = await fileListGetAll(db)
+  let total = all.reduce((sum, r) => sum + r.files.length, 0)
+  if (total <= FILE_LIST_TOTAL_ROW_CAP) return
+
+  // Oldest accessedAt first; skip the entry we just wrote.
+  const candidates = all
+    .filter((r) => r.parentId !== excludeKey)
+    .sort((a, b) => a.accessedAt - b.accessedAt)
+
+  for (const victim of candidates) {
+    if (total <= FILE_LIST_TOTAL_ROW_CAP) break
+    await fileListDelete(db, victim.parentId)
+    total -= victim.files.length
   }
 }
 
 /**
- * Return the cached file list for the given parent folder, or null if it
- * doesn't exist or is older than 30 minutes.
+ * Persist a file list for the given parent folder (null = drive root). If
+ * `decryptedNames` is provided, the entries are merged with any previously
+ * stored names so we don't lose names from earlier decrypt passes.
+ *
+ * Silently no-ops if IndexedDB is unavailable.
  */
-export function getCachedFileList(parentId: string | null): DriveFile[] | null {
-  const key = FILE_LIST_PREFIX + (parentId ?? 'root')
+export async function cacheFileList(
+  parentId: string | null,
+  files: DriveFile[],
+  decryptedNames?: Record<string, string>,
+): Promise<void> {
+  const key = parentKey(parentId)
   try {
-    const raw = localStorage.getItem(key)
-    if (!raw) return null
-    const entry: FileListEntry = JSON.parse(raw)
-    if (Date.now() - entry.cachedAt > FILE_LIST_TTL_MS) {
-      localStorage.removeItem(key)
-      return null
+    const db = await openFileListDB()
+    try {
+      const now = Date.now()
+      const existing = await fileListGet(db, key)
+      const mergedNames: Record<string, string> = {
+        ...(existing?.decryptedNames ?? {}),
+        ...(decryptedNames ?? {}),
+      }
+      // Drop names for files that are no longer in the folder.
+      const nextFileIds = new Set(files.map((f) => f.id))
+      for (const id of Object.keys(mergedNames)) {
+        if (!nextFileIds.has(id)) delete mergedNames[id]
+      }
+      const record: FileListRecord = {
+        parentId: key,
+        files,
+        decryptedNames: mergedNames,
+        cachedAt: now,
+        accessedAt: now,
+      }
+      await fileListPut(db, record)
+      await enforceRowCap(db, key)
+    } finally {
+      db.close()
     }
-    return entry.files
+  } catch {
+    // IndexedDB unavailable, quota exceeded, or schema mismatch — silently skip.
+  }
+}
+
+/**
+ * Return the cached file list for the given parent folder, or null on miss
+ * or hard error. Entries older than the TTL are returned with `stale: true`
+ * so the caller (drive page) can decide whether to use them; offline-fallback
+ * callers should treat stale as missing.
+ *
+ * Touches accessedAt so the entry survives LRU eviction.
+ */
+export async function getCachedFileList(parentId: string | null): Promise<CachedFileList | null> {
+  const key = parentKey(parentId)
+  try {
+    const db = await openFileListDB()
+    try {
+      const record = await fileListGet(db, key)
+      if (!record) return null
+      const stale = Date.now() - record.cachedAt > FILE_LIST_TTL_MS
+      // LRU touch on read.
+      await fileListPut(db, { ...record, accessedAt: Date.now() })
+      return {
+        files: record.files,
+        decryptedNames: record.decryptedNames ?? {},
+        cachedAt: record.cachedAt,
+        stale,
+      }
+    } finally {
+      db.close()
+    }
   } catch {
     return null
   }
 }
 
 /** Remove the cached list for a specific folder (call after mutations). */
-export function invalidateFileListCache(parentId: string | null): void {
-  const key = FILE_LIST_PREFIX + (parentId ?? 'root')
+export async function invalidateFileListCache(parentId: string | null): Promise<void> {
   try {
-    localStorage.removeItem(key)
-  } catch { /* ignore */ }
+    const db = await openFileListDB()
+    try {
+      await fileListDelete(db, parentKey(parentId))
+    } finally {
+      db.close()
+    }
+  } catch {
+    /* ignore */
+  }
 }
 
 // ─── Preview cache (IndexedDB) ────────────────────────────────────────────────

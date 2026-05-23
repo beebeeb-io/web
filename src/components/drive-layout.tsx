@@ -439,7 +439,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   const { isUnlocked, getMasterKey } = useKeys()
   const { isFrozen } = useFrozen()
   const adminUrl = import.meta.env.VITE_ADMIN_URL ?? 'https://admin.beebeeb.io'
-  const { usage, planDetails: contextPlanDetails, pinnedFolderIds } = useDriveData()
+  const { usage, planDetails: contextPlanDetails, pinnedFolderIds, isOffline } = useDriveData()
   const [sharedFolders, setSharedFolders] = useState<(ShareInvite & { decryptedName?: string })[]>([])
   const [storageRegion, setStorageRegion] = useState<string>('auto')
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -759,6 +759,16 @@ export function DriveLayout({ children }: { children: ReactNode }) {
             onMarkAllRead={markAllRead}
           />
         </div>
+        {isOffline && (
+          <div
+            className="bg-amber/10 border-b border-amber/20 px-4 py-1.5 flex items-center justify-center gap-2 text-[12px] text-ink-2"
+            role="status"
+            aria-live="polite"
+          >
+            <Icon name="cloud" size={12} className="text-amber-deep shrink-0" />
+            <span>Offline mode — showing cached data</span>
+          </div>
+        )}
         <IosAppBanner />
         <AnnouncementBanner />
         <EmailVerifyBanner />

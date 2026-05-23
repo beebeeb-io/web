@@ -37,6 +37,10 @@ interface DriveDataState {
 
   incomingCount: number
   refreshIncoming: () => void
+
+  /** True while the drive is serving file lists from the offline cache. */
+  isOffline: boolean
+  setOffline: (offline: boolean) => void
 }
 
 const DriveDataContext = createContext<DriveDataState | null>(null)
@@ -55,6 +59,19 @@ export function DriveDataProvider({ children }: { children: ReactNode }) {
   const [usage, setUsage] = useState<StorageUsage | null>(null)
   const [planDetails, setPlanDetails] = useState<PlanDetails>({ plan: null, subscription: null })
   const [incomingCount, setIncomingCount] = useState(0)
+  const [isOffline, setIsOffline] = useState(false)
+
+  // Reset the offline flag whenever the browser reports it's online again.
+  // The drive page will overwrite it explicitly on next failed/successful
+  // listFiles, but listening here keeps the banner from getting stuck if the
+  // user reconnects without navigating.
+  useEffect(() => {
+    function onOnline() {
+      setIsOffline(false)
+    }
+    window.addEventListener('online', onOnline)
+    return () => window.removeEventListener('online', onOnline)
+  }, [])
 
   // ── Pinned folders ────────────────────────────────────────────────────────
 
@@ -173,6 +190,8 @@ export function DriveDataProvider({ children }: { children: ReactNode }) {
         refreshPlanDetails,
         incomingCount,
         refreshIncoming,
+        isOffline,
+        setOffline: setIsOffline,
       }}
     >
       {children}
