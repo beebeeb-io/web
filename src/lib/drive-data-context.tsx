@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   getPreference,
@@ -13,6 +13,9 @@ import {
 } from './api'
 import { useAuth } from './auth-context'
 import { useKeys } from './key-context'
+import { useWsEvent } from './ws-context'
+
+const USAGE_DEBOUNCE_MS = 500
 
 const PINNED_FOLDERS_PREF = 'pinned_folders'
 const LEGACY_PINNED_FOLDERS_PREF = 'pinned_shared_folders'
@@ -127,6 +130,27 @@ export function DriveDataProvider({ children }: { children: ReactNode }) {
     window.addEventListener('beebeeb:plan-changed', onPlanChanged)
     return () => window.removeEventListener('beebeeb:plan-changed', onPlanChanged)
   }, [refreshUsage, refreshPlanDetails])
+
+  // ── Real-time quota refresh on file mutation events (debounced) ──────────
+  // A mobile backup can fire 50+ file.uploaded events in a burst — coalesce.
+
+  const usageDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const debouncedRefreshUsage = useCallback(() => {
+    if (usageDebounceRef.current) clearTimeout(usageDebounceRef.current)
+    usageDebounceRef.current = setTimeout(() => {
+      refreshUsage()
+      usageDebounceRef.current = null
+    }, USAGE_DEBOUNCE_MS)
+  }, [refreshUsage])
+
+  useWsEvent(['file.uploaded', 'file.deleted', 'file.trashed', 'file.restored'], debouncedRefreshUsage)
+
+  // ── Real-time subscription refresh on Stripe webhook events ───────────────
+
+  useWsEvent(['subscription.changed'], useCallback(() => {
+    refreshPlanDetails()
+    refreshUsage()
+  }, [refreshPlanDetails, refreshUsage]))
 
   // ── React to pin changes so all consumers stay in sync ───────────────────
 
