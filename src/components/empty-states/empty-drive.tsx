@@ -7,9 +7,21 @@ interface EmptyDriveProps {
   userName?: string
   onUpload: () => void
   onCreateFolder: () => void
+  /**
+   * When false, this empty state is rendered inside a subfolder (the parent
+   * vault may already contain files). The heading and primary CTA shift from
+   * "first file" wording to neutral "this folder is empty" copy. Defaults to
+   * true to preserve existing root-level behaviour.
+   */
+  isRoot?: boolean
 }
 
-export function EmptyDrive({ userName, onUpload, onCreateFolder }: EmptyDriveProps) {
+export function EmptyDrive({ userName, onUpload, onCreateFolder, isRoot = true }: EmptyDriveProps) {
+  const heading = isRoot
+    ? (userName ? `Welcome, ${userName}.` : 'Your encrypted vault is empty')
+    : 'This folder is empty'
+  const uploadLabel = isRoot ? 'Upload first file' : 'Upload files'
+
   return (
     <div className="flex-1 flex items-center justify-center relative py-12">
       {/* Honeycomb pattern */}
@@ -32,7 +44,7 @@ export function EmptyDrive({ userName, onUpload, onCreateFolder }: EmptyDrivePro
         </div>
 
         <h1 className="text-xl font-semibold text-ink mb-2">
-          {userName ? `Welcome, ${userName}.` : 'Your encrypted vault is empty'}
+          {heading}
         </h1>
         <p className="text-[14px] text-ink-3 leading-relaxed mb-[22px]">
           Drop files here or click Upload to get started — everything is encrypted before it
@@ -42,7 +54,7 @@ export function EmptyDrive({ userName, onUpload, onCreateFolder }: EmptyDrivePro
         {/* Action buttons */}
         <div className="flex gap-2 justify-center mb-6">
           <BBButton variant="amber" size="lg" onClick={onUpload} className="gap-1.5">
-            <Icon name="upload" size={13} /> Upload first file
+            <Icon name="upload" size={13} /> {uploadLabel}
           </BBButton>
           <BBButton size="lg" variant="ghost" onClick={onCreateFolder} className="gap-1.5">
             <Icon name="folder" size={13} /> Create folder

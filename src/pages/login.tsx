@@ -410,27 +410,24 @@ export function Login() {
                   Forgot?
                 </Link>
               </div>
-              <div
-                className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 transition-all focus-within:ring-2 focus-within:ring-amber/30 focus-within:border-amber-deep"
-              >
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder="Your password"
-                  value={password}
-                  onChange={(e) => setPassword(e.currentTarget.value)}
-                  className="flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-4"
-                  autoComplete="current-password"
-                  required
-                />
-                <button
-                  type="button"
-                  className="password-toggle text-ink-3 hover:text-ink-2 p-0.5 rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-deep"
-                  onClick={() => setShowPassword(!showPassword)}
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                >
-                  <Icon name={showPassword ? 'eye-off' : 'eye'} size={15} />
-                </button>
-              </div>
+              <BBInput
+                type={showPassword ? 'text' : 'password'}
+                placeholder="Your password"
+                value={password}
+                onChange={(e) => setPassword(e.currentTarget.value)}
+                autoComplete="current-password"
+                required
+                trailing={
+                  <button
+                    type="button"
+                    className="password-toggle text-ink-3 hover:text-ink-2 p-0.5 rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-deep"
+                    onClick={() => setShowPassword(!showPassword)}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  >
+                    <Icon name={showPassword ? 'eye-off' : 'eye'} size={15} />
+                  </button>
+                }
+              />
             </div>
           </>
         )}

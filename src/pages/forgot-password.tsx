@@ -146,6 +146,9 @@ export function ForgotPassword() {
           disabled
           badge="Soon"
         />
+        <p className="text-[11.5px] text-ink-3 leading-relaxed -mt-1.5 px-1">
+          For now, use your recovery phrase on the other device to export your files, then re-register.
+        </p>
 
         <OptionCard
           icon="x"

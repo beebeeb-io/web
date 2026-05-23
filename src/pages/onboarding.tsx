@@ -375,6 +375,32 @@ export function Onboarding() {
                           <Icon name="file-text" size={14} className="mr-1.5" /> Recovery Kit PDF
                         </BBButton>
                       </div>
+
+                      {/* Mobile-only continue CTA. On md+ the same CTA appears
+                          in the right panel (along with the "I've saved it"
+                          checkbox); on mobile that panel sits below the phrase
+                          and is easy to miss, so we surface a duplicate here
+                          to spare the user from scrolling past the rationale.
+                          The disabled state mirrors the canonical CTA. */}
+                      <div className="md:hidden mt-5">
+                        <div className="mb-3">
+                          <BBCheckbox
+                            checked={saved}
+                            onChange={setSaved}
+                            label="I've saved my recovery phrase offline."
+                          />
+                        </div>
+                        <BBButton
+                          variant="amber"
+                          size="lg"
+                          className="w-full"
+                          disabled={!saved}
+                          onClick={() => setStep('verify')}
+                        >
+                          I saved it — verify
+                          <Icon name="chevron-right" size={16} className="ml-1.5" />
+                        </BBButton>
+                      </div>
                     </>
                   ) : (
                     <div className="flex items-center gap-2 text-sm text-ink-3">

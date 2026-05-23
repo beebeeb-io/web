@@ -143,6 +143,9 @@ export function Drive() {
   // upload pipeline when the user clicks Retry on a failed item.
   const uploadFilesRef = useRef<Map<string, File>>(new Map())
   const searchInputRef = useRef<HTMLInputElement>(null)
+  // Mobile-only: search starts as an icon button. Tap expands it to a full input row.
+  // Desktop (md+) always shows the full input — the state has no effect there.
+  const [searchOpen, setSearchOpen] = useState(false)
   const [syncedAgo, setSyncedAgo] = useState(0)
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null)
   const [shareFileId, setShareFileId] = useState<string | null>(null)
@@ -1923,11 +1926,26 @@ export function Drive() {
             />
           )}
 
-          {/* Search */}
+          {/* Search — collapsed to an icon on mobile; tap expands. Always
+              rendered (just hidden) on mobile when collapsed so the input ref
+              stays stable for Cmd-K shortcuts on desktop. */}
+          <button
+            type="button"
+            aria-label="Open search"
+            aria-expanded={searchOpen}
+            onClick={() => {
+              setSearchOpen(true)
+              // Defer focus to after the input becomes visible
+              requestAnimationFrame(() => searchInputRef.current?.focus())
+            }}
+            className={`ml-auto md:hidden inline-flex items-center justify-center w-8 h-8 rounded-md border border-line bg-paper text-ink-3 hover:text-ink hover:bg-paper-2 transition-colors ${searchOpen ? 'hidden' : ''}`}
+          >
+            <Icon name="search" size={14} />
+          </button>
           <form
             role="search"
             aria-label="Search vault"
-            className="ml-auto flex items-center gap-2 border border-line rounded-md bg-paper px-2.5 py-1 w-full md:w-[260px] order-last md:order-none"
+            className={`ml-auto md:ml-auto flex items-center gap-2 border border-line rounded-md bg-paper px-2.5 py-1 w-full md:w-[260px] order-last md:order-none ${searchOpen ? 'flex' : 'hidden md:flex'}`}
             onSubmit={(e) => {
               e.preventDefault()
               if (searchInputRef.current?.value.trim())
@@ -1941,7 +1959,24 @@ export function Drive() {
               aria-label="Search files and folders"
               placeholder="Search files and folders..."
               className="flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-4"
+              onBlur={() => {
+                // On mobile, collapse back to the icon when the input is empty
+                if (!searchInputRef.current?.value) setSearchOpen(false)
+              }}
             />
+            {searchOpen && (
+              <button
+                type="button"
+                aria-label="Close search"
+                onClick={() => {
+                  if (searchInputRef.current) searchInputRef.current.value = ''
+                  setSearchOpen(false)
+                }}
+                className="md:hidden inline-flex items-center justify-center w-6 h-6 rounded-sm text-ink-3 hover:text-ink shrink-0"
+              >
+                <Icon name="x" size={12} />
+              </button>
+            )}
             <kbd className="hidden sm:inline-flex items-center self-center gap-0.5 px-1.5 py-[3px] text-[10px] leading-none font-mono text-ink-4 bg-paper-2 border border-line rounded shrink-0">
               {isMac ? <><span className="text-[11px] leading-none">⌘</span>K</> : 'Ctrl+K'}
             </kbd>

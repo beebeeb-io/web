@@ -482,9 +482,11 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
   const [error, setError] = useState<string | null>(null)
   const [inviteDone, setInviteDone] = useState<string | null>(null)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
-  // Spec 024 §1.8: URL is generated immediately on modal open — no "click to generate" step.
+  // Task 0541 (U16): auto-generation was removed. Previously the link was
+  // created immediately on modal open, but this raced with the user adjusting
+  // expiry/passphrase — every settings change had to revoke and regenerate.
+  // The explicit "Generate encrypted link" button is the only entry point now.
   // Task 0538: double-encrypted is the only mode for new shares. No opt-out.
-  const [autoGenPending, setAutoGenPending] = useState(false)
 
   const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
 
@@ -519,7 +521,6 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       // Double-encrypted is now the only mode (task 0538), so there is no
       // longer a toggle to reset here.
       setShareMode('split')
-      setAutoGenPending(true) // trigger auto-generate after state resets
     }
   }, [open])
 
@@ -579,15 +580,6 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       setLoading(false)
     }
   }, [fileId, expiryIdx, maxOpensIdx, passphrase, passwordEnabled, isUnlocked, getFileKey, onShareCreated])
-
-  // Auto-generate link when dialog opens (spec 024 §1.8: URL appears immediately on open).
-  // Runs once the state reset from the open-effect has settled AND the vault is unlocked.
-  useEffect(() => {
-    if (autoGenPending && isUnlocked && mode === 'link' && !shareResult && !loading) {
-      setAutoGenPending(false)
-      void handleGenerate()
-    }
-  }, [autoGenPending, isUnlocked, mode, shareResult, loading, handleGenerate])
 
   const generatePassphrase = useCallback(() => {
     // 8 random alphanumeric characters — easy to type, hard to guess
