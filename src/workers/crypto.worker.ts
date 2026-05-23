@@ -11,6 +11,9 @@ import type * as WasmTypes from 'beebeeb-wasm'
 import wasmUrl from 'beebeeb-wasm/beebeeb_wasm_bg.wasm?url'
 
 let wasmModule: typeof WasmTypes | null = null
+// Captured from the wasm-bindgen InitOutput so we can report linear-memory
+// growth back to the worker owner (used for the memory-cap restart logic).
+let wasmMemory: WebAssembly.Memory | null = null
 
 /** Manifest written by gen-wasm-sri.mjs at build time. */
 interface WasmSriManifest {
@@ -59,10 +62,12 @@ async function ensureWasm(): Promise<typeof WasmTypes> {
         credentials: 'same-origin',
       })
       const wasmBuffer = await wasmResp.arrayBuffer()
-      await mod.default(wasmBuffer)
+      const init = await mod.default(wasmBuffer)
+      wasmMemory = init.memory
     } else {
       // Development: pass URL directly (no manifest generated)
-      await mod.default(wasmUrl)
+      const init = await mod.default(wasmUrl)
+      wasmMemory = init.memory
     }
   }
 
@@ -74,6 +79,16 @@ const cryptoWorker = {
   /** Initialize the WASM module. Called once on worker start. */
   async init(): Promise<void> {
     await ensureWasm()
+  },
+
+  /**
+   * Current size of the WASM linear-memory buffer in bytes.
+   * WebAssembly memory only grows, so the owner uses this to decide when
+   * to terminate + respawn the worker (see `src/lib/crypto.ts`).
+   * Returns 0 before init completes.
+   */
+  getMemoryUsage(): number {
+    return wasmMemory ? wasmMemory.buffer.byteLength : 0
   },
 
   /** Derive a master key from a password + salt via Argon2id. */

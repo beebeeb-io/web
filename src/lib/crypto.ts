@@ -1,12 +1,45 @@
 // ─── Crypto service ─────────────────────────────────
 // Proxies all WASM crypto operations to a Web Worker via Comlink.
 // Master key lives in memory on the main thread only.
+//
+// Memory-cap restart:
+//   WebAssembly linear memory only grows — it never shrinks. After a long
+//   session involving many large encrypt/decrypt ops the worker can hold
+//   hundreds of MB. We periodically check the worker's reported memory
+//   usage and, when it crosses MEMORY_THRESHOLD_BYTES, terminate it and
+//   spawn a fresh worker. All consumer calls funnel through `withProxy`,
+//   which gates new ops on `restartPromise` while a restart is in flight
+//   and tracks `inFlight` so the swap waits for outstanding ops to drain.
 
 import * as Comlink from 'comlink'
 import type { CryptoWorker } from '../workers/crypto.worker'
 
+/** Soft cap on WASM linear-memory bytes before we recycle the worker. */
+const MEMORY_THRESHOLD_BYTES = 256 * 1024 * 1024
+/** Check memory every N completed ops (cheap: a single Comlink round-trip). */
+const MEM_CHECK_INTERVAL = 16
+
+let currentWorker: Worker | null = null
 let workerProxy: Comlink.Remote<CryptoWorker> | null = null
 let initPromise: Promise<void> | null = null
+
+// ── Restart coordination state ──────────────────────────────────────────────
+// `inFlight` counts ops that have grabbed `workerProxy` and not yet resolved.
+// `restartPromise`, when set, blocks new ops at the gate inside `withProxy`.
+// `idleNotifier`, when set, is resolved as soon as `inFlight` returns to 0.
+let inFlight = 0
+let restartPromise: Promise<void> | null = null
+let opsSinceMemCheck = 0
+let idleNotifier: (() => void) | null = null
+
+function spawnWorker(): { worker: Worker; proxy: Comlink.Remote<CryptoWorker> } {
+  const worker = new Worker(
+    new URL('../workers/crypto.worker.ts', import.meta.url),
+    { type: 'module' },
+  )
+  const proxy = Comlink.wrap<CryptoWorker>(worker)
+  return { worker, proxy }
+}
 
 /** Spawn the crypto worker and initialize WASM inside it (singleton). */
 export async function initCrypto(): Promise<void> {
@@ -14,23 +47,145 @@ export async function initCrypto(): Promise<void> {
   if (initPromise) return initPromise
 
   initPromise = (async () => {
-    const worker = new Worker(
-      new URL('../workers/crypto.worker.ts', import.meta.url),
-      { type: 'module' },
-    )
-    const proxy = Comlink.wrap<CryptoWorker>(worker)
+    const { worker, proxy } = spawnWorker()
     await proxy.init()
+    currentWorker = worker
     workerProxy = proxy
   })()
 
-  return initPromise
+  try {
+    await initPromise
+  } finally {
+    // Allow re-init after a terminate(): once `workerProxy` is null again
+    // a later `initCrypto()` should run the spawn flow.
+    initPromise = null
+  }
 }
 
-function getProxy(): Comlink.Remote<CryptoWorker> {
+function notifyIdleIfReached(): void {
+  if (inFlight === 0 && idleNotifier) {
+    const n = idleNotifier
+    idleNotifier = null
+    n()
+  }
+}
+
+function waitForIdle(): Promise<void> {
+  if (inFlight === 0) return Promise.resolve()
+  return new Promise<void>((resolve) => {
+    // Only one waiter ever — the restart driver. We don't have multiple
+    // restart drivers because `restartPromise` itself gates concurrency.
+    idleNotifier = resolve
+  })
+}
+
+/**
+ * Run `fn` against the current worker proxy with concurrency tracking.
+ *
+ * - Waits for any in-flight restart before grabbing the proxy
+ * - Lazily initializes the worker on first call
+ * - Increments `inFlight` for the duration of the call so a concurrent
+ *   restart driver can wait for the op to settle before terminating
+ * - After the call resolves, periodically polls memory usage and triggers
+ *   a restart if the soft cap is exceeded
+ */
+async function withProxy<T>(
+  fn: (proxy: Comlink.Remote<CryptoWorker>) => Promise<T>,
+): Promise<T> {
+  // Gate: block new ops while a restart is in flight.
+  while (restartPromise) {
+    await restartPromise
+  }
   if (!workerProxy) {
+    await initCrypto()
+  }
+  const proxy = workerProxy
+  if (!proxy) {
     throw new Error('Crypto worker not initialized — call initCrypto() first')
   }
-  return workerProxy
+
+  inFlight++
+  try {
+    return await fn(proxy)
+  } finally {
+    inFlight--
+    notifyIdleIfReached()
+    opsSinceMemCheck++
+    if (opsSinceMemCheck >= MEM_CHECK_INTERVAL && !restartPromise) {
+      opsSinceMemCheck = 0
+      // Fire and forget — restart runs in its own async context.
+      void maybeRestart()
+    }
+  }
+}
+
+/**
+ * Check WASM memory usage; if above the threshold, terminate the worker
+ * and spawn a fresh one. Safe to call concurrently — `restartPromise`
+ * serializes the actual swap.
+ */
+async function maybeRestart(): Promise<void> {
+  if (restartPromise || !workerProxy) return
+  let bytes = 0
+  try {
+    // Direct call (not via withProxy) so the memory probe itself doesn't
+    // bump `inFlight` and deadlock the drain step below.
+    bytes = await workerProxy.getMemoryUsage()
+  } catch (err) {
+    // If the worker has gone away (terminate raced us) just bail; the next
+    // op will lazily re-init.
+    console.warn('[crypto] getMemoryUsage failed', err)
+    return
+  }
+  if (bytes <= MEMORY_THRESHOLD_BYTES) return
+  // Re-check the lock — another driver may have raced us past the entry
+  // guard while we were awaiting getMemoryUsage(). The next assignment must
+  // be synchronous so a parallel driver sees a non-null restartPromise.
+  if (restartPromise) return
+
+  // Take the restart lock. Any new `withProxy` call now blocks until we're
+  // done. Existing in-flight ops continue against the old worker and we
+  // wait for them to settle before terminating.
+  restartPromise = (async () => {
+    try {
+      await waitForIdle()
+      const oldWorker = currentWorker
+      currentWorker = null
+      workerProxy = null
+      try {
+        oldWorker?.terminate()
+      } catch (err) {
+        console.warn('[crypto] worker.terminate() failed', err)
+      }
+      const { worker, proxy } = spawnWorker()
+      await proxy.init()
+      currentWorker = worker
+      workerProxy = proxy
+      // Best-effort observability — useful when watching the manual test.
+      console.info(
+        `[crypto] worker recycled at ${(bytes / (1024 * 1024)).toFixed(1)} MB WASM memory`,
+      )
+    } catch (err) {
+      console.error('[crypto] worker restart failed', err)
+      // Leave workerProxy null — the next withProxy() will run initCrypto()
+      // which spawns a fresh worker from scratch.
+    }
+  })()
+  try {
+    await restartPromise
+  } finally {
+    restartPromise = null
+  }
+}
+
+/**
+ * Test-only hook: reports the current memory threshold + state. Not part
+ * of the public API. Kept un-exported in production builds.
+ */
+export const __cryptoRestartInternals = {
+  getInFlight: () => inFlight,
+  getMemoryThresholdBytes: () => MEMORY_THRESHOLD_BYTES,
+  isRestarting: () => restartPromise !== null,
 }
 
 // ─── Key derivation ─────────────────────────────────
@@ -40,8 +195,7 @@ export async function deriveKeys(
   password: string,
   salt: Uint8Array,
 ): Promise<{ masterKey: Uint8Array }> {
-  await initCrypto()
-  const masterKey = await getProxy().deriveKeys(password, salt)
+  const masterKey = await withProxy((p) => p.deriveKeys(password, salt))
   return { masterKey }
 }
 
@@ -50,7 +204,7 @@ export async function deriveFileKey(
   masterKey: Uint8Array,
   fileId: string,
 ): Promise<Uint8Array> {
-  return getProxy().deriveFileKey(masterKey, fileId)
+  return withProxy((p) => p.deriveFileKey(masterKey, fileId))
 }
 
 // ─── Chunk encryption ───────────────────────────────
@@ -65,7 +219,7 @@ export async function encryptChunk(
   fileKey: Uint8Array,
   plaintext: Uint8Array,
 ): Promise<EncryptedChunk> {
-  const result = await getProxy().encryptChunk(fileKey, plaintext)
+  const result = await withProxy((p) => p.encryptChunk(fileKey, plaintext))
   return {
     nonce: result.nonce,
     ciphertext: result.ciphertext,
@@ -78,7 +232,7 @@ export async function decryptChunk(
   nonce: Uint8Array,
   ciphertext: Uint8Array,
 ): Promise<Uint8Array> {
-  return getProxy().decryptChunk(fileKey, nonce, ciphertext)
+  return withProxy((p) => p.decryptChunk(fileKey, nonce, ciphertext))
 }
 
 // ─── Metadata (filename) encryption ─────────────────
@@ -93,7 +247,7 @@ export async function encryptFilename(
   fileKey: Uint8Array,
   filename: string,
 ): Promise<EncryptedMetadata> {
-  const result = await getProxy().encryptFilename(fileKey, filename)
+  const result = await withProxy((p) => p.encryptFilename(fileKey, filename))
   return {
     nonce: result.nonce,
     ciphertext: result.ciphertext,
@@ -120,7 +274,7 @@ export async function decryptFilename(
   nonce: Uint8Array,
   ciphertext: Uint8Array,
 ): Promise<string> {
-  return getProxy().decryptFilename(fileKey, nonce, ciphertext)
+  return withProxy((p) => p.decryptFilename(fileKey, nonce, ciphertext))
 }
 
 /**
@@ -173,19 +327,18 @@ export async function generateRecoveryPhrase(): Promise<{
   phrase: string
   masterKey: Uint8Array
 }> {
-  return getProxy().generateRecoveryPhrase()
+  return withProxy((p) => p.generateRecoveryPhrase())
 }
 
 /** Recover the master key from a 12-word BIP39 phrase. */
 export async function recoverFromPhrase(phrase: string): Promise<Uint8Array> {
-  return getProxy().recoverFromPhrase(phrase)
+  return withProxy((p) => p.recoverFromPhrase(phrase))
 }
 
 // ─── OPAQUE protocol ───────────────────────────────
 
 export async function opaqueRegistrationStart(password: string) {
-  await initCrypto()
-  return getProxy().opaqueRegistrationStart(password)
+  return withProxy((p) => p.opaqueRegistrationStart(password))
 }
 
 export async function opaqueRegistrationFinish(
@@ -193,12 +346,11 @@ export async function opaqueRegistrationFinish(
   password: string,
   serverResponse: Uint8Array,
 ) {
-  return getProxy().opaqueRegistrationFinish(clientState, password, serverResponse)
+  return withProxy((p) => p.opaqueRegistrationFinish(clientState, password, serverResponse))
 }
 
 export async function opaqueLoginStart(password: string) {
-  await initCrypto()
-  return getProxy().opaqueLoginStart(password)
+  return withProxy((p) => p.opaqueLoginStart(password))
 }
 
 export async function opaqueLoginFinish(
@@ -206,20 +358,20 @@ export async function opaqueLoginFinish(
   password: string,
   serverResponse: Uint8Array,
 ) {
-  return getProxy().opaqueLoginFinish(clientState, password, serverResponse)
+  return withProxy((p) => p.opaqueLoginFinish(clientState, password, serverResponse))
 }
 
 export async function deriveX25519Public(masterKey: Uint8Array): Promise<Uint8Array> {
-  return getProxy().deriveX25519Public(masterKey)
+  return withProxy((p) => p.deriveX25519Public(masterKey))
 }
 
 export async function computeRecoveryCheck(masterKey: Uint8Array): Promise<Uint8Array> {
-  return getProxy().computeRecoveryCheck(masterKey)
+  return withProxy((p) => p.computeRecoveryCheck(masterKey))
 }
 
 /** Derive X25519 signing side from master key (for key exchange). */
 export async function deriveX25519Private(masterKey: Uint8Array): Promise<Uint8Array> {
-  return getProxy().deriveX25519Private(masterKey)
+  return withProxy((p) => p.deriveX25519Private(masterKey))
 }
 
 /** Compute X25519 shared secret for user-to-user sharing. */
@@ -227,7 +379,7 @@ export async function x25519SharedSecret(
   myPrivate: Uint8Array,
   theirPublic: Uint8Array,
 ): Promise<Uint8Array> {
-  return getProxy().x25519SharedSecret(myPrivate, theirPublic)
+  return withProxy((p) => p.x25519SharedSecret(myPrivate, theirPublic))
 }
 
 /** Derive a per-file share key from a shared secret and file ID bytes. */
@@ -235,7 +387,7 @@ export async function deriveShareKey(
   sharedSecret: Uint8Array,
   fileId: Uint8Array,
 ): Promise<Uint8Array> {
-  return getProxy().deriveShareKey(sharedSecret, fileId)
+  return withProxy((p) => p.deriveShareKey(sharedSecret, fileId))
 }
 
 /**
@@ -320,7 +472,7 @@ export async function planChunks(
   fileSizeBytes: number,
   profile: 'desktop' | 'web' | 'mobile' | 'backup' = 'web',
 ): Promise<{ chunk_size_bytes: number; chunk_count: number }> {
-  return getProxy().planChunks(fileSizeBytes, profile)
+  return withProxy((p) => p.planChunks(fileSizeBytes, profile))
 }
 
 // ─── Helpers ────────────────────────────────────────
