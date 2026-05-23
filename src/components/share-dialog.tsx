@@ -482,10 +482,8 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
   const [error, setError] = useState<string | null>(null)
   const [inviteDone, setInviteDone] = useState<string | null>(null)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
-  // Default to double-encrypted: even Beebeeb cannot decrypt. Users can opt out
-  // via the "Advanced" toggle below for assisted recovery.
-  const [doubleEncrypted, setDoubleEncrypted] = useState(true)
   // Spec 024 §1.8: URL is generated immediately on modal open — no "click to generate" step.
+  // Task 0538: double-encrypted is the only mode for new shares. No opt-out.
   const [autoGenPending, setAutoGenPending] = useState(false)
 
   const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
@@ -516,10 +514,10 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       setLoading(false)
       setInviteDone(null)
       setFeedbackOpen(false)
-      // Default to double-encrypted with the split-view pre-selected so the
-      // user sees two distinct things (URL + key) to send through separate
-      // channels — the maximum-security path.
-      setDoubleEncrypted(true)
+      // Pre-select the split view so the user sees two distinct things (URL +
+      // key) to send through separate channels — the maximum-security path.
+      // Double-encrypted is now the only mode (task 0538), so there is no
+      // longer a toggle to reset here.
       setShareMode('split')
       setAutoGenPending(true) // trigger auto-generate after state resets
     }
@@ -551,33 +549,22 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
     try {
       const fileKey = await getFileKey(fileId)
 
-      let keyForUrl: string  // what goes into the #key= fragment
-      let result
+      // ── Double-encrypted mode (the only mode, task 0538) ─────────────────
+      // 1. Generate K_c client-side (never leaves the browser).
+      const clientKey = crypto.getRandomValues(new Uint8Array(32))
 
-      if (doubleEncrypted) {
-        // ── Double-encrypted mode ─────────────────────────────────────────
-        // 1. Generate K_c client-side (never leaves the browser)
-        const clientKey = crypto.getRandomValues(new Uint8Array(32))
+      // 2. Wrap the real file key under K_c — server stores an opaque blob.
+      const wrappedFileKey = await wrapKeyForShare(clientKey, fileKey)
+      zeroize(fileKey)
 
-        // 2. Wrap the file key under K_c — server stores opaque blob, sees nothing
-        const wrappedFileKey = await wrapKeyForShare(clientKey, fileKey)
-        zeroize(fileKey)
+      // 3. Send wrapped_file_key to the server as base64.
+      options.wrapped_file_key = toBase64(wrappedFileKey)
 
-        // 3. Send wrapped_file_key to server as base64
-        options.wrapped_file_key = toBase64(wrappedFileKey)
+      // 4. The URL fragment carries K_c (base64url — no + or / in URLs).
+      const keyForUrl = toBase64url(clientKey)
+      zeroize(clientKey)
 
-        // 4. The URL fragment carries K_c (base64url — no + or / in URLs)
-        keyForUrl = toBase64url(clientKey)
-        zeroize(clientKey)
-
-        result = await createShare(fileId, options)
-      } else {
-        // ── Standard mode — existing behaviour ────────────────────────────
-        // The file key goes directly into the URL fragment.
-        keyForUrl = toBase64(fileKey)
-        zeroize(fileKey)
-        result = await createShare(fileId, options)
-      }
+      const result = await createShare(fileId, options)
 
       setShareResult(result)
       setDecryptionKey(keyForUrl)
@@ -591,7 +578,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
     } finally {
       setLoading(false)
     }
-  }, [fileId, expiryIdx, maxOpensIdx, passphrase, passwordEnabled, isUnlocked, getFileKey, onShareCreated, doubleEncrypted])
+  }, [fileId, expiryIdx, maxOpensIdx, passphrase, passwordEnabled, isUnlocked, getFileKey, onShareCreated])
 
   // Auto-generate link when dialog opens (spec 024 §1.8: URL appears immediately on open).
   // Runs once the state reset from the open-effect has settled AND the vault is unlocked.
@@ -959,10 +946,10 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
                       )}
                     </div>
 
-                    {/* End-to-end encrypted lead-in + advanced opt-out toggle */}
+                    {/* End-to-end encrypted lead-in. Double-encrypted is the
+                        only mode for new shares (task 0538) — no opt-out. */}
                     <div className="mb-[18px]">
-                      {/* Lead with the truth: we can't decrypt this share. */}
-                      <div className="px-3 py-2.5 bg-amber-bg border border-amber/30 rounded-md mb-3">
+                      <div className="px-3 py-2.5 bg-amber-bg border border-amber/30 rounded-md">
                         <div className="flex items-center gap-1.5 mb-1">
                           <Icon name="shield" size={12} className="text-amber-deep" />
                           <span className="text-[12px] font-semibold text-amber-deep">
@@ -973,42 +960,6 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
                           Send the link <span className="font-medium">and</span> the key through separate channels for maximum security.
                         </p>
                       </div>
-
-                      {/* Opt-out: assisted recovery (less secure). */}
-                      <label className="flex items-start gap-3 cursor-pointer group">
-                        <div className="relative mt-0.5 shrink-0">
-                          <input
-                            type="checkbox"
-                            checked={!doubleEncrypted}
-                            onChange={(e) => setDoubleEncrypted(!e.target.checked)}
-                            className="sr-only peer"
-                          />
-                          <div className={`w-9 h-5 rounded-full transition-colors ${!doubleEncrypted ? 'bg-amber' : 'bg-line-2'}`} />
-                          <div className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-paper shadow-sm transition-transform ${!doubleEncrypted ? 'translate-x-4' : 'translate-x-0'}`} />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[13px] font-medium text-ink">
-                              Advanced: allow Beebeeb to assist with recovery (less secure)
-                            </span>
-                          </div>
-                          <p className="text-[11px] text-ink-3 mt-0.5 leading-relaxed">
-                            Stores a server-wrapped copy of the share's key so Beebeeb can unwrap it if the recipient loses the link.
-                          </p>
-                        </div>
-                      </label>
-
-                      {/* Warning when double-encrypt is toggled OFF. */}
-                      {!doubleEncrypted && (
-                        <div className="mt-2 px-3 py-2 bg-red/5 border border-red/20 rounded-md">
-                          <div className="flex items-start gap-1.5">
-                            <Icon name="info" size={11} className="text-red mt-0.5 shrink-0" />
-                            <p className="text-[11px] text-red leading-relaxed">
-                              With this on, Beebeeb's servers can technically decrypt this share's contents.
-                            </p>
-                          </div>
-                        </div>
-                      )}
                     </div>
 
                     {error && (
