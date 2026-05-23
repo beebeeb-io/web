@@ -89,26 +89,36 @@ export async function request<T>(
   consecutiveFailures = 0
   reportConnection('ok')
 
-  if (res.status === 401) {
-    // With cookie auth we can't observe "the cookie is present" from JS, so
-    // we treat any 401 on a path that's normally protected as a session
-    // expiry. The legacy `if (token)` guard stays for the localStorage
-    // migration window — once everyone is cookie-only it becomes a no-op
-    // but the fireSessionExpired() path still runs and bounces the user
-    // back to /login.
-    if (token) {
-      clearToken()
-    }
-    fireSessionExpired()
-    throw new ApiError('Session expired', 401)
-  }
-
   if (!res.ok) {
+    // Read the body once. The 401 branch below needs the structured `code`
+    // (e.g. `opaque_ksf_outdated`) to distinguish "session expired" from
+    // "your account needs to migrate" — both surface as 401 from the
+    // server but only the former should clear the session.
     const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
-    throw new ApiError(
-      (body.message ?? body.error ?? res.statusText) as string,
-      res.status,
-    )
+    const code = typeof body.error === 'string' ? body.error : undefined
+    const message = (body.message ?? body.error ?? res.statusText) as string
+
+    if (res.status === 401) {
+      // OPAQUE migration prompt (task 0548) — the server explicitly tells
+      // the caller to recover via phrase; do NOT fire session-expired or
+      // clear the token, the user hasn't actually signed in yet.
+      if (code === 'opaque_ksf_outdated') {
+        throw new ApiError(message, 401, code)
+      }
+      // With cookie auth we can't observe "the cookie is present" from JS,
+      // so we treat any other 401 on a path that's normally protected as a
+      // session expiry. The legacy `if (token)` guard stays for the
+      // localStorage migration window — once everyone is cookie-only it
+      // becomes a no-op but the fireSessionExpired() path still runs and
+      // bounces the user back to /login.
+      if (token) {
+        clearToken()
+      }
+      fireSessionExpired()
+      throw new ApiError('Session expired', 401, code)
+    }
+
+    throw new ApiError(message, res.status, code)
   }
 
   return res.json() as Promise<T>

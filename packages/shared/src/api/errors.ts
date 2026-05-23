@@ -4,10 +4,19 @@
 
 export class ApiError extends Error {
   status: number
-  constructor(message: string, status: number) {
+  /**
+   * Machine-readable error code from the server response body's `error` field.
+   * Set when the server returns a structured `{ error: "<code>", message: "<human>" }`
+   * payload (e.g. `confirmation_required`, `quota_exceeded`, `opaque_ksf_outdated`).
+   * Callers branch on this instead of pattern-matching the human-readable
+   * `message` field, which can change without notice.
+   */
+  code?: string
+  constructor(message: string, status: number, code?: string) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.code = code
   }
 }
 

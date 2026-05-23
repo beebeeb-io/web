@@ -4,6 +4,7 @@ import { AuthShell } from '../components/auth-shell'
 import { BBButton } from '@beebeeb/shared'
 import { BBInput } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
+import { ApiError } from '@beebeeb/shared'
 import { TwoFactorPrompt } from '../components/two-factor-prompt'
 import { DeviceProvision } from '../components/device-provision'
 import { useAuth } from '../lib/auth-context'
@@ -48,6 +49,12 @@ export function Login() {
 
   // Device provisioning state — shown when OPAQUE auth succeeds but no vault exists on this device
   const [needsProvision, setNeedsProvision] = useState(false)
+
+  // OPAQUE KSF migration prompt (task 0548) — the server returned
+  // `opaque_ksf_outdated`, meaning this account's password file was written
+  // by the old Identity-KSF build and cannot complete an OPAQUE handshake
+  // with the current client. The only escape hatch is recover-with-phrase.
+  const [needsKsfMigration, setNeedsKsfMigration] = useState(false)
 
   // Passkey vault fallback — passkey auth succeeded but vault couldn't auto-unlock
   // (no PRF, no localStorage key, no escrow, or decryption failed).
@@ -104,6 +111,14 @@ export function Login() {
     } catch (opaqueErr) {
       // OPAQUE is mandatory — never fall back to password auth.
       if (import.meta.env.DEV) console.warn('[login] OPAQUE failed:', opaqueErr)
+      // task 0548 — detect the V0 KSF outdated remediation hint from the
+      // server. Switch the form to the migration prompt instead of showing
+      // the generic "Authentication failed" message.
+      if (opaqueErr instanceof ApiError && opaqueErr.code === 'opaque_ksf_outdated') {
+        setNeedsKsfMigration(true)
+        setSubmitting(false)
+        return
+      }
       setError('Authentication failed. Please try again.')
     } finally {
       setSubmitting(false)
@@ -170,7 +185,16 @@ export function Login() {
         setNeedsProvision(true)
         setPasskeyFallbackSubmitting(false)
       }
-    } catch {
+    } catch (passkeyFallbackErr) {
+      // task 0548 — the password-fallback after passkey identity uses the
+      // same OPAQUE handshake. A V0 record returns `opaque_ksf_outdated`
+      // and must be routed through phrase recovery.
+      if (passkeyFallbackErr instanceof ApiError && passkeyFallbackErr.code === 'opaque_ksf_outdated') {
+        setPasskeyNeedsPassword(false)
+        setNeedsKsfMigration(true)
+        setPasskeyFallbackSubmitting(false)
+        return
+      }
       setPasskeyFallbackError('Wrong password. Please try again.')
     } finally {
       setPasskeyFallbackSubmitting(false)
@@ -362,6 +386,50 @@ export function Login() {
             )}
           </BBButton>
         </form>
+      </AuthShell>
+    )
+  }
+
+  // OPAQUE KSF migration prompt (task 0548) — this account was registered
+  // before the Argon2idKsf swap, so the stored password file is unusable
+  // with the current client. Recovery via phrase is the only safe escape
+  // hatch (preserves the master key + the existing vault).
+  if (needsKsfMigration) {
+    return (
+      <AuthShell
+        title="One-time security upgrade"
+        subtitle="Your account uses an older authentication format."
+      >
+        <div className="flex items-start gap-2.5 mb-5 px-3.5 py-3 rounded-md bg-amber-bg border border-amber/20">
+          <Icon name="shield" size={14} className="text-amber-deep shrink-0 mt-px" />
+          <p className="text-xs text-ink-2 leading-relaxed">
+            Your account uses an older authentication format. Please verify
+            your identity by entering your recovery phrase to migrate. Your
+            files stay safe — this only re-enrols how we verify your password.
+          </p>
+        </div>
+
+        <Link to="/recover-with-phrase" className="block">
+          <BBButton
+            type="button"
+            variant="amber"
+            size="lg"
+            className="w-full"
+          >
+            <span className="flex items-center gap-2">
+              <Icon name="key" size={14} />
+              Continue with recovery phrase
+            </span>
+          </BBButton>
+        </Link>
+
+        <button
+          type="button"
+          className="w-full mt-4 text-xs text-ink-3 hover:text-ink-2 transition-colors cursor-pointer"
+          onClick={() => { setNeedsKsfMigration(false); setError('') }}
+        >
+          Back to sign-in
+        </button>
       </AuthShell>
     )
   }
