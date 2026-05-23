@@ -160,6 +160,60 @@ const cryptoWorker = {
     return wasm.decrypt_metadata(fileKey, nonce, ciphertext)
   },
 
+  /**
+   * Batched filename + metadata decryption.
+   *
+   * Takes an array of pre-derived per-file inputs and returns one result per
+   * item in the same order. Errors are captured per-item — one bad row does
+   * not fail the whole batch. The caller is responsible for deriving file
+   * keys (cheap, parallelizable on the main thread) and pre-parsing the
+   * encrypted blob into nonce + ciphertext.
+   *
+   * The shape mirrors `decryptFileMetadata` in `src/lib/crypto.ts`:
+   *   - JSON plaintext `{"name":"...","mime_type":"..."}` → returns both fields
+   *   - Bare string plaintext (legacy)                    → name only
+   *
+   * Round-trip cost: one Comlink call regardless of `items.length`.
+   */
+  async decryptManyNames(
+    items: Array<{
+      id: string
+      fileKey: Uint8Array
+      nonce: Uint8Array
+      ciphertext: Uint8Array
+    }>,
+  ): Promise<Array<{ id: string; name?: string; mimeType?: string; error?: string }>> {
+    const wasm = await ensureWasm()
+    const results: Array<{ id: string; name?: string; mimeType?: string; error?: string }> = []
+    for (const item of items) {
+      try {
+        const plain = wasm.decrypt_metadata(item.fileKey, item.nonce, item.ciphertext)
+        let name = plain
+        let mimeType: string | undefined
+        try {
+          const meta = JSON.parse(plain) as { name?: string; mime_type?: string }
+          if (meta && typeof meta === 'object') {
+            if (typeof meta.name === 'string' && meta.name.trim()) {
+              name = meta.name.trim()
+            }
+            if (typeof meta.mime_type === 'string') {
+              mimeType = meta.mime_type
+            }
+          }
+        } catch {
+          // Legacy format — `plain` is the bare filename, already assigned to `name`.
+        }
+        results.push({ id: item.id, name, mimeType })
+      } catch (err) {
+        results.push({
+          id: item.id,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+    return results
+  },
+
   /** Generate a 12-word BIP39 recovery phrase and the corresponding master key. */
   async generateRecoveryPhrase(): Promise<{
     phrase: string

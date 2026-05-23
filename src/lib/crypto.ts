@@ -278,6 +278,19 @@ export async function decryptFilename(
 }
 
 /**
+ * Batched decryption of many `(fileKey, nonce, ciphertext)` triples in one
+ * Comlink round-trip. Errors are reported per item — one failure does not
+ * abort the batch. See `decryptManyNames` in the worker for plaintext parsing
+ * details (JSON `{name, mime_type}` vs legacy bare string).
+ */
+export async function decryptManyNames(
+  items: Array<{ id: string; fileKey: Uint8Array; nonce: Uint8Array; ciphertext: Uint8Array }>,
+): Promise<Array<{ id: string; name?: string; mimeType?: string; error?: string }>> {
+  if (items.length === 0) return []
+  return withProxy((p) => p.decryptManyNames(items))
+}
+
+/**
  * Decrypt and parse the `name_encrypted` field from a DriveFile.
  *
  * Supports two formats:

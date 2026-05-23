@@ -9,7 +9,7 @@ import { getBadgeStyle } from '../lib/file-colors'
 import { ContextMenu } from './context-menu'
 import { FileRowSkeleton } from '@beebeeb/shared'
 import { useKeys } from '../lib/key-context'
-import { decryptFilename, parseEncryptedBlob, encryptFilename, serializeEncryptedBlob } from '../lib/crypto'
+import { decryptManyNames, parseEncryptedBlob, encryptFilename, serializeEncryptedBlob } from '../lib/crypto'
 import { onDecrypted } from '../lib/decrypt-events'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { isPreviewable } from '../lib/preview'
@@ -294,67 +294,120 @@ export function FileList({
     }
     let cancelled = false
 
-    // Strict decryption: throws on failure so the caller can decide whether
-    // to retry. Avoids the silent "Encrypted file" placeholder that the
-    // shared decryptFileMetadata helper returns on error.
-    async function decryptOne(file: DriveFile): Promise<string> {
+    // Retry transient failures (commonly: WASM still initializing when the
+    // first render fires, a brief master-key handoff race, or — for folders
+    // created on iOS — the file-key being derived from a different KDF path
+    // that races with the web key cache warm-up). Four attempts with mild
+    // backoff costs at most ~1.5s before we surface the encrypted placeholder.
+    const MAX_ATTEMPTS = 4
+    const RETRY_DELAY_MS = 300
+
+    // Per-file decryption is split into three phases so we can collapse N
+    // worker round-trips into 1:
+    //   1) Key derivation runs on the main thread in parallel (cheap, cached).
+    //   2) Encrypted blob parsing is a synchronous JSON.parse.
+    //   3) The actual decrypt is one batched Comlink call to the worker.
+    //
+    // Errors are tracked per file: a key-derivation failure or a blob-parse
+    // failure for one row never blocks the others, and the worker's batched
+    // call also reports errors per-item.
+    type Prepared =
+      | { id: string; status: 'ok'; fileKey: Uint8Array; nonce: Uint8Array; ciphertext: Uint8Array }
+      | { id: string; status: 'plaintext'; name: string }
+      | { id: string; status: 'error'; error: unknown }
+
+    async function prepareOne(file: DriveFile): Promise<Prepared> {
       // Legacy format (iOS before 930c61a): plain-text name, not JSON-encrypted.
       if (!file.name_encrypted.startsWith('{')) {
-        return file.name_encrypted
+        return { id: file.id, status: 'plaintext', name: file.name_encrypted }
       }
-      const fileKey = await getFileKey(file.id)
-      const { nonce, ciphertext } = parseEncryptedBlob(file.name_encrypted)
-      const plain = await decryptFilename(fileKey, nonce, ciphertext)
       try {
-        const meta = JSON.parse(plain) as { name?: string }
-        if (meta && typeof meta === 'object' && typeof meta.name === 'string' && meta.name.trim()) {
-          return meta.name.trim()
-        }
-      } catch {
-        // Legacy format — `plain` is the bare filename.
+        const fileKey = await getFileKey(file.id)
+        const { nonce, ciphertext } = parseEncryptedBlob(file.name_encrypted)
+        return { id: file.id, status: 'ok', fileKey, nonce, ciphertext }
+      } catch (err) {
+        return { id: file.id, status: 'error', error: err }
       }
-      return plain
     }
 
     async function decryptAll() {
       const names: Record<string, string | null> = {}
-      // Retry transient failures (commonly: WASM still initializing when the
-      // first render fires, a brief master-key handoff race, or — for folders
-      // created on iOS — the file-key being derived from a different KDF path
-      // that races with the web key cache warm-up). Four attempts with mild
-      // backoff costs at most ~1.5s before we surface the encrypted placeholder.
-      const MAX_ATTEMPTS = 4
-      const RETRY_DELAY_MS = 300
-      for (const file of files) {
+      const errors = new Map<string, unknown>()
+      // Files that still need a retry pass — initialized to all files, then
+      // narrowed each attempt to only those that failed.
+      let pending: DriveFile[] = files.slice()
+
+      for (let attempt = 0; attempt < MAX_ATTEMPTS && pending.length > 0; attempt++) {
         if (cancelled) return
-        let lastErr: unknown
-        let resolved: string | null = null
-        for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+
+        // Phase 1+2: derive keys in parallel + parse blobs.
+        const prepared = await Promise.all(pending.map(prepareOne))
+        if (cancelled) return
+
+        // Phase 3: one batched worker call for all rows that made it to "ok".
+        const batchInput = prepared
+          .filter((p): p is Extract<Prepared, { status: 'ok' }> => p.status === 'ok')
+          .map(({ id, fileKey, nonce, ciphertext }) => ({ id, fileKey, nonce, ciphertext }))
+
+        let batchResults: Awaited<ReturnType<typeof decryptManyNames>> = []
+        if (batchInput.length > 0) {
           try {
-            resolved = await decryptOne(file)
-            break
+            batchResults = await decryptManyNames(batchInput)
           } catch (err) {
-            lastErr = err
-            if (attempt < MAX_ATTEMPTS - 1) {
-              await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * (attempt + 1)))
-            }
+            // Whole-batch failure (worker crash, comlink disconnect, …) — treat
+            // every item in this batch as failed so the retry loop covers them.
+            for (const item of batchInput) errors.set(item.id, err)
           }
-          if (cancelled) return
         }
-        if (resolved !== null) {
-          names[file.id] = resolved
-        } else {
-          names[file.id] = null
-          // eslint-disable-next-line no-console
-          console.error('[file-list] decryption failed', {
-            fileId: file.id,
-            error: lastErr instanceof Error ? lastErr.message : String(lastErr),
-          })
+        if (cancelled) return
+
+        const resultById = new Map(batchResults.map((r) => [r.id, r]))
+        const stillFailing: DriveFile[] = []
+
+        for (const p of prepared) {
+          if (p.status === 'plaintext') {
+            names[p.id] = p.name
+            errors.delete(p.id)
+            continue
+          }
+          if (p.status === 'error') {
+            errors.set(p.id, p.error)
+            const f = pending.find((file) => file.id === p.id)
+            if (f) stillFailing.push(f)
+            continue
+          }
+          const r = resultById.get(p.id)
+          if (r && r.error === undefined && typeof r.name === 'string') {
+            names[p.id] = r.name
+            errors.delete(p.id)
+          } else {
+            errors.set(p.id, r?.error ?? errors.get(p.id) ?? new Error('decryption failed'))
+            const f = pending.find((file) => file.id === p.id)
+            if (f) stillFailing.push(f)
+          }
+        }
+
+        pending = stillFailing
+        if (pending.length > 0 && attempt < MAX_ATTEMPTS - 1) {
+          await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * (attempt + 1)))
         }
       }
-      if (!cancelled) {
-        setDecryptedNames(names)
+
+      if (cancelled) return
+
+      // Anything still in `pending` after retries failed permanently.
+      for (const file of pending) {
+        names[file.id] = null
+        // eslint-disable-next-line no-console
+        console.error('[file-list] decryption failed', {
+          fileId: file.id,
+          error:
+            errors.get(file.id) instanceof Error
+              ? (errors.get(file.id) as Error).message
+              : String(errors.get(file.id)),
+        })
       }
+      setDecryptedNames(names)
     }
     decryptAll()
     return () => { cancelled = true }
