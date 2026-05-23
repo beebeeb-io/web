@@ -35,30 +35,31 @@ async function ensureWasm(): Promise<typeof WasmTypes> {
   if (typeof mod.default === 'function') {
     if (import.meta.env.PROD) {
       // Fetch the build-time SRI manifest
-      let manifest: WasmSriManifest | null = null
+      let manifest: WasmSriManifest
       try {
         const resp = await fetch('/wasm-sri.json')
-        if (resp.ok) {
-          manifest = await resp.json() as WasmSriManifest
-        } else {
-          console.warn('[crypto] WASM SRI manifest not found (HTTP', resp.status, ')— loading without integrity check')
+        if (!resp.ok) {
+          throw new Error(`WASM integrity verification failed: SRI manifest returned HTTP ${resp.status}`)
         }
+        manifest = await resp.json() as WasmSriManifest
       } catch (e) {
-        console.warn('[crypto] WASM SRI manifest fetch failed:', e, '— loading without integrity check')
+        if (e instanceof Error && e.message.startsWith('WASM integrity verification failed')) {
+          throw e
+        }
+        throw new Error(`WASM integrity verification failed: could not load SRI manifest (${e})`)
       }
 
-      if (manifest?.integrity) {
-        // fetch() with integrity= enforces SHA-384 — browser throws on mismatch
-        const wasmResp = await fetch(wasmUrl, {
-          integrity: manifest.integrity,
-          credentials: 'same-origin',
-        })
-        const wasmBuffer = await wasmResp.arrayBuffer()
-        await mod.default(wasmBuffer)
-      } else {
-        // Degraded: Vite content-hash in filename still provides URL-level integrity
-        await mod.default(wasmUrl)
+      if (!manifest.integrity) {
+        throw new Error('WASM integrity verification failed: SRI manifest missing integrity hash')
       }
+
+      // fetch() with integrity= enforces SHA-384 — browser throws on mismatch
+      const wasmResp = await fetch(wasmUrl, {
+        integrity: manifest.integrity,
+        credentials: 'same-origin',
+      })
+      const wasmBuffer = await wasmResp.arrayBuffer()
+      await mod.default(wasmBuffer)
     } else {
       // Development: pass URL directly (no manifest generated)
       await mod.default(wasmUrl)
