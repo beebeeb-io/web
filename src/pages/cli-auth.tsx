@@ -13,7 +13,9 @@
  *   5. The server forwards the encrypted payload to the CLI over the WebSocket.
  *
  * Security notes:
- * - AES-256-GCM encryption with ephemeral P-256 ECDH — server never sees
+ * - AES-256-GCM encryption with ephemeral P-256 ECDH; the AES key is derived
+ *   from the ECDH shared secret via HKDF-SHA256(info="beebeeb-cli-auth-v1").
+ *   The CLI side performs the identical derivation. The server never sees
  *   plaintext credentials. Code is short-lived and single-use.
  */
 
@@ -66,7 +68,7 @@ async function ecdhEncryptPayload(
   const keyPair = await crypto.subtle.generateKey(
     { name: 'ECDH', namedCurve: 'P-256' },
     true,
-    ['deriveKey'],
+    ['deriveBits'],
   )
 
   // Import CLI's raw uncompressed P-256 public key (65 bytes: 0x04 || x || y)
@@ -79,11 +81,39 @@ async function ecdhEncryptPayload(
     [],
   )
 
-  // Derive shared AES-256-GCM key via ECDH
-  const aesKey = await crypto.subtle.deriveKey(
+  // Derive the raw ECDH shared secret (X-coordinate, 32 bytes).
+  // Matches the CLI's `shared_secret.raw_secret_bytes()`.
+  const sharedSecretBits = await crypto.subtle.deriveBits(
     { name: 'ECDH', public: cliPubKey },
     keyPair.privateKey,
-    { name: 'AES-GCM', length: 256 },
+    256,
+  )
+
+  // HKDF-SHA256(salt=empty, info="beebeeb-cli-auth-v1") → 32-byte AES-256 key.
+  // MUST match the CLI side exactly (repos/cli/src/commands/login.rs):
+  //   Hkdf::<Sha256>::new(None, shared_bytes)
+  //   hk.expand(b"beebeeb-cli-auth-v1", &mut [0u8; 32])
+  const hkdfKey = await crypto.subtle.importKey(
+    'raw',
+    sharedSecretBits,
+    'HKDF',
+    false,
+    ['deriveBits'],
+  )
+  const derivedBits = await crypto.subtle.deriveBits(
+    {
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: new Uint8Array(),
+      info: new TextEncoder().encode('beebeeb-cli-auth-v1'),
+    },
+    hkdfKey,
+    256,
+  )
+  const aesKey = await crypto.subtle.importKey(
+    'raw',
+    derivedBits,
+    'AES-GCM',
     false,
     ['encrypt'],
   )
