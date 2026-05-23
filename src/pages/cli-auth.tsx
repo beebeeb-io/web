@@ -209,7 +209,24 @@ export function CliAuth() {
     setState({ kind: 'authorizing' })
 
     try {
-      const sessionToken = getToken()
+      // task 0447 — with the session token now in an httpOnly cookie, JS
+      // can no longer read it from localStorage. Ask the server for it.
+      // The endpoint authenticates via the cookie and only hands back the
+      // raw token when the request actually came in on a cookie session
+      // (PATs / Bearer-only callers get 403). The raw token never goes
+      // back into localStorage — it lives in this closure long enough to
+      // encrypt-and-ship to the CLI, then it falls out of scope.
+      let sessionToken = getToken()
+      if (!sessionToken) {
+        const res = await fetch(`${getApiUrl()}/api/v1/auth/session-token`, {
+          credentials: 'include',
+        })
+        if (!res.ok) {
+          throw new Error('No active session — please sign in again.')
+        }
+        const body = await res.json() as { token?: string }
+        sessionToken = body.token ?? null
+      }
       if (!sessionToken) throw new Error('No active session — please sign in again.')
 
       const masterKey = getMasterKey()
@@ -231,8 +248,11 @@ export function CliAuth() {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            // Belt-and-braces: the cookie carries auth, but send Bearer too
+            // so the cli-authorize endpoint works for any caller shape.
             'Authorization': `Bearer ${sessionToken}`,
           },
+          credentials: 'include',
           body: JSON.stringify({
             user_code: flow.code,
             nonce_b64: encrypted.nonce_b64,

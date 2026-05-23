@@ -67,7 +67,11 @@ export async function devAutoAuth(): Promise<boolean> {
 
     const data = await res.json() as DevAutoLoginResponse
 
-    // 1. Session token
+    // 1. Session token. Stored in localStorage so the auth-context boot
+    //    sequence picks it up and immediately upgrades it to a bb_session
+    //    httpOnly cookie via POST /auth/upgrade-session (task 0447). After
+    //    that hop the dev session looks identical to a real login —
+    //    cookie-only on the wire, nothing readable from JS.
     localStorage.setItem('bb_session', data.session_token)
 
     // 2. Decode master key from URL-safe base64 (server uses URL_SAFE_NO_PAD).

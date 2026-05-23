@@ -55,21 +55,66 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const channelRef = useRef<BroadcastChannel | null>(null)
 
   useEffect(() => {
-    const token = getToken()
-    if (!token) {
-      setLoading(false)
-      return
-    }
-    getMe()
-      .then(setUser)
-      .catch((err) => {
+    // task 0447 — session-cookie migration.
+    //
+    // Three startup shapes we must handle:
+    //   (a) Brand-new visitor / logged out — no token in localStorage and
+    //       no bb_session cookie. getMe() will 401 and we drop them on /login.
+    //   (b) Returning user, already on cookies — localStorage is empty but
+    //       the bb_session cookie is set. getMe() succeeds because the
+    //       request carries the cookie.
+    //   (c) Legacy user, still on localStorage — localStorage has a token
+    //       but the cookie isn't set yet. Before calling getMe() we hand
+    //       the token to POST /auth/upgrade-session, which sets the cookie
+    //       and lets us drop localStorage. From then on, this device is
+    //       indistinguishable from (b).
+    const legacyToken = getToken()
+    const boot = async () => {
+      if (legacyToken) {
+        try {
+          const apiUrl = import.meta.env.VITE_API_URL || 'https://api.beebeeb.io'
+          // Bearer auth for this one call; the response sets the cookie.
+          const res = await fetch(`${apiUrl}/api/v1/auth/upgrade-session`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${legacyToken}`,
+              'Content-Type': 'application/json',
+            },
+            credentials: 'include',
+            body: '{}',
+          })
+          if (res.ok) {
+            // Cookie now set — drop localStorage so XSS can't read the
+            // token from there any more.
+            clearToken()
+          } else if (res.status === 401) {
+            // Token was already invalid. Wipe localStorage too — no point
+            // keeping a dead value around.
+            clearToken()
+          }
+          // Any other status: leave the localStorage token in place so the
+          // user can still authenticate via Bearer until the next attempt.
+        } catch {
+          // Network error during upgrade — keep the localStorage token and
+          // let the next normal request retry the upgrade implicitly via
+          // its own bearer header.
+        }
+      }
+      // Now check the session — works for both cookie and (legacy) bearer.
+      try {
+        const u = await getMe()
+        setUser(u)
+      } catch (err) {
         // Only clear session on genuine 401 expiry — not network errors or 5xx.
         // For transient failures, keep the token so the user can retry.
         if (err instanceof ApiError && err.status === 401) {
           clearToken()
         }
-      })
-      .finally(() => setLoading(false))
+      } finally {
+        setLoading(false)
+      }
+    }
+    void boot()
   }, [])
 
   // Open the BroadcastChannel for multi-tab logout sync. When another tab

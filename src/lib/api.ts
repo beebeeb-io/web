@@ -473,6 +473,9 @@ export async function confirmAction(
     method: 'POST',
     headers,
     body: JSON.stringify({ password }),
+    // task 0447 — send cookie + accept Set-Cookie back. The confirm endpoint
+    // is authenticated and may set a refreshed bb_session cookie.
+    credentials: 'include',
   })
 
   if (res.status === 401) {
@@ -679,6 +682,8 @@ async function uploadChunkRequest(
       method: 'PUT',
       headers,
       body: new Uint8Array(data) as BodyInit,
+      // task 0447 — chunk uploads are authenticated; ship the cookie.
+      credentials: 'include',
     })
   } catch (_err) {
     // The error notifier now lives in @beebeeb/shared and is fired by the
@@ -740,7 +745,8 @@ export async function downloadFile(id: string): Promise<Blob> {
   const headers: Record<string, string> = {}
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const res = await fetch(`${API_URL}/api/v1/files/${id}/download`, { headers })
+  // task 0447 — authenticated download; ship the cookie if present.
+  const res = await fetch(`${API_URL}/api/v1/files/${id}/download`, { headers, credentials: 'include' })
   if (!res.ok) {
     throw new ApiError(res.statusText, res.status)
   }
@@ -800,6 +806,8 @@ export async function uploadThumbnail(fileId: string, blob: Blob): Promise<void>
     method: 'PUT',
     headers,
     body: blob,
+    // task 0447 — authenticated thumbnail upload; ship the cookie.
+    credentials: 'include',
   })
   if (!res.ok) {
     throw new ApiError(res.statusText, res.status)
@@ -1970,6 +1978,8 @@ export async function downloadVersion(fileId: string, versionId: string): Promis
 
   const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/versions/${versionId}/download`, {
     headers,
+    // task 0447 — authenticated version download; ship the cookie.
+    credentials: 'include',
   })
   if (!res.ok) throw new ApiError('download failed', res.status)
   return res.blob()
@@ -2254,6 +2264,8 @@ export async function createTransferProof(
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify(params),
+    // task 0447 — authenticated proof creation; ship the cookie.
+    credentials: 'include',
   })
   if (!res.ok) throw new ApiError(await readError(res), res.status)
   return res.json() as Promise<TransferProof>

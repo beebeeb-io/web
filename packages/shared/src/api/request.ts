@@ -3,7 +3,13 @@
  *
  * Mirrors the helper that previously lived in repos/web/src/lib/api.ts:
  *  - JSON-by-default (`Content-Type: application/json`).
- *  - Pulls the bearer token from `getToken()`.
+ *  - Sends `credentials: 'include'` so the browser attaches the httpOnly
+ *    `bb_session` cookie (task 0447) on every cross-origin API call AND
+ *    accepts Set-Cookie headers back from the server.
+ *  - Falls back to `Authorization: Bearer <token>` from `getToken()` when a
+ *    legacy localStorage token still exists. After `upgrade-session` runs
+ *    once at app startup, the localStorage half is gone and the cookie does
+ *    all the work.
  *  - Single retry on raw network failure (no retry on HTTP error responses).
  *  - Surfaces "flaky" connection state after CONNECTION_FAILURE_THRESHOLD
  *    consecutive failures and clears the flag on the first success.
@@ -54,14 +60,20 @@ export async function request<T>(
   }
 
   const apiUrl = getApiUrl()
+  // `credentials: 'include'` is what makes the httpOnly bb_session cookie
+  // travel on cross-origin requests (web app on app.beebeeb.io → API on
+  // api.beebeeb.io). It also lets the server's Set-Cookie response headers
+  // actually land in the browser's jar. The server sets
+  // Access-Control-Allow-Credentials: true to match (task 0447).
+  const init: RequestInit = { ...options, headers, credentials: 'include' }
 
   let res: Response
   try {
-    res = await fetch(`${apiUrl}${path}`, { ...options, headers })
+    res = await fetch(`${apiUrl}${path}`, init)
   } catch (_first) {
     await delay(RETRY_DELAY_MS)
     try {
-      res = await fetch(`${apiUrl}${path}`, { ...options, headers })
+      res = await fetch(`${apiUrl}${path}`, init)
     } catch (_second) {
       consecutiveFailures += 1
       if (consecutiveFailures >= CONNECTION_FAILURE_THRESHOLD) {
@@ -78,11 +90,17 @@ export async function request<T>(
   reportConnection('ok')
 
   if (res.status === 401) {
+    // With cookie auth we can't observe "the cookie is present" from JS, so
+    // we treat any 401 on a path that's normally protected as a session
+    // expiry. The legacy `if (token)` guard stays for the localStorage
+    // migration window — once everyone is cookie-only it becomes a no-op
+    // but the fireSessionExpired() path still runs and bounces the user
+    // back to /login.
     if (token) {
       clearToken()
-      fireSessionExpired()
-      throw new ApiError('Session expired', 401)
     }
+    fireSessionExpired()
+    throw new ApiError('Session expired', 401)
   }
 
   if (!res.ok) {
