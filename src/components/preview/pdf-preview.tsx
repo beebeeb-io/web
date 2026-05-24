@@ -23,7 +23,11 @@ export function PdfPreview({ blob }: PdfPreviewProps) {
     <iframe
       src={`${blobUrl}#view=FitH`}
       sandbox="allow-popups allow-scripts"
-      className="w-full h-full border-0 rounded"
+      // The parent only sets `min-h-[45vh]` on mobile (not an explicit
+      // height), so `h-full` resolves to `auto` and the iframe falls back
+      // to the 150px browser default. Force a usable mobile height with
+      // min-h-[80vh]; on md+ the parent has flex-1 so h-full takes over.
+      className="block w-full h-full min-h-[80vh] md:min-h-0 border-0 rounded"
       title="PDF preview"
     />
   )
