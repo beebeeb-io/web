@@ -30,8 +30,28 @@ function preloadWasmPlugin(): Plugin {
   }
 }
 
+/**
+ * The meta CSP in index.html is written for production (only api.beebeeb.io
+ * is allowed in connect-src). In dev the API lives on http://localhost:3001
+ * and the Vite client uses ws://localhost:5173, both of which the prod CSP
+ * blocks. This plugin rewrites the meta tag in dev so fetch/WebSocket calls
+ * to localhost work. Prod builds are unchanged.
+ */
+function devCspPlugin(): Plugin {
+  return {
+    name: 'beebeeb-dev-csp',
+    apply: 'serve',
+    transformIndexHtml(html) {
+      return html.replace(
+        /(connect-src [^;]*?)(;)/,
+        '$1 http://localhost:3001 ws://localhost:3001 ws://localhost:5173 http://localhost:5173$2',
+      )
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss(), wasm(), preloadWasmPlugin()],
+  plugins: [react(), tailwindcss(), wasm(), preloadWasmPlugin(), devCspPlugin()],
   worker: {
     format: 'es',
     plugins: () => [wasm()],
