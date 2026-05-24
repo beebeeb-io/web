@@ -10,7 +10,7 @@ import { DeviceProvision } from '../components/device-provision'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
 import { devAutoAuth } from '../lib/dev-auth'
-import { startPasskeyLogin, finishPasskeyLogin, setToken, opaqueLoginStart as apiOpaqueLoginStart, opaqueLoginFinish as apiOpaqueLoginFinish, serverOptsToGetOptions, credentialToAuthenticationJSON, getVaultKeyEscrow } from '../lib/api'
+import { startPasskeyLogin, finishPasskeyLogin, setToken, clearToken, opaqueLoginStart as apiOpaqueLoginStart, opaqueLoginFinish as apiOpaqueLoginFinish, serverOptsToGetOptions, credentialToAuthenticationJSON, getVaultKeyEscrow } from '../lib/api'
 import { opaqueLoginStart, opaqueLoginFinish, toBase64, fromBase64 } from '../lib/crypto'
 import { prfExtensionInputs, extractPrfOutput, getVaultWrapKey, decryptVaultBlob } from '../lib/passkey-vault'
 
@@ -91,6 +91,13 @@ export function Login() {
         return
       }
 
+      // OPAQUE auth succeeded — server set bb_session cookie. Drop any
+      // stale localStorage token from previous sessions so it doesn't get
+      // sent as a bearer header that shadows the fresh cookie (server
+      // 401s on stale bearer → client treats as session-expired → user
+      // gets logged out immediately after logging in).
+      clearToken()
+
       // OPAQUE auth succeeded — refresh user session
       await refreshUser()
 
@@ -129,6 +136,9 @@ export function Login() {
     if (!partialToken) return
     try {
       await verify2fa(partialToken, code)
+      // Same reason as handleSubmit: server has set the fresh bb_session
+      // cookie, drop any stale localStorage bearer that would shadow it.
+      clearToken()
 
       // 2FA verified — now unlock the vault with the password from the first step
       if (vaultExists) {
@@ -167,6 +177,9 @@ export function Login() {
       const serverMsg = Uint8Array.from(atob(serverResp.server_message), c => c.charCodeAt(0))
       const loginFinish = await opaqueLoginFinish(loginStart.state, passkeyFallbackPassword, serverMsg)
       await apiOpaqueLoginFinish(email, toBase64(loginFinish.message), serverResp.server_state)
+      // Drop any stale localStorage bearer so the fresh bb_session cookie
+      // is the only auth carried on subsequent requests.
+      clearToken()
       await refreshUser()
 
       // Try unlocking the local vault with this password
