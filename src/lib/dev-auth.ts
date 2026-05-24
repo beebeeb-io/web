@@ -44,6 +44,19 @@ export async function devAutoAuth(): Promise<boolean> {
   // Not in dev mode — should never be called, but guard defensively.
   if (!import.meta.env.DEV) return false
 
+  // Escape hatch for testing real signup / login flows in dev: append
+  // ?nodev=1 to any URL and devAutoAuth becomes a no-op for the rest of
+  // the session. Reload without the param to re-enable.
+  if (typeof window !== 'undefined') {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('nodev') === '1') {
+      sessionStorage.setItem(DEV_SESSION_FLAG, 'skipped')
+    }
+    if (sessionStorage.getItem(DEV_SESSION_FLAG) === 'skipped') {
+      return false
+    }
+  }
+
   // The session-cache wrapping key lives only in memory, so a page reload
   // always discards it — re-fetch the master key on every fresh load even
   // when a session token is still in localStorage. The /dev/auto-login
