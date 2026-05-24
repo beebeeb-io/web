@@ -180,6 +180,7 @@ export async function fetchAndDecryptThumbnail(
 
     const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/thumbnail`, {
       headers,
+      credentials: 'include',
     })
     if (!res.ok) return null
 

@@ -70,6 +70,8 @@ export async function devAutoAuth(): Promise<boolean> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: DEV_EMAIL }),
       signal: AbortSignal.timeout(3000),
+      // Needed so the Set-Cookie on the response lands in the browser jar.
+      credentials: 'include',
     })
 
     if (!res.ok) {

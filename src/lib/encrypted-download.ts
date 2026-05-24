@@ -404,6 +404,7 @@ export async function encryptedDownload(
   const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/download`, {
     headers,
     signal: opts?.signal,
+    credentials: 'include',
   })
   if (!res.ok) {
     throw new ApiError(res.statusText, res.status)
@@ -532,7 +533,7 @@ export async function decryptToBlob(
   const headers: Record<string, string> = {}
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/download`, { headers })
+  const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/download`, { headers, credentials: 'include' })
   if (!res.ok) throw new ApiError(res.statusText, res.status)
 
   const encryptedBytes = new Uint8Array(await res.arrayBuffer())
@@ -572,7 +573,7 @@ export async function decryptVersionToBlob(
 
   const res = await fetch(
     `${getApiUrl()}/api/v1/files/${fileId}/versions/${versionId}/download`,
-    { headers },
+    { headers, credentials: 'include' },
   )
   if (!res.ok) throw new ApiError(res.statusText, res.status)
 
