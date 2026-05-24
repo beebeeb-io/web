@@ -61,7 +61,7 @@ export function JoinPage() {
           </div>
           <div>
             <div className="text-[13.5px] font-semibold text-ink mb-0.5">EU servers</div>
-            <div className="text-[12.5px] text-ink-3">Stored in Falkenstein. Hetzner. Under EU jurisdiction and GDPR.</div>
+            <div className="text-[12.5px] text-ink-3">Stored in Falkenstein, Germany. Under EU jurisdiction and GDPR.</div>
           </div>
         </li>
         <li className="flex items-start gap-3">
@@ -115,7 +115,7 @@ export function JoinPage() {
 
         <div className="border-t border-line pt-4 flex items-center gap-2 text-[11px] text-ink-3">
           <Icon name="shield" size={12} className="text-amber-deep shrink-0" />
-          <span>Stored in Falkenstein. Hetzner. Under EU jurisdiction.</span>
+          <span>Stored in Falkenstein, Germany. Under EU jurisdiction.</span>
         </div>
       </div>
     </SplitAuthScreen>

@@ -601,7 +601,7 @@ export function Onboarding() {
                   </p>
                 )}
                 <p className="text-center mt-2.5 text-[11px] text-ink-4">
-                  Stored in Falkenstein. Hetzner. Under EU jurisdiction.
+                  Stored in Falkenstein, Germany. Under EU jurisdiction.
                 </p>
               </div>
             </div>
