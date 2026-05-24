@@ -12,7 +12,6 @@ import {
   getFolderKeys,
   getPreference,
   setPreference,
-  getAdminStats,
   requestAdminHandoff,
   type ShareInvite,
 } from '../lib/api'
@@ -436,6 +435,7 @@ function useRecentUploadBadge(pathname: string) {
 
 export function DriveLayout({ children }: { children: ReactNode }) {
   const location = useLocation()
+  const { user } = useAuth()
   const { isUnlocked, getMasterKey } = useKeys()
   const { isFrozen } = useFrozen()
   const adminUrl = import.meta.env.VITE_ADMIN_URL ?? 'https://admin.beebeeb.io'
@@ -445,13 +445,13 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const sidebarTrapRef = useFocusTrap<HTMLElement>(sidebarOpen)
   const [quickAccessDragOver, setQuickAccessDragOver] = useState(false)
-  const [isAdmin, setIsAdmin] = useState(false)
+  // Admin status comes from /me's `role` field — never probe /admin/stats
+  // from the user-app origin: CORS rejects it (admin routes are restricted to
+  // the admin origin) and the rejection cascades into a "flaky connection"
+  // banner + spurious session-expired logouts.
+  const isAdmin = user?.role === 'admin' || user?.role === 'superadmin'
   const recentUploadCount = useRecentUploadBadge(location.pathname)
   const { notifications, unreadCount, markRead, markAllRead } = useNotifications()
-
-  useEffect(() => {
-    getAdminStats().then(() => setIsAdmin(true)).catch(() => setIsAdmin(false))
-  }, [])
 
   // Close sidebar on navigation (mobile)
   useEffect(() => {

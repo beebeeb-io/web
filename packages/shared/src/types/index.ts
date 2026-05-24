@@ -24,6 +24,10 @@ export interface AuthUser {
   email_verified: boolean
   created_at: string
   frozen_at?: string | null
+  /** Account role: `user`, `admin`, or `superadmin`. Surfaced so the web app
+   *  can show an Admin sidebar link without probing /admin/stats (which
+   *  CORS-rejects from the user-app origin and triggers spurious 401s). */
+  role?: 'user' | 'admin' | 'superadmin' | string
   totp_enabled: boolean
   two_factor_enabled?: boolean
   twoFactorEnabled?: boolean
