@@ -5,6 +5,8 @@ const PREVIEWABLE_EXTENSIONS = new Set([
   'dng', 'cr2', 'cr3', 'nef', 'arw', 'orf', 'rw2', 'raf',
   // Video (including HEVC)
   'mp4', 'mov', 'webm', 'mkv', 'hevc',
+  // Audio
+  'mp3', 'flac', 'wav', 'ogg', 'oga', 'opus', 'm4a', 'aac', 'aiff', 'aif', 'wma', 'alac',
   // Text / code
   'txt', 'md', 'csv', 'json', 'xml', 'html', 'css', 'js', 'ts', 'py', 'rs', 'go', 'sh',
   // Documents
@@ -18,6 +20,7 @@ export function isPreviewable(mimeType: string | null | undefined, fileName?: st
     return (
       mimeType.startsWith('image/') ||
       mimeType.startsWith('video/') ||
+      mimeType.startsWith('audio/') ||
       mimeType.startsWith('text/') ||
       mimeType === 'application/pdf' ||
       mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
