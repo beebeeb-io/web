@@ -76,6 +76,7 @@ const SettingsReferrals     = lazyNamed(() => import('./pages/settings/referrals
 const SettingsImport        = lazyNamed(() => import('./pages/settings/import'),        'SettingsImport')
 const DropboxCallback       = lazyNamed(() => import('./pages/settings/import/dropbox-callback'), 'DropboxCallback')
 const GoogleCallback        = lazyNamed(() => import('./pages/settings/import/google-callback'),  'GoogleCallback')
+const DevicesPage           = lazyNamed(() => import('./pages/devices'),                           'DevicesPage')
 const ScanPage              = lazyNamed(() => import('./pages/scan'),                             'ScanPage')
 const FileRequestPage       = lazyNamed(() => import('./pages/file-request'),                     'FileRequestPage')
 const UploadRequestPage     = lazyNamed(() => import('./pages/upload-request'),                   'UploadRequestPage')
@@ -379,6 +380,14 @@ export function App() {
             element={
               <ProtectedRoute>
                 <Trash />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/devices"
+            element={
+              <ProtectedRoute>
+                <DevicesPage />
               </ProtectedRoute>
             }
           />

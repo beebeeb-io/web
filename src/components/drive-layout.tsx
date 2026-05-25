@@ -148,6 +148,7 @@ const navItems: { path: string; icon: IconName; label: string }[] = [
   { path: '/starred', icon: 'star', label: 'Starred' },
   { path: '/recent', icon: 'clock', label: 'Recent' },
   { path: '/trash', icon: 'trash', label: 'Trash' },
+  { path: '/devices', icon: 'cloud', label: 'Devices' },
 ]
 
 const REGION_META: Record<string, { label: string; flag: string }> = {

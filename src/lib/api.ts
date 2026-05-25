@@ -2120,6 +2120,49 @@ export async function requestAdminHandoff(): Promise<AdminHandoffResponse> {
   })
 }
 
+// ── Client devices & sessions ─────────────────────────
+
+export interface ClientDevice {
+  id: string
+  hostname: string
+  platform: string
+  bb_version: string | null
+  last_seen: string
+  created_at: string
+  session_count: number
+}
+
+export interface ClientSession {
+  id: string
+  name: string
+  session_type: string
+  local_path: string | null
+  remote_path: string
+  status: string
+  device_hostname: string
+  device_platform: string
+  device_id: string
+  heartbeat_interval_secs: number
+  alert_after_missed: number
+  last_heartbeat: string | null
+  files_synced: number | null
+  files_total: number | null
+  bytes_synced: number | null
+  bytes_total: number | null
+  heartbeat_status: string | null
+  current_file: string | null
+  speed_bps: number | null
+  created_at: string
+}
+
+export async function listClientDevices(): Promise<{ devices: ClientDevice[] }> {
+  return request<{ devices: ClientDevice[] }>('/api/v1/clients/devices')
+}
+
+export async function listClientSessions(): Promise<{ sessions: ClientSession[] }> {
+  return request<{ sessions: ClientSession[] }>('/api/v1/clients/sessions')
+}
+
 export async function getHealth(): Promise<HealthResponse> {
   const res = await fetch(`${API_URL}/health`)
   if (!res.ok) {
