@@ -14,6 +14,7 @@ import { DocxPreview } from './docx-preview'
 import { XlsxPreview } from './xlsx-preview'
 import { UnsupportedPreview } from './unsupported-preview'
 import { RawPreview } from './raw-preview'
+import { HeicPreview } from './heic-preview'
 import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useKeys } from '../../lib/key-context'
@@ -158,8 +159,9 @@ function getKindLabel(mimeType: string | null | undefined, filename: string): st
   return mimeType ?? (ext.toUpperCase() || 'File')
 }
 
-// HEIC/HEIF — decoded client-side via heic2any (lazy-loaded).
-// These are routed to HeicPreview instead of the native <img> tag.
+// HEIC/HEIF — decoded client-side via a WASM HEIC decoder inside HeicPreview.
+// These are routed away from the native <img> tag because browsers do not
+// consistently support this container.
 const HEIC_IMAGE_MIMES = new Set([
   'image/heic',
   'image/heif',
@@ -248,10 +250,10 @@ function pickRenderer(
     )
   }
 
-  // HEIC/HEIF — extract embedded JPEG preview via exifr, fall back to download
+  // HEIC/HEIF — convert the decrypted blob to JPEG client-side for preview.
   if (HEIC_IMAGE_MIMES.has(mimeType ?? '') || HEIC_IMAGE_EXTS.has(ext)) {
     return (
-      <RawPreview
+      <HeicPreview
         blob={blob}
         filename={filename}
         zoom={imageControls?.zoom ?? 1}
@@ -459,7 +461,8 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   const kindLabel = getKindLabel(effectiveMime, name)
 
   // Zoom helpers
-  const isImage = effectiveMime?.startsWith('image/') || IMAGE_EXTENSIONS_SET.has(getExtension(name))
+  const imageExt = getExtension(name)
+  const isImage = effectiveMime?.startsWith('image/') || IMAGE_EXTENSIONS_SET.has(imageExt) || HEIC_IMAGE_EXTS.has(imageExt)
   function handleZoomIn() {
     setZoom((z) => Math.min(MAX_ZOOM, +(z + ZOOM_STEP).toFixed(2)))
   }

@@ -15,6 +15,7 @@ class ApiError extends Error {
 
 mock.module('../src/lib/crypto', () => ({
   CHUNK_SIZE: 4,
+  planChunks: async () => ({ chunk_size_bytes: 4, chunk_count: 1 }),
   encryptChunk: async (fileKey: Uint8Array, plaintext: Uint8Array) => ({
     nonce: new Uint8Array([fileKey[0]]),
     ciphertext: plaintext,
@@ -26,6 +27,8 @@ mock.module('../src/lib/crypto', () => ({
       ciphertext: new TextEncoder().encode(plaintext),
     }
   },
+  serializeEncryptedBlob: (nonce: Uint8Array, ciphertext: Uint8Array) =>
+    JSON.stringify({ nonce: Array.from(nonce), ciphertext: Array.from(ciphertext) }),
   toBase64: (bytes: Uint8Array) => Buffer.from(bytes).toString('base64'),
 }))
 
