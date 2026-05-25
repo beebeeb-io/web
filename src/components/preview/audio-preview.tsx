@@ -13,6 +13,45 @@ function formatTime(seconds: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
+function pcmToWavBlob(audioBuffer: AudioBuffer): Blob {
+  const numChannels = audioBuffer.numberOfChannels
+  const sampleRate = audioBuffer.sampleRate
+  const numFrames = audioBuffer.length
+  const bytesPerSample = 2
+  const dataSize = numFrames * numChannels * bytesPerSample
+  const buffer = new ArrayBuffer(44 + dataSize)
+  const view = new DataView(buffer)
+
+  const writeStr = (offset: number, str: string) => {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i))
+  }
+
+  writeStr(0, 'RIFF')
+  view.setUint32(4, 36 + dataSize, true)
+  writeStr(8, 'WAVE')
+  writeStr(12, 'fmt ')
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true)
+  view.setUint16(22, numChannels, true)
+  view.setUint32(24, sampleRate, true)
+  view.setUint32(28, sampleRate * numChannels * bytesPerSample, true)
+  view.setUint16(32, numChannels * bytesPerSample, true)
+  view.setUint16(34, bytesPerSample * 8, true)
+  writeStr(36, 'data')
+  view.setUint32(40, dataSize, true)
+
+  let offset = 44
+  for (let i = 0; i < numFrames; i++) {
+    for (let ch = 0; ch < numChannels; ch++) {
+      const sample = Math.max(-1, Math.min(1, audioBuffer.getChannelData(ch)[i]))
+      view.setInt16(offset, sample * 0x7fff, true)
+      offset += 2
+    }
+  }
+
+  return new Blob([buffer], { type: 'audio/wav' })
+}
+
 export function AudioPreview({ blob, filename }: AudioPreviewProps) {
   const audioRef = useRef<HTMLAudioElement>(null)
   const [url, setUrl] = useState<string | null>(null)
@@ -20,15 +59,40 @@ export function AudioPreview({ blob, filename }: AudioPreviewProps) {
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [converting, setConverting] = useState(false)
+  const convertedRef = useRef(false)
 
   useEffect(() => {
     const objectUrl = URL.createObjectURL(blob)
     setUrl(objectUrl)
+    convertedRef.current = false
     return () => URL.revokeObjectURL(objectUrl)
   }, [blob])
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0
   const ext = filename.split('.').pop()?.toUpperCase() ?? 'Audio'
+
+  async function decodeAndConvert() {
+    if (convertedRef.current) return
+    convertedRef.current = true
+    setConverting(true)
+    setError(null)
+    try {
+      const arrayBuffer = await blob.arrayBuffer()
+      const audioCtx = new AudioContext()
+      const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer)
+      await audioCtx.close()
+      const wavBlob = pcmToWavBlob(audioBuffer)
+      const wavUrl = URL.createObjectURL(wavBlob)
+      if (url) URL.revokeObjectURL(url)
+      setUrl(wavUrl)
+      setDuration(audioBuffer.duration)
+    } catch {
+      setError('Could not decode this audio file')
+    } finally {
+      setConverting(false)
+    }
+  }
 
   function togglePlay() {
     const audio = audioRef.current
@@ -73,10 +137,24 @@ export function AudioPreview({ blob, filename }: AudioPreviewProps) {
           onEnded={() => setPlaying(false)}
           onTimeUpdate={() => setCurrentTime(audioRef.current?.currentTime ?? 0)}
           onLoadedMetadata={() => setDuration(audioRef.current?.duration ?? 0)}
-          onError={() => setError('This audio format is not supported by your browser')}
+          onError={() => {
+            if (!convertedRef.current) {
+              decodeAndConvert()
+            } else {
+              setError('Could not decode this audio file')
+            }
+          }}
         />
 
-        {error ? (
+        {converting ? (
+          <div className="flex flex-col items-center gap-2 py-2">
+            <svg className="h-5 w-5 animate-spin text-amber" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            <span className="text-[12px] text-ink-3">Decoding {ext} for playback...</span>
+          </div>
+        ) : error ? (
           <p className="text-center text-sm text-red">{error}</p>
         ) : (
           <>
