@@ -32,9 +32,36 @@ import {
 
 const CONNECTION_FAILURE_THRESHOLD = 2
 const RETRY_DELAY_MS = 800
+const RATE_LIMIT_MAX_RETRIES = 3
+const RATE_PACE_THRESHOLD = 0.2
 
 let consecutiveFailures = 0
 let lastReported: 'ok' | 'flaky' = 'ok'
+
+let rateLimitRemaining: number | null = null
+let rateLimitLimit: number | null = null
+let rateLimitReset: number | null = null
+
+function updateRateLimitState(res: Response): void {
+  const remaining = res.headers.get('x-ratelimit-remaining')
+  const limit = res.headers.get('x-ratelimit-limit')
+  const reset = res.headers.get('x-ratelimit-reset')
+  if (remaining !== null) rateLimitRemaining = parseInt(remaining, 10)
+  if (limit !== null) rateLimitLimit = parseInt(limit, 10)
+  if (reset !== null) rateLimitReset = parseInt(reset, 10)
+}
+
+async function paceIfNeeded(): Promise<void> {
+  if (rateLimitRemaining === null || rateLimitLimit === null || rateLimitReset === null) return
+  if (rateLimitLimit === 0) return
+  const ratio = rateLimitRemaining / rateLimitLimit
+  if (ratio > RATE_PACE_THRESHOLD) return
+  const now = Math.floor(Date.now() / 1000)
+  const secsUntilReset = Math.max(1, rateLimitReset - now)
+  const requestsLeft = Math.max(1, rateLimitRemaining)
+  const paceMs = Math.min(5000, Math.floor((secsUntilReset / requestsLeft) * 1000))
+  if (paceMs > 50) await delay(paceMs)
+}
 
 function reportConnection(status: 'ok' | 'flaky'): void {
   if (status === lastReported) return
@@ -67,59 +94,61 @@ export async function request<T>(
   // Access-Control-Allow-Credentials: true to match (task 0447).
   const init: RequestInit = { ...options, headers, credentials: 'include' }
 
-  let res: Response
-  try {
-    res = await fetch(`${apiUrl}${path}`, init)
-  } catch (_first) {
-    await delay(RETRY_DELAY_MS)
+  await paceIfNeeded()
+
+  for (let attempt = 0; attempt <= RATE_LIMIT_MAX_RETRIES; attempt++) {
+    let res: Response
     try {
       res = await fetch(`${apiUrl}${path}`, init)
-    } catch (_second) {
-      consecutiveFailures += 1
-      if (consecutiveFailures >= CONNECTION_FAILURE_THRESHOLD) {
-        reportConnection('flaky')
+    } catch (_first) {
+      await delay(RETRY_DELAY_MS)
+      try {
+        res = await fetch(`${apiUrl}${path}`, init)
+      } catch (_second) {
+        consecutiveFailures += 1
+        if (consecutiveFailures >= CONNECTION_FAILURE_THRESHOLD) {
+          reportConnection('flaky')
+        }
+        const message = 'Could not reach the server. Check your connection and try again.'
+        fireErrorNotifier(message)
+        throw new ApiError(message, 0)
       }
-      const message = 'Could not reach the server. Check your connection and try again.'
-      fireErrorNotifier(message)
-      throw new ApiError(message, 0)
-    }
-  }
-
-  // Got a response — connection is fine even if the response is an error.
-  consecutiveFailures = 0
-  reportConnection('ok')
-
-  if (!res.ok) {
-    // Read the body once. The 401 branch below needs the structured `code`
-    // (e.g. `opaque_ksf_outdated`) to distinguish "session expired" from
-    // "your account needs to migrate" — both surface as 401 from the
-    // server but only the former should clear the session.
-    const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
-    const code = typeof body.error === 'string' ? body.error : undefined
-    const message = (body.message ?? body.error ?? res.statusText) as string
-
-    if (res.status === 401) {
-      // OPAQUE migration prompt (task 0548) — the server explicitly tells
-      // the caller to recover via phrase; do NOT fire session-expired or
-      // clear the token, the user hasn't actually signed in yet.
-      if (code === 'opaque_ksf_outdated') {
-        throw new ApiError(message, 401, code)
-      }
-      // With cookie auth we can't observe "the cookie is present" from JS,
-      // so we treat any other 401 on a path that's normally protected as a
-      // session expiry. The legacy `if (token)` guard stays for the
-      // localStorage migration window — once everyone is cookie-only it
-      // becomes a no-op but the fireSessionExpired() path still runs and
-      // bounces the user back to /login.
-      if (token) {
-        clearToken()
-      }
-      fireSessionExpired()
-      throw new ApiError('Session expired', 401, code)
     }
 
-    throw new ApiError(message, res.status, code)
+    consecutiveFailures = 0
+    reportConnection('ok')
+    updateRateLimitState(res)
+
+    if (res.status === 429) {
+      const retryAfter = parseInt(res.headers.get('retry-after') ?? '5', 10)
+      if (attempt < RATE_LIMIT_MAX_RETRIES) {
+        await delay(retryAfter * 1000)
+        continue
+      }
+      throw new ApiError('Rate limited — please wait a moment and try again', 429, 'rate_limit_exceeded')
+    }
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
+      const code = typeof body.error === 'string' ? body.error : undefined
+      const message = (body.message ?? body.error ?? res.statusText) as string
+
+      if (res.status === 401) {
+        if (code === 'opaque_ksf_outdated') {
+          throw new ApiError(message, 401, code)
+        }
+        if (token) {
+          clearToken()
+        }
+        fireSessionExpired()
+        throw new ApiError('Session expired', 401, code)
+      }
+
+      throw new ApiError(message, res.status, code)
+    }
+
+    return res.json() as Promise<T>
   }
 
-  return res.json() as Promise<T>
+  throw new ApiError('Rate limited — please wait a moment and try again', 429, 'rate_limit_exceeded')
 }
