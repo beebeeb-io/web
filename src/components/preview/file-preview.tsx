@@ -7,6 +7,7 @@ import { VersionScrubber } from './version-scrubber'
 import { ImagePreview } from './image-preview'
 import { PdfPreview } from './pdf-preview'
 import { VideoPreview } from './video-preview'
+import { AudioPreview } from './audio-preview'
 import { MarkdownPreview } from './markdown-preview'
 import { TextPreview } from './text-preview'
 import { DocxPreview } from './docx-preview'
@@ -73,6 +74,9 @@ const IMAGE_EXTENSIONS_SET = new Set([
 const VIDEO_EXTENSIONS_SET = new Set([
   'mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'ogv', 'hevc',
 ])
+const AUDIO_EXTENSIONS_SET = new Set([
+  'mp3', 'flac', 'wav', 'ogg', 'oga', 'opus', 'm4a', 'aac', 'aiff', 'aif', 'wma', 'alac',
+])
 
 /** Extensions that should render as plain text (no syntax coloring) */
 const TEXT_EXTENSIONS = new Set([
@@ -126,6 +130,11 @@ function getKindLabel(mimeType: string | null | undefined, filename: string): st
     return sub === 'JPEG' ? 'JPEG Image' : `${sub} Image`
   }
   if (mimeType === 'application/pdf') return 'PDF Document'
+  if (mimeType?.startsWith('audio/')) {
+    const sub = mimeType.split('/')[1]?.toUpperCase() ?? 'Audio'
+    return sub === 'MPEG' ? 'MP3' : sub === 'X-FLAC' ? 'FLAC' : sub
+  }
+  if (AUDIO_EXTENSIONS_SET.has(ext)) return ext.toUpperCase()
   if (mimeType?.startsWith('video/')) {
     const sub = mimeType.split('/')[1]?.toUpperCase() ?? 'Video'
     return `${sub} Video`
@@ -277,6 +286,9 @@ function pickRenderer(
   }
   if (mimeType?.startsWith('video/') || VIDEO_EXTENSIONS_SET.has(ext)) {
     return <VideoPreview blob={blob} />
+  }
+  if (mimeType?.startsWith('audio/') || AUDIO_EXTENSIONS_SET.has(ext)) {
+    return <AudioPreview blob={blob} filename={filename} />
   }
   if (mimeType === 'text/markdown' || ext === 'md' || ext === 'mdx') {
     return <MarkdownPreview blob={blob} />
