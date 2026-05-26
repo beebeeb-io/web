@@ -94,7 +94,10 @@ export async function request<T>(
   // Access-Control-Allow-Credentials: true to match (task 0447).
   const init: RequestInit = { ...options, headers, credentials: 'include' }
 
-  await paceIfNeeded()
+  const method = (options.method ?? 'GET').toUpperCase()
+  if (method !== 'GET' && method !== 'HEAD') {
+    await paceIfNeeded()
+  }
 
   for (let attempt = 0; attempt <= RATE_LIMIT_MAX_RETRIES; attempt++) {
     let res: Response
