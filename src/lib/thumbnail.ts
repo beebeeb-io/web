@@ -1,4 +1,4 @@
-import { getToken, getApiUrl, uploadThumbnail } from './api'
+import { getToken, getApiUrl, uploadThumbnail, uploadThumbnailLarge } from './api'
 
 const THUMB_SIZE = 768
 const MAX_THUMB_BYTES = 50 * 1024
@@ -9,6 +9,18 @@ const THUMB_VARIANTS = [
   { size: THUMB_SIZE, quality: 0.58 },
   { size: THUMB_SIZE, quality: 0.5 },
 ] as const
+
+const LARGE_THUMB_SIZE = 1600
+const MAX_LARGE_THUMB_BYTES = 480 * 1024
+const LARGE_THUMB_VARIANTS = [
+  { size: LARGE_THUMB_SIZE, quality: 0.90 },
+  { size: LARGE_THUMB_SIZE, quality: 0.82 },
+  { size: LARGE_THUMB_SIZE, quality: 0.74 },
+  { size: LARGE_THUMB_SIZE, quality: 0.66 },
+  { size: LARGE_THUMB_SIZE, quality: 0.58 },
+  { size: LARGE_THUMB_SIZE, quality: 0.50 },
+] as const
+
 const THUMB_FORMAT = 'image/webp'
 const CACHE_NAME = 'beebeeb-thumbnails-v2'
 const MAX_CACHE_ENTRIES = 10000
@@ -105,11 +117,10 @@ export async function generateThumbnail(file: File): Promise<Blob | null> {
   }
 }
 
-export async function encryptAndUploadThumbnail(
-  fileId: string,
+async function encryptThumbnailBlob(
   thumbnailBlob: Blob,
   fileKey: Uint8Array,
-): Promise<void> {
+): Promise<Uint8Array> {
   const plainBytes = new Uint8Array(await thumbnailBlob.arrayBuffer())
 
   const cryptoKey = await crypto.subtle.importKey(
@@ -129,8 +140,98 @@ export async function encryptAndUploadThumbnail(
   const encrypted = new Uint8Array(12 + ciphertext.byteLength)
   encrypted.set(nonce, 0)
   encrypted.set(new Uint8Array(ciphertext), 12)
+  return encrypted
+}
 
-  await uploadThumbnail(fileId, new Blob([encrypted]))
+export async function encryptAndUploadThumbnail(
+  fileId: string,
+  thumbnailBlob: Blob,
+  fileKey: Uint8Array,
+): Promise<void> {
+  const encrypted = await encryptThumbnailBlob(thumbnailBlob, fileKey)
+  await uploadThumbnail(fileId, new Blob([encrypted.buffer as ArrayBuffer]))
+}
+
+export async function generateLargeThumbnail(file: File): Promise<Blob | null> {
+  if (!isImageType(file.type)) return null
+
+  try {
+    const bitmap = await createImageBitmap(file)
+    try {
+      let fallback: Blob | null = null
+      for (const variant of LARGE_THUMB_VARIANTS) {
+        const scale = Math.min(variant.size / bitmap.width, variant.size / bitmap.height, 1)
+        const w = Math.max(1, Math.round(bitmap.width * scale))
+        const h = Math.max(1, Math.round(bitmap.height * scale))
+
+        const canvas = new OffscreenCanvas(w, h)
+        const ctx = canvas.getContext('2d')
+        if (!ctx) continue
+
+        ctx.drawImage(bitmap, 0, 0, w, h)
+        const blob = await canvas.convertToBlob({ type: THUMB_FORMAT, quality: variant.quality })
+        fallback = blob
+        if (blob.size <= MAX_LARGE_THUMB_BYTES) return blob
+      }
+      return fallback
+    } finally {
+      bitmap.close()
+    }
+  } catch {
+    return null
+  }
+}
+
+export async function encryptAndUploadLargeThumbnail(
+  fileId: string,
+  thumbnailBlob: Blob,
+  fileKey: Uint8Array,
+): Promise<void> {
+  const encrypted = await encryptThumbnailBlob(thumbnailBlob, fileKey)
+  await uploadThumbnailLarge(fileId, new Blob([encrypted.buffer as ArrayBuffer]))
+}
+
+export async function fetchAndDecryptLargeThumbnail(
+  fileId: string,
+  fileKey: Uint8Array,
+): Promise<string | null> {
+  try {
+    const token = getToken()
+    const headers: Record<string, string> = {}
+    if (token) headers['Authorization'] = `Bearer ${token}`
+
+    const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/thumbnail/large`, {
+      headers,
+      credentials: 'include',
+    })
+    if (!res.ok) return null
+
+    const encrypted = new Uint8Array(await res.arrayBuffer())
+    if (encrypted.length < 13) return null
+
+    const nonce = encrypted.slice(0, 12)
+    const ciphertext = encrypted.slice(12)
+
+    const cryptoKey = await crypto.subtle.importKey(
+      'raw',
+      fileKey.buffer as ArrayBuffer,
+      'AES-GCM',
+      false,
+      ['decrypt'],
+    )
+
+    const plainBytes = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: nonce.buffer as ArrayBuffer },
+      cryptoKey,
+      ciphertext.buffer as ArrayBuffer,
+    )
+
+    const blob = new Blob([plainBytes], { type: THUMB_FORMAT })
+    const url = URL.createObjectURL(blob)
+    return url
+  } catch {
+    return null
+  }
 }
 
 async function getCachedBlob(fileId: string): Promise<string | null> {

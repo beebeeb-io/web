@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listVersions, restoreVersion, type DriveFile, type FileVersion } from '../../lib/api'
 import { decryptToBlob, decryptVersionToBlob } from '../../lib/encrypted-download'
+import { fetchAndDecryptLargeThumbnail, fetchAndDecryptThumbnail } from '../../lib/thumbnail'
 import { PreviewChrome } from './preview-chrome'
 import { InfoRail } from './info-rail'
 import { VersionScrubber } from './version-scrubber'
@@ -387,16 +388,57 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     return () => { cancelled = true }
   }, [file.id, file.version_number, isUnlocked])
 
+  // Effective MIME: prefer server value (legacy), then encrypted metadata, then null
+  const effectiveMime = file.mime_type ?? localMimeType
+
   // Load + decrypt content for the current selection (null = live version).
+  // For images viewing the current version, try large thumbnail first to avoid
+  // downloading the full original (spec 031 — thumbnail-first viewing).
   useEffect(() => {
     let cancelled = false
     setBlob(null)
     setError(null)
     if (!isUnlocked) return
 
+    const imageExt = getExtension(name)
+    const isImageFile = effectiveMime?.startsWith('image/') || IMAGE_EXTENSIONS_SET.has(imageExt) || HEIC_IMAGE_EXTS.has(imageExt)
+
     async function loadAndDecrypt() {
       try {
         const fileKey = await getFileKey(file.id)
+
+        // Thumbnail-first path for images (current version only)
+        if (isImageFile && selectedVersionId === null) {
+          const largeThumbnailUrl = await fetchAndDecryptLargeThumbnail(file.id, fileKey)
+          if (largeThumbnailUrl && !cancelled) {
+            const thumbRes = await fetch(largeThumbnailUrl)
+            if (thumbRes.ok) {
+              const thumbBlob = await thumbRes.blob()
+              if (!cancelled) {
+                setBlob(thumbBlob)
+                setRenderKey((k) => k + 1)
+                return
+              }
+            }
+          }
+          // Large failed — try medium thumbnail
+          if (!cancelled) {
+            const mediumThumbnailUrl = await fetchAndDecryptThumbnail(file.id, fileKey)
+            if (mediumThumbnailUrl && !cancelled) {
+              const thumbRes = await fetch(mediumThumbnailUrl)
+              if (thumbRes.ok) {
+                const thumbBlob = await thumbRes.blob()
+                if (!cancelled) {
+                  setBlob(thumbBlob)
+                  setRenderKey((k) => k + 1)
+                  return
+                }
+              }
+            }
+          }
+        }
+
+        // Full download path (non-images, historical versions, or thumbnail fallback)
         let plaintext: Blob
         if (selectedVersionId === null) {
           const res = await decryptToBlob(
@@ -437,7 +479,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     return () => {
       cancelled = true
     }
-  }, [file.id, file.name_encrypted, file.mime_type, file.chunk_count, file.size_bytes, isUnlocked, getFileKey, selectedVersionId, versions])
+  }, [file.id, file.name_encrypted, file.mime_type, file.chunk_count, file.size_bytes, isUnlocked, getFileKey, selectedVersionId, versions, effectiveMime, name])
 
   const handleRestore = useCallback(async () => {
     if (selectedVersionId === null) return
@@ -455,8 +497,6 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     }
   }, [file.id, selectedVersionId, onVersionRestored])
 
-  // Effective MIME: prefer server value (legacy), then encrypted metadata, then null
-  const effectiveMime = file.mime_type ?? localMimeType
   const sizeStr = formatSize(file.size_bytes)
   const kindLabel = getKindLabel(effectiveMime, name)
 

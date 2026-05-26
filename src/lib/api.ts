@@ -814,6 +814,24 @@ export async function uploadThumbnail(fileId: string, blob: Blob): Promise<void>
   }
 }
 
+export async function uploadThumbnailLarge(fileId: string, blob: Blob): Promise<void> {
+  const token = getToken()
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/octet-stream',
+  }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
+  const res = await fetch(`${API_URL}/api/v1/files/${fileId}/thumbnail/large`, {
+    method: 'PUT',
+    headers,
+    body: blob,
+    credentials: 'include',
+  })
+  if (!res.ok) {
+    throw new ApiError(res.statusText, res.status)
+  }
+}
+
 export async function getSnapshot(): Promise<SyncSnapshot> {
   return request<SyncSnapshot>('/api/v1/sync/snapshot')
 }

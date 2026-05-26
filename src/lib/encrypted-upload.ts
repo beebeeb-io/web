@@ -351,13 +351,17 @@ export async function encryptedUpload(
     }])
   }
 
-  // Generate and upload encrypted thumbnail for image files
+  // Generate and upload encrypted thumbnails for image files (medium + large)
   try {
-    const { generateThumbnail, encryptAndUploadThumbnail } = await import('./thumbnail')
+    const { generateThumbnail, encryptAndUploadThumbnail, generateLargeThumbnail, encryptAndUploadLargeThumbnail } = await import('./thumbnail')
     const thumbBlob = await generateThumbnail(file)
+    const largeThumbPromise = generateLargeThumbnail(file).then(async (largeBlob) => {
+      if (largeBlob) await encryptAndUploadLargeThumbnail(serverFileId, largeBlob, activeFileKey)
+    }).catch(() => {})
     if (thumbBlob) {
       await encryptAndUploadThumbnail(serverFileId, thumbBlob, activeFileKey)
     }
+    await largeThumbPromise
   } catch {
     // Thumbnail generation is best-effort
   }
