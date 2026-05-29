@@ -130,7 +130,7 @@ const DATE_RANGES = ['Last 7 days', 'Last 30 days', 'Last 3 months', 'All time']
 
 export function Photos() {
   const navigate = useNavigate()
-  const { getFileKey, isUnlocked, cryptoReady } = useKeys()
+  const { getFileKey, getMasterKey, isUnlocked, cryptoReady } = useKeys()
   const { showToast } = useToast()
   const { planDetails } = useDriveData()
   const planSlug = planDetails.subscription?.plan ?? 'free'
@@ -314,7 +314,7 @@ export function Photos() {
     const abortController = new AbortController()
     uploadAbortRef.current.set(uploadId, abortController)
     try {
-      await encryptedUpload(file, fileId, fileKey, undefined, (p) => {
+      await encryptedUpload(file, fileId, fileKey, getMasterKey(), undefined, (p) => {
         setUploads((prev) => prev.map((u) => u.id === uploadId ? {
           ...u,
           stage: p.stage,

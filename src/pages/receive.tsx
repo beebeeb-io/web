@@ -94,7 +94,7 @@ export function Receive() {
   const initialCode = (searchParams.get('code') ?? '').replace(/\D/g, '').slice(0, 6)
 
   const { user } = useAuth()
-  const { isUnlocked, getFileKey } = useKeys()
+  const { isUnlocked, getFileKey, getMasterKey } = useKeys()
 
   const [phase, setPhase] = useState<Phase>('idle')
   const [errorText, setErrorText] = useState<string | null>(null)
@@ -241,7 +241,7 @@ export function Receive() {
       const file = new File([savedBlob], cleanName, {
         type: savedBlob.type || 'application/octet-stream',
       })
-      await encryptedUpload(file, fileId, fileKey, undefined, undefined, undefined, undefined, undefined, getFileKey)
+      await encryptedUpload(file, fileId, fileKey, getMasterKey(), undefined, undefined, undefined, undefined, undefined, getFileKey)
       setVaultSavePhase('saved')
     } catch (err) {
       setVaultSaveError(
@@ -249,7 +249,7 @@ export function Receive() {
       )
       setVaultSavePhase('error')
     }
-  }, [savedBlob, savedFilename, user, isUnlocked, getFileKey])
+  }, [savedBlob, savedFilename, user, isUnlocked, getFileKey, getMasterKey])
 
   const sasWords = useMemo(() => {
     if (!sessionId || !senderPk || !receiverPk) return null

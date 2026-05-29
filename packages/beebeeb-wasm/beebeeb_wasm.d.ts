@@ -2,9 +2,86 @@
 /* eslint-disable */
 
 /**
+ * Stateful, single-file streaming encryptor for the web client.
+ *
+ * WASM is single-threaded and cannot `Read` a browser `File`, so the web
+ * client uses the **push** form of the shared `beebeeb-core` primitive: JS
+ * slices the `Blob` and hands each plaintext chunk to [`push_chunk`], and core
+ * encrypts it. This converges the web client onto the exact same crypto loop
+ * (and wire format) as the CLI/desktop/mobile clients — the per-file key is
+ * derived **once** inside core and never recombined in JS.
+ *
+ * Lifecycle: construct with [`new`](Self::new) (or
+ * [`withChunkSize`](Self::with_chunk_size) when the server dictates the chunk
+ * size), call [`pushChunk`](Self::push_chunk) once per slice in order, then
+ * [`finish`](Self::finish) to run the integrity guard and get the summary.
+ *
+ * This is the first stateful `#[wasm_bindgen]` struct in the crate: it proves
+ * the constructor + `&mut self` method + by-value `self` (consuming `finish`)
+ * pattern across the JS boundary.
+ */
+export class WasmChunkEncryptor {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Consume the encryptor, run the integrity guard (all planned chunks
+     * emitted and the ciphertext total matches), and return the summary
+     * `{ chunk_count, total_plaintext, total_ciphertext, chunk_size_bytes }`.
+     * Errors if the source shrank (fewer chunks/bytes than planned).
+     */
+    finish(): any;
+    /**
+     * Create a push-form encryptor whose chunk plan is derived from
+     * `file_size` + `profile` (the client ladder).
+     *
+     * `master_key` must be exactly 32 bytes; it is copied into a `MasterKey`
+     * (zeroized on drop). `profile` is one of `"desktop"`, `"web"`, `"mobile"`,
+     * `"backup"`.
+     */
+    constructor(master_key: Uint8Array, file_id: string, file_size: bigint, profile: string);
+    /**
+     * Encrypt one plaintext chunk and return the full wire frame
+     * (`nonce(12) || ciphertext || tag(16)`) for JS to PUT directly — no
+     * recombination needed on the JS side. Errors if more chunks are pushed
+     * than the plan allows.
+     */
+    pushChunk(plaintext: Uint8Array): Uint8Array;
+    /**
+     * Create a push-form encryptor with an explicit, server-dictated chunk
+     * size. Use this when the v2 upload-init response overrode `chunk_size`
+     * so the client plan can't diverge from what the server expects.
+     */
+    static withChunkSize(master_key: Uint8Array, file_id: string, file_size: bigint, chunk_size_bytes: bigint): WasmChunkEncryptor;
+    /**
+     * Planned number of chunks for this file.
+     */
+    readonly chunkCount: number;
+    /**
+     * Plaintext chunk size in bytes (the last chunk may be smaller). Returned
+     * as a JS number (`f64`) to avoid `BigInt` at the boundary.
+     */
+    readonly chunkSize: number;
+    /**
+     * How many chunks have been pushed so far.
+     */
+    readonly chunksEmitted: number;
+    /**
+     * Expected total ciphertext bytes (`file_size + 28 * chunk_count`), the
+     * value the client passes to `upload_init` as the total. Returned as a JS
+     * number (`f64`).
+     */
+    readonly expectedTotalCiphertext: number;
+}
+
+/**
  * Compute recovery check from master key. Returns 32-byte `Uint8Array`.
  */
 export function compute_recovery_check(master_key: Uint8Array): Uint8Array;
+
+/**
+ * Decompress gzip-compressed data. Returns `Uint8Array`.
+ */
+export function decompress_gzip(data: Uint8Array): Uint8Array;
 
 /**
  * Decrypt a ciphertext chunk that was produced by `encrypt_chunk`.
@@ -65,6 +142,14 @@ export function encrypt_chunk(key: Uint8Array, plaintext: Uint8Array): any;
 export function encrypt_metadata(key: Uint8Array, metadata: string): any;
 
 /**
+ * Generate a recovery kit PDF with a title, recovery words, and metadata.
+ *
+ * `metadata_keys` and `metadata_values` are parallel arrays of key-value pairs.
+ * Returns the raw PDF bytes as `Uint8Array`.
+ */
+export function generate_recovery_pdf(title: string, words: any, metadata_keys: any, metadata_values: any): Uint8Array;
+
+/**
  * Generate a new 12-word BIP39 recovery phrase and the corresponding master
  * key. Returns `{ phrase: string, master_key: Uint8Array }`.
  */
@@ -79,6 +164,19 @@ export function is_previewable(mime_type?: string | null): boolean;
  * Returns `true` if the file extension indicates a previewable file.
  */
 export function is_previewable_by_extension(filename: string): boolean;
+
+/**
+ * List entries in an archive, detecting format from the filename extension.
+ * Supports `.tar`, `.gz`, `.tgz`, `.tar.gz`.
+ * Returns a JS array of `{ name: string, size: number, is_directory: boolean }`.
+ */
+export function list_archive(data: Uint8Array, filename: string): any;
+
+/**
+ * List entries in a TAR archive from raw bytes.
+ * Returns a JS array of `{ name: string, size: number, is_directory: boolean }`.
+ */
+export function list_tar_entries(data: Uint8Array): any;
 
 /**
  * Finish OPAQUE client login. Returns `{ message: Uint8Array, session_key: Uint8Array, export_key: Uint8Array }`.
@@ -153,7 +251,9 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly __wbg_wasmchunkencryptor_free: (a: number, b: number) => void;
     readonly compute_recovery_check: (a: number, b: number) => [number, number, number, number];
+    readonly decompress_gzip: (a: number, b: number) => [number, number, number, number];
     readonly decrypt_chunk: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly decrypt_chunks: (a: number, b: number, c: any) => [number, number, number, number];
     readonly decrypt_metadata: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
@@ -164,9 +264,12 @@ export interface InitOutput {
     readonly derive_x25519_public: (a: number, b: number) => [number, number, number, number];
     readonly encrypt_chunk: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly encrypt_metadata: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly generate_recovery_pdf: (a: number, b: number, c: any, d: any, e: any) => [number, number, number, number];
     readonly generate_recovery_phrase: () => [number, number, number];
     readonly is_previewable: (a: number, b: number) => number;
     readonly is_previewable_by_extension: (a: number, b: number) => number;
+    readonly list_archive: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly list_tar_entries: (a: number, b: number) => [number, number, number];
     readonly opaque_login_finish: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly opaque_login_start: (a: number, b: number) => [number, number, number];
     readonly opaque_registration_finish: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
@@ -179,6 +282,14 @@ export interface InitOutput {
     readonly plan_monthly_cost_cents: (a: number, b: number, c: bigint, d: bigint) => bigint;
     readonly recover_from_phrase: (a: number, b: number) => [number, number, number, number];
     readonly storage_format_si: (a: bigint) => [number, number];
+    readonly wasmchunkencryptor_chunkCount: (a: number) => number;
+    readonly wasmchunkencryptor_chunkSize: (a: number) => number;
+    readonly wasmchunkencryptor_chunksEmitted: (a: number) => number;
+    readonly wasmchunkencryptor_expectedTotalCiphertext: (a: number) => number;
+    readonly wasmchunkencryptor_finish: (a: number) => [number, number, number];
+    readonly wasmchunkencryptor_new: (a: number, b: number, c: number, d: number, e: bigint, f: number, g: number) => [number, number, number];
+    readonly wasmchunkencryptor_pushChunk: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly wasmchunkencryptor_withChunkSize: (a: number, b: number, c: number, d: number, e: bigint, f: bigint) => [number, number, number];
     readonly x25519_shared_secret: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;

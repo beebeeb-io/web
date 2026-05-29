@@ -10,7 +10,8 @@
 import {
   CHUNK_SIZE,
   planChunks,
-  encryptChunk,
+  startEncryptedStream,
+  startEncryptedStreamWithChunkSize,
   encryptFilename,
   serializeEncryptedBlob,
 } from './crypto'
@@ -104,6 +105,7 @@ export async function encryptedUpload(
   file: File,
   fileId: string,
   fileKey: Uint8Array,
+  masterKey: Uint8Array,
   parentId?: string,
   onProgress?: (p: UploadProgress) => void,
   resumeFileId?: string,
@@ -306,34 +308,58 @@ export async function encryptedUpload(
     })
   }
 
-  async function encryptAndUpload(index: number): Promise<void> {
-    if (skipChunks.has(index)) return
+  // ── Streaming encryption via the shared core ChunkEncryptor ───────────────
+  // Create the worker-owned encryptor now that the server has fixed the chunk
+  // plan + final file id. The per-file key is derived ONCE inside core from
+  // masterKey + serverFileId — the SAME derivation that produced `activeFileKey`
+  // — so we pass masterKey here and keep `activeFileKey` only for the metadata,
+  // thumbnail, and folder-share paths below.
+  //
+  // If the v2 server overrode the chunk size, pin the encryptor to that exact
+  // size so its internal plan can't diverge from the slices we PUT. Otherwise
+  // use the web ladder, which is identical to the `planChunks()` proposal above
+  // (both call core's `plan_chunks`), so chunk_count stays consistent with init.
+  const serverOverrodeChunkSize = chunkBytes !== fallbackPlan.chunk_size_bytes
+  const enc = serverOverrodeChunkSize
+    ? await startEncryptedStreamWithChunkSize(masterKey, serverFileId, file.size, chunkBytes)
+    : await startEncryptedStream(masterKey, serverFileId, file.size, 'web')
 
-    const start = index * chunkBytes
-    const end = Math.min(start + chunkBytes, file.size)
-    const buffer = await file.slice(start, end).arrayBuffer()
-    const plaintext = new Uint8Array(buffer)
+  try {
+    // Upload chunks sequentially so large web chunks never overlap in memory:
+    // only one plaintext slice + one ciphertext frame are alive per iteration.
+    //
+    // Push EVERY chunk in order so the encryptor's nonce/index/count stay in
+    // lockstep with finish()'s integrity guard — INCLUDING chunks the server
+    // already has on resume: we still push them to advance the stream, we just
+    // don't re-PUT them.
+    for (let i = 0; i < totalChunks; i++) {
+      if (signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError')
 
-    const encrypted = await encryptChunk(activeFileKey, plaintext)
+      const start = i * chunkBytes
+      const end = Math.min(start + chunkBytes, file.size)
+      const buffer = await file.slice(start, end).arrayBuffer()
+      // pushChunk transfers the plaintext into the worker (zero-copy) and
+      // returns the full wire frame (nonce || ciphertext || tag) to PUT directly.
+      const frame = await enc.pushChunk(new Uint8Array(buffer))
 
-    const combined = new Uint8Array(encrypted.nonce.length + encrypted.ciphertext.length)
-    combined.set(encrypted.nonce, 0)
-    combined.set(encrypted.ciphertext, encrypted.nonce.length)
+      if (skipChunks.has(i)) continue // already uploaded — pushed for alignment only
 
-    await withNetworkRetry(() => uploadChunk(serverFileId, index, combined, uploadSessionId), signal)
-    reportProgress()
-  }
+      await withNetworkRetry(() => uploadChunk(serverFileId, i, frame, uploadSessionId), signal)
+      reportProgress()
+    }
 
-  // Upload chunks sequentially so large web chunks never overlap in memory.
-  // The server-side Web profile currently caps chunks at 64 MiB; v1 fallback
-  // stays at the historical 4 MiB constant from discovery task 0126.
-  for (let i = 0; i < totalChunks; i++) {
     if (signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError')
-    if (skipChunks.has(i)) continue
-    await encryptAndUpload(i)
-  }
 
-  if (signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError')
+    // Integrity guard: confirms all planned chunks were emitted and the
+    // ciphertext total matches before we tell the server the upload is done.
+    // A shrinking/corrupt source throws here and surfaces as an upload error.
+    await enc.finish()
+  } catch (err) {
+    // Free the worker-side encryptor for aborted/failed uploads. No-op after
+    // a successful finish() (the handle is already gone).
+    await enc.dispose()
+    throw err
+  }
 
   const fileMeta = await completeUpload(serverFileId, uploadSessionId)
 

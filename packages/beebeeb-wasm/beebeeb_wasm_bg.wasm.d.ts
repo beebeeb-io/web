@@ -1,7 +1,9 @@
 /* tslint:disable */
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
+export const __wbg_wasmchunkencryptor_free: (a: number, b: number) => void;
 export const compute_recovery_check: (a: number, b: number) => [number, number, number, number];
+export const decompress_gzip: (a: number, b: number) => [number, number, number, number];
 export const decrypt_chunk: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
 export const decrypt_chunks: (a: number, b: number, c: any) => [number, number, number, number];
 export const decrypt_metadata: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
@@ -12,9 +14,12 @@ export const derive_x25519_private: (a: number, b: number) => [number, number, n
 export const derive_x25519_public: (a: number, b: number) => [number, number, number, number];
 export const encrypt_chunk: (a: number, b: number, c: number, d: number) => [number, number, number];
 export const encrypt_metadata: (a: number, b: number, c: number, d: number) => [number, number, number];
+export const generate_recovery_pdf: (a: number, b: number, c: any, d: any, e: any) => [number, number, number, number];
 export const generate_recovery_phrase: () => [number, number, number];
 export const is_previewable: (a: number, b: number) => number;
 export const is_previewable_by_extension: (a: number, b: number) => number;
+export const list_archive: (a: number, b: number, c: number, d: number) => [number, number, number];
+export const list_tar_entries: (a: number, b: number) => [number, number, number];
 export const opaque_login_finish: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
 export const opaque_login_start: (a: number, b: number) => [number, number, number];
 export const opaque_registration_finish: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
@@ -27,6 +32,14 @@ export const plan_max_extra_tb: (a: number, b: number) => bigint;
 export const plan_monthly_cost_cents: (a: number, b: number, c: bigint, d: bigint) => bigint;
 export const recover_from_phrase: (a: number, b: number) => [number, number, number, number];
 export const storage_format_si: (a: bigint) => [number, number];
+export const wasmchunkencryptor_chunkCount: (a: number) => number;
+export const wasmchunkencryptor_chunkSize: (a: number) => number;
+export const wasmchunkencryptor_chunksEmitted: (a: number) => number;
+export const wasmchunkencryptor_expectedTotalCiphertext: (a: number) => number;
+export const wasmchunkencryptor_finish: (a: number) => [number, number, number];
+export const wasmchunkencryptor_new: (a: number, b: number, c: number, d: number, e: bigint, f: number, g: number) => [number, number, number];
+export const wasmchunkencryptor_pushChunk: (a: number, b: number, c: number) => [number, number, number, number];
+export const wasmchunkencryptor_withChunkSize: (a: number, b: number, c: number, d: number, e: bigint, f: bigint) => [number, number, number];
 export const x25519_shared_secret: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const __wbindgen_malloc: (a: number, b: number) => number;
 export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;

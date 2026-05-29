@@ -123,7 +123,7 @@ function inferMimeFromName(name: string): string | null {
 export function Drive() {
   const { isFrozen } = useFrozen()
   const { user } = useAuth()
-  const { getFileKey, isUnlocked, cryptoReady, cryptoError } = useKeys()
+  const { getFileKey, getMasterKey, isUnlocked, cryptoReady, cryptoError } = useKeys()
   const { usage: driveUsage, incomingCount: driveIncomingCount, refreshUsage: refreshDriveUsage, setOffline: setDriveOffline } = useDriveData()
   const { indexFile, unindexFile } = useSearchIndex()
   const sync = useSync()
@@ -764,6 +764,7 @@ export function Drive() {
           file,
           match.fileId,
           fileKey,
+          getMasterKey(),
           match.parentId ?? undefined,
           (p) => {
             if (p.stage === 'Uploading' && !resumeStartedAt) {
@@ -1038,7 +1039,7 @@ export function Drive() {
 
     try {
       let uploadStartedAt: number | undefined
-      const uploadedFile = await encryptedUpload(file, fileId, fileKey, currentParentId, (p) => {
+      const uploadedFile = await encryptedUpload(file, fileId, fileKey, getMasterKey(), currentParentId, (p) => {
         if (p.stage === 'Uploading' && !uploadStartedAt) {
           uploadStartedAt = Date.now()
         }
@@ -1271,7 +1272,7 @@ export function Drive() {
         const fileId = crypto.randomUUID()
         const fileKey = await getFileKey(fileId)
 
-        const uploadedFile = await encryptedUpload(ff.file, fileId, fileKey, parentId, (p) => {
+        const uploadedFile = await encryptedUpload(ff.file, fileId, fileKey, getMasterKey(), parentId, (p) => {
           // Blend per-file progress into overall progress
           const fileProgress = p.progress / 100
           const overallProgress = Math.round(

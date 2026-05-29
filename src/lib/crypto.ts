@@ -126,6 +126,17 @@ async function withProxy<T>(
  */
 async function maybeRestart(): Promise<void> {
   if (restartPromise || !workerProxy) return
+  // LIVE-ENCRYPTOR GUARD: never recycle the worker while a streaming upload
+  // owns an encryptor. A `WasmChunkEncryptor` is a pointer into THIS worker's
+  // linear memory; terminating the worker mid-upload would orphan it and break
+  // finish()'s integrity guard. Check before taking the restart lock.
+  try {
+    if ((await workerProxy.liveEncryptorCount()) > 0) return
+  } catch (err) {
+    // Worker went away (terminate raced us) — bail; the next op lazily re-inits.
+    console.warn('[crypto] liveEncryptorCount failed', err)
+    return
+  }
   let bytes = 0
   try {
     // Direct call (not via withProxy) so the memory probe itself doesn't
@@ -486,6 +497,110 @@ export async function planChunks(
   profile: 'desktop' | 'web' | 'mobile' | 'backup' = 'web',
 ): Promise<{ chunk_size_bytes: number; chunk_count: number }> {
   return withProxy((p) => p.planChunks(fileSizeBytes, profile))
+}
+
+// ─── Streaming encryption (shared core ChunkEncryptor) ──────────────────────
+//
+// The web client adopts the same streaming primitive as CLI/desktop/mobile via
+// the WASM `WasmChunkEncryptor`. Because the encryptor instance is a pointer
+// into the worker's linear memory, it CANNOT be proxied directly through
+// Comlink — instead the worker keeps it in a registry and hands back an opaque
+// numeric handle. `StreamingEncryptor` below mirrors that handle on the main
+// thread: every method round-trips the handle to the worker, and the WASM
+// instance itself never crosses the boundary.
+
+export interface ChunkEncryptorSummary {
+  chunk_count: number
+  total_plaintext: number
+  total_ciphertext: number
+  chunk_size_bytes: number
+}
+
+export type ChunkProfile = 'desktop' | 'web' | 'mobile' | 'backup'
+
+/**
+ * Main-thread proxy over a worker-owned `WasmChunkEncryptor`.
+ *
+ * One handle = one file, single consumer. Push plaintext slices in order via
+ * `pushChunk`, then call `finish()` exactly once to run the integrity guard
+ * and get the summary. On an aborted/failed upload, call `dispose()` to free
+ * the worker-side instance. After `finish()` the handle is already gone, so a
+ * follow-up `dispose()` is a harmless no-op.
+ */
+export class StreamingEncryptor {
+  #handle: number
+  #consumed = false
+
+  constructor(handle: number) {
+    this.#handle = handle
+  }
+
+  /**
+   * Encrypt one plaintext slice and return the full wire frame
+   * (`nonce || ciphertext || tag`) ready to PUT. The plaintext buffer is
+   * transferred to the worker (zero-copy) — do not reuse it afterward.
+   */
+  async pushChunk(plaintext: Uint8Array): Promise<Uint8Array> {
+    return withProxy((p) =>
+      p.encryptorPushChunk(this.#handle, Comlink.transfer(plaintext, [plaintext.buffer])),
+    )
+  }
+
+  /**
+   * Run the core integrity guard and return the summary. Consumes the handle.
+   * Throws if the source shrank (fewer chunks/bytes than the plan).
+   */
+  async finish(): Promise<ChunkEncryptorSummary> {
+    this.#consumed = true
+    return withProxy((p) => p.encryptorFinish(this.#handle))
+  }
+
+  /**
+   * Best-effort release for aborted/failed uploads. Never throws; safe to call
+   * after `finish()` (the handle is already gone on the worker side).
+   */
+  async dispose(): Promise<void> {
+    if (this.#consumed) return
+    this.#consumed = true
+    try {
+      await withProxy((p) => p.encryptorDispose(this.#handle))
+    } catch (err) {
+      console.warn('[crypto] encryptor dispose failed', err)
+    }
+  }
+}
+
+/**
+ * Start a streaming encryptor whose chunk plan is derived from `fileSize` +
+ * `profile` (the client ladder). Use when the chunk size was NOT overridden by
+ * the server. The per-file key is derived inside core from `masterKey` +
+ * `fileId` — pass the SAME `fileId` the key will later be derived from.
+ */
+export async function startEncryptedStream(
+  masterKey: Uint8Array,
+  fileId: string,
+  fileSize: number,
+  profile: ChunkProfile = 'web',
+): Promise<StreamingEncryptor> {
+  const handle = await withProxy((p) => p.createEncryptor(masterKey, fileId, fileSize, profile))
+  return new StreamingEncryptor(handle)
+}
+
+/**
+ * Start a streaming encryptor with an explicit, server-dictated chunk size.
+ * Use when the v2 upload-init response overrode `chunk_size` so the client plan
+ * cannot diverge from what the server expects.
+ */
+export async function startEncryptedStreamWithChunkSize(
+  masterKey: Uint8Array,
+  fileId: string,
+  fileSize: number,
+  chunkSizeBytes: number,
+): Promise<StreamingEncryptor> {
+  const handle = await withProxy((p) =>
+    p.createEncryptorWithChunkSize(masterKey, fileId, fileSize, chunkSizeBytes),
+  )
+  return new StreamingEncryptor(handle)
 }
 
 // ─── Helpers ────────────────────────────────────────
