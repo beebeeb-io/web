@@ -46,6 +46,7 @@ export type IconName =
   | 'camera'
   | 'scan'
   | 'pin'
+  | 'flag'
 
 interface IconProps extends SVGProps<SVGSVGElement> {
   name: IconName
@@ -136,9 +137,30 @@ const paths: Record<IconName, string> = {
   // Pin: Lucide-style pushpin — angled pin with shaft line to corner
   pin:
     'M12 17v5M8 17h8M12 3v5M5 8h14a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z',
+  // Flag: Lucide-style pennant on a pole — used by the admin "Feature flags"
+  // nav item and the pool integrity-issue indicator.
+  flag: 'M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1zM4 22v-7',
 }
 
 export function Icon({ name, size = 24, ...rest }: IconProps) {
+  // Look up via a widened type so an unknown name (e.g. one passed as a plain
+  // string from a nav/data config that bypasses the IconName union) yields
+  // `undefined` instead of a typed `string`.
+  const d = (paths as Record<string, string | undefined>)[name]
+
+  // A missing glyph is cosmetic — it must NEVER crash the whole app. Render a
+  // sized, empty svg (preserves layout) rather than throwing on
+  // `paths[name].split(...)`. Caused a full-page ErrorBoundary crash on the
+  // admin dashboard 2026-05-29 when the 'flag' icon name had no path.
+  if (d == null) {
+    if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV) {
+      console.warn(`[Icon] unknown icon name "${String(name)}" — add it to icons.tsx`)
+    }
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" {...rest} />
+    )
+  }
+
   return (
     <svg
       width={size}
@@ -151,12 +173,12 @@ export function Icon({ name, size = 24, ...rest }: IconProps) {
       strokeLinejoin="round"
       {...rest}
     >
-      {paths[name].split('z').length > 1
-        ? paths[name]
+      {d.split('z').length > 1
+        ? d
             .split(/(?<=z)/g)
             .filter(Boolean)
-            .map((d, i) => <path key={i} d={d.trim()} />)
-        : <path d={paths[name]} />}
+            .map((seg, i) => <path key={i} d={seg.trim()} />)
+        : <path d={d} />}
     </svg>
   )
 }
