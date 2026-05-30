@@ -115,6 +115,12 @@ export function derive_file_key(master_key: Uint8Array, file_id: Uint8Array): Ui
 export function derive_master_key(password: string, salt: Uint8Array): any;
 
 /**
+ * Derive the per-request private-key-wrapping key from the owner's master key.
+ * `master_key` is 32 bytes, `request_id` is arbitrary bytes. Returns 32-byte `Uint8Array`.
+ */
+export function derive_request_wrap_key(master_key: Uint8Array, request_id: Uint8Array): Uint8Array;
+
+/**
  * Derive a share key from a shared secret + file ID. Returns 32-byte `Uint8Array`.
  */
 export function derive_share_key(shared_secret: Uint8Array, file_id: Uint8Array): Uint8Array;
@@ -199,6 +205,12 @@ export function opaque_registration_finish(client_state: Uint8Array, password: U
 export function opaque_registration_start(password: Uint8Array): any;
 
 /**
+ * Open a sealed request upload (owner decrypt path). Recovers the content key.
+ * `r_priv` and `e_pub` are 32 bytes; `file_id` is arbitrary bytes. Returns 32-byte `Uint8Array`.
+ */
+export function open_request_upload(r_priv: Uint8Array, e_pub: Uint8Array, file_id: Uint8Array, wrapped_key: Uint8Array): Uint8Array;
+
+/**
  * Return the base storage quota (in bytes) for a plan slug.
  */
 export function plan_base_storage_bytes(plan_slug: string): bigint;
@@ -238,9 +250,27 @@ export function plan_monthly_cost_cents(plan_slug: string, extra_tb: bigint, ext
 export function recover_from_phrase(phrase: string): Uint8Array;
 
 /**
+ * Seal a content key to a request's public key (anonymous uploader path).
+ * `r_pub` and `content_key` are 32 bytes; `file_id` is arbitrary bytes.
+ * Returns `{ e_pub: Uint8Array, wrapped_key: Uint8Array }`.
+ */
+export function seal_to_request(r_pub: Uint8Array, file_id: Uint8Array, content_key: Uint8Array): any;
+
+/**
  * Format a byte count as a human-readable SI string (e.g. "5.0 TB").
  */
 export function storage_format_si(bytes: bigint): string;
+
+/**
+ * Unwrap a request's X25519 private key. Returns 32-byte `Uint8Array`.
+ */
+export function unwrap_request_private(master_key: Uint8Array, request_id: Uint8Array, wrapped: Uint8Array, nonce: Uint8Array): Uint8Array;
+
+/**
+ * Wrap a request's X25519 private key under the owner's master key.
+ * Returns `{ wrapped: Uint8Array, nonce: Uint8Array }`.
+ */
+export function wrap_request_private(master_key: Uint8Array, request_id: Uint8Array, r_priv: Uint8Array): any;
 
 /**
  * Compute X25519 shared secret for sharing. Returns 32-byte `Uint8Array`.
@@ -252,53 +282,55 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_wasmchunkencryptor_free: (a: number, b: number) => void;
-    readonly compute_recovery_check: (a: number, b: number) => [number, number, number, number];
-    readonly decompress_gzip: (a: number, b: number) => [number, number, number, number];
-    readonly decrypt_chunk: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
-    readonly decrypt_chunks: (a: number, b: number, c: any) => [number, number, number, number];
-    readonly decrypt_metadata: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
-    readonly derive_file_key: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly derive_master_key: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly derive_share_key: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly derive_x25519_private: (a: number, b: number) => [number, number, number, number];
-    readonly derive_x25519_public: (a: number, b: number) => [number, number, number, number];
-    readonly encrypt_chunk: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly encrypt_metadata: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly generate_recovery_pdf: (a: number, b: number, c: any, d: any, e: any) => [number, number, number, number];
-    readonly generate_recovery_phrase: () => [number, number, number];
+    readonly compute_recovery_check: (a: number, b: number, c: number) => void;
+    readonly decompress_gzip: (a: number, b: number, c: number) => void;
+    readonly decrypt_chunk: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly decrypt_chunks: (a: number, b: number, c: number, d: number) => void;
+    readonly decrypt_metadata: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly derive_file_key: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly derive_master_key: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly derive_request_wrap_key: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly derive_share_key: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly derive_x25519_private: (a: number, b: number, c: number) => void;
+    readonly derive_x25519_public: (a: number, b: number, c: number) => void;
+    readonly encrypt_chunk: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly encrypt_metadata: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly generate_recovery_pdf: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly generate_recovery_phrase: (a: number) => void;
     readonly is_previewable: (a: number, b: number) => number;
     readonly is_previewable_by_extension: (a: number, b: number) => number;
-    readonly list_archive: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly list_tar_entries: (a: number, b: number) => [number, number, number];
-    readonly opaque_login_finish: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly opaque_login_start: (a: number, b: number) => [number, number, number];
-    readonly opaque_registration_finish: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
-    readonly opaque_registration_start: (a: number, b: number) => [number, number, number];
+    readonly list_archive: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly list_tar_entries: (a: number, b: number, c: number) => void;
+    readonly opaque_login_finish: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly opaque_login_start: (a: number, b: number, c: number) => void;
+    readonly opaque_registration_finish: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly opaque_registration_start: (a: number, b: number, c: number) => void;
+    readonly open_request_upload: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly plan_base_storage_bytes: (a: number, b: number) => bigint;
     readonly plan_can_add_storage: (a: number, b: number) => number;
-    readonly plan_chunks: (a: bigint, b: number, c: number) => [number, number, number];
+    readonly plan_chunks: (a: number, b: bigint, c: number, d: number) => void;
     readonly plan_effective_quota: (a: number, b: number, c: bigint, d: bigint) => bigint;
     readonly plan_max_extra_tb: (a: number, b: number) => bigint;
     readonly plan_monthly_cost_cents: (a: number, b: number, c: bigint, d: bigint) => bigint;
-    readonly recover_from_phrase: (a: number, b: number) => [number, number, number, number];
-    readonly storage_format_si: (a: bigint) => [number, number];
+    readonly recover_from_phrase: (a: number, b: number, c: number) => void;
+    readonly seal_to_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly storage_format_si: (a: number, b: bigint) => void;
+    readonly unwrap_request_private: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly wasmchunkencryptor_chunkCount: (a: number) => number;
     readonly wasmchunkencryptor_chunkSize: (a: number) => number;
     readonly wasmchunkencryptor_chunksEmitted: (a: number) => number;
     readonly wasmchunkencryptor_expectedTotalCiphertext: (a: number) => number;
-    readonly wasmchunkencryptor_finish: (a: number) => [number, number, number];
-    readonly wasmchunkencryptor_new: (a: number, b: number, c: number, d: number, e: bigint, f: number, g: number) => [number, number, number];
-    readonly wasmchunkencryptor_pushChunk: (a: number, b: number, c: number) => [number, number, number, number];
-    readonly wasmchunkencryptor_withChunkSize: (a: number, b: number, c: number, d: number, e: bigint, f: bigint) => [number, number, number];
-    readonly x25519_shared_secret: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly __wbindgen_malloc: (a: number, b: number) => number;
-    readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
-    readonly __wbindgen_exn_store: (a: number) => void;
-    readonly __externref_table_alloc: () => number;
-    readonly __wbindgen_externrefs: WebAssembly.Table;
-    readonly __externref_table_dealloc: (a: number) => void;
-    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
-    readonly __wbindgen_start: () => void;
+    readonly wasmchunkencryptor_finish: (a: number, b: number) => void;
+    readonly wasmchunkencryptor_new: (a: number, b: number, c: number, d: number, e: number, f: bigint, g: number, h: number) => void;
+    readonly wasmchunkencryptor_pushChunk: (a: number, b: number, c: number, d: number) => void;
+    readonly wasmchunkencryptor_withChunkSize: (a: number, b: number, c: number, d: number, e: number, f: bigint, g: bigint) => void;
+    readonly wrap_request_private: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly x25519_shared_secret: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly __wbindgen_export: (a: number, b: number) => number;
+    readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
+    readonly __wbindgen_export3: (a: number) => void;
+    readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
+    readonly __wbindgen_export4: (a: number, b: number, c: number) => void;
 }
 
 export type SyncInitInput = BufferSource | WebAssembly.Module;

@@ -426,6 +426,70 @@ const cryptoWorker = {
   liveEncryptorCount(): number {
     return liveEncryptors.size
   },
+
+  // ─── File requests (sealed-box / ECIES per request) ──────────────────────
+  // Thin pass-throughs to the core `file_request` bindings. No crypto is
+  // implemented here — the seal/open/wrap/unwrap logic all lives in
+  // beebeeb-core::file_request and is byte-identical across every client.
+
+  /** Derive the X25519 public key for a 32-byte private key (used to derive
+   *  R_pub from R_priv when rebuilding a request link). */
+  async deriveX25519PublicFromPrivate(privateKey: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.derive_x25519_public(privateKey) as Uint8Array
+  },
+
+  /** Wrap a request's X25519 private key under the owner's master key.
+   *  Returns { wrapped, nonce }. */
+  async wrapRequestPrivate(
+    masterKey: Uint8Array,
+    requestId: Uint8Array,
+    rPriv: Uint8Array,
+  ): Promise<{ wrapped: Uint8Array; nonce: Uint8Array }> {
+    const wasm = await ensureWasm()
+    const result = wasm.wrap_request_private(masterKey, requestId, rPriv) as {
+      wrapped: Uint8Array
+      nonce: Uint8Array
+    }
+    return { wrapped: result.wrapped, nonce: result.nonce }
+  },
+
+  /** Unwrap a request's X25519 private key. Returns the 32-byte R_priv. */
+  async unwrapRequestPrivate(
+    masterKey: Uint8Array,
+    requestId: Uint8Array,
+    wrapped: Uint8Array,
+    nonce: Uint8Array,
+  ): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.unwrap_request_private(masterKey, requestId, wrapped, nonce) as Uint8Array
+  },
+
+  /** Seal a content key to a request public key (anonymous uploader path).
+   *  Returns { e_pub, wrapped_key } — a fresh ephemeral keypair is generated
+   *  internally and its private half discarded. */
+  async sealToRequest(
+    rPub: Uint8Array,
+    fileId: Uint8Array,
+    contentKey: Uint8Array,
+  ): Promise<{ e_pub: Uint8Array; wrapped_key: Uint8Array }> {
+    const wasm = await ensureWasm()
+    return wasm.seal_to_request(rPub, fileId, contentKey) as {
+      e_pub: Uint8Array
+      wrapped_key: Uint8Array
+    }
+  },
+
+  /** Open a sealed request upload (owner decrypt path). Recovers the content key. */
+  async openRequestUpload(
+    rPriv: Uint8Array,
+    ePub: Uint8Array,
+    fileId: Uint8Array,
+    wrappedKey: Uint8Array,
+  ): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.open_request_upload(rPriv, ePub, fileId, wrappedKey) as Uint8Array
+  },
 }
 
 export type CryptoWorker = typeof cryptoWorker

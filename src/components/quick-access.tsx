@@ -127,7 +127,7 @@ export function QuickAccess() {
   const [pinnedIds, setPinnedIds] = useState<string[]>(() => contextPinnedIds.slice(0, 10))
   const [folders, setFolders] = useState<PinnedFolder[]>([])
   const [folderColorDots, setFolderColorDots] = useState<Record<string, string | null>>({})
-  const { getFileKey, isUnlocked } = useKeys()
+  const { getFileKeyForFile, isUnlocked } = useKeys()
   const location = useLocation()
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
@@ -154,7 +154,7 @@ export function QuickAccess() {
           if (cancelled) return
           try {
             const file = await getFile(id)
-            const fileKey = await getFileKey(id)
+            const fileKey = await getFileKeyForFile(file)
             const { name } = await decryptFileMetadata(fileKey, file.name_encrypted)
             if (name !== 'Encrypted file') {
               resolved = name
@@ -177,7 +177,7 @@ export function QuickAccess() {
     }
     loadNames()
     return () => { cancelled = true }
-  }, [pinnedIds, isUnlocked, getFileKey])
+  }, [pinnedIds, isUnlocked, getFileKeyForFile])
 
   // Load color dots whenever the folder list changes
   useEffect(() => {

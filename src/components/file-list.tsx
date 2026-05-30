@@ -201,7 +201,7 @@ export function FileList({
   parentId,
   onRefresh,
 }: FileListProps) {
-  const { getFileKey, isUnlocked } = useKeys()
+  const { getFileKey, getFileKeyForFile, isUnlocked } = useKeys()
   const { showToast } = useToast()
 
   // ─── Active-share lookup ───────────────────────────
@@ -322,7 +322,7 @@ export function FileList({
         return { id: file.id, status: 'plaintext', name: file.name_encrypted }
       }
       try {
-        const fileKey = await getFileKey(file.id)
+        const fileKey = await getFileKeyForFile(file)
         const { nonce, ciphertext } = parseEncryptedBlob(file.name_encrypted)
         return { id: file.id, status: 'ok', fileKey, nonce, ciphertext }
       } catch (err) {
@@ -411,7 +411,7 @@ export function FileList({
     }
     decryptAll()
     return () => { cancelled = true }
-  }, [files, isUnlocked, getFileKey, externalDecryptedNames])
+  }, [files, isUnlocked, getFileKeyForFile, externalDecryptedNames])
 
   useEffect(() => {
     onDecryptedNamesChange?.(decryptedNames)
@@ -899,7 +899,9 @@ export function FileList({
       return
     }
     try {
-      const fileKey = await getFileKey(file.id)
+      // Use the content key for request-uploaded files so the renamed name stays
+      // decryptable via the same (request-key) path that reads it.
+      const fileKey = await getFileKeyForFile(file)
       const enc = await encryptFilename(fileKey, newName)
       const nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
       await updateFile(file.id, { name_encrypted: nameEncrypted })

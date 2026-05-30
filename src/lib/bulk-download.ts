@@ -68,7 +68,7 @@ interface QueueEntry {
  */
 async function expandToFiles(
   items: DriveFile[],
-  getFileKey: (id: string) => Promise<Uint8Array>,
+  getFileKeyForFile: (file: DriveFile) => Promise<Uint8Array>,
   prefix = '',
 ): Promise<QueueEntry[]> {
   const queue: QueueEntry[] = []
@@ -79,10 +79,11 @@ async function expandToFiles(
       continue
     }
 
-    // Decrypt folder name for the path
+    // Decrypt folder name for the path (folders never use the request-key path,
+    // but getFileKeyForFile handles that branch transparently).
     let folderName = `folder-${item.id.slice(0, 8)}`
     try {
-      const key = await getFileKey(item.id)
+      const key = await getFileKeyForFile(item)
       const { name } = await decryptFileMetadata(key, item.name_encrypted)
       folderName = name
     } catch {
@@ -94,7 +95,7 @@ async function expandToFiles(
     const childPrefix = `${prefix}${safeName}/`
 
     const children = await listFiles(item.id).catch(() => [])
-    const nested = await expandToFiles(children, getFileKey, childPrefix)
+    const nested = await expandToFiles(children, getFileKeyForFile, childPrefix)
     queue.push(...nested)
   }
 
@@ -273,18 +274,19 @@ function createBlobSink(filename: string, mimeType: string): ZipSink {
  * - Size > 1 GiB: `sizeWarning: true` in the result (caller shows warning).
  *
  * @param items      - DriveFile objects (may include folders)
- * @param getFileKey - async function that returns the decryption key for a file ID
+ * @param getFileKeyForFile - async function that returns the decryption key for a
+ *                            DriveFile (handles the request-key path for received files)
  * @param options    - progress callback and output filename
  */
 export async function downloadAsZip(
   items: DriveFile[],
-  getFileKey: (fileId: string) => Promise<Uint8Array>,
+  getFileKeyForFile: (file: DriveFile) => Promise<Uint8Array>,
   options: BulkDownloadOptions = {},
 ): Promise<BulkDownloadResult> {
   const { onProgress, zipFilename = 'beebeeb-files.zip' } = options
 
   // ── Expand folders to a flat file list ───────────────────────────────────
-  const entries = await expandToFiles(items, getFileKey)
+  const entries = await expandToFiles(items, getFileKeyForFile)
 
   if (entries.length === 0) {
     return { errorCount: 0, sizeWarning: false }
@@ -380,7 +382,7 @@ export async function downloadAsZip(
     onProgress?.(i, entries.length, fallbackName)
 
     try {
-      const key = await getFileKey(file.id)
+      const key = await getFileKeyForFile(file)
       const { plaintext, filename } = await decryptToBlob(
         file.id,
         key,

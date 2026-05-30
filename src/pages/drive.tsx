@@ -123,7 +123,7 @@ function inferMimeFromName(name: string): string | null {
 export function Drive() {
   const { isFrozen } = useFrozen()
   const { user } = useAuth()
-  const { getFileKey, getMasterKey, isUnlocked, cryptoReady, cryptoError } = useKeys()
+  const { getFileKey, getMasterKey, getFileKeyForFile, isUnlocked, cryptoReady, cryptoError } = useKeys()
   const { usage: driveUsage, incomingCount: driveIncomingCount, refreshUsage: refreshDriveUsage, setOffline: setDriveOffline } = useDriveData()
   const { indexFile, unindexFile } = useSearchIndex()
   const sync = useSync()
@@ -1350,7 +1350,7 @@ export function Drive() {
     if (!isUnlocked || !cryptoReady || file.is_folder) return
 
     try {
-      const fileKey = await getFileKey(file.id)
+      const fileKey = await getFileKeyForFile(file)
       await encryptedDownload(
         file.id,
         fileKey,
@@ -1851,7 +1851,7 @@ export function Drive() {
     try {
       const { errorCount } = await downloadAsZip(
         selectedItems,
-        getFileKey,
+        getFileKeyForFile,
         {
           onProgress: (done, tot) => setBulkZipProgress({ done, total: tot }),
           zipFilename: `beebeeb-files-${new Date().toISOString().slice(0, 10)}.zip`,
