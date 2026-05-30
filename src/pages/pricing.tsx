@@ -40,7 +40,7 @@ const faqItems: FaqItem[] = [
   },
   {
     q: 'Where exactly is my data stored?',
-    a: 'All data is stored in Falkenstein, Germany — inside the EU, under GDPR. Your files are end-to-end encrypted before they leave your device, so even we can only ever hold encrypted blobs.',
+    a: 'Today, all data is stored in Falkenstein, Germany — inside the EU, under GDPR. More EU regions (Helsinki and Ede) are coming soon. Either way, your files are end-to-end encrypted before they leave your device, so we only ever hold encrypted blobs.',
   },
   {
     q: 'Do you support SEPA, cards, and invoicing?',

@@ -20,10 +20,13 @@ const FALLBACK_REGIONS: AvailableRegion[] = [{
 }]
 
 function countryFromCity(city: string): string {
-  // Only Falkenstein is a live region today (see docs/canon/data-residency.md).
-  // Add entries here only when a new region actually goes live.
+  // Falkenstein is live; Helsinki + Ede are roadmap regions (activate on S3).
+  // See docs/canon/data-residency.md. Add a city here when it can appear in
+  // the region list (live or coming-soon).
   const map: Record<string, string> = {
     falkenstein: 'Germany',
+    helsinki: 'Finland',
+    ede: 'Netherlands',
   }
   return map[city.toLowerCase()] ?? ''
 }
