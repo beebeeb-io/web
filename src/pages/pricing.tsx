@@ -15,7 +15,7 @@ const fallbackPlans = PRICING_PAGE_PLANS
 
 const trustPoints: [string, string, string][] = [
   ['shield', 'All plans E2E encrypted', 'AES-256-GCM · keys never leave your device'],
-  ['cloud', 'EU-only infrastructure', 'Your choice: FRA · AMS · PAR'],
+  ['cloud', 'EU-only infrastructure', 'Stored in Falkenstein, Germany'],
   ['users', '30-day refund', 'No questions, no retention calls'],
   ['key', 'Open-source client apps', 'Audit the code · GitHub'],
 ]
@@ -40,7 +40,7 @@ const faqItems: FaqItem[] = [
   },
   {
     q: 'Where exactly is my data stored?',
-    a: 'You choose your region at signup: Falkenstein (Hetzner), Helsinki (Hetzner), or Ede (coming soon). All EU. Your data never leaves that region. All operators are EU-incorporated with no US subsidiaries.',
+    a: 'All data is stored in Falkenstein, Germany — inside the EU, under GDPR. Your files are end-to-end encrypted before they leave your device, so even we can only ever hold encrypted blobs.',
   },
   {
     q: 'Do you support SEPA, cards, and invoicing?',
