@@ -62,11 +62,17 @@ async function decryptIndex(data: Uint8Array, masterKey: Uint8Array): Promise<Se
 }
 
 export async function fetchIndex(masterKey: Uint8Array): Promise<SearchIndex | null> {
+  // Auth via cookie (post-migration) or bearer (legacy localStorage); the
+  // server's AuthUser extractor accepts either. The early `!token` return
+  // here used to short-circuit when localStorage was empty — that left
+  // every cookie-only user unable to load their search index.
   const token = getToken()
-  if (!token) return null
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
 
   const res = await fetch(`${getApiUrl()}/api/v1/index`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    headers,
+    credentials: 'include',
   })
 
   if (res.status === 404) return null
@@ -77,20 +83,19 @@ export async function fetchIndex(masterKey: Uint8Array): Promise<SearchIndex | n
 }
 
 export async function saveIndex(index: SearchIndex, masterKey: Uint8Array, etag?: string): Promise<string | null> {
-  const token = getToken()
-  if (!token) return null
-
   const encrypted = await encryptIndex(index, masterKey)
+  const token = getToken()
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${token}`,
     'Content-Type': 'application/octet-stream',
   }
+  if (token) headers['Authorization'] = `Bearer ${token}`
   if (etag) headers['If-Match'] = etag
 
   const res = await fetch(`${getApiUrl()}/api/v1/index`, {
     method: 'PUT',
     headers,
     body: encrypted.buffer as ArrayBuffer,
+    credentials: 'include',
   })
 
   if (!res.ok) return null
