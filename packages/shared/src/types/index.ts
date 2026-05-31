@@ -80,6 +80,18 @@ export interface DriveFile {
   /** Encrypted file note. JSON string { nonce: string, ciphertext: string } (base64).
    *  Null when no note has been set. Decrypted client-side with the file key. */
   note_encrypted?: string | null
+  /** Set only on files received through a file request (the inverse-share flow).
+   *  The owner decrypts these via the request-key path (`openRequestUpload`)
+   *  instead of the normal `derive_file_key(master, file_id)` path:
+   *    content_key C = open_request_upload(R_priv, sender_ephemeral_pubkey,
+   *                                        EMPTY_FILE_REQUEST_ID, wrapped_content_key)
+   *  where R_priv is unwrapped from the owning request's wrapped_private_key.
+   *  All three are base64 (opaque server-side). Absent for normal vault files.
+   *  NOTE: the server must include these on file-list/get responses for the
+   *  owner-decrypt branch to activate — see file-request-crypto.ts. */
+  file_request_id?: string | null
+  sender_ephemeral_pubkey?: string | null
+  wrapped_content_key?: string | null
   created_at: string
   updated_at: string
 }

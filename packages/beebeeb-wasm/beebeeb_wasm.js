@@ -1,20 +1,245 @@
 /* @ts-self-types="./beebeeb_wasm.d.ts" */
 
 /**
+ * Stateful, single-file streaming encryptor for the web client.
+ *
+ * WASM is single-threaded and cannot `Read` a browser `File`, so the web
+ * client uses the **push** form of the shared `beebeeb-core` primitive: JS
+ * slices the `Blob` and hands each plaintext chunk to [`push_chunk`], and core
+ * encrypts it. This converges the web client onto the exact same crypto loop
+ * (and wire format) as the CLI/desktop/mobile clients — the per-file key is
+ * derived **once** inside core and never recombined in JS.
+ *
+ * Lifecycle: construct with [`new`](Self::new) (or
+ * [`withChunkSize`](Self::with_chunk_size) when the server dictates the chunk
+ * size), call [`pushChunk`](Self::push_chunk) once per slice in order, then
+ * [`finish`](Self::finish) to run the integrity guard and get the summary.
+ *
+ * This is the first stateful `#[wasm_bindgen]` struct in the crate: it proves
+ * the constructor + `&mut self` method + by-value `self` (consuming `finish`)
+ * pattern across the JS boundary.
+ */
+export class WasmChunkEncryptor {
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(WasmChunkEncryptor.prototype);
+        obj.__wbg_ptr = ptr;
+        WasmChunkEncryptorFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmChunkEncryptorFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmchunkencryptor_free(ptr, 0);
+    }
+    /**
+     * Planned number of chunks for this file.
+     * @returns {number}
+     */
+    get chunkCount() {
+        const ret = wasm.wasmchunkencryptor_chunkCount(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Plaintext chunk size in bytes (the last chunk may be smaller). Returned
+     * as a JS number (`f64`) to avoid `BigInt` at the boundary.
+     * @returns {number}
+     */
+    get chunkSize() {
+        const ret = wasm.wasmchunkencryptor_chunkSize(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * How many chunks have been pushed so far.
+     * @returns {number}
+     */
+    get chunksEmitted() {
+        const ret = wasm.wasmchunkencryptor_chunksEmitted(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Expected total ciphertext bytes (`file_size + 28 * chunk_count`), the
+     * value the client passes to `upload_init` as the total. Returned as a JS
+     * number (`f64`).
+     * @returns {number}
+     */
+    get expectedTotalCiphertext() {
+        const ret = wasm.wasmchunkencryptor_expectedTotalCiphertext(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * Consume the encryptor, run the integrity guard (all planned chunks
+     * emitted and the ciphertext total matches), and return the summary
+     * `{ chunk_count, total_plaintext, total_ciphertext, chunk_size_bytes }`.
+     * Errors if the source shrank (fewer chunks/bytes than planned).
+     * @returns {any}
+     */
+    finish() {
+        try {
+            const ptr = this.__destroy_into_raw();
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmchunkencryptor_finish(retptr, ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Create a push-form encryptor whose chunk plan is derived from
+     * `file_size` + `profile` (the client ladder).
+     *
+     * `master_key` must be exactly 32 bytes; it is copied into a `MasterKey`
+     * (zeroized on drop). `profile` is one of `"desktop"`, `"web"`, `"mobile"`,
+     * `"backup"`.
+     * @param {Uint8Array} master_key
+     * @param {string} file_id
+     * @param {bigint} file_size
+     * @param {string} profile
+     */
+    constructor(master_key, file_id, file_size, profile) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(file_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len1 = WASM_VECTOR_LEN;
+            const ptr2 = passStringToWasm0(profile, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len2 = WASM_VECTOR_LEN;
+            wasm.wasmchunkencryptor_new(retptr, ptr0, len0, ptr1, len1, file_size, ptr2, len2);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            this.__wbg_ptr = r0 >>> 0;
+            WasmChunkEncryptorFinalization.register(this, this.__wbg_ptr, this);
+            return this;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Encrypt one plaintext chunk and return the full wire frame
+     * (`nonce(12) || ciphertext || tag(16)`) for JS to PUT directly — no
+     * recombination needed on the JS side. Errors if more chunks are pushed
+     * than the plan allows.
+     * @param {Uint8Array} plaintext
+     * @returns {Uint8Array}
+     */
+    pushChunk(plaintext) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passArray8ToWasm0(plaintext, wasm.__wbindgen_export);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.wasmchunkencryptor_pushChunk(retptr, this.__wbg_ptr, ptr0, len0);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+            if (r3) {
+                throw takeObject(r2);
+            }
+            var v2 = getArrayU8FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export4(r0, r1 * 1, 1);
+            return v2;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Create a push-form encryptor with an explicit, server-dictated chunk
+     * size. Use this when the v2 upload-init response overrode `chunk_size`
+     * so the client plan can't diverge from what the server expects.
+     * @param {Uint8Array} master_key
+     * @param {string} file_id
+     * @param {bigint} file_size
+     * @param {bigint} chunk_size_bytes
+     * @returns {WasmChunkEncryptor}
+     */
+    static withChunkSize(master_key, file_id, file_size, chunk_size_bytes) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(file_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len1 = WASM_VECTOR_LEN;
+            wasm.wasmchunkencryptor_withChunkSize(retptr, ptr0, len0, ptr1, len1, file_size, chunk_size_bytes);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return WasmChunkEncryptor.__wrap(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+}
+if (Symbol.dispose) WasmChunkEncryptor.prototype[Symbol.dispose] = WasmChunkEncryptor.prototype.free;
+
+/**
  * Compute recovery check from master key. Returns 32-byte `Uint8Array`.
  * @param {Uint8Array} master_key
  * @returns {Uint8Array}
  */
 export function compute_recovery_check(master_key) {
-    const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.compute_recovery_check(ptr0, len0);
-    if (ret[3]) {
-        throw takeFromExternrefTable0(ret[2]);
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.compute_recovery_check(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
     }
-    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-    return v2;
+}
+
+/**
+ * Decompress gzip-compressed data. Returns `Uint8Array`.
+ * @param {Uint8Array} data
+ * @returns {Uint8Array}
+ */
+export function decompress_gzip(data) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.decompress_gzip(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
 }
 
 /**
@@ -26,19 +251,28 @@ export function compute_recovery_check(master_key) {
  * @returns {Uint8Array}
  */
 export function decrypt_chunk(key, nonce, ciphertext) {
-    const ptr0 = passArray8ToWasm0(key, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArray8ToWasm0(nonce, wasm.__wbindgen_malloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ptr2 = passArray8ToWasm0(ciphertext, wasm.__wbindgen_malloc);
-    const len2 = WASM_VECTOR_LEN;
-    const ret = wasm.decrypt_chunk(ptr0, len0, ptr1, len1, ptr2, len2);
-    if (ret[3]) {
-        throw takeFromExternrefTable0(ret[2]);
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(nonce, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(ciphertext, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.decrypt_chunk(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v4 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v4;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
     }
-    var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-    return v4;
 }
 
 /**
@@ -50,15 +284,24 @@ export function decrypt_chunk(key, nonce, ciphertext) {
  * @returns {Uint8Array}
  */
 export function decrypt_chunks(key, chunks) {
-    const ptr0 = passArray8ToWasm0(key, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decrypt_chunks(ptr0, len0, chunks);
-    if (ret[3]) {
-        throw takeFromExternrefTable0(ret[2]);
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.decrypt_chunks(retptr, ptr0, len0, addHeapObject(chunks));
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
     }
-    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-    return v2;
 }
 
 /**
@@ -72,24 +315,30 @@ export function decrypt_metadata(key, nonce, ciphertext) {
     let deferred5_0;
     let deferred5_1;
     try {
-        const ptr0 = passArray8ToWasm0(key, wasm.__wbindgen_malloc);
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(key, wasm.__wbindgen_export);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passArray8ToWasm0(nonce, wasm.__wbindgen_malloc);
+        const ptr1 = passArray8ToWasm0(nonce, wasm.__wbindgen_export);
         const len1 = WASM_VECTOR_LEN;
-        const ptr2 = passArray8ToWasm0(ciphertext, wasm.__wbindgen_malloc);
+        const ptr2 = passArray8ToWasm0(ciphertext, wasm.__wbindgen_export);
         const len2 = WASM_VECTOR_LEN;
-        const ret = wasm.decrypt_metadata(ptr0, len0, ptr1, len1, ptr2, len2);
-        var ptr4 = ret[0];
-        var len4 = ret[1];
-        if (ret[3]) {
+        wasm.decrypt_metadata(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr4 = r0;
+        var len4 = r1;
+        if (r3) {
             ptr4 = 0; len4 = 0;
-            throw takeFromExternrefTable0(ret[2]);
+            throw takeObject(r2);
         }
         deferred5_0 = ptr4;
         deferred5_1 = len4;
         return getStringFromWasm0(ptr4, len4);
     } finally {
-        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred5_0, deferred5_1, 1);
     }
 }
 
@@ -102,17 +351,26 @@ export function decrypt_metadata(key, nonce, ciphertext) {
  * @returns {Uint8Array}
  */
 export function derive_file_key(master_key, file_id) {
-    const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArray8ToWasm0(file_id, wasm.__wbindgen_malloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.derive_file_key(ptr0, len0, ptr1, len1);
-    if (ret[3]) {
-        throw takeFromExternrefTable0(ret[2]);
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(file_id, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.derive_file_key(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v3 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v3;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
     }
-    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-    return v3;
 }
 
 /**
@@ -123,15 +381,53 @@ export function derive_file_key(master_key, file_id) {
  * @returns {any}
  */
 export function derive_master_key(password, salt) {
-    const ptr0 = passStringToWasm0(password, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArray8ToWasm0(salt, wasm.__wbindgen_malloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.derive_master_key(ptr0, len0, ptr1, len1);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(password, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(salt, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.derive_master_key(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
     }
-    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Derive the per-request private-key-wrapping key from the owner's master key.
+ * `master_key` is 32 bytes, `request_id` is arbitrary bytes. Returns 32-byte `Uint8Array`.
+ * @param {Uint8Array} master_key
+ * @param {Uint8Array} request_id
+ * @returns {Uint8Array}
+ */
+export function derive_request_wrap_key(master_key, request_id) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(request_id, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.derive_request_wrap_key(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v3 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v3;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
 }
 
 /**
@@ -141,17 +437,26 @@ export function derive_master_key(password, salt) {
  * @returns {Uint8Array}
  */
 export function derive_share_key(shared_secret, file_id) {
-    const ptr0 = passArray8ToWasm0(shared_secret, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArray8ToWasm0(file_id, wasm.__wbindgen_malloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.derive_share_key(ptr0, len0, ptr1, len1);
-    if (ret[3]) {
-        throw takeFromExternrefTable0(ret[2]);
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(shared_secret, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(file_id, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.derive_share_key(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v3 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v3;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
     }
-    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-    return v3;
 }
 
 /**
@@ -160,15 +465,24 @@ export function derive_share_key(shared_secret, file_id) {
  * @returns {Uint8Array}
  */
 export function derive_x25519_private(master_key) {
-    const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.derive_x25519_private(ptr0, len0);
-    if (ret[3]) {
-        throw takeFromExternrefTable0(ret[2]);
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.derive_x25519_private(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
     }
-    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-    return v2;
 }
 
 /**
@@ -177,15 +491,24 @@ export function derive_x25519_private(master_key) {
  * @returns {Uint8Array}
  */
 export function derive_x25519_public(private_key) {
-    const ptr0 = passArray8ToWasm0(private_key, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.derive_x25519_public(ptr0, len0);
-    if (ret[3]) {
-        throw takeFromExternrefTable0(ret[2]);
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(private_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.derive_x25519_public(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
     }
-    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-    return v2;
 }
 
 /**
@@ -196,15 +519,23 @@ export function derive_x25519_public(private_key) {
  * @returns {any}
  */
 export function encrypt_chunk(key, plaintext) {
-    const ptr0 = passArray8ToWasm0(key, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArray8ToWasm0(plaintext, wasm.__wbindgen_malloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.encrypt_chunk(ptr0, len0, ptr1, len1);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(plaintext, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.encrypt_chunk(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
     }
-    return takeFromExternrefTable0(ret[0]);
 }
 
 /**
@@ -215,15 +546,55 @@ export function encrypt_chunk(key, plaintext) {
  * @returns {any}
  */
 export function encrypt_metadata(key, metadata) {
-    const ptr0 = passArray8ToWasm0(key, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(metadata, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.encrypt_metadata(ptr0, len0, ptr1, len1);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(metadata, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.encrypt_metadata(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
     }
-    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Generate a recovery kit PDF with a title, recovery words, and metadata.
+ *
+ * `metadata_keys` and `metadata_values` are parallel arrays of key-value pairs.
+ * Returns the raw PDF bytes as `Uint8Array`.
+ * @param {string} title
+ * @param {any} words
+ * @param {any} metadata_keys
+ * @param {any} metadata_values
+ * @returns {Uint8Array}
+ */
+export function generate_recovery_pdf(title, words, metadata_keys, metadata_values) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(title, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.generate_recovery_pdf(retptr, ptr0, len0, addHeapObject(words), addHeapObject(metadata_keys), addHeapObject(metadata_values));
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
 }
 
 /**
@@ -232,11 +603,19 @@ export function encrypt_metadata(key, metadata) {
  * @returns {any}
  */
 export function generate_recovery_phrase() {
-    const ret = wasm.generate_recovery_phrase();
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.generate_recovery_phrase(retptr);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
     }
-    return takeFromExternrefTable0(ret[0]);
 }
 
 /**
@@ -245,7 +624,7 @@ export function generate_recovery_phrase() {
  * @returns {boolean}
  */
 export function is_previewable(mime_type) {
-    var ptr0 = isLikeNone(mime_type) ? 0 : passStringToWasm0(mime_type, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    var ptr0 = isLikeNone(mime_type) ? 0 : passStringToWasm0(mime_type, wasm.__wbindgen_export, wasm.__wbindgen_export2);
     var len0 = WASM_VECTOR_LEN;
     const ret = wasm.is_previewable(ptr0, len0);
     return ret !== 0;
@@ -257,10 +636,62 @@ export function is_previewable(mime_type) {
  * @returns {boolean}
  */
 export function is_previewable_by_extension(filename) {
-    const ptr0 = passStringToWasm0(filename, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const ptr0 = passStringToWasm0(filename, wasm.__wbindgen_export, wasm.__wbindgen_export2);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.is_previewable_by_extension(ptr0, len0);
     return ret !== 0;
+}
+
+/**
+ * List entries in an archive, detecting format from the filename extension.
+ * Supports `.tar`, `.gz`, `.tgz`, `.tar.gz`.
+ * Returns a JS array of `{ name: string, size: number, is_directory: boolean }`.
+ * @param {Uint8Array} data
+ * @param {string} filename
+ * @returns {any}
+ */
+export function list_archive(data, filename) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(filename, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.list_archive(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * List entries in a TAR archive from raw bytes.
+ * Returns a JS array of `{ name: string, size: number, is_directory: boolean }`.
+ * @param {Uint8Array} data
+ * @returns {any}
+ */
+export function list_tar_entries(data) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.list_tar_entries(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
 }
 
 /**
@@ -271,17 +702,25 @@ export function is_previewable_by_extension(filename) {
  * @returns {any}
  */
 export function opaque_login_finish(client_state, password, server_response) {
-    const ptr0 = passArray8ToWasm0(client_state, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArray8ToWasm0(password, wasm.__wbindgen_malloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ptr2 = passArray8ToWasm0(server_response, wasm.__wbindgen_malloc);
-    const len2 = WASM_VECTOR_LEN;
-    const ret = wasm.opaque_login_finish(ptr0, len0, ptr1, len1, ptr2, len2);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(client_state, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(password, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(server_response, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.opaque_login_finish(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
     }
-    return takeFromExternrefTable0(ret[0]);
 }
 
 /**
@@ -290,13 +729,21 @@ export function opaque_login_finish(client_state, password, server_response) {
  * @returns {any}
  */
 export function opaque_login_start(password) {
-    const ptr0 = passArray8ToWasm0(password, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.opaque_login_start(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(password, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.opaque_login_start(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
     }
-    return takeFromExternrefTable0(ret[0]);
 }
 
 /**
@@ -307,19 +754,28 @@ export function opaque_login_start(password) {
  * @returns {Uint8Array}
  */
 export function opaque_registration_finish(client_state, password, server_response) {
-    const ptr0 = passArray8ToWasm0(client_state, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArray8ToWasm0(password, wasm.__wbindgen_malloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ptr2 = passArray8ToWasm0(server_response, wasm.__wbindgen_malloc);
-    const len2 = WASM_VECTOR_LEN;
-    const ret = wasm.opaque_registration_finish(ptr0, len0, ptr1, len1, ptr2, len2);
-    if (ret[3]) {
-        throw takeFromExternrefTable0(ret[2]);
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(client_state, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(password, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(server_response, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.opaque_registration_finish(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v4 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v4;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
     }
-    var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-    return v4;
 }
 
 /**
@@ -328,13 +784,57 @@ export function opaque_registration_finish(client_state, password, server_respon
  * @returns {any}
  */
 export function opaque_registration_start(password) {
-    const ptr0 = passArray8ToWasm0(password, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.opaque_registration_start(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(password, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.opaque_registration_start(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
     }
-    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Open a sealed request upload (owner decrypt path). Recovers the content key.
+ * `r_priv` and `e_pub` are 32 bytes; `file_id` is arbitrary bytes. Returns 32-byte `Uint8Array`.
+ * @param {Uint8Array} r_priv
+ * @param {Uint8Array} e_pub
+ * @param {Uint8Array} file_id
+ * @param {Uint8Array} wrapped_key
+ * @returns {Uint8Array}
+ */
+export function open_request_upload(r_priv, e_pub, file_id, wrapped_key) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(r_priv, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(e_pub, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(file_id, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passArray8ToWasm0(wrapped_key, wasm.__wbindgen_export);
+        const len3 = WASM_VECTOR_LEN;
+        wasm.open_request_upload(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v5 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v5;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
 }
 
 /**
@@ -343,7 +843,7 @@ export function opaque_registration_start(password) {
  * @returns {bigint}
  */
 export function plan_base_storage_bytes(plan_slug) {
-    const ptr0 = passStringToWasm0(plan_slug, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const ptr0 = passStringToWasm0(plan_slug, wasm.__wbindgen_export, wasm.__wbindgen_export2);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.plan_base_storage_bytes(ptr0, len0);
     return ret;
@@ -355,7 +855,7 @@ export function plan_base_storage_bytes(plan_slug) {
  * @returns {boolean}
  */
 export function plan_can_add_storage(plan_slug) {
-    const ptr0 = passStringToWasm0(plan_slug, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const ptr0 = passStringToWasm0(plan_slug, wasm.__wbindgen_export, wasm.__wbindgen_export2);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.plan_can_add_storage(ptr0, len0);
     return ret !== 0;
@@ -371,13 +871,21 @@ export function plan_can_add_storage(plan_slug) {
  * @returns {any}
  */
 export function plan_chunks(file_size_bytes, profile) {
-    const ptr0 = passStringToWasm0(profile, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.plan_chunks(file_size_bytes, ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(profile, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.plan_chunks(retptr, file_size_bytes, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
     }
-    return takeFromExternrefTable0(ret[0]);
 }
 
 /**
@@ -388,7 +896,7 @@ export function plan_chunks(file_size_bytes, profile) {
  * @returns {bigint}
  */
 export function plan_effective_quota(plan_slug, extra_tb, bonus_bytes) {
-    const ptr0 = passStringToWasm0(plan_slug, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const ptr0 = passStringToWasm0(plan_slug, wasm.__wbindgen_export, wasm.__wbindgen_export2);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.plan_effective_quota(ptr0, len0, extra_tb, bonus_bytes);
     return ret;
@@ -400,7 +908,7 @@ export function plan_effective_quota(plan_slug, extra_tb, bonus_bytes) {
  * @returns {bigint}
  */
 export function plan_max_extra_tb(plan_slug) {
-    const ptr0 = passStringToWasm0(plan_slug, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const ptr0 = passStringToWasm0(plan_slug, wasm.__wbindgen_export, wasm.__wbindgen_export2);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.plan_max_extra_tb(ptr0, len0);
     return ret;
@@ -414,7 +922,7 @@ export function plan_max_extra_tb(plan_slug) {
  * @returns {bigint}
  */
 export function plan_monthly_cost_cents(plan_slug, extra_tb, extra_users) {
-    const ptr0 = passStringToWasm0(plan_slug, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const ptr0 = passStringToWasm0(plan_slug, wasm.__wbindgen_export, wasm.__wbindgen_export2);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.plan_monthly_cost_cents(ptr0, len0, extra_tb, extra_users);
     return ret;
@@ -427,15 +935,55 @@ export function plan_monthly_cost_cents(plan_slug, extra_tb, extra_users) {
  * @returns {Uint8Array}
  */
 export function recover_from_phrase(phrase) {
-    const ptr0 = passStringToWasm0(phrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.recover_from_phrase(ptr0, len0);
-    if (ret[3]) {
-        throw takeFromExternrefTable0(ret[2]);
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(phrase, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.recover_from_phrase(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
     }
-    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-    return v2;
+}
+
+/**
+ * Seal a content key to a request's public key (anonymous uploader path).
+ * `r_pub` and `content_key` are 32 bytes; `file_id` is arbitrary bytes.
+ * Returns `{ e_pub: Uint8Array, wrapped_key: Uint8Array }`.
+ * @param {Uint8Array} r_pub
+ * @param {Uint8Array} file_id
+ * @param {Uint8Array} content_key
+ * @returns {any}
+ */
+export function seal_to_request(r_pub, file_id, content_key) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(r_pub, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(file_id, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(content_key, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.seal_to_request(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
 }
 
 /**
@@ -447,12 +995,81 @@ export function storage_format_si(bytes) {
     let deferred1_0;
     let deferred1_1;
     try {
-        const ret = wasm.storage_format_si(bytes);
-        deferred1_0 = ret[0];
-        deferred1_1 = ret[1];
-        return getStringFromWasm0(ret[0], ret[1]);
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.storage_format_si(retptr, bytes);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred1_0 = r0;
+        deferred1_1 = r1;
+        return getStringFromWasm0(r0, r1);
     } finally {
-        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * Unwrap a request's X25519 private key. Returns 32-byte `Uint8Array`.
+ * @param {Uint8Array} master_key
+ * @param {Uint8Array} request_id
+ * @param {Uint8Array} wrapped
+ * @param {Uint8Array} nonce
+ * @returns {Uint8Array}
+ */
+export function unwrap_request_private(master_key, request_id, wrapped, nonce) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(request_id, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(wrapped, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passArray8ToWasm0(nonce, wasm.__wbindgen_export);
+        const len3 = WASM_VECTOR_LEN;
+        wasm.unwrap_request_private(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v5 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v5;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Wrap a request's X25519 private key under the owner's master key.
+ * Returns `{ wrapped: Uint8Array, nonce: Uint8Array }`.
+ * @param {Uint8Array} master_key
+ * @param {Uint8Array} request_id
+ * @param {Uint8Array} r_priv
+ * @returns {any}
+ */
+export function wrap_request_private(master_key, request_id, r_priv) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(request_id, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(r_priv, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.wrap_request_private(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
     }
 }
 
@@ -463,207 +1080,209 @@ export function storage_format_si(bytes) {
  * @returns {Uint8Array}
  */
 export function x25519_shared_secret(my_private, their_public) {
-    const ptr0 = passArray8ToWasm0(my_private, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArray8ToWasm0(their_public, wasm.__wbindgen_malloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.x25519_shared_secret(ptr0, len0, ptr1, len1);
-    if (ret[3]) {
-        throw takeFromExternrefTable0(ret[2]);
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(my_private, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(their_public, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.x25519_shared_secret(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v3 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v3;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
     }
-    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-    return v3;
 }
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
         __wbg_Error_960c155d3d49e4c2: function(arg0, arg1) {
             const ret = Error(getStringFromWasm0(arg0, arg1));
-            return ret;
+            return addHeapObject(ret);
         },
         __wbg_String_8564e559799eccda: function(arg0, arg1) {
-            const ret = String(arg1);
-            const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const ret = String(getObject(arg1));
+            const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_export, wasm.__wbindgen_export2);
             const len1 = WASM_VECTOR_LEN;
             getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
             getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
         },
         __wbg___wbindgen_debug_string_ab4b34d23d6778bd: function(arg0, arg1) {
-            const ret = debugString(arg1);
-            const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const ret = debugString(getObject(arg1));
+            const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_export, wasm.__wbindgen_export2);
             const len1 = WASM_VECTOR_LEN;
             getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
             getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
         },
         __wbg___wbindgen_is_function_3baa9db1a987f47d: function(arg0) {
-            const ret = typeof(arg0) === 'function';
+            const ret = typeof(getObject(arg0)) === 'function';
             return ret;
         },
         __wbg___wbindgen_is_object_63322ec0cd6ea4ef: function(arg0) {
-            const val = arg0;
+            const val = getObject(arg0);
             const ret = typeof(val) === 'object' && val !== null;
             return ret;
         },
         __wbg___wbindgen_is_string_6df3bf7ef1164ed3: function(arg0) {
-            const ret = typeof(arg0) === 'string';
+            const ret = typeof(getObject(arg0)) === 'string';
             return ret;
         },
         __wbg___wbindgen_is_undefined_29a43b4d42920abd: function(arg0) {
-            const ret = arg0 === undefined;
+            const ret = getObject(arg0) === undefined;
             return ret;
+        },
+        __wbg___wbindgen_string_get_7ed5322991caaec5: function(arg0, arg1) {
+            const obj = getObject(arg1);
+            const ret = typeof(obj) === 'string' ? obj : undefined;
+            var ptr1 = isLikeNone(ret) ? 0 : passStringToWasm0(ret, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            var len1 = WASM_VECTOR_LEN;
+            getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+            getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
         },
         __wbg___wbindgen_throw_6b64449b9b9ed33c: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
         __wbg_call_a24592a6f349a97e: function() { return handleError(function (arg0, arg1, arg2) {
-            const ret = arg0.call(arg1, arg2);
-            return ret;
+            const ret = getObject(arg0).call(getObject(arg1), getObject(arg2));
+            return addHeapObject(ret);
         }, arguments); },
         __wbg_crypto_38df2bab126b63dc: function(arg0) {
-            const ret = arg0.crypto;
-            return ret;
+            const ret = getObject(arg0).crypto;
+            return addHeapObject(ret);
         },
         __wbg_from_0dbf29f09e7fb200: function(arg0) {
-            const ret = Array.from(arg0);
-            return ret;
+            const ret = Array.from(getObject(arg0));
+            return addHeapObject(ret);
         },
         __wbg_getRandomValues_c44a50d8cfdaebeb: function() { return handleError(function (arg0, arg1) {
-            arg0.getRandomValues(arg1);
+            getObject(arg0).getRandomValues(getObject(arg1));
         }, arguments); },
         __wbg_get_6011fa3a58f61074: function() { return handleError(function (arg0, arg1) {
-            const ret = Reflect.get(arg0, arg1);
-            return ret;
+            const ret = Reflect.get(getObject(arg0), getObject(arg1));
+            return addHeapObject(ret);
         }, arguments); },
         __wbg_get_8360291721e2339f: function(arg0, arg1) {
-            const ret = arg0[arg1 >>> 0];
-            return ret;
+            const ret = getObject(arg0)[arg1 >>> 0];
+            return addHeapObject(ret);
         },
         __wbg_length_3d4ecd04bd8d22f1: function(arg0) {
-            const ret = arg0.length;
+            const ret = getObject(arg0).length;
             return ret;
         },
         __wbg_length_9f1775224cf1d815: function(arg0) {
-            const ret = arg0.length;
+            const ret = getObject(arg0).length;
             return ret;
         },
         __wbg_msCrypto_bd5a034af96bcba6: function(arg0) {
-            const ret = arg0.msCrypto;
-            return ret;
+            const ret = getObject(arg0).msCrypto;
+            return addHeapObject(ret);
         },
         __wbg_new_0c7403db6e782f19: function(arg0) {
-            const ret = new Uint8Array(arg0);
-            return ret;
-        },
-        __wbg_new_34d45cc8e36aaead: function() {
-            const ret = new Map();
-            return ret;
-        },
-        __wbg_new_682678e2f47e32bc: function() {
-            const ret = new Array();
-            return ret;
+            const ret = new Uint8Array(getObject(arg0));
+            return addHeapObject(ret);
         },
         __wbg_new_aa8d0fa9762c29bd: function() {
             const ret = new Object();
-            return ret;
+            return addHeapObject(ret);
         },
         __wbg_new_from_slice_b5ea43e23f6008c0: function(arg0, arg1) {
             const ret = new Uint8Array(getArrayU8FromWasm0(arg0, arg1));
-            return ret;
+            return addHeapObject(ret);
+        },
+        __wbg_new_with_length_223c4ea248649e55: function(arg0) {
+            const ret = new Array(arg0 >>> 0);
+            return addHeapObject(ret);
         },
         __wbg_new_with_length_8c854e41ea4dae9b: function(arg0) {
             const ret = new Uint8Array(arg0 >>> 0);
-            return ret;
+            return addHeapObject(ret);
         },
         __wbg_node_84ea875411254db1: function(arg0) {
-            const ret = arg0.node;
-            return ret;
+            const ret = getObject(arg0).node;
+            return addHeapObject(ret);
         },
         __wbg_process_44c7a14e11e9f69e: function(arg0) {
-            const ret = arg0.process;
-            return ret;
+            const ret = getObject(arg0).process;
+            return addHeapObject(ret);
         },
         __wbg_prototypesetcall_a6b02eb00b0f4ce2: function(arg0, arg1, arg2) {
-            Uint8Array.prototype.set.call(getArrayU8FromWasm0(arg0, arg1), arg2);
+            Uint8Array.prototype.set.call(getArrayU8FromWasm0(arg0, arg1), getObject(arg2));
         },
         __wbg_randomFillSync_6c25eac9869eb53c: function() { return handleError(function (arg0, arg1) {
-            arg0.randomFillSync(arg1);
+            getObject(arg0).randomFillSync(takeObject(arg1));
         }, arguments); },
         __wbg_require_b4edbdcf3e2a1ef0: function() { return handleError(function () {
             const ret = module.require;
-            return ret;
+            return addHeapObject(ret);
         }, arguments); },
         __wbg_set_022bee52d0b05b19: function() { return handleError(function (arg0, arg1, arg2) {
-            const ret = Reflect.set(arg0, arg1, arg2);
+            const ret = Reflect.set(getObject(arg0), getObject(arg1), getObject(arg2));
             return ret;
         }, arguments); },
         __wbg_set_3bf1de9fab0cd644: function(arg0, arg1, arg2) {
-            arg0[arg1 >>> 0] = arg2;
+            getObject(arg0)[arg1 >>> 0] = takeObject(arg2);
         },
         __wbg_set_6be42768c690e380: function(arg0, arg1, arg2) {
-            arg0[arg1] = arg2;
-        },
-        __wbg_set_fde2cec06c23692b: function(arg0, arg1, arg2) {
-            const ret = arg0.set(arg1, arg2);
-            return ret;
+            getObject(arg0)[takeObject(arg1)] = takeObject(arg2);
         },
         __wbg_static_accessor_GLOBAL_8cfadc87a297ca02: function() {
             const ret = typeof global === 'undefined' ? null : global;
-            return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
+            return isLikeNone(ret) ? 0 : addHeapObject(ret);
         },
         __wbg_static_accessor_GLOBAL_THIS_602256ae5c8f42cf: function() {
             const ret = typeof globalThis === 'undefined' ? null : globalThis;
-            return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
+            return isLikeNone(ret) ? 0 : addHeapObject(ret);
         },
         __wbg_static_accessor_SELF_e445c1c7484aecc3: function() {
             const ret = typeof self === 'undefined' ? null : self;
-            return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
+            return isLikeNone(ret) ? 0 : addHeapObject(ret);
         },
         __wbg_static_accessor_WINDOW_f20e8576ef1e0f17: function() {
             const ret = typeof window === 'undefined' ? null : window;
-            return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
+            return isLikeNone(ret) ? 0 : addHeapObject(ret);
         },
         __wbg_subarray_f8ca46a25b1f5e0d: function(arg0, arg1, arg2) {
-            const ret = arg0.subarray(arg1 >>> 0, arg2 >>> 0);
-            return ret;
+            const ret = getObject(arg0).subarray(arg1 >>> 0, arg2 >>> 0);
+            return addHeapObject(ret);
         },
         __wbg_versions_276b2795b1c6a219: function(arg0) {
-            const ret = arg0.versions;
-            return ret;
+            const ret = getObject(arg0).versions;
+            return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000001: function(arg0) {
             // Cast intrinsic for `F64 -> Externref`.
             const ret = arg0;
-            return ret;
+            return addHeapObject(ret);
         },
-        __wbindgen_cast_0000000000000002: function(arg0) {
-            // Cast intrinsic for `I64 -> Externref`.
-            const ret = arg0;
-            return ret;
-        },
-        __wbindgen_cast_0000000000000003: function(arg0, arg1) {
+        __wbindgen_cast_0000000000000002: function(arg0, arg1) {
             // Cast intrinsic for `Ref(Slice(U8)) -> NamedExternref("Uint8Array")`.
             const ret = getArrayU8FromWasm0(arg0, arg1);
-            return ret;
+            return addHeapObject(ret);
         },
-        __wbindgen_cast_0000000000000004: function(arg0, arg1) {
+        __wbindgen_cast_0000000000000003: function(arg0, arg1) {
             // Cast intrinsic for `Ref(String) -> Externref`.
             const ret = getStringFromWasm0(arg0, arg1);
-            return ret;
+            return addHeapObject(ret);
         },
-        __wbindgen_cast_0000000000000005: function(arg0) {
+        __wbindgen_cast_0000000000000004: function(arg0) {
             // Cast intrinsic for `U64 -> Externref`.
             const ret = BigInt.asUintN(64, arg0);
-            return ret;
+            return addHeapObject(ret);
         },
-        __wbindgen_init_externref_table: function() {
-            const table = wasm.__wbindgen_externrefs;
-            const offset = table.grow(4);
-            table.set(0, undefined);
-            table.set(offset + 0, undefined);
-            table.set(offset + 1, null);
-            table.set(offset + 2, true);
-            table.set(offset + 3, false);
+        __wbindgen_object_clone_ref: function(arg0) {
+            const ret = getObject(arg0);
+            return addHeapObject(ret);
+        },
+        __wbindgen_object_drop_ref: function(arg0) {
+            takeObject(arg0);
         },
     };
     return {
@@ -672,9 +1291,16 @@ function __wbg_get_imports() {
     };
 }
 
-function addToExternrefTable0(obj) {
-    const idx = wasm.__externref_table_alloc();
-    wasm.__wbindgen_externrefs.set(idx, obj);
+const WasmChunkEncryptorFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmchunkencryptor_free(ptr >>> 0, 1));
+
+function addHeapObject(obj) {
+    if (heap_next === heap.length) heap.push(heap.length + 1);
+    const idx = heap_next;
+    heap_next = heap[idx];
+
+    heap[idx] = obj;
     return idx;
 }
 
@@ -743,6 +1369,12 @@ function debugString(val) {
     return className;
 }
 
+function dropObject(idx) {
+    if (idx < 1028) return;
+    heap[idx] = heap_next;
+    heap_next = idx;
+}
+
 function getArrayU8FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return getUint8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
@@ -769,14 +1401,20 @@ function getUint8ArrayMemory0() {
     return cachedUint8ArrayMemory0;
 }
 
+function getObject(idx) { return heap[idx]; }
+
 function handleError(f, args) {
     try {
         return f.apply(this, args);
     } catch (e) {
-        const idx = addToExternrefTable0(e);
-        wasm.__wbindgen_exn_store(idx);
+        wasm.__wbindgen_export3(addHeapObject(e));
     }
 }
+
+let heap = new Array(1024).fill(undefined);
+heap.push(undefined, null, true, false);
+
+let heap_next = heap.length;
 
 function isLikeNone(x) {
     return x === undefined || x === null;
@@ -826,10 +1464,10 @@ function passStringToWasm0(arg, malloc, realloc) {
     return ptr;
 }
 
-function takeFromExternrefTable0(idx) {
-    const value = wasm.__wbindgen_externrefs.get(idx);
-    wasm.__externref_table_dealloc(idx);
-    return value;
+function takeObject(idx) {
+    const ret = getObject(idx);
+    dropObject(idx);
+    return ret;
 }
 
 let cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
@@ -867,7 +1505,6 @@ function __wbg_finalize_init(instance, module) {
     wasmModule = module;
     cachedDataViewMemory0 = null;
     cachedUint8ArrayMemory0 = null;
-    wasm.__wbindgen_start();
     return wasm;
 }
 

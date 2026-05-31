@@ -366,7 +366,7 @@ export function Shared() {
           const file = new File([plaintext], filename, { type: invite.mime_type ?? 'application/octet-stream' })
           const newFileId = crypto.randomUUID()
           const newFileKey = await getFileKey(newFileId)
-          await encryptedUpload(file, newFileId, newFileKey, undefined, () => {}, undefined, undefined, undefined, getFileKey)
+          await encryptedUpload(file, newFileId, newFileKey, getMasterKey(), undefined, () => {}, undefined, undefined, undefined, getFileKey)
           zeroize(newFileKey)
           showToast({ icon: 'check', title: 'Copy saved', description: `${filename} saved to your vault.` })
         } catch (e) {

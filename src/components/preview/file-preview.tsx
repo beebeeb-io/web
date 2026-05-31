@@ -312,7 +312,7 @@ function pickRenderer(
 }
 
 export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, onVersionRestored, onPrev, onNext, hasPrev, hasNext }: FilePreviewProps) {
-  const { getFileKey, isUnlocked } = useKeys()
+  const { getFileKeyForFile, isUnlocked } = useKeys()
   const [blob, setBlob] = useState<Blob | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [localDecryptedName, setLocalDecryptedName] = useState<string | null>(null)
@@ -354,7 +354,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     let cancelled = false
     async function decrypt() {
       try {
-        const fileKey = await getFileKey(file.id)
+        const fileKey = await getFileKeyForFile(file)
         const { name, mimeType } = await decryptFileMetadata(fileKey, file.name_encrypted)
         if (!cancelled) {
           setLocalDecryptedName(name)
@@ -366,7 +366,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     }
     decrypt()
     return () => { cancelled = true }
-  }, [file.id, file.name_encrypted, decryptedNameProp, isUnlocked, getFileKey])
+  }, [file.id, file.name_encrypted, decryptedNameProp, isUnlocked, getFileKeyForFile, file])
 
   // Fetch the version list once per file (only if there's actually history).
   useEffect(() => {
@@ -405,7 +405,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
 
     async function loadAndDecrypt() {
       try {
-        const fileKey = await getFileKey(file.id)
+        const fileKey = await getFileKeyForFile(file)
 
         // Thumbnail-first path for images (current version only)
         if (isImageFile && selectedVersionId === null) {
@@ -479,7 +479,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     return () => {
       cancelled = true
     }
-  }, [file.id, file.name_encrypted, file.mime_type, file.chunk_count, file.size_bytes, isUnlocked, getFileKey, selectedVersionId, versions, effectiveMime, name])
+  }, [file.id, file.name_encrypted, file.mime_type, file.chunk_count, file.size_bytes, isUnlocked, getFileKeyForFile, file, selectedVersionId, versions, effectiveMime, name])
 
   const handleRestore = useCallback(async () => {
     if (selectedVersionId === null) return

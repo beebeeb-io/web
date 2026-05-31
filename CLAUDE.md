@@ -94,6 +94,29 @@ Thumbnails are WebP format, generated client-side in `src/lib/thumbnail.ts`. The
 
 Decrypted thumbnails are cached persistently via the Cache API (`beebeeb-thumbnails-v2`, max 10,000 entries) so they survive page reloads. In-memory `Map<string, string>` of object URLs provides the hot cache for the current session.
 
+## Uploads (streaming encryption)
+
+`src/lib/encrypted-upload.ts` encrypts files via the shared core streaming
+primitive (`WasmChunkEncryptor`), NOT a whole-file read. Per chunk it slices the
+`File`, calls `enc.pushChunk(slice)` (returns the full `nonce||ciphertext||tag`
+frame — no JS recombine), PUTs the frame, and runs `enc.finish()` (integrity
+guard) before `completeUpload`. Memory stays bounded to one slice + one frame.
+
+- `encryptedUpload(..., masterKey, ...)` takes BOTH `fileKey` (metadata,
+  thumbnails, folder-share) and `masterKey`. The encryptor derives the per-file
+  key ONCE inside core from `masterKey` + the final `serverFileId` — do not
+  recombine keys in JS. Pass `getMasterKey()` from `useKeys()` at call sites.
+- The encryptor lives INSIDE the crypto worker (it's a pointer into WASM linear
+  memory and can't cross Comlink). `crypto.ts` addresses it by an opaque handle
+  via `StreamingEncryptor` / `startEncryptedStream[WithChunkSize]`.
+- `crypto.ts` `maybeRestart()` skips the 256 MiB worker recycle while
+  `liveEncryptorCount() > 0`, so an in-flight upload is never orphaned.
+- Resume = push-but-don't-upload: already-uploaded chunks are STILL pushed (to
+  keep index/nonce/count aligned with `finish()`), just not re-PUT.
+- Wire contract unchanged: `init_upload` still sends `size_bytes = file.size`
+  (plaintext) and `chunk_count` from the core plan — the server recomputes from
+  chunks. Do NOT switch the init total to the ciphertext size.
+
 ## Critical prop chains
 
 When opening the ShareDialog, ALWAYS pass `isFolder={file.is_folder}`. Folder sharing generates a folder_key and encrypts all children — without this prop, folder shares silently create regular file shares that don't work.

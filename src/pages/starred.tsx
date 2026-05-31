@@ -25,7 +25,7 @@ import { userFriendlyError } from '../lib/user-friendly-error'
 import { EmptyStarred } from '../components/empty-states/empty-starred'
 
 export function Starred() {
-  const { getFileKey, isUnlocked, cryptoReady } = useKeys()
+  const { getFileKey, getFileKeyForFile, isUnlocked, cryptoReady } = useKeys()
   const { showToast } = useToast()
   const navigate = useNavigate()
   const { previewFile, openPreview, closePreview } = useFilePreview()
@@ -82,7 +82,7 @@ export function Starred() {
   async function handleFileDownload(file: DriveFile) {
     if (!isUnlocked || !cryptoReady || file.is_folder) return
     try {
-      const fileKey = await getFileKey(file.id)
+      const fileKey = await getFileKeyForFile(file)
       await encryptedDownload(file.id, fileKey, file.name_encrypted, file.mime_type ?? undefined, file.chunk_count, file.size_bytes)
     } catch (err) {
       showToast({ icon: 'download', title: 'Download failed', description: err instanceof Error ? err.message : 'Could not decrypt the file.', danger: true })

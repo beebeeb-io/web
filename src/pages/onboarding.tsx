@@ -259,6 +259,7 @@ export function Onboarding() {
           welcomeFile,
           fileId,
           fileKey,
+          masterKeyBytes,
           undefined,
           undefined,
           undefined,

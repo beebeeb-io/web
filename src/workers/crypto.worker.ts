@@ -15,6 +15,24 @@ let wasmModule: typeof WasmTypes | null = null
 // growth back to the worker owner (used for the memory-cap restart logic).
 let wasmMemory: WebAssembly.Memory | null = null
 
+// ── Worker-owned streaming-encryptor registry ───────────────────────────────
+// A `WasmChunkEncryptor` is a stateful struct whose instance is a pointer into
+// THIS worker's WASM linear memory. Comlink cannot structured-clone that
+// pointer across the worker boundary, so instances NEVER leave the worker:
+// they are created here, kept in `liveEncryptors`, and addressed from the main
+// thread by an opaque numeric handle. `crypto.ts` mirrors each handle behind a
+// `StreamingEncryptor` proxy.
+const liveEncryptors = new Map<number, WasmTypes.WasmChunkEncryptor>()
+let nextEncryptorHandle = 1
+
+/** Shape returned by `WasmChunkEncryptor.finish()` (the core summary). */
+interface ChunkEncryptorSummary {
+  chunk_count: number
+  total_plaintext: number
+  total_ciphertext: number
+  chunk_size_bytes: number
+}
+
 /** Manifest written by gen-wasm-sri.mjs at build time. */
 interface WasmSriManifest {
   integrity: string
@@ -307,6 +325,170 @@ const cryptoWorker = {
   async planChunks(fileSizeBytes: number, profile: string): Promise<{ chunk_size_bytes: number; chunk_count: number }> {
     const wasm = await ensureWasm()
     return wasm.plan_chunks(BigInt(fileSizeBytes), profile) as { chunk_size_bytes: number; chunk_count: number }
+  },
+
+  // ── Streaming encryptor (handle-addressed) ────────────────────────────────
+  // The whole point of these methods is that the WASM instance stays inside the
+  // worker. Callers get a numeric handle and round-trip it on every op.
+
+  /**
+   * Create a push-form streaming encryptor whose chunk plan is derived from
+   * `fileSize` + `profile` (the client ladder). Returns an opaque handle.
+   * The per-file key is derived ONCE inside core from `masterKey` + `fileId`;
+   * no key material is recombined in JS.
+   */
+  async createEncryptor(
+    masterKey: Uint8Array,
+    fileId: string,
+    fileSize: number,
+    profile: string,
+  ): Promise<number> {
+    const wasm = await ensureWasm()
+    const enc = new wasm.WasmChunkEncryptor(masterKey, fileId, BigInt(fileSize), profile)
+    const handle = nextEncryptorHandle++
+    liveEncryptors.set(handle, enc)
+    return handle
+  },
+
+  /**
+   * Create a push-form streaming encryptor with an explicit, server-dictated
+   * chunk size. Use when the v2 upload-init response overrode `chunk_size`, so
+   * the client plan can't diverge from what the server expects.
+   */
+  async createEncryptorWithChunkSize(
+    masterKey: Uint8Array,
+    fileId: string,
+    fileSize: number,
+    chunkSizeBytes: number,
+  ): Promise<number> {
+    const wasm = await ensureWasm()
+    const enc = wasm.WasmChunkEncryptor.withChunkSize(
+      masterKey,
+      fileId,
+      BigInt(fileSize),
+      BigInt(chunkSizeBytes),
+    )
+    const handle = nextEncryptorHandle++
+    liveEncryptors.set(handle, enc)
+    return handle
+  },
+
+  /**
+   * Encrypt one plaintext chunk and return the full wire frame
+   * (`nonce(12) || ciphertext || tag(16)`) for the main thread to PUT directly.
+   * Transfers the frame buffer (zero-copy). Chunks MUST be pushed in order.
+   */
+  async encryptorPushChunk(handle: number, plaintext: Uint8Array): Promise<Uint8Array> {
+    const enc = liveEncryptors.get(handle)
+    if (!enc) throw new Error(`No live encryptor for handle ${handle}`)
+    const frame = enc.pushChunk(plaintext) as Uint8Array
+    return Comlink.transfer(frame, [frame.buffer])
+  },
+
+  /**
+   * Consume the encryptor, run the core integrity guard (all planned chunks
+   * emitted + ciphertext total matches), return the summary, and drop it from
+   * the registry. `finish()` consumes the WASM instance, so no `free()` needed.
+   */
+  async encryptorFinish(handle: number): Promise<ChunkEncryptorSummary> {
+    const enc = liveEncryptors.get(handle)
+    if (!enc) throw new Error(`No live encryptor for handle ${handle}`)
+    try {
+      const summary = enc.finish() as ChunkEncryptorSummary
+      return summary
+    } finally {
+      // finish() consumes self in core; drop our reference either way.
+      liveEncryptors.delete(handle)
+    }
+  },
+
+  /**
+   * Release an encryptor that will not be finished (aborted/errored upload).
+   * Frees the WASM instance and removes the handle. Idempotent.
+   */
+  encryptorDispose(handle: number): void {
+    const enc = liveEncryptors.get(handle)
+    if (enc) {
+      try {
+        enc.free()
+      } catch {
+        // Already freed/consumed — nothing to do.
+      }
+      liveEncryptors.delete(handle)
+    }
+  },
+
+  /**
+   * How many streaming encryptors are currently live in this worker. The
+   * worker owner (`crypto.ts`) reads this BEFORE recycling the memory-capped
+   * worker so a restart can never orphan an in-flight encryptor.
+   */
+  liveEncryptorCount(): number {
+    return liveEncryptors.size
+  },
+
+  // ─── File requests (sealed-box / ECIES per request) ──────────────────────
+  // Thin pass-throughs to the core `file_request` bindings. No crypto is
+  // implemented here — the seal/open/wrap/unwrap logic all lives in
+  // beebeeb-core::file_request and is byte-identical across every client.
+
+  /** Derive the X25519 public key for a 32-byte private key (used to derive
+   *  R_pub from R_priv when rebuilding a request link). */
+  async deriveX25519PublicFromPrivate(privateKey: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.derive_x25519_public(privateKey) as Uint8Array
+  },
+
+  /** Wrap a request's X25519 private key under the owner's master key.
+   *  Returns { wrapped, nonce }. */
+  async wrapRequestPrivate(
+    masterKey: Uint8Array,
+    requestId: Uint8Array,
+    rPriv: Uint8Array,
+  ): Promise<{ wrapped: Uint8Array; nonce: Uint8Array }> {
+    const wasm = await ensureWasm()
+    const result = wasm.wrap_request_private(masterKey, requestId, rPriv) as {
+      wrapped: Uint8Array
+      nonce: Uint8Array
+    }
+    return { wrapped: result.wrapped, nonce: result.nonce }
+  },
+
+  /** Unwrap a request's X25519 private key. Returns the 32-byte R_priv. */
+  async unwrapRequestPrivate(
+    masterKey: Uint8Array,
+    requestId: Uint8Array,
+    wrapped: Uint8Array,
+    nonce: Uint8Array,
+  ): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.unwrap_request_private(masterKey, requestId, wrapped, nonce) as Uint8Array
+  },
+
+  /** Seal a content key to a request public key (anonymous uploader path).
+   *  Returns { e_pub, wrapped_key } — a fresh ephemeral keypair is generated
+   *  internally and its private half discarded. */
+  async sealToRequest(
+    rPub: Uint8Array,
+    fileId: Uint8Array,
+    contentKey: Uint8Array,
+  ): Promise<{ e_pub: Uint8Array; wrapped_key: Uint8Array }> {
+    const wasm = await ensureWasm()
+    return wasm.seal_to_request(rPub, fileId, contentKey) as {
+      e_pub: Uint8Array
+      wrapped_key: Uint8Array
+    }
+  },
+
+  /** Open a sealed request upload (owner decrypt path). Recovers the content key. */
+  async openRequestUpload(
+    rPriv: Uint8Array,
+    ePub: Uint8Array,
+    fileId: Uint8Array,
+    wrappedKey: Uint8Array,
+  ): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.open_request_upload(rPriv, ePub, fileId, wrappedKey) as Uint8Array
   },
 }
 

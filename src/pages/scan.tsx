@@ -191,7 +191,7 @@ type ScanStep = 'viewfinder' | 'review' | 'saving' | 'done'
 
 export function ScanPage() {
   const navigate = useNavigate()
-  const { getFileKey, isUnlocked, cryptoReady } = useKeys()
+  const { getFileKey, getMasterKey, isUnlocked, cryptoReady } = useKeys()
   const { showToast } = useToast()
 
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -314,7 +314,7 @@ export function ScanPage() {
 
       stopCamera()
 
-      await encryptedUpload(file, fileId, fileKey, undefined, (p) => {
+      await encryptedUpload(file, fileId, fileKey, getMasterKey(), undefined, (p) => {
         // Map upload progress (0-100) to our 40-100 range
         setSaveProgress(40 + Math.round(p.progress * 0.6))
       })
@@ -335,7 +335,7 @@ export function ScanPage() {
       setStep('review')
       setSaveProgress(0)
     }
-  }, [pages, isUnlocked, cryptoReady, getFileKey, stopCamera, showToast, navigate])
+  }, [pages, isUnlocked, cryptoReady, getFileKey, getMasterKey, stopCamera, showToast, navigate])
 
   // ── Render ────────────────────────────────────────────────────────────────
 

@@ -126,6 +126,17 @@ async function withProxy<T>(
  */
 async function maybeRestart(): Promise<void> {
   if (restartPromise || !workerProxy) return
+  // LIVE-ENCRYPTOR GUARD: never recycle the worker while a streaming upload
+  // owns an encryptor. A `WasmChunkEncryptor` is a pointer into THIS worker's
+  // linear memory; terminating the worker mid-upload would orphan it and break
+  // finish()'s integrity guard. Check before taking the restart lock.
+  try {
+    if ((await workerProxy.liveEncryptorCount()) > 0) return
+  } catch (err) {
+    // Worker went away (terminate raced us) — bail; the next op lazily re-inits.
+    console.warn('[crypto] liveEncryptorCount failed', err)
+    return
+  }
   let bytes = 0
   try {
     // Direct call (not via withProxy) so the memory probe itself doesn't
@@ -486,6 +497,185 @@ export async function planChunks(
   profile: 'desktop' | 'web' | 'mobile' | 'backup' = 'web',
 ): Promise<{ chunk_size_bytes: number; chunk_count: number }> {
   return withProxy((p) => p.planChunks(fileSizeBytes, profile))
+}
+
+// ─── Streaming encryption (shared core ChunkEncryptor) ──────────────────────
+//
+// The web client adopts the same streaming primitive as CLI/desktop/mobile via
+// the WASM `WasmChunkEncryptor`. Because the encryptor instance is a pointer
+// into the worker's linear memory, it CANNOT be proxied directly through
+// Comlink — instead the worker keeps it in a registry and hands back an opaque
+// numeric handle. `StreamingEncryptor` below mirrors that handle on the main
+// thread: every method round-trips the handle to the worker, and the WASM
+// instance itself never crosses the boundary.
+
+export interface ChunkEncryptorSummary {
+  chunk_count: number
+  total_plaintext: number
+  total_ciphertext: number
+  chunk_size_bytes: number
+}
+
+export type ChunkProfile = 'desktop' | 'web' | 'mobile' | 'backup'
+
+/**
+ * Main-thread proxy over a worker-owned `WasmChunkEncryptor`.
+ *
+ * One handle = one file, single consumer. Push plaintext slices in order via
+ * `pushChunk`, then call `finish()` exactly once to run the integrity guard
+ * and get the summary. On an aborted/failed upload, call `dispose()` to free
+ * the worker-side instance. After `finish()` the handle is already gone, so a
+ * follow-up `dispose()` is a harmless no-op.
+ */
+export class StreamingEncryptor {
+  #handle: number
+  #consumed = false
+
+  constructor(handle: number) {
+    this.#handle = handle
+  }
+
+  /**
+   * Encrypt one plaintext slice and return the full wire frame
+   * (`nonce || ciphertext || tag`) ready to PUT. The plaintext buffer is
+   * transferred to the worker (zero-copy) — do not reuse it afterward.
+   */
+  async pushChunk(plaintext: Uint8Array): Promise<Uint8Array> {
+    return withProxy((p) =>
+      p.encryptorPushChunk(this.#handle, Comlink.transfer(plaintext, [plaintext.buffer])),
+    )
+  }
+
+  /**
+   * Run the core integrity guard and return the summary. Consumes the handle.
+   * Throws if the source shrank (fewer chunks/bytes than the plan).
+   */
+  async finish(): Promise<ChunkEncryptorSummary> {
+    this.#consumed = true
+    return withProxy((p) => p.encryptorFinish(this.#handle))
+  }
+
+  /**
+   * Best-effort release for aborted/failed uploads. Never throws; safe to call
+   * after `finish()` (the handle is already gone on the worker side).
+   */
+  async dispose(): Promise<void> {
+    if (this.#consumed) return
+    this.#consumed = true
+    try {
+      await withProxy((p) => p.encryptorDispose(this.#handle))
+    } catch (err) {
+      console.warn('[crypto] encryptor dispose failed', err)
+    }
+  }
+}
+
+/**
+ * Start a streaming encryptor whose chunk plan is derived from `fileSize` +
+ * `profile` (the client ladder). Use when the chunk size was NOT overridden by
+ * the server. The per-file key is derived inside core from `masterKey` +
+ * `fileId` — pass the SAME `fileId` the key will later be derived from.
+ */
+export async function startEncryptedStream(
+  masterKey: Uint8Array,
+  fileId: string,
+  fileSize: number,
+  profile: ChunkProfile = 'web',
+): Promise<StreamingEncryptor> {
+  const handle = await withProxy((p) => p.createEncryptor(masterKey, fileId, fileSize, profile))
+  return new StreamingEncryptor(handle)
+}
+
+/**
+ * Start a streaming encryptor with an explicit, server-dictated chunk size.
+ * Use when the v2 upload-init response overrode `chunk_size` so the client plan
+ * cannot diverge from what the server expects.
+ */
+export async function startEncryptedStreamWithChunkSize(
+  masterKey: Uint8Array,
+  fileId: string,
+  fileSize: number,
+  chunkSizeBytes: number,
+): Promise<StreamingEncryptor> {
+  const handle = await withProxy((p) =>
+    p.createEncryptorWithChunkSize(masterKey, fileId, fileSize, chunkSizeBytes),
+  )
+  return new StreamingEncryptor(handle)
+}
+
+// ─── File requests (sealed-box / ECIES per request) ─────────────────────────
+//
+// All crypto is the core `file_request` binding — this layer only composes the
+// pieces. Two domain-separation inputs (`request_id` for the private-key wrap,
+// `file_id` for the per-upload seal) are passed to core as HKDF `info`. Because
+// the SERVER assigns the request UUID and the file UUID *after* the client has
+// already wrapped / sealed, neither id is known at wrap/seal time, and the
+// server carries no client-chosen id to echo back. So both sides use a FIXED
+// EMPTY value — the only value reconstructable by both the wrapper/unwrapper and
+// the sealer/opener. This stays secure: each wrap uses a fresh random GCM nonce,
+// and each seal uses a fresh ephemeral X25519 keypair, so uniqueness never
+// depends on the (empty) id. Every client (web/cli/mobile) MUST use this same
+// empty convention for links to round-trip cross-client.
+export const FILE_REQUEST_EMPTY_ID = new Uint8Array(0)
+
+export interface RequestKeypair {
+  /** 32-byte X25519 private key (R_priv). Wrap before persisting. */
+  privateKey: Uint8Array
+  /** 32-byte X25519 public key (R_pub). Goes in the link fragment. */
+  publicKey: Uint8Array
+}
+
+/** Generate a fresh per-request X25519 keypair. R_priv is 32 random bytes;
+ *  R_pub is derived by the core binding (clamping applied internally). */
+export async function generateRequestKeypair(): Promise<RequestKeypair> {
+  const privateKey = crypto.getRandomValues(new Uint8Array(32))
+  const publicKey = await withProxy((p) => p.deriveX25519PublicFromPrivate(privateKey))
+  return { privateKey, publicKey }
+}
+
+/** Derive R_pub from a (already-unwrapped) R_priv — used to rebuild a link. */
+export async function derivePublicFromPrivate(rPriv: Uint8Array): Promise<Uint8Array> {
+  return withProxy((p) => p.deriveX25519PublicFromPrivate(rPriv))
+}
+
+/** Wrap a request's R_priv under the owner's master key. */
+export async function wrapRequestPrivate(
+  masterKey: Uint8Array,
+  rPriv: Uint8Array,
+  requestId: Uint8Array = FILE_REQUEST_EMPTY_ID,
+): Promise<{ wrapped: Uint8Array; nonce: Uint8Array }> {
+  return withProxy((p) => p.wrapRequestPrivate(masterKey, requestId, rPriv))
+}
+
+/** Unwrap a request's R_priv with the owner's master key. */
+export async function unwrapRequestPrivate(
+  masterKey: Uint8Array,
+  wrapped: Uint8Array,
+  nonce: Uint8Array,
+  requestId: Uint8Array = FILE_REQUEST_EMPTY_ID,
+): Promise<Uint8Array> {
+  return withProxy((p) => p.unwrapRequestPrivate(masterKey, requestId, wrapped, nonce))
+}
+
+/** Seal a per-file content key C to a request public key (uploader path).
+ *  Returns the uploader's ephemeral public key + the wrapped content key. */
+export async function sealToRequest(
+  rPub: Uint8Array,
+  contentKey: Uint8Array,
+  fileId: Uint8Array = FILE_REQUEST_EMPTY_ID,
+): Promise<{ ePub: Uint8Array; wrappedKey: Uint8Array }> {
+  const result = await withProxy((p) => p.sealToRequest(rPub, fileId, contentKey))
+  return { ePub: result.e_pub, wrappedKey: result.wrapped_key }
+}
+
+/** Open a sealed upload, recovering the content key C (owner decrypt path). */
+export async function openRequestUpload(
+  rPriv: Uint8Array,
+  ePub: Uint8Array,
+  wrappedKey: Uint8Array,
+  fileId: Uint8Array = FILE_REQUEST_EMPTY_ID,
+): Promise<Uint8Array> {
+  return withProxy((p) => p.openRequestUpload(rPriv, ePub, fileId, wrappedKey))
 }
 
 // ─── Helpers ────────────────────────────────────────

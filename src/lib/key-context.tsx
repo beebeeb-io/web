@@ -31,6 +31,8 @@ import {
   clearSession,
 } from './session-persist'
 import { getEmail, getToken } from './api'
+import type { DriveFile } from './api'
+import { isRequestUpload, createRequestKeyResolver, type RequestKeyResolver } from './file-request-crypto'
 import { pushTauriSession, clearTauriSession } from './tauri-bridge'
 
 interface KeyState {
@@ -60,6 +62,13 @@ interface KeyState {
   unlock: (password: string, salt: Uint8Array) => Promise<void>
   /** Derive a per-file key from the master key (async — runs in worker). */
   getFileKey: (fileId: string) => Promise<Uint8Array>
+  /** Resolve the decryption key for a DriveFile. Files received through a file
+   *  request carry a sealed content key (file_request_id + sender_ephemeral_pubkey
+   *  + wrapped_content_key) and must be opened via the request-key path; all other
+   *  files use the normal derive_file_key(master, id) path. Prefer this over
+   *  getFileKey wherever the full file object is available (naming, preview,
+   *  download). */
+  getFileKeyForFile: (file: DriveFile) => Promise<Uint8Array>
   /** Get the raw master key (for X25519 key exchange in sharing). */
   getMasterKey: () => Uint8Array
   /** Zero in-memory key. Vault stays in IndexedDB for re-unlock. */
@@ -247,6 +256,21 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     return deriveFileKey(masterKeyRef.current, fileId)
   }, [])
 
+  // Lazily-created resolver for files received through a file request. Caches the
+  // request list + unwrapped R_priv per request for the drive session.
+  const requestResolverRef = useRef<RequestKeyResolver | null>(null)
+
+  const getFileKeyForFile = useCallback(async (file: DriveFile): Promise<Uint8Array> => {
+    if (!masterKeyRef.current) {
+      throw new Error('Vault is locked — unlock first')
+    }
+    if (isRequestUpload(file)) {
+      if (!requestResolverRef.current) requestResolverRef.current = createRequestKeyResolver()
+      return requestResolverRef.current.resolveFileKey(file, masterKeyRef.current)
+    }
+    return deriveFileKey(masterKeyRef.current, file.id)
+  }, [])
+
   const getMasterKey = useCallback((): Uint8Array => {
     if (!masterKeyRef.current) {
       throw new Error('Vault is locked — unlock first')
@@ -259,6 +283,8 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       zeroize(masterKeyRef.current)
       masterKeyRef.current = null
     }
+    requestResolverRef.current?.clear()
+    requestResolverRef.current = null
     clearCachedKey()
     setIsUnlocked(false)
   }, [clearCachedKey])
@@ -268,6 +294,8 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       zeroize(masterKeyRef.current)
       masterKeyRef.current = null
     }
+    requestResolverRef.current?.clear()
+    requestResolverRef.current = null
     clearCachedKey()
     await clearVault()
     setVaultExists(false)
@@ -299,11 +327,12 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       unlockVaultWithPasskey,
       unlock,
       getFileKey,
+      getFileKeyForFile,
       getMasterKey,
       lock,
       fullLogout,
     }),
-    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, vaultExists, vaultChecked, setMasterKey, setMasterKeyDirect, setMasterKeyFromPasskey, unlockVault, unlockVaultWithPasskey, unlock, getFileKey, getMasterKey, lock, fullLogout],
+    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, vaultExists, vaultChecked, setMasterKey, setMasterKeyDirect, setMasterKeyFromPasskey, unlockVault, unlockVaultWithPasskey, unlock, getFileKey, getFileKeyForFile, getMasterKey, lock, fullLogout],
   )
 
   return <KeyContext.Provider value={value}>{children}</KeyContext.Provider>
