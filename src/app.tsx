@@ -6,6 +6,7 @@ import { KeyProvider, useKeys } from './lib/key-context'
 import { WsProvider } from './lib/ws-context'
 import { SyncProvider } from './lib/sync-context'
 import { OnboardingProvider } from './lib/onboarding-context'
+import { FEATURE_TEAMS } from './lib/flags'
 import { ToastProvider, useToast } from './components/toast'
 import { ErrorBoundary } from './components/error-boundary'
 import { WasmGuard } from './components/wasm-guard'
@@ -420,9 +421,13 @@ export function App() {
           <Route
             path="/team"
             element={
-              <ProtectedRoute>
-                <Team />
-              </ProtectedRoute>
+              FEATURE_TEAMS ? (
+                <ProtectedRoute>
+                  <Team />
+                </ProtectedRoute>
+              ) : (
+                <Navigate to="/" replace />
+              )
             }
           />
           <Route path="/invite/:token" element={<AcceptInvite />} />
