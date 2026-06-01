@@ -114,8 +114,19 @@ export function RecoverWithPhrase() {
       setRecoveryToken(result.recovery_token)
       setStep('password')
     } catch (err) {
-      if (err instanceof ApiError && err.status === 401) {
-        setPhraseError('The recovery phrase does not match this account. Double-check all words.')
+      // The server distinguishes several failure modes here. Branch on status
+      // + code instead of surfacing the raw `invalid_recovery_phrase` string:
+      //   429 → rate-limited
+      //   400 / code 'invalid_recovery_phrase' → phrase doesn't match the account
+      //   401 → (legacy) phrase mismatch — same user-facing meaning as 400
+      //   404 → endpoint not deployed yet
+      if (err instanceof ApiError && err.status === 429) {
+        setPhraseError('Too many attempts. For security, wait an hour and try again.')
+      } else if (
+        err instanceof ApiError &&
+        (err.status === 400 || err.status === 401 || err.code === 'invalid_recovery_phrase')
+      ) {
+        setPhraseError("The recovery phrase doesn't match this account. Double-check all 12 words.")
       } else if (err instanceof ApiError && err.status === 404) {
         setStep('unavailable')
       } else {

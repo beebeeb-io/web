@@ -696,12 +696,18 @@ export function list_tar_entries(data) {
 
 /**
  * Finish OPAQUE client login. Returns `{ message: Uint8Array, session_key: Uint8Array, export_key: Uint8Array }`.
+ *
+ * `ksf_version` selects the KSF the account's password file was registered
+ * under (0 = legacy Identity KSF, anything else = current Argon2id). The web
+ * client reads it from the login-start response (`server_state` JSON) and
+ * passes it through verbatim. The KSF must match or finish fails.
  * @param {Uint8Array} client_state
  * @param {Uint8Array} password
  * @param {Uint8Array} server_response
+ * @param {number} ksf_version
  * @returns {any}
  */
-export function opaque_login_finish(client_state, password, server_response) {
+export function opaque_login_finish(client_state, password, server_response, ksf_version) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
         const ptr0 = passArray8ToWasm0(client_state, wasm.__wbindgen_export);
@@ -710,7 +716,7 @@ export function opaque_login_finish(client_state, password, server_response) {
         const len1 = WASM_VECTOR_LEN;
         const ptr2 = passArray8ToWasm0(server_response, wasm.__wbindgen_export);
         const len2 = WASM_VECTOR_LEN;
-        wasm.opaque_login_finish(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        wasm.opaque_login_finish(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ksf_version);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);

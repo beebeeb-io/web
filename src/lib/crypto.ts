@@ -381,8 +381,9 @@ export async function opaqueLoginFinish(
   clientState: Uint8Array,
   password: string,
   serverResponse: Uint8Array,
+  ksfVersion: number,
 ) {
-  return withProxy((p) => p.opaqueLoginFinish(clientState, password, serverResponse))
+  return withProxy((p) => p.opaqueLoginFinish(clientState, password, serverResponse, ksfVersion))
 }
 
 export async function deriveX25519Public(masterKey: Uint8Array): Promise<Uint8Array> {

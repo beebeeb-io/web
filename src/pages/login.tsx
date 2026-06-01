@@ -12,12 +12,13 @@ import { useKeys } from '../lib/key-context'
 import { devAutoAuth } from '../lib/dev-auth'
 import { startPasskeyLogin, finishPasskeyLogin, setToken, clearToken, opaqueLoginStart as apiOpaqueLoginStart, opaqueLoginFinish as apiOpaqueLoginFinish, serverOptsToGetOptions, credentialToAuthenticationJSON, getVaultKeyEscrow } from '../lib/api'
 import { opaqueLoginStart, opaqueLoginFinish, toBase64, fromBase64 } from '../lib/crypto'
+import { autoUpgradeToV1 } from '../lib/auto-upgrade'
 import { prfExtensionInputs, extractPrfOutput, getVaultWrapKey, decryptVaultBlob } from '../lib/passkey-vault'
 
 export function Login() {
   const navigate = useNavigate()
   const { refreshUser, verify2fa } = useAuth()
-  const { unlockVault, unlockVaultWithPasskey, vaultExists, cryptoReady, cryptoError, isUnlocked, setMasterKeyFromPasskey } = useKeys()
+  const { unlockVault, unlockVaultWithPasskey, vaultExists, cryptoReady, cryptoError, isUnlocked, setMasterKeyFromPasskey, getMasterKey } = useKeys()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -27,6 +28,10 @@ export function Login() {
 
   // 2FA state
   const [partialToken, setPartialToken] = useState<string | null>(null)
+  // Stash the account's KSF version across the 2FA round-trip. handleSubmit
+  // returns early (before unlock) when 2FA is required, so the v0 auto-upgrade
+  // can't fire there — handle2faVerify reads this after it unlocks the vault.
+  const [pendingKsfVersion, setPendingKsfVersion] = useState<number | null>(null)
   const [passkeyLoading, setPasskeyLoading] = useState(false)
   const [passkeyMode, setPasskeyMode] = useState(false)
   const [devLoading, setDevLoading] = useState(false)
@@ -81,11 +86,19 @@ export function Login() {
       const loginStart = await opaqueLoginStart(password)
       const serverResp = await apiOpaqueLoginStart(email, toBase64(loginStart.message))
       const serverMsg = Uint8Array.from(atob(serverResp.server_message), c => c.charCodeAt(0))
-      const loginFinish = await opaqueLoginFinish(loginStart.state, password, serverMsg)
+      // Account's OPAQUE KSF version (0 = legacy Identity KSF, else Argon2id),
+      // forwarded by /opaque/login-start. Threaded into the WASM finish so it
+      // stretches with the matching KSF, and used below to trigger the silent
+      // V1 upgrade for legacy (v0) accounts.
+      const ksfVersion = serverResp.ksf_version
+      const loginFinish = await opaqueLoginFinish(loginStart.state, password, serverMsg, ksfVersion)
       const loginResult = await apiOpaqueLoginFinish(email, toBase64(loginFinish.message), serverResp.server_state)
 
       // Check if 2FA is required before completing login
       if (loginResult.requires_2fa && loginResult.partial_token) {
+        // Carry ksfVersion to handle2faVerify so a v0 account still auto-upgrades
+        // after it clears 2FA (the unlock + dispatch happen there, not here).
+        setPendingKsfVersion(ksfVersion)
         setPartialToken(loginResult.partial_token)
         setSubmitting(false)
         return
@@ -109,6 +122,12 @@ export function Login() {
           setSubmitting(false)
           return
         }
+        // Legacy (ksf v0) account just completed a fresh login on the current
+        // client — silently re-register its OPAQUE credential at V1 so it
+        // converges onto the current standard. Fire-and-forget + best-effort
+        // (never throws), so it can't block navigation. Runs only now that the
+        // vault is unlocked: uses the in-memory master key, never the password.
+        if (ksfVersion === 0) void autoUpgradeToV1(password, getMasterKey())
         navigateAfterLogin()
       } else {
         // No vault on this device — needs mnemonic provisioning
@@ -148,6 +167,10 @@ export function Login() {
           setPartialToken(null)
           return
         }
+        // v0 account that just cleared 2FA — fire the same silent V1 upgrade as
+        // the non-2FA path. Best-effort, fire-and-forget; in-memory master key
+        // only, never derived from the password.
+        if (pendingKsfVersion === 0) void autoUpgradeToV1(password, getMasterKey())
       } else {
         setNeedsProvision(true)
         setPartialToken(null)
@@ -175,7 +198,8 @@ export function Login() {
       const loginStart = await opaqueLoginStart(passkeyFallbackPassword)
       const serverResp = await apiOpaqueLoginStart(email, toBase64(loginStart.message))
       const serverMsg = Uint8Array.from(atob(serverResp.server_message), c => c.charCodeAt(0))
-      const loginFinish = await opaqueLoginFinish(loginStart.state, passkeyFallbackPassword, serverMsg)
+      const ksfVersion = serverResp.ksf_version
+      const loginFinish = await opaqueLoginFinish(loginStart.state, passkeyFallbackPassword, serverMsg, ksfVersion)
       await apiOpaqueLoginFinish(email, toBase64(loginFinish.message), serverResp.server_state)
       // Drop any stale localStorage bearer so the fresh bb_session cookie
       // is the only auth carried on subsequent requests.
@@ -190,6 +214,9 @@ export function Login() {
           setPasskeyFallbackSubmitting(false)
           return
         }
+        // Mirror of handleSubmit: silently upgrade a legacy (v0) account to V1
+        // now that it's authenticated + unlocked. Best-effort, fire-and-forget.
+        if (ksfVersion === 0) void autoUpgradeToV1(passkeyFallbackPassword, getMasterKey())
         navigateAfterLogin()
       } else {
         // No local vault — hand off to device provisioning (recovery phrase / QR)

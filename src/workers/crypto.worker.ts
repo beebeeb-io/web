@@ -275,14 +275,22 @@ const cryptoWorker = {
     return { message: result.message as Uint8Array, state: result.state as Uint8Array }
   },
 
-  /** OPAQUE: finish client login. Returns { message, session_key, export_key }. */
+  /**
+   * OPAQUE: finish client login. Returns { message, session_key, export_key }.
+   *
+   * `ksfVersion` selects the KSF the account's password file was registered
+   * under (0 = legacy Identity KSF, else Argon2id). It comes from the
+   * login-start response and is passed through to WASM verbatim — the KSF must
+   * match or the OPAQUE finish fails.
+   */
   async opaqueLoginFinish(
     clientState: Uint8Array,
     password: string,
     serverResponse: Uint8Array,
+    ksfVersion: number,
   ): Promise<{ message: Uint8Array; sessionKey: Uint8Array; exportKey: Uint8Array }> {
     const wasm = await ensureWasm()
-    const result = wasm.opaque_login_finish(clientState, new TextEncoder().encode(password), serverResponse)
+    const result = wasm.opaque_login_finish(clientState, new TextEncoder().encode(password), serverResponse, ksfVersion)
     return {
       message: result.message as Uint8Array,
       sessionKey: result.session_key as Uint8Array,

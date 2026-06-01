@@ -186,8 +186,13 @@ export function list_tar_entries(data: Uint8Array): any;
 
 /**
  * Finish OPAQUE client login. Returns `{ message: Uint8Array, session_key: Uint8Array, export_key: Uint8Array }`.
+ *
+ * `ksf_version` selects the KSF the account's password file was registered
+ * under (0 = legacy Identity KSF, anything else = current Argon2id). The web
+ * client reads it from the login-start response (`server_state` JSON) and
+ * passes it through verbatim. The KSF must match or finish fails.
  */
-export function opaque_login_finish(client_state: Uint8Array, password: Uint8Array, server_response: Uint8Array): any;
+export function opaque_login_finish(client_state: Uint8Array, password: Uint8Array, server_response: Uint8Array, ksf_version: number): any;
 
 /**
  * Start OPAQUE client login. Returns `{ message: Uint8Array, state: Uint8Array }`.
@@ -301,7 +306,7 @@ export interface InitOutput {
     readonly is_previewable_by_extension: (a: number, b: number) => number;
     readonly list_archive: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly list_tar_entries: (a: number, b: number, c: number) => void;
-    readonly opaque_login_finish: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly opaque_login_finish: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly opaque_login_start: (a: number, b: number, c: number) => void;
     readonly opaque_registration_finish: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly opaque_registration_start: (a: number, b: number, c: number) => void;

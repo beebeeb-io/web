@@ -289,7 +289,7 @@ export async function opaqueRegisterFinish(
 export async function opaqueLoginStart(
   email: string,
   clientMessage: string,
-): Promise<{ server_message: string; server_state: string }> {
+): Promise<{ server_message: string; server_state: string; ksf_version: number }> {
   return request('/api/v1/opaque/login-start', {
     method: 'POST',
     body: JSON.stringify({ email, client_message: clientMessage }),
