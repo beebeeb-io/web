@@ -73,6 +73,11 @@ export interface DriveFile {
    *  Returned by the server on all file-list responses. */
   is_media?: boolean
   has_thumbnail?: boolean
+  /** True when the file has a large (1600px) thumbnail variant in addition to the
+   *  medium one. Returned by the server on all file responses. Optional because
+   *  mobile/CLI/legacy uploads only have a medium variant — the preview gates its
+   *  `/thumbnail/large` request on this flag to avoid a guaranteed 404. */
+  has_large_thumbnail?: boolean
   version_number?: number
   /** Number of active (non-revoked, non-expired) share links for this file.
    *  Populated by a LEFT JOIN in the server's list_files handler. */
@@ -113,6 +118,7 @@ export interface SyncNode {
   content_hash: string | null
   version_number: number
   has_thumbnail: boolean
+  has_large_thumbnail: boolean
   storage_pool_id: string | null
   is_trashed: boolean
   is_starred: boolean

@@ -409,19 +409,26 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
 
         // Thumbnail-first path for images (current version only)
         if (isImageFile && selectedVersionId === null) {
-          const largeThumbnailUrl = await fetchAndDecryptLargeThumbnail(file.id, fileKey)
-          if (largeThumbnailUrl && !cancelled) {
-            const thumbRes = await fetch(largeThumbnailUrl)
-            if (thumbRes.ok) {
-              const thumbBlob = await thumbRes.blob()
-              if (!cancelled) {
-                setBlob(thumbBlob)
-                setRenderKey((k) => k + 1)
-                return
+          // Only request the large variant when the server says it exists.
+          // Mobile/CLI/legacy uploads have only a medium thumbnail, so an
+          // unconditional /thumbnail/large request would waste a guaranteed-404.
+          // The medium fallback below is a reachable sibling: it runs whenever
+          // the large fetch is skipped (no large variant) OR fails.
+          if (file.has_large_thumbnail) {
+            const largeThumbnailUrl = await fetchAndDecryptLargeThumbnail(file.id, fileKey)
+            if (largeThumbnailUrl && !cancelled) {
+              const thumbRes = await fetch(largeThumbnailUrl)
+              if (thumbRes.ok) {
+                const thumbBlob = await thumbRes.blob()
+                if (!cancelled) {
+                  setBlob(thumbBlob)
+                  setRenderKey((k) => k + 1)
+                  return
+                }
               }
             }
           }
-          // Large failed — try medium thumbnail
+          // Large skipped or failed — try medium thumbnail
           if (!cancelled) {
             const mediumThumbnailUrl = await fetchAndDecryptThumbnail(file.id, fileKey)
             if (mediumThumbnailUrl && !cancelled) {

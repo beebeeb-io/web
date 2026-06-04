@@ -289,6 +289,7 @@ export function Drive() {
     chunk_count: n.chunk_count ?? 1,
     is_starred: n.is_starred,
     has_thumbnail: n.has_thumbnail,
+    has_large_thumbnail: n.has_large_thumbnail,
     version_number: n.version_number,
     created_at: n.created_at,
     updated_at: n.updated_at,
