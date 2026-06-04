@@ -314,6 +314,12 @@ function pickRenderer(
 export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, onVersionRestored, onPrev, onNext, hasPrev, hasNext }: FilePreviewProps) {
   const { getFileKeyForFile, isUnlocked } = useKeys()
   const [blob, setBlob] = useState<Blob | null>(null)
+  /** True when `blob` holds the full original (non-image / fallback / version
+   *  paths). False when `blob` is only a thumbnail (the thumbnail-first image
+   *  path). The toolbar Download must always save the original — never a
+   *  downscaled thumbnail — so it fetches the original when this is false. */
+  const [blobIsOriginal, setBlobIsOriginal] = useState(false)
+  const [downloading, setDownloading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [localDecryptedName, setLocalDecryptedName] = useState<string | null>(null)
   /** MIME type extracted from encrypted metadata (null for legacy files) */
@@ -397,6 +403,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   useEffect(() => {
     let cancelled = false
     setBlob(null)
+    setBlobIsOriginal(false)
     setError(null)
     if (!isUnlocked) return
 
@@ -472,6 +479,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
         }
         if (!cancelled) {
           setBlob(plaintext)
+          setBlobIsOriginal(true)
           setRenderKey((k) => k + 1)
         }
       } catch (err: unknown) {
@@ -527,9 +535,8 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   const renderer = blob ? pickRenderer(effectiveMime, blob, name, imageControls) : null
   const canPreview = renderer !== null
 
-  function handleDownload() {
-    if (!blob) return
-    const url = URL.createObjectURL(blob)
+  function saveBlob(data: Blob) {
+    const url = URL.createObjectURL(data)
     const a = document.createElement('a')
     a.href = url
     a.download = name
@@ -537,6 +544,51 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
+  }
+
+  // Download must ALWAYS save the full original — never the large/medium
+  // thumbnail the image preview loads for fast rendering. Reuse the loaded blob
+  // only when it IS the original (non-image, fallback, or a historical version);
+  // otherwise fetch and decrypt the original on demand. On error we surface it
+  // rather than silently saving a downscaled WebP.
+  async function handleDownload() {
+    if (downloading) return
+    if (blob && blobIsOriginal) {
+      saveBlob(blob)
+      return
+    }
+    try {
+      setDownloading(true)
+      const fileKey = await getFileKeyForFile(file)
+      let original: Blob
+      if (selectedVersionId === null) {
+        const res = await decryptToBlob(
+          file.id,
+          fileKey,
+          file.name_encrypted,
+          effectiveMime ?? undefined,
+          file.chunk_count,
+          file.size_bytes,
+        )
+        original = res.plaintext
+      } else {
+        const v = versions?.find((x) => x.id === selectedVersionId)
+        if (!v) throw new Error('Version not found')
+        original = await decryptVersionToBlob(
+          file.id,
+          v.id,
+          fileKey,
+          file.mime_type ?? undefined,
+          v.chunk_count,
+          v.size_bytes,
+        )
+      }
+      saveBlob(original)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Download failed')
+    } finally {
+      setDownloading(false)
+    }
   }
 
   // Keyboard navigation for prev/next (arrow keys)

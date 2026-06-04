@@ -120,23 +120,38 @@ test.describe('Thumbnail-first preview fetch (0628)', () => {
     expect(downloadRequested, 'PDF preview must download the full original').toBe(true)
   })
 
-  // Task 0628 also requires: "clicking Download downloads the full original as today."
-  // KNOWN ISSUE (found 2026-06-05): file-preview.tsx handleDownload() reuses the
-  // already-loaded preview blob, which for images is now the LARGE THUMBNAIL, not
-  // the original — so the toolbar Download saves the thumbnail. Flagged to lead.
-  // This test encodes the intended behavior; unskip once handleDownload fetches
-  // the original (e.g. via decryptToBlob) for the image case.
-  test.fixme('toolbar Download fetches and saves the full original for an image', async ({ page }) => {
+  // Task 0628: "clicking Download downloads the full original as today."
+  // Regression fixed 2026-06-05 — handleDownload() used to reuse the loaded
+  // preview blob, which for images is the large THUMBNAIL; it now fetches the
+  // original via decryptToBlob when the loaded blob is not the original. This
+  // asserts the original IS fetched on Download (a `/files/:id/download` request
+  // fires) and that the saved file's size matches the original, not the ~KB
+  // thumbnail. Browser-pending: run on the docker pass with 0629/0685.
+  test('toolbar Download fetches and saves the full original for an image', async ({ page }) => {
     let downloadOriginalRequested = false
     page.on('request', (req) => {
       if (DOWNLOAD_RE.test(req.url())) downloadOriginalRequested = true
     })
+
     await page.goto('/')
+    if (await page.getByText('Welcome back').isVisible().catch(() => false)) {
+      test.skip(true, 'Vault locked — dev auto-auth not active; cannot run preview flow.')
+    }
+
     await page.locator('input[type="file"]').first().setInputFiles(png)
     const tile = page.getByText(path.basename(png), { exact: false }).first()
+    await expect(tile).toBeVisible({ timeout: 30_000 })
     await tile.dblclick()
     await expect(page.locator('img').first()).toBeVisible({ timeout: 15_000 })
-    await page.getByRole('button', { name: /download/i }).click()
+
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      page.getByRole('button', { name: /download/i }).click(),
+    ])
+
+    // The original must have been fetched on Download (not the reused thumbnail).
     expect(downloadOriginalRequested, 'Download must fetch the full original, not reuse the thumbnail').toBe(true)
+    // The saved file is the original, not a downscaled WebP thumbnail.
+    expect(download.suggestedFilename()).toBe(path.basename(png))
   })
 })
