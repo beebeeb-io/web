@@ -269,7 +269,7 @@ export function PublicProfilePage() {
       </header>
 
       {/* Main content */}
-      <main id="main-content" className="flex-1 w-full max-w-2xl mx-auto px-4 pb-12">
+      <main id="main-content" className="flex-1 w-full max-w-[42rem] mx-auto px-4 pb-12">
         {loading && <LoadingState />}
         {notFound && <NotFoundState />}
         {error && <ErrorState message={error} onRetry={loadProfile} />}
