@@ -1,11 +1,11 @@
 # Graph Report - web  (2026-06-05)
 
 ## Corpus Check
-- 305 files · ~321,085 words
+- 306 files · ~321,356 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1708 nodes · 2388 edges · 50 communities detected
+- 1711 nodes · 2392 edges · 49 communities detected
 - Extraction: 78% EXTRACTED · 22% INFERRED · 0% AMBIGUOUS · INFERRED: 518 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
@@ -53,13 +53,12 @@
 - [[_COMMUNITY_Community 86|Community 86]]
 - [[_COMMUNITY_Community 89|Community 89]]
 - [[_COMMUNITY_Community 90|Community 90]]
-- [[_COMMUNITY_Community 91|Community 91]]
+- [[_COMMUNITY_Community 93|Community 93]]
 - [[_COMMUNITY_Community 94|Community 94]]
-- [[_COMMUNITY_Community 98|Community 98]]
-- [[_COMMUNITY_Community 104|Community 104]]
-- [[_COMMUNITY_Community 108|Community 108]]
-- [[_COMMUNITY_Community 110|Community 110]]
-- [[_COMMUNITY_Community 177|Community 177]]
+- [[_COMMUNITY_Community 103|Community 103]]
+- [[_COMMUNITY_Community 107|Community 107]]
+- [[_COMMUNITY_Community 109|Community 109]]
+- [[_COMMUNITY_Community 176|Community 176]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `request()` - 117 edges
@@ -93,7 +92,7 @@ Nodes (136): fireConnectionStatus(), fireErrorNotifier(), fireSessionExpired(), 
 
 ### Community 1 - "Community 1"
 Cohesion: 0.02
-Nodes (101): handleResend(), handleVerify(), decryptAll(), handleNewFolder(), savePermissions(), setExpiry(), copyToClipboard(), handleCopy() (+93 more)
+Nodes (103): handleResend(), handleVerify(), decryptAll(), handleNewFolder(), handleSubmit(), savePermissions(), setExpiry(), copyToClipboard() (+95 more)
 
 ### Community 2 - "Community 2"
 Cohesion: 0.05
@@ -109,7 +108,7 @@ Nodes (27): BillingBanner(), BillingSuspendedOverlay(), FileList(), if(), timeAg
 
 ### Community 5 - "Community 5"
 Cohesion: 0.06
-Nodes (34): getApiUrl(), loadNames(), downloadSharedFile(), downloadVersion(), getFileRequestPublic(), listFiles(), uploadToFileRequest(), canStreamToServiceWorker() (+26 more)
+Nodes (36): getApiUrl(), loadNames(), downloadSharedFile(), downloadVersion(), getFileRequestPublic(), listFiles(), uploadToFileRequest(), canStreamToServiceWorker() (+28 more)
 
 ### Community 6 - "Community 6"
 Cohesion: 0.07
@@ -140,12 +139,12 @@ Cohesion: 0.23
 Nodes (18): cacheFileList(), cacheFilePreview(), enforceRowCap(), evictOldestPreviews(), fileListDelete(), fileListGet(), fileListGetAll(), fileListPut() (+10 more)
 
 ### Community 13 - "Community 13"
-Cohesion: 0.11
-Nodes (3): Row(), AndroidKeyboard(), IOSKeyboard()
-
-### Community 14 - "Community 14"
 Cohesion: 0.18
 Nodes (11): clearSession(), dbDelete(), dbGet(), dbPut(), deriveKey(), getVaultTTL(), openDB(), persistSession() (+3 more)
+
+### Community 14 - "Community 14"
+Cohesion: 0.11
+Nodes (3): Row(), AndroidKeyboard(), IOSKeyboard()
 
 ### Community 15 - "Community 15"
 Cohesion: 0.15
@@ -259,31 +258,27 @@ Nodes (3): extractDroppedItems(), processEntries(), readDirectoryEntry()
 Cohesion: 0.5
 Nodes (2): ContextMenu(), isPreviewable()
 
-### Community 91 - "Community 91"
+### Community 93 - "Community 93"
 Cohesion: 0.5
-Nodes (2): handleSubmit(), reportShareLink()
+Nodes (1): poll()
 
 ### Community 94 - "Community 94"
 Cohesion: 0.83
 Nodes (3): getMenuItems(), getPendingItems(), SharedContextMenu()
 
-### Community 98 - "Community 98"
-Cohesion: 0.5
-Nodes (1): poll()
-
-### Community 104 - "Community 104"
+### Community 103 - "Community 103"
 Cohesion: 0.67
 Nodes (1): ApiError
 
-### Community 108 - "Community 108"
+### Community 107 - "Community 107"
 Cohesion: 1.0
 Nodes (2): deriveSasWords(), fnv1a()
 
-### Community 110 - "Community 110"
+### Community 109 - "Community 109"
 Cohesion: 1.0
 Nodes (2): ch(), migratePreferences()
 
-### Community 177 - "Community 177"
+### Community 176 - "Community 176"
 Cohesion: 1.0
 Nodes (1): WasmChunkEncryptor
 
@@ -322,26 +317,24 @@ Nodes (1): WasmChunkEncryptor
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 90`** (4 nodes): `ContextMenu()`, `isPreviewable()`, `context-menu.tsx`, `preview.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 91`** (4 nodes): `handleKeyDown()`, `handleSubmit()`, `reportShareLink()`, `report-dialog.tsx`
+- **Thin community `Community 93`** (4 nodes): `colourFor()`, `initials()`, `poll()`, `presence-avatars.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 98`** (4 nodes): `colourFor()`, `initials()`, `poll()`, `presence-avatars.tsx`
+- **Thin community `Community 103`** (3 nodes): `ApiError`, `.constructor()`, `encrypted-upload-v2-contract.test.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 104`** (3 nodes): `ApiError`, `.constructor()`, `encrypted-upload-v2-contract.test.ts`
+- **Thin community `Community 107`** (3 nodes): `deriveSasWords()`, `fnv1a()`, `sas-words.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 108`** (3 nodes): `deriveSasWords()`, `fnv1a()`, `sas-words.ts`
+- **Thin community `Community 109`** (3 nodes): `ch()`, `migratePreferences()`, `notifications.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 110`** (3 nodes): `ch()`, `migratePreferences()`, `notifications.tsx`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 177`** (2 nodes): `WasmChunkEncryptor`, `beebeeb_wasm.d.ts`
+- **Thin community `Community 176`** (2 nodes): `WasmChunkEncryptor`, `beebeeb_wasm.d.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `handleFolderFilesSelected()` connect `Community 1` to `Community 8`, `Community 4`?**
-  _High betweenness centrality (0.062) - this node is a cross-community bridge._
+  _High betweenness centrality (0.068) - this node is a cross-community bridge._
 - **Why does `Billing()` connect `Community 3` to `Community 4`, `Community 15`?**
-  _High betweenness centrality (0.051) - this node is a cross-community bridge._
+  _High betweenness centrality (0.058) - this node is a cross-community bridge._
 - **Are the 112 inferred relationships involving `request()` (e.g. with `opaqueRegisterStart()` and `opaqueLoginStart()`) actually correct?**
   _`request()` has 112 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 55 inferred relationships involving `showToast()` (e.g. with `doEncryptedUpload()` and `handleDownload()`) actually correct?**
