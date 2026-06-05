@@ -489,14 +489,39 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
           setBlobIsOriginal(true)
           setRenderKey((k) => k + 1)
         }
-      } catch (err: unknown) {
-        if (!cancelled)
-          setError(err instanceof Error ? err.message : 'Failed to load file')
       } finally {
         if (!cancelled) setVersionLoading(false)
       }
     }
-    loadAndDecrypt()
+
+    // A transient network blip (offline flicker, dropped connection) makes
+    // fetch() reject with a TypeError "Failed to fetch" — distinct from a
+    // permanent failure (404, decrypt error). Retry those a couple of times with
+    // backoff so the preview recovers instead of dead-ending on the error card
+    // (task 0691). Permanent errors fail fast.
+    function isTransientNetworkError(err: unknown): boolean {
+      return err instanceof TypeError && /fetch|network|load failed/i.test(err.message)
+    }
+
+    async function loadWithRetry() {
+      const maxAttempts = 3
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          await loadAndDecrypt()
+          return
+        } catch (err: unknown) {
+          if (cancelled) return
+          if (isTransientNetworkError(err) && attempt < maxAttempts) {
+            await new Promise((r) => setTimeout(r, 400 * attempt))
+            if (cancelled) return
+            continue
+          }
+          setError(err instanceof Error ? err.message : 'Failed to load file')
+          return
+        }
+      }
+    }
+    loadWithRetry()
 
     return () => {
       cancelled = true
