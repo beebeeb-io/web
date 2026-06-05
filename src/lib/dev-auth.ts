@@ -21,8 +21,10 @@
  */
 
 import { initSessionVault, cacheVaultKey } from './session-vault-cache'
+import { deriveX25519Public, toBase64 } from './crypto'
 
 const DEV_SESSION_FLAG = 'bb_dev_authed'
+const DEV_PUBKEY_FLAG = 'bb_dev_pubkey_set'
 const DEV_EMAIL = 'dev@beebeeb.dev'
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.beebeeb.io'
 
@@ -112,6 +114,31 @@ export async function devAutoAuth(): Promise<boolean> {
     //    on startup and call setIsUnlocked(true).
     await initSessionVault()
     await cacheVaultKey(masterKeyBytes)
+
+    // 3.5 (dev-only test-infra). A password-less /dev/auto-login account never
+    //     runs the OPAQUE/onboarding path that uploads its x25519 public key, so
+    //     it cannot RECEIVE E2EE shares (the sender has no recipient pubkey to
+    //     wrap to). Derive it from the master key with the SAME canonical
+    //     `deriveX25519Public` the real signup path uses, and upload it once per
+    //     session — so two-account E2EE flows (targeted sharing, etc.) work in
+    //     e2e. Best-effort: failures are retried on the next load.
+    const pubkeyFlag = `${DEV_PUBKEY_FLAG}:${data.email ?? devEmail}` // per-account
+    if (sessionStorage.getItem(pubkeyFlag) !== '1') {
+      try {
+        const x25519Pub = await deriveX25519Public(masterKeyBytes)
+        const res = await fetch(`${API_URL}/api/v1/auth/public-key`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${data.session_token}`,
+          },
+          body: JSON.stringify({ public_key: toBase64(x25519Pub) }),
+        })
+        if (res.ok) sessionStorage.setItem(pubkeyFlag, '1')
+      } catch {
+        // best-effort — the account stays pubkey-less until a later load succeeds
+      }
+    }
 
     // 4. Record success so DevBanner knows what email/role to display.
     sessionStorage.setItem(
