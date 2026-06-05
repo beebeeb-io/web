@@ -452,6 +452,13 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
           }
         }
 
+        // If this effect run was superseded (the file's decrypted name/versions
+        // resolved async and re-ran loadAndDecrypt), bail BEFORE the full download.
+        // Otherwise a stale run would fetch the entire original even though a
+        // newer run is already rendering the thumbnail — wasting bandwidth and
+        // defeating thumbnail-first viewing (spec 031).
+        if (cancelled) return
+
         // Full download path (non-images, historical versions, or thumbnail fallback)
         let plaintext: Blob
         if (selectedVersionId === null) {
