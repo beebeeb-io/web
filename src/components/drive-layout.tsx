@@ -154,6 +154,10 @@ const navItems: { path: string; icon: IconName; label: string }[] = [
 const REGION_META: Record<string, { label: string; flag: string }> = {
   auto: { label: 'Europe', flag: '' },
   falkenstein: { label: 'Falkenstein, Germany', flag: '' },
+  // Coming-soon roadmap regions (DR-1 canon): labelled so a file stored there
+  // shows a real city instead of the raw region string once those pools go live.
+  helsinki: { label: 'Helsinki, Finland', flag: '' },
+  ede: { label: 'Ede, Netherlands', flag: '' },
 }
 
 const PINNED_FOLDERS_PREF = 'pinned_folders'
