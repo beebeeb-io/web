@@ -55,6 +55,15 @@ export async function devAutoAuth(): Promise<boolean> {
     if (sessionStorage.getItem(DEV_SESSION_FLAG) === 'skipped') {
       return false
     }
+    // Multi-account testing: `?dev_email=other@beebeeb.dev` overrides the dev
+    // account for THIS origin (persisted so it survives reloads). Lets an e2e
+    // run drive two accounts in two browser contexts (e.g. targeted-sharing
+    // sender + recipient). Clear with ?dev_email= (empty) to revert.
+    if (params.has('dev_email')) {
+      const v = params.get('dev_email') ?? ''
+      if (v) localStorage.setItem('bb_dev_email', v)
+      else localStorage.removeItem('bb_dev_email')
+    }
   }
 
   // The session-cache wrapping key lives only in memory, so a page reload
@@ -65,10 +74,12 @@ export async function devAutoAuth(): Promise<boolean> {
   // (e.g. cargo-watch rebuilding), we want to try again on the next page load.
 
   try {
+    const devEmail =
+      (typeof localStorage !== 'undefined' && localStorage.getItem('bb_dev_email')) || DEV_EMAIL
     const res = await fetch(`${API_URL}/dev/auto-login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: DEV_EMAIL }),
+      body: JSON.stringify({ email: devEmail }),
       signal: AbortSignal.timeout(3000),
       // Needed so the Set-Cookie on the response lands in the browser jar.
       credentials: 'include',
