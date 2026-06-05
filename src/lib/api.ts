@@ -2181,6 +2181,10 @@ export async function listClientSessions(): Promise<{ sessions: ClientSession[] 
   return request<{ sessions: ClientSession[] }>('/api/v1/clients/sessions')
 }
 
+export async function deleteClientSession(id: string): Promise<void> {
+  await request<void>(`/api/v1/clients/sessions/${id}`, { method: 'DELETE' })
+}
+
 export async function getHealth(): Promise<HealthResponse> {
   const res = await fetch(`${API_URL}/health`)
   if (!res.ok) {

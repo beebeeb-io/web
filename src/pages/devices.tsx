@@ -4,6 +4,7 @@ import { Icon } from '../components/icons'
 import {
   listClientDevices,
   listClientSessions,
+  deleteClientSession,
   getApiUrl,
   getToken,
   type ClientDevice,
@@ -152,6 +153,8 @@ export function DevicesPage() {
   const [sessions, setSessions] = useState<ClientSession[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [showStopped, setShowStopped] = useState(false)
+  const [forgettingId, setForgettingId] = useState<string | null>(null)
 
   const loadData = useCallback(async () => {
     try {
@@ -168,6 +171,27 @@ export function DevicesPage() {
       setLoading(false)
     }
   }, [])
+
+  const handleForget = useCallback(
+    async (session: ClientSession) => {
+      if (
+        !confirm(
+          `Forget "${session.name}"? The session and its sync history will be permanently removed.`,
+        )
+      )
+        return
+      setForgettingId(session.id)
+      try {
+        await deleteClientSession(session.id)
+        setSessions((prev) => prev.filter((s) => s.id !== session.id))
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to forget session')
+      } finally {
+        setForgettingId(null)
+      }
+    },
+    [],
+  )
 
   useEffect(() => {
     void loadData()
@@ -219,20 +243,43 @@ export function DevicesPage() {
     }
   }
 
-  const deviceEntries = Array.from(deviceMap.values()).sort((a, b) =>
-    new Date(b.device.last_seen).getTime() - new Date(a.device.last_seen).getTime(),
-  )
+  // Stopped sessions are hidden by default; active/paused always show.
+  const stoppedCount = sessions.filter((s) => s.status === 'stopped').length
+
+  const deviceEntries = Array.from(deviceMap.values())
+    .map((entry) => ({
+      ...entry,
+      sessions: showStopped
+        ? entry.sessions
+        : entry.sessions.filter((s) => s.status !== 'stopped'),
+    }))
+    .sort(
+      (a, b) =>
+        new Date(b.device.last_seen).getTime() -
+        new Date(a.device.last_seen).getTime(),
+    )
 
   return (
     <DriveLayout>
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto px-4 py-8 sm:px-6">
           {/* Header */}
-          <div className="mb-8">
-            <h1 className="text-xl font-semibold text-ink">Devices</h1>
-            <p className="mt-1 text-[13px] text-ink-3">
-              All registered devices and their sync sessions
-            </p>
+          <div className="mb-8 flex items-start justify-between gap-4">
+            <div>
+              <h1 className="text-xl font-semibold text-ink">Devices</h1>
+              <p className="mt-1 text-[13px] text-ink-3">
+                All registered devices and their sync sessions
+              </p>
+            </div>
+            {!loading && !error && stoppedCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowStopped((v) => !v)}
+                className="shrink-0 mt-0.5 text-[12px] text-ink-3 hover:text-ink transition-colors"
+              >
+                {showStopped ? 'Hide stopped' : `Show stopped (${stoppedCount})`}
+              </button>
+            )}
           </div>
 
           {/* Loading */}
@@ -328,6 +375,18 @@ export function DevicesPage() {
                                 <span className="ml-auto text-[11px] text-ink-3 shrink-0">
                                   {heartbeatStatusLabel(session)}
                                 </span>
+                                {session.session_type === 'sync' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleForget(session)}
+                                    disabled={forgettingId === session.id}
+                                    className="shrink-0 inline-flex items-center gap-1 text-[11px] text-ink-4 hover:text-red transition-colors disabled:opacity-50"
+                                    title="Forget this session — permanently removes the row and its history"
+                                  >
+                                    <Icon name="trash" size={13} />
+                                    {forgettingId === session.id ? 'Forgetting…' : 'Forget'}
+                                  </button>
+                                )}
                               </div>
 
                               <div className="mt-1 flex items-center gap-3 text-[11px] text-ink-4 font-mono">

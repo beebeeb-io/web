@@ -150,6 +150,13 @@ export async function request<T>(
       throw new ApiError(message, res.status, code)
     }
 
+    // 204 No Content (and other empty-body 2xx, e.g. DELETE) carry no JSON —
+    // res.json() would throw "Unexpected end of JSON input". Resolve to
+    // undefined so callers typed Promise<void> complete cleanly.
+    if (res.status === 204) {
+      return undefined as T
+    }
+
     return res.json() as Promise<T>
   }
 
