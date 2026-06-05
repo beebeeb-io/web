@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import fs from 'fs'
-import { writePng, uploadAndWait, openImagePreview, previewImage } from './helpers/thumb-fixtures'
+import { writePng, uploadAndWait, openImagePreview } from './helpers/thumb-fixtures'
 
 /**
  * Large-thumbnail gate E2E (task 0685).
@@ -69,9 +69,8 @@ test.describe('Large-thumbnail gate (0685)', () => {
 
     await page.goto('/')
     const base = await uploadAndWait(page, png)
-    await openPreview(page, base)
+    await openImagePreview(page, base)
     // Preview rendered (false-pass guard) then settle any thumbnail fetch.
-    await expect(previewImage(page)).toBeVisible({ timeout: 15_000 })
     await page.waitForTimeout(1500)
 
     expect(largeGet, 'gate failed: /thumbnail/large requested for a medium-only file').toBe(false)

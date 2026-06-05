@@ -93,13 +93,39 @@ export function previewImage(page: Page) {
  *  transient toasts can overlap), then wait for the row to appear. */
 export async function uploadAndWait(page: Page, filePath: string): Promise<string> {
   const base = path.basename(filePath)
+  const isImage = /\.(png|jpe?g|webp|gif|avif)$/i.test(base)
+  // The medium+large thumbnail PUTs are best-effort and fire AFTER completeUpload.
+  // For an image, wait for the large PUT to land before opening, so the preview's
+  // thumbnail-first path finds the variant instead of falling back to a full
+  // download. (Set up the listener before the upload so we can't miss it.)
+  const largeThumbStored = isImage
+    ? page
+        .waitForResponse(
+          (r) => r.request().method() === 'PUT' && /\/thumbnail\/large/.test(r.url()) && r.ok(),
+          { timeout: 30_000 },
+        )
+        .catch(() => null)
+    : Promise.resolve(null)
   await page.locator('input[type="file"]').first().setInputFiles(filePath)
   await page.getByRole('row', { name: new RegExp(escapeRe(base)) }).first().waitFor({ timeout: 30_000 })
-  // Let the post-upload churn settle before opening a preview: the best-effort
-  // thumbnail PUTs finish after completeUpload, and the sync stream op triggers
-  // a drive list re-render that would otherwise abort the preview's in-flight
-  // fetch ("Failed to fetch"). A brief settle makes the open deterministic.
-  await page.waitForTimeout(3500)
+  await largeThumbStored
+  // Reload to a STEADY-STATE drive before opening a preview. Immediately after
+  // upload the sync stream pushes a create op that re-renders the drive list and
+  // aborts an in-flight preview fetch (the upload→instant-preview race tracked in
+  // task 0691). A reload loads the drive from a stable snapshot + listFiles, so
+  // opening a settled file exercises thumbnail-first deterministically — which is
+  // what 0628/0685 assert. (storageState keeps us authed + overlays suppressed.)
+  const listRefreshed = page
+    .waitForResponse((r) => /\/api\/v1\/files(\?|$)/.test(r.url()) && r.request().method() === 'GET' && r.ok(), {
+      timeout: 15_000,
+    })
+    .catch(() => null)
+  await page.reload()
+  await page.waitForFunction(() => document.body.dataset.cryptoReady === 'true', { timeout: 15_000 })
+  await page.getByRole('row', { name: new RegExp(escapeRe(base)) }).first().waitFor({ timeout: 30_000 })
+  // listFiles carries has_large_thumbnail (sync omits it) — make sure it has
+  // landed so the gate sees the flag before we open the preview.
+  await listRefreshed
   return base
 }
 
@@ -110,21 +136,11 @@ export async function openPreview(page: Page, base: string) {
   await previewOverlay(page).first().waitFor({ state: 'visible', timeout: 15_000 })
 }
 
-/** Open an IMAGE preview and ensure the decrypted image actually renders.
- *  Right after upload, a sync-stream op can re-render the drive list and abort
- *  the preview's in-flight fetch ("Failed to fetch"); reopening after the churn
- *  settles is deterministic. Retries the open a few times before giving up. */
-export async function openImagePreview(page: Page, base: string, attempts = 3) {
-  for (let i = 0; i < attempts; i++) {
-    await openPreview(page, base)
-    try {
-      await previewImage(page).waitFor({ state: 'visible', timeout: 8_000 })
-      return
-    } catch {
-      if (i === attempts - 1) throw new Error(`image preview never rendered for ${base}`)
-      await page.keyboard.press('Escape')
-      await previewOverlay(page).first().waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {})
-      await page.waitForTimeout(2_000)
-    }
-  }
+/** Open an IMAGE preview and wait for the decrypted image to render. On a
+ *  steady-state drive (uploadAndWait reloads + waits for the large-thumb PUT)
+ *  the thumbnail-first path renders on the first open — no reopen-retry needed,
+ *  which also avoids a stray full-download from a second attempt. */
+export async function openImagePreview(page: Page, base: string) {
+  await openPreview(page, base)
+  await previewImage(page).waitFor({ state: 'visible', timeout: 15_000 })
 }

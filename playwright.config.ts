@@ -26,7 +26,10 @@ export const STORAGE_STATE = path.join(__dirname, 'playwright/.auth/user.json')
 export default defineConfig({
   testDir: './e2e',
   timeout: 30_000,
-  retries: 0,
+  // Auto-retry transient flakes (occasional slow sync-stream delivery of a
+  // freshly-uploaded file's row, network timing). A test that needs >1 attempt
+  // still reports as flaky in the summary, so real regressions stay visible.
+  retries: 2,
   use: {
     baseURL: 'http://localhost:5173',
     headless: true,

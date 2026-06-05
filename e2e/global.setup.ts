@@ -7,11 +7,27 @@
  * devAutoAuth() on every page load in dev mode, re-caching the vault key in
  * IndexedDB, so the vault is always unlocked without driving the real login UI.
  */
-import { test as setup, expect } from '@playwright/test'
+import { test as setup, expect, type Page } from '@playwright/test'
 import path from 'path'
 import fs from 'fs'
 
 export const STORAGE_STATE = path.join(__dirname, '../playwright/.auth/user.json')
+
+/** API origin the app talks to — the isolated e2e backend (:3003) sets
+ *  E2E_API_URL; falls back to the default dev API (:3001). */
+export const API_URL = process.env.E2E_API_URL ?? 'http://localhost:3001'
+
+/** Mark the welcome-tour preference seen SERVER-SIDE so the full-screen
+ *  checklist (which opens whenever the server pref lacks seen:true) never
+ *  mounts its click-blocking backdrop. Uses the page's authenticated cookies. */
+export async function setWelcomeTourSeen(page: Page): Promise<void> {
+  const res = await page.request.put(`${API_URL}/api/v1/preferences/welcome_tour`, {
+    data: { seen: true, completed: [] },
+  })
+  if (!res.ok()) {
+    throw new Error(`failed to set welcome_tour preference: ${res.status()} ${await res.text()}`)
+  }
+}
 
 setup('authenticate', async ({ page }) => {
   // Navigate to the app — DevAuthGate calls devAutoAuth() on mount
@@ -37,15 +53,19 @@ setup('authenticate', async ({ page }) => {
     )
     .toBe(true)
 
-  // Suppress first-run overlays that otherwise mount a full-screen backdrop and
-  // intercept pointer events (cookie consent + the onboarding checklist/tour),
-  // so authenticated specs can interact with the drive. These are localStorage-
-  // backed and captured by storageState below, so every spec inherits a clean,
-  // unblocked drive.
+  // Suppress first-run overlays that mount a full-screen backdrop and intercept
+  // pointer events, so authenticated specs can interact with the drive:
+  //  - cookie consent          → localStorage `bb_cookie_consent`
+  //  - onboarding guide (chip)  → localStorage `beebeeb_onboarding_state={"step":"done"}`
+  //  - welcome tour (checklist) → SERVER preference `welcome_tour={seen:true}`
+  //    (the checklist opens whenever the server pref lacks seen:true — a fresh
+  //    account 404s, so localStorage alone is NOT enough; it must be set server-
+  //    side via the authenticated cookie).
   await page.evaluate(() => {
     localStorage.setItem('bb_cookie_consent', 'all')
-    localStorage.setItem('beebeeb.onboarding.done', 'true')
+    localStorage.setItem('beebeeb_onboarding_state', JSON.stringify({ step: 'done' }))
   })
+  await setWelcomeTourSeen(page)
 
   // Persist auth state so tests can reuse it without re-logging in
   fs.mkdirSync(path.dirname(STORAGE_STATE), { recursive: true })

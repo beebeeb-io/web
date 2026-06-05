@@ -1,4 +1,4 @@
-import { defineConfig, type Plugin } from 'vite'
+import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import wasm from 'vite-plugin-wasm'
@@ -37,33 +37,38 @@ function preloadWasmPlugin(): Plugin {
  * blocks. This plugin rewrites the meta tag in dev so fetch/WebSocket calls
  * to localhost work. Prod builds are unchanged.
  */
-function devCspPlugin(): Plugin {
+function devCspPlugin(apiUrl: string): Plugin {
+  // Allow the configured dev/e2e API origin (default :3001, but :3003 etc. for
+  // an isolated e2e backend) plus its websocket scheme and the Vite HMR socket.
+  const wsApi = apiUrl.replace(/^http/, 'ws')
+  const allow = `${apiUrl} ${wsApi} ws://localhost:5173 http://localhost:5173`
   return {
     name: 'beebeeb-dev-csp',
     apply: 'serve',
     transformIndexHtml(html) {
-      return html.replace(
-        /(connect-src [^;]*?)(;)/,
-        '$1 http://localhost:3001 ws://localhost:3001 ws://localhost:5173 http://localhost:5173$2',
-      )
+      return html.replace(/(connect-src [^;]*?)(;)/, `$1 ${allow}$2`)
     },
   }
 }
 
-export default defineConfig({
-  plugins: [react(), tailwindcss(), wasm(), preloadWasmPlugin(), devCspPlugin()],
-  worker: {
-    format: 'es',
-    plugins: () => [wasm()],
-  },
-  define: {
-    __APP_VERSION__: JSON.stringify(pkg.version),
-  },
-  build: {
-    target: 'esnext',
-  },
-  server: {
-    port: 5173,
-    fs: { allow: ['.', '/wasm-pkg', '../core'] },
-  },
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), 'VITE_')
+  const apiUrl = env.VITE_API_URL || 'http://localhost:3001'
+  return {
+    plugins: [react(), tailwindcss(), wasm(), preloadWasmPlugin(), devCspPlugin(apiUrl)],
+    worker: {
+      format: 'es',
+      plugins: () => [wasm()],
+    },
+    define: {
+      __APP_VERSION__: JSON.stringify(pkg.version),
+    },
+    build: {
+      target: 'esnext',
+    },
+    server: {
+      port: 5173,
+      fs: { allow: ['.', '/wasm-pkg', '../core'] },
+    },
+  }
 })
