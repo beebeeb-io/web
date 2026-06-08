@@ -696,9 +696,15 @@ async function uploadChunkRequest(
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
+    // Carry the machine-readable `error` code (e.g. `object_budget_exceeded`,
+    // `quota_exceeded`) through as ApiError.code so the upload error boundary
+    // can branch on it. Chunk uploads use raw fetch(), so unlike the shared
+    // request() helper this had previously dropped the code.
+    const code = typeof body.error === 'string' ? body.error : undefined
     throw new ApiError(
       (body.message ?? body.error ?? res.statusText) as string,
       res.status,
+      code,
     )
   }
 

@@ -52,6 +52,17 @@ export function userFriendlyError(err: unknown): string {
 
   if (err instanceof ApiError) {
     const status = err.status
+    // Typed quota errors come back with a machine-readable `code` so we don't
+    // pattern-match the human message. Branch on these BEFORE the generic
+    // status handling, otherwise the 403/413 fall-throughs swallow them with
+    // "You don't have permission to do that." (server task 0670).
+    if (err.code === 'object_budget_exceeded') {
+      // Object-COUNT cap, distinct from the byte/storage quota below.
+      return "File limit reached. This account has hit its maximum number of files — delete some files or contact support to raise the limit."
+    }
+    if (err.code === 'quota_exceeded') {
+      return 'Storage full. Free up space or upgrade your plan to keep uploading.'
+    }
     if (status === 401) return 'Your session expired. Sign in again.'
     if (status === 403) return "You don't have permission to do that."
     if (status === 404) return 'Not found.'
