@@ -10,6 +10,7 @@ import { useDriveData } from '../lib/drive-data-context'
 import { UpgradeNudge } from './upgrade-nudge'
 import {
   createShare,
+  ApiError,
   createInvite,
   resolveSharingContact,
   approveInvite,
@@ -469,7 +470,7 @@ function InviteSuccess({
 // ─── Main dialog ─────────────────────────────────────
 
 export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolder, onShareCreated }: ShareDialogProps) {
-  const { getFileKey, isUnlocked } = useKeys()
+  const { getFileKey, getMasterKey, isUnlocked } = useKeys()
   const navigate = useNavigate()
   const { planDetails } = useDriveData()
   const planSlug = planDetails.subscription?.plan ?? 'free'
@@ -555,6 +556,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
     }
 
     try {
+      const masterKey = getMasterKey()
       const fileKey = await getFileKey(fileId)
 
       // ── Double-encrypted mode (the only mode, task 0538) ─────────────────
@@ -564,15 +566,44 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       // 2. Wrap the real file key under K_c — server stores an opaque blob.
       const wrappedFileKey = await wrapKeyForShare(clientKey, fileKey)
       zeroize(fileKey)
-
-      // 3. Send wrapped_file_key to the server as base64.
       options.wrapped_file_key = toBase64(wrappedFileKey)
+
+      // 3. 0709 A+: wrap K_c under the OWNER's master key so the owner can
+      //    re-copy a working link later (server stores it opaque, returns it
+      //    only to owner listings).
+      options.owner_wrapped_key = toBase64(await wrapKeyForShare(masterKey, clientKey))
 
       // 4. The URL fragment carries K_c (base64url — no + or / in URLs).
       const keyForUrl = toBase64url(clientKey)
       zeroize(clientKey)
 
-      const result = await createShare(fileId, options)
+      // 5. A1: generate the raw token client-side (URL-safe-no-pad base64 of 20
+      //    bytes = 27 chars) and wrap it under the master key. token + both
+      //    blobs are sent ALL-OR-NOTHING. The token is also re-derivable on
+      //    re-copy via owner_wrapped_token (the raw token is hashed at rest).
+      // TODO(0709): swap to core generate_share_token WASM export when published
+      //             (shared-core-logic rule) — getRandomValues is the approved interim.
+      const attachFreshToken = async () => {
+        const token = toBase64url(crypto.getRandomValues(new Uint8Array(20)))
+        options.token = token
+        options.owner_wrapped_token = toBase64(
+          await wrapKeyForShare(masterKey, new TextEncoder().encode(token)),
+        )
+      }
+      await attachFreshToken()
+
+      let result
+      try {
+        result = await createShare(fileId, options)
+      } catch (e) {
+        // 409 = token collision (≈ never at 20 random bytes) → regenerate once.
+        if (e instanceof ApiError && e.status === 409) {
+          await attachFreshToken()
+          result = await createShare(fileId, options)
+        } else {
+          throw e
+        }
+      }
 
       setShareResult(result)
       setDecryptionKey(keyForUrl)
@@ -586,7 +617,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
     } finally {
       setLoading(false)
     }
-  }, [fileId, expiryIdx, maxOpensIdx, passphrase, passwordEnabled, isUnlocked, getFileKey, onShareCreated])
+  }, [fileId, expiryIdx, maxOpensIdx, passphrase, passwordEnabled, isUnlocked, getFileKey, getMasterKey, onShareCreated])
 
   const generatePassphrase = useCallback(() => {
     // 8 random alphanumeric characters — easy to type, hard to guess

@@ -78,3 +78,48 @@ test('wrong key: a tampered #key= shows "this key doesn\'t match this file"', as
     await ctx.close()
   }
 })
+
+test('A+ re-copy round-trip: re-copied link from /shared decrypts to identical content', async ({ page, browser }) => {
+  test.setTimeout(120_000)
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+
+  await page.goto('/')
+  await expect(page).not.toHaveURL(/\/login/, { timeout: 15_000 })
+
+  const content = `A+ re-copy round-trip :: ${Date.now()}`
+  const filename = `recopy-rt-${Date.now()}.txt`
+  await uploadTextFile(page, filename, content)
+  await createShareLink(page, filename) // dual-send stores owner_wrapped_key + owner_wrapped_token
+
+  // /shared "by me": the server now returns the owner-wrapped pair, so
+  // canRebuildShareLink is TRUE → a real "Copy link" (not the honest note).
+  await page.goto('/shared?tab=by-me')
+  const shareRow = page.getByText(filename, { exact: false }).first()
+  await expect(shareRow).toBeVisible({ timeout: 20_000 })
+  await shareRow.click() // expand
+  const copyBtn = page.getByRole('button', { name: /copy link/i }).first()
+  await expect(copyBtn).toBeVisible({ timeout: 10_000 })
+  await copyBtn.click()
+
+  // The re-copied link (rebuilt via buildShareLink from the wrapped pair).
+  const link = await page.evaluate(() => navigator.clipboard.readText())
+  expect(link, 're-copied link with #key=').toMatch(/\/s\/[A-Za-z0-9_-]+#key=/)
+
+  // Open it in a fresh anonymous recipient → decrypted bytes must match.
+  const ctx = await browser.newContext()
+  const recipient = await ctx.newPage()
+  await recipient.route('**/dev/auto-login', (r) => r.fulfill({ status: 404 }))
+  try {
+    await recipient.goto(link)
+    await expect(recipient.getByText(filename, { exact: false })).toBeVisible({ timeout: 30_000 })
+    const [download] = await Promise.all([
+      recipient.waitForEvent('download', { timeout: 30_000 }),
+      recipient.getByRole('button', { name: /download and decrypt/i }).click(),
+    ])
+    const path = await download.path()
+    expect(path, 'download path').toBeTruthy()
+    expect(fs.readFileSync(path!, 'utf8')).toBe(content)
+  } finally {
+    await ctx.close()
+  }
+})

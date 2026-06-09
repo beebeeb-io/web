@@ -183,6 +183,18 @@ export interface ShareOptions {
    * Format: base64(nonce(12) || AES-256-GCM-ciphertext(48)) = 80 chars.
    */
   wrapped_file_key?: string
+  /**
+   * 0709 A+ owner-recoverable share (all-or-nothing with the two wrapped blobs):
+   * a client-generated raw token — URL-safe-no-pad base64 of 20 random bytes
+   * (27 chars, [A-Za-z0-9_-]). The server validates + hashes it (as today) and
+   * uses it instead of generating one. Omit all three for a legacy server-gen
+   * token. Sending only some of the three → typed 400.
+   */
+  token?: string
+  /** base64(AES-GCM(masterKey, K_c)) — lets the OWNER re-copy a working link. */
+  owner_wrapped_key?: string
+  /** base64(AES-GCM(masterKey, tokenUtf8)) — the raw token, wrapped for re-copy. */
+  owner_wrapped_token?: string
 }
 
 export interface ShareInfo {

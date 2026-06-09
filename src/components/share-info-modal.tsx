@@ -20,6 +20,8 @@ import {
   type MyShare,
 } from '../lib/api'
 import { useToast } from './toast'
+import { useKeys } from '../lib/key-context'
+import { buildShareLink, canRebuildShareLink } from '../lib/share-link'
 
 interface ShareInfoModalProps {
   fileId: string
@@ -65,12 +67,36 @@ export function ShareInfoModal({
   onRevoked,
 }: ShareInfoModalProps) {
   const { showToast } = useToast()
+  const { isUnlocked, getMasterKey } = useKeys()
   const dialogRef = useRef<HTMLDivElement>(null)
   const [shares, setShares] = useState<MyShare[]>(() =>
     (myShares ?? []).filter((s) => s.file_id === fileId && isShareActive(s)),
   )
   const [loading, setLoading] = useState(true)
   const [revokingId, setRevokingId] = useState<string | null>(null)
+
+  // Re-copy: rebuild the working /s/<token>#key=<K_c> link from the owner-wrapped
+  // pair. NEVER copy share.url. Only offered when canRebuildShareLink is true.
+  async function handleCopy(share: MyShare) {
+    const link = await buildShareLink(share, { isUnlocked, getMasterKey })
+    if (!link) {
+      showToast({
+        icon: 'lock',
+        title: 'Key not stored on this device',
+        description: 'Use the full link from when you created the share, or revoke and create a new one.',
+        danger: true,
+      })
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(link)
+      // Auto-clear after 60s — the link contains the decryption key.
+      setTimeout(() => { navigator.clipboard.writeText('').catch(() => {}) }, 60_000)
+      showToast({ icon: 'check', title: 'Share link copied', description: 'Includes the decryption key.' })
+    } catch {
+      showToast({ icon: 'x', title: 'Failed to copy link', danger: true })
+    }
+  }
 
   // Authoritative fetch on open
   useEffect(() => {
@@ -204,16 +230,29 @@ export function ShareInfoModal({
                   )}
                 </div>
 
-                {/* Honest legacy state: the key isn't stored, so we can't rebuild
-                    a working link here. Say so plainly rather than copy a broken one. */}
+                {/* Re-copy a working link when the owner-wrapped key is present +
+                    vault unlocked; otherwise the honest "key not stored" note —
+                    never the keyless/wrong-key share.url. */}
                 <div className="flex items-start justify-between gap-3">
-                  <p className="text-[11px] text-ink-4 leading-snug flex items-start gap-1.5 flex-1 min-w-0">
-                    <Icon name="lock" size={11} className="text-ink-4 shrink-0 mt-px" />
-                    <span>
-                      The key for this link isn't stored here. Use the full link from
-                      when you created it, or create a new link.
-                    </span>
-                  </p>
+                  {canRebuildShareLink(share, isUnlocked) ? (
+                    <BBButton
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => void handleCopy(share)}
+                      className="gap-1.5"
+                    >
+                      <Icon name="copy" size={12} />
+                      Copy link
+                    </BBButton>
+                  ) : (
+                    <p className="text-[11px] text-ink-4 leading-snug flex items-start gap-1.5 flex-1 min-w-0">
+                      <Icon name="lock" size={11} className="text-ink-4 shrink-0 mt-px" />
+                      <span>
+                        The key for this link isn&apos;t stored here. Use the full link from
+                        when you created it, or create a new link.
+                      </span>
+                    </p>
+                  )}
                   <BBButton
                     size="sm"
                     variant="ghost"
