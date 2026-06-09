@@ -376,6 +376,53 @@ function AcquisitionCTA({
   )
 }
 
+// ─── Key resolution ────────────────────────────────────────────────────────────
+
+/** A file/share key (the file key, or the client key K_c) is always 32 bytes. */
+const KEY_BYTES = 32
+
+/**
+ * Discriminated outcome of resolving the file decryption key, so the recipient
+ * UI can tell the truth per failure instead of collapsing every case into one
+ * generic "Decryption failed" (0709). We NEVER silently use K_c as the file key.
+ */
+type KeyOutcome =
+  | { kind: 'ok'; key: Uint8Array }
+  | { kind: 'no-key' }             // no #key= fragment — show the manual-entry form
+  | { kind: 'malformed-key' }      // fragment present but not a 32-byte key (truncated/corrupt link)
+  | { kind: 'damaged-link' }       // share metadata inconsistent (double_encrypted ⇎ wrapped_file_key)
+  | { kind: 'wrong-key' }          // the key did not unwrap/authenticate against this share
+  | { kind: 'crypto-unavailable' } // WASM crypto failed to initialise
+
+/** Hard key errors (everything except a successful resolve or a missing key). */
+type KeyErrorKind = Exclude<KeyOutcome['kind'], 'ok' | 'no-key'>
+
+/** Honest, actionable, brand-voice copy for each key-resolution failure. */
+function keyErrorMessage(kind: KeyErrorKind): { title: string; body: string } {
+  switch (kind) {
+    case 'malformed-key':
+      return {
+        title: 'This link is incomplete',
+        body: 'The decryption key looks truncated. Re-copy the whole link — everything including the part after #key= — and open it again.',
+      }
+    case 'damaged-link':
+      return {
+        title: 'This share link is damaged',
+        body: "The link and the file's encryption don't match up. Ask the sender for a fresh link.",
+      }
+    case 'wrong-key':
+      return {
+        title: "This key doesn't match this file",
+        body: 'The decryption key in the link is not the one this file was encrypted with. Re-copy the full link, or ask the sender for a new one.',
+      }
+    case 'crypto-unavailable':
+      return {
+        title: "Couldn't start decryption",
+        body: 'The in-browser decryption engine failed to load. Reload the page and try again.',
+      }
+  }
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export function ShareViewPage() {
@@ -394,6 +441,9 @@ export function ShareViewPage() {
   const [unlockError, setUnlockError] = useState<string | null>(null)
   // Tracks whether we have a usable key (from fragment or manual entry)
   const [keyAvailable, setKeyAvailable] = useState(false)
+  // Precise key-resolution failure (null = no hard error). Surfaced instead of
+  // the generic locked UI so the recipient knows what's actually wrong (0709).
+  const [keyError, setKeyError] = useState<KeyErrorKind | null>(null)
   const [reportOpen, setReportOpen] = useState(false)
 
   // Recipients are anonymous — we never display the share creator's name.
@@ -420,7 +470,7 @@ export function ShareViewPage() {
 
   // Extract the raw key bytes from the URL fragment (#key=...).
   // For standard shares: this IS the file key.
-  // For double-encrypted shares: this is K_c; call resolveFileKey() to unwrap.
+  // For double-encrypted shares: this is K_c; call resolveFileKeyOutcome() to unwrap.
   function getKeyFromFragment(): Uint8Array | null {
     const hash = window.location.hash
     if (!hash) return null
@@ -437,30 +487,46 @@ export function ShareViewPage() {
   }
 
   /**
-   * Resolve the actual file decryption key.
-   * - Standard share: key from fragment IS the file key → returns it directly.
-   * - Double-encrypted share: key from fragment is K_c → unwrap wrapped_file_key.
+   * Resolve the actual file decryption key, discriminating every failure mode.
+   * - legacy (pre-0538) share: the fragment IS the file key (32 bytes).
+   * - double-encrypted share: the fragment is K_c → unwrap wrapped_file_key.
+   *
+   * The previous code silently returned the fragment as the file key whenever
+   * `double_encrypted` was falsy — so a modern share whose flag was dropped fed
+   * K_c in as the file key and decryption failed under a generic message. We now
+   * treat a flag/wrapped_file_key disagreement as a hard `damaged-link`, never a
+   * silent wrong-key guess, and assert every resolved key is exactly 32 bytes.
    */
-  async function resolveFileKey(shareData: ShareViewData | null): Promise<Uint8Array | null> {
-    const keyFromFragment = getKeyFromFragment()
-    if (!keyFromFragment) return null
+  async function resolveFileKeyOutcome(shareData: ShareViewData | null): Promise<KeyOutcome> {
+    const fragment = getKeyFromFragment()
+    if (!fragment) return { kind: 'no-key' }
+    if (fragment.length !== KEY_BYTES) return { kind: 'malformed-key' }
 
-    if (!shareData?.double_encrypted) {
-      // Standard: fragment = file key
-      return keyFromFragment
-    }
+    const isDouble = shareData?.double_encrypted === true
+    const hasWrapped = !!shareData?.wrapped_file_key
 
-    // Double-encrypted: fragment = K_c, need to unwrap wrapped_file_key
-    if (!shareData.wrapped_file_key) {
-      if (import.meta.env.DEV) console.error('[share-view] double_encrypted=true but no wrapped_file_key in response')
-      return null
-    }
+    // Inconsistent metadata ⇒ the share record/link is damaged. Do NOT fall back
+    // to treating K_c as the file key (the old silent bug).
+    if (isDouble !== hasWrapped) return { kind: 'damaged-link' }
+
+    // Legacy share: the fragment is the file key directly.
+    if (!isDouble) return { kind: 'ok', key: fragment }
+
+    // Double-encrypted: unwrap wrapped_file_key with K_c (the fragment).
     try {
       await initCrypto()
-      const wrappedBytes = fromBase64(shareData.wrapped_file_key)
-      return await unwrapKeyFromShare(keyFromFragment, wrappedBytes)
     } catch {
-      return null
+      return { kind: 'crypto-unavailable' }
+    }
+    try {
+      const wrappedBytes = fromBase64(shareData!.wrapped_file_key!)
+      const fileKey = await unwrapKeyFromShare(fragment, wrappedBytes)
+      // A wrong K_c fails AES-GCM auth (caught below); a successful unwrap that
+      // is not 32 bytes means a corrupt wrapped_file_key — treat as wrong-key.
+      if (fileKey.length !== KEY_BYTES) return { kind: 'wrong-key' }
+      return { kind: 'ok', key: fileKey }
+    } catch {
+      return { kind: 'wrong-key' }
     }
   }
 
@@ -482,6 +548,7 @@ export function ShareViewPage() {
     setVerifyError(null)
     setDownloadError(null)
     setUnlockError(null)
+    setKeyError(null)
     setLoading(true)
     getShare(token)
       .then((data) => {
@@ -495,7 +562,7 @@ export function ShareViewPage() {
   }, [token])
 
   // Decrypt the filename using the resolved file key.
-  // For double-encrypted shares, resolveFileKey() unwraps the wrapped_file_key first.
+  // For double-encrypted shares, resolveFileKeyOutcome() unwraps the wrapped_file_key first.
   useEffect(() => {
     if (!shareData?.name_encrypted) return
     let cancelled = false
@@ -510,8 +577,12 @@ export function ShareViewPage() {
         }
 
         await initCrypto()
-        const fileKey = await resolveFileKey(shareData)
-        if (!fileKey || cancelled) return
+        const outcome = await resolveFileKeyOutcome(shareData)
+        if (cancelled) return
+        // Hard key errors are surfaced by the dedicated effect below; here we
+        // simply leave the name as the encrypted placeholder.
+        if (outcome.kind !== 'ok') return
+        const fileKey = outcome.key
         const { nonce, ciphertext: ct } = parseEncryptedBlob(nameEnc)
         const raw = await decryptFilename(fileKey, nonce, ct)
         let displayName = raw
@@ -527,6 +598,23 @@ export function ShareViewPage() {
       }
     }
     decrypt()
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shareData, keyAvailable])
+
+  // Surface a precise key-resolution error as soon as the share metadata is
+  // known and a #key= fragment is present — so a damaged / wrong / truncated
+  // link shows actionable copy instead of the generic locked state.
+  useEffect(() => {
+    if (!shareData || shareData.error || shareData.requires_passphrase || !keyAvailable) {
+      setKeyError(null)
+      return
+    }
+    let cancelled = false
+    resolveFileKeyOutcome(shareData).then((outcome) => {
+      if (cancelled) return
+      setKeyError(outcome.kind === 'ok' || outcome.kind === 'no-key' ? null : outcome.kind)
+    })
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shareData, keyAvailable])
@@ -572,16 +660,20 @@ export function ShareViewPage() {
   const handleDownload = useCallback(async () => {
     if (!token || !shareData) return
 
-    // Resolve the file key — handles both standard and double-encrypted shares
-    const fileKey = await resolveFileKey(shareData)
-    if (!fileKey) {
-      setDownloadError(
-        shareData.double_encrypted
-          ? 'Decryption key missing or invalid. The full share URL (including #key=…) is required.'
-          : 'Decryption key missing. Make sure you have the full share link including the #key= fragment.',
-      )
+    // Resolve the file key — distinct, honest message per failure (no silent
+    // generic "Decryption failed"). Surfaces the same precise error card.
+    const outcome = await resolveFileKeyOutcome(shareData)
+    if (outcome.kind !== 'ok') {
+      if (outcome.kind === 'no-key') {
+        setDownloadError('Add the decryption key from the share link to open this file.')
+      } else {
+        // The dedicated key-error card renders the precise message — don't also
+        // duplicate it in the small download-error box.
+        setKeyError(outcome.kind)
+      }
       return
     }
+    const fileKey = outcome.key
 
     setDownloading(true)
     setDownloadError(null)
@@ -824,7 +916,7 @@ export function ShareViewPage() {
         </div>
 
         {/* ── Glassbox: zero-knowledge banner — only shown when key is present ── */}
-        {hasKey && <ZeroBanner />}
+        {hasKey && !keyError && <ZeroBanner />}
 
         {/* ── Main file card ── */}
         <div className="bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
@@ -904,8 +996,24 @@ export function ShareViewPage() {
               )}
             </div>
 
-            {/* Download button — only when decryption key is in the URL */}
-            {hasKey && (
+            {/* Precise key-resolution error — the link is damaged / truncated /
+                wrong-key, or crypto failed to load. Honest, actionable copy
+                instead of the generic locked state (0709). */}
+            {keyError && (() => {
+              const msg = keyErrorMessage(keyError)
+              return (
+                <div className="border border-red/30 bg-red/5 rounded-lg p-4" role="alert">
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <Icon name="shield" size={14} className="text-red shrink-0" />
+                    <span className="text-sm font-semibold text-ink">{msg.title}</span>
+                  </div>
+                  <p className="text-xs text-ink-2 leading-relaxed">{msg.body}</p>
+                </div>
+              )
+            })()}
+
+            {/* Download button — only when a usable decryption key is in the URL */}
+            {hasKey && !keyError && (
               <BBButton
                 variant="amber"
                 size="lg"
@@ -919,7 +1027,7 @@ export function ShareViewPage() {
             )}
 
             {/* Key entry form — when no key is present */}
-            {!hasKey && (
+            {!hasKey && !keyError && (
               <div className="border border-line-2 rounded-lg bg-paper-2 p-4">
                 <div className="flex items-center gap-2 mb-2">
                   <Icon name="lock" size={14} className="text-amber-deep" />
@@ -968,7 +1076,7 @@ export function ShareViewPage() {
             )}
 
             {/* ── Glassbox: URL annotation + server view — only when key present ── */}
-            {hasKey && token && (
+            {hasKey && !keyError && token && (
               <>
                 <UrlAnnotation />
                 <ServerViewPanel
