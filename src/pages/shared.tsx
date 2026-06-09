@@ -28,6 +28,7 @@ import {
   type MyShare,
 } from '../lib/api'
 import { useKeys } from '../lib/key-context'
+import { buildShareLink, canRebuildShareLink } from '../lib/share-link'
 import { userFriendlyError } from '../lib/user-friendly-error'
 import { decryptFilename, decryptFileMetadata, decryptChunk, fromBase64, parseEncryptedBlob, x25519SharedSecret, deriveShareKey, deriveX25519Private, zeroize } from '../lib/crypto'
 import { encryptedDownload } from '../lib/encrypted-download'
@@ -601,18 +602,31 @@ export function Shared() {
     setRevokingAll(false)
   }
 
-  function copyShareLink(url: string) {
-    navigator.clipboard.writeText(url).catch(() => {
+  async function copyShareLinkFor(share: MyShare) {
+    // Rebuild the working /s/<token>#key=<K_c> link from the owner-wrapped pair.
+    // NEVER copy share.url — it carried the wrong key for double-encrypted shares.
+    const link = await buildShareLink(share, { isUnlocked, getMasterKey })
+    if (!link) {
+      showToast({
+        icon: 'lock',
+        title: 'Key not stored on this device',
+        description: 'Use the full link from when you created the share, or revoke and create a new one.',
+        danger: true,
+      })
+      return
+    }
+    const writeLegacy = () => {
       const ta = document.createElement('textarea')
-      ta.value = url
+      ta.value = link
       ta.style.position = 'fixed'
       ta.style.opacity = '0'
       document.body.appendChild(ta)
       ta.select()
       document.execCommand('copy')
       document.body.removeChild(ta)
-    })
-    showToast({ icon: 'check', title: 'Link copied' })
+    }
+    navigator.clipboard.writeText(link).catch(writeLegacy)
+    showToast({ icon: 'check', title: 'Link copied', description: 'Includes the decryption key.' })
   }
 
   function formatExpiry(iso: string | null): string {
@@ -726,34 +740,46 @@ export function Shared() {
                           className={`shrink-0 text-ink-3 transition-transform duration-150 ${isExpanded ? 'rotate-180' : ''}`}
                         />
                       </button>
-                      {/* Quick copy button */}
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); copyShareLink(share.url) }}
-                        title="Copy link"
-                        className="shrink-0 p-1.5 rounded-md text-ink-3 hover:text-ink hover:bg-paper-3 transition-colors cursor-pointer md:opacity-0 md:group-hover:opacity-100"
-                      >
-                        <Icon name="copy" size={13} />
-                      </button>
+                      {/* Quick copy — only when a working link can be rebuilt
+                          (owner-wrapped key present + vault unlocked). */}
+                      {canRebuildShareLink(share, isUnlocked) && (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); void copyShareLinkFor(share) }}
+                          title="Copy link"
+                          className="shrink-0 p-1.5 rounded-md text-ink-3 hover:text-ink hover:bg-paper-3 transition-colors cursor-pointer md:opacity-0 md:group-hover:opacity-100"
+                        >
+                          <Icon name="copy" size={13} />
+                        </button>
+                      )}
                     </div>
 
                     {/* Insights panel */}
                     {isExpanded && (
                       <div className="px-5 pb-4 pt-2 bg-paper-2 border-t border-line">
-                        {/* URL row */}
-                        <div className="flex items-center gap-2 mb-3">
-                          <span className="font-mono text-[11px] text-ink-2 truncate flex-1 min-w-0 bg-paper border border-line rounded px-2 py-1.5">
-                            {share.url}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => copyShareLink(share.url)}
-                            className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-paper border border-line text-[12px] font-medium text-ink hover:bg-paper-3 transition-colors cursor-pointer"
-                          >
-                            <Icon name="copy" size={12} />
-                            Copy link
-                          </button>
-                        </div>
+                        {/* Re-copy row — a working link when the owner-wrapped key
+                            is present + vault unlocked; otherwise the honest "not
+                            stored" note (never the keyless/wrong-key share.url). */}
+                        {canRebuildShareLink(share, isUnlocked) ? (
+                          <div className="flex items-center justify-end mb-3">
+                            <button
+                              type="button"
+                              onClick={() => void copyShareLinkFor(share)}
+                              className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-paper border border-line text-[12px] font-medium text-ink hover:bg-paper-3 transition-colors cursor-pointer"
+                            >
+                              <Icon name="copy" size={12} />
+                              Copy link
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-start gap-1.5 mb-3 text-[11.5px] text-ink-4 leading-snug">
+                            <Icon name="lock" size={11} className="text-ink-4 shrink-0 mt-0.5" />
+                            <span>
+                              The key for this link isn&apos;t stored here. Use the full link from
+                              when you created it, or revoke and create a new one.
+                            </span>
+                          </div>
+                        )}
 
                         {/* KPI row */}
                         <div className="grid grid-cols-4 gap-2 mb-3">

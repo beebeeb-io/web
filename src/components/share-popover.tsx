@@ -16,6 +16,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { getSharesForFile, revokeShare, type MyShare } from '../lib/api'
 import { useToast } from './toast'
+import { useKeys } from '../lib/key-context'
+import { buildShareLink, canRebuildShareLink } from '../lib/share-link'
 import { Icon } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
 
@@ -53,6 +55,7 @@ function copyToClipboard(text: string): void {
 
 export function SharePopover({ fileId, anchorRect, onClose, onRevoked }: SharePopoverProps) {
   const { showToast } = useToast()
+  const { isUnlocked, getMasterKey } = useKeys()
   const popoverRef = useRef<HTMLDivElement>(null)
   const [shares, setShares] = useState<MyShare[]>([])
   const [loading, setLoading] = useState(true)
@@ -103,9 +106,21 @@ export function SharePopover({ fileId, anchorRect, onClose, onRevoked }: SharePo
     }
   }
 
-  function handleCopy(share: MyShare) {
-    copyToClipboard(share.url)
-    showToast({ icon: 'check', title: 'Link copied' })
+  async function handleCopy(share: MyShare) {
+    // Rebuild the working /s/<token>#key=<K_c> link from the owner-wrapped pair.
+    // NEVER copy share.url — it carried the wrong key for double-encrypted shares.
+    const link = await buildShareLink(share, { isUnlocked, getMasterKey })
+    if (!link) {
+      showToast({
+        icon: 'lock',
+        title: 'Key not stored on this device',
+        description: 'Use the full link from when you created the share, or revoke and create a new one.',
+        danger: true,
+      })
+      return
+    }
+    copyToClipboard(link)
+    showToast({ icon: 'check', title: 'Link copied', description: 'Includes the decryption key.' })
   }
 
   // Position: below the anchor badge, left-aligned, shifted up if near viewport bottom
@@ -156,20 +171,28 @@ export function SharePopover({ fileId, anchorRect, onClose, onRevoked }: SharePo
               key={share.id}
               className="px-4 py-3 border-b border-line last:border-b-0 flex flex-col gap-1.5"
             >
-              {/* URL + copy */}
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-[11px] text-ink-2 truncate flex-1 min-w-0">
-                  {share.url}
-                </span>
+              {/* Re-copy: a working link only when the owner-wrapped key is
+                  present + vault unlocked; otherwise the honest "not stored" note
+                  (never the keyless/wrong-key share.url). */}
+              {canRebuildShareLink(share, isUnlocked) ? (
                 <button
                   type="button"
-                  onClick={() => handleCopy(share)}
-                  className="shrink-0 text-ink-3 hover:text-amber-deep transition-colors"
+                  onClick={() => void handleCopy(share)}
+                  className="self-start inline-flex items-center gap-1.5 text-[12px] font-medium text-ink-2 hover:text-amber-deep transition-colors"
                   aria-label="Copy link"
                 >
-                  <Icon name="copy" size={13} />
+                  <Icon name="copy" size={12} />
+                  Copy link
                 </button>
-              </div>
+              ) : (
+                <p className="text-[11px] text-ink-4 leading-snug flex items-start gap-1.5">
+                  <Icon name="lock" size={11} className="text-ink-4 shrink-0 mt-px" />
+                  <span>
+                    The key for this link isn&apos;t stored here. Use the full link from when you
+                    created it, or revoke and create a new one.
+                  </span>
+                </p>
+              )}
 
               {/* Meta row */}
               <div className="flex items-center gap-3 text-[11px] text-ink-4">

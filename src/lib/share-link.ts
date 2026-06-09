@@ -24,6 +24,19 @@ export interface ShareLinkContext {
   origin?: string
 }
 
+/**
+ * Synchronous, crypto-free check of whether buildShareLink COULD produce a
+ * working link right now — i.e. the owner-wrapped pair is present and the vault
+ * is unlocked. Use it for the render decision (show a Copy button vs the honest
+ * "key not stored" note); call buildShareLink() for the actual link.
+ */
+export function canRebuildShareLink(
+  share: Pick<MyShare, 'owner_wrapped_key' | 'owner_wrapped_token'>,
+  isUnlocked: boolean,
+): boolean {
+  return isUnlocked && !!share.owner_wrapped_key && !!share.owner_wrapped_token
+}
+
 export async function buildShareLink(share: MyShare, ctx: ShareLinkContext): Promise<string | null> {
   if (!ctx.isUnlocked) return null
   if (!share.owner_wrapped_key || !share.owner_wrapped_token) return null
