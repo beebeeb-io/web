@@ -235,7 +235,13 @@ export interface ShareView {
 export interface MyShare {
   id: string
   file_id: string
+  /** NOTE: the RAW token is SHA-256-hashed at rest, so /shares/mine returns it
+   *  UNDEFINED in practice (the type still says string for back-compat; guard
+   *  before use). The owner rebuilds a working link via owner_wrapped_token. */
   token: string
+  /** DEPRECATED — being removed server-side. It carried K_s as #key=, the wrong
+   *  key for double-encrypted shares. Never build a recipient link from this;
+   *  use buildShareLink(share). */
   url: string
   expires_at: string | null
   max_opens: number | null
@@ -244,6 +250,12 @@ export interface MyShare {
   has_passphrase: boolean
   revoked?: boolean
   created_at: string
+  /** owner-wrapped client key K_c — base64 of AES-GCM(masterKey, K_c),
+   *  nonce(12)‖ct+tag. Null for legacy shares created before 0709 A+. */
+  owner_wrapped_key?: string | null
+  /** owner-wrapped RAW token — base64 of AES-GCM(masterKey, tokenUtf8),
+   *  nonce(12)‖ct+tag (variable length). Null for legacy shares. */
+  owner_wrapped_token?: string | null
   file: {
     name_encrypted: string
     size_bytes: number
