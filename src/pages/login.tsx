@@ -1,5 +1,5 @@
 import { type FormEvent, useState, useCallback } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { AuthShell } from '../components/auth-shell'
 import { BBButton } from '@beebeeb/shared'
 import { BBInput } from '@beebeeb/shared'
@@ -14,9 +14,11 @@ import { startPasskeyLogin, finishPasskeyLogin, setToken, clearToken, opaqueLogi
 import { opaqueLoginStart, opaqueLoginFinish, toBase64, fromBase64 } from '../lib/crypto'
 import { autoUpgradeToV1 } from '../lib/auto-upgrade'
 import { prfExtensionInputs, extractPrfOutput, getVaultWrapKey, decryptVaultBlob } from '../lib/passkey-vault'
+import { sanitizeRedirect } from '../lib/safe-redirect'
 
 export function Login() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const { refreshUser, verify2fa } = useAuth()
   const { unlockVault, unlockVaultWithPasskey, vaultExists, cryptoReady, cryptoError, isUnlocked, setMasterKeyFromPasskey, getMasterKey } = useKeys()
 
@@ -37,9 +39,13 @@ export function Login() {
   const [devLoading, setDevLoading] = useState(false)
   const showPasskeyLogin = typeof window !== 'undefined' && !!window.PublicKeyCredential
 
+  // After auth completes, return to the `?next=` destination if it is a safe,
+  // allowlisted same-origin path (e.g. the CLI device-auth round-trip to
+  // /cli-auth?code=…). sanitizeRedirect rejects open-redirect attempts; any
+  // non-allowlisted or malformed value falls back to the drive ("/").
   const navigateAfterLogin = useCallback(() => {
-    navigate('/')
-  }, [navigate])
+    navigate(sanitizeRedirect(searchParams.get('next')) ?? '/')
+  }, [navigate, searchParams])
 
   const handleDevSkip = useCallback(async () => {
     if (!import.meta.env.DEV) return

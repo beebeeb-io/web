@@ -59,6 +59,16 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# macOS portability: `setsid` is a Linux (util-linux) tool, absent on stock
+# macOS. It is used here only to start the API/Vite in their own session so the
+# whole group can be reaped on teardown — but cleanup already falls back to a
+# plain `kill "$PID"`, so an exec-based shim (where $! is the real child PID) is
+# sufficient on macOS. No-op when real setsid exists, so Linux/CI keep their
+# original process-group semantics unchanged.
+if ! command -v setsid >/dev/null 2>&1; then
+  setsid() { exec "$@"; }
+fi
+
 [ -x "$API_BIN" ] || { echo "debug binary missing: $API_BIN — build with: (cd $SERVER_DIR && cargo build -p beebeeb-api)"; exit 1; }
 
 # ── Backend lifecycle (fresh DB + blobs PER iteration, so repeats don't

@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, lazy, Suspense } from 'react'
-import { BrowserRouter, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes, useNavigate, useLocation } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { AuthProvider, useAuth } from './lib/auth-context'
 import { KeyProvider, useKeys } from './lib/key-context'
@@ -96,10 +96,19 @@ import { DriveDataProvider } from './lib/drive-data-context'
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
   const { isUnlocked, vaultExists, vaultChecked } = useKeys()
+  const location = useLocation()
 
   if (loading || !vaultChecked) return null
-  if (!user) return <Navigate to="/login" replace />
-  if (!isUnlocked) return vaultExists ? <VaultUnlock /> : <Navigate to="/login" replace />
+
+  // Preserve the intended destination so the login flow can return here after
+  // auth — notably the CLI device-auth round-trip to /cli-auth?code=…, which
+  // is bounced here before login.tsx ever sees the URL. login.tsx validates
+  // `next` against a strict allowlist (safe-redirect.ts), so a non-allowlisted
+  // path simply falls back to "/" — safe to set for every protected route.
+  const loginTo = `/login?next=${encodeURIComponent(location.pathname + location.search)}`
+
+  if (!user) return <Navigate to={loginTo} replace />
+  if (!isUnlocked) return vaultExists ? <VaultUnlock /> : <Navigate to={loginTo} replace />
 
   return (
     <>
