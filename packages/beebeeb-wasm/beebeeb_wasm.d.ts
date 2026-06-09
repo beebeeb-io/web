@@ -162,6 +162,14 @@ export function generate_recovery_pdf(title: string, words: any, metadata_keys: 
 export function generate_recovery_phrase(): any;
 
 /**
+ * Generate a canonical share token (task 0708): 20 bytes of OS randomness as
+ * URL-safe-no-pad base64 (27 chars). Web mints this for A1 owner-recoverable
+ * shares so the client-supplied `token` matches the server's format exactly
+ * (single canonical impl shared with native/UniFFI via `beebeeb-core`).
+ */
+export function generate_share_token(): string;
+
+/**
  * Returns `true` if the given MIME type can be previewed in-app.
  */
 export function is_previewable(mime_type?: string | null): boolean;
@@ -302,6 +310,7 @@ export interface InitOutput {
     readonly encrypt_metadata: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly generate_recovery_pdf: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly generate_recovery_phrase: (a: number) => void;
+    readonly generate_share_token: (a: number) => void;
     readonly is_previewable: (a: number, b: number) => number;
     readonly is_previewable_by_extension: (a: number, b: number) => number;
     readonly list_archive: (a: number, b: number, c: number, d: number, e: number) => void;

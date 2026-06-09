@@ -17,6 +17,7 @@ export const encrypt_chunk: (a: number, b: number, c: number, d: number, e: numb
 export const encrypt_metadata: (a: number, b: number, c: number, d: number, e: number) => void;
 export const generate_recovery_pdf: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
 export const generate_recovery_phrase: (a: number) => void;
+export const generate_share_token: (a: number) => void;
 export const is_previewable: (a: number, b: number) => number;
 export const is_previewable_by_extension: (a: number, b: number) => number;
 export const list_archive: (a: number, b: number, c: number, d: number, e: number) => void;
