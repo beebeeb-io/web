@@ -30,9 +30,19 @@ export async function uploadTextFile(page: Page, filename: string, content: stri
  * `/s/<token>#key=…` URL (the "Full link" tab — the only surface that embeds the
  * decryption key, since K_c is not persisted server-side until 0709 A+ lands).
  */
-export async function createShareLink(page: Page, filename: string): Promise<string> {
+export async function createShareLink(
+  page: Page,
+  filename: string,
+  opts: { passphrase?: string } = {},
+): Promise<string> {
   await openRowMenu(page, filename)
   await page.getByRole('menuitem', { name: /^Share/ }).click()
+  if (opts.passphrase) {
+    // The toggle's checkbox is sr-only (the visible control is the label) —
+    // force past the visibility check; React's onChange still fires.
+    await page.getByRole('checkbox', { name: /require password/i }).check({ force: true })
+    await page.locator('#share-passphrase').fill(opts.passphrase)
+  }
   await page.getByRole('button', { name: /generate encrypted link/i }).click()
   await page.getByRole('button', { name: 'Full link', exact: true }).click()
   const url = await page

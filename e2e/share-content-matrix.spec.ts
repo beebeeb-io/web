@@ -123,3 +123,43 @@ test('A+ re-copy round-trip: re-copied link from /shared decrypts to identical c
     await ctx.close()
   }
 })
+
+test('passphrase share: recipient must enter the passphrase, then decrypts identical content', async ({ page, browser }) => {
+  test.setTimeout(120_000)
+
+  await page.goto('/')
+  await expect(page).not.toHaveURL(/\/login/, { timeout: 15_000 })
+
+  const content = `passphrase matrix :: ${Date.now()}`
+  const filename = `cm-pass-${Date.now()}.txt`
+  const passphrase = `recipient-pass-${Date.now()}`
+  await uploadTextFile(page, filename, content)
+  const shareUrl = await createShareLink(page, filename, { passphrase })
+
+  const ctx = await browser.newContext()
+  const recipient = await ctx.newPage()
+  await recipient.route('**/dev/auto-login', (r) => r.fulfill({ status: 404 }))
+  try {
+    await recipient.goto(shareUrl)
+
+    // Passphrase gate (verifySharePassphrase path) — wrong first, then correct.
+    const passInput = recipient.getByLabel(/share password/i)
+    await expect(passInput).toBeVisible({ timeout: 30_000 })
+    await passInput.fill('definitely-the-wrong-passphrase')
+    await recipient.getByRole('button', { name: /unlock file/i }).click()
+    await expect(recipient.getByText(/incorrect password/i)).toBeVisible({ timeout: 10_000 })
+
+    await passInput.fill(passphrase)
+    await recipient.getByRole('button', { name: /unlock file/i }).click()
+
+    // Unlocked → file info → download → bytes match.
+    await expect(recipient.getByText(filename, { exact: false })).toBeVisible({ timeout: 30_000 })
+    const [download] = await Promise.all([
+      recipient.waitForEvent('download', { timeout: 30_000 }),
+      recipient.getByRole('button', { name: /download and decrypt/i }).click(),
+    ])
+    expect(fs.readFileSync((await download.path())!, 'utf8')).toBe(content)
+  } finally {
+    await ctx.close()
+  }
+})
