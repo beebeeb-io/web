@@ -54,3 +54,23 @@ test.describe('share-view error truth (0709)', () => {
     await page.screenshot({ path: 'test-results/0709-share-view-truncated.png', fullPage: false })
   })
 })
+
+test.describe('share-view typed load errors (0709/0708)', () => {
+  async function mockStatus(page: import('@playwright/test').Page, token: string, status: number, error: string) {
+    await page.route(`**/api/v1/shares/${token}`, (route) =>
+      route.fulfill({ status, contentType: 'application/json', body: JSON.stringify({ error }) }),
+    )
+  }
+
+  test('410 share_expired → "This link has expired" (not a generic failure)', async ({ page }) => {
+    await mockStatus(page, 'EXP1', 410, 'share_expired')
+    await page.goto('/s/EXP1')
+    await expect(page.getByText('This link has expired')).toBeVisible({ timeout: 15_000 })
+  })
+
+  test('403 share_revoked → "This link was revoked"', async ({ page }) => {
+    await mockStatus(page, 'REV1', 403, 'share_revoked')
+    await page.goto('/s/REV1')
+    await expect(page.getByText('This link was revoked')).toBeVisible({ timeout: 15_000 })
+  })
+})

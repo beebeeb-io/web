@@ -431,6 +431,9 @@ export function ShareViewPage() {
   const [decryptedName, setDecryptedName] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // Distinct heading for the load-error card — set from the typed server codes
+  // (share_revoked / share_expired / not-found) so each reads honestly (0708).
+  const [errorTitle, setErrorTitle] = useState<string | null>(null)
   const [passphrase, setPassphrase] = useState('')
   const [verifying, setVerifying] = useState(false)
   const [verifyError, setVerifyError] = useState<string | null>(null)
@@ -544,6 +547,7 @@ export function ShareViewPage() {
     setShareData(null)
     setDecryptedName(null)
     setError(null)
+    setErrorTitle(null)
     setPassphrase('')
     setVerifyError(null)
     setDownloadError(null)
@@ -556,7 +560,21 @@ export function ShareViewPage() {
         setLoading(false)
       })
       .catch((e) => {
-        setError(e instanceof Error ? e.message : 'Failed to load share')
+        // Typed server codes (0708): expired → 410, revoked → 403, not-found → 404.
+        // Split them so the recipient reads the truth, not a generic failure.
+        if (e instanceof ApiError && (e.status === 410 || e.message === 'share_expired')) {
+          setErrorTitle('This link has expired')
+          setError('The sender set a time limit on this share. Ask them for a new link.')
+        } else if (e instanceof ApiError && (e.status === 403 || e.message === 'share_revoked')) {
+          setErrorTitle('This link was revoked')
+          setError('The sender turned off this share link. Ask them for a new one.')
+        } else if (e instanceof ApiError && e.status === 404) {
+          setErrorTitle('Share not found')
+          setError('This link could not be found. Check that you copied the whole link.')
+        } else {
+          setErrorTitle('Share not found')
+          setError(e instanceof Error ? e.message : 'Failed to load share')
+        }
         setLoading(false)
       })
   }, [token])
@@ -830,7 +848,7 @@ export function ShareViewPage() {
               <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-red/10 flex items-center justify-center">
                 <Icon name="x" size={24} className="text-red" />
               </div>
-              <h2 className="text-lg font-semibold text-ink mb-2">Share not found</h2>
+              <h2 className="text-lg font-semibold text-ink mb-2">{errorTitle ?? 'Share not found'}</h2>
               <p className="text-sm text-ink-3">{error}</p>
             </div>
           </div>
