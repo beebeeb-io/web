@@ -354,6 +354,12 @@ export async function generateRecoveryPhrase(): Promise<{
   return withProxy((p) => p.generateRecoveryPhrase())
 }
 
+/** Generate a canonical 0708 share token (20 bytes → 27-char url-safe-no-pad
+ *  base64) via the single core impl in WASM — matches the server's A1 validator. */
+export async function generateShareToken(): Promise<string> {
+  return withProxy((p) => p.generateShareToken())
+}
+
 /** Recover the master key from a 12-word BIP39 phrase. */
 export async function recoverFromPhrase(phrase: string): Promise<Uint8Array> {
   return withProxy((p) => p.recoverFromPhrase(phrase))

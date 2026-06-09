@@ -25,6 +25,7 @@ import {
   encryptFileKeyForSharing,
   wrapKeyForShare,
   toBase64url,
+  generateShareToken,
 } from '../lib/crypto'
 import {
   generateFolderKey,
@@ -577,14 +578,13 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       const keyForUrl = toBase64url(clientKey)
       zeroize(clientKey)
 
-      // 5. A1: generate the raw token client-side (URL-safe-no-pad base64 of 20
-      //    bytes = 27 chars) and wrap it under the master key. token + both
-      //    blobs are sent ALL-OR-NOTHING. The token is also re-derivable on
-      //    re-copy via owner_wrapped_token (the raw token is hashed at rest).
-      // TODO(0709): swap to core generate_share_token WASM export when published
-      //             (shared-core-logic rule) — getRandomValues is the approved interim.
+      // 5. A1: mint the raw token via the canonical core impl (single source,
+      //    shared with native/UniFFI via beebeeb-core) — 20 bytes → 27-char
+      //    url-safe-no-pad base64, matching the server's A1 validator exactly.
+      //    token + both blobs are sent ALL-OR-NOTHING; the token is re-derivable
+      //    on re-copy via owner_wrapped_token (the raw token is hashed at rest).
       const attachFreshToken = async () => {
-        const token = toBase64url(crypto.getRandomValues(new Uint8Array(20)))
+        const token = await generateShareToken()
         options.token = token
         options.owner_wrapped_token = toBase64(
           await wrapKeyForShare(masterKey, new TextEncoder().encode(token)),

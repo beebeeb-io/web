@@ -245,6 +245,13 @@ const cryptoWorker = {
     }
   },
 
+  /** Canonical 0708 share token: 20 bytes of OS randomness → 27-char
+   *  url-safe-no-pad base64. Single core impl, shared with native/UniFFI. */
+  async generateShareToken(): Promise<string> {
+    const wasm = await ensureWasm()
+    return wasm.generate_share_token() as string
+  },
+
   /** Recover the master key from a 12-word BIP39 phrase. */
   async recoverFromPhrase(phrase: string): Promise<Uint8Array> {
     const wasm = await ensureWasm()
