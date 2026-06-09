@@ -20,8 +20,6 @@ import {
   type MyShare,
 } from '../lib/api'
 import { useToast } from './toast'
-import { useKeys } from '../lib/key-context'
-import { toBase64 } from '../lib/crypto'
 
 interface ShareInfoModalProps {
   fileId: string
@@ -67,14 +65,12 @@ export function ShareInfoModal({
   onRevoked,
 }: ShareInfoModalProps) {
   const { showToast } = useToast()
-  const { getFileKey, isUnlocked, cryptoReady } = useKeys()
   const dialogRef = useRef<HTMLDivElement>(null)
   const [shares, setShares] = useState<MyShare[]>(() =>
     (myShares ?? []).filter((s) => s.file_id === fileId && isShareActive(s)),
   )
   const [loading, setLoading] = useState(true)
   const [revokingId, setRevokingId] = useState<string | null>(null)
-  const [copyingId, setCopyingId] = useState<string | null>(null)
 
   // Authoritative fetch on open
   useEffect(() => {
@@ -117,40 +113,15 @@ export function ShareInfoModal({
     }
   }, [onRevoked, showToast])
 
-  const handleCopy = useCallback(async (share: MyShare) => {
-    if (!isUnlocked || !cryptoReady) {
-      showToast({
-        icon: 'lock',
-        title: 'Vault is locked',
-        description: 'Unlock the vault to build a share link with the decryption key.',
-        danger: true,
-      })
-      return
-    }
-    setCopyingId(share.id)
-    try {
-      const fileKey = await getFileKey(fileId)
-      const keyB64 = toBase64(fileKey)
-      const url = `${window.location.origin}/s/${share.token}#key=${encodeURIComponent(keyB64)}`
-      await navigator.clipboard.writeText(url)
-      // Auto-clear clipboard after 60s — URL contains the decryption key in the fragment.
-      setTimeout(() => { navigator.clipboard.writeText('').catch(() => {}) }, 60000)
-      showToast({
-        icon: 'check',
-        title: 'Share link copied',
-        description: 'Includes the decryption key.',
-      })
-    } catch (err) {
-      showToast({
-        icon: 'x',
-        title: 'Failed to copy link',
-        description: err instanceof Error ? err.message : undefined,
-        danger: true,
-      })
-    } finally {
-      setCopyingId(null)
-    }
-  }, [cryptoReady, fileId, getFileKey, isUnlocked, showToast])
+  // NOTE (0709): this modal deliberately does NOT offer "Copy link". The share's
+  // decryption key (K_c) is generated at creation and stored NOWHERE — so the
+  // only correct link is the one the owner copied at creation time. The previous
+  // code rebuilt `#key=` from the FILE KEY, which is the wrong key for the
+  // double-encrypted shares we create today (the recipient unwraps wrapped_file_key
+  // with K_c, not the file key) — every such link failed to decrypt while a toast
+  // claimed "Includes the decryption key." That confidently-wrong UI is removed.
+  // Re-copyable links return with the server-synced owner-wrapped K_c (0709 A+);
+  // until then this surface states the situation honestly.
 
   if (!isOpen) return null
 
@@ -211,7 +182,9 @@ export function ShareInfoModal({
                     className="font-mono text-[11px] text-ink-2 truncate flex-1 min-w-0"
                     title={share.token}
                   >
-                    {share.token.slice(0, 12)}…{share.token.slice(-4)}
+                    {share.token
+                      ? `${share.token.slice(0, 12)}…${share.token.slice(-4)}`
+                      : 'Share link'}
                   </span>
                   <span className="text-[11px] text-ink-4 shrink-0">
                     {formatExpiry(share.expires_at)}
@@ -231,24 +204,22 @@ export function ShareInfoModal({
                   )}
                 </div>
 
-                {/* Actions */}
-                <div className="flex items-center justify-end gap-2">
-                  <BBButton
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => void handleCopy(share)}
-                    disabled={copyingId === share.id}
-                    className="gap-1.5"
-                  >
-                    <Icon name="copy" size={12} />
-                    {copyingId === share.id ? 'Copying…' : 'Copy link'}
-                  </BBButton>
+                {/* Honest legacy state: the key isn't stored, so we can't rebuild
+                    a working link here. Say so plainly rather than copy a broken one. */}
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-[11px] text-ink-4 leading-snug flex items-start gap-1.5 flex-1 min-w-0">
+                    <Icon name="lock" size={11} className="text-ink-4 shrink-0 mt-px" />
+                    <span>
+                      The key for this link isn't stored here. Use the full link from
+                      when you created it, or create a new link.
+                    </span>
+                  </p>
                   <BBButton
                     size="sm"
                     variant="ghost"
                     onClick={() => void handleRevoke(share)}
                     disabled={revokingId === share.id}
-                    className="text-red hover:text-red"
+                    className="text-red hover:text-red shrink-0"
                   >
                     {revokingId === share.id ? 'Revoking…' : 'Revoke'}
                   </BBButton>
@@ -261,8 +232,8 @@ export function ShareInfoModal({
         {/* Footer */}
         <div className="px-5 py-3 bg-paper-2 border-t border-line flex items-center justify-between gap-3">
           <p className="text-[11px] text-ink-4 leading-snug">
-            Each link includes the decryption key after <span className="font-mono">#key=</span>.
-            We never see it.
+            The decryption key lives only in the link you copied when you created
+            the share — never on our servers, and not here.
           </p>
           {onCreateNew && (
             <BBButton
