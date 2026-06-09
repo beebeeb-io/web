@@ -15,6 +15,26 @@ bun run build    # Production build
 bunx tsc --noEmit  # Type check
 ```
 
+## Regenerating beebeeb-wasm (from core)
+
+`beebeeb-wasm` is a **committed workspace package** at `repos/web/packages/beebeeb-wasm/`
+(resolved via `beebeeb-wasm: workspace:*`). It is the **single source of truth for
+every web build** — local, CI, e2e, and the prod Docker image (which bundles the
+committed package; there is no fresh core build at deploy time). So when core's
+WASM surface changes, you MUST regenerate + commit this package or web won't see it.
+
+```sh
+# 1. Build the wasm from core (documented at core README.md:71)
+cd repos/core && wasm-pack build beebeeb-wasm --target web
+# 2. Copy the 4 generated artifacts into the web package (KEEP the committed
+#    package.json unless wasm-pack's output meaningfully differs — diff it first)
+cp beebeeb-wasm/pkg/{beebeeb_wasm_bg.wasm,beebeeb_wasm_bg.wasm.d.ts,beebeeb_wasm.d.ts,beebeeb_wasm.js} \
+   ../web/packages/beebeeb-wasm/
+# 3. Diff the .d.ts: new exports = additive (fine). An EXISTING export with a
+#    changed signature means core drifted under web — STOP and verify before committing.
+# 4. Commit in web naming the core SHA:  build(wasm): regenerate from core @ <SHA>
+```
+
 ## API
 
 Backend runs at `http://localhost:3001`. API client is in `src/lib/api.ts`. All endpoints documented in the server repo's CLAUDE.md.
