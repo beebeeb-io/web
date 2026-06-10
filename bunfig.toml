@@ -1,0 +1,11 @@
+# Scope `bun test` to the unit-test directory (task 0740b).
+#
+# Bun's test runner discovers BOTH `*.test.ts` and `*.spec.ts` everywhere by
+# default — so a bare `bun test` tried to execute the Playwright `e2e/*.spec.ts`
+# files under bun ("Playwright Test did not expect test() to be called here"),
+# producing dozens of bogus failures that buried the real unit tests. The unit
+# tests live in `test/`; the e2e specs run via `e2e/scripts/web-e2e.sh` (real
+# browsers), never under bun. Rooting test discovery at `test/` keeps a bare
+# `bun test` meaningful (and CI-wireable) without touching the e2e suite.
+[test]
+root = "test"
