@@ -116,7 +116,22 @@ start_backend() {
 stop_backend() {
   [ -n "$API_PID" ] && { kill -- -"$API_PID" 2>/dev/null || kill "$API_PID" 2>/dev/null; }
   API_PID=""
-  sleep 1
+  # Wait for the API to actually exit and RELEASE :$API_PORT before returning.
+  # Otherwise the next (rapid) restart races a zombie still bound to the port —
+  # we then DROP its DB out from under it and the new boot's health check hits
+  # the zombie → "database does not exist" → rc=2. The ~30 restarts of per-file
+  # isolation make this race likely without the wait (0740c).
+  for _ in $(seq 1 30); do
+    lsof -nP -iTCP:"$API_PORT" -sTCP:LISTEN >/dev/null 2>&1 || break
+    sleep 0.3
+  done
+  # Force-kill any straggler still bound to the port (a detached/reaped child).
+  # NB: use `if`, not `[ -n ] && {...}` — under `set -e` the latter exits the
+  # whole script when the straggler is absent (the normal case).
+  # `|| true`: with pipefail, lsof returns non-zero when the port is already free
+  # (the normal case), which would otherwise exit the script under `set -e`.
+  local pid; pid="$(lsof -nP -iTCP:"$API_PORT" -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $2}' | head -1 || true)"
+  if [ -n "$pid" ]; then kill -9 "$pid" 2>/dev/null || true; sleep 0.5; fi
   psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d postgres -c "DROP DATABASE IF EXISTS $DB_NAME WITH (FORCE);" >/dev/null 2>&1 || true
 }
 
