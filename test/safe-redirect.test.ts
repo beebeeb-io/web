@@ -37,11 +37,16 @@ describe('sanitizeRedirect', () => {
     ['traversal out of allowlist', '/cli-auth/../admin'],
     ['prefix lookalike', '/cli-auth-evil'],
     ['subpath under allowlisted route', '/cli-auth/extra'],
-    ['different internal route', '/settings/privacy'],
+    ['different non-allowlisted route', '/billing'],
     ['root', '/'],
     ['trailing slash variant', '/cli-auth/'],
   ])('rejects non-allowlisted path: %s', (_label, vector) => {
     expect(sanitizeRedirect(vector)).toBeNull()
+  })
+
+  // /settings/privacy is allowlisted for the GDPR data-export resume (task 0720).
+  test('accepts /settings/privacy (data-export resume route)', () => {
+    expect(sanitizeRedirect('/settings/privacy')).toBe('/settings/privacy')
   })
 
   // ── Control-character smuggling ────────────────────────────────────────────

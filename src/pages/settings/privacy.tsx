@@ -20,6 +20,7 @@ import { useFrozen } from '../../hooks/use-frozen'
 import { ConfirmPasswordModal } from '../../components/confirm-password-modal'
 import {
   dataExportDownloadFilename,
+  markPendingExport,
 } from '../../lib/export-intent'
 import {
   freezeAccount,
@@ -80,7 +81,15 @@ function DataExportCard() {
     try {
       const result = await requestDataExport()
       setExportStatus(result)
-    } catch {
+    } catch (err) {
+      // Session expired mid-export → capture the intent so login resumes back
+      // here instead of stranding the user at "/" (GDPR Art. 20, task 0720).
+      // The global 401 handler bounces to /login; navigateAfterLogin consumes
+      // this flag and returns the user to the export flow.
+      if (err instanceof ApiError && err.status === 401) {
+        markPendingExport()
+        return
+      }
       showToast({ icon: 'x', title: 'Export request failed', danger: true })
     }
   }, [showToast])

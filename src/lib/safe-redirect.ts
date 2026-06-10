@@ -16,8 +16,11 @@
  */
 
 /** Exact pathnames a post-login redirect may target. Match is exact: the query
- *  string (`?code=…`) is preserved, but the path itself cannot vary. */
-export const REDIRECT_ALLOWLIST = ['/cli-auth'] as const
+ *  string (`?code=…`) is preserved, but the path itself cannot vary.
+ *  - `/cli-auth`        — CLI device-auth round-trip.
+ *  - `/settings/privacy`— data-export resume (`DATA_EXPORT_ROUTE`, task 0720);
+ *    a same-origin protected route, so no open-redirect risk in allowlisting it. */
+export const REDIRECT_ALLOWLIST = ['/cli-auth', '/settings/privacy'] as const
 
 /** Control characters (C0 range + DEL) — illegal in a path and a classic
  *  redirect/header-smuggling vector. */

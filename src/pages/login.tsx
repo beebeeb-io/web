@@ -15,6 +15,7 @@ import { opaqueLoginStart, opaqueLoginFinish, toBase64, fromBase64 } from '../li
 import { autoUpgradeToV1 } from '../lib/auto-upgrade'
 import { prfExtensionInputs, extractPrfOutput, getVaultWrapKey, decryptVaultBlob } from '../lib/passkey-vault'
 import { sanitizeRedirect } from '../lib/safe-redirect'
+import { consumePendingExport, DATA_EXPORT_ROUTE } from '../lib/export-intent'
 
 export function Login() {
   const navigate = useNavigate()
@@ -44,7 +45,14 @@ export function Login() {
   // /cli-auth?code=…). sanitizeRedirect rejects open-redirect attempts; any
   // non-allowlisted or malformed value falls back to the drive ("/").
   const navigateAfterLogin = useCallback(() => {
-    navigate(sanitizeRedirect(searchParams.get('next')) ?? '/')
+    // 1. Explicit ?next= redirect (e.g. CLI device-auth) — allowlisted.
+    const fromQuery = sanitizeRedirect(searchParams.get('next'))
+    if (fromQuery) return navigate(fromQuery)
+    // 2. Resume a data-export captured when the session expired mid-export
+    //    (GDPR Art. 20 resume, task 0720) — routed through the same allowlist.
+    if (consumePendingExport()) return navigate(sanitizeRedirect(DATA_EXPORT_ROUTE) ?? '/')
+    // 3. Default home.
+    navigate('/')
   }, [navigate, searchParams])
 
   const handleDevSkip = useCallback(async () => {
