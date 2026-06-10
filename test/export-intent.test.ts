@@ -1,11 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 
 import {
-  DATA_EXPORT_ROUTE,
   PENDING_EXPORT_KEY,
   consumePendingExport,
   dataExportDownloadFilename,
-  getPostLoginPath,
   hasPendingExport,
   markPendingExport,
 } from '../src/lib/export-intent'
@@ -27,14 +25,14 @@ class MemoryStorage {
 }
 
 describe('export intent helpers', () => {
-  test('routes the next login back to privacy while preserving the pending export flag', () => {
+  test('a captured export intent is detected, then consumed (cleared)', () => {
     const storage = new MemoryStorage()
 
     markPendingExport(storage)
 
-    expect(getPostLoginPath(storage)).toBe(DATA_EXPORT_ROUTE)
+    expect(hasPendingExport(storage)).toBe(true)
     expect(consumePendingExport(storage)).toBe(true)
-    expect(getPostLoginPath(storage)).toBe('/')
+    expect(hasPendingExport(storage)).toBe(false)
   })
 
   test('an expired (>10min) capture does NOT resume and is evicted (TTL, 0720)', () => {
@@ -43,7 +41,6 @@ describe('export intent helpers', () => {
     storage.setItem(PENDING_EXPORT_KEY, String(Date.now() - 11 * 60 * 1000))
 
     expect(hasPendingExport(storage)).toBe(false)
-    expect(getPostLoginPath(storage)).toBe('/')
     expect(consumePendingExport(storage)).toBe(false)
     // Stale value evicted so it can never linger.
     expect(storage.getItem(PENDING_EXPORT_KEY)).toBeNull()
@@ -53,7 +50,6 @@ describe('export intent helpers', () => {
     const storage = new MemoryStorage()
     storage.setItem(PENDING_EXPORT_KEY, 'not-a-timestamp')
     expect(hasPendingExport(storage)).toBe(false)
-    expect(getPostLoginPath(storage)).toBe('/')
   })
 
   test('uses a zip filename for data export downloads', () => {

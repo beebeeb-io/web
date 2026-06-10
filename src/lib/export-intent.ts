@@ -36,10 +36,6 @@ export function consumePendingExport(storage = browserStorage()): boolean {
   return fresh
 }
 
-export function getPostLoginPath(storage = browserStorage()): string {
-  return hasPendingExport(storage) ? DATA_EXPORT_ROUTE : '/'
-}
-
 export function dataExportDownloadFilename(now = new Date()): string {
   return `beebeeb-export-${now.toISOString().slice(0, 10)}.zip`
 }
