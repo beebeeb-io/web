@@ -34,14 +34,16 @@ test.describe('Settings restructure (028)', () => {
 
   test('/settings/account redirects to profile (or login)', async ({ page }) => {
     await page.goto('/settings/account')
-    await page.waitForTimeout(5000)
-    // Either redirects to profile (authenticated) or to login with next=profile
-    const url = page.url()
-    expect(url).toMatch(/settings\/profile|login/)
+    // SettingsAccount renders <Navigate to="/settings/profile">; AUTO-WAIT for the
+    // client-side redirect rather than a fixed 5s sleep + sync url read, which
+    // flaked on cold WASM boot + the extra redirect hop (task 0740c — app is correct).
+    await expect(page).toHaveURL(/settings\/profile|login/, { timeout: 20_000 })
   })
 
   test('/settings redirects to profile', async ({ page }) => {
     await page.goto('/settings')
-    await page.waitForURL(/\/settings\/profile/, { timeout: 10000 })
+    // 20s, not 10s: the route's <Navigate> only fires after WasmGuard unblocks,
+    // which can exceed 10s on a cold worker (flaked in the 0740c isolation runs).
+    await page.waitForURL(/\/settings\/profile/, { timeout: 20_000 })
   })
 })
