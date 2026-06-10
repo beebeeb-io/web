@@ -60,6 +60,7 @@ const ImpersonateRedeem = lazyNamed(
 )
 const JoinPage       = lazyNamed(() => import('./pages/join'),            'JoinPage')
 const NotFound       = lazyNamed(() => import('./pages/errors/not-found'),   'NotFound')
+const Logout         = lazyNamed(() => import('./pages/logout'),             'Logout')
 const ServerError    = lazyNamed(() => import('./pages/errors/server-error'), 'ServerError')
 const PublicProfilePage = lazyNamed(() => import('./pages/public-profile'), 'PublicProfilePage')
 
@@ -513,6 +514,7 @@ export function App() {
           />
           {/* E2EE File Requests — public upload page (no auth) */}
           <Route path="/r/:token" element={<UploadRequestPage />} />
+          <Route path="/logout" element={<Logout />} />
           <Route path="/500" element={<ServerError />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

@@ -614,16 +614,28 @@ export function DriveLayout({ children }: { children: ReactNode }) {
               href={adminUrl}
               target="_blank"
               rel="noopener noreferrer"
-              onClick={async () => {
-                // Mint a 60s OTP, then navigate to the configured admin app.
-                try {
-                  const handoff = await requestAdminHandoff()
-                  window.location.href = `${adminUrl}/auth/handoff?token=${encodeURIComponent(handoff.token)}`
-                } catch {
-                  // Fall back to a plain navigation — admin's own login
-                  // page handles unauthenticated visitors.
-                  window.location.href = adminUrl
-                }
+              onClick={(e) => {
+                // The bare href would open admin's /login unauthenticated (the
+                // standalone OPAQUE page). Instead: open the admin tab
+                // synchronously inside the click gesture (so it isn't
+                // popup-blocked), then point it at the handoff redeem once the
+                // 60s single-use OTP is minted — so the admin lands signed-in.
+                e.preventDefault()
+                const adminTab = window.open('about:blank', '_blank')
+                if (adminTab) adminTab.opener = null
+                void (async () => {
+                  try {
+                    const handoff = await requestAdminHandoff()
+                    const dest = `${adminUrl}/auth/handoff?token=${encodeURIComponent(handoff.token)}`
+                    if (adminTab) adminTab.location.replace(dest)
+                    else window.location.href = dest
+                  } catch {
+                    // Fall back to a plain navigation — admin's own login
+                    // page handles unauthenticated visitors.
+                    if (adminTab) adminTab.location.replace(adminUrl)
+                    else window.location.href = adminUrl
+                  }
+                })()
               }}
               className="w-full flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] transition-colors text-ink-2 hover:bg-paper-3/50 cursor-pointer"
             >
