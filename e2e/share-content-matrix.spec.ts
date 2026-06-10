@@ -163,3 +163,45 @@ test('passphrase share: recipient must enter the passphrase, then decrypts ident
     await ctx.close()
   }
 })
+
+test('withNetworkRetry: a transient network failure on download is retried, not surfaced', async ({ page, browser }) => {
+  test.setTimeout(120_000)
+
+  await page.goto('/')
+  await expect(page).not.toHaveURL(/\/login/, { timeout: 15_000 })
+
+  const content = `retry matrix :: ${Date.now()}`
+  const filename = `cm-retry-${Date.now()}.txt`
+  await uploadTextFile(page, filename, content)
+  const shareUrl = await createShareLink(page, filename)
+
+  const ctx = await browser.newContext()
+  const recipient = await ctx.newPage()
+  await recipient.route('**/dev/auto-login', (r) => r.fulfill({ status: 404 }))
+
+  // Fail the FIRST TWO download fetches at the network layer (fetch throws →
+  // ApiError status 0 → retryable); the third proceeds. The user should never
+  // see the blip — withNetworkRetry rides it out.
+  let downloadAttempts = 0
+  await recipient.route('**/api/v1/shares/*/download', (route) => {
+    downloadAttempts++
+    if (downloadAttempts <= 2) {
+      route.abort('connectionfailed')
+      return
+    }
+    route.continue()
+  })
+
+  try {
+    await recipient.goto(shareUrl)
+    await expect(recipient.getByText(filename, { exact: false })).toBeVisible({ timeout: 30_000 })
+    const [download] = await Promise.all([
+      recipient.waitForEvent('download', { timeout: 60_000 }),
+      recipient.getByRole('button', { name: /download and decrypt/i }).click(),
+    ])
+    expect(fs.readFileSync((await download.path())!, 'utf8')).toBe(content)
+    expect(downloadAttempts, 'two aborts then a successful retry').toBeGreaterThanOrEqual(3)
+  } finally {
+    await ctx.close()
+  }
+})

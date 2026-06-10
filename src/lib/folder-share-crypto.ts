@@ -125,6 +125,19 @@ export async function encryptAllChildrenKeys(
   return result
 }
 
+/**
+ * Hard ceiling on descendants enumerated for a single folder share. A folder
+ * share is transactional only if we encrypt a key for EVERY descendant before
+ * the one createInvite call — so an incomplete enumeration would silently
+ * produce a half-shared folder (some children undecryptable to the recipient).
+ * `listFiles` currently returns a parent's children unbounded, but if a default
+ * server-side page cap is ever introduced this guard converts the resulting
+ * silent truncation into a loud, explicit refusal rather than a partial share.
+ * Set well above the free-plan 10k-file cap; a single folder share this large is
+ * pathological regardless.
+ */
+const MAX_FOLDER_SHARE_DESCENDANTS = 50_000
+
 async function collectAllChildren(folderId: string): Promise<string[]> {
   const ids: string[] = []
   const queue: string[] = [folderId]
@@ -137,6 +150,12 @@ async function collectAllChildren(folderId: string): Promise<string[]> {
       if (child.is_folder) {
         queue.push(child.id)
       }
+    }
+    if (ids.length > MAX_FOLDER_SHARE_DESCENDANTS) {
+      // Refuse rather than risk a silently incomplete (half-shared) folder.
+      throw new Error(
+        'This folder is too large to share in one link right now. Share a smaller subfolder, or contact support.',
+      )
     }
   }
 

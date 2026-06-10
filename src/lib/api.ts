@@ -1026,7 +1026,14 @@ export async function downloadSharedFile(
   const headers: HeadersInit = passphrase
     ? { 'X-Share-Passphrase': passphrase }
     : {}
-  const res = await fetch(`${API_URL}/api/v1/shares/${token}/download`, { headers })
+  let res: Response
+  try {
+    res = await fetch(`${API_URL}/api/v1/shares/${token}/download`, { headers })
+  } catch (e) {
+    // fetch threw before any response (offline / DNS / reset / CORS) — surface
+    // as network-class (status 0) so withNetworkRetry treats it as transient.
+    throw new ApiError(e instanceof Error ? e.message : 'Network error', 0)
+  }
   if (!res.ok) {
     // Try to read the server's JSON error body so we surface the real message
     // (e.g. "link has expired", "incorrect passphrase") instead of the opaque

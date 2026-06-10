@@ -16,6 +16,7 @@ import {
 } from '../lib/api'
 import { decryptFilename, fromBase64, parseEncryptedBlob, unwrapKeyFromShare, initCrypto } from '../lib/crypto'
 import { decryptEncryptedBytes, inferChunkCountFromEncryptedSize } from '../lib/encrypted-download'
+import { withNetworkRetry } from '../lib/net-retry'
 import { formatBytes } from '../lib/format'
 
 // ─── Meta tag helpers ─────────────────────────────────────────────────────────
@@ -553,6 +554,13 @@ export function ShareViewPage() {
     setDownloadError(null)
     setUnlockError(null)
     setKeyError(null)
+    // Defensive (0709 cross-pollination from mobile 0710): also clear the
+    // manually-entered key and any open report dialog so nothing from share A
+    // carries into share B on an SPA route change. (The decryption key itself is
+    // read live from the URL fragment and the decrypted blob is revoked
+    // immediately in handleDownload — neither is ever held in per-share state.)
+    setManualKey('')
+    setReportOpen(false)
     setLoading(true)
     getShare(token)
       .then((data) => {
@@ -707,7 +715,9 @@ export function ShareViewPage() {
         chunkSize: headerChunkSize,
         originalSize: headerOriginalSize,
       } =
-        await downloadSharedFile(token, passphrase || undefined)
+        // Ride out transient network blips (fetch-throws → ApiError status 0);
+        // HTTP errors (expired/revoked/passphrase) bubble immediately, not retried.
+        await withNetworkRetry(() => downloadSharedFile(token, passphrase || undefined))
       const encrypted = new Uint8Array(await blob.arrayBuffer())
 
       // Prefer the server-provided original size (X-Original-Size header) over
