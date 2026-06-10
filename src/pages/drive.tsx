@@ -35,7 +35,7 @@ import { useKeyboardShortcuts, isMac } from '../hooks/use-keyboard-shortcuts'
 import { useFrozen } from '../hooks/use-frozen'
 import { useAuth } from '../lib/auth-context'
 import {
-  listFiles,
+  listAllFiles,
   createFolder,
   toggleStar,
   updateFile,
@@ -344,7 +344,7 @@ export function Drive() {
     }
 
     try {
-      const data = await listFiles(currentParentId ?? undefined, trashed)
+      const data = await listAllFiles(currentParentId ?? undefined, { trashed })
       setFiles(data)
       setDriveOffline(false)
       setLoadError(null)

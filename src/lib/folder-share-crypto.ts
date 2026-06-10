@@ -9,7 +9,7 @@ import {
   toBase64,
   zeroize,
 } from './crypto'
-import { listFiles } from './api'
+import { listFilesPage, FILE_LIST_HARD_CAP } from './api'
 
 export async function generateFolderKey(): Promise<Uint8Array> {
   const key = new Uint8Array(32)
@@ -126,17 +126,22 @@ export async function encryptAllChildrenKeys(
 }
 
 /**
- * The server's `list_files` handler (files.rs:2899) clamps `limit` to
- * `unwrap_or(200).clamp(1, 500)` and exposes NO offset/cursor — so a single
- * folder's children cannot be paginated past 500. A folder share is
- * transactional only if we encrypt a key for EVERY descendant before the one
- * createInvite call; enumerating only the first page would silently produce a
- * half-shared folder (some children undecryptable to the recipient). We request
- * the server's max page and treat a FULL page as possible truncation → refuse
- * loudly rather than half-share. Proper fix (server keyset pagination + loop) is
- * task 0739; this is the client-only interim.
+ * A folder share is transactional only if we encrypt a key for EVERY descendant
+ * before the single createInvite call — a partial enumeration would silently
+ * produce a half-shared folder (some children undecryptable to the recipient).
+ *
+ * Task 0739 gives the server keyset pagination, so we follow `next_cursor` to
+ * enumerate each folder IN FULL (no more first-page-only). The page guard is
+ * written to be CORRECT regardless of deploy order with the server half:
+ *  - paginated server → a full page carries a `next_cursor` we follow → no false
+ *    refusal, full enumeration;
+ *  - pre-0739 server (no cursor) → a FULL page with NO cursor means there may be
+ *    more children we can't reach → refuse loudly (the prior interim behaviour),
+ *    never half-share.
+ * Outer bound: encrypting a key for >`FILE_LIST_HARD_CAP` descendants in one link
+ * is impractical → refuse rather than build an unbounded per-recipient key set.
  */
-const SERVER_LIST_PAGE_MAX = 500
+const SHARE_PAGE_LIMIT = 500
 const TOO_LARGE_TO_SHARE =
   'This folder is too large to share in one link right now. Share a smaller subfolder, or contact support.'
 
@@ -146,18 +151,21 @@ export async function collectAllChildren(folderId: string): Promise<string[]> {
 
   while (queue.length > 0) {
     const parentId = queue.shift()!
-    const children = await listFiles(parentId, undefined, { limit: SERVER_LIST_PAGE_MAX })
-    // A full page means there may be MORE children we can't reach (no cursor) —
-    // refuse rather than enumerate a truncated, silently-incomplete set.
-    if (children.length >= SERVER_LIST_PAGE_MAX) {
-      throw new Error(TOO_LARGE_TO_SHARE)
-    }
-    for (const child of children) {
-      ids.push(child.id)
-      if (child.is_folder) {
-        queue.push(child.id)
+    let cursor: string | undefined
+    do {
+      const page = await listFilesPage({ parentId, limit: SHARE_PAGE_LIMIT, cursor })
+      // Pre-0739 server with no keyset pagination: a full page and no cursor
+      // means there may be unreachable children → refuse rather than half-share.
+      if (!page.next_cursor && page.files.length >= SHARE_PAGE_LIMIT) {
+        throw new Error(TOO_LARGE_TO_SHARE)
       }
-    }
+      for (const child of page.files) {
+        ids.push(child.id)
+        if (child.is_folder) queue.push(child.id)
+        if (ids.length > FILE_LIST_HARD_CAP) throw new Error(TOO_LARGE_TO_SHARE)
+      }
+      cursor = page.next_cursor ?? undefined
+    } while (cursor)
   }
 
   return ids

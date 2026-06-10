@@ -1,4 +1,5 @@
 import { clearTauriSession } from './tauri-bridge'
+import { collectPaged } from './paginate'
 import {
   ApiError,
   IncorrectPasswordError,
@@ -565,20 +566,74 @@ export async function verify2fa(
   return data
 }
 
+/** Hard outer bound on a single `listAllFiles` enumeration — a safety valve so a
+ *  pathological or hostile listing can't loop unbounded or OOM the tab (0709/0739). */
+export const FILE_LIST_HARD_CAP = 50_000
+
+/**
+ * One page of `GET /api/v1/files`. `cursor` is an OPAQUE server token (task 0739
+ * keyset pagination) — pass back exactly what the previous page returned, never
+ * parse it. `next_cursor` is non-null only when a full page was served;
+ * null/absent ⇒ last page.
+ */
+export async function listFilesPage(
+  opts: {
+    parentId?: string
+    trashed?: boolean
+    starred?: boolean
+    recent?: boolean
+    limit?: number
+    cursor?: string
+  } = {},
+): Promise<{ files: DriveFile[]; next_cursor: string | null }> {
+  const params = new URLSearchParams()
+  if (opts.parentId) params.set('parent_id', opts.parentId)
+  if (opts.trashed !== undefined) params.set('trashed', String(opts.trashed))
+  if (opts.starred) params.set('starred', 'true')
+  if (opts.recent) params.set('recent', 'true')
+  if (opts.limit !== undefined) params.set('limit', String(opts.limit))
+  if (opts.cursor) params.set('cursor', opts.cursor)
+  const qs = params.toString()
+  const data = await request<{ files: DriveFile[]; next_cursor?: string | null }>(
+    `/api/v1/files${qs ? `?${qs}` : ''}`,
+  )
+  return { files: data.files, next_cursor: data.next_cursor ?? null }
+}
+
+/** A SINGLE page of the listing (server default page size). For callers that only
+ *  need the first page; use `listAllFiles` when you need EVERY row of a folder. */
 export async function listFiles(
   parentId?: string,
   trashed?: boolean,
   options?: { starred?: boolean; recent?: boolean; limit?: number },
 ): Promise<DriveFile[]> {
-  const params = new URLSearchParams()
-  if (parentId) params.set('parent_id', parentId)
-  if (trashed !== undefined) params.set('trashed', String(trashed))
-  if (options?.starred) params.set('starred', 'true')
-  if (options?.recent) params.set('recent', 'true')
-  if (options?.limit !== undefined) params.set('limit', String(options.limit))
-  const qs = params.toString()
-  const data = await request<{ files: DriveFile[] }>(`/api/v1/files${qs ? `?${qs}` : ''}`)
-  return data.files
+  const { files } = await listFilesPage({ parentId, trashed, ...options })
+  return files
+}
+
+/**
+ * Enumerate EVERY row of a listing by following `next_cursor` until the server
+ * reports the last page — the proper fix for the old silent 200/500-item cap
+ * (task 0739). Bounded by `maxTotal` (default `FILE_LIST_HARD_CAP`).
+ */
+export async function listAllFiles(
+  parentId?: string,
+  options?: { trashed?: boolean; starred?: boolean; recent?: boolean; maxTotal?: number },
+): Promise<DriveFile[]> {
+  return collectPaged<DriveFile>(
+    async (cursor) => {
+      const page = await listFilesPage({
+        parentId,
+        trashed: options?.trashed,
+        starred: options?.starred,
+        recent: options?.recent,
+        cursor,
+      })
+      return { items: page.files, nextCursor: page.next_cursor }
+    },
+    options?.maxTotal ?? FILE_LIST_HARD_CAP,
+    'listAllFiles',
+  )
 }
 
 export async function createFolder(
