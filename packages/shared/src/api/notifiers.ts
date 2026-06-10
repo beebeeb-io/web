@@ -40,3 +40,25 @@ export function fireSessionExpired(): void {
 export function fireConnectionStatus(status: 'ok' | 'flaky'): void {
   onConnectionStatus?.(status)
 }
+
+// ── Session-presence tracking (task 0741) ──────────────────────────────────
+// A 401 must only be treated as session EXPIRY (→ global handler → /login) when
+// a session plausibly existed: a bearer token OR a confirmed authenticated
+// response earlier this page-load. An anonymous visitor on a public route
+// (/s/:token, /r/:token, …) whose unconditional boot getMe() 401s must NOT be
+// bounced to /login. Apps call `markSessionConfirmed()` on a successful auth
+// check (e.g. getMe); `request()` reads `wasSessionConfirmed()` before firing.
+// Module-level = scoped to this page-load (resets on reload), the exact window.
+let sessionConfirmed = false
+
+export function markSessionConfirmed(): void {
+  sessionConfirmed = true
+}
+
+export function clearSessionConfirmed(): void {
+  sessionConfirmed = false
+}
+
+export function wasSessionConfirmed(): boolean {
+  return sessionConfirmed
+}

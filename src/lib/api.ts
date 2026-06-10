@@ -4,8 +4,10 @@ import {
   IncorrectPasswordError,
   SessionTooOldForConfirmationError,
   clearToken,
+  clearSessionConfirmed,
   getApiUrl,
   getToken,
+  markSessionConfirmed,
   registerConnectionStatusHandler,
   registerErrorNotifier,
   registerOnTokenCleared,
@@ -446,6 +448,9 @@ export async function logout(): Promise<void> {
     await request<void>('/api/v1/auth/logout', { method: 'POST' })
   } finally {
     clearToken()
+    // Forget the page-load session marker so a post-logout anonymous 401 (e.g.
+    // landing on a public route) does not bounce to /login (task 0741).
+    clearSessionConfirmed()
   }
 }
 
@@ -518,7 +523,12 @@ export async function resendVerification(): Promise<{ message: string }> {
 }
 
 export async function getMe(): Promise<AuthUser> {
-  return request<AuthUser>('/api/v1/auth/me')
+  const user = await request<AuthUser>('/api/v1/auth/me')
+  // Record that an authenticated session was confirmed this page-load, so a
+  // LATER 401 (genuine expiry) is treated as expiry and bounces to /login —
+  // while an anonymous boot 401 (no session ever) does not (task 0741).
+  markSessionConfirmed()
+  return user
 }
 
 export async function setup2fa(): Promise<TotpSetupResponse> {

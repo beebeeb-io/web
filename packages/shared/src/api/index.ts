@@ -20,6 +20,8 @@ export {
   registerErrorNotifier,
   registerSessionExpiredHandler,
   registerConnectionStatusHandler,
+  markSessionConfirmed,
+  clearSessionConfirmed,
 } from './notifiers'
 export { request } from './request'
 export {

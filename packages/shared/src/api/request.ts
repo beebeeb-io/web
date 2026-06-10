@@ -28,6 +28,8 @@ import {
   fireConnectionStatus,
   fireErrorNotifier,
   fireSessionExpired,
+  wasSessionConfirmed,
+  clearSessionConfirmed,
 } from './notifiers'
 
 const CONNECTION_FAILURE_THRESHOLD = 2
@@ -140,11 +142,22 @@ export async function request<T>(
         if (code === 'opaque_ksf_outdated') {
           throw new ApiError(message, 401, code)
         }
-        if (token) {
-          clearToken()
+        // Only treat a 401 as session EXPIRY (→ global handler → /login) when a
+        // session plausibly existed (bearer token, or a confirmed auth this
+        // page-load). An anonymous 401 — e.g. a logged-out visitor on a public
+        // route whose boot getMe() 401s — must NOT fire the global handler, or
+        // it yanks them off /s/:token before the share ever loads (task 0741).
+        if (token || wasSessionConfirmed()) {
+          if (token) {
+            clearToken()
+          }
+          clearSessionConfirmed()
+          fireSessionExpired()
+          throw new ApiError('Session expired', 401, code)
         }
-        fireSessionExpired()
-        throw new ApiError('Session expired', 401, code)
+        // No session ever existed this page-load — surface a plain 401 for the
+        // caller to handle (share-view, etc.); do not bounce to /login.
+        throw new ApiError(message, 401, code)
       }
 
       throw new ApiError(message, res.status, code)

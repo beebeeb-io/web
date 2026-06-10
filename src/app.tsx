@@ -173,6 +173,23 @@ function OnboardingResetHandler() {
   return null
 }
 
+// Public routes an anonymous visitor must be able to use — a 401 (e.g. the boot
+// getMe() with no session) must NEVER bounce them off these to /login. Defense
+// in depth with request.ts's anonymous-401 gate (task 0741).
+const PUBLIC_ROUTE_PATTERNS: RegExp[] = [
+  /^\/s\//, // share recipient view
+  /^\/r\//, // file-request upload
+  /^\/receive(\/|$)/,
+  /^\/p\//, // public profile
+  /^\/join\//,
+  /^\/invite\//,
+  /^\/auth\/impersonate(\/|$)/,
+  /^\/cookies(\/|$)/,
+]
+function isPublicPath(pathname: string): boolean {
+  return PUBLIC_ROUTE_PATTERNS.some((re) => re.test(pathname))
+}
+
 /** Wire API error hooks into the toast + routing system. */
 function ApiErrorWiring() {
   const { showToast } = useToast()
@@ -183,6 +200,10 @@ function ApiErrorWiring() {
       showToast({ icon: 'cloud', title: 'Connection error', description: message, danger: true })
     })
     registerSessionExpiredHandler(() => {
+      // Never redirect off a public route — an anonymous share/file-request
+      // recipient (and even a logged-in user viewing a public share) must not
+      // be yanked to /login by a 401 (task 0741).
+      if (isPublicPath(window.location.pathname)) return
       navigate('/login', { replace: true })
     })
     return () => {
