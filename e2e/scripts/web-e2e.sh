@@ -89,13 +89,18 @@ start_backend() {
   rm -rf "$BLOB_DIR"; mkdir -p "$BLOB_DIR"
   psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d postgres -c "DROP DATABASE IF EXISTS $DB_NAME WITH (FORCE);" >/dev/null
   psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d postgres -c "CREATE DATABASE $DB_NAME;" >/dev/null
-  local opaque; opaque="$("$API_BIN" --generate-opaque-setup 2>/dev/null | grep -oE '[A-Za-z0-9+/=]{40,}' | head -1)"
+  # Generate the OPAQUE secret ONCE and reuse it across restarts. Regenerating it
+  # per restart triggered a fingerprint-mismatch CRITICAL (the API refuses to boot
+  # when the DB's stored fingerprint != the current secret) whenever a rapid
+  # DROP DATABASE raced an open connection — flaked the ~30-restart per-file
+  # isolation run (0740c). A stable secret always matches a fresh OR stale DB.
+  [ -n "${OPAQUE_SETUP:-}" ] || OPAQUE_SETUP="$("$API_BIN" --generate-opaque-setup 2>/dev/null | grep -oE '[A-Za-z0-9+/=]{40,}' | head -1)"
   DATABASE_URL="$DATABASE_URL" BB_PORT="$API_PORT" \
     CORS_ORIGINS="http://localhost:$VITE_PORT" \
     BLOB_STORE=local BLOB_STORE_PATH="$BLOB_DIR" \
     AUDIT_SIGNING_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
     SHARE_WRAPPING_KEY=0000000000000000000000000000000000000000000000000000000000000002 \
-    OPAQUE_SERVER_SETUP="$opaque" \
+    OPAQUE_SERVER_SETUP="$OPAQUE_SETUP" \
     APP_URL="http://localhost:$VITE_PORT" API_URL="http://localhost:$API_PORT" \
     setsid "$API_BIN" >/tmp/bb-web-e2e-api.log 2>&1 &
   API_PID=$!
