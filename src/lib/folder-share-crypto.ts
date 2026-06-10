@@ -126,36 +126,37 @@ export async function encryptAllChildrenKeys(
 }
 
 /**
- * Hard ceiling on descendants enumerated for a single folder share. A folder
- * share is transactional only if we encrypt a key for EVERY descendant before
- * the one createInvite call — so an incomplete enumeration would silently
- * produce a half-shared folder (some children undecryptable to the recipient).
- * `listFiles` currently returns a parent's children unbounded, but if a default
- * server-side page cap is ever introduced this guard converts the resulting
- * silent truncation into a loud, explicit refusal rather than a partial share.
- * Set well above the free-plan 10k-file cap; a single folder share this large is
- * pathological regardless.
+ * The server's `list_files` handler (files.rs:2899) clamps `limit` to
+ * `unwrap_or(200).clamp(1, 500)` and exposes NO offset/cursor — so a single
+ * folder's children cannot be paginated past 500. A folder share is
+ * transactional only if we encrypt a key for EVERY descendant before the one
+ * createInvite call; enumerating only the first page would silently produce a
+ * half-shared folder (some children undecryptable to the recipient). We request
+ * the server's max page and treat a FULL page as possible truncation → refuse
+ * loudly rather than half-share. Proper fix (server keyset pagination + loop) is
+ * task 0739; this is the client-only interim.
  */
-const MAX_FOLDER_SHARE_DESCENDANTS = 50_000
+const SERVER_LIST_PAGE_MAX = 500
+const TOO_LARGE_TO_SHARE =
+  'This folder is too large to share in one link right now. Share a smaller subfolder, or contact support.'
 
-async function collectAllChildren(folderId: string): Promise<string[]> {
+export async function collectAllChildren(folderId: string): Promise<string[]> {
   const ids: string[] = []
   const queue: string[] = [folderId]
 
   while (queue.length > 0) {
     const parentId = queue.shift()!
-    const children = await listFiles(parentId)
+    const children = await listFiles(parentId, undefined, { limit: SERVER_LIST_PAGE_MAX })
+    // A full page means there may be MORE children we can't reach (no cursor) —
+    // refuse rather than enumerate a truncated, silently-incomplete set.
+    if (children.length >= SERVER_LIST_PAGE_MAX) {
+      throw new Error(TOO_LARGE_TO_SHARE)
+    }
     for (const child of children) {
       ids.push(child.id)
       if (child.is_folder) {
         queue.push(child.id)
       }
-    }
-    if (ids.length > MAX_FOLDER_SHARE_DESCENDANTS) {
-      // Refuse rather than risk a silently incomplete (half-shared) folder.
-      throw new Error(
-        'This folder is too large to share in one link right now. Share a smaller subfolder, or contact support.',
-      )
     }
   }
 
