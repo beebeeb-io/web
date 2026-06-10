@@ -1,16 +1,19 @@
 import { test, expect } from '@playwright/test'
 import fs from 'fs'
 import { uploadTextFile, createShareLink } from './helpers/drive'
+import { anonymousContext } from './helpers/auth'
 
 /**
  * Task 0741 — anonymous visitors on public routes must NOT bounce to /login.
  *
- * SUITE-TRUST GAP (pinned 2026-06-10): the :3003 e2e harness backend returns
- * 200 for anonymous /api/v1/auth/me (no cookie), which MASKS this entire
- * 401→bounce class — the share matrix passed for months with the bouncing code
- * in the build. We force PROD's real behavior by mocking /auth/me → 401 (no
- * `code`, exactly what prod returns). Against the PRE-fix build this lands on
- * /login; post-fix the share loads and decrypts with no session.
+ * SUITE-TRUST GAP (pinned + FIXED 2026-06-10, task 0740a): the harness appeared
+ * to return 200 for anonymous /api/v1/auth/me, masking this whole 401→bounce
+ * class. The real mechanism was NOT the server (it 401s a token-less request
+ * exactly like prod) — it was the TEST: `browser.newContext()` inherits the
+ * `authenticated` project's storageState, so the "anonymous" recipient carried
+ * the authed `bb_session` cookie (domain bare `localhost`, port-agnostic). The
+ * fix is `anonymousContext()` (explicit empty storageState) — so this spec now
+ * exercises the REAL anonymous 401 with NO /auth/me mock (the fidelity proof).
  */
 test('anonymous recipient on /s/:token does NOT bounce to /login (prod 401 simulated)', async ({ page, browser }) => {
   test.setTimeout(120_000)
@@ -23,12 +26,13 @@ test('anonymous recipient on /s/:token does NOT bounce to /login (prod 401 simul
   await uploadTextFile(page, filename, content)
   const shareUrl = await createShareLink(page, filename)
 
-  // Anonymous recipient — force prod's anonymous /auth/me 401 (harness 200s it).
-  const ctx = await browser.newContext()
+  // TRULY anonymous recipient (task 0740a): empty storageState so the project's
+  // authed bb_session cookie isn't inherited, + block /dev/auto-login so the app
+  // can't silently re-authenticate via DevAuthGate. The harness then returns the
+  // REAL anonymous 401 from the server — no /auth/me mock (the fidelity proof).
+  const ctx = await anonymousContext(browser)
   const recipient = await ctx.newPage()
   await recipient.route('**/dev/auto-login', (r) => r.fulfill({ status: 404 }))
-  await recipient.route('**/api/v1/auth/me', (r) =>
-    r.fulfill({ status: 401, contentType: 'application/json', body: '{"error":"unauthorized"}' }))
   try {
     await recipient.goto(shareUrl)
     // PRE-FIX: boot getMe()→401 fires fireSessionExpired → navigate('/login').

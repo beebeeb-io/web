@@ -1,4 +1,22 @@
-import type { Page } from '@playwright/test'
+import type { Browser, BrowserContext, Page } from '@playwright/test'
+
+/**
+ * A TRULY anonymous browser context — no cookies, no storage.
+ *
+ * TRAP (task 0740a, the fidelity hole that hid a prod P0): in the
+ * `authenticated` project, `browser.newContext()` INHERITS the project's
+ * `use.storageState`, so a "fresh" context already carries the authenticated
+ * `bb_session` cookie. That cookie's domain is bare `localhost` (port-agnostic
+ * across :3001/:3003/:5173), so it authenticates requests to the e2e API too —
+ * making anonymous `/api/v1/auth/me` return 200 in the harness and MASKING every
+ * logged-out behavior (this is exactly how the 0741 anonymous-401→/login-bounce
+ * P0 passed 6/6 e2e for months). Passing an explicit empty storageState
+ * overrides the inherited one. Pair with blocking `/dev/auto-login` (so
+ * navigating the app cannot silently re-authenticate via DevAuthGate).
+ */
+export async function anonymousContext(browser: Browser): Promise<BrowserContext> {
+  return browser.newContext({ storageState: { cookies: [], origins: [] } })
+}
 
 export interface LoginAndProvisionOptions {
   email: string
