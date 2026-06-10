@@ -17,6 +17,10 @@ export const STORAGE_STATE = path.join(__dirname, '../playwright/.auth/user.json
  *  E2E_API_URL; falls back to the default dev API (:3001). */
 export const API_URL = process.env.E2E_API_URL ?? 'http://localhost:3001'
 
+/** Web origin under test — defaults to the harness's `bun dev` port (:5173);
+ *  E2E_WEB_URL overrides it (kept in lockstep with playwright.config WEB_URL). */
+export const WEB_URL = process.env.E2E_WEB_URL ?? 'http://localhost:5173'
+
 /** Mark the welcome-tour preference seen SERVER-SIDE so the full-screen
  *  checklist (which opens whenever the server pref lacks seen:true) never
  *  mounts its click-blocking backdrop. Uses the page's authenticated cookies. */
@@ -31,7 +35,7 @@ export async function setWelcomeTourSeen(page: Page): Promise<void> {
 
 setup('authenticate', async ({ page }) => {
   // Navigate to the app — DevAuthGate calls devAutoAuth() on mount
-  await page.goto('http://localhost:5173/')
+  await page.goto(`${WEB_URL}/`)
 
   // Wait for WASM crypto to initialise (DevAuthGate sets data-crypto-ready on body)
   await page.waitForFunction(
@@ -40,7 +44,7 @@ setup('authenticate', async ({ page }) => {
   )
 
   // Wait for the vault to be unlocked and the app to land on the drive
-  await page.waitForURL('http://localhost:5173/', { timeout: 10_000 })
+  await page.waitForURL(`${WEB_URL}/`, { timeout: 10_000 })
   await expect(page).not.toHaveURL(/\/login/, { timeout: 5_000 })
 
   // Verify we're actually authenticated. The dev session token is upgraded to

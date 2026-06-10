@@ -23,6 +23,11 @@ dotenv({ path: '.env.test', override: false })
 
 export const STORAGE_STATE = path.join(__dirname, 'playwright/.auth/user.json')
 
+/** Web origin under test. Defaults to the harness's `bun dev` port (:5173);
+ *  override (e.g. E2E_WEB_URL=http://localhost:5174) when the dev server runs
+ *  elsewhere — mirrors how E2E_API_URL parameterizes the backend origin. */
+export const WEB_URL = process.env.E2E_WEB_URL ?? 'http://localhost:5173'
+
 export default defineConfig({
   testDir: './e2e',
   timeout: 30_000,
@@ -31,7 +36,7 @@ export default defineConfig({
   // still reports as flaky in the summary, so real regressions stay visible.
   retries: 2,
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: WEB_URL,
     headless: true,
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
