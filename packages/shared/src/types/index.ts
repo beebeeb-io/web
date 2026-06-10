@@ -505,6 +505,13 @@ export interface AdminUser {
   email_verified: boolean
   plan: string
   storage_used_bytes: number
+  // task 0750 — always emitted by GET /admin/users (server beebeeb-api/src/routes/admin.rs).
+  /** Non-folder, non-trashed file count — server admin.rs:4233. */
+  file_count: number
+  /** Total stored chunk count — server admin.rs:4234. */
+  chunk_count: number
+  /** Admin kill-switch: `disabled_at IS NOT NULL` — server admin.rs:4230. */
+  is_disabled: boolean
 }
 
 export interface AdminUsersResponse {
@@ -564,6 +571,23 @@ export interface AdminUserDetail {
   stripe_customer_id?: string | null
   /** Stripe subscription ID for the active subscription. */
   stripe_subscription_id?: string | null
+  // ── task 0750 — emitted by GET /admin/users/:id (server admin.rs json! @ 4674-4724) ──
+  /** ISO timestamp the recovery PDF was downloaded, or null — server admin.rs:4711. */
+  recovery_pdf_downloaded_at?: string | null
+  /** ISO timestamp the recovery phrase was verified, or null — server admin.rs:4712. */
+  phrase_verified_at?: string | null
+  /** ISO timestamp the recovery phrase was last tested, or null — server admin.rs:4713. */
+  phrase_last_tested_at?: string | null
+  /** User disabled transactional email — server admin.rs:4714 (`email_notifications_disabled`). */
+  email_notifications_disabled?: boolean
+  /** User opted in to product analytics — server admin.rs:4715. */
+  tracking_opted_in?: boolean
+  /** ISO timestamp of the analytics opt-in, or null — server admin.rs:4716. */
+  tracking_opted_in_at?: string | null
+  /** ISO timestamp of the analytics opt-out, or null — server admin.rs:4717. */
+  tracking_opted_out_at?: string | null
+  /** Admin-facing free-text notes, or null — server admin.rs:4722. */
+  admin_notes?: string | null
 }
 
 export interface AdminUserFile {
@@ -1007,6 +1031,15 @@ export interface AdminConfig {
   stripe_configured?: boolean
   /** Flat boolean: webhook secret is set so signatures are verified instead of skipped. */
   stripe_webhook_configured?: boolean
+  /**
+   * Cloudflare Turnstile status. OPTIONAL — task 0750: GET /admin/config does NOT
+   * emit this today (server admin.rs:6880-6888 has no `turnstile` key; runtime-probed
+   * 2026-06-10: keys = blob_store, email_backend, notification_*, opaque_enabled, stripe_*).
+   * The Settings page reads it defensively (`config?.turnstile?.configured`), so it
+   * renders "not configured" until the server adds it. Declared only so the optional
+   * access type-checks.
+   */
+  turnstile?: { configured: boolean; sitekey_prefix?: string } | null
 }
 
 export type AbuseReportStatus = 'pending' | 'reviewing' | 'actioned' | 'dismissed'
