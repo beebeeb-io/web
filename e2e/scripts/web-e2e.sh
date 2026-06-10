@@ -42,8 +42,17 @@ export PGPASSWORD=$PG_PASS
 
 API_PID=""
 VITE_PID=""
-SPECS=("${@:-e2e/thumbnail-fetch.spec.ts e2e/thumbnail-upload.spec.ts e2e/thumbnail-variant.spec.ts}")
-[ "$#" -gt 0 ] && SPECS=("$@")
+# Default (no args) = the WHOLE suite — each spec FILE is run in ISOLATION below
+# (task 0740c). Previously this silently defaulted to only the thumbnail trio, so
+# a bare `make web-e2e` exercised 3 of 30+ specs and stale/red specs outside the
+# trio stayed invisible (the 0741 P0 + share-info-modal-honest both hid this way).
+# The flip to all-specs is only SAFE because of the per-file isolation loop —
+# without it the shared :3003 DB cross-contaminates specs into loud-red.
+if [ "$#" -gt 0 ]; then
+  SPECS=("$@")
+else
+  SPECS=(e2e/*.spec.ts)
+fi
 
 log() { printf '\033[36m[web-e2e]\033[0m %s\n' "$*"; }
 
@@ -135,30 +144,42 @@ backend_alive() {
 }
 
 rc=0
-for run in $(seq 1 "$REPEAT"); do
-  # Each repeat gets a FRESH backend/DB so accumulated state can't degrade later
-  # runs (the failure mode that made the old shared-account suite flaky).
-  if [ "$run" -gt 1 ]; then
-    log "resetting backend for run $run (fresh DB)"
-    stop_backend
-    start_backend || { echo "BACKEND DOWN: could not (re)start the :$API_PORT API for run $run — infra, not a test failure."; rc=2; break; }
-  fi
-  rm -rf playwright/.auth 2>/dev/null || true   # re-auth against the fresh account
-  log "playwright run $run/$REPEAT (workers=$WORKERS): ${SPECS[*]}"
-  if ! backend_alive; then
-    echo "BACKEND DOWN before run $run — the :$API_PORT API is not responding (see /tmp/bb-web-e2e-api.log). This is infra, not a test failure."
-    tail -20 /tmp/bb-web-e2e-api.log
-    rc=2; break
-  fi
-  if ! bunx playwright test ${SPECS[*]} --workers="$WORKERS" --reporter=line; then
-    rc=1; log "run $run FAILED"
-    if ! backend_alive; then
-      echo "↳ NOTE: the :$API_PORT backend DIED during run $run — these failures are infra (backend down), NOT real test flake. Re-run on a healthy backend."
-      rc=2
+FAILED=()
+first=1
+# PER-FILE ISOLATION (task 0740c): every spec FILE runs against a FRESH backend/DB
+# so no spec's uploaded/mutated state can contaminate another. This is the
+# structural fix that makes the all-specs default trustworthy — a shared DB
+# cross-contaminates specs into loud-red (proven: settings-restructure 6-fail in a
+# shared run → 6-pass/1-fail in isolation). Costs ~one backend restart per file;
+# the reliability bar (REPEAT) still re-runs each spec REPEAT× on its own backend.
+for spec in "${SPECS[@]}"; do
+  for run in $(seq 1 "$REPEAT"); do
+    if [ "$first" -eq 0 ]; then
+      stop_backend
+      start_backend || { echo "BACKEND DOWN: could not (re)start the :$API_PORT API for $spec — infra, not a test failure."; rc=2; break 2; }
     fi
-    break
-  fi
-  log "run $run PASSED"
+    first=0
+    rm -rf playwright/.auth 2>/dev/null || true   # re-auth against the fresh account
+    log "playwright $spec (run $run/$REPEAT, workers=$WORKERS)"
+    if ! backend_alive; then
+      echo "BACKEND DOWN before $spec — the :$API_PORT API is not responding (see /tmp/bb-web-e2e-api.log). This is infra, not a test failure."
+      tail -20 /tmp/bb-web-e2e-api.log
+      rc=2; break 2
+    fi
+    if ! bunx playwright test "$spec" --workers="$WORKERS" --reporter=line; then
+      if ! backend_alive; then
+        echo "↳ NOTE: the :$API_PORT backend DIED during $spec — infra (backend down), NOT real test flake. Re-run on a healthy backend."
+        rc=2; break 2
+      fi
+      rc=1; FAILED+=("$spec"); log "✘ $spec FAILED (run $run/$REPEAT)"
+      break   # failed after its own retries; move to the next file (don't re-run a known fail)
+    fi
+    log "✓ $spec (run $run/$REPEAT)"
+  done
 done
-[ "$rc" = 0 ] && log "ALL $REPEAT run(s) GREEN ✓"
+if [ "${#FAILED[@]}" -gt 0 ]; then
+  log "FAILED (${#FAILED[@]}/${#SPECS[@]}): ${FAILED[*]}"
+elif [ "$rc" = 0 ]; then
+  log "ALL ${#SPECS[@]} spec(s) GREEN ✓ (per-file isolation)"
+fi
 exit $rc
