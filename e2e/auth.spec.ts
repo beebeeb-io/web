@@ -12,7 +12,7 @@ import { envTestAccount, loginAndProvision } from './helpers/auth'
  * Run: bunx playwright test
  */
 
-const uniqueEmail = () => `e2e-${Date.now()}-${Math.random().toString(36).slice(2)}@beebeeb-test.io`
+const uniqueEmail = () => `e2e-${Date.now()}-${Math.random().toString(36).slice(2)}@beebeeb.io`
 
 test.describe('Authentication', () => {
   test.beforeEach(async ({ page }) => {
@@ -130,7 +130,7 @@ test.describe('Authentication', () => {
     // Selector note: `getByLabel(/password/i)` also matches the show/hide
     // password toggle button (aria-label "Show password"). Target the actual
     // input by placeholder instead.
-    await page.getByLabel(/email/i).fill(`nope-${Date.now()}@beebeeb-test.io`)
+    await page.getByLabel(/email/i).fill(`nope-${Date.now()}@beebeeb.io`)
     await page.getByPlaceholder('Your password').fill('definitely-not-the-password-1234')
     // The page also has a "Sign in with passkey" button; pick the submit one explicitly.
     await page.getByRole('button', { name: 'Log in', exact: true }).click()

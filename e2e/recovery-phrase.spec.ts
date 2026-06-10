@@ -26,7 +26,7 @@ test.describe('Recovery phrase password reset', () => {
     test.setTimeout(60_000)
 
     // Create a test account via API so the email exists
-    const email = `e2e-recover-${Date.now()}@beebeeb-test.io`
+    const email = `e2e-recover-${Date.now()}@beebeeb.io`
     const signupResp = await page.request.post(`${API}/api/v1/auth/signup`, {
       data: { email, password: 'TestPassword2026!' },
     })

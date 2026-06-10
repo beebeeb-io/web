@@ -18,7 +18,10 @@ set -euo pipefail
 
 # ── Config (isolated; do NOT collide with :3001/:3002) ──────────────────────
 API_PORT="${E2E_API_PORT:-3003}"
-VITE_PORT=5173
+# Vite port is overridable (E2E_VITE_PORT) so the harness doesn't collide with a
+# dev service already on :5173 (e.g. the site CMS / Strapi). The backend CORS,
+# the vite server, and the Playwright baseURL all follow this one value.
+VITE_PORT="${E2E_VITE_PORT:-5173}"
 PG_HOST=localhost
 PG_PORT="${E2E_PG_PORT:-5434}"
 PG_USER=beebeeb
@@ -110,7 +113,7 @@ log "API healthy on :$API_PORT"
 # ── Vite (test mode) pointed at the isolated API ────────────────────────────
 printf 'VITE_API_URL=http://localhost:%s\n' "$API_PORT" > "$WEB_DIR/.env.test.local"
 log "starting vite --mode test → API :$API_PORT"
-setsid bash -c "cd '$WEB_DIR' && exec bunx vite --mode test" >/tmp/bb-web-e2e-vite.log 2>&1 &
+setsid bash -c "cd '$WEB_DIR' && exec bunx vite --mode test --port $VITE_PORT --strictPort" >/tmp/bb-web-e2e-vite.log 2>&1 &
 VITE_PID=$!
 for i in $(seq 1 60); do
   curl -fsS -m3 -o /dev/null "http://localhost:$VITE_PORT" && break
@@ -121,6 +124,7 @@ log "vite up on :$VITE_PORT"
 # ── Run the suite (REPEAT× for the reliability bar) ─────────────────────────
 cd "$WEB_DIR"
 export E2E_API_URL="http://localhost:$API_PORT"   # global.setup uses this for server prefs
+export E2E_WEB_URL="http://localhost:$VITE_PORT"  # Playwright baseURL follows the (overridable) vite port
 rm -rf playwright/.auth test-results 2>/dev/null || true
 # Liveness probe — distinguishes "backend died" from a real test flake (the
 # detached API can be reaped; see the 2026-06-05 incident). Call after a failure.

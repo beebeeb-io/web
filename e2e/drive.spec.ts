@@ -3,7 +3,7 @@ import path from 'path'
 import fs from 'fs'
 
 const API = 'http://localhost:3001'
-const uniqueEmail = () => `e2e-${Date.now()}-${Math.random().toString(36).slice(2)}@beebeeb-test.io`
+const uniqueEmail = () => `e2e-${Date.now()}-${Math.random().toString(36).slice(2)}@beebeeb.io`
 const PASSWORD = 'test-password-e2e-secure!'
 
 test.describe('Drive E2E', () => {

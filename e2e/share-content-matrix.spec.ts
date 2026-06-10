@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test'
 import fs from 'fs'
 import { uploadTextFile, createShareLink } from './helpers/drive'
+import { anonymousContext } from './helpers/auth'
 
 /**
  * Task 0709 — content-verifying share matrix (the proof the bug class is dead).
@@ -25,7 +26,10 @@ test('happy path: recipient downloads & decrypts identical content', async ({ pa
   const shareUrl = await createShareLink(page, filename)
   expect(shareUrl).toMatch(/\/s\/[A-Za-z0-9_-]+#key=/)
 
-  const ctx = await browser.newContext()
+  // TRULY anonymous recipient (task 0740a): empty storageState so the project's
+  // authed cookie isn't inherited (bare newContext() would mask this as the
+  // AUTHED download path) + block /dev/auto-login so the app can't re-auth.
+  const ctx = await anonymousContext(browser)
   const recipient = await ctx.newPage()
   await recipient.route('**/dev/auto-login', (r) => r.fulfill({ status: 404 }))
 
@@ -67,7 +71,10 @@ test('wrong key: a tampered #key= shows "this key doesn\'t match this file"', as
   const tampered = shareUrl.replace(/#key=(.)/, (_m, c: string) => '#key=' + (c === 'A' ? 'B' : 'A'))
   expect(tampered).not.toBe(shareUrl)
 
-  const ctx = await browser.newContext()
+  // TRULY anonymous recipient (task 0740a): empty storageState so the project's
+  // authed cookie isn't inherited (bare newContext() would mask this as the
+  // AUTHED download path) + block /dev/auto-login so the app can't re-auth.
+  const ctx = await anonymousContext(browser)
   const recipient = await ctx.newPage()
   await recipient.route('**/dev/auto-login', (r) => r.fulfill({ status: 404 }))
   try {
@@ -106,7 +113,10 @@ test('A+ re-copy round-trip: re-copied link from /shared decrypts to identical c
   expect(link, 're-copied link with #key=').toMatch(/\/s\/[A-Za-z0-9_-]+#key=/)
 
   // Open it in a fresh anonymous recipient → decrypted bytes must match.
-  const ctx = await browser.newContext()
+  // TRULY anonymous recipient (task 0740a): empty storageState so the project's
+  // authed cookie isn't inherited (bare newContext() would mask this as the
+  // AUTHED download path) + block /dev/auto-login so the app can't re-auth.
+  const ctx = await anonymousContext(browser)
   const recipient = await ctx.newPage()
   await recipient.route('**/dev/auto-login', (r) => r.fulfill({ status: 404 }))
   try {
@@ -136,7 +146,10 @@ test('passphrase share: recipient must enter the passphrase, then decrypts ident
   await uploadTextFile(page, filename, content)
   const shareUrl = await createShareLink(page, filename, { passphrase })
 
-  const ctx = await browser.newContext()
+  // TRULY anonymous recipient (task 0740a): empty storageState so the project's
+  // authed cookie isn't inherited (bare newContext() would mask this as the
+  // AUTHED download path) + block /dev/auto-login so the app can't re-auth.
+  const ctx = await anonymousContext(browser)
   const recipient = await ctx.newPage()
   await recipient.route('**/dev/auto-login', (r) => r.fulfill({ status: 404 }))
   try {
@@ -175,7 +188,10 @@ test('withNetworkRetry: a transient network failure on download is retried, not 
   await uploadTextFile(page, filename, content)
   const shareUrl = await createShareLink(page, filename)
 
-  const ctx = await browser.newContext()
+  // TRULY anonymous recipient (task 0740a): empty storageState so the project's
+  // authed cookie isn't inherited (bare newContext() would mask this as the
+  // AUTHED download path) + block /dev/auto-login so the app can't re-auth.
+  const ctx = await anonymousContext(browser)
   const recipient = await ctx.newPage()
   await recipient.route('**/dev/auto-login', (r) => r.fulfill({ status: 404 }))
 

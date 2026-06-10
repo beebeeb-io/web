@@ -16,7 +16,7 @@ import { test, expect } from '@playwright/test'
 
 const API = 'http://localhost:3001'
 const PASSWORD = 'test-password-e2e-secure!'
-const uniqueEmail = () => `upload-e2e-${Date.now()}-${Math.random().toString(36).slice(2)}@beebeeb-test.io`
+const uniqueEmail = () => `upload-e2e-${Date.now()}-${Math.random().toString(36).slice(2)}@beebeeb.io`
 
 test.describe('Upload E2E', () => {
   test('signup → upload file → appears in drive listing', async ({ page }) => {

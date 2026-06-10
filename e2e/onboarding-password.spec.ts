@@ -15,7 +15,7 @@ import { test, expect, type Page } from '@playwright/test'
  */
 
 const uniqueEmail = () =>
-  `e2e-${Date.now()}-${Math.random().toString(36).slice(2)}@beebeeb-test.io`
+  `e2e-${Date.now()}-${Math.random().toString(36).slice(2)}@beebeeb.io`
 
 /**
  * Drives the signup flow up to the password step (display → verify → password)

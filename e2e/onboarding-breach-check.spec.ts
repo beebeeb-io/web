@@ -10,7 +10,7 @@ import crypto from 'crypto'
  */
 
 const uniqueEmail = () =>
-  `e2e-breach-${Date.now()}-${Math.random().toString(36).slice(2)}@beebeeb-test.io`
+  `e2e-breach-${Date.now()}-${Math.random().toString(36).slice(2)}@beebeeb.io`
 const sha1Upper = (s: string) => crypto.createHash('sha1').update(s).digest('hex').toUpperCase()
 
 /** Drive signup → recovery-phrase → verify, stopping ON the password step. */
