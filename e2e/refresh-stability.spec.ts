@@ -79,7 +79,7 @@ async function signupAndUnlock(page: Page) {
   })
 }
 
-// QUARANTINED (task 0740c): fails in per-file isolation — pre-existing test debt (signup-against-the-dev-:3001-backend and/or feature-specific drift), hidden by the old 3-spec default; NOT an app regression. Rework tracked in task 0761.
+// QUARANTINED (task 0740c): fails in per-file isolation — pre-existing test debt (signup-against-the-dev-:3001-backend and/or feature-specific drift), hidden by the old 3-spec default; NOT an app regression. Rework tracked in task 0763.
 test.describe.skip('Page refresh stability (task 0028)', () => {
   // Pages that must survive a browser refresh without bouncing to `/` or
   // `/login`. Admin pages don't require a superadmin role to RENDER (the

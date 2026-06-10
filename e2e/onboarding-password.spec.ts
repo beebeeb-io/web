@@ -62,7 +62,7 @@ async function reachPasswordStep(page: Page) {
   })
 }
 
-// QUARANTINED (task 0740c): fails in per-file isolation — pre-existing test debt (signup-against-the-dev-:3001-backend and/or feature-specific drift), hidden by the old 3-spec default; NOT an app regression. Rework tracked in task 0761.
+// QUARANTINED (task 0740c): fails in per-file isolation — pre-existing test debt (signup-against-the-dev-:3001-backend and/or feature-specific drift), hidden by the old 3-spec default; NOT an app regression. Rework tracked in task 0763.
 test.describe.skip('Onboarding password step', () => {
   test('shows live strength feedback (weak → fair → strong) and confirm-match (task 0026)', async ({
     page,
