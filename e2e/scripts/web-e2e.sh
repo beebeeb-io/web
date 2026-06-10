@@ -175,8 +175,17 @@ first=1
 for spec in "${SPECS[@]}"; do
   for run in $(seq 1 "$REPEAT"); do
     if [ "$first" -eq 0 ]; then
-      stop_backend
-      start_backend || { echo "BACKEND DOWN: could not (re)start the :$API_PORT API for $spec — infra, not a test failure."; rc=2; break 2; }
+      # Restart with bounded retry: across ~30 rapid restarts the detached API
+      # occasionally needs another cycle to bind/become healthy (the reaping
+      # mentioned above). A single transient restart flake must NOT abort the whole
+      # run — only a persistent failure is real infra-down (task 0740c).
+      restarted=0
+      for attempt in 1 2 3; do
+        stop_backend
+        if start_backend && backend_alive; then restarted=1; break; fi
+        log "restart attempt $attempt/3 for $spec did not come up healthy — retrying"
+      done
+      [ "$restarted" -eq 1 ] || { echo "BACKEND DOWN: :$API_PORT API never came up healthy for $spec after 3 attempts — infra, not a test failure."; rc=2; break 2; }
     fi
     first=0
     rm -rf playwright/.auth 2>/dev/null || true   # re-auth against the fresh account
