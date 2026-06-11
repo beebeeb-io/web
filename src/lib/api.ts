@@ -519,6 +519,19 @@ export async function verifyEmail(
   })
 }
 
+/**
+ * Redeem a single-use account-unlock token (task 0764A). The account is locked
+ * after too many failed sign-ins; the user gets an emailed `/unlock/{token}`
+ * link. Returns `{unlocked: true}` if the token was valid + redeemed, `false`
+ * if expired/already-used. The server never reveals which account it mapped to.
+ */
+export async function unlockAccount(token: string): Promise<{ unlocked: boolean }> {
+  return request<{ unlocked: boolean }>('/api/v1/auth/unlock', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  })
+}
+
 export async function resendVerification(): Promise<{ message: string }> {
   return request<{ message: string }>('/api/v1/auth/resend-verification', { method: 'POST' })
 }
