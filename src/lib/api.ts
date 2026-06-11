@@ -240,10 +240,11 @@ export type {
 export async function signup(
   email: string,
   password: string,
+  turnstileToken?: string,
 ): Promise<SignupResult> {
   const data = await request<AuthSessionResponse>('/api/v1/auth/signup', {
     method: 'POST',
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify(turnstileToken ? { email, password, turnstile_token: turnstileToken } : { email, password }),
   })
   setToken(data.session_token)
   setEmail(email)
@@ -255,8 +256,11 @@ export async function signup(
 export async function opaqueRegisterStart(
   email: string,
   clientMessage: string,
+  turnstileToken?: string,
 ): Promise<{ server_message: string }> {
   const body: Record<string, unknown> = { email, client_message: clientMessage }
+  // The human step of the OPAQUE flow — carries the Turnstile token (task 0764B).
+  if (turnstileToken) body.turnstile_token = turnstileToken
   return request('/api/v1/opaque/register-start', {
     method: 'POST',
     body: JSON.stringify(body),
