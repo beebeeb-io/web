@@ -63,6 +63,13 @@ export function userFriendlyError(err: unknown): string {
     if (err.code === 'quota_exceeded') {
       return 'Storage full. Free up space or upgrade your plan to keep uploading.'
     }
+    // Email-verification gate (task 0762): upload / share / file-request return a
+    // typed 403 when the account is unverified. Point at the always-present
+    // verify-email banner (which carries the code entry + Resend) instead of the
+    // generic "You don't have permission" 403 fall-through below.
+    if (err.code === 'email_unverified') {
+      return 'Verify your email to upload or share. Use the banner at the top to enter your code or resend it.'
+    }
     if (status === 401) return 'Your session expired. Sign in again.'
     if (status === 403) return "You don't have permission to do that."
     if (status === 404) return 'Not found.'
@@ -94,4 +101,14 @@ export function errorRetryable(err: unknown): boolean {
     if (err.status === 0) return true
   }
   return false
+}
+
+/**
+ * True when the server refused the action because the account's email isn't
+ * verified yet (typed `403 {"error":"email_unverified"}`, task 0762). Call sites
+ * can use this to nudge toward the verify-email banner instead of a dead-end
+ * error — the human-facing string comes from userFriendlyError above.
+ */
+export function isEmailUnverified(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 403 && err.code === 'email_unverified'
 }
