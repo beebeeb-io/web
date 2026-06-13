@@ -1,10 +1,11 @@
 import { type FormEvent, useEffect, useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { AuthShell } from '../components/auth-shell'
 import { BBButton } from '@beebeeb/shared'
 import { BBCheckbox } from '@beebeeb/shared'
 import { BBInput } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
+import { Turnstile, turnstileEnabled } from '../components/turnstile'
 
 // Referral keys — read here, forwarded to onboarding, cleared after signup
 export const REFERRAL_SOURCE_KEY = 'bb_ref_source'
@@ -13,11 +14,13 @@ export const REFERRAL_CODE_KEY   = 'bb_ref_code'
 
 export function Signup() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [searchParams] = useSearchParams()
 
   const [email, setEmail] = useState('')
   const [accepted, setAccepted] = useState(false)
   const [error, setError] = useState('')
+  const [turnstileToken, setTurnstileToken] = useState('')
 
   // Persist referral attribution from URL params into localStorage so it
   // survives the multi-step onboarding flow.
@@ -32,6 +35,16 @@ export function Signup() {
     if (sharer) localStorage.setItem(REFERRAL_SHARER_KEY, sharer)
     if (code) localStorage.setItem(REFERRAL_CODE_KEY, code)
   }, [searchParams])
+
+  // Bounced back from onboarding because the Turnstile token was missing/expired
+  // (the widget lives here on step 1) — re-prompt for the check (0764B).
+  useEffect(() => {
+    const s = location.state as { email?: string; captchaRetry?: boolean } | null
+    if (s?.captchaRetry) {
+      if (s.email) setEmail(s.email)
+      setError('Your verification expired — please complete the check again.')
+    }
+  }, [location.state])
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -48,7 +61,12 @@ export function Signup() {
       return
     }
 
-    navigate('/onboarding', { state: { email } })
+    if (turnstileEnabled && !turnstileToken) {
+      setError('Please complete the verification below.')
+      return
+    }
+
+    navigate('/onboarding', { state: { email, turnstileToken } })
   }
 
   return (
@@ -100,6 +118,9 @@ export function Signup() {
         >
           Continue
         </BBButton>
+
+        {/* Turnstile — single allowed third-party visual, below the primary action (0764B) */}
+        <Turnstile onToken={setTurnstileToken} />
 
         <p className="text-xs text-ink-3 text-center mt-4">
           Already have an account?{' '}

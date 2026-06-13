@@ -46,6 +46,7 @@ const ForgotPassword = lazyNamed(() => import('./pages/forgot-password'),'Forgot
 const ResetPassword  = lazyNamed(() => import('./pages/reset-password'), 'ResetPassword')
 const RecoverWithPhrase = lazyNamed(() => import('./pages/recover-with-phrase'), 'RecoverWithPhrase')
 const VerifyEmail    = lazyNamed(() => import('./pages/verify-email'),   'VerifyEmail')
+const Unlock         = lazyNamed(() => import('./pages/unlock'),         'Unlock')
 const Migration      = lazyNamed(() => import('./pages/migration'),      'Migration')
 const Team           = lazyNamed(() => import('./pages/team'),           'Team')
 const AcceptInvite   = lazyNamed(() => import('./pages/accept-invite'),  'AcceptInvite')
@@ -320,6 +321,8 @@ export function App() {
               </GuestRoute>
             }
           />
+          {/* Public — a locked-out user can't authenticate, so no guard (0764A). */}
+          <Route path="/unlock/:token" element={<Unlock />} />
           <Route
             path="/recover-with-phrase"
             element={

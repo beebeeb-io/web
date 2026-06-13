@@ -7,6 +7,7 @@ import { BBLogo } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { MnemonicVerify } from '../components/mnemonic-verify'
 import {
+  ApiError,
   opaqueRegisterStart,
   opaqueRegisterFinish,
 } from '../lib/api'
@@ -125,7 +126,9 @@ export function Onboarding() {
   const { refreshUser } = useAuth()
   const { setMasterKey, cryptoReady, cryptoError } = useKeys()
 
-  const email = (location.state as { email?: string } | null)?.email ?? ''
+  const navState = location.state as { email?: string; turnstileToken?: string } | null
+  const email = navState?.email ?? ''
+  const turnstileToken = navState?.turnstileToken
 
   // Redirect to signup if no email in router state
   useEffect(() => {
@@ -220,7 +223,7 @@ export function Onboarding() {
       // 1. OPAQUE registration (2-round-trip)
       setProcessingStatus('Setting up account encryption...')
       const regStart = await opaqueRegistrationStart(password)
-      const serverResp = await opaqueRegisterStart(email, toBase64(regStart.message))
+      const serverResp = await opaqueRegisterStart(email, toBase64(regStart.message), turnstileToken)
       const serverMsg = Uint8Array.from(atob(serverResp.server_message), c => c.charCodeAt(0))
       const regUpload = await opaqueRegistrationFinish(regStart.state, password, serverMsg)
 
@@ -300,6 +303,13 @@ export function Onboarding() {
       await refreshUser()
       navigate('/', { replace: true })
     } catch (err) {
+      // Typed handling for the Turnstile gate (0764B): a 403 captcha_required means
+      // the token was missing or expired (the widget lives on the signup step). Send
+      // the user back to re-do the verification rather than show a dead-end error.
+      if (err instanceof ApiError && err.status === 403 && /captcha/i.test(err.message)) {
+        navigate('/signup', { state: { email, captchaRetry: true } })
+        return
+      }
       setError(userFriendlyError(err))
       setStep('password')
     }
