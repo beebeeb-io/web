@@ -7,13 +7,11 @@ import { BBLogo } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { MnemonicVerify } from '../components/mnemonic-verify'
 import {
-  ApiError,
   opaqueRegisterStart,
   opaqueRegisterFinish,
 } from '../lib/api'
 import { REFERRAL_SOURCE_KEY, REFERRAL_SHARER_KEY, REFERRAL_CODE_KEY } from './signup'
 import { generateRecoveryKitPDF } from '../lib/recovery-kit-pdf'
-import { pwnedPasswordCount } from '../lib/pwned-check'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
 import {
@@ -126,9 +124,8 @@ export function Onboarding() {
   const { refreshUser } = useAuth()
   const { setMasterKey, cryptoReady, cryptoError } = useKeys()
 
-  const navState = location.state as { email?: string; turnstileToken?: string } | null
+  const navState = location.state as { email?: string } | null
   const email = navState?.email ?? ''
-  const turnstileToken = navState?.turnstileToken
 
   // Redirect to signup if no email in router state
   useEffect(() => {
@@ -152,10 +149,6 @@ export function Onboarding() {
   const [error, setError] = useState('')
   const [processingStatus, setProcessingStatus] = useState('')
 
-  // HIBP breach count for the current password (0723). null = unknown / not yet
-  // checked / fail-open; >0 = breached. Warn-only — never blocks signup.
-  const [pwnedCount, setPwnedCount] = useState<number | null>(null)
-
   const strength = evaluatePassword(password)
   const passwordsMatch =
     password.length > 0 && confirmPassword.length > 0 && password === confirmPassword
@@ -177,25 +170,6 @@ export function Onboarding() {
       setMasterKeyBytes(mk)
     })
   }, [email, cryptoReady])
-
-  // Client-side HIBP breach check (0723), debounced. k-anonymity (only the
-  // SHA-1 prefix leaves the browser); warn-don't-block; fails open silently.
-  useEffect(() => {
-    if (password.length < MIN_PASSWORD_LENGTH) {
-      setPwnedCount(null)
-      return
-    }
-    const ctrl = new AbortController()
-    const timer = setTimeout(() => {
-      void pwnedPasswordCount(password, ctrl.signal).then((count) => {
-        if (!ctrl.signal.aborted) setPwnedCount(count)
-      })
-    }, 500)
-    return () => {
-      clearTimeout(timer)
-      ctrl.abort()
-    }
-  }, [password])
 
   const words = phrase.split(' ').filter(Boolean)
 
@@ -223,7 +197,7 @@ export function Onboarding() {
       // 1. OPAQUE registration (2-round-trip)
       setProcessingStatus('Setting up account encryption...')
       const regStart = await opaqueRegistrationStart(password)
-      const serverResp = await opaqueRegisterStart(email, toBase64(regStart.message), turnstileToken)
+      const serverResp = await opaqueRegisterStart(email, toBase64(regStart.message))
       const serverMsg = Uint8Array.from(atob(serverResp.server_message), c => c.charCodeAt(0))
       const regUpload = await opaqueRegistrationFinish(regStart.state, password, serverMsg)
 
@@ -303,13 +277,6 @@ export function Onboarding() {
       await refreshUser()
       navigate('/', { replace: true })
     } catch (err) {
-      // Typed handling for the Turnstile gate (0764B): a 403 captcha_required means
-      // the token was missing or expired (the widget lives on the signup step). Send
-      // the user back to re-do the verification rather than show a dead-end error.
-      if (err instanceof ApiError && err.status === 403 && /captcha/i.test(err.message)) {
-        navigate('/signup', { state: { email, captchaRetry: true } })
-        return
-      }
       setError(userFriendlyError(err))
       setStep('password')
     }
@@ -514,21 +481,6 @@ export function Onboarding() {
                         </p>
                       </div>
                     </div>
-                  )}
-
-                  {/* HIBP breach warning (0723) — honest, never blocks signup. */}
-                  {pwnedCount !== null && pwnedCount > 0 && (
-                    <p
-                      className="text-xs text-red mb-2 flex items-start gap-1.5"
-                      data-testid="password-breach-warning"
-                    >
-                      <Icon name="shield" size={12} className="shrink-0 mt-px" />
-                      <span>
-                        This password appears in {pwnedCount.toLocaleString()} known data
-                        breaches. We can&apos;t recover your account if it&apos;s guessed —
-                        consider a different one.
-                      </span>
-                    </p>
                   )}
 
                   <div className="mb-1.5">
