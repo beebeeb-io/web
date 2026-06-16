@@ -18,6 +18,8 @@ import { UploadZone } from '../components/upload-zone'
 import { encryptedUpload } from '../lib/encrypted-upload'
 import { useToast } from '../components/toast'
 import { useDriveData } from '../lib/drive-data-context'
+import { useWsEvent } from '../lib/ws-context'
+import { useSelfHealRefetch } from '../hooks/use-self-heal-refetch'
 import { UpgradeNudge } from '../components/upgrade-nudge'
 
 // ─── Constants ──────────────────────────────────
@@ -189,6 +191,33 @@ export function Photos() {
   useEffect(() => {
     fetchAllFiles()
   }, [fetchAllFiles])
+
+  // Reconcile remote mutations: a photo trashed/deleted/moved/renamed on another
+  // client must not linger as a ghost thumbnail here. The Photos grid previously
+  // refreshed only on mount + its own uploads, so it had no path to drop a file
+  // removed elsewhere. Server-authoritative re-fetch on each event (mirrors
+  // recent.tsx).
+  //
+  // Debounced: a bulk delete/move emits one event per file. Coalesce the burst
+  // into a single trailing fetchAllFiles() so N events ≠ N full media refetches.
+  const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => {
+    if (refetchTimer.current !== null) clearTimeout(refetchTimer.current)
+  }, [])
+  useWsEvent(
+    ['file.uploaded', 'file.deleted', 'file.trashed', 'file.moved', 'file.renamed'],
+    useCallback(() => {
+      if (refetchTimer.current !== null) clearTimeout(refetchTimer.current)
+      refetchTimer.current = setTimeout(() => {
+        refetchTimer.current = null
+        fetchAllFiles()
+      }, 400)
+    }, [fetchAllFiles]),
+  )
+
+  // Self-heal when the realtime channel reconnects or the tab refocuses, in case
+  // a deletion event was lost while this tab was backgrounded/asleep/offline.
+  useSelfHealRefetch(fetchAllFiles)
 
   // Decrypt file names + MIME types from the encrypted metadata blob.
   // New uploads: metadata = JSON { name, mime_type } (zero-knowledge).

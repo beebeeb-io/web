@@ -29,6 +29,7 @@ import { getPreference, setPreference } from '../lib/api'
 import { useDriveData } from '../lib/drive-data-context'
 import { useToast } from '../components/toast'
 import { useWsEvent } from '../lib/ws-context'
+import { useSelfHealRefetch } from '../hooks/use-self-heal-refetch'
 import { useSync } from '../lib/sync-context'
 import { useKeys } from '../lib/key-context'
 import { useKeyboardShortcuts, isMac } from '../hooks/use-keyboard-shortcuts'
@@ -662,6 +663,26 @@ export function Drive() {
       fetchFiles()
     }, [fetchFiles]),
   )
+
+  // Cross-client search-index pruning. The encrypted index is shared across a
+  // user's clients, but `unindexFile` only ran on the client that performed the
+  // delete (handleTrash / handleBulkTrash below) — so a file removed on client A
+  // stayed in the index and surfaced as a stale hit in client B's search. When a
+  // delete/trash event arrives for a file, prune it from the index too (the WS
+  // event's `data` is `{ id }`; `unindexFile` persists via saveIndex internally).
+  useWsEvent(
+    ['file.deleted', 'file.trashed'],
+    useCallback((event) => {
+      const data = event.data as { id?: string }
+      if (data.id) void unindexFile(data.id)
+    }, [unindexFile]),
+  )
+
+  // Self-heal on realtime reconnect / tab refocus. The SSE sync engine has
+  // gapless catch-up, but it isn't guaranteed live on every surface — a delete
+  // performed on another client while this tab was disconnected/backgrounded
+  // could otherwise leave a ghost row until manual navigation.
+  useSelfHealRefetch(fetchFiles)
 
   // Star toggled on another device or by a collaborator — update in-place
   useWsEvent(

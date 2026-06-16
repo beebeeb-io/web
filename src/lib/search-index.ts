@@ -119,6 +119,10 @@ export function updateIndexEntry(
 }
 
 export function removeIndexEntry(index: SearchIndex, fileId: string): SearchIndex {
+  // Membership guard: if the id isn't indexed, return the SAME reference so
+  // callers can skip persisting (avoids a gratuitous encrypt + PUT per event
+  // on a bulk delete of files that were never in the index).
+  if (!(fileId in index.files)) return index
   const { [fileId]: _, ...rest } = index.files
   return { ...index, updated_at: new Date().toISOString(), files: rest }
 }

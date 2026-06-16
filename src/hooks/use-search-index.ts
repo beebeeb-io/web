@@ -85,7 +85,11 @@ export function useSearchIndex(): UseSearchIndex {
 
     if (!indexRef.current) return
 
-    indexRef.current = removeIndexEntry(indexRef.current, fileId)
+    const next = removeIndexEntry(indexRef.current, fileId)
+    // Short-circuit when the id wasn't in the index: removeIndexEntry returns
+    // the same reference, so there's nothing to persist — skip the encrypt+PUT.
+    if (next === indexRef.current) return
+    indexRef.current = next
 
     try {
       const newEtag = await saveIndex(indexRef.current, masterKey, etagRef.current ?? undefined)

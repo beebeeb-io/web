@@ -21,6 +21,7 @@ import {
   type DriveFile,
 } from '../lib/api'
 import { useWsEvent } from '../lib/ws-context'
+import { useSelfHealRefetch } from '../hooks/use-self-heal-refetch'
 import { userFriendlyError } from '../lib/user-friendly-error'
 import { EmptyRecent } from '../components/empty-states/empty-recent'
 
@@ -60,6 +61,10 @@ export function Recent() {
     ['file.created', 'file.uploaded', 'file.deleted', 'file.trashed', 'file.renamed', 'file.moved', 'version.restored'],
     useCallback(() => { fetchFiles() }, [fetchFiles]),
   )
+
+  // Self-heal on realtime reconnect / tab refocus — recovers from a deletion
+  // event lost while the WS was down.
+  useSelfHealRefetch(fetchFiles)
 
   function displayName(file: DriveFile): string {
     const cached = decryptedNames[file.id]

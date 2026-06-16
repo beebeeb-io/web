@@ -21,6 +21,7 @@ import {
   type DriveFile,
 } from '../lib/api'
 import { useWsEvent } from '../lib/ws-context'
+import { useSelfHealRefetch } from '../hooks/use-self-heal-refetch'
 import { userFriendlyError } from '../lib/user-friendly-error'
 import { EmptyStarred } from '../components/empty-states/empty-starred'
 
@@ -60,6 +61,10 @@ export function Starred() {
     ['file.starred', 'file.trashed', 'file.deleted'],
     useCallback(() => { fetchFiles() }, [fetchFiles]),
   )
+
+  // Self-heal on realtime reconnect / tab refocus — recovers from a deletion
+  // event lost while the WS was down.
+  useSelfHealRefetch(fetchFiles)
 
   function displayName(file: DriveFile): string {
     return decryptedNames[file.id] ?? file.name_encrypted

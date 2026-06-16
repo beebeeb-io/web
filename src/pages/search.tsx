@@ -7,6 +7,7 @@ import type { IconName } from '@beebeeb/shared'
 import { FileIcon, getFileType } from '../components/file-icon'
 import { EmptyState } from '../components/empty-states/empty-state'
 import { useKeys } from '../lib/key-context'
+import { useSync } from '../lib/sync-context'
 import { formatBytes } from '../lib/format'
 import {
   fetchIndex,
@@ -183,6 +184,7 @@ export function Search() {
   const initialSort = useMemo(() => parseSortParam(searchParams.get('sort')), [searchParams])
 
   const { isUnlocked, getMasterKey } = useKeys()
+  const sync = useSync()
 
   const [query, setQuery] = useState(initialQuery)
   const [results, setResults] = useState<SearchResult[]>([])
@@ -330,6 +332,13 @@ export function Search() {
     const activeSizeFilter = sizeRange ? SIZE_FILTERS.find((f) => f.id === sizeRange) : null
 
     const filtered = results.filter((r) => {
+      // Authoritative-tree guard for cross-client staleness: the encrypted
+      // index is shared across the user's clients, so a file deleted on another
+      // client can still have an index entry here (its WS-driven unindex only
+      // runs on the deleting client). When the sync engine is live, drop any
+      // hit whose id is absent from the authoritative tree. Guarded on
+      // sync.ready so a not-yet-loaded engine never hides legitimate results.
+      if (sync.ready && !sync.getNode(r.id)) return false
       if (kinds.size > 0 && !kinds.has(entryKind(r.entry))) return false
       if (dateCutoff !== null) {
         const t = new Date(r.entry.modified).getTime()
@@ -352,7 +361,10 @@ export function Search() {
       return [...filtered].sort((a, b) => b.entry.size - a.entry.size)
     }
     return filtered
-  }, [results, kinds, dateRange, sizeRange, sortOrder])
+  // sync.getNode is read via the live engine; sync.treeVersion bumps on every
+  // tree mutation so a deletion landing while results are shown re-derives this.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [results, kinds, dateRange, sizeRange, sortOrder, sync.ready, sync.treeVersion])
 
   const hasActiveFilters = kinds.size > 0 || dateRange !== null || sizeRange !== null || sortOrder !== 'relevance'
 
