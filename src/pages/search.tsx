@@ -8,11 +8,14 @@ import { FileIcon, getFileType } from '../components/file-icon'
 import { EmptyState } from '../components/empty-states/empty-state'
 import { useKeys } from '../lib/key-context'
 import { useSync } from '../lib/sync-context'
+import { useWsEvent } from '../lib/ws-context'
+import { useSearchIndex } from '../hooks/use-search-index'
 import { formatBytes } from '../lib/format'
 import {
   fetchIndex,
   searchIndex,
   createEmptyIndex,
+  removeIndexEntry,
   type SearchIndex,
   type SearchIndexEntry,
   type SearchResult,
@@ -185,6 +188,11 @@ export function Search() {
 
   const { isUnlocked, getMasterKey } = useKeys()
   const sync = useSync()
+  // Prunes the SHARED encrypted index (and persists it) so the correction
+  // survives even when only the search page is mounted. This hook keeps its own
+  // in-memory copy of the index, separate from this page's `indexRef` below —
+  // so the WS handler must also prune the local ref to update the visible list.
+  const { unindexFiles } = useSearchIndex()
 
   const [query, setQuery] = useState(initialQuery)
   const [results, setResults] = useState<SearchResult[]>([])
@@ -265,6 +273,61 @@ export function Search() {
       runSearch(initialQuery)
     }
   }, [initialQuery, indexLoaded, runSearch])
+
+  // ─── Remote-deletion reconciliation (works even when sync is down) ───
+  //
+  // The `sync.ready` guard in `filteredResults` is the live-engine backstop: it
+  // drops hits absent from the authoritative tree. But when the SSE sync engine
+  // fails to start (an anticipated degraded state — sync.ready stays false), that
+  // guard is skipped, and this page has NO other refetch path. A file deleted on
+  // another client still lives in the SHARED encrypted index, so it would linger
+  // as a stale hit indefinitely. This WS-driven prune fixes that independent of
+  // sync.ready: belt-and-suspenders alongside the sync-tree guard.
+  //
+  // Coalesce a bulk delete's per-file event burst into one trailing pass. We
+  // collect ids in a ref and flush on a single debounced timer.
+  const pendingDeleteIdsRef = useRef<Set<string>>(new Set())
+  const pruneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Cleanup: cancel any in-flight debounce so the timer can't fire after unmount.
+  useEffect(() => () => {
+    if (pruneTimerRef.current !== null) clearTimeout(pruneTimerRef.current)
+  }, [])
+  useWsEvent(
+    ['file.deleted', 'file.trashed'],
+    useCallback((event) => {
+      // WS delete/trash events carry `{ id }` (see drive.tsx handler).
+      const id = (event.data as { id?: string }).id
+      if (!id) return
+      pendingDeleteIdsRef.current.add(id)
+      if (pruneTimerRef.current !== null) clearTimeout(pruneTimerRef.current)
+      pruneTimerRef.current = setTimeout(() => {
+        pruneTimerRef.current = null
+        const ids = pendingDeleteIdsRef.current
+        if (ids.size === 0) return
+        pendingDeleteIdsRef.current = new Set()
+        // (a) Correct the shared/persisted index via the hook (its own ref).
+        void unindexFiles([...ids])
+        // (b) Prune THIS page's local index so a later re-search won't resurface
+        //     the deleted ids.
+        const idx = indexRef.current
+        if (idx) {
+          let next = idx
+          for (const deletedId of ids) next = removeIndexEntry(next, deletedId)
+          indexRef.current = next
+        }
+        // (c) Make the visible list reflect the prune by dropping the ids
+        //     directly. A functional, membership-based filter is idempotent and
+        //     re-running it can't resurface a hit — so this cannot loop. We do
+        //     NOT re-run searchIndex(query) here: that would only reproduce the
+        //     same filtered set and needlessly re-sort.
+        setResults((prev) => {
+          if (prev.length === 0) return prev
+          const filtered = prev.filter((r) => !ids.has(r.id))
+          return filtered.length === prev.length ? prev : filtered
+        })
+      }, 350)
+    }, [unindexFiles]),
+  )
 
   // Sync filters → URL whenever they change. Keep `q` in sync only on submit.
   useEffect(() => {
