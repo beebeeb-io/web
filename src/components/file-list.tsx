@@ -1492,7 +1492,7 @@ export function FileList({
 
       {/* Bulk action bar */}
       {hasBulkBar && selectedIds.size > 0 && (
-        <div className="px-3 md:px-5 py-2.5 border-t border-line bg-ink flex items-center gap-2 md:gap-3.5 animate-slide-in-up">
+        <div className="relative z-[10000] px-3 md:px-5 py-2.5 border-t border-line bg-ink flex items-center gap-2 md:gap-3.5 animate-slide-in-up">
           <span className="text-sm font-medium text-paper">{selectedIds.size} selected</span>
           <button
             onClick={clearSelection}
