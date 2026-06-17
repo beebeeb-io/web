@@ -37,7 +37,7 @@ export function BillingSuspendedOverlay() {
 
   return (
     <div className="fixed inset-0 z-[100] bg-paper flex items-center justify-center p-xl">
-      <div className="text-center max-w-md">
+      <div className="text-center max-w-[28rem]">
         <div className="mb-xl">
           <BBLogo size={16} />
         </div>

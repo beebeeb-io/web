@@ -68,7 +68,7 @@ export function UnsupportedPreview({ blob, filename, thumbnailUrl }: Unsupported
   }
 
   return (
-    <div className="flex flex-col items-center gap-6 text-center py-8 px-6 max-w-sm mx-auto">
+    <div className="flex flex-col items-center gap-6 text-center py-8 px-6 max-w-[24rem] mx-auto">
       {/* Thumbnail preview if available */}
       {thumbnailUrl ? (
         <div className="relative">

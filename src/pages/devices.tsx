@@ -303,7 +303,7 @@ export function DevicesPage() {
                 <Icon name="cloud" size={20} className="text-ink-3" />
               </div>
               <h2 className="text-[15px] font-medium text-ink mb-1">No devices registered</h2>
-              <p className="text-[13px] text-ink-3 max-w-sm mx-auto">
+              <p className="text-[13px] text-ink-3 max-w-[24rem] mx-auto">
                 Install the Beebeeb CLI and run <span className="font-mono text-ink-2">bb sync</span> to register your first device.
               </p>
             </div>
