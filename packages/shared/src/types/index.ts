@@ -209,6 +209,30 @@ export interface ShareInfo {
   double_encrypted?: boolean
 }
 
+/**
+ * Discriminator for the public-link share surface (task 0417).
+ * `undefined` on a wire response ⇒ treat as legacy 'file' (the server's
+ * `shares.share_type` column is NOT NULL DEFAULT 'file').
+ */
+export type ShareType = 'file' | 'folder' | 'bundle'
+
+/**
+ * One ordered item in a bundle share (task 0417). Returned in the public
+ * manifest's `items` array. `name_encrypted` comes from the file's own
+ * `files.name_encrypted` (the server never sees plaintext); `wrapped_file_key`
+ * is the item's FileKey wrapped under the bundle's fragment key K_c — opaque
+ * to the server.
+ */
+export interface ShareItem {
+  file_id: string
+  position: number
+  name_encrypted: string
+  size: number
+  chunk_count: number
+  /** base64, wrapped under K_c (the URL-fragment key). */
+  wrapped_file_key: string
+}
+
 export interface ShareView {
   id: string
   name_encrypted?: string
@@ -242,6 +266,38 @@ export interface ShareView {
    * The server stores this opaque blob; decryption requires K_c from the URL fragment.
    */
   wrapped_file_key?: string
+  /**
+   * Bundle shares (task 0417). `undefined` ⇒ legacy single-file share.
+   * Clients MUST gate on this before rendering: an unknown/unimplemented
+   * `share_type` should show the "Update Beebeeb to open this share" card
+   * rather than misrender a single-file view.
+   */
+  share_type?: ShareType
+  /** Bundle only: number of items in the bundle. */
+  item_count?: number
+  /** Bundle only: the ordered manifest items (present iff share_type === 'bundle'). */
+  items?: ShareItem[]
+  /** Bundle only: keyset-pagination cursor; null ⇒ no further pages. */
+  next_cursor?: number | null
+}
+
+/**
+ * Request body for creating a bundle share (task 0417) —
+ * `POST /api/v1/shares` with `share_type: 'bundle'`. Additive variant of the
+ * single-file create path; `file_id`/top-level `wrapped_file_key` are replaced
+ * by the ordered `items` array. The envelope-level fields (`expires_in_hours`,
+ * `max_opens`, `passphrase`, `token`, owner-recovery blobs) match the
+ * single-file share options and apply once to the whole bundle.
+ */
+export interface CreateBundleShareRequest {
+  share_type: 'bundle'
+  items: Array<{ file_id: string; position: number; wrapped_file_key: string }>
+  expires_in_hours?: number
+  max_opens?: number | null
+  passphrase?: string | null
+  token?: string
+  owner_wrapped_key?: string
+  owner_wrapped_token?: string
 }
 
 export interface MyShare {
