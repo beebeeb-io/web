@@ -14,8 +14,13 @@ import { envTestAccount, loginAndProvision } from './helpers/auth'
 
 const uniqueEmail = () => `e2e-${Date.now()}-${Math.random().toString(36).slice(2)}@beebeeb.io`
 
-// QUARANTINED (task 0740c): fails in per-file isolation — pre-existing test debt (signup-against-the-dev-:3001-backend and/or feature-specific drift), hidden by the old 3-spec default; NOT an app regression. Rework tracked in task 0763.
-test.describe.skip('Authentication', () => {
+// API origin for direct signup calls. Under the isolated e2e harness this is the
+// dedicated :3003 backend (E2E_API_URL); falls back to the dev :3001 API. Force
+// 127.0.0.1 (not localhost) — the API binds IPv4 and Playwright's apiRequestContext
+// resolves ::1 first, which the IPv4-only dev API refuses (task 0763).
+const API = (process.env.E2E_API_URL ?? 'http://127.0.0.1:3001').replace('://localhost', '://127.0.0.1')
+
+test.describe('Authentication', () => {
   test.beforeEach(async ({ page }) => {
     // Block the dev auto-login endpoint so tests start unauthenticated.
     // In dev mode, devAutoAuth() calls /dev/auto-login on every page load —
@@ -54,13 +59,22 @@ test.describe.skip('Authentication', () => {
   })
 
   test('login flow: fill form, submit, redirected to /', async ({ page }) => {
+    // OBSOLETE BY DESIGN (task 0763): this test creates an account via the
+    // legacy `/api/v1/auth/signup` (password-only, no OPAQUE password file) and
+    // then drives the login UI. The login page is now OPAQUE-mandatory with NO
+    // password fallback (src/pages/login.tsx:98 "OPAQUE is mandatory — no
+    // fallback path"), so a legacy account can never complete a UI login — it
+    // shows "Authentication failed." A real login-to-drive flow requires the
+    // full OPAQUE signup UI (recovery phrase + password step), which is already
+    // covered by refresh-stability.spec.ts (signupAndUnlock).
+    test.skip(true, 'legacy password login removed — app is OPAQUE-mandatory (task 0763); real login covered by refresh-stability.spec.ts')
     const email = uniqueEmail()
 
     // First, create the account via the API directly. Use 127.0.0.1 rather
     // than `localhost` because Playwright's request context resolves to ::1
     // first and the dev API binds to IPv4 only — the browser's fetch falls
     // back via happy-eyeballs but apiRequestContext does not.
-    const signupResp = await page.request.post('http://127.0.0.1:3001/api/v1/auth/signup', {
+    const signupResp = await page.request.post(`${API}/api/v1/auth/signup`, {
       data: { email, password: 'test-password-12chars!' },
     })
     expect(signupResp.ok()).toBeTruthy()
@@ -78,8 +92,8 @@ test.describe.skip('Authentication', () => {
     await page.getByPlaceholder('Your password').fill('test-password-12chars!')
 
     // The page also has a "Sign in with passkey" button; pick the submit
-    // one explicitly.
-    await page.getByRole('button', { name: 'Log in', exact: true }).click()
+    // one explicitly. Button label is "Sign in" (task 0763).
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
     // Should redirect to the drive (root page)
     await expect(page).toHaveURL(/^\/$|\/$/,{ timeout: 10_000 })
@@ -134,7 +148,8 @@ test.describe.skip('Authentication', () => {
     await page.getByLabel(/email/i).fill(`nope-${Date.now()}@beebeeb.io`)
     await page.getByPlaceholder('Your password').fill('definitely-not-the-password-1234')
     // The page also has a "Sign in with passkey" button; pick the submit one explicitly.
-    await page.getByRole('button', { name: 'Log in', exact: true }).click()
+    // Button label is "Sign in" (task 0763).
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
     // The error <p> appears inside the red alert box on the login page.
     // It MUST NOT say "Session expired" — that's the bug — and it should
@@ -145,11 +160,12 @@ test.describe.skip('Authentication', () => {
     const errorText = (await errorBox.textContent())?.toLowerCase().trim() ?? ''
     expect(errorText, 'login error should not pretend the session expired').not.toContain('session expired')
 
-    // Should match the actual server message ("unauthorized") OR the login
-    // page's fallback copy ("invalid email or password"). Either is acceptable
-    // — both correctly signal "wrong credentials" rather than "session timeout".
+    // Should surface a wrong-credentials message rather than a session-timeout
+    // one. The login page is now OPAQUE-mandatory and shows "Authentication
+    // failed. Please try again." for a failed handshake (task 0763); older
+    // copy ("unauthorized" / "invalid email or password") is still accepted.
     expect(
-      /unauthorized|invalid email or password|wrong password/i.test(errorText),
+      /unauthorized|invalid email or password|wrong password|authentication failed/i.test(errorText),
       `expected wrong-credentials copy, got: ${errorText}`,
     ).toBeTruthy()
 

@@ -62,8 +62,21 @@ async function reachPasswordStep(page: Page) {
   })
 }
 
-// QUARANTINED (task 0740c): fails in per-file isolation — pre-existing test debt (signup-against-the-dev-:3001-backend and/or feature-specific drift), hidden by the old 3-spec default; NOT an app regression. Rework tracked in task 0763.
-test.describe.skip('Onboarding password step', () => {
+test.describe('Onboarding password step', () => {
+  // This spec drives the real /signup → onboarding flow, so it must run
+  // UNauthenticated. In the `authenticated` Playwright project the dev
+  // auto-login would bounce /signup to the drive; block it and clear any stored
+  // session so the guest signup pages render (task 0763).
+  test.beforeEach(async ({ page, context }) => {
+    await page.route('**/dev/auto-login', (route) => route.fulfill({ status: 404 }))
+    await context.clearCookies()
+    await page.goto('/signup', { waitUntil: 'domcontentloaded' })
+    await page.evaluate(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
+  })
+
   test('shows live strength feedback (weak → fair → strong) and confirm-match (task 0026)', async ({
     page,
   }) => {

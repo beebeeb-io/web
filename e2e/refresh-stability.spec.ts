@@ -79,8 +79,21 @@ async function signupAndUnlock(page: Page) {
   })
 }
 
-// QUARANTINED (task 0740c): fails in per-file isolation — pre-existing test debt (signup-against-the-dev-:3001-backend and/or feature-specific drift), hidden by the old 3-spec default; NOT an app regression. Rework tracked in task 0763.
-test.describe.skip('Page refresh stability (task 0028)', () => {
+test.describe('Page refresh stability (task 0028)', () => {
+  // This spec creates a brand-new account via the real /signup → onboarding UI,
+  // so it must run UNauthenticated. In the `authenticated` Playwright project the
+  // dev auto-login would bounce /signup to the drive; block it and clear any
+  // stored session so the guest signup pages render (task 0763).
+  test.beforeEach(async ({ page, context }) => {
+    await page.route('**/dev/auto-login', (route) => route.fulfill({ status: 404 }))
+    await context.clearCookies()
+    await page.goto('/signup', { waitUntil: 'domcontentloaded' })
+    await page.evaluate(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
+  })
+
   // Pages that must survive a browser refresh without bouncing to `/` or
   // `/login`. Admin pages don't require a superadmin role to RENDER (the
   // server-side admin endpoints will 403, but the route + URL are

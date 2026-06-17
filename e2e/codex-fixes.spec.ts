@@ -1,12 +1,11 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page, type Locator } from '@playwright/test'
 
 /**
  * Verification tests for Codex fixes (7 items).
  * Each test verifies one fix is working correctly.
  */
 
-// QUARANTINED (task 0740c): fails in per-file isolation — pre-existing test debt (signup-against-the-dev-:3001-backend and/or feature-specific drift), hidden by the old 3-spec default; NOT an app regression. Rework tracked in task 0763.
-test.describe.skip('Codex fixes verification', () => {
+test.describe('Codex fixes verification', () => {
 
   // Fix 1: settings/plan removed, nav points to /settings/billing
   test('1. /settings/plan redirects or 404s, nav shows billing', async ({ page }) => {
@@ -78,8 +77,12 @@ test.describe.skip('Codex fixes verification', () => {
 
   // Fix 6: Data residency shows fallback region
   test('6. data residency shows Europe/Falkenstein fallback', async ({ page }) => {
-    await page.goto('/settings/data-residency')
-    await page.waitForTimeout(5000)
+    test.setTimeout(90_000)
+    // Wait for the page shell to actually mount before reading body text — by
+    // the 6th test the dev account can hit the per-user rate limit, leaving only
+    // the dev banner rendered until the 60s window drains. The helper backs off
+    // + reloads on a blank shell (task 0763).
+    await gotoSettingsPage(page, '/settings/data-residency', page.getByRole('heading', { name: /data residency/i }))
     const content = await page.locator('body').textContent() ?? ''
     // Without auth, redirects to login; with auth, shows data residency
     expect(content).toMatch(/data residency|sign in|welcome back/i)
@@ -103,3 +106,33 @@ test.describe.skip('Codex fixes verification', () => {
     await page.screenshot({ path: '../../qa-screenshots/verify-07-reactivate.png' })
   })
 })
+
+/**
+ * Navigate to a settings page and wait for its shell to mount before the test
+ * reads body text. The body stays blank until WASM crypto is ready
+ * (WasmGuard/DevAuthGate), and in a long single-backend run the dev account can
+ * exhaust the per-user rate limit (the app re-runs dev auto-login + opens a sync
+ * stream every page load), 429-ing the page's fetches and blanking the shell.
+ * The 60s window then drains, so on a blank shell we back off ~12s + reload, up
+ * to 3×. Harness load artifact, not a masked app bug (task 0763).
+ */
+async function gotoSettingsPage(page: Page, path: string, anchor: Locator): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt === 0) {
+      await page.goto(path)
+    } else {
+      await page.waitForTimeout(12_000)
+      await page.reload()
+    }
+    await page
+      .waitForFunction(() => document.body.dataset.cryptoReady === 'true', { timeout: 20_000 })
+      .catch(() => {})
+    if (await anchor.isVisible({ timeout: 12_000 }).catch(() => false)) return
+  }
+  await page.waitForTimeout(12_000)
+  await page.reload()
+  await page
+    .waitForFunction(() => document.body.dataset.cryptoReady === 'true', { timeout: 20_000 })
+    .catch(() => {})
+  await expect(anchor).toBeVisible({ timeout: 15_000 })
+}

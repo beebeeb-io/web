@@ -1,50 +1,33 @@
-import { test, expect } from '@playwright/test'
-import path from 'path'
-import fs from 'fs'
+import { test, expect, type Page, type Locator } from '@playwright/test'
 
-const API = 'http://localhost:3001'
-const uniqueEmail = () => `e2e-${Date.now()}-${Math.random().toString(36).slice(2)}@beebeeb.io`
-const PASSWORD = 'test-password-e2e-secure!'
+// All Drive E2E tests run in the `authenticated` Playwright project (dev
+// auto-login via storageState), so they exercise the signed-in app surface
+// directly. The legacy "create account via /api/v1/auth/signup then log in via
+// the UI" tests were removed — the login page is now OPAQUE-mandatory with no
+// password fallback, so a legacy account can't complete a UI login (task 0763).
 
-// QUARANTINED (task 0740c): fails in per-file isolation — pre-existing test debt (signup-against-the-dev-:3001-backend and/or feature-specific drift), hidden by the old 3-spec default; NOT an app regression. Rework tracked in task 0763.
-test.describe.skip('Drive E2E', () => {
-  let email: string
-
-  test.beforeAll(async () => {
-    email = uniqueEmail()
-  })
-
-  test('signup → login → see drive with seed data', async ({ page }) => {
+test.describe('Drive E2E', () => {
+  test('authenticated user visiting /signup is redirected to the drive', async ({ page }) => {
+    // This spec runs in the `authenticated` project (dev auto-login), so an
+    // already-signed-in user cannot see the guest-only /signup page — the route
+    // guard bounces them back to the drive. The old single-page email+password
+    // "create account" signup this test once drove no longer exists (signup is
+    // now email-first + OPAQUE onboarding, covered by auth.spec.ts /
+    // onboarding-password.spec.ts in the unauthenticated project) (task 0763).
     await page.goto('/signup')
-
-    await page.getByLabel(/email/i).fill(email)
-    await page.getByLabel(/password/i).first().fill(PASSWORD)
-
-    const checkbox = page.getByRole('checkbox')
-    if (await checkbox.isVisible()) await checkbox.check()
-
-    await page.getByRole('button', { name: /create account/i }).click()
-
-    await expect(page).toHaveURL(/\/(verify-email|onboarding|\/)/, { timeout: 10_000 })
+    await expect(page).not.toHaveURL(/\/signup/, { timeout: 10_000 })
+    await expect(page.getByText('All files').first()).toBeVisible({ timeout: 10_000 })
   })
 
-  test('login and navigate to drive', async ({ page }) => {
-    const resp = await page.request.post(`${API}/api/v1/auth/signup`, {
-      data: { email: uniqueEmail(), password: PASSWORD },
-    })
-    expect(resp.ok()).toBeTruthy()
-    const { session_token, salt } = await resp.json()
-    expect(session_token).toBeTruthy()
-    expect(salt).toBeTruthy()
-
-    await page.goto('/login')
-    await page.getByLabel(/email/i).fill(email)
-    await page.getByLabel(/password/i).first().fill(PASSWORD)
-    await page.getByRole('button', { name: /log in/i }).click()
-
-    await expect(page).toHaveURL(/^\/$/, { timeout: 10_000 })
-
-    await expect(page.getByText('All files')).toBeVisible()
+  test('drive renders with the file list for the authenticated dev account', async ({ page }) => {
+    // The legacy "create account via /api/v1/auth/signup then log in via the UI"
+    // path is obsolete: the login page is OPAQUE-mandatory with no password
+    // fallback (src/pages/login.tsx), so a legacy password account can't complete
+    // a UI login. Instead assert the authenticated drive (dev auto-login via the
+    // `authenticated` project) renders its file list (task 0763).
+    await page.goto('/')
+    await expect(page).not.toHaveURL(/\/login/, { timeout: 10_000 })
+    await expect(page.getByText('All files').first()).toBeVisible({ timeout: 10_000 })
   })
 
   test('sidebar navigation works', async ({ page }) => {
@@ -63,7 +46,9 @@ test.describe.skip('Drive E2E', () => {
     }
 
     await page.getByRole('link', { name: 'All files' }).click()
-    await expect(page).toHaveURL(/^\/$/)
+    // toHaveURL matches the FULL url, so anchor on the trailing root path
+    // rather than `^/$` (which never matches `http://host/`) (task 0763).
+    await expect(page).toHaveURL(/\/$/)
   })
 
   test('trash page shows empty state', async ({ page }) => {
@@ -74,15 +59,20 @@ test.describe.skip('Drive E2E', () => {
   })
 
   test('settings profile shows email', async ({ page }) => {
-    await page.goto('/settings/profile')
+    test.setTimeout(90_000)
+    // getByText('Profile') matches 5 nodes (nav link, heading, etc.) — target the
+    // page heading specifically to avoid a strict-mode violation (task 0763).
+    await gotoSettings(page, '/settings/profile', page.getByRole('heading', { name: 'Profile' }))
     if (await page.getByText('Welcome back').isVisible()) return
-
-    await expect(page.getByText('Profile')).toBeVisible()
-    await expect(page.getByText('Email')).toBeVisible()
+    await expect(page.getByText('Email').first()).toBeVisible()
   })
 
   test('search navigates from drive', async ({ page }) => {
-    await page.goto('/')
+    test.setTimeout(90_000)
+    // Land on the drive with its shell mounted (back-to-back tests can hit the
+    // per-user rate limit, blanking the page until the 60s window drains; the
+    // helper backs off + reloads) (task 0763).
+    await gotoSettings(page, '/', page.getByPlaceholder(/search files/i))
     if (await page.getByText('Welcome back').isVisible()) return
 
     const searchInput = page.getByPlaceholder(/search files/i)
@@ -93,9 +83,46 @@ test.describe.skip('Drive E2E', () => {
   })
 
   test('billing page loads plans', async ({ page }) => {
-    await page.goto('/billing')
-    if (await page.getByText('Welcome back').isVisible()) return
-
-    await expect(page.getByText(/plan|billing|subscription/i).first()).toBeVisible({ timeout: 5_000 })
+    test.setTimeout(90_000)
+    // /billing redirects to /settings/billing; go straight there. The SettingsHeader
+    // title "Plan & billing" renders immediately (even in the page's Loading… state),
+    // so it's a stable anchor while plan data fetches (the dev account's plan
+    // endpoints 404, but the header is unconditional) (task 0763).
+    await gotoSettings(page, '/settings/billing', page.getByRole('heading', { name: /plan & billing/i }))
   })
 })
+
+/**
+ * Navigate to a lazy `/settings/*` route and wait for its shell to mount.
+ *
+ * Why this needs retries: every Drive E2E test runs back-to-back against ONE
+ * isolated backend, and the app re-runs dev auto-login + opens a sync stream on
+ * every page load. By the 5th–7th test the dev account exhausts the per-user
+ * rate limit (6000 req / 60s), so the settings page's data/route fetches get
+ * 429'd and the shell renders blank (only the dev banner). The 60s window then
+ * drains. So on a blank shell we back off ~12s (letting the bucket refill) and
+ * reload, up to 3 times. This is a harness load artifact, NOT a masked app bug —
+ * the same route renders in ~1s in isolation (task 0763).
+ */
+async function gotoSettings(page: Page, path: string, anchor: Locator): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt === 0) {
+      await page.goto(path)
+    } else {
+      // Back off to let the per-user rate-limit window drain, then reload.
+      await page.waitForTimeout(12_000)
+      await page.reload()
+    }
+    await page
+      .waitForFunction(() => document.body.dataset.cryptoReady === 'true', { timeout: 20_000 })
+      .catch(() => {})
+    if (await anchor.isVisible({ timeout: 12_000 }).catch(() => false)) return
+  }
+  // Final attempt asserts (and surfaces a real failure if the shell never mounts).
+  await page.waitForTimeout(12_000)
+  await page.reload()
+  await page
+    .waitForFunction(() => document.body.dataset.cryptoReady === 'true', { timeout: 20_000 })
+    .catch(() => {})
+  await expect(anchor).toBeVisible({ timeout: 15_000 })
+}

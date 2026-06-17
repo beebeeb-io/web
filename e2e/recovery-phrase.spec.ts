@@ -8,10 +8,13 @@ import { test, expect } from '@playwright/test'
  * server only returns `recovery_token`.
  */
 
-const API = 'http://127.0.0.1:3001'
+// API origin for direct signup calls. Under the isolated e2e harness this is the
+// dedicated :3003 backend (E2E_API_URL); falls back to the dev :3001 API. Force
+// 127.0.0.1 (not localhost) — the API binds IPv4 and Playwright's apiRequestContext
+// resolves ::1 first, which the IPv4-only dev API refuses (task 0763).
+const API = (process.env.E2E_API_URL ?? 'http://127.0.0.1:3001').replace('://localhost', '://127.0.0.1')
 
-// QUARANTINED (task 0740c): fails in per-file isolation — pre-existing test debt (signup-against-the-dev-:3001-backend and/or feature-specific drift), hidden by the old 3-spec default; NOT an app regression. Rework tracked in task 0763.
-test.describe.skip('Recovery phrase password reset', () => {
+test.describe('Recovery phrase password reset', () => {
   test.beforeEach(async ({ page }) => {
     // Block the dev auto-login endpoint so we see the real auth pages
     await page.route('**/dev/auto-login', (route) => route.abort())
@@ -65,9 +68,11 @@ test.describe.skip('Recovery phrase password reset', () => {
     const bodyText = await page.locator('body').textContent() ?? ''
     expect(bodyText.toLowerCase()).not.toContain('session expired')
 
-    // We should see a proper error about the phrase being wrong
-    // (account was created via legacy signup, has no recovery_check)
-    const hasProperError = /does not match|invalid|incorrect|wrong|failed|try again/i.test(bodyText)
+    // We should see a proper error about the phrase being wrong (account was
+    // created via legacy signup, has no recovery_check). Current copy is
+    // "The recovery phrase doesn't match this account." — match the contraction
+    // ("doesn't") as well as the older "does not" wording (task 0763).
+    const hasProperError = /does ?n.t match|doesn't match|invalid|incorrect|wrong|failed|try again/i.test(bodyText)
     expect(hasProperError).toBe(true)
 
     console.log('PASS: Recovery shows proper error, not "Session expired"')
