@@ -220,7 +220,6 @@ export function Recent() {
         onNavigateFolder={() => navigate('/')}
         onFileAction={handleFileAction}
         onDecryptedNamesChange={setDecryptedNames}
-        externalDecryptedNames={Object.fromEntries(Object.entries(decryptedNames).filter((e): e is [string, string] => e[1] !== null))}
         selectedFileId={selectedFileId}
         onSelectFile={(file) => file && setSelectedFileId(file.id)}
         onBulkTrash={handleBulkTrash}
