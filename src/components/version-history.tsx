@@ -204,9 +204,8 @@ export function VersionHistory({
               {versions.map((v, i) => {
                 const isSelected = i === selectedIdx
                 return (
-                  <button
+                  <div
                     key={v.id}
-                    type="button"
                     role="option"
                     aria-selected={isSelected}
                     aria-label={`Version ${v.version_number}, ${timeAgo(v.created_at)}, ${formatBytes(v.size_bytes)}`}
@@ -218,7 +217,14 @@ export function VersionHistory({
                         ? '3px solid var(--color-amber-deep)'
                         : '3px solid transparent',
                     }}
+                    tabIndex={0}
                     onClick={() => setSelectedIdx(i)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        setSelectedIdx(i)
+                      }
+                    }}
                   >
                     <div
                       className="absolute rounded-full border-2"
@@ -246,18 +252,39 @@ export function VersionHistory({
 
                     {isSelected && (
                       <div className="flex gap-1.5 mt-2">
-                        <BBButton size="sm" variant="ghost" onClick={() => handleDownload(v)}>
+                        <BBButton
+                          size="sm"
+                          variant="ghost"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleDownload(v)
+                          }}
+                        >
                           Download
                         </BBButton>
-                        <BBButton size="sm" variant="amber" onClick={() => handleRestore(v)}>
+                        <BBButton
+                          size="sm"
+                          variant="amber"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleRestore(v)
+                          }}
+                        >
                           Restore
                         </BBButton>
-                        <BBButton size="sm" variant="danger" onClick={() => handleDelete(v)}>
+                        <BBButton
+                          size="sm"
+                          variant="danger"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleDelete(v)
+                          }}
+                        >
                           Delete
                         </BBButton>
                       </div>
                     )}
-                  </button>
+                  </div>
                 )
               })}
             </div>
