@@ -18,6 +18,7 @@ import { UploadZone } from '../components/upload-zone'
 import { encryptedUpload } from '../lib/encrypted-upload'
 import { useToast } from '../components/toast'
 import { useDriveData } from '../lib/drive-data-context'
+import { isLikelyAlbumArtOrIcon } from '../lib/photo-library'
 import { useWsEvent } from '../lib/ws-context'
 import { useSelfHealRefetch } from '../hooks/use-self-heal-refetch'
 import { UpgradeNudge } from '../components/upgrade-nudge'
@@ -414,7 +415,24 @@ export function Photos() {
   // the server filters on the flag set at upload time, so no client-side
   // media detection is needed. We just exclude folders (should be none, but
   // be defensive) and preserve the server-provided order (newest first).
-  const mediaFiles = allFiles.filter((f) => !f.is_folder)
+  //
+  // cover.jpg stopgap (spec 2026-06-17 §ASK 3): the upload-time fix only stops
+  // FUTURE album art from being flagged is_media. Existing cover.jpg / folder.jpg
+  // already carry is_media=true on the server, so we also filter them out of the
+  // VIEW here — using the decrypted name (so the heuristic sees the real filename,
+  // not the ciphertext). This makes already-polluting art disappear immediately.
+  // Conservative by design: it only drops obvious artwork/icons (see
+  // photo-library.ts) so real photos are never hidden.
+  const mediaFiles = allFiles.filter((f) => {
+    if (f.is_folder) return false
+    const name = decryptedNames[f.id]
+    // Only apply the heuristic once the name is decrypted — before that we have
+    // only ciphertext, and a name-based rule would be meaningless. Unknown name →
+    // keep the file (err toward inclusion).
+    if (!name) return true
+    const mime = decryptedMimeTypes[f.id] ?? f.mime_type
+    return !isLikelyAlbumArtOrIcon(name, f.size_bytes, mime)
+  })
 
   // Apply date range filter
   const filteredFiles = mediaFiles.filter((f) => {

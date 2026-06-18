@@ -24,6 +24,7 @@ import {
   saveUploadState,
   removeUploadState,
 } from './upload-resume'
+import { isLikelyAlbumArtOrIcon } from './photo-library'
 
 /**
  * Legacy fallback — only used when WASM plan_chunks is unavailable.
@@ -80,7 +81,15 @@ export async function encryptedUpload(
   // Detect media at upload time — MIME types are encrypted so the server cannot
   // infer this itself. is_media is stored unencrypted so the /files/media endpoint
   // can return all media files without decrypting anything.
-  const isMedia = (mimeType?.startsWith('image/') || mimeType?.startsWith('video/')) ?? false
+  const isMediaMime = (mimeType?.startsWith('image/') || mimeType?.startsWith('video/')) ?? false
+  // cover.jpg stopgap (spec 2026-06-17 §ASK 3): is_media is the only lever the
+  // Photos view filters on today, so the minimal fix is to NOT flag obvious
+  // album art / icons as media — that keeps a Music folder's cover.jpg out of
+  // Photos without a schema change. The file still uploads normally and appears
+  // in the Drive listing (which doesn't filter on is_media); only its Photos
+  // membership changes. The heuristic is conservative — it errs toward leaving
+  // real photos in (see photo-library.ts).
+  const isMedia = isMediaMime && !isLikelyAlbumArtOrIcon(file.name, file.size, mimeType)
   let activeFileKey = fileKey
   let nameEncrypted = await encryptMetadata(activeFileKey)
 
