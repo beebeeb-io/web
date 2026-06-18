@@ -10,6 +10,7 @@ import { useDriveData } from '../lib/drive-data-context'
 import { UpgradeNudge } from './upgrade-nudge'
 import {
   createShare,
+  createBundleShare,
   ApiError,
   createInvite,
   resolveSharingContact,
@@ -17,6 +18,7 @@ import {
   revokeShare,
   type ShareInfo,
   type ShareOptions,
+  type CreateBundleShareRequest,
 } from '../lib/api'
 import {
   toBase64,
@@ -26,6 +28,8 @@ import {
   wrapKeyForShare,
   toBase64url,
   generateShareToken,
+  prepareBundleShareItems,
+  wrapBundleToken,
 } from '../lib/crypto'
 import {
   generateFolderKey,
@@ -43,6 +47,15 @@ interface ShareDialogProps {
   fileName: string
   fileSize: number
   isFolder?: boolean
+  /**
+   * Bundle shares (task 0417): the ordered set of files selected for a single
+   * "Share with Beebeeb" link. When present with MORE THAN ONE entry, the Link
+   * tab mints ONE bundle link covering all of them (an explicit branch in
+   * handleGenerate — it does NOT fall through the single-file/folder paths,
+   * which would share only one item's key). One file (or absent) → single-file.
+   * Each entry must be a real file (folders are not bundle items).
+   */
+  bundleFiles?: Array<{ id: string; name: string; size: number }>
   /** Fires once a share link is successfully created. Used by the first-share onboarding tour. */
   onShareCreated?: (info: { fileId: string; shareUrl: string }) => void
 }
@@ -470,8 +483,11 @@ function InviteSuccess({
 
 // ─── Main dialog ─────────────────────────────────────
 
-export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolder, onShareCreated }: ShareDialogProps) {
+export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolder, bundleFiles, onShareCreated }: ShareDialogProps) {
   const { getFileKey, getMasterKey, isUnlocked } = useKeys()
+  // Bundle (task 0417): a single link over N>1 selected files. One file (or
+  // none) falls through to the existing single-file/folder flow unchanged.
+  const isBundle = (bundleFiles?.length ?? 0) > 1
   const navigate = useNavigate()
   const { planDetails } = useDriveData()
   const planSlug = planDetails.subscription?.plan ?? 'free'
@@ -558,6 +574,54 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
 
     try {
       const masterKey = getMasterKey()
+
+      // ── Bundle branch (task 0417) ────────────────────────────────────────
+      // N>1 files selected for "Share with Beebeeb" → ONE link over the ordered
+      // set. EXPLICIT branch: must NOT fall through the single-file path below
+      // (that would share only the first item's key). Reuses the same K_c /
+      // owner-recovery model — each item's FileKey is wrapped under one K_c.
+      if (isBundle && bundleFiles) {
+        const selections = bundleFiles.map((f, i) => ({ fileId: f.id, position: i }))
+        const { items, keyForUrl, ownerWrappedKey } =
+          await prepareBundleShareItems(masterKey, selections)
+
+        const buildRequest = async (): Promise<CreateBundleShareRequest> => {
+          const token = await generateShareToken()
+          return {
+            share_type: 'bundle',
+            items,
+            expires_in_hours: options.expires_in_hours ?? undefined,
+            max_opens: options.max_opens,
+            ...(trimmedPassphrase ? { passphrase: trimmedPassphrase } : {}),
+            token,
+            owner_wrapped_key: ownerWrappedKey,
+            owner_wrapped_token: await wrapBundleToken(masterKey, token),
+          }
+        }
+
+        let bundleResult
+        try {
+          bundleResult = await createBundleShare(await buildRequest())
+        } catch (e) {
+          // 409 = token collision (≈ never at 20 random bytes) → regenerate once.
+          if (e instanceof ApiError && e.status === 409) {
+            bundleResult = await createBundleShare(await buildRequest())
+          } else {
+            throw e
+          }
+        }
+
+        setShareResult(bundleResult)
+        setDecryptionKey(keyForUrl)
+
+        if (onShareCreated) {
+          const url = `${window.location.origin}/s/${bundleResult.token}#key=${encodeURIComponent(keyForUrl)}`
+          onShareCreated({ fileId: bundleFiles[0].id, shareUrl: url })
+        }
+        setLoading(false)
+        return
+      }
+
       const fileKey = await getFileKey(fileId)
 
       // ── Double-encrypted mode (the only mode, task 0538) ─────────────────
@@ -617,7 +681,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
     } finally {
       setLoading(false)
     }
-  }, [fileId, expiryIdx, maxOpensIdx, passphrase, passwordEnabled, isUnlocked, getFileKey, getMasterKey, onShareCreated])
+  }, [fileId, expiryIdx, maxOpensIdx, passphrase, passwordEnabled, isUnlocked, isBundle, bundleFiles, getFileKey, getMasterKey, onShareCreated])
 
   const generatePassphrase = useCallback(() => {
     // 8 random alphanumeric characters — easy to type, hard to guess
@@ -707,7 +771,9 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
             <Icon name="share" size={14} className="text-ink" />
             <span className="text-sm font-semibold text-ink">Send securely</span>
             <BBChip className="max-w-[220px] truncate shrink">
-              {fileName} · {formatBytes(fileSize)}
+              {isBundle && bundleFiles
+                ? `${bundleFiles.length} files · ${formatBytes(bundleFiles.reduce((sum, f) => sum + f.size, 0))}`
+                : `${fileName} · ${formatBytes(fileSize)}`}
             </BBChip>
             <button
               onClick={onClose}
@@ -894,8 +960,10 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
               />
             ) : (
               <>
-                {/* Tab bar — only show before a result */}
-                <TabBar mode={mode} onChange={setMode} />
+                {/* Tab bar — only show before a result. Bundles are anonymous
+                    public links only (task 0417 non-goal: no per-recipient
+                    bundle invite), so the Invite tab is hidden for bundles. */}
+                {!isBundle && <TabBar mode={mode} onChange={setMode} />}
 
                 {mode === 'link' ? (
                   <>

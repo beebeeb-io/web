@@ -150,6 +150,10 @@ export function Drive() {
   const [syncedAgo, setSyncedAgo] = useState(0)
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null)
   const [shareFileId, setShareFileId] = useState<string | null>(null)
+  // Bundle share (task 0417): the ordered set of file ids selected for a single
+  // "Share with Beebeeb" link. Non-empty (length > 1) ⇒ the ShareDialog opens
+  // in bundle mode over these files instead of a single-file share.
+  const [bundleFileIds, setBundleFileIds] = useState<string[]>([])
   // File whose Manage-shares modal is currently open.
   const [manageSharesFileId, setManageSharesFileId] = useState<string | null>(null)
   // Active shares owned by the current user, used to flag rows in the file
@@ -1836,9 +1840,21 @@ export function Drive() {
   function handleBulkShare(ids: string[]) {
     if (ids.length === 1) {
       setShareFileId(ids[0])
-    } else {
-      showToast({ icon: 'share', title: 'Select one file to share', description: 'Sharing multiple files at once is not supported yet.' })
+      return
     }
+    // Bundle share (task 0417): N>1 files → ONE anonymous link over the ordered
+    // set. Folders cannot be bundle items (a bundle is a flat set of files), so
+    // reject a selection containing any folder before opening the dialog.
+    const selected = files.filter((f) => ids.includes(f.id))
+    if (selected.some((f) => f.is_folder)) {
+      showToast({ icon: 'share', title: 'Folders can’t be bundled', description: 'A multi-file share link covers files only. Deselect folders and try again.' })
+      return
+    }
+    if (selected.length < 2) {
+      showToast({ icon: 'share', title: 'Nothing to share', description: 'Select at least one file to share.' })
+      return
+    }
+    setBundleFileIds(ids)
   }
 
   async function handleBulkDownload(ids: string[]) {
@@ -1971,6 +1987,14 @@ export function Drive() {
 
   // The file currently shown in the share dialog
   const shareFile = files.find((f) => f.id === shareFileId) ?? null
+
+  // Bundle share (task 0417): resolve the selected ids to ordered file objects,
+  // preserving the SELECTION order (positions 0..N-1 in the bundle). Filtered to
+  // non-folder files that still exist.
+  const bundleFiles = bundleFileIds
+    .map((id) => files.find((f) => f.id === id))
+    .filter((f): f is DriveFile => !!f && !f.is_folder)
+    .map((f) => ({ id: f.id, name: displayName(f), size: f.size_bytes }))
 
   return (
     <DriveLayout>
@@ -2502,6 +2526,22 @@ export function Drive() {
             // Advance onboarding context (first_share_done might now be true)
             void refreshOnboarding()
             // Refresh share indicators on file rows.
+            void fetchMyShares()
+          }}
+        />
+      )}
+
+      {/* Bundle share dialog (task 0417): ONE link over the selected file set. */}
+      {bundleFiles.length > 1 && (
+        <ShareDialog
+          open={true}
+          onClose={() => setBundleFileIds([])}
+          fileId={bundleFiles[0].id}
+          fileName={bundleFiles[0].name}
+          fileSize={bundleFiles[0].size}
+          bundleFiles={bundleFiles}
+          onShareCreated={() => {
+            void refreshOnboarding()
             void fetchMyShares()
           }}
         />
