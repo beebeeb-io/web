@@ -140,9 +140,23 @@ start_backend || exit 1
 log "API healthy on :$API_PORT"
 
 # ── Vite (test mode) pointed at the isolated API ────────────────────────────
+# We write .env.test.local AND pass VITE_API_URL explicitly. Why both (task 0826):
+# `bunx vite` boots with NODE_ENV unset, so bun's auto-dotenv loads .env.development
+# (VITE_API_URL=:3001) into process.env. Vite gives a real process.env var precedence
+# over its mode files (.env.test*), so without intervention the served app — and the
+# in-page devAutoAuth() — silently auth against the :3001 DEV stack, minting a session
+# the isolated :3003 API rejects (→ 401 on the welcome_tour PUT that gates every
+# authenticated spec). The "isolation" was partly illusory.
+#   FIX, two layers, defense in depth:
+#   1. NODE_ENV=test → bun does NOT auto-load .env.development at all, so :3001 never
+#      enters process.env in the first place.
+#   2. VITE_API_URL=:3003 passed explicitly → bun's auto-dotenv only fills UNSET vars,
+#      so this wins regardless, and Vite surfaces :3003 to import.meta.env.VITE_API_URL.
+# Both api.ts and dev-auth.ts read import.meta.env.VITE_API_URL, so the app provably
+# hits :3003 for signup/auth AND the dev auto-login.
 printf 'VITE_API_URL=http://localhost:%s\n' "$API_PORT" > "$WEB_DIR/.env.test.local"
 log "starting vite --mode test → API :$API_PORT"
-setsid bash -c "cd '$WEB_DIR' && exec bunx vite --mode test --port $VITE_PORT --strictPort" >/tmp/bb-web-e2e-vite.log 2>&1 &
+setsid bash -c "cd '$WEB_DIR' && NODE_ENV=test VITE_API_URL='http://localhost:$API_PORT' exec bunx vite --mode test --port $VITE_PORT --strictPort" >/tmp/bb-web-e2e-vite.log 2>&1 &
 VITE_PID=$!
 for i in $(seq 1 60); do
   curl -fsS -m3 -o /dev/null "http://localhost:$VITE_PORT" && break
