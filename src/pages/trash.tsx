@@ -392,6 +392,7 @@ export function Trash() {
       cipher: isUnlocked ? 'AES-256-GCM' : undefined,
       keyId: isUnlocked ? file.id : undefined,
       noteEncrypted: file.note_encrypted ?? null,
+      sourceDeviceEncrypted: file.source_device_encrypted ?? null,
     }
   }
 

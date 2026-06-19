@@ -696,16 +696,28 @@ export async function initUpload(metadata: {
   /** True when the file is an image or video. Set by the client at upload time
    *  because MIME types are encrypted — the server cannot infer media type. */
   is_media?: boolean
+  /** Client-ENCRYPTED source-device label ("Uploaded from <device>"), encrypted
+   *  with the per-file key (same opaque shape as name_encrypted). Zero-knowledge:
+   *  the server stores it as an opaque blob and never decrypts it. (task 0824) */
+  source_device_encrypted?: string
 }): Promise<UploadInitResponse> {
   try {
     const v2 = await request<UploadInitV2Response>('/api/v1/uploads/init', {
       method: 'POST',
       body: JSON.stringify({
+        // Send the client-minted file_id so the server adopts it instead of
+        // generating its own. This keeps init.file_id === fileId, so the
+        // per-file key the client used to encrypt name_encrypted AND
+        // source_device_encrypted (task 0824) matches the key the read side
+        // derives — otherwise the server-minted id would orphan those blobs
+        // (name_encrypted is re-PATCHed in that branch, but source_device is not).
+        file_id: metadata.file_id,
         file_name: metadata.name_encrypted,
         file_size_bytes: metadata.size_bytes,
         parent_id: metadata.parent_id,
         profile: 'web',
         is_media: metadata.is_media ?? false,
+        source_device_encrypted: metadata.source_device_encrypted,
       }),
     })
     return { ...v2, protocol: 'v2' }

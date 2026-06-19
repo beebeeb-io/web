@@ -272,6 +272,10 @@ export interface FileDetailsMeta {
   keyId?: string
   region?: string
   noteEncrypted?: string | null
+  /** Raw client-ENCRYPTED source-device label (task 0824), same opaque shape as
+   *  name_encrypted. Decrypted in the panel with the file key to render the
+   *  "Uploaded from" row. Null/absent when the file has no recorded origin. */
+  sourceDeviceEncrypted?: string | null
 }
 
 export interface FileAccessEntry {
@@ -371,11 +375,40 @@ export function FileDetailsPanel({
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null)
   const [thumbnailLoading, setThumbnailLoading] = useState(false)
 
+  // ─── Source-device label (task 0824) ──────────────
+  // Decrypted "Uploaded from <device>" label. Null until decrypted (or when the
+  // file carries no source-device blob).
+  const [sourceDevice, setSourceDevice] = useState<string | null>(null)
+
   // Reset tab to info when the selected file changes
   useEffect(() => {
     setActiveTab('info')
     setThumbnailUrl(null)
+    setSourceDevice(null)
   }, [file?.id])
+
+  // Decrypt the source-device label with the file key (same primitive as the
+  // filename/note). ZK: the server only ever stored the opaque ciphertext.
+  useEffect(() => {
+    const blob = file?.sourceDeviceEncrypted
+    if (!file || !blob) return
+    let cancelled = false
+    // Mirror the note decrypt: don't gate on `isUnlocked` (getFileKey throws when
+    // locked and the .catch swallows it) — gating on it lost the decrypt when the
+    // panel mounted a tick before the unlock flag settled.
+    getFileKey(file.id)
+      .then(async (fileKey) => {
+        try {
+          const { nonce, ciphertext } = parseEncryptedBlob(blob)
+          const plain = await decryptFilename(fileKey, nonce, ciphertext)
+          if (!cancelled) setSourceDevice(plain)
+        } catch {
+          // Decryption failed (e.g. blob bound to a different key) — show nothing.
+        }
+      })
+      .catch(() => { /* key not available */ })
+    return () => { cancelled = true }
+  }, [file?.id, file?.sourceDeviceEncrypted, getFileKey])
 
   // Load thumbnail when file has one and vault is unlocked
   useEffect(() => {
@@ -422,6 +455,9 @@ export function FileDetailsPanel({
   ]
   if (file.cipher) details.push(['Cipher', file.cipher])
   if (file.region) details.push(['Region', file.region])
+  // "Uploaded from <device>" — only when the file carries a decrypted source
+  // device (task 0824). Absent rows render nothing (honest: no fabricated origin).
+  if (sourceDevice) details.push(['Uploaded from', sourceDevice])
 
   return (
     <div

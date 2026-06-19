@@ -85,6 +85,13 @@ export interface DriveFile {
   /** Encrypted file note. JSON string { nonce: string, ciphertext: string } (base64).
    *  Null when no note has been set. Decrypted client-side with the file key. */
   note_encrypted?: string | null
+  /** Client-ENCRYPTED source-device label ("Uploaded from <device>"), encrypted
+   *  with the per-file key (same opaque `{cipher_suite,nonce,ciphertext}` shape
+   *  as `name_encrypted`). Snapshot-at-upload. Zero-knowledge: the server stores
+   *  it as an opaque blob and never decrypts it. Null/absent for files uploaded
+   *  before this existed, or by clients that didn't send a device label.
+   *  Decrypted client-side with the file key for the file-details panel. (0824) */
+  source_device_encrypted?: string | null
   /** Set only on files received through a file request (the inverse-share flow).
    *  The owner decrypts these via the request-key path (`openRequestUpload`)
    *  instead of the normal `derive_file_key(master, file_id)` path:

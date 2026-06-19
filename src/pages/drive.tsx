@@ -1609,6 +1609,7 @@ export function Drive() {
       keyId: isUnlocked ? file.id : undefined,
       region: undefined,
       noteEncrypted: file.note_encrypted ?? null,
+      sourceDeviceEncrypted: file.source_device_encrypted ?? null,
     }
   }
 

@@ -25,6 +25,7 @@ import {
   removeUploadState,
 } from './upload-resume'
 import { isLikelyAlbumArtOrIcon } from './photo-library'
+import { getWebDeviceLabel } from './device-name'
 
 /**
  * Legacy fallback — only used when WASM plan_chunks is unavailable.
@@ -92,6 +93,13 @@ export async function encryptedUpload(
   const isMedia = isMediaMime && !isLikelyAlbumArtOrIcon(file.name, file.size, mimeType)
   let activeFileKey = fileKey
   let nameEncrypted = await encryptMetadata(activeFileKey)
+  // Source-device label (task 0824): "Uploaded from <device>". The web app has
+  // no real device identity, so we synthesise a coarse UA label ("Chrome on
+  // macOS"). It is encrypted with the per-file key — same opaque shape as
+  // name_encrypted — so the server only ever stores the ciphertext (ZK). A
+  // snapshot taken at upload; a later browser/OS change never rewrites it.
+  const deviceLabel = getWebDeviceLabel()
+  let sourceDeviceEncrypted = await encryptDeviceLabel(activeFileKey)
 
   // Use the core adaptive chunk-size ladder for the initial client proposal.
   // The server may override this during v2 init — the client proposes, server decides.
@@ -126,6 +134,14 @@ export async function encryptedUpload(
     return serializeEncryptedBlob(encName.nonce, encName.ciphertext)
   }
 
+  async function encryptDeviceLabel(key: Uint8Array): Promise<string> {
+    // Same primitive + opaque envelope as name_encrypted, so the server stores
+    // and the details panel decrypts the device label with the file key in the
+    // exact same way it already handles the filename.
+    const enc = await encryptFilename(key, deviceLabel)
+    return serializeEncryptedBlob(enc.nonce, enc.ciphertext)
+  }
+
   async function startUpload(): Promise<void> {
     const init = await withNetworkRetry(() => initUpload({
       file_id: fileId,
@@ -134,6 +150,7 @@ export async function encryptedUpload(
       chunk_count: fallbackChunkCount,
       parent_id: parentId ?? null,
       is_media: isMedia,
+      source_device_encrypted: sourceDeviceEncrypted,
     }), signal)
 
     serverFileId = init.file_id
@@ -151,8 +168,15 @@ export async function encryptedUpload(
       throw new Error('V2 upload init returned a server-generated file id, but no file-key resolver was provided.')
     }
 
+    // Server minted a different file id → its real key differs, so re-encrypt
+    // the metadata under it. (The web client always sends its own file_id, so
+    // this branch is effectively unreachable for web — handled for parity with
+    // name_encrypted. source_device_encrypted was bound to the original id at
+    // init; it is not re-PATCHed here because the PATCH endpoint doesn't carry
+    // it and the branch is web-unreachable.)
     activeFileKey = await deriveFileKeyForId(init.file_id)
     nameEncrypted = await encryptMetadata(activeFileKey)
+    sourceDeviceEncrypted = await encryptDeviceLabel(activeFileKey)
     await withNetworkRetry(() => updateFile(init.file_id, { name_encrypted: nameEncrypted }), signal)
   }
 
