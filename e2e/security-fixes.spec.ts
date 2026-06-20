@@ -27,6 +27,43 @@ async function waitForDrive(page: import('@playwright/test').Page) {
   }
 }
 
+/**
+ * Navigate to a lazy `/settings/*` route and wait for its shell to mount,
+ * retrying through transient 429-blank shells.
+ *
+ * Mirrors drive.spec.ts gotoSettings: every spec runs back-to-back against ONE
+ * isolated backend, and the app re-runs dev auto-login + opens a sync stream on
+ * every page load, so a late spec can exhaust the per-user rate limit
+ * (6000 req / 60s). When 429'd the settings route fetches fail and the shell
+ * renders blank. The 60s window then drains — so on a blank shell we back off
+ * ~12s and reload, up to 3 times. Harness load artifact, NOT a masked app bug.
+ */
+async function gotoSettingsWithRetry(
+  page: import('@playwright/test').Page,
+  path: string,
+  anchor: import('@playwright/test').Locator,
+) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt === 0) {
+      await page.goto(path)
+    } else {
+      await page.waitForTimeout(12_000) // let the rate-limit window drain
+      await page.reload()
+    }
+    await page
+      .waitForFunction(() => document.body.dataset.cryptoReady === 'true', { timeout: 20_000 })
+      .catch(() => {})
+    if (await anchor.isVisible({ timeout: 12_000 }).catch(() => false)) return
+  }
+  // Final attempt — let the caller's assertion surface a real failure if the
+  // shell still never mounts.
+  await page.waitForTimeout(12_000)
+  await page.reload()
+  await page
+    .waitForFunction(() => document.body.dataset.cryptoReady === 'true', { timeout: 20_000 })
+    .catch(() => {})
+}
+
 // ── 0220: Passkey button hidden ───────────────────────────────────────────────
 
 test('0220: passkey sign-in button is not shown (showPasskeyLogin=false gate)', async ({ page }) => {
@@ -60,16 +97,17 @@ test('0219: command palette dispatches beebeeb:upload-trigger event', async ({ p
   expect(await uploadHandled).toBe(true)
 })
 
-// ── 0231: File request coming soon ───────────────────────────────────────────
+// ── 0231: File requests page (shipped) ───────────────────────────────────────
 
-test('0231: /file-requests shows coming-soon page', async ({ page }) => {
+test('0231: /file-requests renders the FileRequestPage (not coming-soon)', async ({ page }) => {
   await page.goto('/')
   await waitForDrive(page)
   await page.goto('/file-requests')
   await page.waitForLoadState('domcontentloaded')
   await page.waitForTimeout(1000) // let lazy chunk load
 
-  await expect(page.locator('text=/coming soon/i').first()).toBeVisible({ timeout: 5000 })
+  // The page now fully implements FileRequestPage — assert the real heading.
+  await expect(page.getByRole('heading', { name: /file requests/i }).first()).toBeVisible({ timeout: 5000 })
 })
 
 // ── 0232: DOCX/XLSX iframe sandbox ───────────────────────────────────────────
@@ -87,6 +125,11 @@ test('0232: no iframe has allow-same-origin in sandbox', async ({ page }) => {
 // ── 0240: Nav links fixed ─────────────────────────────────────────────────────
 
 test('0240: no stale /settings/account links; /settings/profile route loads correctly', async ({ page }) => {
+  // Back-to-back specs share ONE isolated backend; by the time this test runs the
+  // dev account can be inside the per-user rate-limit window (6000 req / 60s), which
+  // 429s the settings route fetches and blanks the shell. So we use the same
+  // back-off-and-reload pattern as drive.spec.ts gotoSettings (90s budget).
+  test.setTimeout(90_000)
   await page.goto('/')
   await waitForDrive(page)
 
@@ -94,15 +137,15 @@ test('0240: no stale /settings/account links; /settings/profile route loads corr
   const staleLinks = await page.locator('a[href="/settings/account"]').count()
   expect(staleLinks).toBe(0)
 
-  // Navigate directly to /settings/profile — should load (not redirect to /settings/account)
-  await page.goto('/settings/profile')
-  await page.waitForLoadState('domcontentloaded')
-  await page.waitForTimeout(500)
+  // Navigate to /settings/profile and wait for the SettingsHeader <h2>Profile</h2>
+  // to mount, retrying through transient 429-blank shells. (No redirect chain
+  // through /settings/account — the route loads the profile page directly.)
+  const profileHeading = page.getByRole('heading', { name: 'Profile' })
+  await gotoSettingsWithRetry(page, '/settings/profile', profileHeading)
 
-  // Should land on /settings/profile directly (no redirect chain through /settings/account)
+  // Should land on /settings/profile directly (no redirect to /settings/account)
   expect(page.url()).toContain('/settings/profile')
-  // Should render profile page content
-  await expect(page.locator('text=/profile|display name|email/i').first()).toBeVisible({ timeout: 5000 })
+  await expect(profileHeading).toBeVisible({ timeout: 15_000 })
 })
 
 // ── 0222: WebSocket uses stream token ─────────────────────────────────────────
@@ -134,7 +177,7 @@ test('0222: WebSocket upgrade URL contains a token (not the full session token)'
 
 // ── 0243: Notes label ─────────────────────────────────────────────────────────
 
-test('0243: file notes section shows "Not encrypted" label', async ({ page }) => {
+test('0243: file notes section shows encrypted indicator', async ({ page }) => {
   await page.goto('/')
   await waitForDrive(page)
 
@@ -143,13 +186,13 @@ test('0243: file notes section shows "Not encrypted" label', async ({ page }) =>
   if (await fileRow.isVisible({ timeout: 3000 })) {
     await fileRow.click()
     await page.waitForTimeout(500)
-    // Look for the unencrypted label in the details panel
-    const label = page.locator('text=/not encrypted/i').first()
+    // Notes are now E2EE — the label reads "Encrypted · synced across devices"
+    const label = page.locator('text=/encrypted.*synced|synced.*encrypted/i').first()
     await expect(label).toBeVisible({ timeout: 3000 })
   } else {
-    // No files in the vault — just verify the text is in the source
+    // No files in the vault — verify the encrypted label text is present in source
     const html = await page.content()
-    expect(html).toContain('Not encrypted')
+    expect(html).toContain('Encrypted')
   }
 })
 

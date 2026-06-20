@@ -56,7 +56,11 @@ test.describe('Chunk-stream upload', () => {
       test.skip(true, 'Vault locked — dev auto-auth not active')
     }
 
-    await expect(page.getByText('All files')).toBeVisible({ timeout: 10_000 })
+    // Use heading role to avoid strict-mode violation: both the sidebar nav item
+    // and the breadcrumb heading contain "All files" — the heading is unique.
+    await expect(page.getByRole('heading', { name: 'All files', exact: true }).or(
+      page.locator('#main-content, main, [role="main"]').getByText('All files').first()
+    )).toBeVisible({ timeout: 10_000 })
 
     // Drive renders a hidden <input type="file"> via useBrowseFiles. Setting
     // files on it triggers the same handler the "Upload" button click path uses.

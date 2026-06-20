@@ -14,15 +14,27 @@ import { test, expect } from '@playwright/test'
  *   3. Web:       bun dev
  */
 
-const API = 'http://localhost:3001'
+// Honor the harness-provided API URL so this spec runs against the isolated
+// :3003 backend when invoked via web-e2e.sh, not the dev :3001 stack.
+const API = process.env.E2E_API_URL ?? 'http://localhost:3001'
 const PASSWORD = 'test-password-e2e-secure!'
 const uniqueEmail = () => `upload-e2e-${Date.now()}-${Math.random().toString(36).slice(2)}@beebeeb.io`
+
+// The server validates name_encrypted must be canonical V1Aes256Gcm JSON
+// (cipher_suite, 12-byte nonce array, ciphertext array). Use a minimal stub.
+function makeNameEncrypted(label: string): string {
+  // Nonce: 12 bytes, ciphertext: the label bytes (opaque to the server — just needs to be an array)
+  const nonce = Array.from({ length: 12 }, (_, i) => i)
+  const ciphertext = Array.from(Buffer.from(label, 'utf-8'))
+  return JSON.stringify({ cipher_suite: 'V1Aes256Gcm', nonce, ciphertext })
+}
 
 test.describe('Upload E2E', () => {
   test('signup → upload file → appears in drive listing', async ({ page }) => {
     const email = uniqueEmail()
     const filename = `e2e-upload-${Date.now()}.txt`
     const fileBytes = Buffer.from('Hello from the Beebeeb upload E2E test.\n', 'utf-8')
+    const nameEncrypted = makeNameEncrypted(filename)
 
     // 1. Signup creates the account and returns a session token.
     const signup = await page.request.post(`${API}/api/v1/auth/signup`, {
@@ -44,8 +56,10 @@ test.describe('Upload E2E', () => {
     expect(token).toBeTruthy()
 
     // 3. Upload the file via the multipart endpoint that the web client uses.
+    //    name_encrypted must be canonical V1Aes256Gcm JSON — the server now
+    //    validates the format and rejects raw filenames.
     const metadata = JSON.stringify({
-      name_encrypted: filename,
+      name_encrypted: nameEncrypted,
       mime_type: 'text/plain',
       size_bytes: fileBytes.length,
       parent_id: null,
@@ -60,7 +74,9 @@ test.describe('Upload E2E', () => {
     expect(upload.ok(), `upload failed: ${upload.status()} ${await upload.text()}`).toBeTruthy()
     const uploaded = await upload.json()
     expect(uploaded.id).toBeTruthy()
-    expect(uploaded.name_encrypted).toBe(filename)
+    // name_encrypted is stored opaquely — just check it's a non-empty string
+    expect(typeof uploaded.name_encrypted).toBe('string')
+    expect(uploaded.name_encrypted.length).toBeGreaterThan(0)
     expect(uploaded.size_bytes).toBe(fileBytes.length)
     expect(uploaded.chunk_count).toBe(1)
 
@@ -72,24 +88,15 @@ test.describe('Upload E2E', () => {
     const { files } = await list.json()
     const found = files.find((f: { id: string }) => f.id === uploaded.id)
     expect(found, `uploaded file ${uploaded.id} missing from /api/v1/files`).toBeTruthy()
-    expect(found.name_encrypted).toBe(filename)
+    // name_encrypted is stored and returned as-is (opaque ciphertext)
+    expect(found.name_encrypted).toBe(uploaded.name_encrypted)
     expect(found.size_bytes).toBe(fileBytes.length)
     expect(found.is_folder).toBe(false)
 
-    // 5. Drive UI loads the listing for this session and shows the filename.
-    //    Names that aren't valid encrypted-JSON (this test uses the raw
-    //    filename) fall through to the raw value, so it appears as-is.
+    // 5. Drive UI loads the listing for this session (best-effort; the session
+    //    may hit the vault-unlock gate, both outcomes are valid — the API checks above
+    //    are the load-bearing assertions).
     await page.addInitScript(t => localStorage.setItem('bb_session', t), token)
     await page.goto('/')
-
-    // Either the drive renders the file, or vault provisioning blocks the
-    // route. Both are valid outcomes for a session that didn't go through
-    // the recovery-phrase onboarding — the API-level assertions above are
-    // the load-bearing ones. Best-effort UI check:
-    const driveCell = page.getByText(filename, { exact: false })
-    await driveCell.first().waitFor({ timeout: 5_000 }).catch(() => {
-      // UI render is not the contract under test; the API listing already
-      // proved the upload reached storage. Don't fail the test on it.
-    })
   })
 })

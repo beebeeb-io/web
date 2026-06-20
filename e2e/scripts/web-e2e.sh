@@ -81,6 +81,11 @@ if ! command -v setsid >/dev/null 2>&1; then
   setsid() { exec "$@"; }
 fi
 
+# Ensure node_modules are up-to-date (e.g. otplib may be in package.json but
+# missing from node_modules after a fresh clone or partial install).
+log "bun install --frozen-lockfile"
+(cd "$WEB_DIR" && bun install --frozen-lockfile) || { echo "bun install failed — check lockfile"; exit 1; }
+
 [ -x "$API_BIN" ] || { echo "debug binary missing: $API_BIN — build with: (cd $SERVER_DIR && cargo build -p beebeeb-api)"; exit 1; }
 
 # ── Backend lifecycle (fresh DB + blobs PER iteration, so repeats don't
