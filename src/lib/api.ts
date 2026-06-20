@@ -30,6 +30,7 @@ import type {
   AuthSessionResponse,
   AuthUser,
   BillingUsage,
+  CreateBundleShareRequest,
   CreateTokenParams,
   CreateTokenResponse,
   CreateWebhookResponse,
@@ -163,6 +164,7 @@ export type {
   AvailableRegion,
   BillingUsage,
   ConnectionStatusHandler,
+  CreateBundleShareRequest,
   CreateTokenParams,
   CreateTokenResponse,
   CreateWebhookResponse,
@@ -207,6 +209,7 @@ export type {
   SessionExpiredHandler,
   ShareInfo,
   ShareInvite,
+  ShareItem,
   ShareOptions,
   ShareStats,
   ShareView,
@@ -1061,9 +1064,36 @@ export async function createShare(
   })
 }
 
-export async function getShare(token: string): Promise<ShareView> {
+/**
+ * Create a bundle share (task 0417): ONE anonymous public link over an ordered
+ * set of files. The caller has already generated K_c client-side and wrapped
+ * each item's FileKey under it (see prepareBundleShareItems in crypto.ts) — the
+ * server only ever sees the opaque wrapped blobs. Returns the same envelope
+ * shape as a single-file share plus `share_type:'bundle'` + `item_count`.
+ */
+export async function createBundleShare(req: CreateBundleShareRequest): Promise<ShareInfo & { share_type?: string; item_count?: number }> {
+  return request('/api/v1/shares', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  })
+}
+
+/**
+ * Fetch a share manifest. Bundle-aware: when the share is a bundle the server
+ * returns `share_type:'bundle'` + the ordered `items` array (keyset-paginated
+ * by `position`) + `next_cursor`. For a single-file share the legacy body is
+ * returned unchanged. Pass `page.cursor`/`page.limit` to walk a large bundle.
+ */
+export async function getShare(
+  token: string,
+  page?: { cursor?: number | null; limit?: number },
+): Promise<ShareView> {
   // Public endpoint — no auth header
-  const res = await fetch(`${API_URL}/api/v1/shares/${token}`)
+  const params = new URLSearchParams()
+  if (page?.cursor != null) params.set('cursor', String(page.cursor))
+  if (page?.limit != null) params.set('limit', String(page.limit))
+  const qs = params.toString()
+  const res = await fetch(`${API_URL}/api/v1/shares/${token}${qs ? `?${qs}` : ''}`)
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
@@ -1074,6 +1104,47 @@ export async function getShare(token: string): Promise<ShareView> {
   }
 
   return res.json() as Promise<ShareView>
+}
+
+/**
+ * Download one item of a bundle share (task 0417). The recipient unwraps the
+ * item's FileKey from the manifest (`unwrapBundleItemKey`) and uses it to
+ * decrypt the streamed ciphertext. `passphrase` (if the bundle is locked) is
+ * sent via the `X-Share-Passphrase` HEADER only — never a query parameter.
+ */
+export async function downloadBundleItem(
+  token: string,
+  fileId: string,
+  passphrase?: string,
+): Promise<SharedFileDownload & { chunkSize: number | null }> {
+  const headers: HeadersInit = passphrase
+    ? { 'X-Share-Passphrase': passphrase }
+    : {}
+  let res: Response
+  try {
+    res = await fetch(`${API_URL}/api/v1/shares/${token}/items/${fileId}/download`, { headers })
+  } catch (e) {
+    // fetch threw before any response (offline / DNS / reset / CORS) — surface
+    // as network-class (status 0) so withNetworkRetry treats it as transient.
+    throw new ApiError(e instanceof Error ? e.message : 'Network error', 0)
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => null) as Record<string, unknown> | null
+    const message = ((body?.message ?? body?.error) || res.statusText || 'Download failed') as string
+    throw new ApiError(message, res.status)
+  }
+
+  const parseHeaderInt = (value: string | null): number | null => {
+    if (!value) return null
+    const n = Number.parseInt(value, 10)
+    return Number.isFinite(n) && n >= 0 ? n : null
+  }
+
+  const chunkCount = parseHeaderInt(res.headers.get('X-Chunk-Count'))
+  const chunkSize = parseHeaderInt(res.headers.get('X-Chunk-Size'))
+  const originalSize = parseHeaderInt(res.headers.get('X-Original-Size'))
+  const blob = await res.blob()
+  return { blob, chunkCount, chunkSize, originalSize }
 }
 
 export async function verifySharePassphrase(

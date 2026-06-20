@@ -808,3 +808,105 @@ export function toBase64url(bytes: Uint8Array): string {
     .replace(/\//g, '_')
     .replace(/=+$/, '')
 }
+
+// ─── Bundle shares (task 0417) ───────────────────────
+//
+// A bundle share mints ONE anonymous public link (`/s/:token#key=K_c`) over an
+// ordered set of files — no folder is created. It reuses the single-file
+// double-encrypted model verbatim (NO new crypto primitive, spec §3, D1):
+//   - One client key K_c (32B random) lives ONLY in the URL fragment.
+//   - For each selected file: FileKey_i = deriveFileKey(masterKey, file_id_i),
+//     then wrapped_i = wrapKeyForShare(K_c, FileKey_i) — K_c wraps each item key
+//     DIRECTLY (no intermediate bundle_key; a public link has one consumer key).
+//   - The owner-recovery blobs (task 0708/0709 A+) are computed ONCE for the
+//     whole bundle: owner_wrapped_key = wrap(masterKey, K_c),
+//     owner_wrapped_token = wrap(masterKey, rawToken).
+// The server only ever receives the opaque wrapped blobs — never K_c, never any
+// FileKey, never a plaintext name. Zero-knowledge is identical to single-file.
+
+/** One file selected for a bundle share — the minimum the helper needs. */
+export interface BundleSelection {
+  fileId: string
+  /** 0-based ordered position in the bundle. */
+  position: number
+}
+
+/**
+ * The crypto material a bundle CREATE needs, ready to POST. `items` are ordered
+ * (position 0..N-1), each carrying the item's FileKey wrapped under K_c.
+ * `keyForUrl` is the base64url K_c that goes in the `#key=` fragment — it MUST
+ * stay client-side. The owner-recovery blobs are the bundle's single envelope
+ * copy (one per bundle, not per item).
+ */
+export interface BundleCreateMaterial {
+  items: Array<{ file_id: string; position: number; wrapped_file_key: string }>
+  keyForUrl: string
+  ownerWrappedKey: string
+}
+
+/**
+ * Build the per-item wrapped keys + owner-recovery key for a bundle CREATE.
+ *
+ * Generates a fresh K_c, derives each selected file's FileKey from the master
+ * key, and wraps it under K_c (60-byte AES-256-GCM frame). Returns the ordered
+ * `items` array, the base64url K_c for the URL fragment, and the owner-wrapped
+ * K_c. The caller is responsible for `owner_wrapped_token` (it wraps the raw
+ * token, which the caller mints). K_c and each derived FileKey are zeroized
+ * before returning — the only surviving copy of K_c is `keyForUrl`.
+ */
+export async function prepareBundleShareItems(
+  masterKey: Uint8Array,
+  selections: BundleSelection[],
+): Promise<BundleCreateMaterial> {
+  // One client key for the whole bundle — never leaves the browser except as
+  // the URL fragment (keyForUrl) the owner shares out-of-band.
+  const clientKey = crypto.getRandomValues(new Uint8Array(32))
+
+  const items: Array<{ file_id: string; position: number; wrapped_file_key: string }> = []
+  for (const sel of selections) {
+    const fileKey = await deriveFileKey(masterKey, sel.fileId)
+    const wrapped = await wrapKeyForShare(clientKey, fileKey)
+    zeroize(fileKey)
+    items.push({
+      file_id: sel.fileId,
+      position: sel.position,
+      wrapped_file_key: toBase64(wrapped),
+    })
+  }
+
+  // Owner-recovery (0708/0709 A+): wrap K_c under the OWNER's master key so the
+  // owner can rebuild a working link later. Computed ONCE for the bundle.
+  const ownerWrappedKey = toBase64(await wrapKeyForShare(masterKey, clientKey))
+
+  const keyForUrl = toBase64url(clientKey)
+  zeroize(clientKey)
+
+  return { items, keyForUrl, ownerWrappedKey }
+}
+
+/**
+ * Wrap a raw share token under the owner's master key (task 0708) so the owner
+ * can re-derive a working link from `/shared`. Returns base64. Mirrors the
+ * single-file `owner_wrapped_token`, computed once per bundle.
+ */
+export async function wrapBundleToken(
+  masterKey: Uint8Array,
+  rawToken: string,
+): Promise<string> {
+  return toBase64(await wrapKeyForShare(masterKey, new TextEncoder().encode(rawToken)))
+}
+
+/**
+ * Recipient side: unwrap one bundle item's FileKey from K_c.
+ *
+ * @param clientKey  K_c (32B) read from the `#key=` URL fragment.
+ * @param wrappedFileKeyB64  the item's `wrapped_file_key` (base64) from the manifest.
+ * @returns the 32-byte FileKey to decrypt that item's name + content. Throws if
+ *          K_c is wrong (AES-GCM auth fails) — the caller surfaces that honestly.
+ */
+export async function unwrapBundleItemKey(
+  clientKey: Uint8Array,
+  wrappedFileKeyB64: string,
+): Promise<Uint8Array> {
+  return unwrapKeyFromShare(clientKey, fromBase64(wrappedFileKeyB64))
+}
