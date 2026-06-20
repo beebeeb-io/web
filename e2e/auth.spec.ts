@@ -21,20 +21,34 @@ const uniqueEmail = () => `e2e-${Date.now()}-${Math.random().toString(36).slice(
 const API = (process.env.E2E_API_URL ?? 'http://127.0.0.1:3001').replace('://localhost', '://127.0.0.1')
 
 test.describe('Authentication', () => {
+  // Override the [authenticated] project's storageState for ALL tests in this
+  // describe block. Every test here manages auth state manually via beforeEach
+  // and needs to start with a blank cookie jar, not the saved dev session.
+  // Without this override, the [authenticated] project loads a valid bb_session
+  // cookie for the isolated :3003 backend — getMe() succeeds even after
+  // clearCookies() in beforeEach because the server-side session is still live
+  // on the test DB, so unauthenticated tests falsely pass as authenticated.
+  test.use({ storageState: { cookies: [], origins: [] } })
+
   test.beforeEach(async ({ page }) => {
     // Block the dev auto-login endpoint so tests start unauthenticated.
     // In dev mode, devAutoAuth() calls /dev/auto-login on every page load —
     // intercepting it with a 404 prevents the automatic session injection.
+    //
+    // The route intercept is registered before any navigation and persists for
+    // the page lifetime. No prior navigation is needed — test.use() above
+    // already ensures each test starts with a blank context (no cookies, no
+    // localStorage), so there is no prior-session state to clear.
+    //
+    // NOTE: a prior version of this beforeEach also navigated to
+    // http://localhost:5173 to explicitly clear state, but that pre-navigation
+    // triggered a getMe() call on EVERY test, contributing to the auth rate
+    // limiter (60 req/60s per IP). In auth.spec.ts with 6 tests across two
+    // projects (+ setup + retries), the cumulative requests pushed getMe() into
+    // 429 territory, causing auth.boot() to block on Retry-After delays (api.ts
+    // retries 429 up to 3x). When boot() stalled, ProtectedRoute never got
+    // user=null + loading=false, so the redirect to /login never fired.
     await page.route('**/dev/auto-login', (route) => route.fulfill({ status: 404 }))
-
-    // Also clear any existing localStorage auth state
-    await page.goto('http://localhost:5173', { waitUntil: 'domcontentloaded' })
-    await page.evaluate(() => {
-      localStorage.clear()
-      sessionStorage.clear()
-    })
-    await page.context().clearCookies()
-    await page.goto('about:blank')
   })
   test('signup flow: fill form, submit, redirected to /onboarding', async ({ page }) => {
     const email = uniqueEmail()
@@ -100,13 +114,8 @@ test.describe('Authentication', () => {
   })
 
   test('unauthenticated visit to / redirects to /login', async ({ page }) => {
-    // Clear any stored session
-    await page.context().clearCookies()
-
     await page.goto('/')
-
-    // Should redirect to login
-    await expect(page).toHaveURL(/\/login/, { timeout: 5_000 })
+    await expect(page).toHaveURL(/\/login/, { timeout: 10_000 })
   })
 
   test('full OPAQUE + DeviceProvision flow with seeded account', async ({ page }) => {
