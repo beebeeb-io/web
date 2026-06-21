@@ -584,7 +584,6 @@ export function Drive() {
       return
     }
 
-    lastResolvedFolderRef.current = folderId
     let cancelled = false
     ;(async () => {
       // Rebuild the FULL breadcrumb trail by walking parent_id from the target
@@ -607,6 +606,11 @@ export function Drive() {
         }
         if (cancelled) return
         setBreadcrumbs([{ id: null, name: 'All files' }, ...chain])
+        // Mark resolved ONLY after committing the breadcrumbs. Setting it earlier
+        // is unsafe: if this run is cancelled (deps changed during crypto warm-up)
+        // before the commit, the next run would see ref === folderId and skip the
+        // rebuild, stranding the view at root.
+        lastResolvedFolderRef.current = folderId
       } catch (err) {
         if (cancelled) return
         // Target folder deleted/unshared, or an ancestor is unreadable. Fall back
@@ -617,6 +621,7 @@ export function Drive() {
           { id: null, name: 'All files' },
           { id: folderId, name: 'Folder' },
         ])
+        lastResolvedFolderRef.current = folderId
       }
     })()
     return () => { cancelled = true }
@@ -1560,16 +1565,21 @@ export function Drive() {
   }
 
   function handleFolderOpen(folder: DriveFile) {
+    // Idempotent: a row's single-click + double-click can both fire open, which
+    // would append a duplicate breadcrumb (same id → React duplicate-key) and
+    // push a redundant history entry. If we're already in this folder, no-op.
+    if (currentParentId === folder.id) return
     // The URL is the source of truth for the current folder (task 0839): pushing
     // /?folder=<id> gives the browser Back button a history entry per level and
     // makes the location copy-pasteable. Set the ref so the ?folder= effect
     // treats this as already-resolved and keeps the optimistic breadcrumb below
     // instead of re-walking the chain.
     lastResolvedFolderRef.current = folder.id
-    setBreadcrumbs((prev) => [
-      ...prev,
-      { id: folder.id, name: externalDecryptedNames[folder.id] ?? 'Folder' },
-    ])
+    setBreadcrumbs((prev) =>
+      prev[prev.length - 1]?.id === folder.id
+        ? prev
+        : [...prev, { id: folder.id, name: externalDecryptedNames[folder.id] ?? 'Folder' }],
+    )
     navigate(`/?folder=${folder.id}`)
   }
 
