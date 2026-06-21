@@ -18,7 +18,9 @@ import {
 import { useDriveData } from '../lib/drive-data-context'
 import { StorageUsageBar } from './storage-usage-bar'
 import { decryptFolderKey, decryptChildFileKey } from '../lib/folder-share-crypto'
-import { decryptFilename, fromBase64, parseEncryptedBlob } from '../lib/crypto'
+import { decryptFilename, fromBase64, parseEncryptedBlob, decryptFileMetadata } from '../lib/crypto'
+import { useSync } from '../lib/sync-context'
+import { useSearchIndex, type NodeNameResolver } from '../hooks/use-search-index'
 import { QuotaWarning } from './quota-warning'
 import { QuickAccess } from './quick-access'
 import { EmailVerifyBanner } from './email-verify-banner'
@@ -345,7 +347,9 @@ function useRecentUploadBadge(pathname: string) {
 export function DriveLayout({ children }: { children: ReactNode }) {
   const location = useLocation()
   const { user } = useAuth()
-  const { isUnlocked, getMasterKey } = useKeys()
+  const { isUnlocked, getMasterKey, getFileKey, cryptoReady } = useKeys()
+  const sync = useSync()
+  const { reconcileFromTree } = useSearchIndex()
   const { isFrozen } = useFrozen()
   const adminUrl = import.meta.env.VITE_ADMIN_URL ?? 'https://admin.beebeeb.io'
   const { usage, planDetails: contextPlanDetails, pinnedFolderIds, isOffline } = useDriveData()
@@ -366,6 +370,30 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   useEffect(() => {
     setSidebarOpen(false)
   }, [location.pathname])
+
+  // Full-vault search backfill (task 0840). The on-upload indexFile path only
+  // ever indexes files created in THIS web client, so files from desktop/CLI/
+  // mobile — or in folders never browsed here — were unsearchable. Reconcile the
+  // encrypted index against the complete sync snapshot whenever the tree settles
+  // (debounced past the initial op burst). Lives in the layout so it runs on
+  // every authenticated file surface (drive, /search, trash), not just the drive
+  // page. reconcileFromTree adds missing nodes, prunes dead ones, and emits
+  // `beebeeb:search-index-updated` so open search surfaces reload.
+  const backfillTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (!isUnlocked || !cryptoReady || !sync.ready) return
+    if (backfillTimerRef.current) clearTimeout(backfillTimerRef.current)
+    backfillTimerRef.current = setTimeout(() => {
+      const resolveName: NodeNameResolver = async (node) => {
+        const key = await getFileKey(node.id)
+        const { name } = await decryptFileMetadata(key, node.name_encrypted)
+        return name && name !== 'Encrypted file' ? name : null
+      }
+      void reconcileFromTree(sync.allNodes(), resolveName)
+    }, 1500)
+    return () => { if (backfillTimerRef.current) clearTimeout(backfillTimerRef.current) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isUnlocked, cryptoReady, sync.ready, sync.treeVersion, reconcileFromTree])
 
   useEffect(() => {
     getPreference<{ pool_name: string }>('storage_region')

@@ -247,6 +247,14 @@ function GlobalShortcuts() {
     },
   })
 
+  // Let any surface (e.g. the drive toolbar search field) open the palette
+  // without prop-drilling the setter through the route tree (task 0842).
+  useEffect(() => {
+    function onOpen() { setPaletteOpen(true) }
+    window.addEventListener('beebeeb:open-command-palette', onOpen)
+    return () => window.removeEventListener('beebeeb:open-command-palette', onOpen)
+  }, [])
+
   return (
     <>
       <CommandPalette open={paletteOpen} onClose={closePalette} />

@@ -210,43 +210,13 @@ export function Search() {
 
   // Hold the decrypted index in memory
   const indexRef = useRef<SearchIndex | null>(null)
+  // Latest input value, read inside the index-reload effect without making it a
+  // dependency (which would re-fetch on every keystroke).
+  const queryRef = useRef(query)
+  useEffect(() => { queryRef.current = query }, [query])
 
-  // Focus input on mount
-  useEffect(() => {
-    inputRef.current?.focus()
-  }, [])
-
-  // Fetch and decrypt the search index when the vault is unlocked
-  useEffect(() => {
-    if (!isUnlocked) {
-      indexRef.current = null
-      setIndexLoaded(false)
-      return
-    }
-
-    let cancelled = false
-    async function loadIndex() {
-      try {
-        const masterKey = getMasterKey()
-        const idx = await fetchIndex(masterKey)
-        if (!cancelled) {
-          indexRef.current = idx ?? createEmptyIndex()
-          setIndexError(null)
-          setIndexLoaded(true)
-        }
-      } catch {
-        if (!cancelled) {
-          indexRef.current = createEmptyIndex()
-          setIndexError('Could not load search index.')
-          setIndexLoaded(true)
-        }
-      }
-    }
-    loadIndex()
-    return () => { cancelled = true }
-  }, [isUnlocked, getMasterKey])
-
-  // Search against the local encrypted index
+  // Search against the local encrypted index. Declared before the index-load
+  // effect so that effect can re-run the active query after a reload.
   const runSearch = useCallback((q: string) => {
     if (!q.trim()) {
       setResults([])
@@ -266,6 +236,54 @@ export function Search() {
       setLoading(false)
     }
   }, [])
+
+  // Bumped when the full-vault backfill (task 0840) persists a fresh index, so a
+  // just-indexed deep file (e.g. desktop.ini from another client) becomes
+  // findable without a manual reload.
+  const [indexReloadTick, setIndexReloadTick] = useState(0)
+  useEffect(() => {
+    function onUpdated() { setIndexReloadTick((t) => t + 1) }
+    window.addEventListener('beebeeb:search-index-updated', onUpdated)
+    return () => window.removeEventListener('beebeeb:search-index-updated', onUpdated)
+  }, [])
+
+  // Focus input on mount
+  useEffect(() => {
+    inputRef.current?.focus()
+  }, [])
+
+  // Fetch and decrypt the search index when the vault is unlocked (and again
+  // whenever the backfill signals an update).
+  useEffect(() => {
+    if (!isUnlocked) {
+      indexRef.current = null
+      setIndexLoaded(false)
+      return
+    }
+
+    let cancelled = false
+    async function loadIndex() {
+      try {
+        const masterKey = getMasterKey()
+        const idx = await fetchIndex(masterKey)
+        if (!cancelled) {
+          indexRef.current = idx ?? createEmptyIndex()
+          setIndexError(null)
+          setIndexLoaded(true)
+          // Refresh visible results against the reloaded index.
+          if (queryRef.current.trim()) runSearch(queryRef.current)
+        }
+      } catch {
+        if (!cancelled) {
+          indexRef.current = createEmptyIndex()
+          setIndexError('Could not load search index.')
+          setIndexLoaded(true)
+        }
+      }
+    }
+    loadIndex()
+    return () => { cancelled = true }
+  }, [isUnlocked, getMasterKey, indexReloadTick, runSearch])
 
   // Re-run search once index loads (for initial query from URL)
   useEffect(() => {

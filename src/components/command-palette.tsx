@@ -64,6 +64,15 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
     return () => { cancelled = true }
   }, [open, isUnlocked, getMasterKey, index])
 
+  // Drop the cached index when the full-vault backfill (task 0840) persists a
+  // fresh one, so a just-indexed deep file is searchable on the next open (and
+  // immediately if the palette is already open — the loader re-fetches).
+  useEffect(() => {
+    function onUpdated() { setIndex(null) }
+    window.addEventListener('beebeeb:search-index-updated', onUpdated)
+    return () => window.removeEventListener('beebeeb:search-index-updated', onUpdated)
+  }, [])
+
   const items = useMemo<PaletteItem[]>(() => {
     const all: PaletteItem[] = []
 

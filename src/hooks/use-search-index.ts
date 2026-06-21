@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useRef } from 'react'
 import { useKeys } from '../lib/key-context'
+import type { SyncNode } from '@beebeeb/shared'
 import {
   fetchIndex,
   saveIndex,
@@ -14,6 +15,9 @@ import {
   type SearchIndexEntry,
 } from '../lib/search-index'
 
+/** Resolves a sync node's plaintext name (decrypt + cache lives in the caller). */
+export type NodeNameResolver = (node: SyncNode) => Promise<string | null>
+
 interface UseSearchIndex {
   /** Add or update a file in the search index, then persist. */
   indexFile: (fileId: string, entry: SearchIndexEntry) => Promise<void>
@@ -21,6 +25,15 @@ interface UseSearchIndex {
   unindexFile: (fileId: string) => Promise<void>
   /** Remove multiple files from the search index in one pass, then persist once. */
   unindexFiles: (fileIds: string[]) => Promise<void>
+  /**
+   * Backfill the index from the full vault tree (task 0840). The on-upload
+   * `indexFile` path only ever sees files created in THIS web client, so files
+   * uploaded by desktop/CLI/mobile — or in folders never browsed here — were
+   * unsearchable. The sync snapshot holds the entire tree; this decrypts the
+   * names of any nodes missing from the index, adds them (with a computed path),
+   * prunes entries whose node is now trashed or gone, and persists once.
+   */
+  reconcileFromTree: (nodes: SyncNode[], resolveName: NodeNameResolver) => Promise<void>
 }
 
 /**
@@ -183,5 +196,92 @@ export function useSearchIndex(): UseSearchIndex {
     }
   }, [isUnlocked, getMasterKey])
 
-  return { indexFile, unindexFile, unindexFiles }
+  const reconcileFromTree = useCallback(async (nodes: SyncNode[], resolveName: NodeNameResolver) => {
+    if (!isUnlocked || nodes.length === 0) return
+    let masterKey: Uint8Array
+    try {
+      masterKey = getMasterKey()
+    } catch {
+      return
+    }
+    if (!indexRef.current) indexRef.current = createEmptyIndex()
+    const prev = indexRef.current
+
+    const byId = new Map<string, SyncNode>(nodes.map((n) => [n.id, n]))
+    const liveIds = new Set<string>()
+    // Per-call decrypted-name cache: a path walk re-visits ancestors, and a
+    // child + its parent both need the parent's name — decrypt each node once.
+    const nameCache = new Map<string, string | null>()
+    const resolveCached = async (node: SyncNode): Promise<string | null> => {
+      const hit = nameCache.get(node.id)
+      if (hit !== undefined) return hit
+      let name: string | null = null
+      try { name = await resolveName(node) } catch { name = null }
+      nameCache.set(node.id, name)
+      return name
+    }
+    // Folder path from root → parent (excludes the node's own name), built from
+    // the in-memory tree with no network. Bounded against pathological cycles.
+    const buildPath = async (node: SyncNode): Promise<string> => {
+      const parts: string[] = []
+      let currentId = node.parent_id
+      for (let depth = 0; depth < 50 && currentId; depth++) {
+        const parent = byId.get(currentId)
+        if (!parent) break
+        const pname = await resolveCached(parent)
+        if (pname) parts.unshift(pname)
+        currentId = parent.parent_id
+      }
+      return parts.join('/')
+    }
+
+    const files: Record<string, SearchIndexEntry> = { ...prev.files }
+    let changed = false
+
+    for (const node of nodes) {
+      if (node.is_trashed) continue
+      liveIds.add(node.id)
+      if (node.id in files) continue // already indexed — leave as-is
+      const name = await resolveCached(node)
+      if (!name) continue // undecryptable (key not warm) — retried on a later pass
+      files[node.id] = {
+        name,
+        path: await buildPath(node),
+        type: node.is_folder ? 'folder' : 'file',
+        size: node.size_bytes,
+        parent: node.parent_id,
+        starred: node.is_starred,
+        created: node.created_at,
+        modified: node.updated_at,
+        tags: [],
+      }
+      changed = true
+    }
+
+    // Prune entries whose node is trashed (in the tree, is_trashed → not live)
+    // or permanently gone (absent from the full own-vault snapshot). The index
+    // only ever holds own-vault files — `indexFile` is called solely on web
+    // upload — so there are no shared-folder entries to protect; dropping
+    // anything not live is safe. The caller gates this on a ready snapshot, so
+    // the tree is complete and absence is genuine, not transient.
+    for (const id of Object.keys(files)) {
+      if (liveIds.has(id)) continue
+      delete files[id]
+      changed = true
+    }
+
+    if (!changed) return
+    indexRef.current = { ...prev, updated_at: new Date().toISOString(), files }
+    try {
+      const newEtag = await saveIndex(indexRef.current, masterKey, etagRef.current ?? undefined)
+      if (newEtag) etagRef.current = newEtag
+      // Tell open search surfaces (palette, /search) to reload the now-complete
+      // index so a just-backfilled deep file becomes findable without a reload.
+      window.dispatchEvent(new Event('beebeeb:search-index-updated'))
+    } catch {
+      // Non-fatal: rebuilds on next pass.
+    }
+  }, [isUnlocked, getMasterKey])
+
+  return { indexFile, unindexFile, unindexFiles, reconcileFromTree }
 }
