@@ -6,11 +6,42 @@ import { useToast } from '../../components/toast'
 import {
   getNotificationPreferences,
   setNotificationPreferences,
+  listPushDevices,
+  setPushDeviceEnabled,
   ApiError,
   type NotificationPreferences,
   type NotificationType,
   type LegacyNotificationPreferences,
+  type PushDevice,
 } from '../../lib/api'
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function timeAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime()
+  const seconds = Math.floor(diff / 1000)
+  if (seconds < 60) return 'just now'
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 7) return `${days}d ago`
+  const weeks = Math.floor(days / 7)
+  return `${weeks}w ago`
+}
+
+function pushPlatformLabel(platform: string): string {
+  const map: Record<string, string> = {
+    ios: 'iOS',
+    android: 'Android',
+    macos: 'macOS',
+    linux: 'Linux',
+    windows: 'Windows',
+    web: 'Web',
+  }
+  return map[platform.toLowerCase()] ?? platform
+}
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -213,6 +244,11 @@ export function SettingsNotifications() {
   const [endpointMissing, setEndpointMissing] = useState(false)
   const [saving, setSaving] = useState(false)
 
+  // Push devices section
+  const [pushDevices, setPushDevices] = useState<PushDevice[]>([])
+  const [pushDevicesLoading, setPushDevicesLoading] = useState(true)
+  const [togglingDeviceId, setTogglingDeviceId] = useState<string | null>(null)
+
   useEffect(() => {
     let cancelled = false
     getNotificationPreferences()
@@ -228,6 +264,21 @@ export function SettingsNotifications() {
           setEndpointMissing(true)
         }
         setLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    listPushDevices()
+      .then(devices => {
+        if (!cancelled) {
+          setPushDevices(devices)
+          setPushDevicesLoading(false)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setPushDevicesLoading(false)
       })
     return () => { cancelled = true }
   }, [])
@@ -264,6 +315,33 @@ export function SettingsNotifications() {
       }
     },
     [prefs, endpointMissing, showToast],
+  )
+
+  const handleTogglePushDevice = useCallback(
+    async (device: PushDevice, enabled: boolean) => {
+      // Optimistic update
+      setPushDevices(prev =>
+        prev.map(d => d.device_id === device.device_id ? { ...d, notifications_enabled: enabled } : d),
+      )
+      setTogglingDeviceId(device.device_id)
+      try {
+        await setPushDeviceEnabled(device.device_id, enabled)
+      } catch (err) {
+        // Revert on error
+        setPushDevices(prev =>
+          prev.map(d => d.device_id === device.device_id ? { ...d, notifications_enabled: !enabled } : d),
+        )
+        showToast({
+          icon: 'x',
+          title: 'Failed to update device',
+          description: err instanceof Error ? err.message : 'Please try again.',
+          danger: true,
+        })
+      } finally {
+        setTogglingDeviceId(null)
+      }
+    },
+    [showToast],
   )
 
   return (
@@ -370,6 +448,62 @@ export function SettingsNotifications() {
               )}
             </div>
           ))}
+
+          {/* Push devices section */}
+          <div className="mt-2">
+            <div className="flex items-center gap-2 px-7 py-3">
+              <Icon name="cloud" size={13} className="text-ink-3 shrink-0" />
+              <h2 className="text-[11px] font-semibold uppercase tracking-widest text-ink-4">
+                Push devices
+              </h2>
+            </div>
+
+            {pushDevicesLoading ? (
+              <div className="mx-7 px-5 py-4 flex items-center gap-2 text-ink-3">
+                <span className="w-3.5 h-3.5 border-2 border-line-2 border-t-ink-3 rounded-full animate-spin shrink-0" />
+                <span className="text-[13px]">Loading devices...</span>
+              </div>
+            ) : pushDevices.length === 0 ? (
+              <div className="mx-7 px-5 py-4 text-[13px] text-ink-3">
+                No push devices registered. Install the Beebeeb app on a device to receive push notifications.
+              </div>
+            ) : (
+              <div className="divide-y divide-line border-t border-b border-line mx-7 rounded-lg overflow-hidden">
+                {pushDevices.map((device) => (
+                  <div
+                    key={device.id}
+                    className="flex items-center gap-4 px-5 py-4 bg-paper hover:bg-paper-2 transition-colors"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[13px] font-medium text-ink">
+                        {pushPlatformLabel(device.platform)}
+                        <span className="ml-2 font-mono text-[11px] text-ink-3">{device.device_id}</span>
+                      </div>
+                      <div className="text-[12px] text-ink-3 mt-0.5 leading-snug">
+                        Last used {timeAgo(device.last_used_at)}.
+                        {' '}Turning this off stops push notifications to this device.
+                      </div>
+                    </div>
+                    <div className="shrink-0">
+                      <BBToggle
+                        on={device.notifications_enabled}
+                        onChange={(val) => void handleTogglePushDevice(device, val)}
+                        disabled={togglingDeviceId === device.device_id}
+                        aria-label={`Push notifications for ${pushPlatformLabel(device.platform)} device ${device.device_id}`}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="px-7 mt-2">
+              <p className="text-[11px] text-ink-4 leading-relaxed flex items-center gap-1.5">
+                <Icon name="lock" size={10} className="text-ink-4 shrink-0" />
+                Muting a device stops push notifications server-side. Other notification channels are unaffected.
+              </p>
+            </div>
+          </div>
         </div>
       )}
     </SettingsShell>

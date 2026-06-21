@@ -854,6 +854,21 @@ export async function deleteFile(id: string): Promise<void> {
   await request<void>(`/api/v1/files/${id}`, { method: 'DELETE' })
 }
 
+/**
+ * Move many files/folders to Trash in ONE request (server cascades folders).
+ * Replaces the old per-file `Promise.all(ids.map(deleteFile))` fan-out.
+ * `POST /api/v1/files/trash` — owned, non-trashed ids are trashed; the response
+ * reports which were `trashed` / `already_trashed` / `missing`.
+ */
+export async function bulkTrashFiles(
+  ids: string[],
+): Promise<{ trashed: string[]; already_trashed: string[]; missing: string[] }> {
+  return request<{ trashed: string[]; already_trashed: string[]; missing: string[] }>(
+    '/api/v1/files/trash',
+    { method: 'POST', body: JSON.stringify({ ids }) },
+  )
+}
+
 export async function restoreFile(id: string): Promise<void> {
   await request<void>(`/api/v1/files/${id}/restore`, { method: 'POST' })
 }
@@ -865,6 +880,25 @@ export async function permanentDeleteFile(
   await request<void>(`/api/v1/files/${id}/permanent`, {
     method: 'DELETE',
     headers: confirmToken ? { 'X-Confirm-Token': confirmToken } : undefined,
+  })
+}
+
+/**
+ * Permanently erase many already-trashed files/folders in ONE request, gated by
+ * a SINGLE step-up confirmation token (`POST /api/v1/files/permanent`). The
+ * server reclaims every S3 blob (V1 + V2, incl. folder descendants), decrements
+ * pool byte/object counts, deletes the rows, and emits per-row delete ops — so
+ * "empty trash" / "delete selected" is one round-trip, not N. Only owned + trashed
+ * ids are erased; live ids are skipped server-side, unknown ids reported missing.
+ */
+export async function bulkPermanentDelete(
+  ids: string[],
+  confirmToken: string,
+): Promise<void> {
+  await request<void>('/api/v1/files/permanent', {
+    method: 'POST',
+    headers: { 'X-Confirm-Token': confirmToken },
+    body: JSON.stringify({ ids }),
   })
 }
 
@@ -2347,6 +2381,10 @@ export async function deleteClientSession(id: string): Promise<void> {
   await request<void>(`/api/v1/clients/sessions/${id}`, { method: 'DELETE' })
 }
 
+export async function deleteClientDevice(id: string): Promise<void> {
+  await request<void>(`/api/v1/clients/devices/${id}`, { method: 'DELETE' })
+}
+
 export async function getHealth(): Promise<HealthResponse> {
   const res = await fetch(`${API_URL}/health`)
   if (!res.ok) {
@@ -2618,6 +2656,27 @@ export async function setNotificationPreferences(
     body: JSON.stringify(prefs),
   })
   return res.preferences
+}
+
+export interface PushDevice {
+  id: string
+  device_id: string
+  platform: string
+  last_used_at: string
+  notifications_enabled: boolean
+}
+
+/** GET /api/v1/notifications/devices — list the user's registered push devices */
+export async function listPushDevices(): Promise<PushDevice[]> {
+  return request<PushDevice[]>('/api/v1/notifications/devices')
+}
+
+/** PATCH /api/v1/notifications/devices/{device_id} — enable or disable push for a device */
+export async function setPushDeviceEnabled(deviceId: string, enabled: boolean): Promise<void> {
+  await request<void>(`/api/v1/notifications/devices/${deviceId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ notifications_enabled: enabled }),
+  })
 }
 
 /**

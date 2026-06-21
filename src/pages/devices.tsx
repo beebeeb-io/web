@@ -5,6 +5,7 @@ import {
   listClientDevices,
   listClientSessions,
   deleteClientSession,
+  deleteClientDevice,
   getApiUrl,
   getToken,
   type ClientDevice,
@@ -155,6 +156,7 @@ export function DevicesPage() {
   const [error, setError] = useState<string | null>(null)
   const [showStopped, setShowStopped] = useState(false)
   const [forgettingId, setForgettingId] = useState<string | null>(null)
+  const [forgettingDeviceId, setForgettingDeviceId] = useState<string | null>(null)
 
   const loadData = useCallback(async () => {
     try {
@@ -188,6 +190,28 @@ export function DevicesPage() {
         setError(err instanceof Error ? err.message : 'Failed to forget session')
       } finally {
         setForgettingId(null)
+      }
+    },
+    [],
+  )
+
+  const handleForgetDevice = useCallback(
+    async (device: ClientDevice) => {
+      if (
+        !confirm(
+          `Forget this device? This removes the device and all its folder syncs.`,
+        )
+      )
+        return
+      setForgettingDeviceId(device.id)
+      try {
+        await deleteClientDevice(device.id)
+        setDevices((prev) => prev.filter((d) => d.id !== device.id))
+        setSessions((prev) => prev.filter((s) => s.device_id !== device.id))
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to forget device')
+      } finally {
+        setForgettingDeviceId(null)
       }
     },
     [],
@@ -346,6 +370,16 @@ export function DevicesPage() {
                           <span>{deviceSessions.length} session{deviceSessions.length !== 1 ? 's' : ''}</span>
                         </div>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleForgetDevice(device)}
+                        disabled={forgettingDeviceId === device.id}
+                        className="shrink-0 inline-flex items-center gap-1 text-[11px] text-ink-4 hover:text-red transition-colors disabled:opacity-50"
+                        title="Forget this device — removes the device and all its folder syncs"
+                      >
+                        <Icon name="trash" size={13} />
+                        {forgettingDeviceId === device.id ? 'Forgetting…' : 'Forget device'}
+                      </button>
                     </div>
 
                     {/* Sessions */}
