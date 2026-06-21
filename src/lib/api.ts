@@ -2344,6 +2344,8 @@ export interface ClientDevice {
   last_seen: string
   created_at: string
   session_count: number
+  /** null = no push token linked to this device; true/false = the linked token's mute state */
+  notifications_enabled?: boolean | null
 }
 
 export interface ClientSession {
@@ -2383,6 +2385,14 @@ export async function deleteClientSession(id: string): Promise<void> {
 
 export async function deleteClientDevice(id: string): Promise<void> {
   await request<void>(`/api/v1/clients/devices/${id}`, { method: 'DELETE' })
+}
+
+/** PATCH /api/v1/clients/devices/{id}/notifications — mute or unmute push for a device */
+export async function setDeviceNotifications(deviceId: string, enabled: boolean): Promise<void> {
+  await request<void>(`/api/v1/clients/devices/${deviceId}/notifications`, {
+    method: 'PATCH',
+    body: JSON.stringify({ enabled }),
+  })
 }
 
 export async function getHealth(): Promise<HealthResponse> {
@@ -2658,26 +2668,6 @@ export async function setNotificationPreferences(
   return res.preferences
 }
 
-export interface PushDevice {
-  id: string
-  device_id: string
-  platform: string
-  last_used_at: string
-  notifications_enabled: boolean
-}
-
-/** GET /api/v1/notifications/devices — list the user's registered push devices */
-export async function listPushDevices(): Promise<PushDevice[]> {
-  return (await request<{ devices: PushDevice[] }>('/api/v1/notifications/devices')).devices
-}
-
-/** PATCH /api/v1/notifications/devices/{device_id} — enable or disable push for a device */
-export async function setPushDeviceEnabled(deviceId: string, enabled: boolean): Promise<void> {
-  await request<void>(`/api/v1/notifications/devices/${deviceId}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ notifications_enabled: enabled }),
-  })
-}
 
 /**
  * Normalize a server-returned download_url. The API returns a relative path

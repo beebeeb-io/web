@@ -1,11 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '../components/icons'
+import { BBToggle } from '../components/bb-toggle'
+import { useToast } from '../components/toast'
 import {
   listClientDevices,
   listClientSessions,
   deleteClientSession,
   deleteClientDevice,
+  setDeviceNotifications,
   getApiUrl,
   getToken,
   type ClientDevice,
@@ -150,6 +153,7 @@ function useSessionSSE(
 // ─── Component ──────────────────────────────────
 
 export function DevicesPage() {
+  const { showToast } = useToast()
   const [devices, setDevices] = useState<ClientDevice[]>([])
   const [sessions, setSessions] = useState<ClientSession[]>([])
   const [loading, setLoading] = useState(true)
@@ -157,6 +161,7 @@ export function DevicesPage() {
   const [showStopped, setShowStopped] = useState(false)
   const [forgettingId, setForgettingId] = useState<string | null>(null)
   const [forgettingDeviceId, setForgettingDeviceId] = useState<string | null>(null)
+  const [togglingNotificationsDeviceId, setTogglingNotificationsDeviceId] = useState<string | null>(null)
 
   const loadData = useCallback(async () => {
     try {
@@ -215,6 +220,33 @@ export function DevicesPage() {
       }
     },
     [],
+  )
+
+  const handleToggleNotifications = useCallback(
+    async (device: ClientDevice, enabled: boolean) => {
+      // Optimistic update
+      setDevices((prev) =>
+        prev.map((d) => d.id === device.id ? { ...d, notifications_enabled: enabled } : d),
+      )
+      setTogglingNotificationsDeviceId(device.id)
+      try {
+        await setDeviceNotifications(device.id, enabled)
+      } catch (err) {
+        // Revert on error
+        setDevices((prev) =>
+          prev.map((d) => d.id === device.id ? { ...d, notifications_enabled: !enabled } : d),
+        )
+        showToast({
+          icon: 'x',
+          title: 'Failed to update notifications',
+          description: err instanceof Error ? err.message : 'Please try again.',
+          danger: true,
+        })
+      } finally {
+        setTogglingNotificationsDeviceId(null)
+      }
+    },
+    [showToast],
   )
 
   useEffect(() => {
@@ -370,6 +402,23 @@ export function DevicesPage() {
                           <span>{deviceSessions.length} session{deviceSessions.length !== 1 ? 's' : ''}</span>
                         </div>
                       </div>
+                      {/* Notifications toggle */}
+                      <div className="shrink-0 flex flex-col items-end gap-0.5">
+                        {device.notifications_enabled == null ? (
+                          <span className="text-[11px] text-ink-4">No notifications</span>
+                        ) : (
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[11px] text-ink-3">Notifications</span>
+                            <BBToggle
+                              on={device.notifications_enabled}
+                              onChange={(val) => void handleToggleNotifications(device, val)}
+                              disabled={togglingNotificationsDeviceId === device.id}
+                              aria-label={`Push notifications for ${device.hostname}`}
+                            />
+                          </div>
+                        )}
+                      </div>
+
                       <button
                         type="button"
                         onClick={() => void handleForgetDevice(device)}
