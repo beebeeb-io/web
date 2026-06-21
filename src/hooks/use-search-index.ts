@@ -208,27 +208,55 @@ export function useSearchIndex(): UseSearchIndex {
     const prev = indexRef.current
 
     const byId = new Map<string, SyncNode>(nodes.map((n) => [n.id, n]))
-    const liveIds = new Set<string>()
-    // Per-call decrypted-name cache: a path walk re-visits ancestors, and a
-    // child + its parent both need the parent's name — decrypt each node once.
-    const nameCache = new Map<string, string | null>()
-    const resolveCached = async (node: SyncNode): Promise<string | null> => {
-      const hit = nameCache.get(node.id)
-      if (hit !== undefined) return hit
+    const liveNodes = nodes.filter((n) => !n.is_trashed)
+    // ALL live ids — used for pruning. A node whose name didn't decrypt this pass
+    // is still live and must NOT be pruned; it just isn't added yet.
+    const liveIds = new Set<string>(liveNodes.map((n) => n.id))
+
+    // Phase 1 — resolve every live node's name, with retry passes. On a
+    // from-scratch rebuild the crypto worker / key cache is still warming, so a
+    // chunk of getFileKey/decrypt calls transiently fail. Skipping them
+    // permanently (the index only re-runs on a treeVersion bump that may never
+    // come) left gaps — deep files silently unsearchable. So we retry the
+    // stragglers a few times with backoff and only ever cache SUCCESSES, so a
+    // transient failure is re-attempted rather than memoized as null.
+    const nameCache = new Map<string, string>()
+    let pendingIds = liveNodes.filter((n) => !(n.id in prev.files)).map((n) => n.id)
+    const MAX_PASSES = 5
+    for (let pass = 0; pass < MAX_PASSES && pendingIds.length > 0; pass++) {
+      if (pass > 0) await new Promise((r) => setTimeout(r, 300 * pass))
+      const stillPending: string[] = []
+      for (const id of pendingIds) {
+        const node = byId.get(id)
+        if (!node) continue
+        let name: string | null = null
+        try { name = await resolveName(node) } catch { name = null }
+        if (name) nameCache.set(id, name)
+        else stillPending.push(id)
+      }
+      pendingIds = stillPending
+    }
+    // Resolve ancestor names too (for path building) — some ancestors may be
+    // already-indexed and thus weren't in pendingIds. Best-effort, cached.
+    const resolveAncestor = async (id: string): Promise<string | null> => {
+      if (nameCache.has(id)) return nameCache.get(id) as string
+      const node = byId.get(id)
+      if (!node) return null
       let name: string | null = null
       try { name = await resolveName(node) } catch { name = null }
-      nameCache.set(node.id, name)
+      if (name) nameCache.set(id, name)
       return name
     }
-    // Folder path from root → parent (excludes the node's own name), built from
-    // the in-memory tree with no network. Bounded against pathological cycles.
+
+    // Folder path from root → parent (excludes the node's own name), from the
+    // in-memory tree. Bounded against pathological cycles.
     const buildPath = async (node: SyncNode): Promise<string> => {
       const parts: string[] = []
       let currentId = node.parent_id
       for (let depth = 0; depth < 50 && currentId; depth++) {
         const parent = byId.get(currentId)
         if (!parent) break
-        const pname = await resolveCached(parent)
+        const pname = await resolveAncestor(parent.id)
         if (pname) parts.unshift(pname)
         currentId = parent.parent_id
       }
@@ -238,12 +266,11 @@ export function useSearchIndex(): UseSearchIndex {
     const files: Record<string, SearchIndexEntry> = { ...prev.files }
     let changed = false
 
-    for (const node of nodes) {
-      if (node.is_trashed) continue
-      liveIds.add(node.id)
+    // Phase 2 — add every newly-resolved node with its computed path.
+    for (const node of liveNodes) {
       if (node.id in files) continue // already indexed — leave as-is
-      const name = await resolveCached(node)
-      if (!name) continue // undecryptable (key not warm) — retried on a later pass
+      const name = nameCache.get(node.id)
+      if (!name) continue // still undecryptable after retries — a later run retries
       files[node.id] = {
         name,
         path: await buildPath(node),
