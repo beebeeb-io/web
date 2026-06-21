@@ -41,6 +41,7 @@ import {
   toggleStar,
   updateFile,
   deleteFile,
+  bulkTrashFiles,
   getFile,
   getPendingApprovals,
   listMyShares,
@@ -125,7 +126,7 @@ export function Drive() {
   const { isFrozen } = useFrozen()
   const { user } = useAuth()
   const { getFileKey, getMasterKey, getFileKeyForFile, isUnlocked, cryptoReady, cryptoError } = useKeys()
-  const { usage: driveUsage, incomingCount: driveIncomingCount, refreshUsage: refreshDriveUsage, setOffline: setDriveOffline } = useDriveData()
+  const { usage: driveUsage, incomingCount: driveIncomingCount, refreshUsage: refreshDriveUsage, setOffline: setDriveOffline, unpinFolders } = useDriveData()
   const { indexFile, unindexFile } = useSearchIndex()
   const sync = useSync()
   const { refresh: refreshOnboarding } = useOnboarding()
@@ -1741,6 +1742,8 @@ export function Drive() {
             await deleteFile(file.id)
             showToast({ icon: 'trash', title: 'Moved to trash', description: trashName })
             unindexFile(file.id)
+            // A trashed folder must not linger in Quick Access (task 0837).
+            if (file.is_folder) unpinFolders([file.id])
             fetchFiles()
           } catch (err) {
             showToast({ icon: 'trash', title: 'Failed to trash', description: userFriendlyError(err), danger: true })
@@ -1808,8 +1811,10 @@ export function Drive() {
     return new Promise<void>((resolve) => {
       setTimeout(async () => {
         try {
-          await Promise.all(ids.map((id) => deleteFile(id)))
+          await bulkTrashFiles(ids)
           for (const id of ids) unindexFile(id)
+          // Drop any trashed folders from Quick Access (no-op for unpinned ids).
+          unpinFolders(ids)
           showToast({ icon: 'trash', title: 'Moved to trash', description: `${count} file${count !== 1 ? 's' : ''} moved to trash` })
           fetchFiles()
         } catch (err) {

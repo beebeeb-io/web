@@ -16,11 +16,13 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import { Link, useLocation } from 'react-router-dom'
 import { Icon } from './icons'
+import { ApiError } from '@beebeeb/shared'
 import { useKeys } from '../lib/key-context'
 import { setPreference, getFile } from '../lib/api'
 import { decryptFileMetadata } from '../lib/crypto'
 import { getFolderColorDot } from '../lib/folder-colors'
 import { useDriveData } from '../lib/drive-data-context'
+import { useSync } from '../lib/sync-context'
 
 interface PinnedFolder {
   id: string
@@ -122,12 +124,13 @@ function SortablePinnedFolder({ folder, isActive, onUnpin, colorDot }: {
 }
 
 export function QuickAccess() {
-  const { pinnedFolderIds: contextPinnedIds } = useDriveData()
+  const { pinnedFolderIds: contextPinnedIds, unpinFolders } = useDriveData()
   // Local copy for optimistic drag-to-reorder; synced from context on change.
   const [pinnedIds, setPinnedIds] = useState<string[]>(() => contextPinnedIds.slice(0, 10))
   const [folders, setFolders] = useState<PinnedFolder[]>([])
   const [folderColorDots, setFolderColorDots] = useState<Record<string, string | null>>({})
   const { getFileKeyForFile, isUnlocked } = useKeys()
+  const { getNode, ready: syncReady, treeVersion } = useSync()
   const location = useLocation()
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
@@ -144,12 +147,26 @@ export function QuickAccess() {
     let cancelled = false
     async function loadNames() {
       const results: PinnedFolder[] = []
+      // Pinned ids that no longer resolve to a live folder for this user. We only
+      // unpin on POSITIVE evidence of removal — a trashed node in the sync tree,
+      // or a definitive 404 from getFile — never on a transient decrypt/WASM
+      // error (those are retried) and never on mere absence from the own-vault
+      // snapshot (a pinned SHARED folder legitimately isn't in our tree).
+      const deadIds: string[] = []
       // Retry transient failures (WASM init race, key cache warm-up for
       // iOS-uploaded backup folders). Mirrors the retry pattern in file-list.tsx.
       const MAX_ATTEMPTS = 4
       const RETRY_DELAY_MS = 300
       for (const id of pinnedIds) {
+        // Fast path: the sync tree already knows this folder was trashed (covers
+        // a parent-folder cascade delete, where the pinned child is gone but its
+        // id lingers in pinned_folders). No network needed.
+        if (syncReady && getNode(id)?.is_trashed) {
+          deadIds.push(id)
+          continue
+        }
         let resolved: string | null = null
+        let gone = false
         for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
           if (cancelled) return
           try {
@@ -165,19 +182,33 @@ export function QuickAccess() {
               await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * (attempt + 1)))
               continue
             }
-          } catch {
+          } catch (err) {
+            // A 404 is definitive: the folder was permanently deleted (or
+            // unshared). Drop the pin rather than retrying a corpse.
+            if (err instanceof ApiError && err.status === 404) {
+              gone = true
+              break
+            }
             if (attempt < MAX_ATTEMPTS - 1) {
               await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * (attempt + 1)))
             }
           }
         }
+        if (gone) {
+          deadIds.push(id)
+          continue
+        }
         results.push({ id, name: resolved ?? 'Folder' })
       }
-      if (!cancelled) setFolders(results)
+      if (cancelled) return
+      setFolders(results)
+      // Persist the prune once, after rendering the survivors. unpinFolders
+      // updates the context list, which syncs back into pinnedIds.
+      if (deadIds.length > 0) unpinFolders(deadIds)
     }
     loadNames()
     return () => { cancelled = true }
-  }, [pinnedIds, isUnlocked, getFileKeyForFile])
+  }, [pinnedIds, isUnlocked, getFileKeyForFile, getNode, syncReady, treeVersion, unpinFolders])
 
   // Load color dots whenever the folder list changes
   useEffect(() => {

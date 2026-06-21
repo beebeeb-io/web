@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import type { ReactNode } from 'react'
 import {
   getPreference,
+  setPreference,
   getStorageUsage,
   fetchUsage,
   getPlans,
@@ -28,6 +29,13 @@ interface PlanDetails {
 interface DriveDataState {
   pinnedFolderIds: string[]
   refreshPinnedFolders: () => void
+  /**
+   * Remove folder ids from Quick Access and persist. Used as the deletion hook
+   * (a trashed folder must not linger as a pin) and as the self-heal path when
+   * QuickAccess discovers a pinned id that no longer resolves. No-op (no PUT)
+   * when none of the ids are actually pinned.
+   */
+  unpinFolders: (folderIds: string[]) => void
 
   usage: StorageUsage | null
   refreshUsage: () => void
@@ -86,6 +94,19 @@ export function DriveDataProvider({ children }: { children: ReactNode }) {
         setPinnedFolderIds(legacy?.folder_ids ?? [])
       })
       .catch(() => {})
+  }, [])
+
+  const unpinFolders = useCallback((folderIds: string[]) => {
+    if (folderIds.length === 0) return
+    const removeSet = new Set(folderIds)
+    setPinnedFolderIds((prev) => {
+      const next = prev.filter((id) => !removeSet.has(id))
+      if (next.length === prev.length) return prev // nothing was pinned → no PUT
+      setPreference(PINNED_FOLDERS_PREF, { folder_ids: next }).catch(() => {})
+      // Notify other consumers (the sidebar keeps a local optimistic copy).
+      window.dispatchEvent(new Event('beebeeb:pins-changed'))
+      return next
+    })
   }, [])
 
   // ── Usage ─────────────────────────────────────────────────────────────────
@@ -184,6 +205,7 @@ export function DriveDataProvider({ children }: { children: ReactNode }) {
       value={{
         pinnedFolderIds,
         refreshPinnedFolders,
+        unpinFolders,
         usage,
         refreshUsage,
         planDetails,
