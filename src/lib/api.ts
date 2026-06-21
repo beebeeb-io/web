@@ -2668,7 +2668,7 @@ export interface PushDevice {
 
 /** GET /api/v1/notifications/devices — list the user's registered push devices */
 export async function listPushDevices(): Promise<PushDevice[]> {
-  return request<PushDevice[]>('/api/v1/notifications/devices')
+  return (await request<{ devices: PushDevice[] }>('/api/v1/notifications/devices')).devices
 }
 
 /** PATCH /api/v1/notifications/devices/{device_id} — enable or disable push for a device */
