@@ -17,10 +17,13 @@
 
 /** Exact pathnames a post-login redirect may target. Match is exact: the query
  *  string (`?code=…`) is preserved, but the path itself cannot vary.
+ *  - `/`                — Drive root; carries `?folder=<id>` so a copied deep-link
+ *    URL resumes at the exact vault location after login (task 0839). Same-origin
+ *    own root → no open-redirect risk; only the query varies, never the path.
  *  - `/cli-auth`        — CLI device-auth round-trip.
  *  - `/settings/privacy`— data-export resume (`DATA_EXPORT_ROUTE`, task 0720);
  *    a same-origin protected route, so no open-redirect risk in allowlisting it. */
-export const REDIRECT_ALLOWLIST = ['/cli-auth', '/settings/privacy'] as const
+export const REDIRECT_ALLOWLIST = ['/', '/cli-auth', '/settings/privacy'] as const
 
 /** Control characters (C0 range + DEL) — illegal in a path and a classic
  *  redirect/header-smuggling vector. */

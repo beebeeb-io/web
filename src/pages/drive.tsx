@@ -551,21 +551,20 @@ export function Drive() {
       openFolderName?: string
       openFileId?: string | null
     } | null
-    if (state?.openFolderId) {
-      setBreadcrumbs([
-        { id: null, name: 'All files' },
-        { id: state.openFolderId, name: state.openFolderName ?? 'Folder' },
-      ])
-    }
     if (state?.openFileId) {
       // Auto-select the file so the detail panel opens
       setSelectedFileId(state.openFileId)
     }
-    if (state?.openFolderId || state?.openFileId) {
+    if (state?.openFolderId) {
+      // Route through the URL (task 0839) so the full breadcrumb chain rebuilds
+      // and the location is shareable / Back-navigable, instead of setting a
+      // flat [root, folder] pair directly.
+      navigate(`/?folder=${state.openFolderId}`, { replace: true, state: null })
+    } else if (state?.openFileId) {
       // Clear location state so refreshing doesn't re-navigate
-      navigate(location.pathname, { replace: true, state: null })
+      navigate(location.pathname + location.search, { replace: true, state: null })
     }
-  }, [location.state, navigate, location.pathname])
+  }, [location.state, navigate, location.pathname, location.search])
 
   // Deep-link via ?folder=<id> query param (used by the Quick Access sidebar
   // on the home route). Runs whenever the search string changes — the Quick
@@ -576,26 +575,46 @@ export function Drive() {
     if (!isUnlocked) return
     const params = new URLSearchParams(location.search)
     const folderId = params.get('folder')
+
+    // Already in sync with this folder — covers optimistic in-app navigation
+    // (handleFolderOpen / breadcrumb clicks set the ref before pushing the URL),
+    // so we don't fight the optimistic breadcrumbs by rebuilding them.
+    if (lastResolvedFolderRef.current === folderId) return
+
     if (!folderId) {
+      // Navigated to the drive root (e.g. Back out of every folder).
       lastResolvedFolderRef.current = null
+      setBreadcrumbs([{ id: null, name: 'All files' }])
       return
     }
-    if (lastResolvedFolderRef.current === folderId) return
+
     lastResolvedFolderRef.current = folderId
     let cancelled = false
     ;(async () => {
+      // Rebuild the FULL breadcrumb trail by walking parent_id from the target
+      // up to the root, so a pasted deep-link URL or a Back/forward jump restores
+      // the complete path — not a flat [root, folder] pair (task 0839).
+      const chain: { id: string | null; name: string }[] = []
+      let currentId: string | null = folderId
+      const MAX_DEPTH = 50
       try {
-        const file = await getFile(folderId)
-        const fileKey = await getFileKey(folderId)
-        const { name } = await decryptFileMetadata(fileKey, file.name_encrypted)
+        for (let depth = 0; depth < MAX_DEPTH && currentId; depth++) {
+          const file = await getFile(currentId)
+          let name = 'Folder'
+          try {
+            const fileKey = await getFileKey(currentId)
+            const decrypted = await decryptFileMetadata(fileKey, file.name_encrypted)
+            if (decrypted.name) name = decrypted.name
+          } catch { /* unreadable ancestor (e.g. share boundary) — keep placeholder */ }
+          chain.unshift({ id: currentId, name })
+          currentId = file.parent_id ?? null
+        }
         if (cancelled) return
-        setBreadcrumbs([
-          { id: null, name: 'All files' },
-          { id: folderId, name: name || 'Folder' },
-        ])
+        setBreadcrumbs([{ id: null, name: 'All files' }, ...chain])
       } catch (err) {
         if (cancelled) return
-        // Folder may have been deleted/unshared. Show with a placeholder name.
+        // Target folder deleted/unshared, or an ancestor is unreadable. Fall back
+        // to a flat crumb so the view is still usable.
         // eslint-disable-next-line no-console
         console.error('[drive] Failed to resolve ?folder= deep link', { folderId, err })
         setBreadcrumbs([
@@ -1545,14 +1564,25 @@ export function Drive() {
   }
 
   function handleFolderOpen(folder: DriveFile) {
+    // The URL is the source of truth for the current folder (task 0839): pushing
+    // /?folder=<id> gives the browser Back button a history entry per level and
+    // makes the location copy-pasteable. Set the ref so the ?folder= effect
+    // treats this as already-resolved and keeps the optimistic breadcrumb below
+    // instead of re-walking the chain.
+    lastResolvedFolderRef.current = folder.id
     setBreadcrumbs((prev) => [
       ...prev,
       { id: folder.id, name: externalDecryptedNames[folder.id] ?? 'Folder' },
     ])
+    navigate(`/?folder=${folder.id}`)
   }
 
   function handleBreadcrumbNav(index: number) {
-    setBreadcrumbs((prev) => prev.slice(0, index + 1))
+    const next = breadcrumbs.slice(0, index + 1)
+    const target = next[next.length - 1]
+    lastResolvedFolderRef.current = target.id
+    setBreadcrumbs(next)
+    navigate(target.id ? `/?folder=${target.id}` : '/')
   }
 
   function handleCancelUpload(uploadId: string) {
