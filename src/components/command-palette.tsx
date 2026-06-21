@@ -6,6 +6,7 @@ import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
 import { modLabel } from '../hooks/use-keyboard-shortcuts'
 import { fetchIndex, searchIndex as doSearch, type SearchIndex, type SearchResult } from '../lib/search-index'
+import { listClientDevices, type ClientDevice } from '../lib/api'
 
 interface PaletteItem {
   id: string
@@ -13,7 +14,10 @@ interface PaletteItem {
   label: string
   description?: string
   shortcut?: string
-  group: 'recent' | 'files' | 'actions' | 'navigation'
+  group: 'recent' | 'files' | 'actions' | 'navigation' | 'devices'
+  /** Extra terms (not shown) that the fuzzy matcher also searches, so e.g.
+   *  "invoices" finds Billing and "space" finds the Storage overview. */
+  keywords?: string
   action: () => void
 }
 
@@ -44,6 +48,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
   const [index, setIndex] = useState<SearchIndex | null>(null)
+  const [devices, setDevices] = useState<ClientDevice[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
@@ -73,22 +78,87 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
     return () => window.removeEventListener('beebeeb:search-index-updated', onUpdated)
   }, [])
 
+  // Load linked devices once per open so the empty palette can surface them.
+  useEffect(() => {
+    if (!open || devices.length > 0) return
+    let cancelled = false
+    listClientDevices()
+      .then((res) => { if (!cancelled) setDevices(res.devices) })
+      .catch(() => { /* devices are a nice-to-have, never block the palette */ })
+    return () => { cancelled = true }
+  }, [open, devices.length])
+
+  // Most-recently-changed files/folders, surfaced as "Recent" when the query is
+  // empty. Derived from the (full-vault, task 0840) index.
+  const recentEntries = useMemo(() => {
+    if (!index) return [] as { id: string; name: string; path: string; isFolder: boolean }[]
+    return Object.entries(index.files)
+      .map(([id, e]) => ({ id, name: e.name, path: e.path, isFolder: e.type === 'folder', modified: e.modified }))
+      .sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime())
+      .slice(0, 6)
+  }, [index])
+
   const items = useMemo<PaletteItem[]>(() => {
+    const go = (path: string) => () => { navigate(path); onClose() }
     const all: PaletteItem[] = []
 
+    // Actions
     all.push(
-      { id: 'upload', icon: 'upload', label: 'Upload files...', shortcut: `${modLabel} U`, group: 'actions', action: () => { onClose(); window.dispatchEvent(new Event('beebeeb:upload-trigger')) } },
-      { id: 'new-folder', icon: 'folder', label: 'New folder', shortcut: `${modLabel} N`, group: 'actions', action: () => { onClose(); window.dispatchEvent(new Event('beebeeb:new-folder-trigger')) } },
-      { id: 'search', icon: 'search', label: 'Search files', shortcut: `${modLabel} F`, group: 'actions', action: () => { navigate('/search'); onClose() } },
+      { id: 'upload', icon: 'upload', label: 'Upload files...', shortcut: `${modLabel} U`, group: 'actions', keywords: 'add new file import', action: () => { onClose(); window.dispatchEvent(new Event('beebeeb:upload-trigger')) } },
+      { id: 'new-folder', icon: 'folder', label: 'New folder', shortcut: `${modLabel} N`, group: 'actions', keywords: 'create directory', action: () => { onClose(); window.dispatchEvent(new Event('beebeeb:new-folder-trigger')) } },
+    )
+
+    // Navigation — every app surface, keyword-rich so "invoices", "storage",
+    // "space", "subscription" etc. all resolve to the right place (task 0842).
+    all.push(
+      { id: 'nav-drive', icon: 'folder', label: 'All files', description: 'Your drive', group: 'navigation', keywords: 'drive home vault files root', action: go('/') },
+      { id: 'nav-recent', icon: 'clock', label: 'Recent', description: 'Recently changed files', group: 'navigation', keywords: 'latest history new', action: go('/recent') },
+      { id: 'nav-photos', icon: 'image', label: 'Photos', description: 'Photo & video backups', group: 'navigation', keywords: 'pictures camera images gallery video', action: go('/photos') },
+      { id: 'nav-file-requests', icon: 'link', label: 'File requests', description: 'Collect files from others', group: 'navigation', keywords: 'request inbox receive upload link', action: go('/file-requests') },
+      { id: 'nav-trash', icon: 'trash', label: 'Trash', description: 'Deleted files', group: 'navigation', keywords: 'deleted bin remove recover restore', action: go('/trash') },
+      { id: 'nav-billing', icon: 'cloud', label: 'Billing', description: 'Plan, payments & invoices', group: 'navigation', keywords: 'invoices receipts payment subscription upgrade plan pricing card', action: go('/billing') },
+      { id: 'nav-storage', icon: 'cloud', label: 'Storage overview', description: 'Usage, quota & regions', group: 'navigation', keywords: 'space quota usage capacity data residency region gb', action: go('/settings/storage') },
+      { id: 'nav-security', icon: 'shield', label: 'Security', description: 'Encryption, sessions, keys', group: 'navigation', keywords: 'password 2fa passkey recovery sessions encryption', action: go('/security') },
+      { id: 'nav-devices', icon: 'key', label: 'Devices', description: 'Linked devices & sessions', group: 'navigation', keywords: 'device desktop mobile windows ios sync sessions linked', action: go('/devices') },
+      { id: 'nav-settings', icon: 'settings', label: 'Settings', description: 'Profile, devices, notifications', group: 'navigation', keywords: 'preferences profile account config options', action: go('/settings') },
+      { id: 'nav-notifications', icon: 'bell', label: 'Notifications', description: 'Alerts & push settings', group: 'navigation', keywords: 'alerts push email mute', action: go('/settings/notifications') },
+      { id: 'nav-language', icon: 'settings', label: 'Language', description: 'App language', group: 'navigation', keywords: 'locale translation i18n', action: go('/settings/language') },
+      { id: 'nav-activity', icon: 'activity', label: 'Activity', description: 'Account activity log', group: 'navigation', keywords: 'audit log history events', action: go('/settings/activity') },
+      { id: 'nav-referrals', icon: 'users', label: 'Referrals', description: 'Invite & earn storage', group: 'navigation', keywords: 'invite refer friends bonus', action: go('/settings/referrals') },
     )
 
     all.push(
-      { id: 'nav-settings', icon: 'settings', label: 'Go to settings', description: 'Profile, devices, notifications', group: 'navigation', action: () => { navigate('/settings'); onClose() } },
-      { id: 'nav-security', icon: 'shield', label: 'Go to security', description: 'Encryption, sessions, keys', group: 'navigation', action: () => { navigate('/security'); onClose() } },
-      { id: 'nav-billing', icon: 'cloud', label: 'Go to billing', description: 'Plan, usage, invoices', group: 'navigation', action: () => { navigate('/billing'); onClose() } },
-      { id: 'nav-trash', icon: 'trash', label: 'Go to trash', description: 'Deleted files', group: 'navigation', action: () => { navigate('/trash'); onClose() } },
-      { id: 'sign-out', icon: 'lock', label: 'Sign out', description: 'Lock vault and sign out', group: 'actions', action: () => { logout(); onClose() } },
+      { id: 'sign-out', icon: 'lock', label: 'Sign out', description: 'Lock vault and sign out', group: 'actions', keywords: 'logout lock leave exit', action: () => { logout(); onClose() } },
     )
+
+    // Recent files + devices only when the query is empty (a populated palette
+    // beats a blank one). When searching, the Jump-to file results lead instead.
+    if (!query.trim()) {
+      for (const r of recentEntries) {
+        all.unshift({
+          id: `recent-${r.id}`,
+          icon: r.isFolder ? 'folder' : 'file',
+          label: r.name,
+          description: r.path || undefined,
+          group: 'recent',
+          action: () => {
+            navigate(r.isFolder ? `/?folder=${r.id}` : `/?folder=${''}&highlight=${r.id}`)
+            onClose()
+          },
+        })
+      }
+      for (const d of devices) {
+        all.push({
+          id: `device-${d.id}`,
+          icon: 'key',
+          label: d.hostname,
+          description: `${d.platform}${d.session_count ? ` · ${d.session_count} sync${d.session_count !== 1 ? 's' : ''}` : ''}`,
+          group: 'devices',
+          keywords: `${d.platform} device`,
+          action: go('/devices'),
+        })
+      }
+    }
 
     if (query.trim() && index) {
       const results: SearchResult[] = doSearch(index, query).slice(0, 10)
@@ -113,17 +183,27 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
     }
 
     if (query.trim()) {
-      return all.filter((item) => item.group === 'files' || fuzzyMatch(query, item.label))
+      return all.filter(
+        (item) =>
+          item.group === 'files' ||
+          fuzzyMatch(query, item.label) ||
+          (item.keywords ? fuzzyMatch(query, item.keywords) : false),
+      )
     }
     return all
-  }, [query, navigate, onClose, logout, index])
+  }, [query, navigate, onClose, logout, index, recentEntries, devices])
 
   // Group items for rendering
   const groups = useMemo(() => {
     const map = new Map<string, PaletteItem[]>()
     const order: string[] = []
     for (const item of items) {
-      const key = item.group === 'files' ? 'Jump to' : item.group === 'actions' ? 'Actions' : item.group === 'navigation' ? 'Navigation' : 'Recent'
+      const key =
+        item.group === 'files' ? 'Jump to'
+        : item.group === 'recent' ? 'Recent'
+        : item.group === 'devices' ? 'Devices'
+        : item.group === 'actions' ? 'Actions'
+        : 'Navigation'
       if (!map.has(key)) {
         map.set(key, [])
         order.push(key)

@@ -145,10 +145,6 @@ export function Drive() {
   // Cache the File object per upload-id so we can re-invoke the encrypted
   // upload pipeline when the user clicks Retry on a failed item.
   const uploadFilesRef = useRef<Map<string, File>>(new Map())
-  const searchInputRef = useRef<HTMLInputElement>(null)
-  // Mobile-only: search starts as an icon button. Tap expands it to a full input row.
-  // Desktop (md+) always shows the full input — the state has no effect there.
-  const [searchOpen, setSearchOpen] = useState(false)
   const [syncedAgo, setSyncedAgo] = useState(0)
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null)
   const [shareFileId, setShareFileId] = useState<string | null>(null)
@@ -2024,12 +2020,8 @@ export function Drive() {
       if (externalSelectedIds.size > 0) handleBulkDownload(Array.from(externalSelectedIds))
     },
     onSearch: () => {
-      if (searchInputRef.current) {
-        searchInputRef.current.focus()
-        searchInputRef.current.select()
-      } else {
-        navigate('/search')
-      }
+      // The dedicated search shortcut now opens the command palette (task 0842).
+      window.dispatchEvent(new Event('beebeeb:open-command-palette'))
     },
     onShortcuts: () => setShowShortcuts((v) => !v),
     onOpenSelected: () => {
@@ -2048,31 +2040,6 @@ export function Drive() {
       // Other escape handling is done inside FileList
     },
   })
-
-  // Cmd-K / Ctrl-K focuses the inline search bar. Uses capture phase so it
-  // fires before the global GlobalShortcuts handler (which would open the
-  // command palette), and stopPropagation prevents that from also triggering.
-  useEffect(() => {
-    function handleSearchKey(e: KeyboardEvent) {
-      const target = e.target as HTMLElement
-      // Don't hijack while the user is already typing somewhere else.
-      if (
-        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) &&
-        target !== searchInputRef.current
-      ) return
-      const mod = isMac ? e.metaKey : e.ctrlKey
-      if (mod && e.key.toLowerCase() === 'k') {
-        e.preventDefault()
-        // stopImmediatePropagation so GlobalShortcuts' bubble listener
-        // (document-level, same element) doesn't also open the command palette.
-        e.stopImmediatePropagation()
-        searchInputRef.current?.focus()
-        searchInputRef.current?.select()
-      }
-    }
-    document.addEventListener('keydown', handleSearchKey, { capture: true })
-    return () => document.removeEventListener('keydown', handleSearchKey, { capture: true })
-  }, [])
 
   // ─── Derived data ───────────────────────────────────
 
@@ -2112,61 +2079,31 @@ export function Drive() {
             />
           )}
 
-          {/* Search — collapsed to an icon on mobile; tap expands. Always
-              rendered (just hidden) on mobile when collapsed so the input ref
-              stays stable for Cmd-K shortcuts on desktop. */}
+          {/* Search — opens the command palette (task 0842). Mobile collapses to
+              an icon button; desktop shows a field-styled button with the ⌘K hint
+              inside on the right (task 0841). ⌘K itself is handled globally. */}
           <button
             type="button"
-            aria-label="Open search"
-            aria-expanded={searchOpen}
-            onClick={() => {
-              setSearchOpen(true)
-              // Defer focus to after the input becomes visible
-              requestAnimationFrame(() => searchInputRef.current?.focus())
-            }}
-            className={`ml-auto md:hidden inline-flex items-center justify-center w-8 h-8 rounded-md border border-line bg-paper text-ink-3 hover:text-ink hover:bg-paper-2 transition-colors ${searchOpen ? 'hidden' : ''}`}
+            aria-label="Search files and folders"
+            aria-keyshortcuts={isMac ? 'Meta+K' : 'Control+K'}
+            onClick={() => window.dispatchEvent(new Event('beebeeb:open-command-palette'))}
+            className="ml-auto md:hidden inline-flex items-center justify-center w-8 h-8 rounded-md border border-line bg-paper text-ink-3 hover:text-ink hover:bg-paper-2 transition-colors"
           >
             <Icon name="search" size={14} />
           </button>
-          <form
-            role="search"
-            aria-label="Search vault"
-            className={`ml-auto md:ml-auto flex items-center gap-2 border border-line rounded-md bg-paper px-2.5 py-1 w-full md:w-[260px] order-last md:order-none ${searchOpen ? 'flex' : 'hidden md:flex'}`}
-            onSubmit={(e) => {
-              e.preventDefault()
-              if (searchInputRef.current?.value.trim())
-                navigate(`/search?q=${encodeURIComponent(searchInputRef.current.value.trim())}`)
-            }}
+          <button
+            type="button"
+            aria-label="Search files and folders"
+            aria-keyshortcuts={isMac ? 'Meta+K' : 'Control+K'}
+            onClick={() => window.dispatchEvent(new Event('beebeeb:open-command-palette'))}
+            className="hidden md:flex ml-auto items-center gap-2 border border-line rounded-md bg-paper px-2.5 py-1.5 w-[260px] text-left hover:bg-paper-2 hover:border-line-2 transition-colors group"
           >
             <Icon name="search" size={13} className="text-ink-4 shrink-0" />
-            <input
-              ref={searchInputRef}
-              data-search-input
-              aria-label="Search files and folders"
-              placeholder="Search files and folders..."
-              className="flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-4"
-              onBlur={() => {
-                // On mobile, collapse back to the icon when the input is empty
-                if (!searchInputRef.current?.value) setSearchOpen(false)
-              }}
-            />
-            {searchOpen && (
-              <button
-                type="button"
-                aria-label="Close search"
-                onClick={() => {
-                  if (searchInputRef.current) searchInputRef.current.value = ''
-                  setSearchOpen(false)
-                }}
-                className="md:hidden inline-flex items-center justify-center w-6 h-6 rounded-sm text-ink-3 hover:text-ink shrink-0"
-              >
-                <Icon name="x" size={12} />
-              </button>
-            )}
-            <kbd className="hidden sm:inline-flex items-center self-center gap-0.5 px-1.5 py-[3px] text-[10px] leading-none font-mono text-ink-4 bg-paper-2 border border-line rounded shrink-0">
+            <span className="flex-1 text-sm text-ink-4 truncate">Search files and folders...</span>
+            <kbd className="inline-flex items-center self-center gap-0.5 px-1.5 py-[3px] text-[10px] leading-none font-mono text-ink-4 bg-paper-2 border border-line rounded shrink-0">
               {isMac ? <><span className="text-[11px] leading-none">⌘</span>K</> : 'Ctrl+K'}
             </kbd>
-          </form>
+          </button>
 
           {/* New + Upload */}
           <div className="flex items-center gap-1.5 shrink-0">
