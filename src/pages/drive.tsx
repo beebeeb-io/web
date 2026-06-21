@@ -16,6 +16,7 @@ import { UploadZone, useBrowseFiles, useBrowseFolders, type FolderFile } from '.
 import type { UploadItem } from '../components/upload-progress'
 import { UploadCards } from '../components/upload-progress-card'
 import { NewFolderDialog } from '../components/new-folder-dialog'
+import { DeleteBackupsDialog } from '../components/delete-backups-dialog'
 import { VersionHistory } from '../components/version-history'
 import { DuplicateFileDialog, getUniqueName, type ConflictItem } from '../components/duplicate-file-dialog'
 import { ShortcutsCheatsheet } from '../components/shortcuts-cheatsheet'
@@ -164,6 +165,10 @@ export function Drive() {
   const [moveFileId, setMoveFileId] = useState<string | null>(null)
   const [renameFileId, setRenameFileId] = useState<string | null>(null)
   const [versionFileId, setVersionFileId] = useState<string | null>(null)
+  // Pending trash of the Backups root, awaiting the extra confirmation (0838).
+  const [backupsDeleteRequest, setBackupsDeleteRequest] = useState<
+    { kind: 'single'; file: DriveFile } | { kind: 'bulk'; ids: string[] } | null
+  >(null)
   const [trustFileId, setTrustFileId] = useState<string | null>(null)
   const [tourOpen, setTourOpen] = useState(false)
   const [tourCompleted, setTourCompleted] = useState<Set<string>>(new Set())
@@ -1487,6 +1492,58 @@ export function Drive() {
     setFolderSuggestion(null)
   }
 
+  // ─── Backups-folder delete guard (task 0838) ────────
+  // The root folder literally named "Backups" is the device-backup root the
+  // desktop/mobile engines write to (Backups/{device}/{category}/). Match by
+  // decrypted name AND root position so a user's own folder called "Backups"
+  // nested elsewhere is unaffected.
+  function isBackupsRoot(file: DriveFile): boolean {
+    return (
+      file.is_folder &&
+      (file.parent_id ?? null) === null &&
+      displayName(file) === 'Backups'
+    )
+  }
+
+  // Cheap descendant summary from the in-memory sync tree (no network): how many
+  // items live under Backups and how many top-level device folders it has.
+  function summarizeBackups(backupsId: string): { deviceCount: number; itemCount: number } {
+    let itemCount = 0
+    let deviceCount = 0
+    const queue: string[] = [backupsId]
+    const seen = new Set<string>()
+    while (queue.length) {
+      const parentId = queue.shift() as string
+      for (const child of sync.children(parentId)) {
+        if (seen.has(child.id) || child.is_trashed) continue
+        seen.add(child.id)
+        itemCount++
+        if (parentId === backupsId && child.is_folder) deviceCount++
+        if (child.is_folder) queue.push(child.id)
+      }
+    }
+    return { deviceCount, itemCount }
+  }
+
+  function performSingleTrash(file: DriveFile) {
+    const trashName = displayName(file)
+    setTrashingIds((prev) => new Set(prev).add(file.id))
+    setTimeout(async () => {
+      try {
+        await deleteFile(file.id)
+        showToast({ icon: 'trash', title: 'Moved to trash', description: trashName })
+        unindexFile(file.id)
+        // A trashed folder must not linger in Quick Access (task 0837).
+        if (file.is_folder) unpinFolders([file.id])
+        fetchFiles()
+      } catch (err) {
+        showToast({ icon: 'trash', title: 'Failed to trash', description: userFriendlyError(err), danger: true })
+      } finally {
+        setTrashingIds((prev) => { const next = new Set(prev); next.delete(file.id); return next })
+      }
+    }, 200)
+  }
+
   function handleFolderOpen(folder: DriveFile) {
     setBreadcrumbs((prev) => [
       ...prev,
@@ -1735,22 +1792,13 @@ export function Drive() {
         handleFileDownload(file)
         break
       case 'trash': {
-        const trashName = displayName(file)
-        setTrashingIds((prev) => new Set(prev).add(file.id))
-        setTimeout(async () => {
-          try {
-            await deleteFile(file.id)
-            showToast({ icon: 'trash', title: 'Moved to trash', description: trashName })
-            unindexFile(file.id)
-            // A trashed folder must not linger in Quick Access (task 0837).
-            if (file.is_folder) unpinFolders([file.id])
-            fetchFiles()
-          } catch (err) {
-            showToast({ icon: 'trash', title: 'Failed to trash', description: userFriendlyError(err), danger: true })
-          } finally {
-            setTrashingIds((prev) => { const next = new Set(prev); next.delete(file.id); return next })
-          }
-        }, 200)
+        // The root "Backups" folder holds device backups (task 0838) — gate it
+        // behind an explicit warning instead of the silent one-tap trash.
+        if (isBackupsRoot(file)) {
+          setBackupsDeleteRequest({ kind: 'single', file })
+          break
+        }
+        performSingleTrash(file)
         break
       }
     }
@@ -1806,6 +1854,17 @@ export function Drive() {
   // ─── Bulk action handlers ────────────────────────────
 
   async function handleBulkTrash(ids: string[]) {
+    // If the selection includes the Backups root, gate the whole batch behind
+    // the warning (task 0838). Resolve immediately — the dialog drives the rest.
+    const backupsRoot = files.find((f) => ids.includes(f.id) && isBackupsRoot(f))
+    if (backupsRoot) {
+      setBackupsDeleteRequest({ kind: 'bulk', ids })
+      return
+    }
+    return performBulkTrash(ids)
+  }
+
+  async function performBulkTrash(ids: string[]) {
     const count = ids.length
     setTrashingIds(new Set(ids))
     return new Promise<void>((resolve) => {
@@ -2432,6 +2491,29 @@ export function Drive() {
         onClose={() => setFolderDialogOpen(false)}
         onCreate={handleCreateFolder}
       />
+
+      {/* Extra guard before trashing the device-backup root (task 0838) */}
+      {backupsDeleteRequest && (() => {
+        const backupsId =
+          backupsDeleteRequest.kind === 'single'
+            ? backupsDeleteRequest.file.id
+            : files.find((f) => backupsDeleteRequest.ids.includes(f.id) && isBackupsRoot(f))?.id ?? null
+        const summary = backupsId ? summarizeBackups(backupsId) : { deviceCount: 0, itemCount: 0 }
+        return (
+          <DeleteBackupsDialog
+            open
+            deviceCount={summary.deviceCount}
+            itemCount={summary.itemCount}
+            onCancel={() => setBackupsDeleteRequest(null)}
+            onConfirm={() => {
+              const req = backupsDeleteRequest
+              setBackupsDeleteRequest(null)
+              if (req.kind === 'single') performSingleTrash(req.file)
+              else performBulkTrash(req.ids)
+            }}
+          />
+        )
+      })()}
 
       {/* Duplicate-file conflict dialog — shown before uploading when names collide */}
       <DuplicateFileDialog
