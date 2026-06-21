@@ -5,7 +5,7 @@ import { BBCheckbox } from '@beebeeb/shared'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '@beebeeb/shared'
 import type { IconName } from '@beebeeb/shared'
-import { listFiles, restoreFile, permanentDeleteFile, confirmAction, ApiError, type DriveFile } from '../lib/api'
+import { listFiles, restoreFile, bulkPermanentDelete, ApiError, type DriveFile } from '../lib/api'
 import { useToast } from '../components/toast'
 import { useKeys } from '../lib/key-context'
 import { TrashRowSkeleton } from '@beebeeb/shared'
@@ -273,74 +273,52 @@ export function Trash() {
   }
 
   /**
-   * Step 2 — fire deletes sequentially, minting a fresh single-use confirmation
-   * token for each file from the verified password. Confirmation tokens are
-   * single-use server-side, so a parallel Promise.all with one token would
-   * succeed only for the first request and 403 the rest.
+   * Step 2 — erase the whole batch in ONE request with a SINGLE confirmation
+   * token. The server (`POST /files/permanent`) deletes every owned+trashed id
+   * in one transaction, reclaims their S3 blobs, and emits per-row delete ops —
+   * so emptying trash / deleting a multi-select is one round-trip, not N. (The
+   * `password` arg from the modal is unused now: one token covers the batch.)
    */
-  const performPermanentDelete = async (initialToken: string, password: string) => {
+  const performPermanentDelete = async (confirmToken: string) => {
     const ids = pwPrompt.fileIds
     setPwPrompt({ open: false, fileIds: [] })
     if (ids.length === 0) return
 
-    setDeleteProgress({ current: 0, total: ids.length })
+    setDeleteProgress({ current: ids.length, total: ids.length })
     setLoading(true)
 
-    const succeededIds: string[] = []
-    const failures: { id: string; message: string }[] = []
-    let token: string | null = initialToken
-
-    for (let i = 0; i < ids.length; i++) {
-      const id = ids[i]
-      setDeleteProgress({ current: i + 1, total: ids.length })
-
-      try {
-        if (token === null) {
-          const fresh = await confirmAction(password)
-          token = fresh.confirmation_token
-        }
-        await permanentDeleteFile(id, token)
-        succeededIds.push(id)
-      } catch (err) {
-        const message =
-          err instanceof ApiError && err.status === 403
-            ? 'Re-authentication expired'
-            : err instanceof Error
-              ? err.message
-              : 'Unknown error'
-        failures.push({ id, message })
-      } finally {
-        token = null
-      }
-    }
-
-    setDeleteProgress(null)
-
-    const succeededSet = new Set(succeededIds)
-    setFiles((prev) => prev.filter((f) => !succeededSet.has(f.id)))
-    setSelected((prev) => {
-      const next = new Set(prev)
-      succeededSet.forEach((id) => next.delete(id))
-      return next
-    })
-
-    if (failures.length === 0) {
+    try {
+      await bulkPermanentDelete(ids, confirmToken)
+      const erased = new Set(ids)
+      setFiles((prev) => prev.filter((f) => !erased.has(f.id)))
+      setSelected((prev) => {
+        const next = new Set(prev)
+        erased.forEach((id) => next.delete(id))
+        return next
+      })
       showToast({
         icon: 'trash',
-        title: `Permanently deleted ${succeededIds.length} file${succeededIds.length !== 1 ? 's' : ''}`,
+        title: `Permanently deleted ${ids.length} file${ids.length !== 1 ? 's' : ''}`,
         description: 'Vault keys destroyed. Data is unrecoverable.',
       })
-    } else {
+    } catch (err) {
+      const message =
+        err instanceof ApiError && (err.status === 403 || err.status === 401)
+          ? 'Re-authentication expired — please try again.'
+          : err instanceof Error
+            ? err.message
+            : 'Unknown error'
       showToast({
         icon: 'x',
-        title: `Deleted ${succeededIds.length} of ${ids.length}`,
-        description: `${failures.length} file${failures.length !== 1 ? 's' : ''} could not be deleted: ${failures[0].message}`,
+        title: 'Permanent delete failed',
+        description: message,
         danger: true,
       })
       fetchTrash()
+    } finally {
+      setDeleteProgress(null)
+      setLoading(false)
     }
-
-    setLoading(false)
   }
 
   const handleRestoreSelected = async () => {
@@ -574,7 +552,7 @@ export function Trash() {
           {deleteProgress ? (
             <span className="font-mono text-red flex items-center gap-1.5">
               <Icon name="trash" size={12} className="text-red" />
-              Deleting {deleteProgress.current} of {deleteProgress.total}…
+              Deleting {deleteProgress.total} file{deleteProgress.total !== 1 ? 's' : ''}…
             </span>
           ) : (
             <>

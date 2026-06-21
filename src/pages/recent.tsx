@@ -18,6 +18,7 @@ import {
   toggleStar,
   updateFile,
   deleteFile,
+  bulkTrashFiles,
   type DriveFile,
 } from '../lib/api'
 import { useWsEvent } from '../lib/ws-context'
@@ -158,7 +159,7 @@ export function Recent() {
 
   async function handleBulkTrash(ids: string[]) {
     try {
-      await Promise.all(ids.map((id) => deleteFile(id)))
+      await bulkTrashFiles(ids)
       setFiles((prev) => prev.filter((f) => !ids.includes(f.id)))
       showToast({ icon: 'trash', title: 'Moved to trash', description: `${ids.length} file${ids.length !== 1 ? 's' : ''} moved to trash` })
     } catch (err) {
