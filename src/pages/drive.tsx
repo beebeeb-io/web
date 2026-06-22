@@ -128,7 +128,7 @@ export function Drive() {
   const { user } = useAuth()
   const { getFileKey, getMasterKey, getFileKeyForFile, isUnlocked, cryptoReady, cryptoError } = useKeys()
   const { usage: driveUsage, incomingCount: driveIncomingCount, refreshUsage: refreshDriveUsage, setOffline: setDriveOffline, unpinFolders } = useDriveData()
-  const { indexFile, unindexFile } = useSearchIndex()
+  const { indexFile, reindexFields, unindexFile } = useSearchIndex()
   const sync = useSync()
   const { refresh: refreshOnboarding } = useOnboarding()
   const { previewFile, openPreview, closePreview } = useFilePreview()
@@ -1749,12 +1749,44 @@ export function Drive() {
     }
   }
 
+  // ─── Search re-index on rename/move (task 0843) ──────
+  // The on-upload `indexFile` path never sees later renames/moves, so without
+  // this the search index keeps the OLD name / OLD path until a full rebuild.
+
+  // Build the search-index path string ("/A/B") for a destination folder by
+  // walking parents up the sync tree and decrypting each name. Returns "/" for
+  // the vault root. Best-effort: an unreadable ancestor is skipped.
+  const buildIndexPathForParent = useCallback(async (parentId: string | null): Promise<string> => {
+    const parts: string[] = []
+    let currentId = parentId
+    for (let depth = 0; depth < 50 && currentId; depth++) {
+      const node = sync.getNode(currentId)
+      if (!node) break
+      try {
+        const key = await getFileKey(node.id)
+        const { name } = await decryptFileMetadata(key, node.name_encrypted)
+        if (name && name !== 'Encrypted file') parts.unshift(name)
+      } catch { /* unreadable ancestor — skip */ }
+      currentId = node.parent_id ?? null
+    }
+    return parts.length ? `/${parts.join('/')}` : '/'
+  }, [sync, getFileKey])
+
+  // Re-index after a successful move: patch parent + recomputed path. Fire-and-
+  // forget; a miss self-heals on the next reconcileFromTree (drive-layout).
+  const reindexAfterMove = useCallback((ids: string[], destinationId: string | null) => {
+    void buildIndexPathForParent(destinationId).then((path) => {
+      for (const id of ids) void reindexFields(id, { parent: destinationId, path })
+    })
+  }, [buildIndexPathForParent, reindexFields])
+
   // ─── Move handler ─────────────────────────────────
 
   async function handleMoveConfirm(destinationId: string | null, _mode: 'move' | 'copy') {
     if (!moveFileId) return
     try {
       await updateFile(moveFileId, { parent_id: destinationId })
+      reindexAfterMove([moveFileId], destinationId)
       showToast({ icon: 'folder', title: 'File moved', description: 'Moved successfully.' })
       fetchFiles()
     } catch (err) {
@@ -1787,6 +1819,7 @@ export function Drive() {
       const enc = await encryptFilename(fileKey, newName)
       const nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
       await updateFile(renameFileId, { name_encrypted: nameEncrypted })
+      void reindexFields(renameFileId, { name: newName })
       showToast({ icon: 'check', title: 'Renamed', description: `Renamed to "${newName}".` })
       fetchFiles()
     } catch (err) {
@@ -1864,6 +1897,7 @@ export function Drive() {
     const targetName = knownFolderName || displayName(targetFolder) || 'folder'
     try {
       await Promise.all(ids.map((id) => updateFile(id, { parent_id: targetFolder.id })))
+      reindexAfterMove(ids, targetFolder.id)
       if (ids.length === 1) {
         const movedFile = files.find((f) => f.id === ids[0])
         const movedName = movedFile ? displayName(movedFile) : 'File'
@@ -1943,6 +1977,7 @@ export function Drive() {
     const count = ids.length
     try {
       await Promise.all(ids.map((id) => updateFile(id, { parent_id: destinationId })))
+      reindexAfterMove(ids, destinationId)
       showToast({ icon: 'folder', title: 'Files moved', description: `${count} file${count !== 1 ? 's' : ''} moved successfully.` })
       fetchFiles()
     } catch (err) {

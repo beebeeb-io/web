@@ -21,6 +21,13 @@ export type NodeNameResolver = (node: SyncNode) => Promise<string | null>
 interface UseSearchIndex {
   /** Add or update a file in the search index, then persist. */
   indexFile: (fileId: string, entry: SearchIndexEntry) => Promise<void>
+  /**
+   * Patch an already-indexed entry's fields in place (rename → name; move →
+   * parent + path), then persist. No-op if the id isn't in the index yet — the
+   * next `reconcileFromTree` backfills it from the sync tree. Used after a
+   * successful rename/move so the local index doesn't go stale (task 0843 B1).
+   */
+  reindexFields: (fileId: string, fields: Partial<SearchIndexEntry>) => Promise<void>
   /** Remove a file from the search index, then persist. */
   unindexFile: (fileId: string) => Promise<void>
   /** Remove multiple files from the search index in one pass, then persist once. */
@@ -133,6 +140,36 @@ export function useSearchIndex(): UseSearchIndex {
     }
   }, [isUnlocked, getMasterKey])
 
+  const reindexFields = useCallback(async (fileId: string, fields: Partial<SearchIndexEntry>) => {
+    if (!isUnlocked) return
+    // Index still loading or empty: nothing to patch. The entry will be
+    // (re)created by the on-load reconcile, which reads the live tree, so a
+    // missed patch here self-heals rather than persisting a stale entry.
+    if (!indexRef.current) return
+    const existing = indexRef.current.files[fileId]
+    if (!existing) return
+
+    let masterKey: Uint8Array
+    try {
+      masterKey = getMasterKey()
+    } catch {
+      return
+    }
+
+    indexRef.current = updateIndexEntry(indexRef.current, fileId, {
+      ...existing,
+      ...fields,
+      modified: new Date().toISOString(),
+    })
+
+    try {
+      const newEtag = await saveIndex(indexRef.current, masterKey, etagRef.current ?? undefined)
+      if (newEtag) etagRef.current = newEtag
+    } catch {
+      // Non-fatal: rebuilds on next load / reconcile.
+    }
+  }, [isUnlocked, getMasterKey])
+
   const unindexFile = useCallback(async (fileId: string) => {
     if (!isUnlocked) return
     const masterKey = getMasterKey()
@@ -221,7 +258,16 @@ export function useSearchIndex(): UseSearchIndex {
     // stragglers a few times with backoff and only ever cache SUCCESSES, so a
     // transient failure is re-attempted rather than memoized as null.
     const nameCache = new Map<string, string>()
-    let pendingIds = liveNodes.filter((n) => !(n.id in prev.files)).map((n) => n.id)
+    // Resolve names for NEW nodes (with warm-up retries below) and ALSO for
+    // already-indexed nodes whose parent moved since last index (a move is
+    // detectable without decrypting). Renames are caught by comparing the freshly
+    // resolved name against the stored entry in phase 2, so we additionally
+    // attempt a single-pass resolve of every already-indexed node — best-effort,
+    // a transient failure just leaves the old name until the next reconcile.
+    const newOrMoved = liveNodes.filter(
+      (n) => !(n.id in prev.files) || prev.files[n.id].parent !== n.parent_id,
+    )
+    let pendingIds = newOrMoved.map((n) => n.id)
     const MAX_PASSES = 5
     for (let pass = 0; pass < MAX_PASSES && pendingIds.length > 0; pass++) {
       if (pass > 0) await new Promise((r) => setTimeout(r, 300 * pass))
@@ -266,21 +312,48 @@ export function useSearchIndex(): UseSearchIndex {
     const files: Record<string, SearchIndexEntry> = { ...prev.files }
     let changed = false
 
-    // Phase 2 — add every newly-resolved node with its computed path.
+    // Phase 2 — add new nodes AND refresh existing entries whose name/parent/path
+    // drifted from the live tree (cross-client rename/move self-heal, task 0843
+    // B2). Without this, a rename or move done on another client kept its OLD
+    // name/path in this client's index until a full rebuild.
     for (const node of liveNodes) {
-      if (node.id in files) continue // already indexed — leave as-is
-      const name = nameCache.get(node.id)
-      if (!name) continue // still undecryptable after retries — a later run retries
+      const existing = files[node.id]
+
+      if (!existing) {
+        // New node — needs a freshly resolved name (with the warm-up retries).
+        const name = nameCache.get(node.id)
+        if (!name) continue // still undecryptable after retries — a later run retries
+        files[node.id] = {
+          name,
+          path: await buildPath(node),
+          type: node.is_folder ? 'folder' : 'file',
+          size: node.size_bytes,
+          parent: node.parent_id,
+          starred: node.is_starred,
+          created: node.created_at,
+          modified: node.updated_at,
+          tags: [],
+        }
+        changed = true
+        continue
+      }
+
+      // Already indexed. A parent change is unambiguous (no decrypt needed) and
+      // means the path is stale; recompute. Try to resolve the live name to also
+      // catch renames — but only OVERWRITE the stored name on a successful
+      // decrypt, never clobber a good name with a transient failure.
+      const movedParent = existing.parent !== node.parent_id
+      const liveName = nameCache.get(node.id) ?? (await resolveAncestor(node.id))
+      const renamed = !!liveName && liveName !== existing.name
+      if (!movedParent && !renamed) continue
+
+      const newPath = movedParent ? await buildPath(node) : existing.path
       files[node.id] = {
-        name,
-        path: await buildPath(node),
-        type: node.is_folder ? 'folder' : 'file',
-        size: node.size_bytes,
+        ...existing,
+        name: renamed ? (liveName as string) : existing.name,
+        path: newPath,
         parent: node.parent_id,
-        starred: node.is_starred,
-        created: node.created_at,
         modified: node.updated_at,
-        tags: [],
       }
       changed = true
     }
@@ -310,5 +383,5 @@ export function useSearchIndex(): UseSearchIndex {
     }
   }, [isUnlocked, getMasterKey])
 
-  return { indexFile, unindexFile, unindexFiles, reconcileFromTree }
+  return { indexFile, reindexFields, unindexFile, unindexFiles, reconcileFromTree }
 }

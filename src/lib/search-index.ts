@@ -82,21 +82,44 @@ export async function fetchIndex(masterKey: Uint8Array): Promise<SearchIndex | n
   return decryptIndex(blob, masterKey)
 }
 
-export async function saveIndex(index: SearchIndex, masterKey: Uint8Array, etag?: string): Promise<string | null> {
-  const encrypted = await encryptIndex(index, masterKey)
-  const token = getToken()
+async function putIndex(encrypted: Uint8Array, token: string | null, etag?: string): Promise<Response> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/octet-stream',
   }
   if (token) headers['Authorization'] = `Bearer ${token}`
   if (etag) headers['If-Match'] = etag
 
-  const res = await fetch(`${getApiUrl()}/api/v1/index`, {
+  return fetch(`${getApiUrl()}/api/v1/index`, {
     method: 'PUT',
     headers,
     body: encrypted.buffer as ArrayBuffer,
     credentials: 'include',
   })
+}
+
+/** Read the current ETag of the index resource without decrypting the body. */
+async function fetchIndexEtag(token: string | null): Promise<string | null> {
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const res = await fetch(`${getApiUrl()}/api/v1/index`, { headers, credentials: 'include' })
+  if (!res.ok) return null
+  return res.headers.get('ETag')
+}
+
+export async function saveIndex(index: SearchIndex, masterKey: Uint8Array, etag?: string): Promise<string | null> {
+  const encrypted = await encryptIndex(index, masterKey)
+  const token = getToken()
+
+  let res = await putIndex(encrypted, token, etag)
+
+  // Etag-409 race (task 0843 F2): another tab/client wrote the index between our
+  // last read and this PUT. The extra rename/move re-index writes make this more
+  // likely. Re-fetch the current ETag and retry the PUT ONCE (last-writer-wins:
+  // our in-memory index is authoritative, callers reconcile/rebuild on next load).
+  if (res.status === 409 && etag) {
+    const freshEtag = await fetchIndexEtag(token)
+    if (freshEtag) res = await putIndex(encrypted, token, freshEtag)
+  }
 
   if (!res.ok) return null
   return res.headers.get('ETag')
