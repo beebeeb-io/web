@@ -91,9 +91,9 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   // Most-recently-changed files/folders, surfaced as "Recent" when the query is
   // empty. Derived from the (full-vault, task 0840) index.
   const recentEntries = useMemo(() => {
-    if (!index) return [] as { id: string; name: string; path: string; isFolder: boolean }[]
+    if (!index) return [] as { id: string; name: string; path: string; isFolder: boolean; parent: string | null; modified: string }[]
     return Object.entries(index.files)
-      .map(([id, e]) => ({ id, name: e.name, path: e.path, isFolder: e.type === 'folder', modified: e.modified }))
+      .map(([id, e]) => ({ id, name: e.name, path: e.path, isFolder: e.type === 'folder', parent: e.parent, modified: e.modified }))
       .sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime())
       .slice(0, 6)
   }, [index])
@@ -142,7 +142,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
           description: r.path || undefined,
           group: 'recent',
           action: () => {
-            navigate(r.isFolder ? `/?folder=${r.id}` : `/?folder=${''}&highlight=${r.id}`)
+            navigate(r.isFolder ? `/?folder=${r.id}` : `/?folder=${r.parent || ''}&highlight=${r.id}`)
             onClose()
           },
         })
