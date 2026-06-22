@@ -148,10 +148,18 @@ export function QuickAccess() {
     async function loadNames() {
       const results: PinnedFolder[] = []
       // Pinned ids that no longer resolve to a live folder for this user. We only
-      // unpin on POSITIVE evidence of removal — a trashed node in the sync tree,
-      // or a definitive 404 from getFile — never on a transient decrypt/WASM
-      // error (those are retried) and never on mere absence from the own-vault
-      // snapshot (a pinned SHARED folder legitimately isn't in our tree).
+      // unpin on POSITIVE, UNAMBIGUOUS evidence of removal:
+      //   - the sync tree marks the (own-vault) node trashed, OR
+      //   - a 404 from getFile for an id that IS still in the own-vault tree.
+      // Never on a transient decrypt/WASM error (those are retried), and never on
+      // mere absence from the own-vault snapshot. A folder shared TO the user
+      // legitimately isn't in our tree AND returns 404 from GET /files/{id}
+      // (the endpoint filters by user_id), so a 404 there is NOT proof of removal
+      // — treating it as such silently dropped every accessible shared pin on
+      // each reload (task 0846). The proper server fix is 0847; this client guard
+      // stays as defense in depth. Tradeoff: a permanently-deleted OWN folder that
+      // is also absent from the tree may persist as a stale pin — far less harmful
+      // than dropping a valid shared pin.
       const deadIds: string[] = []
       // Retry transient failures (WASM init race, key cache warm-up for
       // iOS-uploaded backup folders). Mirrors the retry pattern in file-list.tsx.
@@ -183,10 +191,15 @@ export function QuickAccess() {
               continue
             }
           } catch (err) {
-            // A 404 is definitive: the folder was permanently deleted (or
-            // unshared). Drop the pin rather than retrying a corpse.
             if (err instanceof ApiError && err.status === 404) {
-              gone = true
+              // A 404 is only definitive when the id is in our OWN vault tree —
+              // then it really was permanently deleted. If it's NOT in the tree,
+              // it's almost certainly a folder shared TO us (GET /files/{id}
+              // returns 404 for those, server-side); keep the pin with a
+              // placeholder name instead of dropping a valid shared pin (0846).
+              if (syncReady && getNode(id)) {
+                gone = true
+              }
               break
             }
             if (attempt < MAX_ATTEMPTS - 1) {
