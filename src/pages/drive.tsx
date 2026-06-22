@@ -572,6 +572,22 @@ export function Drive() {
     const params = new URLSearchParams(location.search)
     const folderId = params.get('folder')
 
+    // Palette/recent file results deep-link as ?folder=<parent>&highlight=<id>
+    // (command-palette.tsx). Selecting the file opens the detail panel; for a
+    // root file the parent is empty (?folder=&highlight=<id>), so apply this
+    // regardless of whether folderId is set. The folder breadcrumb rebuild below
+    // still runs as before.
+    const highlightId = params.get('highlight')
+    if (highlightId) {
+      setSelectedFileId(highlightId)
+      // Best-effort scroll the row into view once it renders.
+      requestAnimationFrame(() => {
+        document
+          .querySelector(`[data-file-id="${CSS.escape(highlightId)}"]`)
+          ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      })
+    }
+
     // Already in sync with this folder — covers optimistic in-app navigation
     // (handleFolderOpen / breadcrumb clicks set the ref before pushing the URL),
     // so we don't fight the optimistic breadcrumbs by rebuilding them.
