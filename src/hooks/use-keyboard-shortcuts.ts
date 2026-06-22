@@ -43,16 +43,17 @@ export function useKeyboardShortcuts(actions: ShortcutActions) {
         return
       }
 
-      // Skip remaining shortcuts while typing in inputs
-      if (isInput) return
-
+      // ⌘K / Ctrl+K always opens the command palette, even from inputs.
+      // Gate strictly on the modifier so plain "k" typing is unaffected.
       const mod = e[modKey]
-
       if (mod && e.key.toLowerCase() === 'k') {
         e.preventDefault()
         actions.onCommandPalette?.()
         return
       }
+
+      // Skip remaining shortcuts while typing in inputs
+      if (isInput) return
       if (mod && e.key.toLowerCase() === 'u') {
         e.preventDefault()
         actions.onUpload?.()
