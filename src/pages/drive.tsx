@@ -1533,12 +1533,18 @@ export function Drive() {
   // desktop/mobile engines write to (Backups/{device}/{category}/). Match by
   // decrypted name AND root position so a user's own folder called "Backups"
   // nested elsewhere is unaffected.
+  //
+  // Conservative pending state (task 0848): if the name has not yet been
+  // decrypted (externalDecryptedNames[file.id] === undefined), treat any ROOT
+  // folder as potentially-Backups and return true so the warning dialog shows.
+  // This yields a sub-second false-positive for non-Backups root folders during
+  // the ~500ms first-load crypto bootstrap, but eliminates the silent-trash-of-
+  // Backups path. Once names resolve, only the actual "Backups" root matches.
   function isBackupsRoot(file: DriveFile): boolean {
-    return (
-      file.is_folder &&
-      (file.parent_id ?? null) === null &&
-      displayName(file) === 'Backups'
-    )
+    if (!file.is_folder || (file.parent_id ?? null) !== null) return false
+    // Name not yet resolved — treat conservatively as potential Backups root.
+    if (externalDecryptedNames[file.id] === undefined) return true
+    return displayName(file) === 'Backups'
   }
 
   // Cheap descendant summary from the in-memory sync tree (no network): how many
