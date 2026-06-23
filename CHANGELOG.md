@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nothing yet.
 
 ### Fixed
-- Nothing yet.
+- Trash: "Empty trash" and multi-select permanent delete now send ONE `POST /files/permanent` with a single step-up confirmation, instead of looping a fresh token + `DELETE` per file. Multi-select move-to-trash (drive + recent) sends ONE `POST /files/trash`. Pairs with the server cookie-session step-up fix. (task 0832)
 
 ### Removed
 - Nothing yet.
