@@ -79,6 +79,7 @@ import { EmptyDrive } from '../components/empty-states/empty-drive'
 import { formatBytes } from '../lib/format'
 import { cacheFileList, getCachedFileList } from '../lib/offline-cache'
 import { hashFile, checkDuplicate, recordUpload } from '../lib/upload-dedup'
+import { isBackupsRoot as isBackupsRootPure } from '../lib/backups-root'
 
 // ─── Drive component ────────────────────────────────
 // Folders are always grouped before files; the chosen key only orders
@@ -1528,23 +1529,21 @@ export function Drive() {
     setFolderSuggestion(null)
   }
 
-  // ─── Backups-folder delete guard (task 0838) ────────
+  // ─── Backups-folder delete guard (task 0838 / 0848) ────────
   // The root folder literally named "Backups" is the device-backup root the
   // desktop/mobile engines write to (Backups/{device}/{category}/). Match by
   // decrypted name AND root position so a user's own folder called "Backups"
   // nested elsewhere is unaffected.
   //
-  // Conservative pending state (task 0848): if the name has not yet been
-  // decrypted (externalDecryptedNames[file.id] === undefined), treat any ROOT
-  // folder as potentially-Backups and return true so the warning dialog shows.
-  // This yields a sub-second false-positive for non-Backups root folders during
-  // the ~500ms first-load crypto bootstrap, but eliminates the silent-trash-of-
-  // Backups path. Once names resolve, only the actual "Backups" root matches.
+  // The pure logic lives in src/lib/backups-root.ts (extracted for unit tests,
+  // task 0848). This wrapper reads the pending-vs-resolved name from component
+  // state and forwards it explicitly so the pure function stays testable.
   function isBackupsRoot(file: DriveFile): boolean {
-    if (!file.is_folder || (file.parent_id ?? null) !== null) return false
-    // Name not yet resolved — treat conservatively as potential Backups root.
-    if (externalDecryptedNames[file.id] === undefined) return true
-    return displayName(file) === 'Backups'
+    // externalDecryptedNames[id] is undefined at runtime when the key is absent
+    // (name still pending), even though the Record type says string|null.
+    // Cast to include undefined so the pure function's type accepts it.
+    const name = externalDecryptedNames[file.id] as string | null | undefined
+    return isBackupsRootPure(file, name)
   }
 
   // Cheap descendant summary from the in-memory sync tree (no network): how many
