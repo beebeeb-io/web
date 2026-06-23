@@ -78,11 +78,15 @@ function ToastItem({
   }, [toast.id, onDismiss])
 
   const scheduleDismiss = useCallback(() => {
+    // Error toasts stay until the user dismisses them — they often carry an
+    // error reference code the user needs to read or copy, and a 5s auto-hide
+    // made them vanish before they could be read.
+    if (toast.danger) return
     if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current)
     dismissTimerRef.current = setTimeout(() => {
       if (!hoveredRef.current) startExit()
     }, AUTO_DISMISS_MS)
-  }, [startExit])
+  }, [startExit, toast.danger])
 
   useEffect(() => {
     // Trigger enter animation
