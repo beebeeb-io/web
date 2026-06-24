@@ -1,6 +1,12 @@
 import { clearTauriSession } from './tauri-bridge'
 import { collectPaged } from './paginate'
 import {
+  opaqueLoginStart as wasmOpaqueLoginStart,
+  opaqueLoginFinish as wasmOpaqueLoginFinish,
+  toBase64,
+  fromBase64,
+} from './crypto'
+import {
   ApiError,
   IncorrectPasswordError,
   SessionTooOldForConfirmationError,
@@ -465,23 +471,145 @@ export async function logout(): Promise<void> {
  * Exchange the user's password for a short-lived confirmation token.
  * Pass that token via the X-Confirm-Token header on destructive endpoints
  * (permanent delete, change password, delete account).
+ *
+ * OPAQUE step-up (task 0854a): the plaintext password NEVER leaves the browser
+ * for OPAQUE-enrolled accounts. We run the SAME OPAQUE login handshake login
+ * uses (`opaqueLoginStart` / `opaqueLoginFinish` in WASM) against the
+ * authenticated `/auth/confirm-opaque-{start,finish}` endpoints, which mint the
+ * byte-identical single-use X-Confirm-Token as the legacy `/auth/confirm`.
+ *
+ * Branching:
+ *   start → 409 { opaque_unavailable: true }  → legacy Argon2-only account:
+ *                                                fall back to plaintext /auth/confirm.
+ *   start → 200 { server_message, server_state, ksf_version }
+ *                                              → opaqueLoginFinish + finish POST.
+ *
+ * The return shape `{ confirmation_token, expires_at }` is unchanged, so every
+ * caller (confirm-password modal, trash, change-password, delete-account,
+ * permanent-delete) is untouched. The 401 "wrong password" vs
+ * SessionTooOldForConfirmationError distinction is preserved end to end.
  */
 export async function confirmAction(
   password: string,
+): Promise<{ confirmation_token: string; expires_at: string }> {
+  const token = getToken()
+  const authHeaders: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+  if (token) authHeaders['Authorization'] = `Bearer ${token}`
+
+  // 1. OPAQUE login start in WASM — same helper login uses. Yields the client
+  //    CredentialRequest message + the opaque client state we round-trip into
+  //    finish.
+  const loginStart = await wasmOpaqueLoginStart(password)
+
+  // 2. Authenticated POST to confirm-opaque-start. Direct fetch (not request())
+  //    so a 401/409 on this step-up path never clears the session and bounces
+  //    the user to /login. Mirror the legacy confirm auth: Bearer header AND the
+  //    bb_session cookie.
+  const startRes = await fetch(`${API_URL}/api/v1/auth/confirm-opaque-start`, {
+    method: 'POST',
+    headers: authHeaders,
+    body: JSON.stringify({ client_message: toBase64(loginStart.message) }),
+    credentials: 'include',
+  })
+
+  // 3. Legacy Argon2-only account (no opaque_password_file) → distinguishable
+  //    409 { opaque_unavailable: true }. Fall back to the plaintext path, which
+  //    still works for these accounts (incl. the session-freshness fallback).
+  if (startRes.status === 409) {
+    const body = (await startRes.json().catch(() => ({}))) as Record<string, unknown>
+    if (body.opaque_unavailable === true) {
+      return confirmActionPlaintext(password, authHeaders)
+    }
+    // Some other 409 — surface it rather than silently swallowing.
+    throw new ApiError(
+      (body.message ?? body.error ?? startRes.statusText) as string,
+      startRes.status,
+    )
+  }
+
+  if (!startRes.ok) {
+    const body = (await startRes
+      .json()
+      .catch(() => ({ error: 'Server returned an invalid response' }))) as Record<string, unknown>
+    throw new ApiError(
+      (body.message ?? body.error ?? startRes.statusText) as string,
+      startRes.status,
+    )
+  }
+
+  const startBody = (await startRes.json()) as {
+    server_message: string
+    server_state: string
+    ksf_version: number
+  }
+  const serverMsg = fromBase64(startBody.server_message)
+
+  // 4. OPAQUE login finish in WASM — exactly as login.tsx does, threading the
+  //    account's KSF version so the client stretches with the matching KSF.
+  //    A WRONG password fails HERE, client-side: finish recomputes the session
+  //    key from the password and verifies the server MAC, which mismatches for a
+  //    bad password (it never reaches the finish POST). Map that to the same
+  //    "Incorrect password" UX as the 401 / plaintext paths.
+  const loginFinish = await wasmOpaqueLoginFinish(
+    loginStart.state,
+    password,
+    serverMsg,
+    startBody.ksf_version,
+  ).catch(() => {
+    throw new IncorrectPasswordError()
+  })
+
+  // 5. Authenticated POST to confirm-opaque-finish with the finish client
+  //    message + the round-tripped server state. Same auth + cookie semantics.
+  const finishRes = await fetch(`${API_URL}/api/v1/auth/confirm-opaque-finish`, {
+    method: 'POST',
+    headers: authHeaders,
+    body: JSON.stringify({
+      client_message: toBase64(loginFinish.message),
+      server_state: startBody.server_state,
+    }),
+    credentials: 'include',
+  })
+
+  if (finishRes.status === 401) {
+    // OPAQUE finish 401 = wrong password (the finish is a password-guess oracle
+    // like /opaque/login-finish). Map to the same "Incorrect password" UX as the
+    // legacy path. (Session-too-old does not arise on the OPAQUE finish — the
+    // freshness fallback lives only on the plaintext /auth/confirm.)
+    throw new IncorrectPasswordError()
+  }
+  if (!finishRes.ok) {
+    const body = (await finishRes
+      .json()
+      .catch(() => ({ error: 'Server returned an invalid response' }))) as Record<string, unknown>
+    throw new ApiError(
+      (body.message ?? body.error ?? finishRes.statusText) as string,
+      finishRes.status,
+    )
+  }
+  return finishRes.json() as Promise<{ confirmation_token: string; expires_at: string }>
+}
+
+/**
+ * Legacy plaintext step-up fallback (`POST /api/v1/auth/confirm`). Kept intact
+ * for Argon2-only accounts that have no OPAQUE credential — those accounts
+ * return 409 { opaque_unavailable: true } from confirm-opaque-start. Mobile/CLI
+ * also still use this endpoint. The password leaves the browser here; that is
+ * the documented, account-specific exception OPAQUE cannot yet cover.
+ */
+async function confirmActionPlaintext(
+  password: string,
+  authHeaders: Record<string, string>,
 ): Promise<{ confirmation_token: string; expires_at: string }> {
   // Direct fetch instead of request() — a 401 from /auth/confirm means the
   // user mistyped their password during step-up, NOT that their session
   // expired. Routing it through request() would clear the token and bounce
   // them to /login on every wrong attempt.
-  const token = getToken()
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  }
-  if (token) headers['Authorization'] = `Bearer ${token}`
-
   const res = await fetch(`${API_URL}/api/v1/auth/confirm`, {
     method: 'POST',
-    headers,
+    headers: authHeaders,
     body: JSON.stringify({ password }),
     // task 0447 — send cookie + accept Set-Cookie back. The confirm endpoint
     // is authenticated and may set a refreshed bb_session cookie.
