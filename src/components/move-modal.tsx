@@ -302,12 +302,9 @@ export function MoveModal({
             New folder
           </button>
           <div className="ml-auto flex gap-2">
-            <BBButton
-              size="sm"
-              onClick={() => handleConfirm('copy')}
-            >
-              Copy here
-            </BBButton>
+            {/* "Copy here" removed (QA #1): there is no server-side copy — the
+                button performed a MOVE, silently losing the original. Re-add only
+                alongside a real copy/duplicate endpoint. */}
             <BBButton
               size="sm"
               variant="amber"
