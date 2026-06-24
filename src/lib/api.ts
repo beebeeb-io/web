@@ -1108,22 +1108,68 @@ export async function getStreamToken(): Promise<StreamTokenResponse> {
 
 // ─── Password / Account endpoints ───────────────
 
-export async function changePassword(
-  currentPassword: string,
-  newPassword: string,
-  confirmToken?: string,
+/**
+ * Change password — OPAQUE re-registration, leg 1 (task 0854b).
+ *
+ * The server rotates the OPAQUE credential as a FRESH registration bound to the
+ * caller's email (resolved from the session — we never send the email). This is
+ * the start leg: hand the server a base64 OPAQUE `RegistrationRequest` for the
+ * NEW password (from `client_registration_start(newPassword)` in WASM), get back
+ * the base64 `RegistrationResponse`.
+ *
+ * Authenticated + step-up gated: the session travels via `request()` (Bearer +
+ * bb_session cookie); the X-Confirm-Token is a SEPARATE single-use OPAQUE
+ * step-up token (the `ConfirmedAction` extractor consumes one per gated request,
+ * so the start and finish legs each need their OWN confirm token).
+ */
+export async function changePasswordOpaqueStart(
+  clientMessage: string,
+  confirmToken: string,
+): Promise<{ server_message: string }> {
+  return request<{ server_message: string }>('/api/v1/auth/change-password-start', {
+    method: 'POST',
+    headers: { 'X-Confirm-Token': confirmToken },
+    body: JSON.stringify({ client_message: clientMessage }),
+  })
+}
+
+/**
+ * Change password — OPAQUE re-registration, leg 2 (task 0854b).
+ *
+ * Sends the base64 OPAQUE `RegistrationUpload` (from
+ * `client_registration_finish(state, newPassword, server_message)`). The server
+ * rotates `opaque_password_file`, clears the legacy password_hash/salt (no
+ * downgrade), stamps `opaque_ksf_version=1`, INVALIDATES all prior sessions, and
+ * mints a fresh session for this device — returned as `session_token` (and set
+ * as the bb_session httpOnly cookie). We `setToken` it so this tab stays logged
+ * in.
+ *
+ * `recoveryCheck` / `x25519Pub` are OPTIONAL (server COALESCEs — omitting keeps
+ * the existing values). On a plain password change the master key is UNCHANGED,
+ * so we re-send the existing recovery_check + x25519 public key derived from the
+ * in-memory master key (a no-op write that keeps the row self-consistent).
+ *
+ * NOTE: `salt` in the response is now ALWAYS an empty string for an OPAQUE
+ * account — do NOT use it.
+ */
+export async function changePasswordOpaqueFinish(
+  clientMessage: string,
+  confirmToken: string,
+  recoveryCheck?: string,
+  x25519Pub?: string,
 ): Promise<{ message: string; salt: string; session_token: string }> {
+  const body: Record<string, string> = { client_message: clientMessage }
+  if (recoveryCheck !== undefined) body.recovery_check = recoveryCheck
+  if (x25519Pub !== undefined) body.x25519_public_key = x25519Pub
+
   const data = await request<{
     message: string
     salt: string
     session_token: string
-  }>('/api/v1/auth/change-password', {
+  }>('/api/v1/auth/change-password-finish', {
     method: 'POST',
-    headers: confirmToken ? { 'X-Confirm-Token': confirmToken } : undefined,
-    body: JSON.stringify({
-      current_password: currentPassword,
-      new_password: newPassword,
-    }),
+    headers: { 'X-Confirm-Token': confirmToken },
+    body: JSON.stringify(body),
   })
   setToken(data.session_token)
   return data

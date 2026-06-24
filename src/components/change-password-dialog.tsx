@@ -3,7 +3,23 @@ import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from '@beebeeb/shared'
 import { BBInput } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
-import { changePassword as apiChangePassword, confirmAction, IncorrectPasswordError } from '../lib/api'
+import {
+  changePasswordOpaqueStart,
+  changePasswordOpaqueFinish,
+  confirmAction,
+  IncorrectPasswordError,
+} from '../lib/api'
+import { useKeys } from '../lib/key-context'
+import {
+  opaqueRegistrationStart,
+  opaqueRegistrationFinish,
+  computeRecoveryCheck,
+  deriveX25519Public,
+  toBase64,
+  fromBase64,
+} from '../lib/crypto'
+import { checkPasswordPwned } from '../lib/hibp'
+import { clearVault } from '../lib/vault'
 
 interface ChangePasswordDialogProps {
   open: boolean
@@ -32,6 +48,7 @@ function evaluateStrength(pw: string): PasswordStrength {
 }
 
 export function ChangePasswordDialog({ open, onClose, onSuccess }: ChangePasswordDialogProps) {
+  const { getMasterKey, setMasterKey } = useKeys()
   const [currentPw, setCurrentPw] = useState('')
   const [newPw, setNewPw] = useState('')
   const [confirmPw, setConfirmPw] = useState('')
@@ -64,11 +81,87 @@ export function ChangePasswordDialog({ open, onClose, onSuccess }: ChangePasswor
     setError(null)
 
     try {
-      // Step-up re-auth: exchange current password for a confirmation token,
-      // then send it on the change-password call. setToken() inside
-      // apiChangePassword keeps us logged in on this device.
-      const { confirmation_token } = await confirmAction(currentPw)
-      const result = await apiChangePassword(currentPw, newPw, confirmation_token)
+      // (a) The vault must be unlocked — the master key does NOT change on a
+      //     password change, but we need it to (e) re-wrap the local vault under
+      //     the new password and to re-send the (unchanged) recovery_check +
+      //     x25519 public key. getMasterKey() throws if the vault is locked.
+      let masterKey: Uint8Array
+      try {
+        masterKey = getMasterKey()
+      } catch {
+        setError('Your vault is locked. Reload and unlock it before changing your password.')
+        return
+      }
+
+      // (b) Client-side breach check (HIBP k-anonymity). Only the first 5 chars
+      //     of the SHA-1 hash leave the device; the full password/hash never do.
+      //     Fail-open on a service outage (checkFailed) so we don't block a
+      //     legitimate change on a third-party being down.
+      const breach = await checkPasswordPwned(newPw)
+      if (breach.pwned) {
+        setError(
+          `This password has appeared in ${breach.count.toLocaleString()} known data breaches. ` +
+            'Choose a different one.',
+        )
+        return
+      }
+
+      // (c) Two SEPARATE OPAQUE step-up tokens — the ConfirmedAction extractor
+      //     consumes ONE confirm token per gated request, and BOTH the start and
+      //     finish legs are gated, so we mint one for each. Both round-trips run
+      //     while the CURRENT session is still valid (finish is what invalidates
+      //     prior sessions). A wrong current password fails here (client-side
+      //     OPAQUE finish or 401) → IncorrectPasswordError.
+      const { confirmation_token: startToken } = await confirmAction(currentPw)
+
+      // (d) OPAQUE re-registration for the NEW password.
+      const regStart = await opaqueRegistrationStart(newPw)
+      const { server_message } = await changePasswordOpaqueStart(
+        toBase64(regStart.message),
+        startToken,
+      )
+      const regUpload = await opaqueRegistrationFinish(
+        regStart.state,
+        newPw,
+        fromBase64(server_message),
+      )
+
+      // The master key is unchanged, so recovery_check + x25519 public key are
+      // re-sent UNCHANGED (server COALESCEs — a no-op write that keeps the row
+      // self-consistent).
+      const recoveryCheck = await computeRecoveryCheck(masterKey)
+      const x25519Pub = await deriveX25519Public(masterKey)
+
+      const { confirmation_token: finishToken } = await confirmAction(currentPw)
+      const result = await changePasswordOpaqueFinish(
+        toBase64(regUpload),
+        finishToken,
+        toBase64(recoveryCheck),
+        toBase64(x25519Pub),
+      )
+
+      // (e) CRITICAL — lockout prevention. Re-wrap the local IndexedDB vault
+      //     under the NEW password. Without this the wrapped key on this device
+      //     (and the relogin path) still expects the OLD password, locking the
+      //     user out. Do it RIGHT AFTER the server finish succeeds.
+      //     If this rare step fails (e.g. IndexedDB write error), the server
+      //     credential is already the NEW password while the local vault is
+      //     stale (OLD password) — which would fail to unlock on relogin. Clear
+      //     the stale vault so the next sign-in re-provisions under the new
+      //     password, and tell the user exactly what to do instead of leaving a
+      //     vague error + a silent broken state.
+      try {
+        await setMasterKey(masterKey, newPw)
+      } catch {
+        await clearVault().catch(() => {})
+        setError(
+          'Your password was changed, but this device could not re-encrypt its ' +
+            'local vault. Sign out and sign in again with your new password to re-secure it.',
+        )
+        return
+      }
+
+      // (f) Hand the fresh session token up so the caller persists it.
       onSuccess?.(result.session_token)
       onClose()
     } catch (e) {
@@ -80,7 +173,7 @@ export function ChangePasswordDialog({ open, onClose, onSuccess }: ChangePasswor
     } finally {
       setLoading(false)
     }
-  }, [canSubmit, currentPw, newPw, onClose, onSuccess])
+  }, [canSubmit, currentPw, newPw, getMasterKey, setMasterKey, onClose, onSuccess])
 
   if (!open) return null
 
