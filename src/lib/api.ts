@@ -28,7 +28,6 @@ import type {
   AbuseReportStatus,
   AcceptInviteResponse,
   AccountActivity,
-  AccountExport,
   AccountSession,
   ActivityResponse,
   AdminStats,
@@ -1251,12 +1250,6 @@ export async function emailChangeFinish(
       recovery_check: recoveryCheck,
       x25519_public_key: x25519PublicKey,
     }),
-  })
-}
-
-export async function exportAccountData(): Promise<AccountExport> {
-  return request<AccountExport>('/api/v1/auth/account/export', {
-    method: 'POST',
   })
 }
 
