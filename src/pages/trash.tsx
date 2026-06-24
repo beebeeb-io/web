@@ -5,7 +5,7 @@ import { BBCheckbox } from '@beebeeb/shared'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '@beebeeb/shared'
 import type { IconName } from '@beebeeb/shared'
-import { listFiles, restoreFile, bulkPermanentDelete, ApiError, type DriveFile } from '../lib/api'
+import { listAllFiles, restoreFile, bulkPermanentDelete, confirmAction, ApiError, type DriveFile } from '../lib/api'
 import { useToast } from '../components/toast'
 import { useKeys } from '../lib/key-context'
 import { TrashRowSkeleton } from '@beebeeb/shared'
@@ -127,7 +127,10 @@ export function Trash() {
   const fetchTrash = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await listFiles(undefined, true)
+      // Enumerate EVERY trashed row (follows next_cursor), not just the first
+      // page — so the displayed list, "empty trash", and "restore all" all cover
+      // the entire trash even when it holds more than one server page (~200).
+      const data = await listAllFiles(undefined, { trashed: true })
       setFiles(data.map((f) => ({ ...f, was_in: '/' })))
     } catch (err) {
       console.error('[Trash] Failed to load trashed files:', err)
@@ -273,23 +276,44 @@ export function Trash() {
   }
 
   /**
-   * Step 2 — erase the whole batch in ONE request with a SINGLE confirmation
-   * token. The server (`POST /files/permanent`) deletes every owned+trashed id
-   * in one transaction, reclaims their S3 blobs, and emits per-row delete ops —
-   * so emptying trash / deleting a multi-select is one round-trip, not N. (The
-   * `password` arg from the modal is unused now: one token covers the batch.)
+   * Step 2 — erase the batch. The server (`POST /files/permanent`) caps each
+   * request at 500 ids (MAX_BULK_TRASH_IDS), so >500 ids are split into chunks
+   * of 500. The first chunk uses the modal's confirmation token; each later
+   * chunk mints a fresh single-use token from the verified password — one
+   * password entry, invisible re-mint per 500. The ≤500 case is the fast path:
+   * exactly one request with the modal token, no extra mint.
+   *
+   * NOTE: the per-chunk `confirmAction(password)` re-mint is interim — it will
+   * be replaced by the OPAQUE step-up (task 0854) so we don't hold the password
+   * in memory across chunks.
    */
-  const performPermanentDelete = async (confirmToken: string) => {
+  const performPermanentDelete = async (confirmToken: string, password: string) => {
     const ids = pwPrompt.fileIds
     setPwPrompt({ open: false, fileIds: [] })
     if (ids.length === 0) return
 
-    setDeleteProgress({ current: ids.length, total: ids.length })
+    const CHUNK_SIZE = 500
+    const chunks: string[][] = []
+    for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+      const chunk = ids.slice(i, i + CHUNK_SIZE)
+      if (chunk.length > 0) chunks.push(chunk)
+    }
+
+    setDeleteProgress({ current: 0, total: ids.length })
     setLoading(true)
 
+    const erased = new Set<string>()
     try {
-      await bulkPermanentDelete(ids, confirmToken)
-      const erased = new Set(ids)
+      for (let c = 0; c < chunks.length; c++) {
+        const chunk = chunks[c]
+        // First chunk reuses the modal's token; subsequent chunks mint a fresh
+        // single-use token (the X-Confirm-Token is consumed per request).
+        const token = c === 0 ? confirmToken : (await confirmAction(password)).confirmation_token
+        await bulkPermanentDelete(chunk, token)
+        chunk.forEach((id) => erased.add(id))
+        setDeleteProgress({ current: erased.size, total: ids.length })
+      }
+
       setFiles((prev) => prev.filter((f) => !erased.has(f.id)))
       setSelected((prev) => {
         const next = new Set(prev)
@@ -298,7 +322,7 @@ export function Trash() {
       })
       showToast({
         icon: 'trash',
-        title: `Permanently deleted ${ids.length} file${ids.length !== 1 ? 's' : ''}`,
+        title: `Permanently deleted ${erased.size} file${erased.size !== 1 ? 's' : ''}`,
         description: 'Vault keys destroyed. Data is unrecoverable.',
       })
     } catch (err) {
@@ -308,9 +332,13 @@ export function Trash() {
           : err instanceof Error
             ? err.message
             : 'Unknown error'
+      // Some chunks may have succeeded before the failure — report partial progress.
       showToast({
         icon: 'x',
-        title: 'Permanent delete failed',
+        title:
+          erased.size > 0
+            ? `Deleted ${erased.size} of ${ids.length} — then failed`
+            : 'Permanent delete failed',
         description: message,
         danger: true,
       })
@@ -321,12 +349,26 @@ export function Trash() {
     }
   }
 
+  /**
+   * Restore every id, bounding concurrency to waves of WAVE_SIZE so restoring
+   * thousands of trashed rows doesn't fire thousands of parallel requests at
+   * once. Returns the ids that restored successfully; throws on the first wave
+   * that fails (the caller refetches to resync after partial progress).
+   */
+  const restoreInWaves = async (ids: string[]): Promise<void> => {
+    const WAVE_SIZE = 20
+    for (let i = 0; i < ids.length; i += WAVE_SIZE) {
+      const wave = ids.slice(i, i + WAVE_SIZE)
+      await Promise.all(wave.map((id) => restoreFile(id)))
+    }
+  }
+
   const handleRestoreSelected = async () => {
     const ids = Array.from(selected)
     if (ids.length === 0) return
     setLoading(true)
     try {
-      await Promise.all(ids.map((id) => restoreFile(id)))
+      await restoreInWaves(ids)
       setFiles((prev) => prev.filter((f) => !selected.has(f.id)))
       setSelected(new Set())
       showToast({ icon: 'check', title: `${ids.length} file${ids.length !== 1 ? 's' : ''} restored`, description: 'Moved back to your vault' })
@@ -339,12 +381,14 @@ export function Trash() {
   }
 
   const handleRestoreAll = async () => {
+    const ids = files.map((f) => f.id)
+    if (ids.length === 0) return
     setLoading(true)
     try {
-      await Promise.all(files.map((f) => restoreFile(f.id)))
+      await restoreInWaves(ids)
       setFiles([])
       setSelected(new Set())
-      showToast({ icon: 'check', title: 'All files restored', description: 'Moved back to your vault' })
+      showToast({ icon: 'check', title: `${ids.length} file${ids.length !== 1 ? 's' : ''} restored`, description: 'Moved back to your vault' })
     } catch (err) {
       showToast({ icon: 'x', title: 'Restore all failed', description: err instanceof Error ? err.message : 'Some files could not be restored', danger: true })
       fetchTrash()
