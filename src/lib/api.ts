@@ -182,6 +182,7 @@ export type {
   Invoice,
   JoinTransferResponse,
   LoginResult,
+  MyActivityEvent,
   MyActivityResponse,
   MyShare,
   MySignIn,
@@ -2717,11 +2718,13 @@ export async function getUserRegion(): Promise<UserRegionResponse> {
   return request<UserRegionResponse>('/api/v1/me/region')
 }
 
-/** PUT /api/v1/me/region — set preferred region */
-export async function setUserRegion(continent: string): Promise<{ preferred_region: string }> {
-  return request<{ preferred_region: string }>('/api/v1/me/region', {
+/** PUT /api/v1/me/region — set preferred region.
+ * Server (regions.rs `SetRegionBody`) deserializes ONLY `preferred_region`;
+ * sending `{continent}` silently dropped the value and cleared the preference. */
+export async function setUserRegion(continent: string): Promise<{ preferred_region: string | null }> {
+  return request<{ preferred_region: string | null }>('/api/v1/me/region', {
     method: 'PUT',
-    body: JSON.stringify({ continent }),
+    body: JSON.stringify({ preferred_region: continent }),
   })
 }
 

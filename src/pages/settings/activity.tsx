@@ -3,46 +3,54 @@ import { Link } from 'react-router-dom'
 import { SettingsShell, SettingsHeader } from '../../components/settings-shell'
 import { Icon } from '@beebeeb/shared'
 import type { IconName } from '@beebeeb/shared'
-import { getMyActivity, ApiError, type ActivityEvent } from '../../lib/api'
+import { getMyActivity, ApiError, type MyActivityEvent } from '../../lib/api'
 
 const PAGE_SIZE = 50
 
-/** Security event types shown on this page. File operations are excluded. */
+/** Hard cap on auto-paging passes when filtering for security events, so a
+ *  user whose entire audit log is file operations can't spin forever. */
+const MAX_AUTO_PAGES = 20
+
+/** Security event types shown on this page. File operations are excluded.
+ *  These MUST match the event strings the server actually writes to
+ *  `audit_log` (verified against repos/server/.../routes/{auth,opaque_auth,
+ *  password,account,account_activity}.rs via `log_chained`). */
 const SECURITY_EVENT_TYPES = new Set([
-  'session.created',
-  'session.revoke',
-  'device.new',
-  'password.changed',
-  'totp.enabled',
-  'totp.disabled',
-  'recovery.used',
-  'export.requested',
-  'export.downloaded',
-  'account.delete_requested',
-  'key.rotate',
-  'impersonation.start',
-  'impersonation.end',
-  // Legacy underscore-style event names from older server versions
-  'session_created',
-  'session_revoked',
-  'device_new',
-  'password_changed',
-  'totp_enabled',
-  'totp_disabled',
-  'recovery_used',
-  'export_requested',
-  'export_downloaded',
-  'account_delete_requested',
-  'key_rotated',
+  // Sign-in / account creation
+  'user.login',
+  'auth.login.success',
+  'user.signup',
+  'user.signup.passkey',
+  'auth.opaque_silent_upgrade',
+  // Sign-out
+  'user.logout',
+  'auth.logout',
+  'user.logout_all',
+  // Session revocation
+  'auth.session.revoke',
+  'auth.sessions.revoke_all',
+  // Password change
+  'user.password_change',
+  'auth.password.changed',
+  // Account security
+  'account.email_changed',
+  'account.data_export_requested',
+  'account.frozen',
+  'account.unfrozen',
+  // Admin impersonation
+  'admin.user.impersonation_start',
+  'admin.user.impersonation_session_created',
 ])
 
 /** Events that warrant visual warning (amber highlight). */
 const ALARMING_EVENTS = new Set([
-  'session.created', 'session_created',
-  'device.new', 'device_new',
-  'recovery.used', 'recovery_used',
-  'impersonation.start',
-  'account.delete_requested', 'account_delete_requested',
+  'user.login',
+  'auth.login.success',
+  'user.signup',
+  'user.signup.passkey',
+  'account.frozen',
+  'admin.user.impersonation_start',
+  'admin.user.impersonation_session_created',
 ])
 
 type ActionMeta = {
@@ -53,43 +61,36 @@ type ActionMeta = {
 
 function actionMeta(type: string): ActionMeta {
   switch (type) {
-    case 'session.created':
-    case 'session_created':
+    case 'user.login':
+    case 'auth.login.success':
+    case 'auth.opaque_silent_upgrade':
       return { label: 'Sign-in', icon: 'shield', badgeClass: 'bg-amber-bg text-amber-deep' }
-    case 'session.revoke':
-    case 'session_revoked':
+    case 'user.signup':
+    case 'user.signup.passkey':
+      return { label: 'Account created', icon: 'shield', badgeClass: 'bg-amber-bg text-amber-deep' }
+    case 'user.logout':
+    case 'auth.logout':
+      return { label: 'Sign-out', icon: 'lock', badgeClass: 'bg-paper-2 text-ink-2 border border-line' }
+    case 'user.logout_all':
+      return { label: 'Signed out everywhere', icon: 'lock', badgeClass: 'bg-paper-2 text-ink-2 border border-line' }
+    case 'auth.session.revoke':
       return { label: 'Session revoked', icon: 'lock', badgeClass: 'bg-paper-2 text-ink-2 border border-line' }
-    case 'device.new':
-    case 'device_new':
-      return { label: 'New device', icon: 'shield', badgeClass: 'bg-amber-bg text-amber-deep' }
-    case 'password.changed':
-    case 'password_changed':
+    case 'auth.sessions.revoke_all':
+      return { label: 'All sessions revoked', icon: 'lock', badgeClass: 'bg-paper-2 text-ink-2 border border-line' }
+    case 'user.password_change':
+    case 'auth.password.changed':
       return { label: 'Password changed', icon: 'key', badgeClass: 'bg-amber-bg text-amber-deep' }
-    case 'totp.enabled':
-    case 'totp_enabled':
-      return { label: '2FA enabled', icon: 'shield', badgeClass: 'bg-green/10 text-green' }
-    case 'totp.disabled':
-    case 'totp_disabled':
-      return { label: '2FA disabled', icon: 'shield', badgeClass: 'bg-red/10 text-red' }
-    case 'recovery.used':
-    case 'recovery_used':
-      return { label: 'Recovery used', icon: 'key', badgeClass: 'bg-red/10 text-red' }
-    case 'export.requested':
-    case 'export_requested':
+    case 'account.email_changed':
+      return { label: 'Email changed', icon: 'shield', badgeClass: 'bg-amber-bg text-amber-deep' }
+    case 'account.data_export_requested':
       return { label: 'Export requested', icon: 'download', badgeClass: 'bg-amber-bg text-amber-deep' }
-    case 'export.downloaded':
-    case 'export_downloaded':
-      return { label: 'Export downloaded', icon: 'download', badgeClass: 'bg-paper-2 text-ink-2 border border-line' }
-    case 'account.delete_requested':
-    case 'account_delete_requested':
-      return { label: 'Delete requested', icon: 'trash', badgeClass: 'bg-red/10 text-red' }
-    case 'key.rotate':
-    case 'key_rotated':
-      return { label: 'Key rotation', icon: 'key', badgeClass: 'bg-amber-bg text-amber-deep' }
-    case 'impersonation.start':
+    case 'account.frozen':
+      return { label: 'Account frozen', icon: 'lock', badgeClass: 'bg-red/10 text-red' }
+    case 'account.unfrozen':
+      return { label: 'Account unfrozen', icon: 'shield', badgeClass: 'bg-green/10 text-green' }
+    case 'admin.user.impersonation_start':
+    case 'admin.user.impersonation_session_created':
       return { label: 'Admin access', icon: 'eye', badgeClass: 'bg-red/10 text-red' }
-    case 'impersonation.end':
-      return { label: 'Admin left', icon: 'eye-off', badgeClass: 'bg-paper-2 text-ink-2 border border-line' }
     default:
       return { label: type.replace(/[._]/g, ' '), icon: 'clock', badgeClass: 'bg-paper-2 text-ink-2 border border-line' }
   }
@@ -113,25 +114,43 @@ export function SettingsActivity() {
   const [loadingMore, setLoadingMore] = useState(false)
   const [notDeployed, setNotDeployed] = useState(false)
   const [optedIn, setOptedIn] = useState(false)
-  const [events, setEvents] = useState<ActivityEvent[]>([])
+  const [events, setEvents] = useState<MyActivityEvent[]>([])
   const [hasMore, setHasMore] = useState(false)
   const [offset, setOffset] = useState(0)
 
-  const load = useCallback(async (newOffset: number, append: boolean) => {
-    if (newOffset === 0) setLoading(true)
+  // The server endpoint cannot filter by our (multi-type) security set —
+  // `?type=` is exact-match only — so we page the raw audit log and filter
+  // client-side. Because a page of file-only events filters to nothing, we
+  // auto-page until we collect at least one security event or the server is
+  // exhausted (a short page < PAGE_SIZE). `hasMore` reflects whether the RAW
+  // server log has more rows, not the filtered subset, so "Load more" can
+  // never persist past true exhaustion.
+  const load = useCallback(async (startOffset: number, append: boolean) => {
+    if (startOffset === 0) setLoading(true)
     else setLoadingMore(true)
 
+    let currentOffset = startOffset
+    const collected: MyActivityEvent[] = []
+    let serverHasMore = false
+
     try {
-      const res = await getMyActivity({
-        limit: PAGE_SIZE,
-        offset: newOffset,
-      })
-      setOptedIn(res.opted_in)
-      // Filter to security events only — file operations are excluded
-      const securityEvents = res.events.filter(e => SECURITY_EVENT_TYPES.has(e.type))
-      setEvents(prev => append ? [...prev, ...securityEvents] : securityEvents)
-      setHasMore(res.events.length === PAGE_SIZE)
-      setOffset(newOffset + res.events.length)
+      for (let pass = 0; pass < MAX_AUTO_PAGES; pass++) {
+        const res = await getMyActivity({ limit: PAGE_SIZE, offset: currentOffset })
+        setOptedIn(res.opted_in)
+
+        const securityEvents = res.events.filter(e => SECURITY_EVENT_TYPES.has(e.type))
+        collected.push(...securityEvents)
+        currentOffset += res.events.length
+
+        // A short page means the server has no more rows.
+        serverHasMore = res.events.length === PAGE_SIZE
+        // Stop once we have something to show, or the log is exhausted.
+        if (collected.length > 0 || !serverHasMore) break
+      }
+
+      setEvents(prev => (append ? [...prev, ...collected] : collected))
+      setHasMore(serverHasMore)
+      setOffset(currentOffset)
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
         setNotDeployed(true)
@@ -221,14 +240,14 @@ export function SettingsActivity() {
                             </span>
                           </td>
                           <td className="px-3 py-2 text-ink-2 max-w-[260px] truncate">
-                            {ev.subject && <span className="font-mono text-[12px]">{ev.subject}</span>}
-                            {ev.subject && ev.details && <span className="text-ink-4"> · </span>}
-                            {ev.details && <span className="text-ink-3">{ev.details}</span>}
-                            {!ev.subject && !ev.details && '—'}
+                            {ev.description && <span className="text-ink-3">{ev.description}</span>}
+                            {ev.description && ev.device && <span className="text-ink-4"> · </span>}
+                            {ev.device && <span className="font-mono text-[12px]">{ev.device}</span>}
+                            {!ev.description && !ev.device && '—'}
                           </td>
                           <td className="px-3 py-2 text-ink-3 max-w-[180px] truncate">
-                            {ev.where ? (
-                              <span className="text-amber-deep">{ev.where}</span>
+                            {ev.country_code ? (
+                              <span className="text-amber-deep font-mono">{ev.country_code}</span>
                             ) : '—'}
                           </td>
                         </tr>

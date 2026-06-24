@@ -14,7 +14,7 @@ import {
 const FALLBACK_REGIONS: AvailableRegion[] = [{
   continent: 'europe',
   display_name: 'Europe',
-  city: 'Falkenstein',
+  example_city: 'Falkenstein',
   provider: 'Hetzner',
   is_default: true,
 }]
@@ -41,8 +41,8 @@ interface RegionCardProps {
 }
 
 function RegionCard({ region, selected, disabled, onClick }: RegionCardProps) {
-  const country = countryFromCity(region.city)
-  const locationLabel = country ? `${region.city}, ${country}` : region.city
+  const country = countryFromCity(region.example_city)
+  const locationLabel = country ? `${region.example_city}, ${country}` : region.example_city
 
   return (
     <button
@@ -106,7 +106,7 @@ export function SettingsDataResidency() {
     getUserRegion()
       .then(data => {
         if (cancelled) return
-        const availableRegions = data.regions?.length ? data.regions : FALLBACK_REGIONS
+        const availableRegions = data.available_regions?.length ? data.available_regions : FALLBACK_REGIONS
         setRegions(availableRegions)
         setPreferred(data.preferred_region ?? null)
       })
@@ -189,7 +189,7 @@ export function SettingsDataResidency() {
             {/* Single-region note */}
             {onlyOneRegion && (
               <p className="text-[12px] text-ink-4 mt-3 leading-relaxed">
-                More regions coming soon. Your files are stored in {regions[0]?.city ?? 'Europe'}.
+                More regions coming soon. Your files are stored in {regions[0]?.example_city ?? 'Europe'}.
               </p>
             )}
           </div>

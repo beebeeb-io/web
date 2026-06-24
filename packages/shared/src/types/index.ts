@@ -1314,9 +1314,24 @@ export interface AdminActivityResponse {
   events: AdminActivityEvent[]
 }
 
+/** One event from `GET /api/v1/me/activity` (tracking.rs `get_my_activity`).
+ *  Shape: { id, type, description, category, outcome, device, country_code,
+ *  created_at } — NOT the subject/details/where shape of `ActivityEvent`
+ *  (which belongs to `/api/v1/activity`). */
+export interface MyActivityEvent {
+  id: string
+  type: string
+  description: string
+  category: string
+  outcome: string
+  device: string | null
+  country_code: string | null
+  created_at: string
+}
+
 export interface MyActivityResponse {
   opted_in: boolean
-  events: ActivityEvent[]
+  events: MyActivityEvent[]
 }
 
 /** Per-channel toggle for a single notification type. */
@@ -1401,7 +1416,9 @@ export interface DataExportStatus {
 export interface AvailableRegion {
   continent: string
   display_name: string
-  city: string
+  /** Representative city, e.g. "Falkenstein". Server (storage.rs `RegionInfo`)
+   *  emits this as `example_city` — NOT `city`. */
+  example_city: string
   provider: string
   is_default: boolean
 }
@@ -1412,5 +1429,7 @@ export interface RegionsResponse {
 
 export interface UserRegionResponse {
   preferred_region: string | null
-  regions: AvailableRegion[]
+  /** Server (regions.rs `get_preferred_region`) returns the array under
+   *  `available_regions`, not `regions`. */
+  available_regions: AvailableRegion[]
 }
