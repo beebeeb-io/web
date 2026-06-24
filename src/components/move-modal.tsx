@@ -155,6 +155,13 @@ export function MoveModal({
     ? folders.filter((f) => displayName(f).toLowerCase().includes(search.toLowerCase()))
     : folders
 
+  // Folders currently being moved cannot be a destination, nor can the user
+  // navigate INTO them — doing so would let you move a folder into itself or
+  // its own subtree (a cycle). Opening is the only way into a moved folder's
+  // descendants in this UI (search only filters the current directory), so
+  // blocking open is what prevents reaching the subtree.
+  const movedFolderIds = new Set(items.filter((i) => i.isFolder).map((i) => i.id))
+
   if (!open) return null
 
   return (
@@ -254,35 +261,55 @@ export function MoveModal({
             </div>
           ) : (
             filteredFolders.map((folder) => {
-              const isSelected = selectedId === folder.id
+              const isMoved = movedFolderIds.has(folder.id)
+              const isSelected = !isMoved && selectedId === folder.id
               return (
                 <button
                   key={folder.id}
                   type="button"
                   role="option"
                   aria-selected={isSelected}
-                  className="w-full text-left flex items-center gap-2.5 px-xl py-2.5 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-deep"
+                  aria-disabled={isMoved}
+                  disabled={isMoved}
+                  className={`w-full text-left flex items-center gap-2.5 px-xl py-2.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-deep ${
+                    isMoved ? 'cursor-not-allowed text-ink-4' : 'cursor-pointer'
+                  }`}
                   style={{
+                    opacity: isMoved ? 0.5 : 1,
                     background: isSelected ? 'var(--color-amber-bg)' : 'transparent',
                     borderLeft: isSelected
                       ? '3px solid var(--color-amber-deep)'
                       : '3px solid transparent',
                   }}
-                  onClick={() => setSelectedId(folder.id)}
-                  onDoubleClick={() => handleFolderOpen(folder)}
+                  onClick={() => {
+                    if (isMoved) return
+                    setSelectedId(folder.id)
+                  }}
+                  onDoubleClick={() => {
+                    if (isMoved) return
+                    handleFolderOpen(folder)
+                  }}
                 >
                   <Icon
                     name="folder"
                     size={14}
-                    className={isSelected ? 'text-amber-deep' : 'text-ink-3'}
+                    className={
+                      isMoved ? 'text-ink-4' : isSelected ? 'text-amber-deep' : 'text-ink-3'
+                    }
                   />
                   <span
                     className={`flex-1 text-[13px] ${isSelected ? 'font-semibold' : ''}`}
                   >
                     {displayName(folder)}
                   </span>
-                  {isSelected && (
-                    <Icon name="check" size={13} className="text-amber-deep" />
+                  {isMoved ? (
+                    <span className="text-[10.5px] text-ink-4 whitespace-nowrap">
+                      Can't move here
+                    </span>
+                  ) : (
+                    isSelected && (
+                      <Icon name="check" size={13} className="text-amber-deep" />
+                    )
                   )}
                 </button>
               )
