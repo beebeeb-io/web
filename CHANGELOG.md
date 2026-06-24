@@ -8,19 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Nothing yet.
-
-### Changed
-- Nothing yet.
+- `/receive` (Constellation transfer): real X25519 + HKDF transfer-key derivation and AES-256-GCM decrypt of the received blob + filename, SAS words derived from the shared secret (authenticates the key exchange). End-to-end once the mobile sender produces real transfer-key blobs. (task 0855b)
 
 ### Fixed
-- Trash: "Empty trash" and multi-select permanent delete now send ONE `POST /files/permanent` with a single step-up confirmation, instead of looping a fresh token + `DELETE` per file. Multi-select move-to-trash (drive + recent) sends ONE `POST /files/trash`. Pairs with the server cookie-session step-up fix. (task 0832)
+- Trash: "Empty trash" and "Restore all" now act on EVERY trashed item (full listing via `listAllFiles`), not just the first ~200; permanent delete batches into ≤500-id requests. (QA #4)
+- Settings → Data Residency: read `available_regions`/`example_city` (was a non-existent field → stuck on one region); selecting a region sends `preferred_region` (was silently clearing it). (QA #6/#7)
+- Settings → Security Activity: render real `description`/`device`/`country_code` + the server's actual event names with proper paging (was blank columns + a false "no events" empty state + infinite "Load more"). (QA #15/#16)
+- Drive/Recent/Starred: file-details Trash now trashes (was only closing the panel); Move + Star/Unstar wired on all three pages. (QA #10/#11/#12)
+- Move dialog: removed the mislabeled "Copy here" button that actually MOVED the file (no copy endpoint exists). (QA #1)
+- Trash: empty/multi-select permanent delete send ONE `POST /files/permanent`; multi-select move-to-trash sends ONE `POST /files/trash`. (task 0832)
 
 ### Removed
 - Nothing yet.
 
 ### Security
-- Nothing yet.
+- Step-up confirm (`confirmAction`) uses the OPAQUE handshake against `/auth/confirm-opaque-{start,finish}` — the plaintext password no longer leaves the browser for OPAQUE accounts (legacy Argon2 accounts fall back to `/auth/confirm`). (task 0854a)
 
 ## [1.0.0] - 2026-05-13
 
