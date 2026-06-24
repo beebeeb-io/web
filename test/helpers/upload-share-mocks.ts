@@ -74,6 +74,16 @@ export function installMocks(): void {
     fromBase64: () => new Uint8Array(),
     toBase64: (bytes?: Uint8Array) => (bytes ? Buffer.from(bytes).toString('base64') : ''),
     zeroize: () => {},
+    // bun's mock.module is process-global; this stub must export EVERY name any
+    // co-running test imports from ./crypto. sessionIdToBytes is a pure parser
+    // (transfer-crypto.test.ts imports it), so mirror its real behaviour here
+    // rather than a no-op stub — keeps the superset faithful.
+    sessionIdToBytes: (sessionId: string): Uint8Array => {
+      const hex = sessionId.replace(/-/g, '')
+      const out = new Uint8Array(16)
+      for (let i = 0; i < 16; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+      return out
+    },
   }))
 
   // net-retry passthrough — avoids loading net-retry.ts (its `import { ApiError }

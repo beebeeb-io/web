@@ -12,20 +12,25 @@
  *   3. Derive 4 SAS words from session_id + keys; user verbally verifies
  *      against the sender's screen.
  *   4. Poll /transfer/{id}/status until the sender approves + uploads.
- *   5. GET /transfer/{id}/blob → Blob → "Save to device" triggers a
- *      browser download.
+ *   5. GET /transfer/{id}/blob → decrypt under the agreed transfer_key →
+ *      "Save to device" triggers a browser download of the TRUE plaintext.
  *   6. POST /transfer/{id}/ack so the server drops the blob.
  *   7. Transfer Receipt is shown with SHA-256 fingerprint of the file.
  *
- * v1: bytes are saved as-is (encrypted with the transfer_key). When WASM
- * exposes HKDF + AES-GCM here we'll decrypt before saving.
+ * Crypto (real, task 0855b): the receiver generates an ephemeral X25519
+ * keypair and sends its public key. After join it performs ECDH against the
+ * sender's public key and derives BOTH the AES-256-GCM transfer key and the 4
+ * SAS words from the same shared secret + session id — so the SAS words
+ * authenticate the real key agreement (MITM protection). The downloaded blob
+ * (and the encrypted file_name_hint) are decrypted with the transfer key.
  *
  * Save to vault: if the receiver is logged in with an unlocked vault,
- * a "Save to my Beebeeb" button is shown. On click the blob is re-encrypted
- * with the user's master key and uploaded via the standard chunked upload path.
+ * a "Save to my Beebeeb" button is shown. On click the DECRYPTED plaintext is
+ * uploaded — single-encrypted under the user's master key via the standard
+ * chunked upload path (no transfer-layer double-encrypt).
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { BBLogo } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
@@ -36,7 +41,14 @@ import {
   getTransferStatus,
   joinTransferByCode,
 } from '../lib/api'
-import { deriveSasWords } from '../lib/sas-words'
+import {
+  decryptTransferBlob,
+  deriveTransferSession,
+  fromBase64,
+  toBase64,
+  transferDecrypt,
+  transferGenerateKeypair,
+} from '../lib/crypto'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
 import { encryptedUpload } from '../lib/encrypted-upload'
@@ -52,20 +64,6 @@ type Phase =
   | 'error'
 
 const POLL_INTERVAL_MS = 2_000
-
-/** 32 cryptographically random bytes via Web Crypto. */
-function randomBytes(n: number): Uint8Array {
-  const out = new Uint8Array(n)
-  crypto.getRandomValues(out)
-  return out
-}
-
-/** Base64-encode a byte array. */
-function bytesToBase64(bytes: Uint8Array): string {
-  let s = ''
-  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]!)
-  return btoa(s)
-}
 
 /**
  * Compute SHA-256 of a Blob. Returns lowercase hex string.
@@ -101,9 +99,9 @@ export function Receive() {
   const [codeInput, setCodeInput] = useState(initialCode)
 
   const [sessionId, setSessionId] = useState<string | null>(null)
-  const [senderPk, setSenderPk] = useState<string | null>(null)
-  const [receiverPk, setReceiverPk] = useState<string | null>(null)
   const [downloadToken, setDownloadToken] = useState<string | null>(null)
+  // The 4 SAS words, derived from the REAL ECDH shared secret + session id.
+  const [sasWords, setSasWords] = useState<string[] | null>(null)
 
   const [savedBlob, setSavedBlob] = useState<Blob | null>(null)
   const [savedFilename, setSavedFilename] = useState<string>('beebeeb-transfer')
@@ -115,6 +113,14 @@ export function Receive() {
   // Mirrors sessionId for the polling timer; lets the closure observe the
   // current session without rebinding every state change.
   const activeSessionRef = useRef<string | null>(null)
+  // Receiver's ephemeral X25519 private key, kept off React state (never
+  // rendered) and zeroized-on-reset implicitly by dropping the ref.
+  const receiverSkRef = useRef<Uint8Array | null>(null)
+  // The agreed AES-256-GCM transfer key; used to decrypt the blob + filename.
+  const transferKeyRef = useRef<Uint8Array | null>(null)
+  // The encrypted filename hint (base64), surfaced on the status response and
+  // decrypted with the transfer key once the blob arrives.
+  const fileNameHintRef = useRef<string | null>(null)
 
   const handleSubmitCode = useCallback(async () => {
     const code = codeInput.replace(/\D/g, '')
@@ -122,13 +128,26 @@ export function Receive() {
     setPhase('joining')
     setErrorText(null)
     try {
-      const pkBytes = randomBytes(32)
-      const pkB64 = bytesToBase64(pkBytes)
-      const res = await joinTransferByCode(code, pkB64)
+      // Generate a real ephemeral X25519 keypair; keep the private half in a
+      // ref (never rendered) and send the public half as receiver_pk.
+      const kp = await transferGenerateKeypair()
+      receiverSkRef.current = kp.private
+      const res = await joinTransferByCode(code, toBase64(kp.public))
+
+      // Real key agreement: ECDH against the sender's public key, then derive
+      // the AES transfer key AND the SAS words from the same shared secret +
+      // session id (salted with the 16 raw UUID bytes). The matching SAS words
+      // on both screens are the MITM check.
+      const { transferKey, sasWords: words } = await deriveTransferSession(
+        kp.private,
+        fromBase64(res.sender_pk),
+        res.session_id,
+      )
+      transferKeyRef.current = transferKey
+
       setSessionId(res.session_id)
-      setSenderPk(res.sender_pk)
-      setReceiverPk(pkB64)
       setDownloadToken(res.download_token)
+      setSasWords(words)
       activeSessionRef.current = res.session_id
       setPhase('verifying')
     } catch (err) {
@@ -158,6 +177,11 @@ export function Receive() {
           setPhase('cancelled')
           return
         }
+        // The server returns the (transfer_key-encrypted) filename hint on the
+        // status response; capture it so we can decrypt the real name on pickup.
+        if (status.file_name_hint) {
+          fileNameHintRef.current = status.file_name_hint
+        }
         if (status.status === 'ready' || (status.blob_size != null && status.blob_size > 0)) {
           setPhase('receiving')
         }
@@ -179,24 +203,42 @@ export function Receive() {
     let cancelled = false
     ;(async () => {
       try {
-        const blob = await downloadTransferBlob(sessionId, downloadToken)
+        const transferKey = transferKeyRef.current
+        if (!transferKey) throw new Error('Transfer key not derived')
+
+        const ciphertextBlob = await downloadTransferBlob(sessionId, downloadToken)
         if (cancelled) return
-        setSavedBlob(blob)
-        // v1: filename hint is encrypted server-side and we don't yet have
-        // the transfer_key to decrypt it. Use a generic name with a short
-        // random suffix so multiple downloads don't collide.
-        const suffix = Array.from(randomBytes(4))
-          .map((b) => b.toString(16).padStart(2, '0'))
-          .join('')
-        const filename = `beebeeb-transfer-${suffix}.enc`
+
+        // Decrypt the blob under the agreed transfer key → the TRUE plaintext.
+        const plaintext = await decryptTransferBlob(
+          transferKey,
+          new Uint8Array(await ciphertextBlob.arrayBuffer()),
+        )
+        if (cancelled) return
+        const plainBlob = new Blob([plaintext as BlobPart], { type: 'application/octet-stream' })
+        setSavedBlob(plainBlob)
+
+        // Decrypt the filename hint (transfer_key-encrypted, base64). Falls back
+        // to a generic name if the sender omitted it or decryption fails.
+        let filename = 'beebeeb-transfer'
+        const hint = fileNameHintRef.current
+        if (hint) {
+          try {
+            const nameBytes = await transferDecrypt(transferKey, fromBase64(hint))
+            const decoded = new TextDecoder().decode(nameBytes).trim()
+            if (decoded) filename = decoded
+          } catch {
+            // Corrupt/forged hint — keep the generic fallback name.
+          }
+        }
         setSavedFilename(filename)
 
-        // Compute SHA-256 of the received bytes for the transfer receipt.
-        const hash = await sha256Hex(blob)
+        // Compute SHA-256 of the DECRYPTED bytes for the transfer receipt.
+        const hash = await sha256Hex(plainBlob)
         const timestamp = new Date().toISOString()
         setProofData({
-          fileName: filename.replace(/\.enc$/, ''),
-          fileSizeBytes: blob.size,
+          fileName: filename,
+          fileSizeBytes: plainBlob.size,
           sha256Hash: hash,
           sessionId,
           timestamp,
@@ -235,10 +277,10 @@ export function Receive() {
     try {
       const fileId = crypto.randomUUID()
       const fileKey = await getFileKey(fileId)
-      // Use savedFilename but strip the .enc suffix added by the v1 transfer
-      // path — the user's vault should show a friendlier name.
-      const cleanName = savedFilename.replace(/\.enc$/, '')
-      const file = new File([savedBlob], cleanName, {
+      // savedBlob is already the DECRYPTED plaintext — upload it directly so it
+      // is single-encrypted under the user's master key (no transfer-layer
+      // double-encrypt). savedFilename is the real decrypted name.
+      const file = new File([savedBlob], savedFilename, {
         type: savedBlob.type || 'application/octet-stream',
       })
       await encryptedUpload(file, fileId, fileKey, getMasterKey(), undefined, undefined, undefined, undefined, undefined, getFileKey)
@@ -250,11 +292,6 @@ export function Receive() {
       setVaultSavePhase('error')
     }
   }, [savedBlob, savedFilename, user, isUnlocked, getFileKey, getMasterKey])
-
-  const sasWords = useMemo(() => {
-    if (!sessionId || !senderPk || !receiverPk) return null
-    return deriveSasWords(sessionId, senderPk, receiverPk)
-  }, [sessionId, senderPk, receiverPk])
 
   return (
     <div className="min-h-screen flex flex-col bg-[#0C0C0D] text-white">
@@ -309,9 +346,11 @@ export function Receive() {
               onReset={() => {
                 setPhase('idle')
                 setSessionId(null)
-                setSenderPk(null)
-                setReceiverPk(null)
+                setSasWords(null)
                 setDownloadToken(null)
+                receiverSkRef.current = null
+                transferKeyRef.current = null
+                fileNameHintRef.current = null
               }}
             />
           )}
@@ -641,8 +680,8 @@ function Received({
   onSaveToVault: () => void
   proof: ProofData | null
 }) {
-  // Strip the .enc suffix for display — it's a v1 transfer artifact.
-  const displayName = filename.replace(/\.enc$/, '')
+  // `filename` is the real decrypted name (or the generic fallback).
+  const displayName = filename
 
   return (
     <div className="flex flex-col items-center text-center">

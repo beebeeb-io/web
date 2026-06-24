@@ -505,6 +505,54 @@ const cryptoWorker = {
     const wasm = await ensureWasm()
     return wasm.open_request_upload(rPriv, ePub, fileId, wrappedKey) as Uint8Array
   },
+
+  // ─── Constellation peer transfer ──────────────────────────────────────────
+  // Ephemeral X25519 + HKDF-SHA256 + AES-256-GCM, all in core. The receiver
+  // generates a keypair, performs ECDH against the sender's public key, derives
+  // the AES transfer key (salted with the session id), and decrypts the blob.
+  // The salt-less-vs-salted distinction lives entirely in core; web just maps
+  // the named entry points 1:1.
+
+  /** Generate a fresh ephemeral X25519 keypair for a transfer. Returns
+   *  { public, private } as 32-byte Uint8Arrays. */
+  async transferGenerateKeypair(): Promise<{ public: Uint8Array; private: Uint8Array }> {
+    const wasm = await ensureWasm()
+    const kp = wasm.transfer_generate_keypair() as { public: Uint8Array; private: Uint8Array }
+    return { public: kp.public, private: kp.private }
+  },
+
+  /** Derive the 32-byte AES-256 transfer key from a shared secret + session id
+   *  (HKDF-SHA256 salted with the session id). */
+  async transferDeriveKey(sharedSecret: Uint8Array, sessionId: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.transfer_derive_key(sharedSecret, sessionId) as Uint8Array
+  },
+
+  /** Derive the 4-byte SAS material from a shared secret + session id (the
+   *  MITM check — both devices computing the same bytes authenticates the ECDH). */
+  async transferDeriveSasBytes(sharedSecret: Uint8Array, sessionId: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.transfer_derive_sas_bytes(sharedSecret, sessionId) as Uint8Array
+  },
+
+  /** Map 4 SAS bytes to 4 words from the canonical core wordlist. */
+  async transferSasToWords(sasBytes: Uint8Array): Promise<string[]> {
+    const wasm = await ensureWasm()
+    return wasm.transfer_sas_to_words(sasBytes) as string[]
+  },
+
+  /** Encrypt a transfer payload under the transfer key. Returns
+   *  `nonce(12) || ciphertext+tag`. */
+  async transferEncrypt(key: Uint8Array, plaintext: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.transfer_encrypt(key, plaintext) as Uint8Array
+  },
+
+  /** Decrypt a `nonce(12) || ciphertext` blob produced by transferEncrypt. */
+  async transferDecrypt(key: Uint8Array, blob: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.transfer_decrypt(key, blob) as Uint8Array
+  },
 }
 
 export type CryptoWorker = typeof cryptoWorker
