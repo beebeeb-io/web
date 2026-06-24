@@ -17,7 +17,6 @@ import { Icon } from '@beebeeb/shared'
 import { useToast } from '../../components/toast'
 import { useAuth } from '../../lib/auth-context'
 import { useFrozen } from '../../hooks/use-frozen'
-import { ConfirmPasswordModal } from '../../components/confirm-password-modal'
 import {
   dataExportDownloadFilename,
   markPendingExport,
@@ -75,7 +74,6 @@ function Card({
 function DataExportCard() {
   const { showToast } = useToast()
   const [exportStatus, setExportStatus] = useState<DataExportStatus | null>(null)
-  const [pwModalOpen, setPwModalOpen] = useState(false)
 
   const handleExport = useCallback(async () => {
     try {
@@ -93,11 +91,6 @@ function DataExportCard() {
       showToast({ icon: 'x', title: 'Export request failed', danger: true })
     }
   }, [showToast])
-
-  const handlePasswordConfirmed = useCallback((_token: string, _password: string) => {
-    setPwModalOpen(false)
-    void handleExport()
-  }, [handleExport])
 
   const downloadExport = useCallback(async (url: string) => {
     const token = getToken()
@@ -127,18 +120,9 @@ function DataExportCard() {
 
   return (
     <Card title="Your data">
-      <ConfirmPasswordModal
-        open={pwModalOpen}
-        title="Confirm data export"
-        description="Enter your password to confirm you want to download a copy of your data."
-        confirmLabel="Export my data"
-        onConfirmed={handlePasswordConfirmed}
-        onCancel={() => setPwModalOpen(false)}
-      />
-
       <div className="flex flex-col gap-3">
         <p className="text-[13px] text-ink-2 leading-relaxed">
-          Download a copy of everything Beebeeb holds about you: file metadata, share history, activity logs, and account settings. File contents are exported encrypted.
+          Download a copy of everything Beebeeb holds about you: file metadata, share history, billing history, activity logs, and account settings — as a ZIP archive. File contents are exported encrypted.
         </p>
 
         {/* Status states */}
@@ -185,7 +169,7 @@ function DataExportCard() {
             <BBButton
               variant="default"
               size="md"
-              onClick={() => setPwModalOpen(true)}
+              onClick={() => void handleExport()}
               className="gap-1.5"
             >
               <Icon name="download" size={13} />
@@ -210,7 +194,7 @@ function DataExportCard() {
             Your files are exported encrypted. Use your recovery phrase or any logged-in device to decrypt them.
           </p>
           <p className="text-[11px] text-ink-4">
-            You can request one export per day. GDPR Article 15.
+            You can request one export per day. The download link stays available for 7 days. GDPR Article 15.
           </p>
         </div>
       </div>
