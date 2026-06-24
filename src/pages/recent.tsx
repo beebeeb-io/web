@@ -220,6 +220,10 @@ export function Recent() {
         showDateGroups
         onNavigateFolder={() => navigate('/')}
         onFileAction={handleFileAction}
+        onToggleStar={(fileId) => {
+          const file = files.find((f) => f.id === fileId)
+          if (file) void handleFileAction('star', file)
+        }}
         onDecryptedNamesChange={setDecryptedNames}
         selectedFileId={selectedFileId}
         onSelectFile={(file) => file && setSelectedFileId(file.id)}
@@ -272,6 +276,12 @@ export function Recent() {
           }
         }}
         isStarred={selectedFile?.is_starred ?? false}
+        onMove={() => {
+          if (selectedFile) {
+            setMoveFileId(selectedFile.id)
+            setSelectedFileId(null)
+          }
+        }}
         onTrash={() => {
           if (selectedFile) {
             handleFileAction('trash', selectedFile)

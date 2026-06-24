@@ -223,6 +223,7 @@ export function Starred() {
         onRefresh={fetchFiles}
         onNavigateFolder={() => navigate('/')}
         onFileAction={handleFileAction}
+        onToggleStar={handleToggleStar}
         onDecryptedNamesChange={setDecryptedNames}
         selectedFileId={selectedFileId}
         onSelectFile={(file) => file && setSelectedFileId(file.id)}
@@ -271,6 +272,12 @@ export function Starred() {
         }}
         onStar={() => selectedFile && handleToggleStar(selectedFile.id)}
         isStarred={selectedFile?.is_starred ?? false}
+        onMove={() => {
+          if (selectedFile) {
+            setMoveFileId(selectedFile.id)
+            setSelectedFileId(null)
+          }
+        }}
         onTrash={() => {
           if (selectedFile) {
             handleFileAction('trash', selectedFile)
