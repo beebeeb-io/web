@@ -1039,6 +1039,189 @@ export function storage_format_si(bytes) {
 }
 
 /**
+ * Decrypt a `nonce(12) || ciphertext` blob produced by `transfer_encrypt`.
+ *
+ * Delegates to `transfer::decrypt_transfer`.
+ * @param {Uint8Array} key
+ * @param {Uint8Array} blob
+ * @returns {Uint8Array}
+ */
+export function transfer_decrypt(key, blob) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(blob, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.transfer_decrypt(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v3 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v3;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Derive the 32-byte AES-256 transfer key from a shared secret + session id.
+ *
+ * `HKDF-SHA256(ikm = shared_secret, salt = session_id, info = "beebeeb-transfer-v1")`.
+ * SALTED with `session_id` — NOT the salt-less `derive_sas_bytes` derivation.
+ * @param {Uint8Array} shared_secret
+ * @param {Uint8Array} session_id
+ * @returns {Uint8Array}
+ */
+export function transfer_derive_key(shared_secret, session_id) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(shared_secret, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(session_id, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.transfer_derive_key(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v3 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v3;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Derive the 4-byte SAS material from a shared secret + session id.
+ *
+ * `HKDF-SHA256(ikm = shared_secret, salt = session_id, info = "beebeeb-sas-v1")`.
+ * SALTED with `session_id`. Both devices computing the same 4 bytes (and thus
+ * the same 4 SAS words) is the MITM check. This is intentionally distinct from
+ * the salt-less `derive_sas_bytes` exported elsewhere.
+ * @param {Uint8Array} shared_secret
+ * @param {Uint8Array} session_id
+ * @returns {Uint8Array}
+ */
+export function transfer_derive_sas_bytes(shared_secret, session_id) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(shared_secret, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(session_id, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.transfer_derive_sas_bytes(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v3 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v3;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Encrypt a transfer payload under the transfer key.
+ *
+ * Returns `nonce(12) || AES-256-GCM ciphertext+tag` — the same wire format as
+ * `encrypt_blob`. Delegates to `transfer::encrypt_transfer`.
+ * @param {Uint8Array} key
+ * @param {Uint8Array} plaintext
+ * @returns {Uint8Array}
+ */
+export function transfer_encrypt(key, plaintext) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(plaintext, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.transfer_encrypt(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v3 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v3;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Generate a fresh ephemeral X25519 keypair for a transfer.
+ *
+ * Returns `{ public: Uint8Array(32), private: Uint8Array(32) }`. `core`'s
+ * `transfer::generate_keypair` returns an `EphemeralSecret` that cannot cross
+ * the FFI boundary, so — matching the `createRequestKeypair` web precedent —
+ * the private scalar is 32 bytes of OS randomness and the public point is the
+ * X25519 base-point multiplication (`opaque::derive_x25519_public`). The two
+ * produce the same shared secret as the core's `EphemeralSecret` path because
+ * X25519 clamps the scalar identically (`StaticSecret::from`).
+ * @returns {any}
+ */
+export function transfer_generate_keypair() {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.transfer_generate_keypair(retptr);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Map 4 SAS bytes to 4 words from the canonical 256-word transfer wordlist.
+ *
+ * Returns a JS array of 4 strings. Keeps the wordlist as one source of truth
+ * (core) so web and Swift render identical words for the same SAS bytes.
+ * @param {Uint8Array} sas_bytes
+ * @returns {any}
+ */
+export function transfer_sas_to_words(sas_bytes) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(sas_bytes, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.transfer_sas_to_words(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * Unwrap a request's X25519 private key. Returns 32-byte `Uint8Array`.
  * @param {Uint8Array} master_key
  * @param {Uint8Array} request_id
@@ -1219,6 +1402,10 @@ function __wbg_get_imports() {
             const ret = new Uint8Array(getObject(arg0));
             return addHeapObject(ret);
         },
+        __wbg_new_682678e2f47e32bc: function() {
+            const ret = new Array();
+            return addHeapObject(ret);
+        },
         __wbg_new_aa8d0fa9762c29bd: function() {
             const ret = new Object();
             return addHeapObject(ret);
@@ -1245,6 +1432,10 @@ function __wbg_get_imports() {
         },
         __wbg_prototypesetcall_a6b02eb00b0f4ce2: function(arg0, arg1, arg2) {
             Uint8Array.prototype.set.call(getArrayU8FromWasm0(arg0, arg1), getObject(arg2));
+        },
+        __wbg_push_471a5b068a5295f6: function(arg0, arg1) {
+            const ret = getObject(arg0).push(getObject(arg1));
+            return ret;
         },
         __wbg_randomFillSync_6c25eac9869eb53c: function() { return handleError(function (arg0, arg1) {
             getObject(arg0).randomFillSync(takeObject(arg1));

@@ -36,6 +36,12 @@ export const plan_monthly_cost_cents: (a: number, b: number, c: bigint, d: bigin
 export const recover_from_phrase: (a: number, b: number, c: number) => void;
 export const seal_to_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const storage_format_si: (a: number, b: bigint) => void;
+export const transfer_decrypt: (a: number, b: number, c: number, d: number, e: number) => void;
+export const transfer_derive_key: (a: number, b: number, c: number, d: number, e: number) => void;
+export const transfer_derive_sas_bytes: (a: number, b: number, c: number, d: number, e: number) => void;
+export const transfer_encrypt: (a: number, b: number, c: number, d: number, e: number) => void;
+export const transfer_generate_keypair: (a: number) => void;
+export const transfer_sas_to_words: (a: number, b: number, c: number) => void;
 export const unwrap_request_private: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
 export const wasmchunkencryptor_chunkCount: (a: number) => number;
 export const wasmchunkencryptor_chunkSize: (a: number) => number;

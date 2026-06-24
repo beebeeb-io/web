@@ -275,6 +275,60 @@ export function seal_to_request(r_pub: Uint8Array, file_id: Uint8Array, content_
 export function storage_format_si(bytes: bigint): string;
 
 /**
+ * Decrypt a `nonce(12) || ciphertext` blob produced by `transfer_encrypt`.
+ *
+ * Delegates to `transfer::decrypt_transfer`.
+ */
+export function transfer_decrypt(key: Uint8Array, blob: Uint8Array): Uint8Array;
+
+/**
+ * Derive the 32-byte AES-256 transfer key from a shared secret + session id.
+ *
+ * `HKDF-SHA256(ikm = shared_secret, salt = session_id, info = "beebeeb-transfer-v1")`.
+ * SALTED with `session_id` — NOT the salt-less `derive_sas_bytes` derivation.
+ */
+export function transfer_derive_key(shared_secret: Uint8Array, session_id: Uint8Array): Uint8Array;
+
+/**
+ * Derive the 4-byte SAS material from a shared secret + session id.
+ *
+ * `HKDF-SHA256(ikm = shared_secret, salt = session_id, info = "beebeeb-sas-v1")`.
+ * SALTED with `session_id`. Both devices computing the same 4 bytes (and thus
+ * the same 4 SAS words) is the MITM check. This is intentionally distinct from
+ * the salt-less `derive_sas_bytes` exported elsewhere.
+ */
+export function transfer_derive_sas_bytes(shared_secret: Uint8Array, session_id: Uint8Array): Uint8Array;
+
+/**
+ * Encrypt a transfer payload under the transfer key.
+ *
+ * Returns `nonce(12) || AES-256-GCM ciphertext+tag` — the same wire format as
+ * `encrypt_blob`. Delegates to `transfer::encrypt_transfer`.
+ */
+export function transfer_encrypt(key: Uint8Array, plaintext: Uint8Array): Uint8Array;
+
+/**
+ * Generate a fresh ephemeral X25519 keypair for a transfer.
+ *
+ * Returns `{ public: Uint8Array(32), private: Uint8Array(32) }`. `core`'s
+ * `transfer::generate_keypair` returns an `EphemeralSecret` that cannot cross
+ * the FFI boundary, so — matching the `createRequestKeypair` web precedent —
+ * the private scalar is 32 bytes of OS randomness and the public point is the
+ * X25519 base-point multiplication (`opaque::derive_x25519_public`). The two
+ * produce the same shared secret as the core's `EphemeralSecret` path because
+ * X25519 clamps the scalar identically (`StaticSecret::from`).
+ */
+export function transfer_generate_keypair(): any;
+
+/**
+ * Map 4 SAS bytes to 4 words from the canonical 256-word transfer wordlist.
+ *
+ * Returns a JS array of 4 strings. Keeps the wordlist as one source of truth
+ * (core) so web and Swift render identical words for the same SAS bytes.
+ */
+export function transfer_sas_to_words(sas_bytes: Uint8Array): any;
+
+/**
  * Unwrap a request's X25519 private key. Returns 32-byte `Uint8Array`.
  */
 export function unwrap_request_private(master_key: Uint8Array, request_id: Uint8Array, wrapped: Uint8Array, nonce: Uint8Array): Uint8Array;
@@ -329,6 +383,12 @@ export interface InitOutput {
     readonly recover_from_phrase: (a: number, b: number, c: number) => void;
     readonly seal_to_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly storage_format_si: (a: number, b: bigint) => void;
+    readonly transfer_decrypt: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly transfer_derive_key: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly transfer_derive_sas_bytes: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly transfer_encrypt: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly transfer_generate_keypair: (a: number) => void;
+    readonly transfer_sas_to_words: (a: number, b: number, c: number) => void;
     readonly unwrap_request_private: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly wasmchunkencryptor_chunkCount: (a: number) => number;
     readonly wasmchunkencryptor_chunkSize: (a: number) => number;
