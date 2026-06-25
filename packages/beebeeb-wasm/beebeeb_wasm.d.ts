@@ -74,6 +74,60 @@ export class WasmChunkEncryptor {
 }
 
 /**
+ * A stateful, client-side search index over a vault's file names.
+ *
+ * Build it from a file list, mutate it incrementally (`upsert`/`remove` return
+ * the dirty bucket set as a `Uint32Array`), query it (returns a `string[]` of
+ * file_ids), and (de)serialize it to encrypted shards for sync. The master key
+ * crosses as 32 raw bytes; crypto runs in core.
+ */
+export class WasmSearchIndex {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Build from `files` — a JS array of `{ fileId, name }` objects.
+     */
+    static build(files: any, num_shards: number): WasmSearchIndex;
+    /**
+     * Encrypt only the given buckets (incremental sync) — pass the dirty set.
+     */
+    encryptBuckets(master_key: Uint8Array, buckets: Uint32Array): any;
+    /**
+     * Encrypt every non-empty shard page → `[{bucket, page, blob: Uint8Array}]`.
+     */
+    encryptShards(master_key: Uint8Array): any;
+    /**
+     * Reconstruct from encrypted shards (`[{bucket, page, blob: Uint8Array}]`),
+     * decrypting each with the 32-byte master key.
+     */
+    static fromEncryptedShards(master_key: Uint8Array, shards: any, num_shards: number): WasmSearchIndex;
+    /**
+     * Empty index with the given shard count (clamped to ≥ 1).
+     */
+    constructor(num_shards: number);
+    /**
+     * Search; returns the matching file_ids as a `string[]`.
+     */
+    query(term: string): string[];
+    /**
+     * Remove a file. Returns the dirty bucket set (`Uint32Array`).
+     */
+    remove(file_id: string): Uint32Array;
+    /**
+     * Insert or update a file. Returns the dirty bucket set (`Uint32Array`).
+     */
+    upsert(file_id: string, name: string): Uint32Array;
+    /**
+     * Number of indexed files.
+     */
+    readonly fileCount: number;
+    /**
+     * Shard count this index uses.
+     */
+    readonly numShards: number;
+}
+
+/**
  * Compute recovery check from master key. Returns 32-byte `Uint8Array`.
  */
 export function compute_recovery_check(master_key: Uint8Array): Uint8Array;
@@ -100,6 +154,18 @@ export function decrypt_chunks(key: Uint8Array, chunks: any): Uint8Array;
  * Decrypt a metadata blob back to a UTF-8 string.
  */
 export function decrypt_metadata(key: Uint8Array, nonce: Uint8Array, ciphertext: Uint8Array): string;
+
+/**
+ * Batch-decrypt file names in ONE WASM call (task 0806 — folder-load perf).
+ *
+ * `items` is a JS array of `{ fileId: string, nameEncrypted: string }`.
+ * `master_key` is the 32 raw bytes. Returns a JS array (same order + length as
+ * `items`) of `{ name: string|null, mimeType: string|null, error: string|null }`
+ * — `name` set on success, `error` set on failure (bad blob / unparseable
+ * fileId / wrong key). One bad item never fails the batch. Mirrors core
+ * `decrypt_names` (string-UUID then legacy binary-UUID key attempt).
+ */
+export function decrypt_names(master_key: Uint8Array, items: any): any;
 
 /**
  * Derive a per-file encryption key from a master key and file ID via
@@ -270,6 +336,15 @@ export function recover_from_phrase(phrase: string): Uint8Array;
 export function seal_to_request(r_pub: Uint8Array, file_id: Uint8Array, content_key: Uint8Array): any;
 
 /**
+ * Compute the shard sync plan to converge `local` (the client's shard set) with
+ * `remote` (the server manifest from `GET /api/v1/search-index/shards`), LWW.
+ * `local`/`remote` are arrays of `{ bucket, page, version }`; returns
+ * `{ toPut, toGet, toDelete }` arrays of `{ bucket, page }`. See the core
+ * `search_sync::diff_manifest` doc for the `localIsAuthoritative` semantics.
+ */
+export function searchIndexSyncPlan(local: any, remote: any, local_is_authoritative: boolean): any;
+
+/**
  * Format a byte count as a human-readable SI string (e.g. "5.0 TB").
  */
 export function storage_format_si(bytes: bigint): string;
@@ -349,11 +424,13 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_wasmchunkencryptor_free: (a: number, b: number) => void;
+    readonly __wbg_wasmsearchindex_free: (a: number, b: number) => void;
     readonly compute_recovery_check: (a: number, b: number, c: number) => void;
     readonly decompress_gzip: (a: number, b: number, c: number) => void;
     readonly decrypt_chunk: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly decrypt_chunks: (a: number, b: number, c: number, d: number) => void;
     readonly decrypt_metadata: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly decrypt_names: (a: number, b: number, c: number, d: number) => void;
     readonly derive_file_key: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly derive_master_key: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly derive_request_wrap_key: (a: number, b: number, c: number, d: number, e: number) => void;
@@ -382,6 +459,7 @@ export interface InitOutput {
     readonly plan_monthly_cost_cents: (a: number, b: number, c: bigint, d: bigint) => bigint;
     readonly recover_from_phrase: (a: number, b: number, c: number) => void;
     readonly seal_to_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly searchIndexSyncPlan: (a: number, b: number, c: number, d: number) => void;
     readonly storage_format_si: (a: number, b: bigint) => void;
     readonly transfer_decrypt: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly transfer_derive_key: (a: number, b: number, c: number, d: number, e: number) => void;
@@ -398,6 +476,16 @@ export interface InitOutput {
     readonly wasmchunkencryptor_new: (a: number, b: number, c: number, d: number, e: number, f: bigint, g: number, h: number) => void;
     readonly wasmchunkencryptor_pushChunk: (a: number, b: number, c: number, d: number) => void;
     readonly wasmchunkencryptor_withChunkSize: (a: number, b: number, c: number, d: number, e: number, f: bigint, g: bigint) => void;
+    readonly wasmsearchindex_build: (a: number, b: number, c: number) => void;
+    readonly wasmsearchindex_encryptBuckets: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly wasmsearchindex_encryptShards: (a: number, b: number, c: number, d: number) => void;
+    readonly wasmsearchindex_fileCount: (a: number) => number;
+    readonly wasmsearchindex_fromEncryptedShards: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly wasmsearchindex_new: (a: number) => number;
+    readonly wasmsearchindex_numShards: (a: number) => number;
+    readonly wasmsearchindex_query: (a: number, b: number, c: number, d: number) => void;
+    readonly wasmsearchindex_remove: (a: number, b: number, c: number, d: number) => void;
+    readonly wasmsearchindex_upsert: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly wrap_request_private: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly x25519_shared_secret: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
