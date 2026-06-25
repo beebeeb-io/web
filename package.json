@@ -26,7 +26,10 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build && node gen-wasm-sri.mjs",
     "preview": "vite preview",
-    "test": "bun test"
+    "test": "bun test",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install chromium",
+    "test:e2e:isolated": "./e2e/scripts/web-e2e.sh"
   },
   "author": "Initlabs B.V.",
   "license": "AGPL-3.0-or-later",

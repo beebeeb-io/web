@@ -28,6 +28,16 @@ export const STORAGE_STATE = path.join(__dirname, 'playwright/.auth/user.json')
  *  elsewhere — mirrors how E2E_API_URL parameterizes the backend origin. */
 export const WEB_URL = process.env.E2E_WEB_URL ?? 'http://localhost:5173'
 
+/** API origin the served app must talk to. Defaults to the local dev API
+ *  (:3001). The webServer block below pins this into Vite explicitly so the
+ *  app NEVER falls back to its prod default (`https://api.beebeeb.io`, see
+ *  src/lib/api.ts) when VITE_API_URL is unset. */
+export const API_URL = process.env.E2E_API_URL ?? 'http://localhost:3001'
+
+/** Port Playwright's managed Vite binds — derived from WEB_URL so the
+ *  E2E_WEB_URL override stays the single source of truth. */
+const WEB_PORT = new URL(WEB_URL).port || '5173'
+
 export default defineConfig({
   testDir: './e2e',
   timeout: 30_000,
@@ -41,6 +51,26 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
   },
+
+  // ── Deterministic web origin ──────────────────────────────────────────────
+  // Boots Vite on the baseURL's port (pinned at the LOCAL API so the served app
+  // can never fall back to its prod default) and waits for it before running.
+  // Powers the simple `bun run test:e2e` path. `reuseExistingServer: true` makes
+  // it cooperate with an already-running origin (a developer's `bun dev`), and
+  // the isolated full-stack harness (`e2e/scripts/web-e2e.sh`) sets
+  // E2E_NO_WEBSERVER=1 to skip this block entirely — it manages its own Vite+API
+  // lifecycle on a fresh per-spec backend. The API is NOT started here; point it
+  // via E2E_API_URL (default :3001), which web-e2e.sh / the CI job provision.
+  webServer: process.env.E2E_NO_WEBSERVER
+    ? undefined
+    : {
+        command: `VITE_API_URL=${API_URL} bunx vite --port ${WEB_PORT} --strictPort`,
+        url: WEB_URL,
+        reuseExistingServer: true,
+        timeout: 120_000,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      },
 
   projects: [
     // ── Step 1: authenticate once and save storage state ──────────────────────

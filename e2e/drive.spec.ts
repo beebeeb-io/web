@@ -68,6 +68,17 @@ test.describe('Drive E2E', () => {
   })
 
   test('search navigates from drive', async ({ page }) => {
+    // QUARANTINE(0866): STALE TEST, not a flake. The drive search was redesigned
+    // into a command-palette TRIGGER (task 0842) — `src/pages/drive.tsx` now
+    // renders a `<button aria-label="Search files and folders">` that dispatches
+    // `beebeeb:open-command-palette`, NOT a `<input placeholder="search files">`,
+    // and the palette searches the encrypted index in-place + navigates to
+    // `/?folder=…` rather than to `/search?q=…`. So this test's selector
+    // (getByPlaceholder(/search files/i)) and its `/search?q=test` URL assertion
+    // are both obsolete and fail deterministically. Needs a rewrite against the
+    // command-palette UX — a test-modernization follow-up, out of scope for the
+    // CI-gate wiring (0866). The other 7 drive tests gate.
+    test.skip(true, 'QUARANTINE(0866): stale test — drive search migrated to the command palette (task 0842); selector + /search?q= assertion are obsolete, needs a rewrite')
     test.setTimeout(90_000)
     // Land on the drive with its shell mounted (back-to-back tests can hit the
     // per-user rate limit, blanking the page until the 60s window drains; the

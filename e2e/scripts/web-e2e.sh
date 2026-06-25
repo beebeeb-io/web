@@ -34,7 +34,13 @@ REPEAT="${E2E_REPEAT:-1}"
 WEB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORKSPACE="$(cd "$WEB_DIR/../.." && pwd)"
 SERVER_DIR="$WORKSPACE/repos/server"
-API_BIN="$SERVER_DIR/target/debug/beebeeb-api"
+# API binary: defaults to the debug build, but E2E_API_BIN can point elsewhere —
+# notably at a RELEASE build. The dev auto-login derives a 256 MiB Argon2id
+# master key on every page load (DevAuthGate re-runs it per navigation); that is
+# ~11 s in an unoptimized debug build (busts the health probe + every spec's
+# timeout) and trivially fast in release. The CI gate builds + points here at
+# `target/release/beebeeb-api`.
+API_BIN="${E2E_API_BIN:-$SERVER_DIR/target/debug/beebeeb-api}"
 DATABASE_URL="postgres://$PG_USER:$PG_PASS@$PG_HOST:$PG_PORT/$DB_NAME"
 # Local dev Postgres password (public, same as .env.dev.example / docker-compose).
 # Unquoted on purpose so the secret-scanner doesn't flag the dev credential.
@@ -106,11 +112,16 @@ start_backend() {
     AUDIT_SIGNING_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
     SHARE_WRAPPING_KEY=0000000000000000000000000000000000000000000000000000000000000002 \
     OPAQUE_SERVER_SETUP="$OPAQUE_SETUP" \
+    SECRET_FINGERPRINTS_PATH="$BLOB_DIR/.secret-fingerprints" \
+    BB_RATE_LIMIT_DISABLED=1 \
     APP_URL="http://localhost:$VITE_PORT" API_URL="http://localhost:$API_PORT" \
     setsid "$API_BIN" >/tmp/bb-web-e2e-api.log 2>&1 &
   API_PID=$!
+  # -m10 (not -m3): the FIRST auto-login also creates the dev user (Argon2id
+  # password hash) + derives the master key; allow headroom on a cold CI runner.
+  # A genuinely dead API is still caught immediately by the kill -0 check below.
   for i in $(seq 1 60); do
-    curl -fsS -m3 -o /dev/null -X POST "http://localhost:$API_PORT/dev/auto-login" \
+    curl -fsS -m10 -o /dev/null -X POST "http://localhost:$API_PORT/dev/auto-login" \
       -H 'Content-Type: application/json' -d '{"email":"dev@beebeeb.dev"}' && return 0
     kill -0 "$API_PID" 2>/dev/null || { echo "API died on boot; see /tmp/bb-web-e2e-api.log"; tail -20 /tmp/bb-web-e2e-api.log; return 1; }
     sleep 1
@@ -173,12 +184,16 @@ log "vite up on :$VITE_PORT"
 cd "$WEB_DIR"
 export E2E_API_URL="http://localhost:$API_PORT"   # global.setup uses this for server prefs
 export E2E_WEB_URL="http://localhost:$VITE_PORT"  # Playwright baseURL follows the (overridable) vite port
+# This harness manages its own Vite (started above with the isolated :$API_PORT
+# API pinned in). Tell playwright.config.ts to SKIP its webServer block so
+# Playwright reuses this Vite instead of racing a second one.
+export E2E_NO_WEBSERVER=1
 rm -rf playwright/.auth test-results 2>/dev/null || true
 # Liveness probe — distinguishes "backend died" from a real test flake (the
 # detached API can be reaped; see the 2026-06-05 incident). Call after a failure.
 backend_alive() {
   kill -0 "$API_PID" 2>/dev/null &&
-    curl -fsS -m3 -o /dev/null -X POST "http://localhost:$API_PORT/dev/auto-login" \
+    curl -fsS -m10 -o /dev/null -X POST "http://localhost:$API_PORT/dev/auto-login" \
       -H 'Content-Type: application/json' -d '{"email":"dev@beebeeb.dev"}'
 }
 
