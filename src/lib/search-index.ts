@@ -1,5 +1,21 @@
+// ─── LEGACY single-blob search index (DEPRECATED — B4, task 0871) ──────────
+//
+// This module is the OLD bespoke index: a single whole-JSON blob, hand-written
+// HKDF (label `beebeeb-search-index`, empty salt) + Web Crypto AES-GCM, stored
+// at `/api/v1/index`. It is SUPERSEDED by the core-backed sharded index in
+// `search-index-core.ts` (+ `search-index-shards.ts`), which routes ALL crypto
+// through core's `WasmSearchIndex` and is byte-compatible with mobile.
+//
+// It is KEPT — not deleted — through the B4 transition for the A+B+D data-compat
+// strategy: a user's first post-migration unlock has an EMPTY shard manifest, so
+// the hook REBUILDS shards from the live decrypted file tree; while that rebuild
+// runs, queries fall back to THIS old blob (decrypted via `fetchIndex`) so there
+// is no visible empty-search window. Removing this module + the `/api/v1/index`
+// endpoint is a later, Guus-gated, post-mobile cleanup (blueprint §4-F).
+//
+// DO NOT add new callers. New code uses `search-index-core.ts`.
+
 import { getToken, getApiUrl } from './api'
-// crypto imports unused -- search index uses Web Crypto API directly
 
 export interface SearchIndexEntry {
   name: string
@@ -61,6 +77,11 @@ async function decryptIndex(data: Uint8Array, masterKey: Uint8Array): Promise<Se
   return JSON.parse(json) as SearchIndex
 }
 
+/**
+ * @deprecated B4 (task 0871): legacy single-blob read. Used ONLY as the
+ * graceful-fallback/seed source while the core shard index rebuilds on first
+ * unlock. New code queries `search-index-core.ts`.
+ */
 export async function fetchIndex(masterKey: Uint8Array): Promise<SearchIndex | null> {
   // Auth via cookie (post-migration) or bearer (legacy localStorage); the
   // server's AuthUser extractor accepts either. The early `!token` return
@@ -156,6 +177,11 @@ export interface SearchResult {
   score: number
 }
 
+/**
+ * @deprecated B4 (task 0871): the bespoke TS scorer. New queries run in core via
+ * `WasmSearchIndex.query` (see `search-index-core.ts`). Retained only for the
+ * fallback path that scores the old blob during a rebuild.
+ */
 export function searchIndex(index: SearchIndex, query: string): SearchResult[] {
   if (!query.trim()) return []
 

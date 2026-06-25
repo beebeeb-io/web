@@ -4,9 +4,21 @@ import { Icon } from '@beebeeb/shared'
 import type { IconName } from '@beebeeb/shared'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
+import { useSync } from '../lib/sync-context'
+import { useSearchIndex } from '../hooks/use-search-index'
+import { decryptFileMetadata } from '../lib/crypto'
 import { modLabel } from '../hooks/use-keyboard-shortcuts'
-import { fetchIndex, searchIndex as doSearch, type SearchIndex, type SearchResult } from '../lib/search-index'
 import { listClientDevices, type ClientDevice } from '../lib/api'
+
+/** A resolved search hit: file_id + the metadata the palette renders. */
+interface FileHit {
+  id: string
+  name: string
+  path: string
+  isFolder: boolean
+  parent: string | null
+  modified: string
+}
 
 interface PaletteItem {
   id: string
@@ -47,36 +59,127 @@ function fuzzyMatch(query: string, text: string): boolean {
 export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
-  const [index, setIndex] = useState<SearchIndex | null>(null)
+  const [fileHits, setFileHits] = useState<FileHit[]>([])
+  const [recentEntries, setRecentEntries] = useState<FileHit[]>([])
   const [devices, setDevices] = useState<ClientDevice[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
   const { logout } = useAuth()
-  const { getMasterKey, isUnlocked } = useKeys()
+  const { isUnlocked, getFileKey } = useKeys()
+  const sync = useSync()
+  // The shared core-backed index (B4) — query returns file_ids; metadata + name
+  // come from the live sync tree (the index no longer stores them).
+  const { query: queryIndex, version: indexVersion } = useSearchIndex()
 
-  useEffect(() => {
-    if (!open || !isUnlocked || index) return
-    let cancelled = false
-    async function load() {
+  // Decrypt one node's plaintext name. Cached for the palette's lifetime so a
+  // re-render / re-query doesn't re-decrypt the same handful of results.
+  const nameCacheRef = useRef<Map<string, string>>(new Map())
+  const resolveName = useCallback(
+    async (nodeId: string): Promise<string | null> => {
+      const cached = nameCacheRef.current.get(nodeId)
+      if (cached) return cached
+      const node = sync.getNode(nodeId)
+      if (!node) return null
       try {
-        const mk = await getMasterKey()
-        const idx = await fetchIndex(mk)
-        if (!cancelled && idx) setIndex(idx)
-      } catch { /* index not available yet */ }
-    }
-    load()
-    return () => { cancelled = true }
-  }, [open, isUnlocked, getMasterKey, index])
+        const key = await getFileKey(node.id)
+        const { name } = await decryptFileMetadata(key, node.name_encrypted)
+        if (name && name !== 'Encrypted file') {
+          nameCacheRef.current.set(nodeId, name)
+          return name
+        }
+      } catch { /* undecryptable right now — caller skips it */ }
+      return null
+    },
+    [sync, getFileKey],
+  )
 
-  // Drop the cached index when the full-vault backfill (task 0840) persists a
-  // fresh one, so a just-indexed deep file is searchable on the next open (and
-  // immediately if the palette is already open — the loader re-fetches).
+  // Build a node's folder path (root → parent, excluding its own name) from the
+  // live tree, resolving ancestor names. Bounded against pathological cycles.
+  const buildPath = useCallback(
+    async (nodeId: string): Promise<string> => {
+      const parts: string[] = []
+      let currentId = sync.getNode(nodeId)?.parent_id ?? null
+      for (let depth = 0; depth < 50 && currentId; depth++) {
+        const parent = sync.getNode(currentId)
+        if (!parent) break
+        const pname = await resolveName(parent.id)
+        if (pname) parts.unshift(pname)
+        currentId = parent.parent_id
+      }
+      return parts.join('/')
+    },
+    [sync, resolveName],
+  )
+
+  // Resolve a list of file_ids into renderable FileHits (name + path + meta from
+  // the sync tree). Undecryptable / vanished ids are dropped.
+  const resolveHits = useCallback(
+    async (ids: string[]): Promise<FileHit[]> => {
+      const out: FileHit[] = []
+      for (const id of ids) {
+        const node = sync.getNode(id)
+        if (!node || node.is_trashed) continue
+        const name = await resolveName(id)
+        if (!name) continue
+        out.push({
+          id,
+          name,
+          path: await buildPath(id),
+          isFolder: node.is_folder,
+          parent: node.parent_id,
+          modified: node.updated_at,
+        })
+      }
+      return out
+    },
+    [sync, resolveName, buildPath],
+  )
+
+  // Run the core query whenever the term (or the shared index) changes.
   useEffect(() => {
-    function onUpdated() { setIndex(null) }
-    window.addEventListener('beebeeb:search-index-updated', onUpdated)
-    return () => window.removeEventListener('beebeeb:search-index-updated', onUpdated)
-  }, [])
+    if (!open || !isUnlocked || !query.trim()) {
+      setFileHits([])
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const ids = (await queryIndex(query)).slice(0, 10)
+        const hits = await resolveHits(ids)
+        if (!cancelled) setFileHits(hits)
+      } catch {
+        if (!cancelled) setFileHits([])
+      }
+    })()
+    return () => { cancelled = true }
+  }, [open, isUnlocked, query, queryIndex, resolveHits, indexVersion])
+
+  // Most-recently-changed files/folders, surfaced as "Recent" when the query is
+  // empty. Derived from the live sync tree (no longer from the index, which is
+  // now name-only). Bounded to the 6 newest live nodes.
+  useEffect(() => {
+    if (!open || !isUnlocked || query.trim()) return
+    let cancelled = false
+    void (async () => {
+      const newest = sync
+        .allNodes()
+        .filter((n) => !n.is_trashed)
+        .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+        .slice(0, 6)
+        .map((n) => n.id)
+      const hits = await resolveHits(newest)
+      if (!cancelled) setRecentEntries(hits)
+    })()
+    return () => { cancelled = true }
+  }, [open, isUnlocked, query, sync, resolveHits, indexVersion])
+
+  // Drop the resolved-name cache when the index changes (a rename elsewhere) so
+  // stale names don't survive. The search/recent effects above re-run on the
+  // same `indexVersion` bump and repopulate against the fresh tree.
+  useEffect(() => {
+    nameCacheRef.current.clear()
+  }, [indexVersion])
 
   // Load linked devices once per open so the empty palette can surface them.
   useEffect(() => {
@@ -87,16 +190,6 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       .catch(() => { /* devices are a nice-to-have, never block the palette */ })
     return () => { cancelled = true }
   }, [open, devices.length])
-
-  // Most-recently-changed files/folders, surfaced as "Recent" when the query is
-  // empty. Derived from the (full-vault, task 0840) index.
-  const recentEntries = useMemo(() => {
-    if (!index) return [] as { id: string; name: string; path: string; isFolder: boolean; parent: string | null; modified: string }[]
-    return Object.entries(index.files)
-      .map(([id, e]) => ({ id, name: e.name, path: e.path, isFolder: e.type === 'folder', parent: e.parent, modified: e.modified }))
-      .sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime())
-      .slice(0, 6)
-  }, [index])
 
   const items = useMemo<PaletteItem[]>(() => {
     const go = (path: string) => () => { navigate(path); onClose() }
@@ -160,21 +253,20 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       }
     }
 
-    if (query.trim() && index) {
-      const results: SearchResult[] = doSearch(index, query).slice(0, 10)
-      for (const r of results) {
-        const isFolder = r.entry.type === 'folder'
+    if (query.trim() && fileHits.length > 0) {
+      for (const r of fileHits) {
+        const isFolder = r.isFolder
         all.unshift({
           id: `file-${r.id}`,
           icon: isFolder ? 'folder' : 'file',
-          label: r.entry.name,
-          description: r.entry.path || undefined,
+          label: r.name,
+          description: r.path || undefined,
           group: 'files',
           action: () => {
             if (isFolder) {
               navigate(`/?folder=${r.id}`)
             } else {
-              navigate(`/?folder=${r.entry.parent || ''}&highlight=${r.id}`)
+              navigate(`/?folder=${r.parent || ''}&highlight=${r.id}`)
             }
             onClose()
           },
@@ -191,7 +283,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       )
     }
     return all
-  }, [query, navigate, onClose, logout, index, recentEntries, devices])
+  }, [query, navigate, onClose, logout, fileHits, recentEntries, devices])
 
   // Group items for rendering
   const groups = useMemo(() => {

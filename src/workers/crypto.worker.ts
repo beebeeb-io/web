@@ -25,6 +25,23 @@ let wasmMemory: WebAssembly.Memory | null = null
 const liveEncryptors = new Map<number, WasmTypes.WasmChunkEncryptor>()
 let nextEncryptorHandle = 1
 
+// ── Worker-owned search-index registry (B4, task 0871) ──────────────────────
+// `WasmSearchIndex` is a stateful struct (a pointer into THIS worker's WASM
+// linear memory), exactly like `WasmChunkEncryptor`, so it cannot be proxied
+// through Comlink. Instances live here, addressed from the main thread by an
+// opaque numeric handle; `crypto.ts`'s `SearchIndexProxy` mirrors each handle.
+// All search crypto (per-shard key derivation, AES-256-GCM) runs in core via
+// these methods — the master key crosses as 32 raw bytes and is never logged.
+const liveSearchIndexes = new Map<number, WasmTypes.WasmSearchIndex>()
+let nextSearchIndexHandle = 1
+
+/** An encrypted shard page as core produces / consumes it. */
+interface EncryptedShardJs {
+  bucket: number
+  page: number
+  blob: Uint8Array
+}
+
 /** Shape returned by `WasmChunkEncryptor.finish()` (the core summary). */
 interface ChunkEncryptorSummary {
   chunk_count: number
@@ -440,6 +457,141 @@ const cryptoWorker = {
    */
   liveEncryptorCount(): number {
     return liveEncryptors.size
+  },
+
+  // ── Search index (handle-addressed, worker-owned) ─────────────────────────
+  // The WASM `WasmSearchIndex` stays inside the worker; the main thread holds an
+  // opaque numeric handle and round-trips it on every op. The shard blobs that
+  // cross the boundary are opaque core ciphertext. Crypto runs entirely in core.
+
+  /** New empty index with `numShards` buckets. Returns an opaque handle. */
+  async searchIndexNew(numShards: number): Promise<number> {
+    const wasm = await ensureWasm()
+    const idx = new wasm.WasmSearchIndex(numShards)
+    const handle = nextSearchIndexHandle++
+    liveSearchIndexes.set(handle, idx)
+    return handle
+  },
+
+  /** Build an index from `files` (`[{fileId, name}]`). Returns an opaque handle. */
+  async searchIndexBuild(
+    files: Array<{ fileId: string; name: string }>,
+    numShards: number,
+  ): Promise<number> {
+    const wasm = await ensureWasm()
+    const idx = wasm.WasmSearchIndex.build(files, numShards)
+    const handle = nextSearchIndexHandle++
+    liveSearchIndexes.set(handle, idx)
+    return handle
+  },
+
+  /**
+   * Reconstruct an index from encrypted shards, decrypting each with the
+   * 32-byte master key (in core). Returns an opaque handle.
+   */
+  async searchIndexFromShards(
+    masterKey: Uint8Array,
+    shards: EncryptedShardJs[],
+    numShards: number,
+  ): Promise<number> {
+    const wasm = await ensureWasm()
+    const idx = wasm.WasmSearchIndex.fromEncryptedShards(masterKey, shards, numShards)
+    const handle = nextSearchIndexHandle++
+    liveSearchIndexes.set(handle, idx)
+    return handle
+  },
+
+  /** Insert/update a file. Returns the dirty bucket set as a plain number[]. */
+  searchIndexUpsert(handle: number, fileId: string, name: string): number[] {
+    const idx = liveSearchIndexes.get(handle)
+    if (!idx) throw new Error(`No live search index for handle ${handle}`)
+    return Array.from(idx.upsert(fileId, name) as Uint32Array)
+  },
+
+  /** Remove a file. Returns the dirty bucket set as a plain number[]. */
+  searchIndexRemove(handle: number, fileId: string): number[] {
+    const idx = liveSearchIndexes.get(handle)
+    if (!idx) throw new Error(`No live search index for handle ${handle}`)
+    return Array.from(idx.remove(fileId) as Uint32Array)
+  },
+
+  /** Query the index; returns matching file_ids (`string[]`). */
+  searchIndexQuery(handle: number, term: string): string[] {
+    const idx = liveSearchIndexes.get(handle)
+    if (!idx) throw new Error(`No live search index for handle ${handle}`)
+    return idx.query(term) as string[]
+  },
+
+  /** Encrypt EVERY non-empty shard page. Returns `[{bucket, page, blob}]`. */
+  searchIndexEncryptShards(handle: number, masterKey: Uint8Array): EncryptedShardJs[] {
+    const idx = liveSearchIndexes.get(handle)
+    if (!idx) throw new Error(`No live search index for handle ${handle}`)
+    return idx.encryptShards(masterKey) as EncryptedShardJs[]
+  },
+
+  /** Encrypt ONLY the given buckets (the dirty set) for an incremental sync. */
+  searchIndexEncryptBuckets(
+    handle: number,
+    masterKey: Uint8Array,
+    buckets: number[],
+  ): EncryptedShardJs[] {
+    const idx = liveSearchIndexes.get(handle)
+    if (!idx) throw new Error(`No live search index for handle ${handle}`)
+    return idx.encryptBuckets(masterKey, Uint32Array.from(buckets)) as EncryptedShardJs[]
+  },
+
+  /** Number of buckets this index uses. */
+  searchIndexNumShards(handle: number): number {
+    const idx = liveSearchIndexes.get(handle)
+    if (!idx) throw new Error(`No live search index for handle ${handle}`)
+    return idx.numShards
+  },
+
+  /** Number of indexed files. */
+  searchIndexFileCount(handle: number): number {
+    const idx = liveSearchIndexes.get(handle)
+    if (!idx) throw new Error(`No live search index for handle ${handle}`)
+    return idx.fileCount
+  },
+
+  /** Free a search index and drop its handle. Idempotent. */
+  searchIndexDispose(handle: number): void {
+    const idx = liveSearchIndexes.get(handle)
+    if (idx) {
+      try {
+        idx.free()
+      } catch {
+        // Already freed — nothing to do.
+      }
+      liveSearchIndexes.delete(handle)
+    }
+  },
+
+  /** How many search indexes are live (parallels liveEncryptorCount). */
+  liveSearchIndexCount(): number {
+    return liveSearchIndexes.size
+  },
+
+  /**
+   * Pure manifest-diff (LWW) → `{toPut, toGet, toDelete}` shard coords.
+   * `local`/`remote` are `[{bucket, page, version}]`. No crypto, no state — just
+   * the core sync planner, run here only because WASM is initialized here.
+   */
+  async searchIndexSyncPlan(
+    local: Array<{ bucket: number; page: number; version: number }>,
+    remote: Array<{ bucket: number; page: number; version: number }>,
+    localIsAuthoritative: boolean,
+  ): Promise<{
+    toPut: Array<{ bucket: number; page: number }>
+    toGet: Array<{ bucket: number; page: number }>
+    toDelete: Array<{ bucket: number; page: number }>
+  }> {
+    const wasm = await ensureWasm()
+    return wasm.searchIndexSyncPlan(local, remote, localIsAuthoritative) as {
+      toPut: Array<{ bucket: number; page: number }>
+      toGet: Array<{ bucket: number; page: number }>
+      toDelete: Array<{ bucket: number; page: number }>
+    }
   },
 
   // ─── File requests (sealed-box / ECIES per request) ──────────────────────

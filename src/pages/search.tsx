@@ -9,17 +9,16 @@ import { EmptyState } from '../components/empty-states/empty-state'
 import { useKeys } from '../lib/key-context'
 import { useSync } from '../lib/sync-context'
 import { useWsEvent } from '../lib/ws-context'
-import { useSearchIndex } from '../hooks/use-search-index'
+import { useSearchIndex, type SearchIndexEntry } from '../hooks/use-search-index'
+import { decryptFileMetadata } from '../lib/crypto'
 import { formatBytes } from '../lib/format'
-import {
-  fetchIndex,
-  searchIndex,
-  createEmptyIndex,
-  removeIndexEntry,
-  type SearchIndex,
-  type SearchIndexEntry,
-  type SearchResult,
-} from '../lib/search-index'
+
+/** A scored search hit — `entry` is built from the live sync tree (B4). */
+interface SearchResult {
+  id: string
+  entry: SearchIndexEntry
+  score: number
+}
 
 // ─── Helpers ─────────────────────────────────────
 
@@ -186,13 +185,13 @@ export function Search() {
   const initialSize = useMemo(() => parseSizeParam(searchParams.get('size')), [searchParams])
   const initialSort = useMemo(() => parseSortParam(searchParams.get('sort')), [searchParams])
 
-  const { isUnlocked, getMasterKey } = useKeys()
+  const { isUnlocked, getFileKey } = useKeys()
   const sync = useSync()
-  // Prunes the SHARED encrypted index (and persists it) so the correction
-  // survives even when only the search page is mounted. This hook keeps its own
-  // in-memory copy of the index, separate from this page's `indexRef` below —
-  // so the WS handler must also prune the local ref to update the visible list.
-  const { unindexFiles } = useSearchIndex()
+  // The shared core-backed index (B4). `query` returns file_ids; the surface
+  // resolves each into a renderable SearchResult from the live sync tree.
+  // `unindexFiles` prunes the shared index when a delete arrives here.
+  // `version` bumps on any index mutation/rebuild so the active query re-runs.
+  const { query: queryIndex, unindexFiles, version: indexVersion } = useSearchIndex()
 
   const [query, setQuery] = useState(initialQuery)
   const [results, setResults] = useState<SearchResult[]>([])
@@ -205,92 +204,128 @@ export function Search() {
   const [loading, setLoading] = useState(false)
   const [searched, setSearched] = useState(!!initialQuery)
   const [indexError, setIndexError] = useState<string | null>(null)
-  const [indexLoaded, setIndexLoaded] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // Hold the decrypted index in memory
-  const indexRef = useRef<SearchIndex | null>(null)
-  // Latest input value, read inside the index-reload effect without making it a
-  // dependency (which would re-fetch on every keystroke).
+  // Per-page resolved-name cache (file_id → plaintext). Decrypting a name is a
+  // worker round-trip, so cache it; cleared when the index changes (rename).
+  const nameCacheRef = useRef<Map<string, string>>(new Map())
+  const resolveName = useCallback(
+    async (nodeId: string): Promise<string | null> => {
+      const cached = nameCacheRef.current.get(nodeId)
+      if (cached) return cached
+      const node = sync.getNode(nodeId)
+      if (!node) return null
+      try {
+        const key = await getFileKey(node.id)
+        const { name } = await decryptFileMetadata(key, node.name_encrypted)
+        if (name && name !== 'Encrypted file') {
+          nameCacheRef.current.set(nodeId, name)
+          return name
+        }
+      } catch { /* undecryptable now — skip this hit */ }
+      return null
+    },
+    [sync, getFileKey],
+  )
+
+  // Build a node's folder path (root → parent) from the live tree.
+  const buildPath = useCallback(
+    async (nodeId: string): Promise<string> => {
+      const parts: string[] = []
+      let currentId = sync.getNode(nodeId)?.parent_id ?? null
+      for (let depth = 0; depth < 50 && currentId; depth++) {
+        const parent = sync.getNode(currentId)
+        if (!parent) break
+        const pname = await resolveName(parent.id)
+        if (pname) parts.unshift(pname)
+        currentId = parent.parent_id
+      }
+      return parts.join('/')
+    },
+    [sync, resolveName],
+  )
+
+  // Resolve a core query for `q` into renderable SearchResults. Metadata (kind,
+  // size, modified, parent, starred, path) comes from the live sync tree; the
+  // core index supplies the name matches (and their order = relevance).
+  const runSearch = useCallback(
+    async (q: string) => {
+      if (!q.trim()) {
+        setResults([])
+        setSearched(false)
+        return
+      }
+      setLoading(true)
+      setSearched(true)
+      try {
+        const ids = await queryIndex(q)
+        const out: SearchResult[] = []
+        let rank = ids.length
+        for (const id of ids) {
+          const node = sync.getNode(id)
+          if (!node || node.is_trashed) {
+            rank--
+            continue
+          }
+          const name = await resolveName(id)
+          if (!name) {
+            rank--
+            continue
+          }
+          const entry: SearchIndexEntry = {
+            name,
+            path: await buildPath(id),
+            type: node.is_folder ? 'folder' : (node.mime_type || 'application/octet-stream'),
+            size: node.size_bytes,
+            parent: node.parent_id,
+            starred: node.is_starred,
+            created: node.created_at,
+            modified: node.updated_at,
+            tags: [],
+          }
+          // Score = core result order (higher = earlier match); preserves the
+          // relevance ordering the core scorer produced.
+          out.push({ id, entry, score: rank-- })
+        }
+        setResults(out)
+      } catch {
+        setResults([])
+        setIndexError('Could not load search index.')
+      } finally {
+        setLoading(false)
+      }
+    },
+    [queryIndex, sync, resolveName, buildPath],
+  )
+
+  // Latest input value, read inside effects without making it a dependency.
   const queryRef = useRef(query)
   useEffect(() => { queryRef.current = query }, [query])
 
-  // Search against the local encrypted index. Declared before the index-load
-  // effect so that effect can re-run the active query after a reload.
-  const runSearch = useCallback((q: string) => {
-    if (!q.trim()) {
-      setResults([])
-      setSearched(false)
-      return
-    }
-    setLoading(true)
-    setSearched(true)
-    try {
-      const idx = indexRef.current
-      if (!idx) {
-        setResults([])
-        return
-      }
-      setResults(searchIndex(idx, q))
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  // Bumped when the full-vault backfill (task 0840) persists a fresh index, so a
-  // just-indexed deep file (e.g. desktop.ini from another client) becomes
-  // findable without a manual reload.
-  const [indexReloadTick, setIndexReloadTick] = useState(0)
+  // Re-run the active query whenever the shared index changes (a rebuild/backfill
+  // landing, a cross-client rename) — replaces the old `beebeeb:search-index-
+  // updated` listener (the context bumps `version` on the same events). Also
+  // clears the name cache so a rename reflects.
   useEffect(() => {
-    function onUpdated() { setIndexReloadTick((t) => t + 1) }
-    window.addEventListener('beebeeb:search-index-updated', onUpdated)
-    return () => window.removeEventListener('beebeeb:search-index-updated', onUpdated)
-  }, [])
+    nameCacheRef.current.clear()
+    if (isUnlocked && queryRef.current.trim()) {
+      void runSearch(queryRef.current)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [indexVersion, isUnlocked])
 
   // Focus input on mount
   useEffect(() => {
     inputRef.current?.focus()
   }, [])
 
-  // Fetch and decrypt the search index when the vault is unlocked (and again
-  // whenever the backfill signals an update).
+  // Run the initial query (from the URL) once unlocked.
   useEffect(() => {
-    if (!isUnlocked) {
-      indexRef.current = null
-      setIndexLoaded(false)
-      return
+    if (initialQuery && isUnlocked) {
+      void runSearch(initialQuery)
     }
-
-    let cancelled = false
-    async function loadIndex() {
-      try {
-        const masterKey = getMasterKey()
-        const idx = await fetchIndex(masterKey)
-        if (!cancelled) {
-          indexRef.current = idx ?? createEmptyIndex()
-          setIndexError(null)
-          setIndexLoaded(true)
-          // Refresh visible results against the reloaded index.
-          if (queryRef.current.trim()) runSearch(queryRef.current)
-        }
-      } catch {
-        if (!cancelled) {
-          indexRef.current = createEmptyIndex()
-          setIndexError('Could not load search index.')
-          setIndexLoaded(true)
-        }
-      }
-    }
-    loadIndex()
-    return () => { cancelled = true }
-  }, [isUnlocked, getMasterKey, indexReloadTick, runSearch])
-
-  // Re-run search once index loads (for initial query from URL)
-  useEffect(() => {
-    if (initialQuery && indexLoaded) {
-      runSearch(initialQuery)
-    }
-  }, [initialQuery, indexLoaded, runSearch])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialQuery, isUnlocked])
 
   // ─── Remote-deletion reconciliation (works even when sync is down) ───
   //
@@ -323,21 +358,13 @@ export function Search() {
         const ids = pendingDeleteIdsRef.current
         if (ids.size === 0) return
         pendingDeleteIdsRef.current = new Set()
-        // (a) Correct the shared/persisted index via the hook (its own ref).
+        // (a) Correct the SHARED core index via the hook (removes the shard
+        //     entries + re-publishes the dirty buckets).
         void unindexFiles([...ids])
-        // (b) Prune THIS page's local index so a later re-search won't resurface
-        //     the deleted ids.
-        const idx = indexRef.current
-        if (idx) {
-          let next = idx
-          for (const deletedId of ids) next = removeIndexEntry(next, deletedId)
-          indexRef.current = next
-        }
-        // (c) Make the visible list reflect the prune by dropping the ids
+        // (b) Make the visible list reflect the prune by dropping the ids
         //     directly. A functional, membership-based filter is idempotent and
-        //     re-running it can't resurface a hit — so this cannot loop. We do
-        //     NOT re-run searchIndex(query) here: that would only reproduce the
-        //     same filtered set and needlessly re-sort.
+        //     re-running it can't resurface a hit — so this cannot loop. The
+        //     core index itself is corrected by (a); a later re-search reflects it.
         setResults((prev) => {
           if (prev.length === 0) return prev
           const filtered = prev.filter((r) => !ids.has(r.id))
@@ -370,7 +397,7 @@ export function Search() {
     else next.delete('q')
     setSearchParams(next)
     if (trimmed) setRecent(saveRecent(trimmed))
-    runSearch(q)
+    void runSearch(q)
   }
 
   const handleSubmit = (e: React.FormEvent) => {

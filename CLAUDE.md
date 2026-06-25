@@ -35,6 +35,37 @@ cp beebeeb-wasm/pkg/{beebeeb_wasm_bg.wasm,beebeeb_wasm_bg.wasm.d.ts,beebeeb_wasm
 # 4. Commit in web naming the core SHA:  build(wasm): regenerate from core @ <SHA>
 ```
 
+The vendored package now exports the **search surface** too (B4, task 0871):
+`WasmSearchIndex` (build / fromEncryptedShards / upsert / remove / query /
+encryptShards / encryptBuckets) + `searchIndexSyncPlan` + `decrypt_names`. From
+the workspace root, `make wasm-sync` does the regen + copy in one step.
+
+## Encrypted search index (B4, task 0871)
+
+Web's file-name search runs on core's **unified sharded** primitive (HKDF label
+`beebeeb-search-index-shard-v1`, 64 buckets, AES-256-GCM per shard) — BYTE-
+identical shard keys to mobile/core (proven by `test/search-index-kat.test.ts`
+against the pinned kdf.rs vectors). All crypto runs in core via `WasmSearchIndex`.
+
+- `src/lib/search-index-shards.ts` — transport client for the sharded endpoints
+  `/api/v1/search-index/shards` (manifest GET, per-shard GET/PUT/DELETE, LWW).
+- `src/lib/search-index-core.ts` — `CoreSearchIndex`: build / fromShards /
+  upsert / remove / query / pushBuckets(dirty) / pushAllShards. Joins the crypto
+  proxy to the shard storage. `DEFAULT_NUM_SHARDS = 64` MUST match core.
+- `src/lib/crypto.ts` `SearchIndexProxy` + `src/workers/crypto.worker.ts` — the
+  `WasmSearchIndex` is a worker-owned stateful struct (like `WasmChunkEncryptor`),
+  addressed by an opaque handle; the master key crosses as 32 raw bytes.
+- `src/lib/search-index-context.tsx` — ONE owned `CoreSearchIndex` for the app,
+  exposed via `useSearchIndex()` (singleton-via-context; palette + /search +
+  drive all query the SAME index). On first unlock the shard manifest is empty,
+  so `reconcileFromTree` REBUILDS shards from the decrypted file tree; until then
+  queries fall back to the legacy blob (`src/lib/search-index.ts`, DEPRECATED) so
+  there is no empty-search window. The index stores names only — result metadata
+  (path/size/kind/modified) is resolved from the live sync tree at query time.
+- `src/lib/search-index.ts` is the LEGACY single-blob `/api/v1/index` path, kept
+  ONLY as the rebuild-window fallback/seed. Do not add new callers. Its removal +
+  the `/api/v1/index` endpoint retirement is a later, Guus-gated, post-mobile task.
+
 ## API
 
 Backend runs at `http://localhost:3001`. API client is in `src/lib/api.ts`. All endpoints documented in the server repo's CLAUDE.md.

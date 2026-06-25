@@ -94,6 +94,7 @@ import { IncidentBanner } from './components/incident-banner'
 import { BillingSuspendedOverlay } from './components/billing-suspended-overlay'
 import { CookieBanner } from './components/cookie-banner'
 import { DriveDataProvider } from './lib/drive-data-context'
+import { SearchIndexProvider } from './lib/search-index-context'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
@@ -277,6 +278,7 @@ export function App() {
         <SyncProvider>
         <ToastProvider>
         <DriveDataProvider>
+        <SearchIndexProvider>
         <DisplayProvider>
         {/* Skip link — first focusable element; visible only on keyboard focus */}
         <a href="#main-content" className="skip-to-content">
@@ -531,6 +533,7 @@ export function App() {
         </Routes>
         </Suspense>
         </DisplayProvider>
+        </SearchIndexProvider>
         </DriveDataProvider>
         </ToastProvider>
         </SyncProvider>
