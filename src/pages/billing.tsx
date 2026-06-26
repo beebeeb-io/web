@@ -241,10 +241,40 @@ export function Billing() {
   // Billing cycle switch confirmation
   const [cycleSwitchConfirm, setCycleSwitchConfirm] = useState<'monthly' | 'yearly' | null>(null)
   const [cycleSwitchLoading, setCycleSwitchLoading] = useState(false)
-  // Upgraded celebration card
+  // Upgraded return — the user came back from the provider's hosted checkout.
+  // Provisioning is async (the payment webhook writes the subscription row, NOT
+  // the redirect), and the provider reuses ONE redirect URL for paid/cancelled/
+  // expired, so `?upgraded=true` alone cannot assert success. We poll the
+  // subscription and only claim "Upgrade complete" once it actually reflects the
+  // change; otherwise we show an honest neutral "still processing" state. (0865)
   const showUpgraded = searchParams.get('upgraded') === 'true' || Boolean(searchParams.get('session_id'))
   const upgradedDismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // Checkout watchdog — detects abandoned Stripe checkouts
+  // 'finalizing' = polling; 'complete' = subscription reflects the upgrade;
+  // 'unconfirmed' = poll window elapsed without a change (payment may still be
+  // processing, or was cancelled/not completed — never a false success).
+  const [upgradeConfirm, setUpgradeConfirm] = useState<'finalizing' | 'complete' | 'unconfirmed'>('finalizing')
+  // Snapshot of the pre-checkout subscription + the target plan/cycle the user
+  // chose, captured synchronously on the upgraded return so the poll can detect
+  // "did the subscription actually change?" The pending-checkout record is
+  // written just before the redirect and is the most precise success signal.
+  const upgradeBaselineRef = useRef<{
+    plan: string
+    cycle: string | undefined
+    status: string | undefined
+    periodEnd: string | null | undefined
+    target: { plan: string; cycle: string } | null
+  } | null>(null)
+  if (showUpgraded && upgradeBaselineRef.current === null) {
+    const base = contextPlanDetails.subscription
+    upgradeBaselineRef.current = {
+      plan: base?.plan ?? 'free',
+      cycle: base?.billing_cycle,
+      status: base?.status,
+      periodEnd: base?.current_period_end,
+      target: getPendingCheckout(),
+    }
+  }
+  // Checkout watchdog — detects abandoned checkouts
   const [pendingCheckout, setPendingCheckoutState] = useState<{ plan: string; cycle: string } | null>(null)
 
   useEffect(() => {
@@ -256,6 +286,79 @@ export function Billing() {
       if (pending) setPendingCheckoutState(pending)
     }
   }, [showUpgraded, searchParams])
+
+  // Poll the subscription on the upgraded return until it reflects the change
+  // (~2s interval, ~30s cap). An "active paid status from a non-active baseline",
+  // a plan change, a billing-cycle change, or an advanced period-end all count as
+  // confirmation; the precise pending-checkout target takes priority when present.
+  useEffect(() => {
+    if (!showUpgraded) return
+    const baseline = upgradeBaselineRef.current
+    // Baseline is captured synchronously whenever showUpgraded flips true, so it
+    // is always set here; bail defensively rather than poll without a reference.
+    if (!baseline) { setUpgradeConfirm('complete'); return }
+
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const deadline = Date.now() + 30_000
+    setUpgradeConfirm('finalizing')
+
+    const ACTIVE_STATUSES = new Set(['active', 'trialing'])
+    const reflectsUpgrade = (s: Subscription): boolean => {
+      // Most precise: the subscription matches exactly what the user just bought.
+      if (baseline.target) {
+        return s.plan === baseline.target.plan
+          && s.billing_cycle === baseline.target.cycle
+          && ACTIVE_STATUSES.has(s.status)
+      }
+      // No pending record (e.g. landed on ?upgraded directly): accept any change
+      // away from the pre-checkout state that looks like a successful provision.
+      if (s.plan !== baseline.plan && s.plan !== 'free' && ACTIVE_STATUSES.has(s.status)) return true
+      if (s.billing_cycle !== baseline.cycle && ACTIVE_STATUSES.has(s.status)) return true
+      if (!ACTIVE_STATUSES.has(baseline.status ?? '') && ACTIVE_STATUSES.has(s.status) && s.plan !== 'free') return true
+      if (baseline.periodEnd && s.current_period_end && s.current_period_end > baseline.periodEnd) return true
+      return false
+    }
+
+    const confirmComplete = (latest: Subscription) => {
+      setSub(latest)
+      setUpgradeConfirm('complete')
+      window.dispatchEvent(new Event('beebeeb:plan-changed'))
+      refreshPlanDetails()
+      void loadData()
+    }
+
+    let attempt = 0
+    const poll = async () => {
+      if (cancelled) return
+      try {
+        const latest = await getSubscription()
+        if (cancelled) return
+        if (reflectsUpgrade(latest)) {
+          confirmComplete(latest)
+          return
+        }
+      } catch {
+        // Transient fetch failure — keep polling until the deadline.
+      }
+      if (cancelled) return
+      if (Date.now() >= deadline) {
+        setUpgradeConfirm('unconfirmed')
+        return
+      }
+      attempt += 1
+      // Gentle backoff: 2s, then creeping toward 4s, capped so we stay responsive.
+      const delay = Math.min(2000 + attempt * 250, 4000)
+      timer = setTimeout(() => { void poll() }, delay)
+    }
+    timer = setTimeout(() => { void poll() }, 2000)
+
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showUpgraded])
 
   // Storage add-on state
   const [addonState, setAddonState] = useState<StorageAddonState | null>(null)
@@ -331,16 +434,18 @@ export function Billing() {
     void loadData()
   }, [loadData])
 
-  // Auto-dismiss the upgraded celebration card after 10 s
+  // Auto-dismiss the celebration card 10 s after the upgrade is CONFIRMED.
+  // While finalizing (still polling) or unconfirmed ("updates automatically")
+  // we keep the card up so the user isn't dropped mid-flow.
   useEffect(() => {
-    if (!showUpgraded) return
+    if (!showUpgraded || upgradeConfirm !== 'complete') return
     upgradedDismissTimer.current = setTimeout(() => {
       setSearchParams({}, { replace: true })
     }, 10_000)
     return () => {
       if (upgradedDismissTimer.current) clearTimeout(upgradedDismissTimer.current)
     }
-  }, [showUpgraded, setSearchParams])
+  }, [showUpgraded, upgradeConfirm, setSearchParams])
 
   function dismissUpgraded() {
     if (upgradedDismissTimer.current) clearTimeout(upgradedDismissTimer.current)
@@ -737,8 +842,33 @@ function openUpgrade(plan: string) {
       />
 
       <div className="p-7 space-y-6">
-        {/* Upgraded celebration card — shown after Stripe redirect */}
-        {showUpgraded && (
+        {/* Checkout return — provisioning is async, so we poll before claiming
+            success. Three states: finalizing (polling) → complete (confirmed) or
+            unconfirmed (poll window elapsed; honest "still processing"). (0865) */}
+        {showUpgraded && upgradeConfirm === 'finalizing' && (
+          <div className="rounded-xl border border-amber/60 bg-amber-bg px-6 py-5">
+            <div className="flex items-start gap-4">
+              <svg className="animate-spin h-5 w-5 text-amber-deep shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+              <div className="flex-1">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep mb-1">
+                  Finalizing your upgrade
+                </div>
+                <h2 className="text-xl font-bold text-ink leading-snug mb-1">
+                  Confirming your payment
+                </h2>
+                <p className="text-[13.5px] text-ink-2 leading-relaxed">
+                  We are confirming your payment with our processor. This usually
+                  takes a few seconds — this page updates automatically.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showUpgraded && upgradeConfirm === 'complete' && (
           <div className="relative rounded-xl border border-amber/60 bg-amber-bg overflow-hidden">
             <div className="px-6 py-5">
               <div className="flex items-start justify-between gap-4">
@@ -778,6 +908,33 @@ function openUpgrade(plan: string) {
                 className="h-full bg-amber-deep transition-all ease-linear"
                 style={{ width: '100%', animation: 'shrink-width 10s linear forwards' }}
               />
+            </div>
+          </div>
+        )}
+
+        {showUpgraded && upgradeConfirm === 'unconfirmed' && (
+          <div className="rounded-xl border border-line-2 bg-paper-2 px-6 py-5">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex-1">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-3 mb-1">
+                  Payment processing
+                </div>
+                <h2 className="text-lg font-bold text-ink leading-snug mb-1">
+                  We haven&apos;t confirmed this upgrade yet
+                </h2>
+                <p className="text-[13.5px] text-ink-2 leading-relaxed">
+                  Your payment is either still processing or was not completed. If
+                  you did pay, it can take a moment to settle — this page updates
+                  automatically. Nothing has changed on your plan in the meantime.
+                </p>
+              </div>
+              <button
+                onClick={dismissUpgraded}
+                className="text-ink-3 hover:text-ink transition-colors mt-0.5 shrink-0"
+                aria-label="Dismiss"
+              >
+                <Icon name="x" size={16} />
+              </button>
             </div>
           </div>
         )}
