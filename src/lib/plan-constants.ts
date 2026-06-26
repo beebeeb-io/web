@@ -30,7 +30,7 @@ const PLANS: { [K in 'free' | 'basic' | 'pro' | 'business']: PlanMeta } = {
   basic: {
     label: 'Basic',
     priceMonthly: 10.99,
-    priceYearly: 109.92,
+    priceYearly: 109.90,
     storageGB: 1000,
     tagline: '1 TB of truly private storage',
     features: ['Everything in Free', '30-day version history'],
@@ -38,7 +38,7 @@ const PLANS: { [K in 'free' | 'basic' | 'pro' | 'business']: PlanMeta } = {
   pro: {
     label: 'Pro',
     priceMonthly: 54.95,
-    priceYearly: 549.48,
+    priceYearly: 549.50,
     storageGB: 5000,
     tagline: '5 TB for power users and creators',
     features: ['Everything in Basic', '5 TB encrypted storage', 'Unlimited version history', 'Advanced sharing controls'],
