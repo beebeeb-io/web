@@ -12,7 +12,7 @@ type BillingCycle = 'monthly' | 'yearly'
 interface UpgradeDialogProps {
   planId: string
   planName: string
-  /** Monthly price (displayed, not used for calculation — Stripe is source of truth) */
+  /** Monthly price (displayed only — the server derives the charged amount) */
   pricePerSeat: number
   /** Annual total price */
   priceYearlySeat: number
@@ -51,7 +51,6 @@ export function UpgradeDialog({
       const { url } = await createCheckoutSession({
         plan: planId,
         billing_cycle: cycle,
-        seats: 1,
       })
       try { localStorage.setItem('bb_pending_checkout', JSON.stringify({ plan: planId, cycle, ts: Date.now() })) } catch { /* ok */ }
       window.location.href = url
@@ -60,7 +59,7 @@ export function UpgradeDialog({
         showToast({
           icon: 'x',
           title: 'Billing not configured',
-          description: 'Stripe integration is pending. Contact support to upgrade.',
+          description: 'Payments are not set up yet. Contact support to upgrade.',
           danger: true,
         })
         onClose()
@@ -182,8 +181,15 @@ export function UpgradeDialog({
             {!loading && <Icon name="chevron-right" size={13} className="ml-1" />}
           </BBButton>
 
+          {/*
+            Non-enumerated payment-method copy (0865): we don't list specific
+            methods here because the set Mollie actually offers depends on the
+            account config Guus controls — advertising one we don't enable would
+            be an honest-voice violation. Guus to confirm the enabled method set,
+            then we can enumerate (e.g. "Card · iDEAL · SEPA") if desired.
+          */}
           <div className="text-[11px] text-ink-4 text-center mt-2">
-            Card · Apple Pay · SEPA Direct Debit · iDEAL
+            Choose your payment method on the next step
           </div>
         </div>
       </div>

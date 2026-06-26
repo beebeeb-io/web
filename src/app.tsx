@@ -137,6 +137,19 @@ function AdminRedirect() {
   return null
 }
 
+/**
+ * Redirect that preserves the query string. A plain `<Navigate to="/path" />`
+ * with a static string `to` drops the current `?search` (react-router v7), so a
+ * checkout return like `/billing?upgraded=true` would land on `/settings/billing`
+ * with the param stripped — and the billing page's `?upgraded` finalize/poll flow
+ * (and the legacy Stripe `?success`/`?session_id` returns) would never fire.
+ * Carrying `location.search` through the hop keeps the return params intact (0865).
+ */
+function RedirectPreservingSearch({ to }: { to: string }) {
+  const location = useLocation()
+  return <Navigate to={{ pathname: to, search: location.search }} replace />
+}
+
 function GuestRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
   const { isUnlocked } = useKeys()
@@ -405,7 +418,7 @@ export function App() {
           <Route path="/settings/import/google/callback" element={<ProtectedRoute><GoogleCallback /></ProtectedRoute>} />
 
           {/* Redirects for old routes */}
-          <Route path="/settings/storage" element={<Navigate to="/settings/billing" replace />} />
+          <Route path="/settings/storage" element={<RedirectPreservingSearch to="/settings/billing" />} />
           <Route path="/settings/devices" element={<Navigate to="/settings/security" replace />} />
           <Route path="/settings/language" element={<Navigate to="/settings/appearance" replace />} />
           <Route path="/settings/2fa" element={<Navigate to="/settings/security" replace />} />
@@ -443,7 +456,7 @@ export function App() {
             }
           />
           <Route path="/pricing" element={<Pricing />} />
-          <Route path="/billing" element={<Navigate to="/settings/billing" replace />} />
+          <Route path="/billing" element={<RedirectPreservingSearch to="/settings/billing" />} />
           {/* Admin moved to admin.beebeeb.io. Redirect any /admin/* URL
               there so old bookmarks keep working. The admin app's login
               page handles unauthenticated visitors. See

@@ -1657,8 +1657,10 @@ export async function getInvoices(): Promise<Invoice[]> {
 export async function createCheckoutSession(params: {
   plan: string
   billing_cycle: string
-  seats?: number
 }): Promise<{ url: string }> {
+  // The server derives the amount from plan + billing_cycle (server-authoritative
+  // money); the client never sends a price. All plans are single-user, so there is
+  // no seats field — the previous `seats: 1` was a no-op the server ignored.
   return request<{ url: string }>('/api/v1/billing/checkout', {
     method: 'POST',
     body: JSON.stringify(params),
