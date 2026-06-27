@@ -1654,6 +1654,202 @@ export async function getInvoices(): Promise<Invoice[]> {
   }))
 }
 
+// ─── Billing profile + VAT (task 0919) ───────────────
+// D2 billing data collected before the Mollie redirect. The server runs VIES on
+// PUT for B2B + cross-border (country != "NL") VAT numbers and returns the verdict
+// in the `vat_validated` STRING field. See docs/billing/compliance/00-build-spec.md §7.
+
+export type CustomerType = 'b2c' | 'b2b'
+
+/**
+ * VIES verdict the server attaches to a saved billing profile (`vat_validated`).
+ * It is a STRING — the server always returns 200 (never 400 for a bad number).
+ *   valid          → VIES valid → reverse charge / 0% VAT
+ *   invalid        → well-formed but not VIES-registered → inline invalid error
+ *   invalid_format → fails the per-country format check → inline invalid error
+ *   unreachable    → VIES service down → "charged with local VAT" copy
+ *   unchecked      → no VIES run (domestic NL B2B, or no VAT number / B2C)
+ */
+export type VatState =
+  | 'valid'
+  | 'invalid'
+  | 'invalid_format'
+  | 'unreachable'
+  | 'unchecked'
+
+/** VAT treatment returned by the engine. Mirrors `vat_engine::resolve_vat`. */
+export type VatTreatment =
+  | 'domestic'
+  | 'oss_destination'
+  | 'reverse_charge'
+  | 'out_of_scope'
+  | 'micro_threshold_home'
+
+/** Editable billing-profile fields (PUT body). B2B fields are optional. */
+export interface BillingProfilePayload {
+  full_name: string
+  billing_country: string // ISO-3166-1 alpha-2
+  billing_street: string
+  billing_postal: string
+  billing_city: string
+  customer_type: CustomerType
+  company_name?: string | null
+  vat_number?: string | null
+  company_registration_number?: string | null
+  company_registration_type?: string | null
+}
+
+/** Billing profile as returned on read — payload plus the VIES verdict string. */
+export interface BillingProfile extends BillingProfilePayload {
+  vat_validated: VatState
+}
+
+/** Normalise a raw `vat_validated` value into a known VatState. */
+function normalizeVatState(raw: unknown): VatState {
+  switch (raw) {
+    case 'valid':
+    case 'invalid':
+    case 'invalid_format':
+    case 'unreachable':
+      return raw
+    default:
+      return 'unchecked'
+  }
+}
+
+/**
+ * GET /api/v1/billing/profile — the current user's billing profile, or an empty
+ * shell with the same field names when none has been saved yet. We normalise
+ * nulls into the shape the form expects.
+ */
+export async function getBillingProfile(): Promise<BillingProfile> {
+  const raw = await request<Partial<BillingProfile>>('/api/v1/billing/profile')
+  return {
+    full_name: raw.full_name ?? '',
+    billing_country: raw.billing_country ?? '',
+    billing_street: raw.billing_street ?? '',
+    billing_postal: raw.billing_postal ?? '',
+    billing_city: raw.billing_city ?? '',
+    customer_type: raw.customer_type === 'b2b' ? 'b2b' : 'b2c',
+    company_name: raw.company_name ?? null,
+    vat_number: raw.vat_number ?? null,
+    company_registration_number: raw.company_registration_number ?? null,
+    company_registration_type: raw.company_registration_type ?? null,
+    vat_validated: normalizeVatState(raw.vat_validated),
+  }
+}
+
+/**
+ * PUT /api/v1/billing/profile — persist the billing profile BEFORE redirecting
+ * to Mollie. The server validates the country, runs VIES for cross-border B2B
+ * VAT numbers, and returns the stored profile incl. the `vat_validated` STRING
+ * verdict so the caller can reflect reverse-charge / invalid / local-VAT status.
+ * The server returns 200 even for an invalid number — the verdict is in the body.
+ */
+export async function saveBillingProfile(
+  payload: BillingProfilePayload,
+): Promise<BillingProfile> {
+  const raw = await request<Partial<BillingProfile>>('/api/v1/billing/profile', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+  // The server echoes the stored row; fall back to the payload for any field it
+  // does not return so the form stays consistent.
+  return {
+    full_name: raw.full_name ?? payload.full_name,
+    billing_country: raw.billing_country ?? payload.billing_country,
+    billing_street: raw.billing_street ?? payload.billing_street,
+    billing_postal: raw.billing_postal ?? payload.billing_postal,
+    billing_city: raw.billing_city ?? payload.billing_city,
+    customer_type: raw.customer_type === 'b2b' ? 'b2b' : payload.customer_type,
+    company_name: raw.company_name ?? payload.company_name ?? null,
+    vat_number: raw.vat_number ?? payload.vat_number ?? null,
+    company_registration_number:
+      raw.company_registration_number ?? payload.company_registration_number ?? null,
+    company_registration_type:
+      raw.company_registration_type ?? payload.company_registration_type ?? null,
+    vat_validated: normalizeVatState(raw.vat_validated),
+  }
+}
+
+/** Live VAT-inclusive price preview. All amounts are integer cents. */
+export interface VatPreview {
+  net_cents: number
+  vat_rate_bps: number
+  vat_amount_cents: number
+  gross_cents: number
+  treatment: VatTreatment
+}
+
+/**
+ * GET /api/v1/billing/vat-preview — the VAT-inclusive price for a plan/cycle as
+ * the user picks country + customer type, BEFORE they commit. `country` + `type`
+ * are passed explicitly, so this NEVER previews reverse_charge (that only applies
+ * after a profile VIES pass); the conservative D5 default shows destination/home
+ * VAT.
+ */
+export async function getVatPreview(params: {
+  plan: string
+  cycle: 'monthly' | 'yearly'
+  country: string
+  type: CustomerType
+  quantity?: number
+}): Promise<VatPreview> {
+  const qs = new URLSearchParams({
+    plan: params.plan,
+    cycle: params.cycle,
+    country: params.country,
+    type: params.type,
+  })
+  if (params.quantity != null) qs.set('quantity', String(params.quantity))
+  return request<VatPreview>(`/api/v1/billing/vat-preview?${qs.toString()}`)
+}
+
+/** A row from GET /api/v1/billing/invoices (Mollie/VAT-compliant invoices). */
+export interface BillingInvoice {
+  id: string
+  invoice_number: string
+  invoice_date: string
+  amount_gross_cents: number
+  amount_net_cents: number
+  vat_amount_cents: number
+  vat_rate_bps: number
+  status: string
+  vat_treatment: VatTreatment
+  pdf_url: string
+}
+
+/**
+ * GET /api/v1/billing/invoices — the VAT-compliant invoice list backed by the
+ * `invoices` table (NOT Stripe). Each row carries a `pdf_url` pointing at
+ * `/api/v1/billing/invoices/{id}/pdf`. `stripe_configured` is always false now.
+ */
+export async function getBillingInvoices(): Promise<BillingInvoice[]> {
+  const data = await request<{ invoices: BillingInvoice[]; stripe_configured?: boolean }>(
+    '/api/v1/billing/invoices',
+  )
+  return data.invoices ?? []
+}
+
+/**
+ * Download an invoice PDF (GET /api/v1/billing/invoices/{id}/pdf). The endpoint
+ * is authenticated, so we fetch with the bearer token + cookie and hand back a
+ * Blob the caller saves — a plain `window.open` would 401.
+ */
+export async function downloadInvoicePdf(invoiceId: string): Promise<Blob> {
+  const token = getToken()
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const res = await fetch(
+    `${API_URL}/api/v1/billing/invoices/${invoiceId}/pdf`,
+    { headers, credentials: 'include' },
+  )
+  if (!res.ok) {
+    throw new ApiError(res.statusText, res.status)
+  }
+  return res.blob()
+}
+
 export async function createCheckoutSession(params: {
   plan: string
   billing_cycle: string

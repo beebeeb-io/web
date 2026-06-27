@@ -11,7 +11,7 @@ import { DowngradeDialog } from '../components/downgrade-dialog'
 import { useToast } from '../components/toast'
 import {
   getSubscription,
-  getInvoices,
+  getBillingInvoices,
   getPlans,
   listFiles,
   createPortalSession,
@@ -31,7 +31,7 @@ import {
   convertTrial,
   ApiError,
   type Subscription,
-  type Invoice,
+  type BillingInvoice,
   type Plan,
   type DriveFile,
   type StorageAddonState,
@@ -50,6 +50,7 @@ import {
   formatCentsAsEur,
 } from '../lib/plan-pricing'
 import { PlanComparisonTable } from '../components/plan-comparison'
+import { InvoiceList } from '../components/billing/InvoiceList'
 import { PLAN_META, PLAN_RANK, getDowngradeOptions } from '../lib/plan-constants'
 
 /* ── Plan metadata (imported from plan-constants.ts) ──── */
@@ -106,11 +107,6 @@ function remainingDays(iso: string | null): number {
 
 /** Plans ordered by tier, used for downgrade suggestions. */
 const orderedPaidPlans = ['basic', 'pro', 'business'] as const
-
-function invoicePdfUrl(invoice: Invoice): string | undefined {
-  // TODO: Remove this fallback once the billing API settles on one invoice PDF field.
-  return invoice.pdf_url ?? invoice.url
-}
 
 function formatEuro(amount: number): string {
   if (!Number.isFinite(amount)) return '€0.00'
@@ -215,7 +211,7 @@ export function Billing() {
   const { usage: contextUsage, planDetails: contextPlanDetails, refreshPlanDetails } = useDriveData()
   // sub comes from context; re-synced after cancel/reactivate via loadData
   const [sub, setSub] = useState<Subscription | null>(contextPlanDetails.subscription)
-  const [invoices, setInvoices] = useState<Invoice[]>([])
+  const [invoices, setInvoices] = useState<BillingInvoice[]>([])
   const [plans, setPlans] = useState<Plan[] | null>(null)
   const [files, setFiles] = useState<DriveFile[] | null>(null)
   const [loading, setLoading] = useState(true)
@@ -397,7 +393,7 @@ export function Billing() {
       // cards section (context only stores the matched current-user plan).
       const [subData, invData, invoicePref, plansData, filesData, addonsData] = await Promise.all([
         getSubscription(),
-        getInvoices().catch(() => [] as Invoice[]),
+        getBillingInvoices().catch(() => [] as BillingInvoice[]),
         getPreference<{ send_email: boolean; invoice_email: string }>('invoice_settings').catch(() => null),
         getPlans().catch(() => null),
         listFiles(undefined, false).catch(() => null),
@@ -421,24 +417,6 @@ export function Billing() {
       setLoading(false)
     }
   }, [])
-
-  const handleDownloadInvoice = useCallback((invoice: Invoice) => {
-    const url = invoicePdfUrl(invoice)
-    if (!url) {
-      showToast({ icon: 'download', title: 'Invoice unavailable', description: 'No PDF URL was provided for this invoice.', danger: true })
-      return
-    }
-    window.open(url, '_blank', 'noopener,noreferrer')
-  }, [showToast])
-
-  const handleDownloadAllInvoices = useCallback(() => {
-    const urls = invoices.map(invoicePdfUrl).filter((url): url is string => Boolean(url))
-    if (urls.length === 0) {
-      showToast({ icon: 'download', title: 'Invoices unavailable', description: 'No PDF URLs were provided for these invoices.', danger: true })
-      return
-    }
-    urls.forEach((url) => window.open(url, '_blank', 'noopener,noreferrer'))
-  }, [invoices, showToast])
 
   useEffect(() => {
     void loadData()
@@ -1987,72 +1965,12 @@ function openUpgrade(plan: string) {
         })()}
 
         {/* ── Invoices ───────────────────────────────── */}
-        <div>
-          <div className="flex items-center gap-2.5 mb-2.5">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-4">
-              Invoices
-            </span>
-            {invoices.length > 0 && (
-              <BBButton size="sm" variant="ghost" className="ml-auto" onClick={handleDownloadAllInvoices}>
-                <Icon name="download" size={11} className="mr-1" />
-                Download all
-              </BBButton>
-            )}
-          </div>
-
-          {invoices.length === 0 ? (
-            <div className="border border-line rounded-xl bg-paper-2 py-8 text-center">
-              <div className="w-10 h-10 rounded-xl bg-paper border border-line flex items-center justify-center mx-auto mb-3">
-                <Icon name="file-text" size={16} className="text-ink-3" />
-              </div>
-              <div className="text-sm text-ink-3 mb-0.5">No invoices yet</div>
-              <div className="text-xs text-ink-4">
-                Invoices will appear here after your first payment.
-              </div>
-            </div>
-          ) : (
-            <div className="border border-line rounded-xl overflow-x-auto">
-              <div
-                className="grid gap-4 px-5 py-2.5 border-b border-line bg-paper-2 text-[11px] font-semibold uppercase tracking-wider text-ink-4 min-w-[500px]"
-                style={{ gridTemplateColumns: '1.2fr 1fr 100px 100px 40px' }}
-              >
-                <span>Number</span>
-                <span>Date</span>
-                <span>Amount</span>
-                <span>Status</span>
-                <span />
-              </div>
-
-              {invoices.map((inv) => {
-                const isPaid = inv.status === 'paid'
-                const isUpcoming = inv.status === 'upcoming' || inv.status === 'open'
-                return (
-                  <div
-                    key={inv.id}
-                    className="grid gap-4 px-5 py-3 border-b border-line items-center last:border-b-0 hover:bg-paper-2/50 transition-colors min-w-[500px]"
-                    style={{ gridTemplateColumns: '1.2fr 1fr 100px 100px 40px' }}
-                  >
-                    <span className="font-mono text-xs font-medium">{inv.number}</span>
-                    <span className="text-[12.5px] text-ink-2">{formatDate(inv.date)}</span>
-                    <span className="font-mono text-xs font-semibold">
-                      EUR {inv.amount_eur.toFixed(2)}
-                    </span>
-                    <span>
-                      <BBChip variant={isPaid ? 'green' : isUpcoming ? 'amber' : 'default'}>
-                        {inv.status.charAt(0).toUpperCase() + inv.status.slice(1)}
-                      </BBChip>
-                    </span>
-                    <div className="flex justify-end">
-                      <BBButton size="sm" variant="ghost" onClick={() => handleDownloadInvoice(inv)}>
-                        <Icon name="download" size={12} />
-                      </BBButton>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
+        <InvoiceList
+          invoices={invoices}
+          onError={(message) =>
+            showToast({ icon: 'download', title: 'Could not download invoice', description: message, danger: true })
+          }
+        />
 
         {/* ── Invoice preferences ────────────────────── */}
         <div className="border border-line rounded-xl overflow-hidden bg-paper">
