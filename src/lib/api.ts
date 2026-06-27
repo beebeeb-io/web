@@ -419,6 +419,30 @@ export async function verifyRecoveryCheck(recoveryCheck: string): Promise<boolea
   return res.valid === true
 }
 
+/**
+ * POST /api/v1/auth/recovery-check  (set-once-if-absent backfill — task 0875)
+ *
+ * Authed (Bearer session): sets the CURRENT account's `recovery_check` ONLY if
+ * it is currently NULL. A handful of legacy accounts predate the signup-time
+ * check; task 0874 made device-provision REJECT a recovery phrase whose
+ * `recovery_check` doesn't match the stored one, so a NULL-stored account is
+ * wrongly locked out of recovery-phrase provisioning. We backfill it on a
+ * PROVEN-correct-key unlock (the only time the client holds a key it KNOWS is
+ * the account's). The server never overwrites a non-NULL value, so this can
+ * never poison an existing verifier. Idempotent → `{ updated: boolean }`.
+ *
+ * MUST be called only with a key proven correct (vault keyCheck / escrow
+ * AEAD-decrypt / 0874-validated phrase) — never from an unvalidated key.
+ */
+export async function setRecoveryCheckIfAbsent(
+  recoveryCheck: string,
+): Promise<{ ok: boolean; updated: boolean }> {
+  return request<{ ok: boolean; updated: boolean }>(
+    '/api/v1/auth/recovery-check',
+    { method: 'POST', body: JSON.stringify({ recovery_check: recoveryCheck }) },
+  )
+}
+
 export async function recoverOpaqueRegister(
   recoveryToken: string,
   clientMessage: string,

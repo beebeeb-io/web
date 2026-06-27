@@ -55,3 +55,54 @@ export async function recoveredKeyMatchesAccount(
     throw err
   }
 }
+
+/**
+ * Dependencies for {@link backfillRecoveryCheckIfAbsent}, injected so the
+ * backfill can be unit-tested without the Comlink crypto worker.
+ */
+export interface RecoveryCheckBackfillDeps {
+  /** Compute the account-binding `recovery_check`, base64-encoded. */
+  computeRecoveryCheckB64: (masterKey: Uint8Array) => Promise<string>
+  /**
+   * Authed `POST /api/v1/auth/recovery-check` — sets the current account's
+   * `recovery_check` ONLY if it is currently NULL (set-once-if-absent; the
+   * server never overwrites a non-NULL value). Resolves `{ updated }`.
+   */
+  setRecoveryCheckIfAbsent: (
+    recoveryCheckB64: string,
+  ) => Promise<{ updated: boolean }>
+}
+
+/**
+ * Best-effort backfill of the account's server-stored `recovery_check` from a
+ * master key that has ALREADY been proven correct (task 0875).
+ *
+ * A handful of legacy accounts predate the signup-time `recovery_check`. Task
+ * 0874 made device-provision REJECT a recovery phrase whose `recovery_check`
+ * doesn't match the stored one — but for a NULL-stored account that rejects the
+ * CORRECT phrase too, locking it out of recovery-phrase provisioning. The
+ * server can never compute the check itself (it never sees the master key), so
+ * the client backfills it on a proven-correct-key unlock. The server only sets
+ * it when currently NULL, so this is safe + idempotent.
+ *
+ * CRITICAL: the caller MUST pass a key proven to be the account's (local-vault
+ * keyCheck, passkey/escrow AEAD-decrypt, fresh signup key, password-change
+ * re-wrap, or a 0874-validated recovery phrase). NEVER call this with an
+ * unvalidated key — that could set a WRONG check into the empty slot.
+ *
+ * NEVER throws: this is fire-and-forget and must never block or break an
+ * unlock. Returns `true` only when the server actually set the value.
+ */
+export async function backfillRecoveryCheckIfAbsent(
+  masterKey: Uint8Array,
+  deps: RecoveryCheckBackfillDeps,
+): Promise<boolean> {
+  try {
+    const recoveryCheck = await deps.computeRecoveryCheckB64(masterKey)
+    const res = await deps.setRecoveryCheckIfAbsent(recoveryCheck)
+    return res.updated === true
+  } catch {
+    // Best effort — a network/server failure must never surface to the unlock.
+    return false
+  }
+}

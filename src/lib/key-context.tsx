@@ -16,6 +16,8 @@ import {
   deriveFileKey,
   initCrypto,
   zeroize,
+  computeRecoveryCheck,
+  toBase64,
 } from './crypto'
 import { registerLogoutCallback } from './auth-context'
 import { wrapAndStore, unwrap, hasVault, clearVault, wrapAndStoreWithPasskey, unwrapWithPasskey } from './vault'
@@ -30,9 +32,10 @@ import {
   restoreSession,
   clearSession,
 } from './session-persist'
-import { getEmail, getToken } from './api'
+import { getEmail, getToken, setRecoveryCheckIfAbsent } from './api'
 import type { DriveFile } from './api'
 import { isRequestUpload, createRequestKeyResolver, type RequestKeyResolver } from './file-request-crypto'
+import { backfillRecoveryCheckIfAbsent } from './recovery-validation'
 import { pushTauriSession, clearTauriSession } from './tauri-bridge'
 
 interface KeyState {
@@ -190,6 +193,31 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     void pushTauriSession(token, key, email ?? undefined)
   }, [])
 
+  // Backfill the account's server-stored `recovery_check` on a PROVEN-correct-key
+  // unlock (task 0875). A handful of legacy accounts predate the signup-time
+  // check; task 0874 made device-provision REJECT a recovery phrase whose
+  // recovery_check doesn't match the stored one, so a NULL-stored account would
+  // be wrongly locked out of recovery-phrase provisioning. The server sets it
+  // ONLY if currently NULL (never overwrites), so this is safe + idempotent.
+  //
+  // CRITICAL: call this ONLY with a key already proven to be the account's —
+  // i.e. local-vault keyCheck (unlockVault), passkey-escrow AEAD-decrypt
+  // (unlockVaultWithPasskey / setMasterKeyFromPasskey / setMasterKeyDirect), a
+  // freshly-generated signup key, a password-change re-wrap of the live key, or
+  // the 0874-validated recovery-phrase path (all funnel through setMasterKey).
+  // It MUST NOT be wired into the legacy `unlock(password, salt)` path, which
+  // derives a key WITHOUT proving it correct — backfilling from there could
+  // set a WRONG recovery_check into the empty slot.
+  //
+  // Best-effort + fire-and-forget: never awaited by the caller; the helper
+  // swallows all failures — it must never block or break an unlock.
+  const backfillRecoveryCheck = useCallback((key: Uint8Array) => {
+    void backfillRecoveryCheckIfAbsent(key, {
+      computeRecoveryCheckB64: async (k) => toBase64(await computeRecoveryCheck(k)),
+      setRecoveryCheckIfAbsent,
+    })
+  }, [])
+
   const unlock = useCallback(async (password: string, salt: Uint8Array) => {
     const { masterKey } = await deriveKeys(password, salt)
     masterKeyRef.current = masterKey
@@ -205,7 +233,8 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     setIsUnlocked(true)
     cacheKey(key)
     handoffToTauri(key)
-  }, [cacheKey, handoffToTauri])
+    backfillRecoveryCheck(key)
+  }, [cacheKey, handoffToTauri, backfillRecoveryCheck])
 
   // Set the master key directly without password wrapping.
   // Used by passkey vault unlock where the key comes from server escrow,
@@ -218,7 +247,8 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     setIsUnlocked(true)
     cacheKey(key)
     handoffToTauri(key)
-  }, [cacheKey, handoffToTauri])
+    backfillRecoveryCheck(key)
+  }, [cacheKey, handoffToTauri, backfillRecoveryCheck])
 
   const setMasterKeyFromPasskey = useCallback(async (key: Uint8Array, wrapKey: Uint8Array) => {
     masterKeyRef.current = key
@@ -227,7 +257,8 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     setIsUnlocked(true)
     cacheKey(key)
     handoffToTauri(key)
-  }, [cacheKey, handoffToTauri])
+    backfillRecoveryCheck(key)
+  }, [cacheKey, handoffToTauri, backfillRecoveryCheck])
 
   const unlockVaultWithPasskey = useCallback(async (wrapKey: Uint8Array): Promise<boolean> => {
     const key = await unwrapWithPasskey(wrapKey)
@@ -236,8 +267,9 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     setIsUnlocked(true)
     cacheKey(key)
     handoffToTauri(key)
+    backfillRecoveryCheck(key)
     return true
-  }, [cacheKey, handoffToTauri])
+  }, [cacheKey, handoffToTauri, backfillRecoveryCheck])
 
   const unlockVault = useCallback(async (password: string): Promise<boolean> => {
     const key = await unwrap(password)
@@ -246,8 +278,9 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     setIsUnlocked(true)
     cacheKey(key)
     handoffToTauri(key)
+    backfillRecoveryCheck(key)
     return true
-  }, [cacheKey, handoffToTauri])
+  }, [cacheKey, handoffToTauri, backfillRecoveryCheck])
 
   const getFileKey = useCallback(async (fileId: string): Promise<Uint8Array> => {
     if (!masterKeyRef.current) {
