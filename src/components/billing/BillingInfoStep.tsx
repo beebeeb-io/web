@@ -8,11 +8,18 @@ import {
   getVatPreview,
   type BillingProfile,
   type BillingProfilePayload,
+  type CompanyRegistrationType,
   type CustomerType,
   type VatPreview,
   type VatState,
 } from '../../lib/api'
-import { EU_COUNTRIES, NON_EU_COUNTRIES, isEuCountry } from '../../lib/countries'
+import {
+  EU_COUNTRIES,
+  NON_EU_COUNTRIES,
+  isEuCountry,
+  COMPANY_REG_TYPE_OPTIONS,
+  defaultRegTypeForCountry,
+} from '../../lib/countries'
 import { userFriendlyError } from '../../lib/user-friendly-error'
 
 type BillingCycle = 'monthly' | 'yearly'
@@ -78,6 +85,10 @@ export function BillingInfoStep({
   const [companyName, setCompanyName] = useState('')
   const [vatNumber, setVatNumber] = useState('')
   const [regNumber, setRegNumber] = useState('')
+  // Company registration register (required for B2B). Defaults from the billing
+  // country until the user explicitly picks one (`regTypeTouched`).
+  const [regType, setRegType] = useState<CompanyRegistrationType>('OTHER')
+  const [regTypeTouched, setRegTypeTouched] = useState(false)
 
   const [loadingProfile, setLoadingProfile] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -104,6 +115,10 @@ export function BillingInfoStep({
         setCompanyName(p.company_name ?? '')
         setVatNumber(p.vat_number ?? '')
         setRegNumber(p.company_registration_number ?? '')
+        if (p.company_registration_type) {
+          setRegType(p.company_registration_type)
+          setRegTypeTouched(true)
+        }
       } catch {
         // No saved profile (or transient) — start with an empty form.
       } finally {
@@ -150,6 +165,15 @@ export function BillingInfoStep({
     setVies({ kind: 'idle' })
   }, [vatNumber, country, customerType])
 
+  // Default the registration register from the billing country until the user
+  // explicitly overrides it (NL→KvK, DE→HRB, …). Keeps the required B2B field
+  // pre-filled with the most likely value.
+  useEffect(() => {
+    if (!regTypeTouched && country) {
+      setRegType(defaultRegTypeForCountry(country))
+    }
+  }, [country, regTypeTouched])
+
   const isB2b = customerType === 'b2b'
   const crossBorderB2b = isB2b && country !== '' && country !== 'NL' && isEuCountry(country)
 
@@ -164,9 +188,10 @@ export function BillingInfoStep({
       company_name: isB2b ? companyName.trim() || null : null,
       vat_number: isB2b ? vatNumber.trim() || null : null,
       company_registration_number: isB2b ? regNumber.trim() || null : null,
-      company_registration_type: null,
+      // REQUIRED for B2B (server rejects null with 400); omitted for B2C.
+      company_registration_type: isB2b ? regType : null,
     }),
-    [fullName, country, street, postal, city, customerType, isB2b, companyName, vatNumber, regNumber],
+    [fullName, country, street, postal, city, customerType, isB2b, companyName, vatNumber, regNumber, regType],
   )
 
   function validate(): boolean {
@@ -177,6 +202,7 @@ export function BillingInfoStep({
     if (!city.trim()) errs.city = 'Required.'
     if (!postal.trim()) errs.postal = 'Required.'
     if (isB2b && !companyName.trim()) errs.companyName = 'Required for business accounts.'
+    if (isB2b && !regType) errs.regType = 'Required.'
     setFieldErrors(errs)
     return Object.keys(errs).length === 0
   }
@@ -409,14 +435,39 @@ export function BillingInfoStep({
               <span>VAT number could not be verified. You will be charged with local VAT.</span>
             </div>
           )}
-          <BBInput
-            label="Company registration number"
-            hint="Optional."
-            value={regNumber}
-            onChange={(e) => setRegNumber(e.target.value)}
-            placeholder="KvK 95157565"
-            autoComplete="off"
-          />
+          <div className="grid grid-cols-2 gap-2.5">
+            {/* Registration register — REQUIRED for B2B (server enum). */}
+            <div>
+              <label htmlFor="reg-type" className="block text-xs font-medium text-ink-2 mb-1.5">
+                Registration register
+              </label>
+              <select
+                id="reg-type"
+                data-testid="reg-type"
+                value={regType}
+                onChange={(e) => {
+                  setRegType(e.target.value as CompanyRegistrationType)
+                  setRegTypeTouched(true)
+                }}
+                className={`${selectClass} ${fieldErrors.regType ? 'border-red' : 'border-line'}`}
+              >
+                {COMPANY_REG_TYPE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+              {fieldErrors.regType && <p className="text-xs mt-1.5 text-red">{fieldErrors.regType}</p>}
+            </div>
+            <BBInput
+              label="Registration number"
+              hint="Optional."
+              value={regNumber}
+              onChange={(e) => setRegNumber(e.target.value)}
+              placeholder="95157565"
+              autoComplete="off"
+            />
+          </div>
         </div>
       )}
 

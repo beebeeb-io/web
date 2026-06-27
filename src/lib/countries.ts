@@ -3,6 +3,8 @@
 // set of common non-EU countries. The server is the source of truth for VAT
 // treatment — this list only drives the selector + the vat-preview query.
 
+import type { CompanyRegistrationType } from './api'
+
 export interface Country {
   code: string
   name: string
@@ -62,4 +64,36 @@ export function countryName(code: string): string {
 
 export function isEuCountry(code: string): boolean {
   return COUNTRY_BY_CODE.get(code)?.eu ?? false
+}
+
+/** Human labels for the 7 server-side company-registration registers (B2B). */
+export const COMPANY_REG_TYPE_OPTIONS: { value: CompanyRegistrationType; label: string }[] = [
+  { value: 'KVK', label: 'KvK (Netherlands)' },
+  { value: 'HRB', label: 'Handelsregister / HRB (Germany)' },
+  { value: 'SIREN', label: 'SIREN/SIRET (France)' },
+  { value: 'KBO', label: 'KBO/BCE (Belgium)' },
+  { value: 'CVR', label: 'CVR (Denmark)' },
+  { value: 'ORGNR', label: 'Org.nr (Sweden/Norway)' },
+  { value: 'OTHER', label: 'Other' },
+]
+
+/** Sensible default register for a billing country; user can override. */
+export function defaultRegTypeForCountry(code: string): CompanyRegistrationType {
+  switch (code) {
+    case 'NL':
+      return 'KVK'
+    case 'DE':
+      return 'HRB'
+    case 'FR':
+      return 'SIREN'
+    case 'BE':
+      return 'KBO'
+    case 'DK':
+      return 'CVR'
+    case 'SE':
+    case 'NO':
+      return 'ORGNR'
+    default:
+      return 'OTHER'
+  }
 }

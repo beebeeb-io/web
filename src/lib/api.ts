@@ -1662,6 +1662,21 @@ export async function getInvoices(): Promise<Invoice[]> {
 export type CustomerType = 'b2c' | 'b2b'
 
 /**
+ * Company registration register, REQUIRED for B2B. The server constrains it to
+ * this enum (case-insensitive, stored uppercased) and rejects null for a B2B
+ * customer with 400 ("company_registration_type is required for a B2B customer").
+ * Mirrors `COMPANY_REG_TYPES` in server billing.rs.
+ */
+export type CompanyRegistrationType =
+  | 'KVK'
+  | 'HRB'
+  | 'SIREN'
+  | 'KBO'
+  | 'CVR'
+  | 'ORGNR'
+  | 'OTHER'
+
+/**
  * VIES verdict the server attaches to a saved billing profile (`vat_validated`).
  * It is a STRING — the server always returns 200 (never 400 for a bad number).
  *   valid          → VIES valid → reverse charge / 0% VAT
@@ -1696,7 +1711,7 @@ export interface BillingProfilePayload {
   company_name?: string | null
   vat_number?: string | null
   company_registration_number?: string | null
-  company_registration_type?: string | null
+  company_registration_type?: CompanyRegistrationType | null
 }
 
 /** Billing profile as returned on read — payload plus the VIES verdict string. */
