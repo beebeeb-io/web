@@ -443,6 +443,12 @@ export interface Subscription {
   storage_grace_deadline?: string | null
   /** Set when status === 'paused' (task 0544). ISO timestamp when billing resumes. */
   pause_until?: string | null
+  /**
+   * Set when status === 'trialing' (task 0905, 14-day free trial). RFC3339
+   * timestamp when the trial ends — drives the "N days left" banner and the
+   * convert/add-payment CTA. Null/absent for non-trial subscriptions.
+   */
+  trial_ends_at?: string | null
 }
 
 export interface Invoice {

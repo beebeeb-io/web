@@ -238,7 +238,9 @@ test.describe('0865 checkout redirect + poll-confirmed success', () => {
     await bootBilling(page, '/settings/billing')
     await expect(page.getByText(/Plan & billing/i).first()).toBeVisible({ timeout: 15_000 })
     // Open the upgrade dialog (the checkout entry point that holds the copy).
-    await page.getByRole('button', { name: /Upgrade to Basic/i }).first().click()
+    // task 0905 renamed the Free-plan paid entry to "Subscribe to Basic" (the
+    // amber primary is now "Start 14-day free trial"); the dialog is unchanged.
+    await page.getByRole('button', { name: /Subscribe to Basic/i }).first().click()
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 10_000 })
     await expect(page.getByText(/Choose your payment method on the next step/i)).toBeVisible()
     // No enumerated method list, no "Stripe", no emoji in the dialog.

@@ -27,6 +27,9 @@ import {
   getStorageAddons,
   updateStorageAddons,
   previewStorageAddons,
+  startTrial,
+  convertTrial,
+  ApiError,
   type Subscription,
   type Invoice,
   type Plan,
@@ -241,6 +244,13 @@ export function Billing() {
   // Billing cycle switch confirmation
   const [cycleSwitchConfirm, setCycleSwitchConfirm] = useState<'monthly' | 'yearly' | null>(null)
   const [cycleSwitchLoading, setCycleSwitchLoading] = useState(false)
+  // 14-day free trial (task 0905). `trialStarting` tracks the plan currently
+  // being started; `trialUsed` is set when the server reports the user already
+  // had a trial (409 trial_already_used) so we hide the CTA and fall back to the
+  // normal paid checkout. `convertLoading` tracks the convert/add-payment flow.
+  const [trialStarting, setTrialStarting] = useState<string | null>(null)
+  const [trialUsed, setTrialUsed] = useState(false)
+  const [convertLoading, setConvertLoading] = useState(false)
   // Upgraded return — the user came back from the provider's hosted checkout.
   // Provisioning is async (the payment webhook writes the subscription row, NOT
   // the redirect), and the provider reuses ONE redirect URL for paid/cancelled/
@@ -758,6 +768,102 @@ function openUpgrade(plan: string) {
     }
   }
 
+  /**
+   * Start a 14-day free trial (task 0905, Pattern B — no card). On success the
+   * subscription flips to `trialing` immediately; we refresh state so the page
+   * shows the trialing summary + the global "N days left" banner. A 409
+   * `trial_already_used` is honest signal that this account already had a trial —
+   * we hide the trial CTA and fall back to the normal paid checkout.
+   */
+  async function handleStartTrial(plan: string) {
+    setTrialStarting(plan)
+    try {
+      await startTrial({ plan, billing_cycle: 'monthly' })
+      showToast({
+        icon: 'check',
+        title: 'Your free trial has started',
+        description: '14 days of full access. No card required — cancel anytime, you keep your files.',
+      })
+      window.dispatchEvent(new Event('beebeeb:plan-changed'))
+      refreshPlanDetails()
+      await loadData()
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'trial_already_used') {
+        setTrialUsed(true)
+        showToast({
+          icon: 'clock',
+          title: 'You have already used your free trial',
+          description: 'Subscribe to keep full access — your files stay encrypted either way.',
+        })
+        openUpgrade(plan)
+        return
+      }
+      if (err instanceof ApiError && err.code === 'trial_has_active_subscription') {
+        showToast({
+          icon: 'check',
+          title: 'You already have a plan',
+          description: 'Manage it from billing below.',
+        })
+        await loadData()
+        return
+      }
+      showToast({
+        icon: 'x',
+        title: 'Could not start your trial',
+        description: err instanceof Error ? err.message : 'Please try again.',
+        danger: true,
+      })
+    } finally {
+      setTrialStarting(null)
+    }
+  }
+
+  /**
+   * Convert an active trial to a paid subscription (task 0905, UNIT B). REUSES
+   * the 0865 redirect + poll-confirmed return machine: stamp the pending-checkout
+   * marker, then redirect to the Mollie hosted checkout the server returns. The
+   * two typed 409s route the user: a lapsed trial → normal upgrade picker; an
+   * already-converted trial → billing management (this page, refreshed).
+   */
+  async function handleConvertTrial() {
+    setConvertLoading(true)
+    try {
+      const { url } = await convertTrial()
+      setPendingCheckout(sub?.plan ?? effectivePlan, sub?.billing_cycle ?? 'monthly')
+      window.location.href = url
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'trial_not_active') {
+        showToast({
+          icon: 'clock',
+          title: 'Your trial has ended',
+          description: 'Choose a plan to keep your extra storage.',
+        })
+        await loadData()
+        setConvertLoading(false)
+        return
+      }
+      if (err instanceof ApiError && err.code === 'trial_already_subscribed') {
+        showToast({
+          icon: 'check',
+          title: 'You are already subscribed',
+          description: 'Your trial has already been converted.',
+        })
+        window.dispatchEvent(new Event('beebeeb:plan-changed'))
+        refreshPlanDetails()
+        await loadData()
+        setConvertLoading(false)
+        return
+      }
+      showToast({
+        icon: 'x',
+        title: 'Could not add a payment method',
+        description: err instanceof Error ? err.message : 'Please try again.',
+        danger: true,
+      })
+      setConvertLoading(false)
+    }
+  }
+
   /* ── Loading state ─────────────────────────────────── */
 
   if (loading) {
@@ -820,6 +926,7 @@ function openUpgrade(plan: string) {
   function statusBadge() {
     if (effectivePlan === 'free') return null
     const cfg =
+      sub?.status === 'trialing'   ? { bg: 'bg-amber-bg', text: 'text-amber-deep', dot: 'bg-amber-deep', label: 'Trial' }      :
       sub?.status === 'cancelling' ? { bg: 'bg-amber-bg', text: 'text-amber-deep', dot: 'bg-amber-deep', label: 'Cancelling' } :
       sub?.status === 'past_due'   ? { bg: 'bg-red/10',   text: 'text-red',        dot: 'bg-red',        label: 'Past due' }   :
       sub?.status === 'paused'     ? { bg: 'bg-paper-3',  text: 'text-ink-2',      dot: 'bg-ink-3',      label: 'Paused' }     :
@@ -992,6 +1099,49 @@ function openUpgrade(plan: string) {
             >
               {portalLoading ? 'Redirecting...' : 'Update payment method'}
             </BBButton>
+          </div>
+        )}
+
+        {/* Trial summary (task 0905) — only for an active trial with a future
+            end date. A lapsed trial has status back to a non-trialing value, so
+            this also guards against a stale "trialing" panel. Honest copy near
+            expiry; the day count is mono (it reads like data); amber on the
+            primary convert CTA only. */}
+        {sub?.status === 'trialing' && sub.trial_ends_at && remainingDays(sub.trial_ends_at) > 0 && (
+          <div className="rounded-xl border border-amber/60 bg-amber-bg px-6 py-5">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex-1">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep mb-1">
+                  Free trial
+                </div>
+                {remainingDays(sub.trial_ends_at) <= 2 ? (
+                  <h2 className="text-lg font-bold text-ink leading-snug mb-1">
+                    Your trial ends in{' '}
+                    <span className="font-mono">{remainingDays(sub.trial_ends_at)}</span>{' '}
+                    {remainingDays(sub.trial_ends_at) === 1 ? 'day' : 'days'} — add a payment method to keep {meta.label}
+                  </h2>
+                ) : (
+                  <h2 className="text-lg font-bold text-ink leading-snug mb-1">
+                    <span className="font-mono">{remainingDays(sub.trial_ends_at)}</span> days left in your free trial
+                  </h2>
+                )}
+                <p className="text-[13.5px] text-ink-2 leading-relaxed mb-4">
+                  You have full {meta.label} access until{' '}
+                  <strong className="font-mono">{formatDate(sub.trial_ends_at)}</strong>.
+                  No card required — if you do nothing, your account simply returns to Free (5 GB).
+                  Your files stay encrypted either way.
+                </p>
+                <BBButton
+                  variant="amber"
+                  size="md"
+                  onClick={() => void handleConvertTrial()}
+                  disabled={convertLoading}
+                >
+                  {convertLoading ? 'Redirecting...' : 'Add payment method'}
+                  {!convertLoading && <Icon name="chevron-right" size={13} className="ml-1.5" />}
+                </BBButton>
+              </div>
+            </div>
           </div>
         )}
 
@@ -1185,21 +1335,58 @@ function openUpgrade(plan: string) {
             {/* Actions */}
             <div className="mt-4 flex gap-2">
               {effectivePlan === 'free' ? (
-                <>
-                  <BBButton
-                    variant="amber"
-                    size="md"
-                    onClick={() => openUpgrade('basic')}
-                  >
-                    Upgrade to Basic
-                  </BBButton>
-                  <BBButton
-                    size="md"
-                    onClick={() => openUpgrade('pro')}
-                  >
-                    Explore Pro
-                  </BBButton>
-                </>
+                /* Free plan. When the user is eligible (status not already
+                   trialing, trial not previously used), the amber primary action
+                   is "Start 14-day free trial" (task 0905, Pattern B — no card).
+                   A 409 trial_already_used flips `trialUsed` and we fall back to
+                   the normal paid checkout entry. */
+                sub?.status !== 'trialing' && !trialUsed ? (
+                  <>
+                    <BBButton
+                      variant="amber"
+                      size="md"
+                      onClick={() => void handleStartTrial('pro')}
+                      disabled={trialStarting !== null}
+                    >
+                      {trialStarting ? 'Starting trial...' : 'Start 14-day free trial'}
+                    </BBButton>
+                    <BBButton
+                      size="md"
+                      onClick={() => openUpgrade('basic')}
+                    >
+                      Subscribe to Basic
+                    </BBButton>
+                  </>
+                ) : (
+                  <>
+                    <BBButton
+                      variant="amber"
+                      size="md"
+                      onClick={() => openUpgrade('basic')}
+                    >
+                      Upgrade to Basic
+                    </BBButton>
+                    <BBButton
+                      size="md"
+                      onClick={() => openUpgrade('pro')}
+                    >
+                      Explore Pro
+                    </BBButton>
+                  </>
+                )
+              ) : sub?.status === 'trialing' ? (
+                /* Trialing on a paid plan (task 0905). The user has no Mollie
+                   customer yet, so "Manage billing" would dead-end — the primary
+                   action is the convert/add-payment CTA instead. */
+                <BBButton
+                  variant="amber"
+                  size="md"
+                  onClick={() => void handleConvertTrial()}
+                  disabled={convertLoading}
+                >
+                  {convertLoading ? 'Redirecting...' : 'Add payment method'}
+                  {!convertLoading && <Icon name="chevron-right" size={13} className="ml-1.5" />}
+                </BBButton>
               ) : (
                 <>
                   <BBButton
@@ -1223,6 +1410,14 @@ function openUpgrade(plan: string) {
               )}
             </div>
 
+            {/* Trial offer subtext — honest, no emojis. Only under the Free-plan
+                eligible state (task 0905). */}
+            {effectivePlan === 'free' && sub?.status !== 'trialing' && !trialUsed && (
+              <p className="mt-2.5 text-[11.5px] text-ink-3">
+                14 days free. No card required. Cancel anytime — you keep your files.
+              </p>
+            )}
+
             {/* Cancel plan — paid plans only, not already cancelling or paused.
                 Four steps (task 0544 added 'pause'):
                   idle    → "Cancel plan" link
@@ -1230,7 +1425,7 @@ function openUpgrade(plan: string) {
                   pause   → "Pause instead?" card with 30/60/90-day options
                   confirm → existing cancel-confirmation panel
             */}
-            {effectivePlan !== 'free' && sub?.status !== 'cancelling' && sub?.status !== 'paused' && (
+            {effectivePlan !== 'free' && sub?.status !== 'cancelling' && sub?.status !== 'paused' && sub?.status !== 'trialing' && (
               cancelStep === 'offer' ? (
                 <div className="mt-3 p-3.5 bg-amber-bg/40 border border-amber/30 rounded-lg space-y-4">
                   <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep">

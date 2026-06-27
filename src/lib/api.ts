@@ -1668,6 +1668,52 @@ export async function createCheckoutSession(params: {
 }
 
 /**
+ * Start a 14-day free trial (task 0905, Pattern B — no card required).
+ *
+ * `POST /api/v1/billing/trial/start` sets the subscription to `status:'trialing'`
+ * + `trial_ends_at = now()+14d` and grants the chosen plan's quota immediately —
+ * NO Mollie call, NO payment method. Returns the new trialing subscription row.
+ *
+ * The server enforces one-trial-per-account. On a 409 the thrown ApiError carries
+ * a machine-readable `.code` the caller branches on:
+ *   - `trial_already_used`             → user already had a trial; fall back to
+ *                                        the normal paid checkout (hide the CTA).
+ *   - `trial_has_active_subscription`  → user already has an active paid sub.
+ * A 400 means the plan or billing_cycle is invalid.
+ */
+export async function startTrial(params: {
+  plan: string
+  billing_cycle: string
+}): Promise<Subscription> {
+  return request<Subscription>('/api/v1/billing/trial/start', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
+/**
+ * Convert an active trial to a paid subscription (task 0905, UNIT B).
+ *
+ * `POST /api/v1/billing/trial/convert` (no body) creates the Mollie €0 first
+ * payment (mandate capture) and the deferred subscription (`startDate =
+ * trial_ends_at`, no double charge) and returns the Mollie hosted-checkout
+ * `{url}` — the caller redirects to it exactly like `createCheckoutSession`,
+ * REUSING the 0865 poll-confirmed return machine (set the pending-checkout
+ * marker before redirecting).
+ *
+ * On a 409 the thrown ApiError's `.code` tells the caller where to route:
+ *   - `trial_not_active`        → the trial lapsed to Free; send the user to the
+ *                                 normal plan picker / checkout, NOT convert.
+ *   - `trial_already_subscribed`→ already converted; send to billing management.
+ * A 400 means Mollie is not configured server-side.
+ */
+export async function convertTrial(): Promise<{ url: string }> {
+  return request<{ url: string }>('/api/v1/billing/trial/convert', {
+    method: 'POST',
+  })
+}
+
+/**
  * Open the Stripe Customer Portal for the current user.
  * Returns the portal session URL on success, or null when the endpoint is not
  * yet deployed (404) — callers should show a "not available yet" notice.
