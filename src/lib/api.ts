@@ -396,6 +396,29 @@ export async function recoverWithPhraseStart(
   }
 }
 
+/**
+ * POST /api/v1/auth/verify-recovery-check
+ *
+ * Authed (Bearer session): validates that a `recovery_check` (HMAC-SHA256 of a
+ * master key derived from a recovery phrase) belongs to the CURRENT account,
+ * WITHOUT issuing any password-recovery token. The server compares constant-time
+ * against the caller's stored `recovery_check` and returns `{valid:true}` on a
+ * match, or 400 `invalid_recovery_phrase` on a mismatch / no stored check.
+ *
+ * Used on device-provision to REJECT a wrong-but-checksum-valid recovery phrase
+ * BEFORE the derived key is persisted to the local IndexedDB vault — without it
+ * `recoverFromPhrase` derives *a* key from any valid BIP39 phrase and poisons
+ * the device. Returns `true` on match; throws `ApiError` (status 400, code
+ * `invalid_recovery_phrase`) on mismatch.
+ */
+export async function verifyRecoveryCheck(recoveryCheck: string): Promise<boolean> {
+  const res = await request<{ valid: boolean }>(
+    '/api/v1/auth/verify-recovery-check',
+    { method: 'POST', body: JSON.stringify({ recovery_check: recoveryCheck }) },
+  )
+  return res.valid === true
+}
+
 export async function recoverOpaqueRegister(
   recoveryToken: string,
   clientMessage: string,

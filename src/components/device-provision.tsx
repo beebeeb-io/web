@@ -2,10 +2,11 @@ import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { AuthShell } from './auth-shell'
 import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
-import { recoverFromPhrase } from '../lib/crypto'
+import { recoverFromPhrase, computeRecoveryCheck, toBase64 } from '../lib/crypto'
+import { recoveredKeyMatchesAccount } from '../lib/recovery-validation'
 import { useKeys } from '../lib/key-context'
 import { decryptFromQr } from '../lib/qr-crypto'
-import { startPasskeyLogin, finishPasskeyLogin, serverOptsToGetOptions, credentialToAuthenticationJSON, getVaultKeyEscrow } from '../lib/api'
+import { startPasskeyLogin, finishPasskeyLogin, serverOptsToGetOptions, credentialToAuthenticationJSON, getVaultKeyEscrow, verifyRecoveryCheck } from '../lib/api'
 import { prfExtensionInputs, extractPrfOutput, getVaultWrapKey, decryptVaultBlob } from '../lib/passkey-vault'
 import { fromBase64 } from '../lib/crypto'
 import jsQR from 'jsqr'
@@ -150,6 +151,23 @@ export function DeviceProvision({ password, email: propEmail, onProvisioned }: D
 
     try {
       const masterKey = await recoverFromPhrase(trimmed)
+
+      // recoverFromPhrase derives *a* master key from ANY checksum-valid BIP39
+      // phrase — it does NOT prove the phrase belongs to this account. Without a
+      // check, a wrong phrase would be wrapped + persisted into this device's
+      // local IndexedDB vault (setMasterKey → vault.ts wrapAndStore), poisoning
+      // the device into a can't-decrypt-anything state (task 0874). The user is
+      // already authenticated here, so validate the derived key against the
+      // account's server-stored recovery_check BEFORE persisting/unlocking.
+      const matches = await recoveredKeyMatchesAccount(masterKey, {
+        computeRecoveryCheckB64: async (k) => toBase64(await computeRecoveryCheck(k)),
+        verifyRecoveryCheck,
+      })
+      if (!matches) {
+        setError('Incorrect recovery phrase. Check your words and try again.')
+        return
+      }
+
       await setMasterKey(masterKey, password)
       onProvisioned()
     } catch (err) {
