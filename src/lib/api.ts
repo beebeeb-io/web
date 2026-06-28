@@ -262,14 +262,26 @@ export async function signup(
 
 // ─── OPAQUE auth endpoints ─────────────────────────
 
+/**
+ * OPAQUE registration, round 1. While Beebeeb is in private development the
+ * server gates this endpoint behind a shared pilot access key: pass the
+ * user-entered key as `pilotKey` and it rides as the `X-Beebeeb-Pilot-Key`
+ * header. A missing/wrong key is rejected HERE with a typed 403
+ * (`error: "pilot_key_required"`) BEFORE anything is created server-side, so
+ * the gate must be enforced on this (register-start) request — not finish.
+ */
 export async function opaqueRegisterStart(
   email: string,
   clientMessage: string,
+  pilotKey?: string,
 ): Promise<{ server_message: string }> {
   const body: Record<string, unknown> = { email, client_message: clientMessage }
+  const headers: Record<string, string> = {}
+  if (pilotKey) headers['X-Beebeeb-Pilot-Key'] = pilotKey
   return request('/api/v1/opaque/register-start', {
     method: 'POST',
     body: JSON.stringify(body),
+    headers,
   })
 }
 
