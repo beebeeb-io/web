@@ -102,9 +102,11 @@ export function InvoiceList({ invoices, onError }: InvoiceListProps) {
           </div>
         </div>
       ) : (
-        <div className="border border-line rounded-xl overflow-x-auto" data-testid="invoices-list">
+        <div className="border border-line rounded-xl overflow-hidden" data-testid="invoices-list">
+          {/* Column header — table layout only (sm+). On mobile the rows reflow to
+              stacked cards (below), so the header would be meaningless there. */}
           <div
-            className="grid gap-4 px-5 py-2.5 border-b border-line bg-paper-2 text-[11px] font-semibold uppercase tracking-wider text-ink-4 min-w-[560px]"
+            className="hidden sm:grid gap-4 px-5 py-2.5 border-b border-line bg-paper-2 text-[11px] font-semibold uppercase tracking-wider text-ink-4"
             style={{ gridTemplateColumns: '1.4fr 1fr 120px 100px 40px' }}
           >
             <span>Number</span>
@@ -117,44 +119,80 @@ export function InvoiceList({ invoices, onError }: InvoiceListProps) {
           {invoices.map((inv) => {
             const isPaid = inv.status === 'paid'
             const isUpcoming = inv.status === 'upcoming' || inv.status === 'open'
+            const statusLabel = inv.status.charAt(0).toUpperCase() + inv.status.slice(1)
+            const downloadButton = (
+              <BBButton
+                size="sm"
+                variant="ghost"
+                onClick={() => void handleDownload(inv)}
+                disabled={downloading === inv.id}
+                aria-label={`Download invoice ${inv.invoice_number}`}
+              >
+                {downloading === inv.id ? (
+                  <svg className="animate-spin h-3 w-3 text-ink-3" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                ) : (
+                  <Icon name="download" size={12} />
+                )}
+              </BBButton>
+            )
             return (
               <div
                 key={inv.id}
-                className="grid gap-4 px-5 py-3 border-b border-line items-center last:border-b-0 hover:bg-paper-2/50 transition-colors min-w-[560px]"
-                style={{ gridTemplateColumns: '1.4fr 1fr 120px 100px 40px' }}
+                className="border-b border-line last:border-b-0 hover:bg-paper-2/50 transition-colors"
               >
-                <span className="font-mono text-xs font-medium break-all">{inv.invoice_number}</span>
-                <span className="text-[12.5px] text-ink-2">{formatDate(inv.invoice_date)}</span>
-                <div className="min-w-0">
-                  <div className="font-mono text-xs font-semibold">
-                    {formatCents(inv.amount_gross_cents)}
+                {/* Desktop / tablet: the original fixed-column table row (sm+). */}
+                <div
+                  className="hidden sm:grid gap-4 px-5 py-3 items-center"
+                  style={{ gridTemplateColumns: '1.4fr 1fr 120px 100px 40px' }}
+                >
+                  <span className="font-mono text-xs font-medium break-all">{inv.invoice_number}</span>
+                  <span className="text-[12.5px] text-ink-2">{formatDate(inv.invoice_date)}</span>
+                  <div className="min-w-0">
+                    <div className="font-mono text-xs font-semibold">
+                      {formatCents(inv.amount_gross_cents)}
+                    </div>
+                    <div className="text-[10.5px] text-ink-4 mt-0.5">
+                      {vatTreatmentLabel(inv.vat_treatment)}
+                    </div>
                   </div>
-                  <div className="text-[10.5px] text-ink-4 mt-0.5">
-                    {vatTreatmentLabel(inv.vat_treatment)}
-                  </div>
+                  <span>
+                    <BBChip variant={isPaid ? 'green' : isUpcoming ? 'amber' : 'default'}>
+                      {statusLabel}
+                    </BBChip>
+                  </span>
+                  <div className="flex justify-end">{downloadButton}</div>
                 </div>
-                <span>
-                  <BBChip variant={isPaid ? 'green' : isUpcoming ? 'amber' : 'default'}>
-                    {inv.status.charAt(0).toUpperCase() + inv.status.slice(1)}
-                  </BBChip>
-                </span>
-                <div className="flex justify-end">
-                  <BBButton
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => void handleDownload(inv)}
-                    disabled={downloading === inv.id}
-                    aria-label={`Download invoice ${inv.invoice_number}`}
-                  >
-                    {downloading === inv.id ? (
-                      <svg className="animate-spin h-3 w-3 text-ink-3" viewBox="0 0 24 24" fill="none">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                      </svg>
-                    ) : (
-                      <Icon name="download" size={12} />
-                    )}
-                  </BBButton>
+
+                {/* Mobile: stacked card — no horizontal scroll. Number + amount in
+                    mono, status chip + per-row download stay reachable. */}
+                <div className="sm:hidden px-4 py-3.5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-mono text-xs font-medium break-all text-ink">
+                        {inv.invoice_number}
+                      </div>
+                      <div className="text-[12px] text-ink-3 mt-0.5">
+                        {formatDate(inv.invoice_date)}
+                      </div>
+                    </div>
+                    <div className="shrink-0 -mr-1.5 -mt-1">{downloadButton}</div>
+                  </div>
+                  <div className="flex items-end justify-between gap-3 mt-2.5">
+                    <div className="min-w-0">
+                      <div className="font-mono text-sm font-semibold text-ink">
+                        {formatCents(inv.amount_gross_cents)}
+                      </div>
+                      <div className="text-[10.5px] text-ink-4 mt-0.5">
+                        {vatTreatmentLabel(inv.vat_treatment)}
+                      </div>
+                    </div>
+                    <BBChip variant={isPaid ? 'green' : isUpcoming ? 'amber' : 'default'}>
+                      {statusLabel}
+                    </BBChip>
+                  </div>
                 </div>
               </div>
             )

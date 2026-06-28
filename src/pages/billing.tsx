@@ -890,21 +890,24 @@ function openUpgrade(plan: string) {
 
   /* ── Computed values for the template ──────────────── */
 
-  const nextPlan =
-    effectivePlan === 'free' ? 'basic' :
-    effectivePlan === 'basic' || effectivePlan === 'personal' ? 'pro' : 'pro'
-
   const allUpgradePlans = plans?.length
     ? plans
         .filter((plan) => plan.id !== 'free' && plan.id !== 'business' && plan.is_active !== false)
         .map(upgradeCardFromApiPlan)
     : fallbackUpgradePlanIds.map(upgradeCardFromFallback)
   const currentSortOrder = allUpgradePlans.find((plan) => plan.id === effectivePlan)?.sortOrder ?? planRank[effectivePlan]
+  // Only plans strictly ABOVE the user's current tier are real upgrade targets.
+  // Business is `comingSoon` and is filtered out of `allUpgradePlans`, so the
+  // top purchasable tier today is Pro — a Pro user therefore has none.
   const upgradePlans = allUpgradePlans
     .filter((plan) => plan.id !== effectivePlan)
     .filter((plan) => currentSortOrder === undefined || plan.sortOrder > currentSortOrder)
     .sort((a, b) => a.sortOrder - b.sortOrder)
-  const nextPlanDetails = allUpgradePlans.find((plan) => plan.id === nextPlan) ?? upgradeCardFromPlanMeta(nextPlan)
+  // Derive the primary-CTA target from the CURRENT plan: the lowest tier strictly
+  // above what the user holds. When none exists (e.g. on Pro), there is no upgrade
+  // CTA at all — never offer an upgrade to the tier the user is already on.
+  const nextPlanDetails = upgradePlans[0] ?? null
+  const nextPlan = nextPlanDetails?.id ?? null
   const selectedApiPlan = plans?.find((plan) => plan.id === upgradePlan)
   const upgradePlanDetails = selectedApiPlan
     ? upgradeCardFromApiPlan(selectedApiPlan, 0)
@@ -1382,13 +1385,18 @@ function openUpgrade(plan: string) {
                   {!convertLoading && <Icon name="chevron-right" size={13} className="ml-1.5" />}
                 </BBButton>
               ) : (
-                effectivePlan !== 'business' && sub?.status !== 'cancelling' && sub?.status !== 'paused' ? (
+                // Paid, non-trialing, not cancelling/paused: only show an upgrade
+                // CTA when a strictly-higher purchasable tier exists. `nextPlan`
+                // is null on the top tier (Pro today), so a Pro user sees no
+                // "Upgrade to Pro" — the annual-switch + cancel flows below still
+                // render. (task 0934)
+                nextPlan && nextPlanDetails && sub?.status !== 'cancelling' && sub?.status !== 'paused' ? (
                   <BBButton
                     variant="amber"
                     size="md"
                     onClick={() => openUpgrade(nextPlan)}
                   >
-                    Upgrade to {nextPlanDetails?.label ?? planMeta[nextPlan]?.label}
+                    Upgrade to {nextPlanDetails.label}
                   </BBButton>
                 ) : null
               )}
