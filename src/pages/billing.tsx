@@ -14,7 +14,8 @@ import {
   getBillingInvoices,
   getPlans,
   listFiles,
-  createPortalSession,
+  updatePaymentMethod,
+  getPaymentMethod,
   createCheckoutSession,
   cancelSubscription,
   reactivateSubscription,
@@ -36,6 +37,7 @@ import {
   type DriveFile,
   type StorageAddonState,
   type StorageAddonPreview,
+  type PaymentMethod,
   cancelDowngrade,
 } from '../lib/api'
 import { useDriveData } from '../lib/drive-data-context'
@@ -382,6 +384,12 @@ export function Billing() {
   const [invoiceEmail, setInvoiceEmail] = useState('')
   const [savingInvoicePrefs, setSavingInvoicePrefs] = useState(false)
 
+  // Payment method on file (task 0925). `null` = no card (server 404) or not yet
+  // loaded; `pmLoaded` distinguishes "fetched, none on file" from "still loading"
+  // so the card only renders an honest state once the fetch settles.
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(null)
+  const [pmLoaded, setPmLoaded] = useState(false)
+
   const showSuccess = searchParams.get('success') === 'true'
 
   const loadData = useCallback(async () => {
@@ -391,18 +399,23 @@ export function Billing() {
       // getSubscription is fetched fresh here so cancel/reactivate flows see
       // the updated status immediately. getPlans is needed for the upgrade
       // cards section (context only stores the matched current-user plan).
-      const [subData, invData, invoicePref, plansData, filesData, addonsData] = await Promise.all([
+      const [subData, invData, invoicePref, plansData, filesData, addonsData, pmData] = await Promise.all([
         getSubscription(),
         getBillingInvoices().catch(() => [] as BillingInvoice[]),
         getPreference<{ send_email: boolean; invoice_email: string }>('invoice_settings').catch(() => null),
         getPlans().catch(() => null),
         listFiles(undefined, false).catch(() => null),
         getStorageAddons().catch(() => null),
+        // 404 = no card on file (not an error) → null. Any other failure also
+        // resolves null so a missing payment-method endpoint never breaks the page.
+        getPaymentMethod().catch(() => null),
       ])
       setSub(subData)
       setInvoices(invData ?? [])
       setPlans(plansData)
       setFiles(filesData)
+      setPaymentMethod(pmData)
+      setPmLoaded(true)
       if (addonsData) {
         setAddonState(addonsData)
         setSliderTB(addonsData.extra_storage_tb)
@@ -633,27 +646,24 @@ function openUpgrade(plan: string) {
     }
   }
 
-  async function handleManageBilling() {
+  /**
+   * Native payment-method update (task 0925). Provider-agnostic: the server
+   * returns a hosted card re-auth checkout (Mollie) or a Stripe portal URL
+   * (legacy Stripe customers); either way we just redirect. No Stripe-hosted
+   * "manage billing" portal is surfaced — everything else is native on this page.
+   * `portalLoading` keeps the redirect spinner; the intent is now "update payment
+   * method", not "open the portal".
+   */
+  async function handleUpdatePaymentMethod() {
     setPortalLoading(true)
     try {
-      const result = await createPortalSession()
-      if (result === null) {
-        // Endpoint not yet deployed (404) — show friendly notice
-        showToast({
-          icon: 'cloud',
-          title: 'Billing portal not available yet',
-          description: 'Stripe billing is being set up. Check back soon, or email billing@beebeeb.io.',
-        })
-        setPortalLoading(false)
-        return
-      }
-      // Navigate to Stripe-hosted portal (returns to /settings/billing)
+      const result = await updatePaymentMethod()
       window.location.href = result.url
     } catch (err) {
       showToast({
         icon: 'x',
-        title: 'Billing portal unavailable',
-        description: err instanceof Error ? err.message : 'Could not open billing portal.',
+        title: 'Could not update payment method',
+        description: err instanceof Error ? err.message : 'Please try again.',
         danger: true,
       })
       setPortalLoading(false)
@@ -665,13 +675,12 @@ function openUpgrade(plan: string) {
     try {
       const preview = await previewStorageAddons({ extra_storage_tb: sliderTB })
       if (preview.requires_payment_method) {
-        // Redirect to Stripe portal to add payment method
+        // Redirect to the native payment-method update flow (Mollie checkout /
+        // legacy Stripe portal) so the user can add a card, then come back.
         try {
-          const result = await createPortalSession()
-          if (result) {
-            window.location.href = result.url
-            return
-          }
+          const result = await updatePaymentMethod()
+          window.location.href = result.url
+          return
         } catch {
           // fall through
         }
@@ -1079,7 +1088,7 @@ function openUpgrade(plan: string) {
             <BBButton
               size="sm"
               variant="danger"
-              onClick={() => void handleManageBilling()}
+              onClick={() => void handleUpdatePaymentMethod()}
               disabled={portalLoading}
             >
               {portalLoading ? 'Redirecting...' : 'Update payment method'}
@@ -1373,25 +1382,15 @@ function openUpgrade(plan: string) {
                   {!convertLoading && <Icon name="chevron-right" size={13} className="ml-1.5" />}
                 </BBButton>
               ) : (
-                <>
+                effectivePlan !== 'business' && sub?.status !== 'cancelling' && sub?.status !== 'paused' ? (
                   <BBButton
                     variant="amber"
                     size="md"
-                    onClick={() => void handleManageBilling()}
-                    disabled={portalLoading}
+                    onClick={() => openUpgrade(nextPlan)}
                   >
-                    <Icon name="settings" size={13} className="mr-1.5" />
-                    {portalLoading ? 'Redirecting...' : 'Manage billing'}
+                    Upgrade to {nextPlanDetails?.label ?? planMeta[nextPlan]?.label}
                   </BBButton>
-                  {effectivePlan !== 'business' && sub?.status !== 'cancelling' && sub?.status !== 'paused' && (
-                    <BBButton
-                      size="md"
-                      onClick={() => openUpgrade(nextPlan)}
-                    >
-                      Upgrade to {nextPlanDetails?.label ?? planMeta[nextPlan]?.label}
-                    </BBButton>
-                  )}
-                </>
+                ) : null
               )}
             </div>
 
@@ -1708,6 +1707,62 @@ function openUpgrade(plan: string) {
             </div>
           )}
         </div>
+
+        {/* ── Payment method (native, task 0925) ─────────
+            Paid, non-trialing subscribers manage their card here — no Stripe
+            hosted portal. Shows the card on file (brand + last4 + expiry, digits
+            in mono) with a secondary "Update payment method", or an honest "No
+            payment method on file" + "Add payment method" when the server has
+            none (404). The button redirects to the provider's hosted re-auth. */}
+        {effectivePlan !== 'free' && sub?.status !== 'trialing' && pmLoaded && (
+          <div className="border border-line rounded-xl overflow-hidden bg-paper">
+            <div className="px-5 py-4 border-b border-line">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-4">
+                Payment method
+              </div>
+            </div>
+            <div className="px-5 py-4 flex items-center justify-between gap-4">
+              {paymentMethod ? (
+                <div className="flex items-center gap-3 min-w-0">
+                  <Icon name="shield" size={16} className="text-ink-3 shrink-0" />
+                  <div className="min-w-0">
+                    <div className="text-[13px] text-ink flex items-center gap-2 flex-wrap">
+                      <span className="font-medium">{paymentMethod.brand ?? 'Card'}</span>
+                      {paymentMethod.last4 && (
+                        <span className="font-mono text-ink-2">•••• {paymentMethod.last4}</span>
+                      )}
+                    </div>
+                    {paymentMethod.exp_month && paymentMethod.exp_year && (
+                      <div className="text-[11.5px] text-ink-3 mt-0.5">
+                        Expires{' '}
+                        <span className="font-mono">
+                          {String(paymentMethod.exp_month).padStart(2, '0')}/{paymentMethod.exp_year}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3 min-w-0">
+                  <Icon name="shield" size={16} className="text-ink-3 shrink-0" />
+                  <div className="text-[13px] text-ink-2">No payment method on file</div>
+                </div>
+              )}
+              <BBButton
+                size="sm"
+                variant="ghost"
+                onClick={() => void handleUpdatePaymentMethod()}
+                disabled={portalLoading}
+              >
+                {portalLoading
+                  ? 'Redirecting...'
+                  : paymentMethod
+                    ? 'Update payment method'
+                    : 'Add payment method'}
+              </BBButton>
+            </div>
+          </div>
+        )}
 
         {/* ── Storage breakdown ──────────────────────── */}
         {usedBytes > 0 && (

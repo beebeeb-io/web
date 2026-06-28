@@ -34,13 +34,6 @@ const COOKIES: CookieRow[] = [
     duration: 'Until cleared',
     category: 'essential',
   },
-  {
-    name: '__stripe_mid, __stripe_sid',
-    provider: 'Stripe (stripe.com)',
-    purpose: 'Fraud prevention and payment processing. Only loaded on the billing page.',
-    duration: 'Session / 1 year',
-    category: 'functional',
-  },
 ]
 
 const CATEGORY_LABELS: Record<CookieRow['category'], string> = {
@@ -50,7 +43,7 @@ const CATEGORY_LABELS: Record<CookieRow['category'], string> = {
 
 const CATEGORY_DESCRIPTION: Record<CookieRow['category'], string> = {
   essential: 'Always active. Required for the service to function.',
-  functional: 'Used for specific features (payment processing). You can decline these.',
+  functional: 'Optional cookies for specific features. We currently set none — payments are handled on our payment provider\'s hosted page, off beebeeb.io.',
 }
 
 const CATEGORY_COLOR: Record<CookieRow['category'], string> = {
@@ -78,7 +71,7 @@ function ConsentPanel() {
         {current === 'all'
           ? 'You have accepted all cookies (essential + functional).'
           : current === 'essential'
-            ? 'You have chosen essential cookies only. Stripe is blocked on the billing page.'
+            ? 'You have chosen essential cookies only.'
             : 'You have not made a choice yet — the banner will appear on your next visit.'}
       </p>
       <div className="flex flex-wrap gap-2">
@@ -193,16 +186,8 @@ export function Cookies() {
             We do not use Google Analytics, Meta Pixel, or any other advertising or tracking service.
           </p>
           <p>
-            Stripe processes payments and is subject to its own{' '}
-            <a
-              href="https://stripe.com/privacy"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline hover:text-ink-3"
-            >
-              privacy policy
-            </a>
-            .
+            Payments are handled by redirecting you to our payment provider's own hosted
+            checkout page. No third-party payment code or cookies run on beebeeb.io.
           </p>
           <p>
             Questions?{' '}

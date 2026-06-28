@@ -2,8 +2,11 @@
  * Cookie consent store.
  *
  * Two choices:
- *   'all'       — essential + functional (Stripe on /billing)
- *   'essential' — essential only (auth session cookie); Stripe blocked
+ *   'all'       — essential + functional
+ *   'essential' — essential only (auth session cookie)
+ *
+ * Payments are handled by a redirect to our payment provider's hosted page, so
+ * no third-party payment cookies are set on beebeeb.io under either choice.
  *
  * Not set → banner shown.
  */

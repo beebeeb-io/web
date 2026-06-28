@@ -1983,6 +1983,16 @@ export async function getPaymentMethod(): Promise<PaymentMethod> {
   return request<PaymentMethod>('/api/v1/billing/payment-method')
 }
 
+/**
+ * Start a native payment-method update (task 0925). Provider-agnostic: under
+ * Mollie this returns a hosted card re-auth checkout URL; for legacy Stripe
+ * customers it returns a Stripe portal URL. The client just redirects the
+ * browser to `url`. 404 if there is no active subscription.
+ */
+export async function updatePaymentMethod(): Promise<{ url: string }> {
+  return request<{ url: string }>('/api/v1/billing/payment-method/update', { method: 'POST' })
+}
+
 export async function cancelSubscription(): Promise<{ message: string; cancel_at?: string }> {
   return request<{ message: string; cancel_at?: string }>('/api/v1/billing/cancel', { method: 'POST' })
 }
