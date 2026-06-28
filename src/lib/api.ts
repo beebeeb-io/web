@@ -1794,6 +1794,20 @@ export interface VatPreview {
   vat_amount_cents: number
   gross_cents: number
   treatment: VatTreatment
+  /** True when the engine resolved reverse charge — the "btw verlegd / Art. 196"
+   *  note applies. Carried through from the server's `reverse_charge_note`. */
+  reverse_charge_note: boolean
+}
+
+/** Raw vat-preview body as the server sends it: the VAT amount key is
+ *  `vat_cents` (NOT `vat_amount_cents`). See server billing.rs. */
+interface RawVatPreview {
+  net_cents: number
+  vat_rate_bps: number
+  vat_cents: number
+  gross_cents: number
+  treatment: VatTreatment
+  reverse_charge_note?: boolean
 }
 
 /**
@@ -1802,6 +1816,10 @@ export interface VatPreview {
  * are passed explicitly, so this NEVER previews reverse_charge (that only applies
  * after a profile VIES pass); the conservative D5 default shows destination/home
  * VAT.
+ *
+ * The server returns the VAT amount under `vat_cents`; we normalise it to
+ * `vat_amount_cents` so the UI never reads an undefined key (which rendered the
+ * VAT line as EUR 0.00).
  */
 export async function getVatPreview(params: {
   plan: string
@@ -1817,7 +1835,15 @@ export async function getVatPreview(params: {
     type: params.type,
   })
   if (params.quantity != null) qs.set('quantity', String(params.quantity))
-  return request<VatPreview>(`/api/v1/billing/vat-preview?${qs.toString()}`)
+  const raw = await request<RawVatPreview>(`/api/v1/billing/vat-preview?${qs.toString()}`)
+  return {
+    net_cents: raw.net_cents,
+    vat_rate_bps: raw.vat_rate_bps,
+    vat_amount_cents: raw.vat_cents,
+    gross_cents: raw.gross_cents,
+    treatment: raw.treatment,
+    reverse_charge_note: raw.reverse_charge_note ?? false,
+  }
 }
 
 /** A row from GET /api/v1/billing/invoices (Mollie/VAT-compliant invoices). */
@@ -1834,16 +1860,29 @@ export interface BillingInvoice {
   pdf_url: string
 }
 
+/** Raw invoice row as the server sends it: the invoice number key is `number`
+ *  (NOT `invoice_number`). Other keys (id, *_cents, pdf_url, …) already match. */
+interface RawBillingInvoice extends Omit<BillingInvoice, 'invoice_number'> {
+  number: string
+}
+
 /**
  * GET /api/v1/billing/invoices — the VAT-compliant invoice list backed by the
  * `invoices` table (NOT Stripe). Each row carries a `pdf_url` pointing at
  * `/api/v1/billing/invoices/{id}/pdf`. `stripe_configured` is always false now.
+ *
+ * The server returns the invoice number under `number`; we normalise it to
+ * `invoice_number` so the list cell, the download aria-label, and the saved PDF
+ * filename are populated (they previously read an undefined key → blank/"undefined").
  */
 export async function getBillingInvoices(): Promise<BillingInvoice[]> {
-  const data = await request<{ invoices: BillingInvoice[]; stripe_configured?: boolean }>(
+  const data = await request<{ invoices: RawBillingInvoice[]; stripe_configured?: boolean }>(
     '/api/v1/billing/invoices',
   )
-  return data.invoices ?? []
+  return (data.invoices ?? []).map(({ number, ...rest }) => ({
+    ...rest,
+    invoice_number: number,
+  }))
 }
 
 /**
