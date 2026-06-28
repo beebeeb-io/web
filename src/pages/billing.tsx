@@ -518,15 +518,22 @@ function openUpgrade(plan: string) {
   //   offer (if eligible) → pause → confirm
   // — each step has a "no thanks" link to the next, so users always have a
   // softer landing before committing to cancel.
+  //
+  // The 'pause' step only exists when the active billing provider supports
+  // pause/resume (task 0924). Under Mollie (`pause_supported === false`) there
+  // is no native pause, so we NEVER route to 'pause' — eligible users still see
+  // the retention offer (then continue straight to confirm), and ineligible
+  // users go directly to confirm.
+  const pauseSupported = sub?.pause_supported ?? false
   async function startCancelFlow() {
     setWinbackStartingLoading(true)
     try {
       const { eligible } = await getWinbackEligible()
-      setCancelStep(eligible ? 'offer' : 'pause')
+      setCancelStep(eligible ? 'offer' : pauseSupported ? 'pause' : 'confirm')
     } catch {
-      // Don't block cancel if eligibility check fails — just skip the offer
-      // and go straight to the pause card.
-      setCancelStep('pause')
+      // Don't block cancel if eligibility check fails — skip the offer and go
+      // to the pause card (or straight to confirm when pause isn't supported).
+      setCancelStep(pauseSupported ? 'pause' : 'confirm')
     } finally {
       setWinbackStartingLoading(false)
     }
@@ -1428,14 +1435,14 @@ function openUpgrade(plan: string) {
                     <BBButton
                       size="sm"
                       variant="ghost"
-                      onClick={() => setCancelStep('pause')}
+                      onClick={() => setCancelStep(pauseSupported ? 'pause' : 'confirm')}
                       disabled={winbackAcceptLoading}
                     >
                       No thanks
                     </BBButton>
                   </div>
                 </div>
-              ) : cancelStep === 'pause' ? (
+              ) : cancelStep === 'pause' && pauseSupported ? (
                 <div className="mt-3 p-3.5 bg-paper-2 border border-line rounded-lg space-y-4">
                   <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">
                     Pause instead?

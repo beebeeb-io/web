@@ -449,6 +449,13 @@ export interface Subscription {
    * convert/add-payment CTA. Null/absent for non-trial subscriptions.
    */
   trial_ends_at?: string | null
+  /**
+   * Whether the active billing provider supports subscription pause/resume
+   * (task 0924). True only under Stripe; false under Mollie (no native pause).
+   * The web cancel flow gates its "Pause instead?" step on this — a Mollie sub
+   * can never newly enter the pause card (where pauseSubscription() would 501).
+   */
+  pause_supported?: boolean
 }
 
 export interface Invoice {
