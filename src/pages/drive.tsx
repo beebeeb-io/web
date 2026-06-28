@@ -21,7 +21,6 @@ import { VersionHistory } from '../components/version-history'
 import { DuplicateFileDialog, getUniqueName, type ConflictItem } from '../components/duplicate-file-dialog'
 import { ShortcutsCheatsheet } from '../components/shortcuts-cheatsheet'
 import { WelcomeTour } from '../components/welcome-tour'
-import { OnboardingGuide } from '../components/onboarding-guide'
 import { OnboardingTour } from '../components/onboarding-tour'
 import { FilePreview } from '../components/preview/file-preview'
 import { useFilePreview } from '../hooks/use-file-preview'
@@ -171,9 +170,6 @@ export function Drive() {
   const [tourCompleted, setTourCompleted] = useState<Set<string>>(new Set())
   const [pausedUploads, setPausedUploads] = useState<UploadState[]>([])
   const [uploadMenuOpen, setUploadMenuOpen] = useState(false)
-
-  // Track the last uploaded file id for the onboarding guide's first-share step.
-  const [lastUploadedFileId, setLastUploadedFileId] = useState<string | null>(null)
 
   // ─── Offline cache state ─────────────────────────────
   // The "is the drive serving cached data right now?" flag lives in
@@ -1151,7 +1147,6 @@ export function Drive() {
       uploadFilesRef.current.delete(uploadId)
       // Remove from paused list if this was a resume
       setPausedUploads((prev) => prev.filter((u) => u.fileId !== fileId))
-      setLastUploadedFileId(uploadedFileId)
       showToast({ icon: 'check', title: 'Uploaded', description: file.name })
       // Notify sidebar badge that a file was uploaded
       window.dispatchEvent(new CustomEvent('beebeeb:file-uploaded'))
@@ -2391,15 +2386,6 @@ export function Drive() {
               </div>
             )}
           </div>
-        )}
-
-        {/* Onboarding guide — context-driven bottom chip (spec 024 §1.6-1.9) */}
-        {currentParentId === undefined && location.pathname === '/' && (
-          <OnboardingGuide
-            onPickFile={browse}
-            onOpenShare={(id) => id && setShareFileId(id)}
-            lastUploadedFileId={lastUploadedFileId}
-          />
         )}
 
         {/* Smart folder suggestion banner */}
