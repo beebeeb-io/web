@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { SettingsShell, SettingsHeader } from '../components/settings-shell'
 import { BBButton } from '@beebeeb/shared'
@@ -56,7 +56,7 @@ import {
 import { PlanComparisonTable } from '../components/plan-comparison'
 import { InvoiceList } from '../components/billing/InvoiceList'
 import { TransactionList } from '../components/billing/TransactionList'
-import { PLAN_META, PLAN_RANK, getDowngradeOptions } from '../lib/plan-constants'
+import { PLAN_META, PLAN_RANK, getDowngradeOptions, CANONICAL_PLAN_SLUGS } from '../lib/plan-constants'
 
 /* ── Plan metadata (imported from plan-constants.ts) ──── */
 
@@ -182,6 +182,61 @@ function AnimatedProgress({ percent, className = '' }: { percent: number; classN
   )
 }
 
+/* ── Presentational primitives (task 0942 restyle) ─────────
+   These are layout/markup helpers ONLY — no state, no handlers, no data
+   flow. They exist so the billing markup matches the approved mockups
+   (#7 summary, #8 change-plan): hairline-bordered cards, uppercase muted
+   section labels, and a storage meter that can render a secondary (muted,
+   non-accent) add-on bar alongside the amber primary bar. */
+
+/** A hairline-bordered card matching the mockups' radii + padding. */
+function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
+  return (
+    <div className={`border border-line rounded-xl bg-paper ${className}`}>{children}</div>
+  )
+}
+
+/** Uppercase, muted, letter-spaced section label ("CURRENT PLAN", …). */
+function SectionLabel({ children, className = '' }: { children: ReactNode; className?: string }) {
+  return (
+    <div className={`text-[11px] font-semibold uppercase tracking-wider text-ink-4 ${className}`}>
+      {children}
+    </div>
+  )
+}
+
+/** A static storage meter. `variant="secondary"` renders a muted/desaturated
+    fill (the add-on meter in #7) so it reads as a SECONDARY meter, never a
+    second accent. The primary variant keeps the amber usage colour cascade. */
+function MeterBar({
+  percent,
+  variant = 'primary',
+  usagePercent,
+}: {
+  percent: number
+  variant?: 'primary' | 'secondary'
+  /** For the primary bar, drive the colour cascade off actual usage. */
+  usagePercent?: number
+}) {
+  const up = usagePercent ?? percent
+  const fill =
+    variant === 'secondary'
+      ? 'bg-ink-4'
+      : up > 90
+        ? 'bg-red'
+        : up > 75
+          ? 'bg-amber'
+          : 'bg-amber-deep'
+  return (
+    <div className="relative h-2 rounded-full bg-paper-3 overflow-hidden">
+      <div
+        className={`absolute inset-y-0 left-0 rounded-full ${fill}`}
+        style={{ width: `${Math.max(0, Math.min(percent, 100))}%` }}
+      />
+    </div>
+  )
+}
+
 /* ── Checkout watchdog ─────────────────────────────────── */
 
 const PENDING_CHECKOUT_KEY = 'bb_pending_checkout'
@@ -213,6 +268,11 @@ export function Billing() {
   const [searchParams, setSearchParams] = useSearchParams()
   const { showToast } = useToast()
   const navigate = useNavigate()
+  // Presentational view toggle (task 0942) — pure UI state, no data flow.
+  // 'summary' = the /billing summary (mockup #7); 'change' = the change-plan
+  // view (mockup #8) the "Change plan" button opens. Both views render the SAME
+  // handlers/modals/state machines; this only regroups the markup.
+  const [view, setView] = useState<'summary' | 'change'>('summary')
   const { usage: contextUsage, planDetails: contextPlanDetails, refreshPlanDetails } = useDriveData()
   // sub comes from context; re-synced after cancel/reactivate via loadData
   const [sub, setSub] = useState<Subscription | null>(contextPlanDetails.subscription)
@@ -1148,6 +1208,196 @@ function openUpgrade(plan: string) {
           </div>
         )}
 
+        {/* ════════════════════════════════════════════════
+            SUMMARY VIEW (mockup #7) — the default /billing view.
+            Compact current-plan card with side-by-side storage meters,
+            payment-method SEPA row, and the payment-history table. The
+            "Change plan" button flips to the change-plan view (#8). All
+            handlers/derived values are the SAME ones used below. (0942)
+           ════════════════════════════════════════════════ */}
+        {view === 'summary' && (
+          <div className="space-y-4">
+            {/* Current Plan card */}
+            <Card className="overflow-hidden">
+              <div className="p-5 grid gap-6 md:grid-cols-2">
+                {/* Left: plan + price + actions */}
+                <div>
+                  <SectionLabel className="mb-2">Current plan</SectionLabel>
+                  <div className="flex items-center gap-3 mb-1">
+                    <span className="text-[28px] font-bold tracking-tight leading-none">
+                      {meta.label}
+                    </span>
+                    {effectivePlan !== 'free' && statusBadge()}
+                  </div>
+                  {effectivePlan !== 'free' && (
+                    <div className="font-mono text-[13px] text-ink-2">
+                      EUR {formatCentsAsEur(basePriceCents)} / {billingInterval}
+                      <span className="text-ink-3">
+                        {' · '}billed {sub?.billing_cycle === 'yearly' ? 'annually' : 'monthly'}
+                      </span>
+                    </div>
+                  )}
+                  {effectivePlan === 'free' && (
+                    <div className="text-[13px] text-ink-3">5 GB encrypted storage</div>
+                  )}
+
+                  <div className="mt-5 flex items-center gap-3">
+                    <BBButton variant="amber" size="md" onClick={() => setView('change')}>
+                      <Icon name="arrow-up" size={13} className="mr-1.5" />
+                      {effectivePlan === 'free' ? 'Choose a plan' : 'Change plan'}
+                    </BBButton>
+                    {effectivePlan !== 'free' &&
+                      sub?.status !== 'cancelling' &&
+                      sub?.status !== 'paused' &&
+                      sub?.status !== 'trialing' && (
+                        <button
+                          className="text-[13px] text-ink-3 hover:text-red transition-colors disabled:opacity-50"
+                          onClick={() => setView('change')}
+                        >
+                          Cancel
+                        </button>
+                      )}
+                  </div>
+                </div>
+
+                {/* Right: storage meters (primary amber + secondary add-on) */}
+                <div className="md:pl-2">
+                  <div className="flex items-baseline justify-between mb-2">
+                    <span className="text-[13px] text-ink-2">Storage</span>
+                    <span className="font-mono text-[13px] font-semibold">
+                      {formatStorageSI(usedBytes)}
+                      <span className="text-ink-3 font-normal"> / {formatStorageSI(totalStorageBytes)}</span>
+                    </span>
+                  </div>
+                  <MeterBar percent={usedPercent} usagePercent={usedPercent} />
+
+                  {currentExtraTB > 0 && (
+                    <>
+                      <div className="flex items-baseline justify-between mt-4 mb-2">
+                        <span className="text-[13px] text-ink-2">Add-on storage</span>
+                        <span className="font-mono text-[13px] font-semibold text-ink-2">
+                          +{currentExtraTB} TB
+                        </span>
+                      </div>
+                      <MeterBar percent={100} variant="secondary" />
+                      <div className="font-mono text-[11px] text-ink-4 mt-1.5">
+                        EUR 10.99 / extra TB · billed {sub?.billing_cycle === 'yearly' ? 'annually' : 'monthly'}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Footer strip: next charge / renews */}
+              {sub?.current_period_end &&
+                effectivePlan !== 'free' &&
+                sub.status !== 'cancelling' &&
+                sub.status !== 'paused' && (
+                  <div className="flex items-center gap-3 px-5 py-3 border-t border-line bg-paper-2 text-xs">
+                    <Icon name="clock" size={13} className="text-ink-3 shrink-0" />
+                    <span className="flex-1 text-ink-2">
+                      Renews <strong className="font-mono text-ink">{formatDate(sub.current_period_end)}</strong>
+                      {paymentMethod?.brand && (
+                        <> via <span className="text-ink">{paymentMethod.brand}</span></>
+                      )}
+                    </span>
+                    {currentExtraTB > 0 && (
+                      <span className="font-mono text-ink-4">incl. add-on storage</span>
+                    )}
+                  </div>
+                )}
+            </Card>
+
+            {/* Payment Method card (#7) — restyled. Binds ONLY to real
+                PaymentMethod fields (type/brand/last4/iban_last4/is_default);
+                same data + same Update/Add handler as the detailed view. */}
+            {effectivePlan !== 'free' && sub?.status !== 'trialing' && pmLoaded && (
+              <Card className="overflow-hidden">
+                <div className="px-5 py-4 flex items-center justify-between border-b border-line">
+                  <SectionLabel>Payment method</SectionLabel>
+                  <button
+                    className="inline-flex items-center gap-1.5 text-[12px] font-medium text-amber-deep hover:text-amber transition-colors disabled:opacity-50"
+                    onClick={() => void handleUpdatePaymentMethod()}
+                    disabled={portalLoading}
+                  >
+                    <Icon name="plus" size={12} />
+                    {portalLoading ? 'Redirecting...' : paymentMethod ? 'Update method' : 'Add method'}
+                  </button>
+                </div>
+                <div className="px-5 py-4 flex items-center justify-between gap-4">
+                  {paymentMethod ? (
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="shrink-0 inline-flex items-center justify-center px-2 py-1 rounded-md border border-line bg-paper-2 font-mono text-[10px] font-semibold uppercase tracking-wide text-ink-2">
+                        {paymentMethod.type === 'directdebit' ? 'SEPA' : (paymentMethod.brand ?? 'Card')}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="text-[13px] text-ink flex items-center gap-2 flex-wrap">
+                          <span className="font-medium">{paymentMethod.brand ?? 'Card'}</span>
+                          {(paymentMethod.iban_last4 || paymentMethod.last4) && (
+                            <span className="font-mono text-ink-2">
+                              •••• {paymentMethod.iban_last4 ?? paymentMethod.last4}
+                            </span>
+                          )}
+                        </div>
+                        {paymentMethod.exp_month && paymentMethod.exp_year && (
+                          <div className="text-[11.5px] text-ink-3 mt-0.5">
+                            Expires{' '}
+                            <span className="font-mono">
+                              {String(paymentMethod.exp_month).padStart(2, '0')}/{paymentMethod.exp_year}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Icon name="shield" size={16} className="text-ink-3 shrink-0" />
+                      <div className="text-[13px] text-ink-2">No payment method on file</div>
+                    </div>
+                  )}
+                  {paymentMethod?.is_default && (
+                    <BBChip variant="green">Default</BBChip>
+                  )}
+                </div>
+              </Card>
+            )}
+
+            {/* Payment History (#7) — the 0936 transactions view, restyled. */}
+            <TransactionList transactions={transactions} variant="card" />
+
+            {/* Invoices — the legal VAT documents, downloadable. */}
+            <InvoiceList
+              invoices={invoices}
+              onError={(message) =>
+                showToast({ icon: 'download', title: 'Could not download invoice', description: message, danger: true })
+              }
+            />
+
+            {/* Compliance footer line (#7) */}
+            <div className="flex items-center gap-2.5 px-1 pt-1 text-[11.5px] text-ink-3">
+              <Icon name="shield" size={13} className="text-ink-4 shrink-0" />
+              <span>
+                VAT-compliant invoices · Operated by Initlabs B.V. · Stored in Europe under EU law.
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* ════════════════════════════════════════════════
+            CHANGE-PLAN VIEW (mockup #8) — opened by "Change plan".
+            Identical handlers/state/modals to before; just gated behind the
+            view toggle, with a back affordance + the switch-plan tier grid. (0942)
+           ════════════════════════════════════════════════ */}
+        {view === 'change' && (
+        <div className="space-y-6">
+        <button
+          onClick={() => setView('summary')}
+          className="inline-flex items-center gap-1.5 text-[13px] text-ink-3 hover:text-ink transition-colors"
+        >
+          <Icon name="chevron-right" size={13} className="rotate-180" />
+          Back to billing
+        </button>
+
         {/* ── Plan summary ──────────────────────────── */}
         <div className="grid gap-4">
 
@@ -1722,6 +1972,92 @@ function openUpgrade(plan: string) {
           )}
         </div>
 
+        {/* ── Switch Plan tier grid (mockup #8) ───────────
+            Presentational tier selector. Each tier routes through the SAME
+            existing handlers: an upgrade opens UpgradeDialog (openUpgrade);
+            a downgrade opens DowngradeDialog (setDowngradeTarget); the current
+            tier is just marked. No new data flow. Business is comingSoon. */}
+        <Card className="overflow-hidden">
+          <div className="px-5 py-4 border-b border-line">
+            <SectionLabel className="mb-1">Switch plan</SectionLabel>
+            <div className="text-sm text-ink-2">
+              Move to a different tier. Changes apply at your next renewal.
+            </div>
+          </div>
+          <div className="p-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {(() => {
+              // Same downgrade set the (now-removed) legacy "smaller plan" block
+              // used, so the tier grid's downgrade affordances route identically.
+              const downgradeSet = new Set(getDowngradeOptions(effectivePlan))
+              return CANONICAL_PLAN_SLUGS.map((slug) => {
+              const pm = planMeta[slug]
+              if (!pm) return null
+              const isCurrent = slug === effectivePlan
+              const currentRank = planRank[effectivePlan] ?? 0
+              const slugRank = planRank[slug] ?? 0
+              const isUpgrade = slugRank > currentRank && pm.comingSoon !== true
+              const isDown = downgradeSet.has(slug) || (slug === 'free' && effectivePlan !== 'free')
+              const comingSoon = pm.comingSoon === true
+              return (
+                <div
+                  key={slug}
+                  className={`relative rounded-lg border p-4 flex flex-col ${
+                    isCurrent ? 'border-amber bg-amber-bg/30' : 'border-line bg-paper'
+                  }`}
+                >
+                  {isCurrent && (
+                    <span className="absolute -top-2 right-3 px-1.5 py-0.5 rounded bg-amber text-[oklch(0.22_0.01_70)] text-[9px] font-bold uppercase tracking-wider">
+                      Current
+                    </span>
+                  )}
+                  {!isCurrent && comingSoon && (
+                    <span className="absolute -top-2 right-3 px-1.5 py-0.5 rounded bg-paper-3 border border-line text-ink-3 text-[9px] font-bold uppercase tracking-wider">
+                      Later this year
+                    </span>
+                  )}
+                  <div className={`text-sm font-bold mb-0.5 ${comingSoon && !isCurrent ? 'text-ink-3' : 'text-ink'}`}>
+                    {pm.label}
+                  </div>
+                  <div className="font-mono text-[12px] text-ink-2 mb-0.5">
+                    {pm.priceMonthly === 0 ? 'EUR 0/mo' : `EUR ${pm.priceMonthly.toFixed(2)}/mo`}
+                  </div>
+                  <div className="text-[11px] text-ink-3 mb-3">
+                    {slug === 'free'
+                      ? '5 GB'
+                      : slug === 'business'
+                        ? 'Teams · SLA'
+                        : `${formatStorageSI(pm.storageGB * 1_000_000_000)} base`}
+                  </div>
+                  <div className="mt-auto">
+                    {isCurrent ? (
+                      <span className="text-[11px] text-ink-3">Your plan</span>
+                    ) : comingSoon ? (
+                      <span className="text-[11px] text-ink-4">Notify me</span>
+                    ) : isUpgrade ? (
+                      <button
+                        onClick={() => openUpgrade(slug)}
+                        className="inline-flex items-center gap-1 text-[12px] font-medium text-amber-deep hover:text-amber transition-colors"
+                      >
+                        Upgrade
+                        <Icon name="chevron-right" size={11} />
+                      </button>
+                    ) : isDown ? (
+                      <button
+                        onClick={() => slug === 'free' ? void startCancelFlow() : setDowngradeTarget(slug)}
+                        className="inline-flex items-center gap-1 text-[12px] font-medium text-ink-3 hover:text-ink transition-colors"
+                      >
+                        Downgrade
+                        <Icon name="chevron-right" size={11} />
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              )
+            })
+            })()}
+          </div>
+        </Card>
+
         {/* ── Payment method (native, task 0925) ─────────
             Paid, non-trialing subscribers manage their card here — no Stripe
             hosted portal. Shows the card on file (brand + last4 + expiry, digits
@@ -1978,78 +2314,13 @@ function openUpgrade(plan: string) {
           </div>
         )}
 
-        {/* ── Downgrade options ────────────────────── */}
-        {(() => {
-          if (effectivePlan === 'free') return null
-          if (sub?.pending_downgrade_plan) return null
-          if (sub?.status === 'cancelling') return null
+        {/* Legacy "Switch to a smaller plan" downgrade cards removed in 0942 —
+            the Switch Plan tier grid above now drives downgrades via the SAME
+            setDowngradeTarget handler (and getDowngradeOptions). The pending-
+            downgrade status + cooldown still surface in the Current plan card. */}
 
-          const cooldownUntil = sub?.downgrade_cooldown_until
-          const inCooldown = cooldownUntil ? new Date(cooldownUntil).getTime() > Date.now() : false
-
-          const downgradeOptions = getDowngradeOptions(effectivePlan)
-            .filter((slug) => slug !== 'business')
-
-          if (downgradeOptions.length === 0) return null
-
-          return (
-            <div className="border border-line rounded-xl overflow-hidden bg-paper">
-              <div className="px-5 py-4 border-b border-line">
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-4 mb-1">
-                  {inCooldown ? 'Downgrade unavailable' : 'Switch to a smaller plan'}
-                </div>
-                {inCooldown && (
-                  <div className="text-sm text-ink-2">
-                    You can downgrade again after {formatDate(cooldownUntil!)}.
-                  </div>
-                )}
-              </div>
-              {!inCooldown && (
-                <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-line">
-                  {downgradeOptions.map((slug) => {
-                    const pm = planMeta[slug]
-                    if (!pm) return null
-                    return (
-                      <button
-                        key={slug}
-                        onClick={() => setDowngradeTarget(slug)}
-                        className="p-5 text-left hover:bg-paper-2 transition-colors cursor-pointer group"
-                      >
-                        <div className="text-sm font-semibold mb-0.5 group-hover:text-ink transition-colors">
-                          {pm.label}
-                        </div>
-                        <div className="flex items-baseline gap-1 mb-2">
-                          <span className="font-mono text-lg font-bold">
-                            {formatEuro(pm.priceMonthly)}
-                          </span>
-                          <span className="text-xs text-ink-3">/mo</span>
-                        </div>
-                        <div className="text-xs text-ink-3 mb-3">
-                          {formatStorageSI(pm.storageGB * 1_000_000_000)}
-                        </div>
-                        <span className="inline-flex items-center gap-1 text-xs font-medium text-ink-3 group-hover:text-ink transition-colors">
-                          Switch plan
-                          <Icon name="chevron-right" size={10} />
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          )
-        })()}
-
-        {/* ── Transactions / payment history (task 0936) ─ */}
-        <TransactionList transactions={transactions} />
-
-        {/* ── Invoices ───────────────────────────────── */}
-        <InvoiceList
-          invoices={invoices}
-          onError={(message) =>
-            showToast({ icon: 'download', title: 'Could not download invoice', description: message, danger: true })
-          }
-        />
+        {/* Payment history + invoices live in the summary view (#7); not
+            duplicated here. Invoice preferences (a management setting) stays. */}
 
         {/* ── Invoice preferences ────────────────────── */}
         <div className="border border-line rounded-xl overflow-hidden bg-paper">
@@ -2097,6 +2368,8 @@ function openUpgrade(plan: string) {
             </div>
           </div>
         </div>
+        </div>
+        )}
 
         {/* ── Footer: VAT + DPA + Need help ──────────── */}
         <div className="space-y-3">
