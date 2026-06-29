@@ -24,6 +24,14 @@ interface UpgradeDialogProps {
   onClose: () => void
   /** Reserved for future non-redirect upgrade flows. */
   onSuccess?: () => void
+  /**
+   * Persist the pre-checkout intent just before the redirect (task 0946). The
+   * parent owns the live subscription, so it builds the pre-state snapshot; the
+   * dialog only hands back the chosen plan/cycle. Called immediately before
+   * `window.location.href = url`. Replaces the dialog's old raw localStorage
+   * write so EVERY plan path stamps the same unified intent shape.
+   */
+  onBeforeRedirect?: (plan: string, cycle: BillingCycle) => void
 }
 
 export function UpgradeDialog({
@@ -33,6 +41,7 @@ export function UpgradeDialog({
   priceYearlySeat,
   open,
   onClose,
+  onBeforeRedirect,
 }: UpgradeDialogProps) {
   const [cycle, setCycle] = useState<BillingCycle>('yearly')
   const [step, setStep] = useState<Step>('cycle')
@@ -64,7 +73,15 @@ export function UpgradeDialog({
         plan: planId,
         billing_cycle: cycle,
       })
-      try { localStorage.setItem('bb_pending_checkout', JSON.stringify({ plan: planId, cycle, ts: Date.now() })) } catch { /* ok */ }
+      // Stamp the unified pre-checkout intent (task 0946). The parent owns the
+      // live subscription, so it captures the pre-state snapshot; if no callback
+      // was wired, fall back to the legacy minimal marker so the abandoned-
+      // checkout watchdog still works.
+      if (onBeforeRedirect) {
+        onBeforeRedirect(planId, cycle)
+      } else {
+        try { localStorage.setItem('bb_pending_checkout', JSON.stringify({ kind: 'plan', plan: planId, cycle, ts: Date.now() })) } catch { /* ok */ }
+      }
       window.location.href = url
     } catch (checkoutErr) {
       if (checkoutErr instanceof Error && 'status' in checkoutErr && (checkoutErr as { status: number }).status === 400) {
@@ -81,7 +98,7 @@ export function UpgradeDialog({
       // submitting state from sticking.
       throw new Error(userFriendlyError(checkoutErr))
     }
-  }, [planId, cycle, handleClose, showToast])
+  }, [planId, cycle, handleClose, showToast, onBeforeRedirect])
 
   if (!open) return null
 

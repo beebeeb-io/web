@@ -240,28 +240,96 @@ function MeterBar({
   )
 }
 
-/* ── Checkout watchdog ─────────────────────────────────── */
+/* ── Checkout watchdog + pre-checkout intent (task 0946) ───
+
+   A persisted "intent" is written to localStorage just before EVERY redirect to
+   the hosted Mollie checkout — plan upgrade, billing-cycle switch, trial convert,
+   AND storage instant-pay. It carries two things:
+
+   - `pre`: the subscription state captured *before* the redirect (plan, cycle,
+     status, extra_storage_tb, storage_tb_quantity, current_period_end,
+     mandate_method). This is the ground truth the reconcile-on-load compares a
+     fresh subscription against — NOT a post-reload baseline (which would already
+     be the upgraded value if the grant landed before the reload). Comparing to
+     `pre` is what makes confirmation survive a reload of /billing?upgraded=true.
+   - `target`: what the user bought, so we can confirm an exact plan/cycle match.
+
+   `kind` distinguishes a storage add-on (plan/cycle unchanged, only storage
+   rises) from a plan checkout. 24h TTL, same as the legacy record. */
 
 const PENDING_CHECKOUT_KEY = 'bb_pending_checkout'
 
-function setPendingCheckout(plan: string, cycle: string) {
-  localStorage.setItem(PENDING_CHECKOUT_KEY, JSON.stringify({ plan, cycle, ts: Date.now() }))
+interface CheckoutPreState {
+  plan: string
+  cycle: string | undefined
+  status: string | undefined
+  periodEnd: string | null | undefined
+  extraStorageTb: number
+  storageTbQuantity: number
+  mandateMethod: 'creditcard' | 'directdebit' | null | undefined
+}
+
+interface PendingCheckout {
+  // 'plan' = plan upgrade / cycle switch / trial convert; 'storage' = add-on.
+  kind: 'plan' | 'storage'
+  // What was bought. For storage, `cycle` mirrors the current cycle (unused by
+  // the storage reconcile path, which keys off the storage delta).
+  plan: string
+  cycle: string
+  // Pre-checkout server truth — the reconcile baseline.
+  pre: CheckoutPreState
+  ts: number
+}
+
+function makePreState(sub: Subscription | null | undefined): CheckoutPreState {
+  return {
+    plan: sub?.plan ?? 'free',
+    cycle: sub?.billing_cycle,
+    status: sub?.status,
+    periodEnd: sub?.current_period_end,
+    extraStorageTb: sub?.extra_storage_tb ?? 0,
+    storageTbQuantity: sub?.storage_tb_quantity ?? 0,
+    mandateMethod: sub?.mandate_method,
+  }
+}
+
+function setPendingCheckout(
+  kind: 'plan' | 'storage',
+  plan: string,
+  cycle: string,
+  pre: CheckoutPreState,
+) {
+  try {
+    localStorage.setItem(
+      PENDING_CHECKOUT_KEY,
+      JSON.stringify({ kind, plan, cycle, pre, ts: Date.now() } satisfies PendingCheckout),
+    )
+  } catch { /* storage unavailable — watchdog/reconcile simply won't fire */ }
 }
 
 function clearPendingCheckout() {
   localStorage.removeItem(PENDING_CHECKOUT_KEY)
 }
 
-function getPendingCheckout(): { plan: string; cycle: string; ts: number } | null {
+function getPendingCheckout(): PendingCheckout | null {
   try {
     const raw = localStorage.getItem(PENDING_CHECKOUT_KEY)
     if (!raw) return null
-    const data = JSON.parse(raw)
-    if (Date.now() - data.ts > 24 * 60 * 60 * 1000) {
+    const data = JSON.parse(raw) as Partial<PendingCheckout> & { ts?: number }
+    if (typeof data.ts !== 'number' || Date.now() - data.ts > 24 * 60 * 60 * 1000) {
       localStorage.removeItem(PENDING_CHECKOUT_KEY)
       return null
     }
-    return data
+    // Back-compat: a legacy record ({plan,cycle,ts}) has no kind/pre. Treat it as
+    // a plan checkout with an empty pre-state — the reconcile then falls back to
+    // the target-match / any-change heuristics rather than a delta compare.
+    return {
+      kind: data.kind === 'storage' ? 'storage' : 'plan',
+      plan: data.plan ?? 'free',
+      cycle: data.cycle ?? 'monthly',
+      pre: data.pre ?? makePreState(null),
+      ts: data.ts,
+    }
   } catch { return null }
 }
 
@@ -271,11 +339,24 @@ export function Billing() {
   const [searchParams, setSearchParams] = useSearchParams()
   const { showToast } = useToast()
   const navigate = useNavigate()
-  // Presentational view toggle (task 0942) — pure UI state, no data flow.
-  // 'summary' = the /billing summary (mockup #7); 'change' = the change-plan
-  // view (mockup #8) the "Change plan" button opens. Both views render the SAME
-  // handlers/modals/state machines; this only regroups the markup.
-  const [view, setView] = useState<'summary' | 'change'>('summary')
+  // Presentational view toggle (task 0942) — backed by the router URL so the
+  // change-plan view is linkable, refresh-stable, and Back-button-friendly
+  // (task 0944). 'summary' = the /billing summary (mockup #7); 'change' =
+  // ?view=change, the change-plan view (mockup #8) the "Change plan" button
+  // opens. Both views render the SAME handlers/modals/state machines; this only
+  // regroups the markup.
+  const view: 'summary' | 'change' = searchParams.get('view') === 'change' ? 'change' : 'summary'
+  const setView = useCallback((next: 'summary' | 'change') => {
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev)
+        if (next === 'change') p.set('view', 'change')
+        else p.delete('view')
+        return p
+      },
+      { replace: true },
+    )
+  }, [setSearchParams])
   const { usage: contextUsage, planDetails: contextPlanDetails, refreshPlanDetails } = useDriveData()
   // sub comes from context; re-synced after cancel/reactivate via loadData
   const [sub, setSub] = useState<Subscription | null>(contextPlanDetails.subscription)
@@ -328,36 +409,24 @@ export function Billing() {
   // 'unconfirmed' = poll window elapsed without a change (payment may still be
   // processing, or was cancelled/not completed — never a false success).
   const [upgradeConfirm, setUpgradeConfirm] = useState<'finalizing' | 'complete' | 'unconfirmed'>('finalizing')
-  // Snapshot of the pre-checkout subscription + the target plan/cycle the user
-  // chose, captured synchronously on the upgraded return so the poll can detect
-  // "did the subscription actually change?" The pending-checkout record is
-  // written just before the redirect and is the most precise success signal.
-  const upgradeBaselineRef = useRef<{
-    plan: string
-    cycle: string | undefined
-    status: string | undefined
-    periodEnd: string | null | undefined
-    // Storage add-on baseline (task 0943). An instant-pay STORAGE upgrade leaves
-    // plan/cycle/status untouched and only raises these — so the poll must also
-    // recognise an increase here as a successful confirmation.
-    extraStorageTb: number
-    storageTbQuantity: number
-    target: { plan: string; cycle: string } | null
-  } | null>(null)
-  if (showUpgraded && upgradeBaselineRef.current === null) {
-    const base = contextPlanDetails.subscription
-    upgradeBaselineRef.current = {
-      plan: base?.plan ?? 'free',
-      cycle: base?.billing_cycle,
-      status: base?.status,
-      periodEnd: base?.current_period_end,
-      extraStorageTb: base?.extra_storage_tb ?? 0,
-      storageTbQuantity: base?.storage_tb_quantity ?? 0,
-      target: getPendingCheckout(),
-    }
+  // The pre-checkout intent persisted to localStorage just before the redirect
+  // (task 0946). This — not a post-reload, context-derived baseline — is the
+  // ground truth confirmation compares against. Read it ONCE on first render and
+  // pin it to a ref so it survives the `clearPendingCheckout()` that runs on the
+  // upgraded return: clearing the storage key must NOT lose the reconcile
+  // baseline mid-flow. `null` when the user landed on /billing with no in-flight
+  // checkout (a direct visit, or a stale/expired record).
+  const intentRef = useRef<PendingCheckout | null>(null)
+  const intentReadRef = useRef(false)
+  if (!intentReadRef.current) {
+    intentReadRef.current = true
+    intentRef.current = getPendingCheckout()
   }
+  // The intent's mandate method drives SEPA-aware copy from the very first frame
+  // (before any subscription refetch lands). directdebit = settles over days.
+  const intentMandate = intentRef.current?.pre.mandateMethod ?? null
   // Checkout watchdog — detects abandoned checkouts
-  const [pendingCheckout, setPendingCheckoutState] = useState<{ plan: string; cycle: string } | null>(null)
+  const [pendingCheckout, setPendingCheckoutState] = useState<PendingCheckout | null>(null)
 
   useEffect(() => {
     if (showUpgraded || searchParams.get('cancelled') === 'true') {
@@ -370,69 +439,95 @@ export function Billing() {
   }, [showUpgraded, searchParams])
 
   // Does a freshly-fetched subscription reflect the upgrade the user just made?
-  // Shared by BOTH the poll (fallback) and the real-time WS handler (task 0943)
-  // so they agree on what "confirmed" means. Reads the baseline from the ref each
-  // call, so it stays a stable callback while still seeing the captured snapshot.
+  // Shared by the poll (fallback), the WS handler, AND the reconcile-on-load —
+  // all three agree on what "confirmed" means by comparing the fresh sub against
+  // the PRE-checkout state persisted in the intent (task 0946), not a post-reload
+  // baseline. Comparing to pre-checkout truth is what fixes F1/F7: on a reload of
+  // /billing?upgraded=true the context subscription is ALREADY the upgraded value,
+  // so a delta against it can never trip — but the delta against `intent.pre`
+  // (captured before the redirect) still does.
   const reflectsUpgrade = useCallback((s: Subscription): boolean => {
-    const baseline = upgradeBaselineRef.current
-    if (!baseline) return false
+    const intent = intentRef.current
+    if (!intent) return false
+    const pre = intent.pre
     const ACTIVE_STATUSES = new Set(['active', 'trialing'])
-    // Storage add-on (task 0943). An instant-pay STORAGE upgrade leaves the
-    // plan/cycle/status unchanged and only raises extra_storage_tb (or the
-    // pinned storage_tb_quantity). Detect that FIRST — before the plan-target
-    // path — so it confirms even if a stale pending-checkout record lingers.
-    // The storage instant-pay flow writes no pending-checkout record, so for
-    // that return baseline.target is null and we fall through to here anyway.
+    // Storage add-on. An instant-pay STORAGE upgrade leaves plan/cycle/status
+    // unchanged and only raises extra_storage_tb (or the pinned
+    // storage_tb_quantity). Detect that FIRST — before the plan-target path —
+    // so it confirms even when plan/cycle never move. Compared against the
+    // PRE-checkout storage, so it trips on a reload after the grant landed.
     const extraNow = s.extra_storage_tb ?? 0
     const qtyNow = s.storage_tb_quantity ?? 0
     if (
       ACTIVE_STATUSES.has(s.status) &&
-      (extraNow > baseline.extraStorageTb || qtyNow > baseline.storageTbQuantity)
+      (extraNow > pre.extraStorageTb || qtyNow > pre.storageTbQuantity)
     ) {
       return true
     }
+    // A storage-kind intent confirms ONLY via the storage delta above; never via
+    // the plan/cycle heuristics (the plan is expected to stay the same).
+    if (intent.kind === 'storage') return false
     // Most precise: the subscription matches exactly what the user just bought.
-    if (baseline.target) {
-      return s.plan === baseline.target.plan
-        && s.billing_cycle === baseline.target.cycle
-        && ACTIVE_STATUSES.has(s.status)
-    }
-    // No pending record (e.g. landed on ?upgraded directly): accept any change
-    // away from the pre-checkout state that looks like a successful provision.
-    if (s.plan !== baseline.plan && s.plan !== 'free' && ACTIVE_STATUSES.has(s.status)) return true
-    if (s.billing_cycle !== baseline.cycle && ACTIVE_STATUSES.has(s.status)) return true
-    if (!ACTIVE_STATUSES.has(baseline.status ?? '') && ACTIVE_STATUSES.has(s.status) && s.plan !== 'free') return true
-    if (baseline.periodEnd && s.current_period_end && s.current_period_end > baseline.periodEnd) return true
-    return false
+    return s.plan === intent.plan
+      && s.billing_cycle === intent.cycle
+      && ACTIVE_STATUSES.has(s.status)
+      // …but only if that is actually a CHANGE from the pre-state (a no-op
+      // "match" against an unchanged sub is not a confirmation), OR the pre-state
+      // wasn't active (a fresh paid provision from free/expired).
+      && (s.plan !== pre.plan
+        || s.billing_cycle !== pre.cycle
+        || !ACTIVE_STATUSES.has(pre.status ?? '')
+        || (!!pre.periodEnd && !!s.current_period_end && s.current_period_end > pre.periodEnd))
   }, [])
 
   // The `billing_updated` WS subscription (task 0943, part B) is defined AFTER
   // `loadData` (below) to avoid a temporal-dead-zone on its const binding.
 
-  // Poll the subscription on the upgraded return until it reflects the change
-  // (~2s interval, ~30s cap) — the FALLBACK for when the WS event is missed.
-  // An "active paid status from a non-active baseline", a plan change, a
-  // billing-cycle change, a storage-addon increase, or an advanced period-end
-  // all count as confirmation; the pending-checkout target takes priority.
+  // Reconcile-on-load + poll the subscription on the upgraded return (task 0946).
+  //
+  // Reconcile-on-load: the moment we land — regardless of whether `?upgraded` is
+  // in the URL — if a persisted pre-checkout intent exists, fetch a FRESH
+  // subscription IMMEDIATELY and compare it to `intent.pre`. If storage increased
+  // vs the pre-state, or plan/cycle now match the target, or status went active,
+  // confirm and clear the intent. This is the fix for the founder's stuck banner:
+  // when the grant landed BEFORE the reload, the very first reconcile sees the
+  // delta against the pre-checkout truth and flips to `complete` without spinning.
+  //
+  // The 2s→4s / 30s poll remains the fallback for the slow-webhook case where the
+  // grant has NOT yet landed when the page loads. An &upgraded URL is what shows
+  // the finalizing banner; the reconcile runs even without it (so a back/forward
+  // re-arm — F7 — still resolves), but only flips visible banner state when the
+  // banner is showing.
   useEffect(() => {
-    if (!showUpgraded) return
-    const baseline = upgradeBaselineRef.current
-    // Baseline is captured synchronously whenever showUpgraded flips true, so it
-    // is always set here; bail defensively rather than poll without a reference.
-    if (!baseline) { setUpgradeConfirm('complete'); return }
+    const intent = intentRef.current
+    // Nothing to reconcile and not an upgraded return → nothing to do.
+    if (!intent && !showUpgraded) return
 
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | null = null
     const deadline = Date.now() + 30_000
-    setUpgradeConfirm('finalizing')
+    if (showUpgraded) setUpgradeConfirm('finalizing')
 
     const confirmComplete = (latest: Subscription) => {
       setSub(latest)
       setUpgradeConfirm('complete')
+      // The upgrade is confirmed — the intent has done its job. Clear it so a
+      // later reload / back-forward does not re-arm against a now-stale record.
+      clearPendingCheckout()
+      intentRef.current = null
       window.dispatchEvent(new Event('beebeeb:plan-changed'))
       refreshPlanDetails()
       void loadData()
     }
+
+    // A confirmation signal when there is NO intent to compare against — a legacy
+    // direct visit to ?upgraded=true with no persisted pre-state. Accept any
+    // active paid subscription as the best-effort signal (the historical 0865
+    // behaviour); with an intent we always use the precise reflectsUpgrade().
+    const confirmed = (s: Subscription): boolean =>
+      intent
+        ? reflectsUpgrade(s)
+        : (s.plan !== 'free' && new Set(['active', 'trialing']).has(s.status))
 
     let attempt = 0
     const poll = async () => {
@@ -440,7 +535,7 @@ export function Billing() {
       try {
         const latest = await getSubscription()
         if (cancelled) return
-        if (reflectsUpgrade(latest)) {
+        if (confirmed(latest)) {
           confirmComplete(latest)
           return
         }
@@ -448,8 +543,11 @@ export function Billing() {
         // Transient fetch failure — keep polling until the deadline.
       }
       if (cancelled) return
+      // Only the upgraded-return banner has a 30s "give up" deadline. A silent
+      // reconcile (intent but no ?upgraded) just runs one immediate check and
+      // a short poll, never forcing an `unconfirmed` banner.
       if (Date.now() >= deadline) {
-        setUpgradeConfirm('unconfirmed')
+        if (showUpgraded) setUpgradeConfirm('unconfirmed')
         return
       }
       attempt += 1
@@ -457,7 +555,9 @@ export function Billing() {
       const delay = Math.min(2000 + attempt * 250, 4000)
       timer = setTimeout(() => { void poll() }, delay)
     }
-    timer = setTimeout(() => { void poll() }, 2000)
+    // Reconcile-on-load: run the FIRST check immediately (not after a 2s wait) so
+    // an already-landed grant confirms on the first frame instead of spinning.
+    void poll()
 
     return () => {
       cancelled = true
@@ -562,10 +662,16 @@ export function Billing() {
       // Always refresh app-wide storage/quota UI on a billing change.
       window.dispatchEvent(new Event('beebeeb:plan-changed'))
       refreshPlanDetails()
-      // If a checkout return is finalizing and this update is the one we were
-      // waiting for, flip to complete now (no poll-tick latency).
-      if (showUpgraded && upgradeConfirm === 'finalizing' && reflectsUpgrade(latest)) {
+      // If a checkout return banner is still showing AND this update is the one
+      // we were waiting for, flip to complete now (no poll-tick latency). F5:
+      // accept the flip from EITHER `finalizing` (poll still running) OR
+      // `unconfirmed` (the 30s poll already gave up) — a genuine later WS event
+      // for a slow webhook / settled SEPA debit must still resolve the banner,
+      // not just silently refresh the data underneath a stuck "still processing".
+      if (showUpgraded && upgradeConfirm !== 'complete' && reflectsUpgrade(latest)) {
         setUpgradeConfirm('complete')
+        clearPendingCheckout()
+        intentRef.current = null
         void loadData()
       }
     })()
@@ -617,6 +723,10 @@ export function Billing() {
   // extra "pay now to activate instantly" path. creditcard / null keep the
   // immediate-charge UX.
   const isSepaMandate = sub?.mandate_method === 'directdebit'
+  // For checkout-return banners, prefer the intent's captured mandate_method
+  // (known on the first frame, before `sub` refetches) and fall back to the live
+  // subscription (task 0946, F4). A SEPA charge is "settling", never "failed".
+  const checkoutIsSepa = intentMandate === 'directdebit' || isSepaMandate
 
   // Storage slider derived values
   const canAddStorage = planCanAddStorage(effectivePlan)
@@ -894,6 +1004,17 @@ function openUpgrade(plan: string) {
     setAddonInstantPayLoading(true)
     try {
       const { checkout_url } = await createStorageAddonCheckout({ extra_storage_tb: sliderTB })
+      // F2 (task 0946): persist a pre-checkout intent so the upgraded return can
+      // reconcile against the PRE-state (a storage add-on leaves plan/cycle
+      // untouched — only extra_storage_tb rises — so without a pre snapshot the
+      // confirmation had no baseline and false-failed). kind:'storage' routes the
+      // reconcile to the storage-delta path. cycle mirrors the current cycle.
+      setPendingCheckout(
+        'storage',
+        effectivePlan,
+        sub?.billing_cycle ?? 'monthly',
+        makePreState(sub),
+      )
       window.location.href = checkout_url
     } catch (err) {
       showToast({
@@ -942,7 +1063,7 @@ function openUpgrade(plan: string) {
         plan: effectivePlan,
         billing_cycle: cycle,
       })
-      setPendingCheckout(effectivePlan, cycle)
+      setPendingCheckout('plan', effectivePlan, cycle, makePreState(sub))
       window.location.href = url
     } catch (e) {
       showToast({
@@ -1016,7 +1137,12 @@ function openUpgrade(plan: string) {
     setConvertLoading(true)
     try {
       const { url } = await convertTrial()
-      setPendingCheckout(sub?.plan ?? effectivePlan, sub?.billing_cycle ?? 'monthly')
+      setPendingCheckout(
+        'plan',
+        sub?.plan ?? effectivePlan,
+        sub?.billing_cycle ?? 'monthly',
+        makePreState(sub),
+      )
       window.location.href = url
     } catch (err) {
       if (err instanceof ApiError && err.code === 'trial_not_active') {
@@ -1162,14 +1288,19 @@ function openUpgrade(plan: string) {
               </svg>
               <div className="flex-1">
                 <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep mb-1">
-                  Finalizing your upgrade
+                  {intentMandate === 'directdebit' ? 'Upgrade on its way' : 'Finalizing your upgrade'}
                 </div>
                 <h2 className="text-xl font-bold text-ink leading-snug mb-1">
-                  Confirming your payment
+                  {intentMandate === 'directdebit' ? 'Your SEPA debit is settling' : 'Confirming your payment'}
                 </h2>
+                {/* SEPA-aware copy from the FIRST frame (task 0946, F4): the
+                    intent's mandate_method is known before any refetch, so a
+                    directdebit charge never promises "a few seconds" — SEPA
+                    debits settle over the next few days. */}
                 <p className="text-[13.5px] text-ink-2 leading-relaxed">
-                  We are confirming your payment with our processor. This usually
-                  takes a few seconds — this page updates automatically.
+                  {intentMandate === 'directdebit'
+                    ? 'Your payment was charged to your SEPA mandate. SEPA debits settle over the next few days — your upgrade activates automatically once it clears. You can safely leave this page; it updates on its own.'
+                    : 'We are confirming your payment with our processor. This usually takes a few seconds — this page updates automatically.'}
                 </p>
               </div>
             </div>
@@ -1230,16 +1361,16 @@ function openUpgrade(plan: string) {
                     payment is settling and the page updates itself. A SEPA-mandate
                     sub gets the explicit "charged to your SEPA mandate" wording. */}
                 <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-3 mb-1">
-                  {isSepaMandate ? 'Upgrade pending' : 'Still processing'}
+                  {checkoutIsSepa ? 'Upgrade pending' : 'Still processing'}
                 </div>
                 <h2 className="text-lg font-bold text-ink leading-snug mb-1">
-                  {isSepaMandate
+                  {checkoutIsSepa
                     ? 'Your upgrade is on its way'
                     : 'We are still confirming your payment'}
                 </h2>
                 <p className="text-[13.5px] text-ink-2 leading-relaxed">
-                  {isSepaMandate
-                    ? 'Your payment was charged to your SEPA mandate. SEPA debits settle in a few days — your extra storage activates automatically once it clears. You can safely leave this page; this updates on its own.'
+                  {checkoutIsSepa
+                    ? 'Your payment was charged to your SEPA mandate. SEPA debits settle in a few days — your upgrade activates automatically once it clears. You can safely leave this page; this updates on its own.'
                     : 'Your payment is still settling with our processor — this can take a moment. This page updates automatically the instant it confirms, so there is nothing else you need to do.'}
                 </p>
               </div>
@@ -1268,28 +1399,55 @@ function openUpgrade(plan: string) {
           </div>
         )}
 
-        {/* Abandoned checkout watchdog */}
+        {/* Checkout watchdog. Two distinct realities share this slot (task 0946):
+            - A SEPA-mandate charge WAS made and is settling over a few days — it
+              is NOT an abandoned checkout, so it must never say "didn't complete
+              checkout" or offer a "Continue" CTA. Honest "settling" copy only.
+            - A genuinely abandoned hosted-checkout (no SEPA charge): offer to
+              resume. Plan vs storage intent get their own copy + resume action. */}
         {pendingCheckout && !showUpgraded && (
-          <div className="flex items-center gap-3 p-3.5 bg-amber-bg border border-amber/30 rounded-lg text-sm">
-            <Icon name="clock" size={14} className="text-amber-deep shrink-0" />
-            <span className="flex-1 text-ink-2">
-              You started switching to <span className="font-semibold text-ink">{pendingCheckout.cycle}</span> billing but didn't complete checkout.
-            </span>
-            <BBButton
-              size="sm"
-              variant="amber"
-              onClick={() => void handleSwitchBillingCycle(pendingCheckout.cycle as 'monthly' | 'yearly')}
-            >
-              Continue
-            </BBButton>
-            <button
-              onClick={() => { clearPendingCheckout(); setPendingCheckoutState(null) }}
-              className="text-ink-3 hover:text-ink transition-colors shrink-0"
-              aria-label="Dismiss"
-            >
-              <Icon name="x" size={14} />
-            </button>
-          </div>
+          pendingCheckout.pre.mandateMethod === 'directdebit' ? (
+            <div className="flex items-center gap-3 p-3.5 bg-amber-bg border border-amber/30 rounded-lg text-sm">
+              <Icon name="clock" size={14} className="text-amber-deep shrink-0" />
+              <span className="flex-1 text-ink-2">
+                Your payment was charged to your SEPA mandate and is settling — SEPA debits clear over the next few days, and your upgrade activates automatically once it does.
+              </span>
+              <button
+                onClick={() => { clearPendingCheckout(); setPendingCheckoutState(null) }}
+                className="text-ink-3 hover:text-ink transition-colors shrink-0"
+                aria-label="Dismiss"
+              >
+                <Icon name="x" size={14} />
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3 p-3.5 bg-amber-bg border border-amber/30 rounded-lg text-sm">
+              <Icon name="clock" size={14} className="text-amber-deep shrink-0" />
+              <span className="flex-1 text-ink-2">
+                {pendingCheckout.kind === 'storage' ? (
+                  <>You started adding storage but didn't complete checkout.</>
+                ) : (
+                  <>You started switching to <span className="font-semibold text-ink">{pendingCheckout.cycle}</span> billing but didn't complete checkout.</>
+                )}
+              </span>
+              {pendingCheckout.kind === 'plan' && (
+                <BBButton
+                  size="sm"
+                  variant="amber"
+                  onClick={() => void handleSwitchBillingCycle(pendingCheckout.cycle as 'monthly' | 'yearly')}
+                >
+                  Continue
+                </BBButton>
+              )}
+              <button
+                onClick={() => { clearPendingCheckout(); setPendingCheckoutState(null) }}
+                className="text-ink-3 hover:text-ink transition-colors shrink-0"
+                aria-label="Dismiss"
+              >
+                <Icon name="x" size={14} />
+              </button>
+            </div>
+          )
         )}
 
         {/* Past due warning banner */}
@@ -2775,6 +2933,7 @@ function openUpgrade(plan: string) {
         priceYearlySeat={upgradePlanDetails?.priceYearly ?? 383.52}
         open={upgradeOpen}
         onClose={() => setUpgradeOpen(false)}
+        onBeforeRedirect={(plan, cycle) => setPendingCheckout('plan', plan, cycle, makePreState(sub))}
         onSuccess={() => {
           void loadData()
           window.dispatchEvent(new Event('beebeeb:plan-changed'))
