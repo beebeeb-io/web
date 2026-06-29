@@ -29,6 +29,8 @@ import {
   getStorageAddons,
   updateStorageAddons,
   previewStorageAddons,
+  createStorageAddonCheckout,
+  exportBillingTransactions,
   startTrial,
   convertTrial,
   ApiError,
@@ -438,6 +440,11 @@ export function Billing() {
   const [addonSaving, setAddonSaving] = useState(false)
   const [addonPreview, setAddonPreview] = useState<StorageAddonPreview | null>(null)
   const [addonPreviewLoading, setAddonPreviewLoading] = useState(false)
+  // SEPA two-path storage update (task 0941). `addonInstantPayLoading` tracks the
+  // pay-now-to-activate-instantly redirect; `addonPending` becomes true after a
+  // SEPA-mandate charge whose grant is deferred until the debit settles.
+  const [addonInstantPayLoading, setAddonInstantPayLoading] = useState(false)
+  const [addonPending, setAddonPending] = useState(false)
 
   // Downgrade state
   const [downgradeTarget, setDowngradeTarget] = useState<string | null>(null)
@@ -453,6 +460,8 @@ export function Billing() {
   // so the card only renders an honest state once the fetch settles.
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(null)
   const [pmLoaded, setPmLoaded] = useState(false)
+  // CSV export of the payment history (#7 "Export all", task 0942).
+  const [exportingTransactions, setExportingTransactions] = useState(false)
 
   const showSuccess = searchParams.get('success') === 'true'
 
@@ -541,6 +550,12 @@ export function Billing() {
     : meta.storageGB * 1_000_000_000
   const usedBytes = contextUsage?.used_bytes ?? 0
   const usedPercent = totalStorageBytes > 0 ? (usedBytes / totalStorageBytes) * 100 : 0
+
+  // SEPA two-path (task 0941). A directdebit mandate can only be charged
+  // off-session (settles in a few days), so the storage-update dialog offers an
+  // extra "pay now to activate instantly" path. creditcard / null keep the
+  // immediate-charge UX.
+  const isSepaMandate = sub?.mandate_method === 'directdebit'
 
   // Storage slider derived values
   const canAddStorage = planCanAddStorage(effectivePlan)
@@ -777,11 +792,23 @@ function openUpgrade(plan: string) {
       const result = await updateStorageAddons({ extra_storage_tb: sliderTB })
       setAddonState(result)
       setAddonPreview(null)
-      showToast({
-        icon: 'check',
-        title: 'Storage updated',
-        description: `Your vault is now ${formatStorageSI(result.effective_storage_bytes)}.`,
-      })
+      // SEPA mandate charges settle off-session (a few days) — the apply response
+      // carries pending:true and the grant is deferred. Surface an honest pending
+      // state instead of claiming the vault already grew. (task 0941)
+      if (result.pending) {
+        setAddonPending(true)
+        showToast({
+          icon: 'clock',
+          title: 'Storage upgrade pending',
+          description: 'Your SEPA mandate is being charged — the extra storage activates in a few days, once the payment settles.',
+        })
+      } else {
+        showToast({
+          icon: 'check',
+          title: 'Storage updated',
+          description: `Your vault is now ${formatStorageSI(result.effective_storage_bytes)}.`,
+        })
+      }
       window.dispatchEvent(new Event('beebeeb:plan-changed'))
       refreshPlanDetails()
     } catch (err) {
@@ -793,6 +820,45 @@ function openUpgrade(plan: string) {
       })
     } finally {
       setAddonSaving(false)
+    }
+  }
+
+  /**
+   * Pay-now-to-activate-instantly path (task 0941, SEPA two-path). Instead of
+   * charging the SEPA mandate (which settles in a few days), redirect to a hosted
+   * Mollie one-off payment that grants the storage instantly via webhook. Creates
+   * NO mandate charge. Mirrors createCheckoutSession's redirect.
+   */
+  async function handleStorageAddonInstantPay() {
+    setAddonInstantPayLoading(true)
+    try {
+      const { checkout_url } = await createStorageAddonCheckout({ extra_storage_tb: sliderTB })
+      window.location.href = checkout_url
+    } catch (err) {
+      showToast({
+        icon: 'x',
+        title: 'Could not start instant payment',
+        description: err instanceof Error ? err.message : 'Please try again.',
+        danger: true,
+      })
+      setAddonInstantPayLoading(false)
+    }
+  }
+
+  /** Download the full payment history as CSV (#7 "Export all", task 0942). */
+  async function handleExportTransactions() {
+    setExportingTransactions(true)
+    try {
+      await exportBillingTransactions()
+    } catch (err) {
+      showToast({
+        icon: 'x',
+        title: 'Could not export payment history',
+        description: err instanceof Error ? err.message : 'Please try again.',
+        danger: true,
+      })
+    } finally {
+      setExportingTransactions(false)
     }
   }
 
@@ -993,7 +1059,9 @@ function openUpgrade(plan: string) {
       sub?.status === 'cancelling' ? { bg: 'bg-amber-bg', text: 'text-amber-deep', dot: 'bg-amber-deep', label: 'Cancelling' } :
       sub?.status === 'past_due'   ? { bg: 'bg-red/10',   text: 'text-red',        dot: 'bg-red',        label: 'Past due' }   :
       sub?.status === 'paused'     ? { bg: 'bg-paper-3',  text: 'text-ink-2',      dot: 'bg-ink-3',      label: 'Paused' }     :
-                                     { bg: 'bg-green/10', text: 'text-green',       dot: 'bg-green',      label: 'Active' }
+                                     // Active plan-state pill is AMBER (task 0942 — the encryption/primary accent),
+                                     // distinct from the transaction status chips (Paid/Issued) which stay green.
+                                     { bg: 'bg-amber-bg', text: 'text-amber-deep', dot: 'bg-amber-deep', label: 'Active' }
     return (
       <div className={`flex items-center gap-1.5 px-2 py-1 rounded-md ${cfg.bg} ${cfg.text} text-[11px] font-medium`}>
         <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
@@ -1006,10 +1074,19 @@ function openUpgrade(plan: string) {
 
   return (
     <SettingsShell activeSection="billing">
-      <SettingsHeader
-        title="Plan & billing"
-        subtitle={meta.tagline}
-      />
+      {/* Title differs by view (task 0942): the summary (#7) is the account-level
+          "Billing" overview; the change view (#8) keeps the plan-centric heading. */}
+      {view === 'summary' ? (
+        <SettingsHeader
+          title="Billing"
+          subtitle="Manage your plan, payment method, and invoices."
+        />
+      ) : (
+        <SettingsHeader
+          title="Plan & billing"
+          subtitle={meta.tagline}
+        />
+      )}
 
       <div className="p-7 space-y-6">
         {/* Checkout return — provisioning is async, so we poll before claiming
@@ -1326,9 +1403,36 @@ function openUpgrade(plan: string) {
                 </div>
                 <div className="px-5 py-4 flex items-center justify-between gap-4">
                   {paymentMethod ? (
+                    // SEPA mandate (#7): a "SEPA" badge + the masked IBAN (mono) and a
+                    // muted "{holder} · mandate {ref}" line. We treat it as SEPA when the
+                    // method type is directdebit OR the new mandate fields are present.
+                    paymentMethod.type === 'directdebit' || paymentMethod.iban_masked || paymentMethod.mandate_reference ? (
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="shrink-0 inline-flex items-center justify-center px-2 py-1 rounded-md border border-line bg-paper-2 font-mono text-[10px] font-semibold uppercase tracking-wide text-ink-2">
+                          SEPA
+                        </span>
+                        <div className="min-w-0">
+                          <div className="font-mono text-[13px] text-ink truncate">
+                            {paymentMethod.iban_masked
+                              ?? (paymentMethod.iban_last4 ? `•••• ${paymentMethod.iban_last4}` : 'SEPA Direct Debit')}
+                          </div>
+                          {(paymentMethod.account_holder_name || paymentMethod.mandate_reference) && (
+                            <div className="text-[11.5px] text-ink-3 mt-0.5 truncate">
+                              {paymentMethod.account_holder_name && (
+                                <span>{paymentMethod.account_holder_name}</span>
+                              )}
+                              {paymentMethod.account_holder_name && paymentMethod.mandate_reference && ' · '}
+                              {paymentMethod.mandate_reference && (
+                                <>mandate <span className="font-mono">{paymentMethod.mandate_reference}</span></>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
                     <div className="flex items-center gap-3 min-w-0">
                       <span className="shrink-0 inline-flex items-center justify-center px-2 py-1 rounded-md border border-line bg-paper-2 font-mono text-[10px] font-semibold uppercase tracking-wide text-ink-2">
-                        {paymentMethod.type === 'directdebit' ? 'SEPA' : (paymentMethod.brand ?? 'Card')}
+                        {paymentMethod.brand ?? 'Card'}
                       </span>
                       <div className="min-w-0">
                         <div className="text-[13px] text-ink flex items-center gap-2 flex-wrap">
@@ -1349,6 +1453,7 @@ function openUpgrade(plan: string) {
                         )}
                       </div>
                     </div>
+                    )
                   ) : (
                     <div className="flex items-center gap-3 min-w-0">
                       <Icon name="shield" size={16} className="text-ink-3 shrink-0" />
@@ -1362,8 +1467,14 @@ function openUpgrade(plan: string) {
               </Card>
             )}
 
-            {/* Payment History (#7) — the 0936 transactions view, restyled. */}
-            <TransactionList transactions={transactions} variant="card" />
+            {/* Payment History (#7) — the 0936 transactions view, restyled, with
+                the "Export all" CSV affordance (task 0942) in the header. */}
+            <TransactionList
+              transactions={transactions}
+              variant="card"
+              onExport={() => void handleExportTransactions()}
+              exporting={exportingTransactions}
+            />
 
             {/* Invoices — the legal VAT documents, downloadable. */}
             <InvoiceList
@@ -1400,6 +1511,68 @@ function openUpgrade(plan: string) {
 
         {/* ── Plan summary ──────────────────────────── */}
         <div className="grid gap-4">
+
+          {/* Annual savings prompt — shown to monthly paid subscribers. Moved ABOVE
+              the Current plan card (task 0942) to match mockup #8's order:
+              savings banner → current plan → switch plan → manage storage → cancel. */}
+          {sub?.billing_cycle === 'monthly' && effectivePlan !== 'free' && (
+            <div className="border border-amber/30 bg-amber-bg/30 rounded-xl p-5">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep mb-1">
+                Save on your plan
+              </div>
+              <p className="text-sm text-ink-2 mb-3">
+                Switch to annual billing and save{' '}
+                <span className="font-semibold text-ink">
+                  EUR {((currentPriceMonthly * 12 - currentPriceYearly) || 0).toFixed(2)}
+                </span>{' '}
+                per year.
+              </p>
+              <div className="flex items-center gap-4 text-xs font-mono text-ink-3 mb-3">
+                <span>Monthly: EUR {currentPriceMonthly.toFixed(2)}/mo</span>
+                <span>Annual: EUR {(currentPriceYearly / 12).toFixed(2)}/mo</span>
+              </div>
+              {cycleSwitchConfirm === 'yearly' ? (
+                <div className="rounded-lg bg-paper border border-line px-4 py-3.5 space-y-3">
+                  <div className="text-[12px] font-medium text-ink">Switch to annual billing?</div>
+                  <div className="rounded-md bg-paper-2 border border-line px-3.5 py-3 space-y-1">
+                    <div className="flex items-baseline justify-between text-xs">
+                      <span className="text-ink-2">New price</span>
+                      <span className="font-mono font-semibold text-ink">
+                        EUR {currentPriceYearly.toFixed(2)} / year
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-ink-3">
+                      That is EUR {(currentPriceYearly / 12).toFixed(2)}/mo instead of EUR {currentPriceMonthly.toFixed(2)}/mo.
+                    </div>
+                  </div>
+                  <p className="text-xs text-ink-3">
+                    The change takes effect at the start of your next billing period.
+                  </p>
+                  <div className="flex gap-2">
+                    <BBButton
+                      size="sm"
+                      onClick={() => setCycleSwitchConfirm(null)}
+                      disabled={cycleSwitchLoading}
+                    >
+                      Cancel
+                    </BBButton>
+                    <BBButton
+                      size="sm"
+                      variant="amber"
+                      onClick={() => void handleSwitchBillingCycle('yearly')}
+                      disabled={cycleSwitchLoading}
+                    >
+                      {cycleSwitchLoading ? 'Switching...' : 'Confirm switch to annual'}
+                    </BBButton>
+                  </div>
+                </div>
+              ) : (
+                <BBButton size="sm" variant="amber" onClick={() => setCycleSwitchConfirm('yearly')}>
+                  Switch to annual
+                </BBButton>
+              )}
+            </div>
+          )}
 
           {/* Current plan card */}
           <div className="border border-line rounded-xl p-5 bg-paper relative">
@@ -1848,66 +2021,6 @@ function openUpgrade(plan: string) {
             )}
           </div>
 
-          {/* Annual savings prompt — shown to monthly paid subscribers */}
-          {sub?.billing_cycle === 'monthly' && effectivePlan !== 'free' && (
-            <div className="border border-amber/30 bg-amber-bg/30 rounded-xl p-5">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep mb-1">
-                Save on your plan
-              </div>
-              <p className="text-sm text-ink-2 mb-3">
-                Switch to annual billing and save{' '}
-                <span className="font-semibold text-ink">
-                  EUR {((currentPriceMonthly * 12 - currentPriceYearly) || 0).toFixed(2)}
-                </span>{' '}
-                per year.
-              </p>
-              <div className="flex items-center gap-4 text-xs font-mono text-ink-3 mb-3">
-                <span>Monthly: EUR {currentPriceMonthly.toFixed(2)}/mo</span>
-                <span>Annual: EUR {(currentPriceYearly / 12).toFixed(2)}/mo</span>
-              </div>
-              {cycleSwitchConfirm === 'yearly' ? (
-                <div className="rounded-lg bg-paper border border-line px-4 py-3.5 space-y-3">
-                  <div className="text-[12px] font-medium text-ink">Switch to annual billing?</div>
-                  <div className="rounded-md bg-paper-2 border border-line px-3.5 py-3 space-y-1">
-                    <div className="flex items-baseline justify-between text-xs">
-                      <span className="text-ink-2">New price</span>
-                      <span className="font-mono font-semibold text-ink">
-                        EUR {currentPriceYearly.toFixed(2)} / year
-                      </span>
-                    </div>
-                    <div className="text-[11px] text-ink-3">
-                      That is EUR {(currentPriceYearly / 12).toFixed(2)}/mo instead of EUR {currentPriceMonthly.toFixed(2)}/mo.
-                    </div>
-                  </div>
-                  <p className="text-xs text-ink-3">
-                    The change takes effect at the start of your next billing period.
-                  </p>
-                  <div className="flex gap-2">
-                    <BBButton
-                      size="sm"
-                      onClick={() => setCycleSwitchConfirm(null)}
-                      disabled={cycleSwitchLoading}
-                    >
-                      Cancel
-                    </BBButton>
-                    <BBButton
-                      size="sm"
-                      variant="amber"
-                      onClick={() => void handleSwitchBillingCycle('yearly')}
-                      disabled={cycleSwitchLoading}
-                    >
-                      {cycleSwitchLoading ? 'Switching...' : 'Confirm switch to annual'}
-                    </BBButton>
-                  </div>
-                </div>
-              ) : (
-                <BBButton size="sm" variant="amber" onClick={() => setCycleSwitchConfirm('yearly')}>
-                  Switch to annual
-                </BBButton>
-              )}
-            </div>
-          )}
-
           {/* Monthly switch prompt — shown to yearly paid subscribers */}
           {sub?.billing_cycle === 'yearly' && effectivePlan !== 'free' && sub.status !== 'cancelling' && (
             <div className="border border-line rounded-xl p-5 bg-paper">
@@ -2229,6 +2342,19 @@ function openUpgrade(plan: string) {
                 </div>
               )}
 
+              {/* Deferred SEPA upgrade pending (task 0941) — the mandate was charged
+                  but the grant settles in a few days. Honest "pending" state until
+                  the webhook confirms. */}
+              {addonPending && (
+                <div className="flex items-start gap-2.5 px-3.5 py-2.5 bg-amber-bg/40 border border-amber/30 rounded-lg">
+                  <Icon name="clock" size={13} className="text-amber-deep shrink-0 mt-0.5" />
+                  <span className="text-[12px] text-ink-2 leading-snug">
+                    Storage upgrade pending — your SEPA mandate is being charged. The
+                    extra storage activates in a few days, once the payment settles.
+                  </span>
+                </div>
+              )}
+
               {/* Action */}
               <div className="flex items-center gap-3">
                 <BBButton
@@ -2437,19 +2563,39 @@ function openUpgrade(plan: string) {
 
             {/* Body */}
             <div className="px-5 py-5 space-y-4">
-              {/* Prorated charge / credit */}
+              {/* Prorated charge / credit. SEPA mandates (task 0941) settle off-session,
+                  so we drop the "IMMEDIATE CHARGE" framing — the charge is to the SEPA
+                  mandate and activates in a few days (the pay-now path below activates
+                  instantly). creditcard / null keep the immediate-charge copy. */}
               {addonPreview.is_upgrade && addonPreview.immediate_charge_cents > 0 && (
-                <div className="rounded-lg bg-amber-bg border border-amber/30 px-4 py-3">
-                  <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep mb-1">
-                    Immediate charge
+                isSepaMandate ? (
+                  <div className="rounded-lg bg-amber-bg border border-amber/30 px-4 py-3">
+                    <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep mb-1">
+                      Prorated charge
+                    </div>
+                    <div className="font-mono text-xl font-bold text-ink">
+                      EUR {(addonPreview.immediate_charge_cents / 100).toFixed(2)}
+                    </div>
+                    <div className="text-[12px] text-ink-3 mt-1">
+                      Charged to your SEPA Direct Debit mandate, prorated for the
+                      remaining {addonPreview.remaining_days} day{addonPreview.remaining_days !== 1 ? 's' : ''} of your
+                      billing period. The extra storage activates in a few days, once
+                      the debit settles — or pay now to activate it instantly.
+                    </div>
                   </div>
-                  <div className="font-mono text-xl font-bold text-ink">
-                    EUR {(addonPreview.immediate_charge_cents / 100).toFixed(2)}
+                ) : (
+                  <div className="rounded-lg bg-amber-bg border border-amber/30 px-4 py-3">
+                    <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep mb-1">
+                      Immediate charge
+                    </div>
+                    <div className="font-mono text-xl font-bold text-ink">
+                      EUR {(addonPreview.immediate_charge_cents / 100).toFixed(2)}
+                    </div>
+                    <div className="text-[12px] text-ink-3 mt-1">
+                      Prorated for the remaining {addonPreview.remaining_days} day{addonPreview.remaining_days !== 1 ? 's' : ''} of your billing period.
+                    </div>
                   </div>
-                  <div className="text-[12px] text-ink-3 mt-1">
-                    Prorated for the remaining {addonPreview.remaining_days} day{addonPreview.remaining_days !== 1 ? 's' : ''} of your billing period.
-                  </div>
-                </div>
+                )
               )}
 
               {!addonPreview.is_upgrade && addonPreview.credit_cents > 0 && (
@@ -2498,25 +2644,55 @@ function openUpgrade(plan: string) {
               </div>
             </div>
 
-            {/* Footer */}
-            <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-line">
-              <BBButton
-                size="md"
-                variant="ghost"
-                onClick={() => setAddonPreview(null)}
-                disabled={addonSaving}
-              >
-                Cancel
-              </BBButton>
-              <BBButton
-                size="md"
-                variant="amber"
-                onClick={() => void handleConfirmStorageAddon()}
-                disabled={addonSaving}
-              >
-                {addonSaving ? 'Updating...' : 'Confirm'}
-              </BBButton>
-            </div>
+            {/* Footer. For a SEPA upgrade (task 0941) we offer TWO paths: charge the
+                mandate (deferred, settles in a few days) OR pay now to activate
+                instantly via a hosted Mollie one-off. Downgrades + non-SEPA keep the
+                single Confirm. */}
+            {isSepaMandate && addonPreview.is_upgrade ? (
+              <div className="flex flex-col gap-2 px-5 py-4 border-t border-line">
+                <BBButton
+                  size="md"
+                  variant="amber"
+                  onClick={() => void handleStorageAddonInstantPay()}
+                  disabled={addonSaving || addonInstantPayLoading}
+                >
+                  {addonInstantPayLoading ? 'Redirecting...' : 'Pay now to activate instantly'}
+                </BBButton>
+                <BBButton
+                  size="md"
+                  onClick={() => void handleConfirmStorageAddon()}
+                  disabled={addonSaving || addonInstantPayLoading}
+                >
+                  {addonSaving ? 'Charging...' : 'Charge my SEPA mandate'}
+                </BBButton>
+                <button
+                  className="mt-0.5 text-[12px] text-ink-3 hover:text-ink transition-colors disabled:opacity-50"
+                  onClick={() => setAddonPreview(null)}
+                  disabled={addonSaving || addonInstantPayLoading}
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-line">
+                <BBButton
+                  size="md"
+                  variant="ghost"
+                  onClick={() => setAddonPreview(null)}
+                  disabled={addonSaving}
+                >
+                  Cancel
+                </BBButton>
+                <BBButton
+                  size="md"
+                  variant="amber"
+                  onClick={() => void handleConfirmStorageAddon()}
+                  disabled={addonSaving}
+                >
+                  {addonSaving ? 'Updating...' : 'Confirm'}
+                </BBButton>
+              </div>
+            )}
           </div>
         </div>
       )}

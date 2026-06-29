@@ -10,6 +10,14 @@ interface TransactionListProps {
    * hairline-bordered card with an uppercase label header and the table inside.
    */
   variant?: 'plain' | 'card'
+  /**
+   * When provided on the 'card' variant (#7), renders an "Export all" affordance
+   * in the header that downloads the full payment history as CSV. No-op on the
+   * 'plain' variant.
+   */
+  onExport?: () => void
+  /** Disables the Export all affordance while a download is in flight. */
+  exporting?: boolean
 }
 
 function formatDate(iso: string): string {
@@ -88,7 +96,7 @@ function statusVariant(status: string): 'green' | 'amber' | 'red' | 'default' {
  * table at sm+, reflowing to stacked cards on narrow viewports — never a
  * horizontal scroll.
  */
-export function TransactionList({ transactions, variant = 'plain' }: TransactionListProps) {
+export function TransactionList({ transactions, variant = 'plain', onExport, exporting = false }: TransactionListProps) {
   const isCard = variant === 'card'
 
   // The 'card' variant (mockup #7) renders a single hairline-bordered card with
@@ -97,10 +105,21 @@ export function TransactionList({ transactions, variant = 'plain' }: Transaction
   if (isCard) {
     return (
       <div className="border border-line rounded-xl overflow-hidden bg-paper" data-testid="transactions-list">
-        <div className="px-5 py-4 border-b border-line">
+        <div className="px-5 py-4 border-b border-line flex items-center justify-between">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-4">
             Payment history
           </span>
+          {onExport && (
+            <button
+              onClick={onExport}
+              disabled={exporting}
+              className="inline-flex items-center gap-1.5 text-[12px] font-medium text-amber-deep hover:text-amber transition-colors disabled:opacity-50"
+              data-testid="transactions-export"
+            >
+              <Icon name="download" size={13} />
+              {exporting ? 'Exporting...' : 'Export all'}
+            </button>
+          )}
         </div>
         {transactions.length === 0 ? (
           <div className="py-10 text-center" data-testid="transactions-empty">

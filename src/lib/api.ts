@@ -1959,6 +1959,39 @@ export async function getBillingTransactions(): Promise<BillingTransaction[]> {
   return data.transactions ?? []
 }
 
+/**
+ * Download the full payment history as a CSV (task 0942). GET
+ * /api/v1/billing/transactions/export returns a `text/csv` attachment; the
+ * endpoint is authenticated so a plain `window.open` would 401 — we fetch with
+ * the bearer token + cookie, then trigger a browser download of the blob using
+ * the server-provided filename (Content-Disposition) when present.
+ */
+export async function exportBillingTransactions(): Promise<void> {
+  const token = getToken()
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const res = await fetch(`${API_URL}/api/v1/billing/transactions/export`, {
+    headers,
+    credentials: 'include',
+  })
+  if (!res.ok) {
+    throw new ApiError(res.statusText, res.status)
+  }
+  // Prefer the server's filename from Content-Disposition; fall back to a sane default.
+  const disposition = res.headers.get('content-disposition') ?? ''
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition)
+  const filename = match?.[1] ? decodeURIComponent(match[1]) : 'beebeeb-payment-history.csv'
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
 export async function createCheckoutSession(params: {
   plan: string
   billing_cycle: string
@@ -2129,6 +2162,13 @@ export interface StorageAddonState {
   storage_addon_price_cents: number | null
   base_storage_tb: number
   effective_storage_bytes: number
+  /**
+   * Set by the POST /addons apply response when the change was charged off-session
+   * to a SEPA Direct Debit mandate (task 0941): the grant is DEFERRED until the
+   * mandate settles (a few days). Drives the "upgrade pending" UI. Absent/false for
+   * synchronous (credit-card) applies, which grant immediately.
+   */
+  pending?: boolean
 }
 
 /** GET /api/v1/billing/addons — current add-on state */
@@ -2222,7 +2262,28 @@ export async function updateStorageAddons(params: {
     storage_addon_price_cents: typeof raw.storage_addon_price_cents === 'number' ? raw.storage_addon_price_cents : null,
     base_storage_tb: baseTB,
     effective_storage_bytes: effectiveBytes,
+    pending: raw.pending === true,
   }
+}
+
+/**
+ * Instant-pay storage add-on checkout (task 0941, SEPA two-path). For a SEPA
+ * Direct Debit subscriber, charging the mandate settles in a few days; this
+ * endpoint instead returns a hosted Mollie redirect for an instant one-off
+ * payment that grants the extra storage via webhook on `paid` — it creates NO
+ * mandate charge. The caller redirects the browser to `checkout_url`.
+ *
+ * POST /api/v1/billing/storage-addon/checkout
+ *   body { extra_storage_tb, extra_users? } → { checkout_url }
+ */
+export async function createStorageAddonCheckout(params: {
+  extra_storage_tb: number
+  extra_users?: number
+}): Promise<{ checkout_url: string }> {
+  return request<{ checkout_url: string }>('/api/v1/billing/storage-addon/checkout', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
 }
 
 /**

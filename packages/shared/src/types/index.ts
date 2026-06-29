@@ -456,6 +456,14 @@ export interface Subscription {
    * can never newly enter the pause card (where pauseSubscription() would 501).
    */
   pause_supported?: boolean
+  /**
+   * The active mandate's payment method (task 0941). `'directdebit'` = a SEPA
+   * mandate, which can only be charged off-session (settles in a few days) — the
+   * storage-add-on flow then offers an instant pay-now path alongside the mandate
+   * charge. `'creditcard'` (or null) = synchronous, immediate-charge UX. Null for
+   * trial/legacy subs without a captured mandate.
+   */
+  mandate_method?: 'creditcard' | 'directdebit' | null
 }
 
 export interface Invoice {
@@ -490,6 +498,16 @@ export interface PaymentMethod {
   exp_year?: number
   iban_last4?: string
   is_default: boolean
+  /**
+   * SEPA Direct Debit details (Mollie directdebit mandates, task 0942). Additive,
+   * nullable — only present for a SEPA mandate; null/absent for card/legacy.
+   *   iban_masked          — pre-masked IBAN, e.g. "NL10 •••• •••• •••• 9438"
+   *   mandate_reference    — Mollie mandate ref, e.g. "SD54-2280-8872-1850"
+   *   account_holder_name  — mandate account holder, e.g. "T. Test"
+   */
+  iban_masked?: string | null
+  mandate_reference?: string | null
+  account_holder_name?: string | null
 }
 
 export interface ReferralStats {
