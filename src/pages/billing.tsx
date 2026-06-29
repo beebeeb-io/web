@@ -1239,9 +1239,52 @@ function openUpgrade(plan: string) {
     : upgradeCardFromPlanMeta(upgradePlan)
 
   const billingInterval = sub?.billing_cycle === 'yearly' ? 'year' : 'month'
-  const basePriceCents = currentCostCents > 0 ? currentCostCents : (sub?.billing_cycle === 'yearly' ? Math.round(currentPriceYearly * 100) : Math.round(currentPriceMonthly * 100))
-  const extraStorageCostCents = currentExtraTB > 0 ? currentExtraTB * 1099 : 0
-  const basePlanCents = basePriceCents - extraStorageCostCents
+
+  /* ── Plan-price breakdown from SERVER truth (task 0947) ──────────────
+     The headline used to lump base plan + every extra-TB add-on into one
+     number, recomputed CLIENT-SIDE via the WASM `planMonthlyCostCents` with a
+     hard-coded €10.99/TB — which could drift from what Mollie actually bills
+     (the founder saw a bare "EUR 373.66 / month"). We now render a coherent
+     breakdown straight from the `/billing/subscription` response:
+       - basePlanCents:    server `base_plan_cents` (catalog base, no add-ons)
+       - addonPerTbCents:  server `addon_per_tb_cents` (per-TB price, NOT a literal)
+       - extraStorageCostCents: extra TB × the server per-TB price
+       - basePriceCents:   the authoritative monthly/period TOTAL —
+                           `mollie_amount_cents` when present, else base + add-on.
+     Fallbacks keep this working before the server field change is deployed
+     (server fields absent → fall back to the old client recompute). */
+  const serverBasePlanCents = sub?.base_plan_cents
+  const serverAddonCents = sub?.addon_cents
+  const serverAddonPerTbCents = sub?.addon_per_tb_cents
+  const serverMollieAmountCents = sub?.mollie_amount_cents
+
+  // Per-TB price: server truth first, else derive from the WASM ladder (the
+  // marginal cost of 1 extra TB), else the historical 1099 constant.
+  const addonPerTbCents =
+    serverAddonPerTbCents != null && serverAddonPerTbCents > 0
+      ? serverAddonPerTbCents
+      : (planMonthlyCostCents(effectivePlan, 1) - planMonthlyCostCents(effectivePlan, 0)) || 1099
+
+  const basePlanCents =
+    serverBasePlanCents != null && serverBasePlanCents > 0
+      ? serverBasePlanCents
+      : (sub?.billing_cycle === 'yearly' ? Math.round(currentPriceYearly * 100) : Math.round(currentPriceMonthly * 100))
+
+  const extraStorageCostCents =
+    serverAddonCents != null
+      ? serverAddonCents
+      : (currentExtraTB > 0 ? currentExtraTB * addonPerTbCents : 0)
+
+  // Authoritative period total: prefer what Mollie actually charges; else
+  // base + add-on (server-derived where available, else the old WASM recompute).
+  const basePriceCents =
+    serverMollieAmountCents != null && serverMollieAmountCents > 0
+      ? serverMollieAmountCents
+      : (serverBasePlanCents != null
+          ? basePlanCents + extraStorageCostCents
+          : (currentCostCents > 0
+              ? currentCostCents
+              : (sub?.billing_cycle === 'yearly' ? Math.round(currentPriceYearly * 100) : Math.round(currentPriceMonthly * 100))))
 
   /* ── Status badge ──────────────────────────────────── */
 
@@ -1544,6 +1587,15 @@ function openUpgrade(plan: string) {
                       <span className="text-ink-3">
                         {' · '}billed {sub?.billing_cycle === 'yearly' ? 'annually' : 'monthly'}
                       </span>
+                      {/* Coherent breakdown from server truth (task 0947): show
+                          the base plan and the storage add-on as their own line
+                          instead of one lumped figure, with the per-TB price from
+                          the server's storage_addon_price_cents (not hard-coded). */}
+                      {currentExtraTB > 0 && (
+                        <div className="text-[11px] text-ink-3 mt-0.5">
+                          {meta.label} EUR {formatCentsAsEur(basePlanCents)} + {currentExtraTB} TB × EUR {formatCentsAsEur(addonPerTbCents)}/{billingInterval}
+                        </div>
+                      )}
                     </div>
                   )}
                   {effectivePlan === 'free' && (
@@ -1833,7 +1885,7 @@ function openUpgrade(plan: string) {
                           EUR {formatCentsAsEur(basePriceCents)} / {billingInterval}
                         </div>
                         <div className="text-[11px] text-ink-3 font-mono">
-                          {meta.label} EUR {formatCentsAsEur(basePlanCents)} + {currentExtraTB} TB x EUR 10.99
+                          {meta.label} EUR {formatCentsAsEur(basePlanCents)} + {currentExtraTB} TB x EUR {formatCentsAsEur(addonPerTbCents)}
                         </div>
                       </>
                     ) : (

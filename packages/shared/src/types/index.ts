@@ -478,6 +478,34 @@ export interface Subscription {
    * treats an increase here as confirmation when present.
    */
   storage_tb_quantity?: number
+  /**
+   * Authoritative billed total in cents — the amount Mollie actually charges on
+   * this subscription row (task 0947). The `/billing` summary headline renders
+   * the monthly total from THIS, not a client-side WASM recompute (which folded
+   * in a hard-coded €10.99/TB that could drift from Mollie). Null for
+   * legacy/Stripe/mock subscriptions that never captured a Mollie amount — the
+   * web then falls back to `base_plan_cents + addon_cents`.
+   */
+  mollie_amount_cents?: number | null
+  /**
+   * The catalog-authoritative recurring BASE price (cents) for plan + cycle +
+   * seats, with NO add-ons folded in (task 0947). Drives the "Pro €54.95/mo"
+   * line in the breakdown. 0 for free / plans with no catalog price.
+   */
+  base_plan_cents?: number
+  /**
+   * The add-on total (cents) for the cycle — extra storage + extra users — from
+   * the server's per-unit prices (task 0947). Rendered as a separate "+ N TB ×
+   * €X.XX/mo" line in the breakdown. 0 when no add-ons.
+   */
+  addon_cents?: number
+  /**
+   * Per-TB storage add-on price (cents) for this plan, sourced from the server's
+   * `storage_addon_price_cents` (task 0947) — NOT a hard-coded literal. The web
+   * renders "N TB × €{addon_per_tb_cents/100}/mo" from this. Null for plans with
+   * no storage add-on.
+   */
+  addon_per_tb_cents?: number | null
 }
 
 export interface Invoice {
