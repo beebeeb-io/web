@@ -12,6 +12,7 @@ import { useToast } from '../components/toast'
 import {
   getSubscription,
   getBillingInvoices,
+  getBillingTransactions,
   getPlans,
   listFiles,
   updatePaymentMethod,
@@ -33,6 +34,7 @@ import {
   ApiError,
   type Subscription,
   type BillingInvoice,
+  type BillingTransaction,
   type Plan,
   type DriveFile,
   type StorageAddonState,
@@ -53,6 +55,7 @@ import {
 } from '../lib/plan-pricing'
 import { PlanComparisonTable } from '../components/plan-comparison'
 import { InvoiceList } from '../components/billing/InvoiceList'
+import { TransactionList } from '../components/billing/TransactionList'
 import { PLAN_META, PLAN_RANK, getDowngradeOptions } from '../lib/plan-constants'
 
 /* ── Plan metadata (imported from plan-constants.ts) ──── */
@@ -214,6 +217,7 @@ export function Billing() {
   // sub comes from context; re-synced after cancel/reactivate via loadData
   const [sub, setSub] = useState<Subscription | null>(contextPlanDetails.subscription)
   const [invoices, setInvoices] = useState<BillingInvoice[]>([])
+  const [transactions, setTransactions] = useState<BillingTransaction[]>([])
   const [plans, setPlans] = useState<Plan[] | null>(null)
   const [files, setFiles] = useState<DriveFile[] | null>(null)
   const [loading, setLoading] = useState(true)
@@ -399,9 +403,10 @@ export function Billing() {
       // getSubscription is fetched fresh here so cancel/reactivate flows see
       // the updated status immediately. getPlans is needed for the upgrade
       // cards section (context only stores the matched current-user plan).
-      const [subData, invData, invoicePref, plansData, filesData, addonsData, pmData] = await Promise.all([
+      const [subData, invData, txnData, invoicePref, plansData, filesData, addonsData, pmData] = await Promise.all([
         getSubscription(),
         getBillingInvoices().catch(() => [] as BillingInvoice[]),
+        getBillingTransactions().catch(() => [] as BillingTransaction[]),
         getPreference<{ send_email: boolean; invoice_email: string }>('invoice_settings').catch(() => null),
         getPlans().catch(() => null),
         listFiles(undefined, false).catch(() => null),
@@ -412,6 +417,7 @@ export function Billing() {
       ])
       setSub(subData)
       setInvoices(invData ?? [])
+      setTransactions(txnData ?? [])
       setPlans(plansData)
       setFiles(filesData)
       setPaymentMethod(pmData)
@@ -2033,6 +2039,9 @@ function openUpgrade(plan: string) {
             </div>
           )
         })()}
+
+        {/* ── Transactions / payment history (task 0936) ─ */}
+        <TransactionList transactions={transactions} />
 
         {/* ── Invoices ───────────────────────────────── */}
         <InvoiceList

@@ -1916,6 +1916,49 @@ export async function downloadInvoicePdf(invoiceId: string): Promise<Blob> {
   return res.blob()
 }
 
+/**
+ * A money movement from GET /api/v1/billing/transactions (task 0936) — the
+ * payment-history ledger, SEPARATE from the legal `invoices` documents.
+ *
+ * `kind: 'payment'` is a charge (positive `amount_gross_cents`); `kind: 'refund'`
+ * is a credit note (NEGATIVE amount). `method` is the Mollie payment method
+ * (`ideal` / `creditcard` / `directdebit` / …) and is `null` for refunds and for
+ * pre-0936 payment rows. `invoice_number` / `invoice_pdf_url` link a payment to
+ * its invoice when one exists; refunds carry `credit_note_number` +
+ * `original_invoice_number` instead.
+ */
+export interface BillingTransaction {
+  id: string
+  kind: 'payment' | 'refund'
+  date: string
+  status: string
+  amount_gross_cents: number
+  currency: string
+  method: string | null
+  description?: string | null
+  invoice_id?: string | null
+  invoice_number?: string | null
+  invoice_pdf_url?: string | null
+  credit_note_number?: string
+  original_invoice_number?: string
+  credit_note_pdf_url?: string
+  /** Mollie payment id (`tr_…`) for a payment, or refund id for a refund. */
+  reference?: string | null
+}
+
+/**
+ * GET /api/v1/billing/transactions — the caller's payment history (money
+ * movements), newest-first. Distinct from `getBillingInvoices` (legal docs):
+ * this lists the actual charges + refunds, with method + status + the linked
+ * invoice. AuthUser-scoped server-side.
+ */
+export async function getBillingTransactions(): Promise<BillingTransaction[]> {
+  const data = await request<{ transactions: BillingTransaction[] }>(
+    '/api/v1/billing/transactions',
+  )
+  return data.transactions ?? []
+}
+
 export async function createCheckoutSession(params: {
   plan: string
   billing_cycle: string
