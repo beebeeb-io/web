@@ -477,6 +477,12 @@ export function Billing() {
       && (s.plan !== pre.plan
         || s.billing_cycle !== pre.cycle
         || !ACTIVE_STATUSES.has(pre.status ?? '')
+        // Trial conversion keeps the SAME plan/cycle and only moves
+        // trialing → active; both are "active" so the clause above won't fire and
+        // current_period_end may not advance (the existing period is honored).
+        // That status transition IS the confirmation signal — without this a
+        // convert-to-paid would spin to `unconfirmed` despite succeeding.
+        || (pre.status === 'trialing' && s.status === 'active')
         || (!!pre.periodEnd && !!s.current_period_end && s.current_period_end > pre.periodEnd))
   }, [])
 
