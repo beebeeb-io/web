@@ -185,7 +185,11 @@ export function DriveDataProvider({ children }: { children: ReactNode }) {
 
   // ── Real-time subscription refresh on Stripe webhook events ───────────────
 
-  useWsEvent(['subscription.changed'], useCallback(() => {
+  // `subscription.changed` (legacy Stripe webhook) and `billing_updated` (task
+  // 0943 — the per-user event the Mollie grant/provision/renewal paths emit) both
+  // mean "your billing state moved" → refresh plan + quota app-wide so storage UI
+  // updates live no matter which page is open.
+  useWsEvent(['subscription.changed', 'billing_updated'], useCallback(() => {
     refreshPlanDetails()
     refreshUsage()
   }, [refreshPlanDetails, refreshUsage]))

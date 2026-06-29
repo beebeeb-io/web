@@ -206,9 +206,11 @@ test.describe('0865 checkout redirect + poll-confirmed success', () => {
     await installMocks(page, { subForRequest: () => FREE_SUB })
     await bootBilling(page, '/settings/billing?upgraded=true')
     await expect(page.getByText(/Finalizing your upgrade/i)).toBeVisible({ timeout: 15_000 })
-    // Wait out the ~30s poll cap → neutral message.
-    await expect(page.getByText(/We haven.t confirmed this upgrade yet/i)).toBeVisible({ timeout: 45_000 })
-    await expect(page.getByText(/still processing or was not completed/i)).toBeVisible()
+    // Wait out the ~30s poll cap → neutral "still processing" message. Copy was
+    // softened in task 0943 so it never implies failure (a deferred-SEPA charge
+    // is indistinguishable from a slow webhook on the redirect return).
+    await expect(page.getByText(/Still processing/i)).toBeVisible({ timeout: 45_000 })
+    await expect(page.getByText(/still settling with our processor/i)).toBeVisible()
     // Must NOT claim success.
     await expect(page.getByText(/Upgrade complete/i)).toHaveCount(0)
     await page.screenshot({ path: 'e2e/screenshots/0865-gate4-unconfirmed.png', fullPage: true })

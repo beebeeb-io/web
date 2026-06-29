@@ -45,6 +45,7 @@ import {
   cancelDowngrade,
 } from '../lib/api'
 import { useDriveData } from '../lib/drive-data-context'
+import { useWsEvent } from '../lib/ws-context'
 
 import { formatStorageSI } from '../lib/format'
 import { StorageBreakdown } from '../components/storage-breakdown'
@@ -336,6 +337,11 @@ export function Billing() {
     cycle: string | undefined
     status: string | undefined
     periodEnd: string | null | undefined
+    // Storage add-on baseline (task 0943). An instant-pay STORAGE upgrade leaves
+    // plan/cycle/status untouched and only raises these — so the poll must also
+    // recognise an increase here as a successful confirmation.
+    extraStorageTb: number
+    storageTbQuantity: number
     target: { plan: string; cycle: string } | null
   } | null>(null)
   if (showUpgraded && upgradeBaselineRef.current === null) {
@@ -345,6 +351,8 @@ export function Billing() {
       cycle: base?.billing_cycle,
       status: base?.status,
       periodEnd: base?.current_period_end,
+      extraStorageTb: base?.extra_storage_tb ?? 0,
+      storageTbQuantity: base?.storage_tb_quantity ?? 0,
       target: getPendingCheckout(),
     }
   }
@@ -361,10 +369,51 @@ export function Billing() {
     }
   }, [showUpgraded, searchParams])
 
+  // Does a freshly-fetched subscription reflect the upgrade the user just made?
+  // Shared by BOTH the poll (fallback) and the real-time WS handler (task 0943)
+  // so they agree on what "confirmed" means. Reads the baseline from the ref each
+  // call, so it stays a stable callback while still seeing the captured snapshot.
+  const reflectsUpgrade = useCallback((s: Subscription): boolean => {
+    const baseline = upgradeBaselineRef.current
+    if (!baseline) return false
+    const ACTIVE_STATUSES = new Set(['active', 'trialing'])
+    // Storage add-on (task 0943). An instant-pay STORAGE upgrade leaves the
+    // plan/cycle/status unchanged and only raises extra_storage_tb (or the
+    // pinned storage_tb_quantity). Detect that FIRST — before the plan-target
+    // path — so it confirms even if a stale pending-checkout record lingers.
+    // The storage instant-pay flow writes no pending-checkout record, so for
+    // that return baseline.target is null and we fall through to here anyway.
+    const extraNow = s.extra_storage_tb ?? 0
+    const qtyNow = s.storage_tb_quantity ?? 0
+    if (
+      ACTIVE_STATUSES.has(s.status) &&
+      (extraNow > baseline.extraStorageTb || qtyNow > baseline.storageTbQuantity)
+    ) {
+      return true
+    }
+    // Most precise: the subscription matches exactly what the user just bought.
+    if (baseline.target) {
+      return s.plan === baseline.target.plan
+        && s.billing_cycle === baseline.target.cycle
+        && ACTIVE_STATUSES.has(s.status)
+    }
+    // No pending record (e.g. landed on ?upgraded directly): accept any change
+    // away from the pre-checkout state that looks like a successful provision.
+    if (s.plan !== baseline.plan && s.plan !== 'free' && ACTIVE_STATUSES.has(s.status)) return true
+    if (s.billing_cycle !== baseline.cycle && ACTIVE_STATUSES.has(s.status)) return true
+    if (!ACTIVE_STATUSES.has(baseline.status ?? '') && ACTIVE_STATUSES.has(s.status) && s.plan !== 'free') return true
+    if (baseline.periodEnd && s.current_period_end && s.current_period_end > baseline.periodEnd) return true
+    return false
+  }, [])
+
+  // The `billing_updated` WS subscription (task 0943, part B) is defined AFTER
+  // `loadData` (below) to avoid a temporal-dead-zone on its const binding.
+
   // Poll the subscription on the upgraded return until it reflects the change
-  // (~2s interval, ~30s cap). An "active paid status from a non-active baseline",
-  // a plan change, a billing-cycle change, or an advanced period-end all count as
-  // confirmation; the precise pending-checkout target takes priority when present.
+  // (~2s interval, ~30s cap) — the FALLBACK for when the WS event is missed.
+  // An "active paid status from a non-active baseline", a plan change, a
+  // billing-cycle change, a storage-addon increase, or an advanced period-end
+  // all count as confirmation; the pending-checkout target takes priority.
   useEffect(() => {
     if (!showUpgraded) return
     const baseline = upgradeBaselineRef.current
@@ -376,23 +425,6 @@ export function Billing() {
     let timer: ReturnType<typeof setTimeout> | null = null
     const deadline = Date.now() + 30_000
     setUpgradeConfirm('finalizing')
-
-    const ACTIVE_STATUSES = new Set(['active', 'trialing'])
-    const reflectsUpgrade = (s: Subscription): boolean => {
-      // Most precise: the subscription matches exactly what the user just bought.
-      if (baseline.target) {
-        return s.plan === baseline.target.plan
-          && s.billing_cycle === baseline.target.cycle
-          && ACTIVE_STATUSES.has(s.status)
-      }
-      // No pending record (e.g. landed on ?upgraded directly): accept any change
-      // away from the pre-checkout state that looks like a successful provision.
-      if (s.plan !== baseline.plan && s.plan !== 'free' && ACTIVE_STATUSES.has(s.status)) return true
-      if (s.billing_cycle !== baseline.cycle && ACTIVE_STATUSES.has(s.status)) return true
-      if (!ACTIVE_STATUSES.has(baseline.status ?? '') && ACTIVE_STATUSES.has(s.status) && s.plan !== 'free') return true
-      if (baseline.periodEnd && s.current_period_end && s.current_period_end > baseline.periodEnd) return true
-      return false
-    }
 
     const confirmComplete = (latest: Subscription) => {
       setSub(latest)
@@ -509,6 +541,35 @@ export function Billing() {
   useEffect(() => {
     void loadData()
   }, [loadData])
+
+  // Real-time confirmation (task 0943, part B). The server emits a per-user
+  // `billing_updated` WS event the instant a billing change is APPLIED (Mollie
+  // webhook grant, plan provision, renewal, cancel/downgrade). On receipt:
+  // refetch the subscription, keep app-wide plan/quota UI fresh, and — if a
+  // `?upgraded=true` return is still finalizing and the new sub reflects the
+  // change — confirm IMMEDIATELY instead of waiting for the next poll tick. The
+  // 30s poll above stays as the fallback for a dropped/missed WS event.
+  useWsEvent(['billing_updated'], useCallback(() => {
+    void (async () => {
+      let latest: Subscription
+      try {
+        latest = await getSubscription()
+      } catch {
+        // Couldn't refetch — the poll fallback will catch up.
+        return
+      }
+      setSub(latest)
+      // Always refresh app-wide storage/quota UI on a billing change.
+      window.dispatchEvent(new Event('beebeeb:plan-changed'))
+      refreshPlanDetails()
+      // If a checkout return is finalizing and this update is the one we were
+      // waiting for, flip to complete now (no poll-tick latency).
+      if (showUpgraded && upgradeConfirm === 'finalizing' && reflectsUpgrade(latest)) {
+        setUpgradeConfirm('complete')
+        void loadData()
+      }
+    })()
+  }, [showUpgraded, upgradeConfirm, reflectsUpgrade, refreshPlanDetails, loadData]))
 
   // Auto-dismiss the celebration card 10 s after the upgrade is CONFIRMED.
   // While finalizing (still polling) or unconfirmed ("updates automatically")
@@ -1163,16 +1224,23 @@ function openUpgrade(plan: string) {
           <div className="rounded-xl border border-line-2 bg-paper-2 px-6 py-5">
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1">
+                {/* Honest "still processing" state (task 0943). The redirect return
+                    cannot tell a deferred-SEPA charge (settles in a few days) from a
+                    slow webhook, so the copy never implies failure — it says the
+                    payment is settling and the page updates itself. A SEPA-mandate
+                    sub gets the explicit "charged to your SEPA mandate" wording. */}
                 <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-3 mb-1">
-                  Payment processing
+                  {isSepaMandate ? 'Upgrade pending' : 'Still processing'}
                 </div>
                 <h2 className="text-lg font-bold text-ink leading-snug mb-1">
-                  We haven&apos;t confirmed this upgrade yet
+                  {isSepaMandate
+                    ? 'Your upgrade is on its way'
+                    : 'We are still confirming your payment'}
                 </h2>
                 <p className="text-[13.5px] text-ink-2 leading-relaxed">
-                  Your payment is either still processing or was not completed. If
-                  you did pay, it can take a moment to settle — this page updates
-                  automatically. Nothing has changed on your plan in the meantime.
+                  {isSepaMandate
+                    ? 'Your payment was charged to your SEPA mandate. SEPA debits settle in a few days — your extra storage activates automatically once it clears. You can safely leave this page; this updates on its own.'
+                    : 'Your payment is still settling with our processor — this can take a moment. This page updates automatically the instant it confirms, so there is nothing else you need to do.'}
                 </p>
               </div>
               <button

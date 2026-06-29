@@ -464,6 +464,20 @@ export interface Subscription {
    * trial/legacy subs without a captured mandate.
    */
   mandate_method?: 'creditcard' | 'directdebit' | null
+  /**
+   * Extra storage purchased via the storage add-on (task 0943). The
+   * `GET /billing/subscription` response carries this so the post-checkout
+   * confirmation poll can detect an instant-pay STORAGE upgrade (plan stays the
+   * same, only this rises) — not just plan/cycle changes. TB count, 0 when none.
+   */
+  extra_storage_tb?: number
+  /**
+   * The pinned storage-quantity axis (task 0867). For Business plans it is the
+   * provisioned TB count; for flat plans it mirrors `extra_storage_tb`. Optional
+   * because the subscription endpoint does not always include it — the poll
+   * treats an increase here as confirmation when present.
+   */
+  storage_tb_quantity?: number
 }
 
 export interface Invoice {
