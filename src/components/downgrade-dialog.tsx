@@ -13,6 +13,14 @@ interface DowngradeDialogProps {
   targetPlan: string
   currentUsageBytes: number
   effectiveDate: string | null
+  /**
+   * ISO timestamp until which a fresh downgrade is blocked (server-side
+   * cooldown). When set and in the future, the confirm action is disabled and
+   * the dialog states the date calmly (informational, never an alarming wall).
+   * The tier card that opens this dialog disables its own "Downgrade" affordance
+   * for the same reason, so this is a belt-and-suspenders fallback for context.
+   */
+  cooldownUntil?: string | null
   open: boolean
   onClose: () => void
   onSuccess: () => void
@@ -23,6 +31,7 @@ export function DowngradeDialog({
   targetPlan,
   currentUsageBytes,
   effectiveDate,
+  cooldownUntil,
   open,
   onClose,
   onSuccess,
@@ -42,6 +51,13 @@ export function DowngradeDialog({
 
   const graceDeadline = effectiveDate
     ? new Date(new Date(effectiveDate).getTime() + 60 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+    : null
+
+  // Downgrade cooldown: a downgrade was made recently and a fresh one is blocked
+  // until this date. Render the date as a calm human string (never the raw ISO).
+  const cooldownActive = cooldownUntil ? new Date(cooldownUntil).getTime() > Date.now() : false
+  const cooldownDate = cooldownUntil
+    ? new Date(cooldownUntil).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
     : null
 
   const handleConfirm = useCallback(async () => {
@@ -122,6 +138,16 @@ export function DowngradeDialog({
             </div>
           )}
 
+          {cooldownActive && cooldownDate && (
+            <div className="flex gap-2 rounded-md border border-line bg-paper-2 p-3.5">
+              <Icon name="clock" size={14} className="text-ink-3 mt-0.5 shrink-0" />
+              <div className="text-[12.5px] text-ink-2 leading-relaxed">
+                You changed plans recently. Your next downgrade is available after{' '}
+                <span className="font-mono text-ink">{cooldownDate}</span>.
+              </div>
+            </div>
+          )}
+
           {error && (
             <div className="text-sm text-red text-center">{error}</div>
           )}
@@ -131,10 +157,12 @@ export function DowngradeDialog({
             size="lg"
             className="w-full justify-center"
             onClick={handleConfirm}
-            disabled={loading}
+            disabled={loading || cooldownActive}
           >
             {loading
               ? 'Processing...'
+              : cooldownActive && cooldownDate
+              ? `Available after ${cooldownDate}`
               : isOverQuota
               ? `I understand, switch to ${targetMeta.label}`
               : 'Confirm switch'}

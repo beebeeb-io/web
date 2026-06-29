@@ -1983,50 +1983,39 @@ function openUpgrade(plan: string) {
                   </div>
                 </div>
               ) : cancelConfirm ? (
-                <div className="mt-3 p-3.5 bg-red/5 border border-red/20 rounded-lg space-y-4">
-                  <div className="text-[12px] font-medium text-ink">Cancel your plan?</div>
+                // Flattened cancel-to-Free panel (task 0944): ONE calm level.
+                // No card-in-card. Period-end facts are plain prose; the downsell
+                // is a single inline secondary option, not a nested card.
+                <div className="mt-3 p-4 bg-paper-2 border border-line rounded-lg space-y-3.5">
+                  <div className="text-sm font-semibold text-ink">Cancel your plan?</div>
 
-                  {/* Current plan + price summary */}
-                  <div className="rounded-md bg-paper-2 border border-line px-3.5 py-3 space-y-1">
-                    <div className="flex items-baseline justify-between text-xs">
-                      <span className="text-ink-2">{meta.label} plan</span>
-                      <span className="font-mono font-semibold text-ink">
-                        EUR {formatCentsAsEur(basePriceCents)} / {billingInterval}
-                      </span>
-                    </div>
-                    {sub?.billing_cycle === 'yearly' && sub.current_period_end && remainingDays(sub.current_period_end) > 0 && (
-                      <div className="text-[11px] text-ink-3">
-                        You have pre-paid EUR {currentPriceYearly.toFixed(2)} for the year.
-                        Your access continues until <strong className="font-mono">{formatDate(sub.current_period_end)}</strong>.
-                      </div>
-                    )}
-                    {sub?.billing_cycle !== 'yearly' && sub?.current_period_end && (
-                      <div className="text-[11px] text-ink-3">
-                        Your access continues until <strong className="font-mono">{formatDate(sub.current_period_end)}</strong>.
-                      </div>
-                    )}
-                  </div>
-
-                  <p className="text-xs text-ink-3">
-                    Your plan{currentExtraTB > 0 ? ` and ${currentExtraTB} TB of extra storage` : ''} will
-                    end on <strong>{formatDate(sub?.current_period_end ?? null)}</strong>.
-                    After that, your storage drops to <strong>5 GB</strong> (Free tier).
+                  {/* What changes — plain prose, mono for the dates/sizes-as-data */}
+                  <p className="text-[13px] text-ink-2 leading-relaxed">
+                    Your {meta.label} plan{currentExtraTB > 0 ? ` and ${currentExtraTB} TB of extra storage` : ''} ends{' '}
+                    <span className="font-mono text-ink">{formatDate(sub?.current_period_end ?? null)}</span>.
+                    After that, your storage drops to <span className="font-mono text-ink">5 GB</span> (Free).
                   </p>
-
-                  {usedBytes > 5_000_000_000 && (
-                    <>
-                      <p className="text-xs text-red">
-                        You are currently using {formatStorageSI(usedBytes)} — make sure to export anything you need before your plan ends.
-                      </p>
-                      <div className="flex gap-2">
-                        <BBButton size="sm" variant="ghost" onClick={() => { navigate('/?sort=size&order=desc'); setCancelConfirm(false); }}>
-                          Review my files
-                        </BBButton>
-                      </div>
-                    </>
+                  {sub?.billing_cycle === 'yearly' && sub.current_period_end && remainingDays(sub.current_period_end) > 0 && (
+                    <p className="text-[12px] text-ink-3 leading-relaxed">
+                      You have pre-paid <span className="font-mono">EUR {currentPriceYearly.toFixed(2)}</span> for the year — you keep full access until then.
+                    </p>
                   )}
 
-                  {/* Downgrade suggestion — offer lower paid tiers instead of cancelling */}
+                  {/* Honest usage warning + inline Review link */}
+                  {usedBytes > 5_000_000_000 && (
+                    <p className="text-[13px] text-red leading-relaxed">
+                      You&apos;re using <span className="font-mono">{formatStorageSI(usedBytes)}</span> — export anything you need before your plan ends.{' '}
+                      <a
+                        href="/?sort=size&order=desc"
+                        onClick={(e) => { e.preventDefault(); navigate('/?sort=size&order=desc'); setCancelConfirm(false); }}
+                        className="underline text-red hover:text-ink transition-colors"
+                      >
+                        Review my files
+                      </a>
+                    </p>
+                  )}
+
+                  {/* Secondary downsell — a single inline option, NOT a nested card */}
                   {(() => {
                     const currentRank = planRank[effectivePlan] ?? 0
                     const lowerPlans = orderedPaidPlans
@@ -2034,34 +2023,25 @@ function openUpgrade(plan: string) {
                       .map((p) => ({ id: p, ...(planMeta[p] ?? planMeta.free) }))
                     if (lowerPlans.length === 0) return null
                     return (
-                      <div className="rounded-md border border-amber/30 bg-amber-bg/30 px-3.5 py-3">
-                        <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep mb-2">
-                          Instead of cancelling
-                        </div>
-                        <div className="space-y-2">
-                          {lowerPlans.map((lp) => (
+                      <div className="pt-1 text-[12.5px] text-ink-3 leading-relaxed">
+                        Not ready to lose your storage? Keep more for less:{' '}
+                        {lowerPlans.map((lp, i) => (
+                          <span key={lp.id}>
+                            {i > 0 && <span className="text-ink-4"> · </span>}
                             <button
-                              key={lp.id}
                               onClick={() => { setCancelConfirm(false); setDowngradeTarget(lp.id); }}
-                              className="w-full flex items-center justify-between rounded-md border border-line bg-paper px-3 py-2.5 text-left hover:border-amber/50 hover:bg-amber-bg/20 transition-colors group"
+                              className="font-medium text-amber-deep hover:text-amber underline transition-colors"
                             >
-                              <div>
-                                <div className="text-xs font-semibold text-ink group-hover:text-amber-deep transition-colors">
-                                  Switch to {lp.label}
-                                </div>
-                                <div className="text-[11px] text-ink-3 font-mono mt-0.5">
-                                  EUR {lp.priceMonthly.toFixed(2)}/mo — {formatStorageSI(lp.storageGB * 1_000_000_000)}
-                                </div>
-                              </div>
-                              <Icon name="chevron-right" size={12} className="text-ink-4 group-hover:text-amber-deep transition-colors shrink-0" />
+                              Switch to {lp.label} (<span className="font-mono">EUR {lp.priceMonthly.toFixed(2)}/mo · {formatStorageSI(lp.storageGB * 1_000_000_000)}</span>)
                             </button>
-                          ))}
-                        </div>
+                          </span>
+                        ))}
                       </div>
                     )
                   })()}
 
-                  <div className="flex gap-2">
+                  {/* Actions — Keep plan primary, Cancel plan danger-secondary */}
+                  <div className="flex gap-2 pt-1">
                     <BBButton size="sm" onClick={() => setCancelConfirm(false)}>
                       Keep plan
                     </BBButton>
@@ -2170,6 +2150,16 @@ function openUpgrade(plan: string) {
               // Same downgrade set the (now-removed) legacy "smaller plan" block
               // used, so the tier grid's downgrade affordances route identically.
               const downgradeSet = new Set(getDowngradeOptions(effectivePlan))
+              // Downgrade cooldown surfaced UP FRONT (task 0944): a recent plan
+              // change blocks a fresh downgrade until this date. Disable the
+              // "Downgrade" affordance and show the human date so the user never
+              // opens the modal, commits intent, then hits a cooldown wall.
+              const downgradeCooldownActive = sub?.downgrade_cooldown_until
+                ? new Date(sub.downgrade_cooldown_until).getTime() > Date.now()
+                : false
+              const downgradeCooldownDate = sub?.downgrade_cooldown_until
+                ? formatDate(sub.downgrade_cooldown_until)
+                : null
               return CANONICAL_PLAN_SLUGS.map((slug) => {
               const pm = planMeta[slug]
               if (!pm) return null
@@ -2223,13 +2213,25 @@ function openUpgrade(plan: string) {
                         <Icon name="chevron-right" size={11} />
                       </button>
                     ) : isDown ? (
-                      <button
-                        onClick={() => slug === 'free' ? void startCancelFlow() : setDowngradeTarget(slug)}
-                        className="inline-flex items-center gap-1 text-[12px] font-medium text-ink-3 hover:text-ink transition-colors"
-                      >
-                        Downgrade
-                        <Icon name="chevron-right" size={11} />
-                      </button>
+                      // 'free' = cancel flow (no cooldown gate); paid downgrades
+                      // are blocked while a cooldown is active — shown up front.
+                      slug !== 'free' && downgradeCooldownActive && downgradeCooldownDate ? (
+                        <span
+                          className="inline-flex items-center gap-1 text-[11px] text-ink-4"
+                          title={`A recent plan change means your next downgrade is available after ${downgradeCooldownDate}`}
+                        >
+                          <Icon name="clock" size={11} className="shrink-0" />
+                          Available {downgradeCooldownDate}
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => slug === 'free' ? void startCancelFlow() : setDowngradeTarget(slug)}
+                          className="inline-flex items-center gap-1 text-[12px] font-medium text-ink-3 hover:text-ink transition-colors"
+                        >
+                          Downgrade
+                          <Icon name="chevron-right" size={11} />
+                        </button>
+                      )
                     ) : null}
                   </div>
                 </div>
@@ -2786,6 +2788,7 @@ function openUpgrade(plan: string) {
           targetPlan={downgradeTarget}
           currentUsageBytes={usedBytes}
           effectiveDate={sub?.current_period_end ?? null}
+          cooldownUntil={sub?.downgrade_cooldown_until ?? null}
           open={!!downgradeTarget}
           onClose={() => setDowngradeTarget(null)}
           onSuccess={() => {
