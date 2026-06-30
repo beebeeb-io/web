@@ -2326,6 +2326,22 @@ export async function createStorageAddonCheckout(params: {
 }
 
 /**
+ * Task 1062 (WP-D, decision 5) — settle the dunning arrears in full with a
+ * one-off Mollie charge. The server computes the REAL outstanding amount from
+ * Mollie's truth (not an estimate) and returns a hosted checkout URL; the
+ * caller redirects the browser there. On `paid`, the webhook un-freezes the
+ * account (`billing_state` -> `'active'`) — the user returns to a normal,
+ * writable account.
+ *
+ * POST /api/v1/billing/pay-overdue → { checkout_url, arrears_cents }
+ */
+export async function payOverdue(): Promise<{ checkout_url: string; arrears_cents: number }> {
+  return request<{ checkout_url: string; arrears_cents: number }>('/api/v1/billing/pay-overdue', {
+    method: 'POST',
+  })
+}
+
+/**
  * Returns the user's referral code + summary stats.
  * Returns null on 404 — caller falls back to client-side code derivation.
  */

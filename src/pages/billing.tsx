@@ -30,6 +30,7 @@ import {
   updateStorageAddons,
   previewStorageAddons,
   createStorageAddonCheckout,
+  payOverdue,
   exportBillingTransactions,
   startTrial,
   convertTrial,
@@ -364,6 +365,7 @@ export function Billing() {
   const [upgradeOpen, setUpgradeOpen] = useState(false)
   const [upgradePlan, setUpgradePlan] = useState<string>('pro')
   const [portalLoading, setPortalLoading] = useState(false)
+  const [payOverdueLoading, setPayOverdueLoading] = useState(false)
   // Cancel flow is a four-step machine (task 0544 added 'pause'):
   //   'idle'    — initial state, "Cancel plan" link is visible
   //   'offer'   — win-back offer card (50% off / 3 months); only when eligible
@@ -933,6 +935,30 @@ function openUpgrade(plan: string) {
         danger: true,
       })
       setPortalLoading(false)
+    }
+  }
+
+  /**
+   * Task 1062 (WP-D, decision 5) — settle the dunning arrears in full via a
+   * one-off Mollie charge, the "Pay outstanding balance" CTA on the read-only
+   * freeze banner below. The server computes the REAL outstanding amount (not
+   * an estimate) and returns a hosted checkout; the webhook un-freezes the
+   * account on `paid`. We just redirect — the return trip lands back here with
+   * the account already un-frozen (or, if the charge failed, still frozen).
+   */
+  async function handlePayOverdue() {
+    setPayOverdueLoading(true)
+    try {
+      const result = await payOverdue()
+      window.location.href = result.checkout_url
+    } catch (err) {
+      showToast({
+        icon: 'x',
+        title: 'Could not start payment',
+        description: err instanceof Error ? err.message : 'Please try again.',
+        danger: true,
+      })
+      setPayOverdueLoading(false)
     }
   }
 
@@ -1516,8 +1542,11 @@ function openUpgrade(plan: string) {
           )
         )}
 
-        {/* Past due warning banner */}
-        {sub?.status === 'past_due' && (
+        {/* Past due warning banner — superseded by the read-only freeze banner
+            below once billing_state reaches 'read_only' (more specific, more
+            honest copy + the pay-overdue CTA), so this one only shows for the
+            earlier grace window (day 0 through wk3). */}
+        {sub?.status === 'past_due' && sub.billing_state !== 'read_only' && (
           <div className="flex items-center gap-3 p-3.5 bg-red/10 border border-red/30 rounded-lg text-sm">
             <Icon name="x" size={14} className="text-red shrink-0" />
             <span className="flex-1">
@@ -1531,6 +1560,60 @@ function openUpgrade(plan: string) {
             >
               {portalLoading ? 'Redirecting...' : 'Update payment method'}
             </BBButton>
+          </div>
+        )}
+
+        {/* Read-only freeze banner (task 1062, WP-D, decision 3+5). Dunning
+            schedule: payment fails -> email now, +wk1/+wk2/+wk3 reminders,
+            wk4 -> billing_state='read_only'. Retention-first: nothing is ever
+            auto-deleted here — view + download always work; only uploads/
+            edits/sharing are paused until the balance is paid. The primary CTA
+            ("Pay outstanding balance") is the decision-5 pay-overdue-in-full
+            flow — it settles the REAL arrears (not an estimate) via a one-off
+            Mollie charge and un-freezes the account on success. */}
+        {sub?.billing_state === 'read_only' && (
+          <div className="rounded-xl border border-red/30 bg-red/5 px-6 py-5">
+            <div className="flex items-start gap-3">
+              <Icon name="lock" size={16} className="text-red shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-red mb-1">
+                  Account read-only
+                </div>
+                <h2 className="text-lg font-bold text-ink leading-snug mb-1.5">
+                  A payment failed and we haven't heard back
+                </h2>
+                <p className="text-[13.5px] text-ink-2 leading-relaxed mb-4">
+                  You can still view and <strong>download every file</strong> — nothing has been deleted and
+                  nothing will be. Uploads, edits, and sharing are paused until the outstanding balance is
+                  settled.
+                  {sub.past_due_since && (
+                    <>
+                      {' '}Past due since{' '}
+                      <strong className="font-mono">{formatDate(sub.past_due_since)}</strong>.
+                    </>
+                  )}
+                </p>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <BBButton
+                    variant="amber"
+                    size="md"
+                    onClick={() => void handlePayOverdue()}
+                    disabled={payOverdueLoading}
+                  >
+                    {payOverdueLoading ? 'Redirecting...' : 'Pay outstanding balance'}
+                    {!payOverdueLoading && <Icon name="chevron-right" size={13} className="ml-1.5" />}
+                  </BBButton>
+                  <BBButton
+                    variant="default"
+                    size="md"
+                    onClick={() => void handleUpdatePaymentMethod()}
+                    disabled={portalLoading}
+                  >
+                    {portalLoading ? 'Redirecting...' : 'Update payment method'}
+                  </BBButton>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
