@@ -2280,19 +2280,23 @@ function openUpgrade(plan: string) {
                     )
                   })()}
 
-                  {/* Actions — Keep plan primary, Cancel plan danger-secondary */}
-                  <div className="flex gap-2 pt-1">
-                    <BBButton size="sm" onClick={() => setCancelConfirm(false)}>
-                      Keep plan
-                    </BBButton>
+                  {/* Actions — Keep <plan> leads as the amber primary; Cancel is a quiet link */}
+                  <div className="flex items-center gap-4 pt-1">
                     <BBButton
-                      size="sm"
-                      variant="danger"
+                      size="md"
+                      variant="amber"
+                      onClick={() => setCancelConfirm(false)}
+                    >
+                      <Icon name="shield" size={15} className="mr-1.5" />
+                      Keep {planMeta[effectivePlan]?.label ?? 'plan'}
+                    </BBButton>
+                    <button
+                      className="text-[12px] text-ink-4 hover:text-red transition-colors disabled:opacity-50"
                       onClick={() => void handleCancelSubscription()}
                       disabled={cancelLoading}
                     >
                       {cancelLoading ? 'Cancelling...' : 'Cancel plan'}
-                    </BBButton>
+                    </button>
                   </div>
                 </div>
               ) : (
