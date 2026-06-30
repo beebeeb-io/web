@@ -2366,16 +2366,6 @@ function openUpgrade(plan: string) {
               // Same downgrade set the (now-removed) legacy "smaller plan" block
               // used, so the tier grid's downgrade affordances route identically.
               const downgradeSet = new Set(getDowngradeOptions(effectivePlan))
-              // Downgrade cooldown surfaced UP FRONT (task 0944): a recent plan
-              // change blocks a fresh downgrade until this date. Disable the
-              // "Downgrade" affordance and show the human date so the user never
-              // opens the modal, commits intent, then hits a cooldown wall.
-              const downgradeCooldownActive = sub?.downgrade_cooldown_until
-                ? new Date(sub.downgrade_cooldown_until).getTime() > Date.now()
-                : false
-              const downgradeCooldownDate = sub?.downgrade_cooldown_until
-                ? formatDate(sub.downgrade_cooldown_until)
-                : null
               // Pricing v2: show the marketed tiers (Basic, Pro, Teams). Free is
               // not marketed, but a subscriber currently ON it must still see
               // their own tier, so include effectivePlan.
@@ -2437,25 +2427,13 @@ function openUpgrade(plan: string) {
                         <Icon name="chevron-right" size={11} />
                       </button>
                     ) : isDown ? (
-                      // 'free' = cancel flow (no cooldown gate); paid downgrades
-                      // are blocked while a cooldown is active — shown up front.
-                      slug !== 'free' && downgradeCooldownActive && downgradeCooldownDate ? (
-                        <span
-                          className="inline-flex items-center gap-1 text-[11px] text-ink-4"
-                          title={`A recent plan change means your next downgrade is available after ${downgradeCooldownDate}`}
-                        >
-                          <Icon name="clock" size={11} className="shrink-0" />
-                          Available {downgradeCooldownDate}
-                        </span>
-                      ) : (
-                        <button
-                          onClick={() => slug === 'free' ? void startCancelFlow() : setDowngradeTarget(slug)}
-                          className="inline-flex items-center gap-1 text-[12px] font-medium text-ink-3 hover:text-ink transition-colors"
-                        >
-                          Downgrade
-                          <Icon name="chevron-right" size={11} />
-                        </button>
-                      )
+                      <button
+                        onClick={() => slug === 'free' ? void startCancelFlow() : setDowngradeTarget(slug)}
+                        className="inline-flex items-center gap-1 text-[12px] font-medium text-ink-3 hover:text-ink transition-colors"
+                      >
+                        Downgrade
+                        <Icon name="chevron-right" size={11} />
+                      </button>
                     ) : null}
                   </div>
                 </div>
@@ -3013,7 +2991,6 @@ function openUpgrade(plan: string) {
           targetPlan={downgradeTarget}
           currentUsageBytes={usedBytes}
           effectiveDate={sub?.current_period_end ?? null}
-          cooldownUntil={sub?.downgrade_cooldown_until ?? null}
           open={!!downgradeTarget}
           onClose={() => setDowngradeTarget(null)}
           onSuccess={() => {
