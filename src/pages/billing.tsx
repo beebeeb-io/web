@@ -17,7 +17,7 @@ import {
   listFiles,
   updatePaymentMethod,
   getPaymentMethod,
-  createCheckoutSession,
+  switchBillingCycle,
   cancelSubscription,
   reactivateSubscription,
   pauseSubscription,
@@ -1065,19 +1065,25 @@ function openUpgrade(plan: string) {
   async function handleSwitchBillingCycle(cycle: 'monthly' | 'yearly') {
     setCycleSwitchLoading(true)
     try {
-      const { url } = await createCheckoutSession({
-        plan: effectivePlan,
-        billing_cycle: cycle,
+      const result = await switchBillingCycle(cycle)
+      setCycleSwitchConfirm(null)
+      showToast({
+        icon: 'check',
+        title: cycle === 'yearly' ? 'Switched to annual billing' : 'Switched to monthly billing',
+        description: result.annual_billing_start
+          ? `Your annual billing starts on ${formatDate(result.annual_billing_start)}.`
+          : 'The change takes effect at the start of your next billing period.',
       })
-      setPendingCheckout('plan', effectivePlan, cycle, makePreState(sub))
-      window.location.href = url
+      refreshPlanDetails()
+      await loadData()
     } catch (e) {
       showToast({
         icon: 'x',
-        title: 'Failed to start checkout',
+        title: 'Failed to switch billing cycle',
         description: e instanceof Error ? e.message : 'Please try again.',
         danger: true,
       })
+    } finally {
       setCycleSwitchLoading(false)
     }
   }
@@ -1830,8 +1836,15 @@ function openUpgrade(plan: string) {
                     </div>
                   </div>
                   <p className="text-xs text-ink-3">
-                    The change takes effect at the start of your next billing period.
+                    Annual billing starts on{' '}
+                    <strong className="font-mono">{formatDate(sub?.current_period_end ?? null)}</strong>.
+                    Your current monthly period stays active until then — no double charge.
                   </p>
+                  {(sub?.extra_storage_tb ?? 0) > 0 && (
+                    <p className="text-xs text-ink-3">
+                      Your storage add-on ({sub!.extra_storage_tb} TB) will also switch to annual billing on the same date.
+                    </p>
+                  )}
                   <div className="flex gap-2">
                     <BBButton
                       size="sm"

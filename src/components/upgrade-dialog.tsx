@@ -32,6 +32,11 @@ interface UpgradeDialogProps {
    * write so EVERY plan path stamps the same unified intent shape.
    */
   onBeforeRedirect?: (plan: string, cycle: BillingCycle) => void
+  /**
+   * TB of active storage add-on on the current subscription. When non-zero,
+   * the cycle selector shows a note that the add-on will also switch cycles.
+   */
+  activeAddOnStorageTb?: number
 }
 
 export function UpgradeDialog({
@@ -42,6 +47,7 @@ export function UpgradeDialog({
   open,
   onClose,
   onBeforeRedirect,
+  activeAddOnStorageTb = 0,
 }: UpgradeDialogProps) {
   const [cycle, setCycle] = useState<BillingCycle>('yearly')
   const [step, setStep] = useState<Step>('cycle')
@@ -194,6 +200,13 @@ export function UpgradeDialog({
               </div>
             </button>
           </div>
+
+          {/* Add-on coupling note: shown when a storage add-on will also switch cycles */}
+          {activeAddOnStorageTb > 0 && cycle === 'yearly' && (
+            <p className="text-[11px] text-ink-3 mb-3">
+              Your {activeAddOnStorageTb} TB storage add-on will also switch to annual billing.
+            </p>
+          )}
 
           {/* Summary */}
           <div className="p-3.5 bg-ink text-paper rounded-md mb-3">

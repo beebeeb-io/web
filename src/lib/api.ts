@@ -2153,11 +2153,16 @@ export async function claimWinback(): Promise<WinbackClaimResponse> {
   return request<WinbackClaimResponse>('/api/v1/billing/winback-claim', { method: 'POST' })
 }
 
-export async function switchBillingCycle(billing_cycle: 'monthly' | 'yearly'): Promise<{ billing_cycle: string }> {
-  return request<{ billing_cycle: string }>('/api/v1/billing/switch-cycle', {
-    method: 'POST',
-    body: JSON.stringify({ billing_cycle }),
-  })
+export async function switchBillingCycle(
+  billing_cycle: 'monthly' | 'yearly',
+): Promise<{ billing_cycle: string; annual_billing_start?: string }> {
+  return request<{ billing_cycle: string; annual_billing_start?: string }>(
+    '/api/v1/billing/switch-cycle',
+    {
+      method: 'POST',
+      body: JSON.stringify({ billing_cycle }),
+    },
+  )
 }
 
 export async function downgradePlan(params: {
