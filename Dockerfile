@@ -22,7 +22,11 @@ COPY repos/web/ ./
 
 # Tailwind v4 falls back to filesystem scanning when .git is missing,
 # which avoids needing a git binary in the container.
-RUN rm -rf .git node_modules
+# `dist` MUST be cleaned too: a stale dist/ copied from the build context can
+# leave multiple beebeeb_wasm_bg-*.wasm files, and gen-wasm-sri.mjs's
+# files.find() may then hash the WRONG wasm → an SRI integrity mismatch that
+# blocks WASM load in the browser (prod incident 2026-06-30).
+RUN rm -rf .git node_modules dist
 
 # Swap the @beebeeb/shared workspace-protocol dep to the /shared mirror we
 # copied above, then install. (beebeeb-wasm stays workspace:* — its committed
