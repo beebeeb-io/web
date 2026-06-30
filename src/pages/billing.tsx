@@ -76,7 +76,7 @@ type UpgradePlanCard = {
   sortOrder: number
 }
 
-const fallbackUpgradePlanIds = ['basic', 'pro'] as const
+const fallbackUpgradePlanIds = ['basic', 'pro', 'business'] as const
 
 /* ── Helpers ────────────────────────────────────────────── */
 
@@ -1217,13 +1217,13 @@ function openUpgrade(plan: string) {
 
   const allUpgradePlans = plans?.length
     ? plans
-        .filter((plan) => plan.id !== 'free' && plan.id !== 'business' && plan.is_active !== false)
+        .filter((plan) => plan.id !== 'free' && plan.is_active !== false)
         .map(upgradeCardFromApiPlan)
     : fallbackUpgradePlanIds.map(upgradeCardFromFallback)
   const currentSortOrder = allUpgradePlans.find((plan) => plan.id === effectivePlan)?.sortOrder ?? planRank[effectivePlan]
   // Only plans strictly ABOVE the user's current tier are real upgrade targets.
-  // Business is `comingSoon` and is filtered out of `allUpgradePlans`, so the
-  // top purchasable tier today is Pro — a Pro user therefore has none.
+  // Teams (slug `business`) is now a marketed, purchasable top tier — a Pro user
+  // can upgrade to Teams; a Teams user has no higher tier.
   const upgradePlans = allUpgradePlans
     .filter((plan) => plan.id !== effectivePlan)
     .filter((plan) => currentSortOrder === undefined || plan.sortOrder > currentSortOrder)
@@ -2353,7 +2353,7 @@ function openUpgrade(plan: string) {
             Presentational tier selector. Each tier routes through the SAME
             existing handlers: an upgrade opens UpgradeDialog (openUpgrade);
             a downgrade opens DowngradeDialog (setDowngradeTarget); the current
-            tier is just marked. No new data flow. Business is comingSoon. */}
+            tier is just marked. No new data flow. */}
         <Card className="overflow-hidden">
           <div className="px-5 py-4 border-b border-line">
             <SectionLabel className="mb-1">Switch plan</SectionLabel>
@@ -2376,9 +2376,9 @@ function openUpgrade(plan: string) {
               const downgradeCooldownDate = sub?.downgrade_cooldown_until
                 ? formatDate(sub.downgrade_cooldown_until)
                 : null
-              // Pricing v2: show only the marketed tiers (Basic, Pro). Free and
-              // Business are not marketed (D3), but a subscriber currently ON one
-              // of them must still see their own tier, so include effectivePlan.
+              // Pricing v2: show the marketed tiers (Basic, Pro, Teams). Free is
+              // not marketed, but a subscriber currently ON it must still see
+              // their own tier, so include effectivePlan.
               // Order follows CANONICAL_PLAN_SLUGS for a stable low→high layout.
               const marketedSet = new Set<string>(MARKETED_PLAN_SLUGS)
               const tierSlugs = CANONICAL_PLAN_SLUGS.filter(
@@ -2420,7 +2420,7 @@ function openUpgrade(plan: string) {
                     {slug === 'free'
                       ? '5 GB'
                       : slug === 'business'
-                        ? `${formatStorageSI(pm.storageGB * 1_000_000_000)} · teams`
+                        ? `${formatStorageSI(pm.storageGB * 1_000_000_000)} · 2 seats`
                         : `${formatStorageSI(pm.storageGB * 1_000_000_000)} base`}
                   </div>
                   <div className="mt-auto">

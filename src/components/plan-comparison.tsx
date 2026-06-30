@@ -7,9 +7,9 @@ interface PlanComparisonProps {
   onUpgrade: (plan: string) => void
 }
 
-// Only the marketed tiers (pricing v2: Basic, Pro). Free is removed and
-// Business is hidden (D3); the feature rows below keep all keys so the row
-// shape is stable if a column is re-enabled later.
+// The marketed tiers (pricing v2: Basic, Pro, Teams). Free is removed.
+// Teams (slug `business`) is back as a visible 3rd column; each row carries a
+// `business` value. Teams has no 14-day trial (per spec).
 const features: Array<{ name: string; basic: boolean | string; pro: boolean | string; business: boolean | string }> = [
   { name: 'Encrypted storage', basic: '200 GB', pro: '1 TB', business: '5 TB' },
   { name: 'Extra storage add-on', basic: false, pro: '€10.99/TB', business: '€10.99/TB' },

@@ -11,8 +11,8 @@ type BillingCycle = 'monthly' | 'yearly'
 
 type PlanDef = PricingPlanDef
 
-// Pricing v2: market only Basic + Pro. Free is removed; Business is hidden (D3).
-// PRICING_PAGE_PLANS keeps the Business def so the card can render if re-enabled.
+// Pricing v2: market Basic, Pro, and Teams (slug `business`). Free is removed.
+// Teams is back as a visible 3rd tier (RESOLVED 2026-06-30).
 const marketed = new Set<string>(MARKETED_PLAN_SLUGS)
 const fallbackPlans = PRICING_PAGE_PLANS.filter((p) => marketed.has(p.id))
 
@@ -331,11 +331,13 @@ export function Pricing() {
             </div>
           </div>
 
-          {/* Plans grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 p-7 bg-paper-2">
-            {plans.map((p) => (
-              <PlanCard key={p.id} plan={p} cycle={cycle} onSelect={handleSelect} />
-            ))}
+          {/* Plans grid — 3 marketed tiers, centered as a group (not stretched). */}
+          <div className="flex justify-center p-7 bg-paper-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 w-full max-w-[860px]">
+              {plans.map((p) => (
+                <PlanCard key={p.id} plan={p} cycle={cycle} onSelect={handleSelect} />
+              ))}
+            </div>
           </div>
 
           {/* Trust strip */}

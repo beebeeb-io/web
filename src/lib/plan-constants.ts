@@ -24,6 +24,10 @@ export interface PlanMeta {
 // source of truth for charged amounts — this is the display copy.)
 export const STORAGE_ADDON_EUR_PER_TB = 10.99
 
+// Seat add-on rate — €4.99/user beyond the 2 seats Teams includes.
+// (Mirrors core's USER_ADDON_CENTS = 499.)
+export const USER_ADDON_EUR_PER_SEAT = 4.99
+
 const PLANS: { [K in 'free' | 'basic' | 'pro' | 'business']: PlanMeta } = {
   // Free is REMOVED as a marketed plan (pricing v2). It stays here only as the
   // internal lapsed/zero/fallback state — never surfaced on marketed surfaces
@@ -52,17 +56,24 @@ const PLANS: { [K in 'free' | 'basic' | 'pro' | 'business']: PlanMeta } = {
     tagline: '1 TB base, expandable to 99 TB',
     features: ['Everything in Basic', '1 TB encrypted storage', 'Add storage at €10.99/TB', 'Unlimited version history', 'Advanced sharing controls', '14-day free trial'],
   },
-  // Business is deprioritized (no users, no "coming soon" promise) and HIDDEN
-  // from marketed surfaces per pricing v2 D3. The price is parked — kept at the
-  // old €109.90 only so internal resolution has a number; do NOT market it.
+  // Teams (internal slug `business`) is a MARKETED 3rd tier again (pricing v2,
+  // RESOLVED 2026-06-30 — supersedes the earlier "hide Business" D3 call).
+  // €54.95/mo (what Pro cost before), 5 TB base + 2 seats included, +€10.99/TB,
+  // +€4.99/user beyond 2. Slug stays `business` (no migration; no users).
+  // Numbers mirror core @ b3aae1a (Plan::Business => 5495).
   business: {
-    label: 'Business',
-    priceMonthly: 109.90,
-    priceYearly: 1099.00,
+    label: 'Teams',
+    priceMonthly: 54.95,
+    priceYearly: 549.50,
     storageGB: 5000,
-    tagline: '5 TB for teams and heavy storage',
-    features: ['Everything in Pro', '5 TB encrypted storage'],
-    comingSoon: true,
+    tagline: '5 TB with 2 seats — collaborate privately',
+    features: [
+      'Everything in Pro',
+      '5 TB encrypted storage',
+      '2 users included',
+      'Add storage at €10.99/TB',
+      'Add seats at €4.99/user',
+    ],
   },
 }
 
@@ -112,11 +123,12 @@ export type CanonicalPlanSlug = (typeof CANONICAL_PLAN_SLUGS)[number]
 export const CANONICAL_PAID_PLAN_SLUGS = ['basic', 'pro', 'business'] as const
 
 // ── Marketed plan slugs ──────────────────────────────────────────────────────
-// Pricing v2: the only tiers we advertise. Free is removed as a marketed plan
-// (internal fallback only) and Business is hidden (D3 — deprioritized, price
-// parked). Every marketed surface (pricing page, plan comparison, tier picker)
-// iterates THIS list; CANONICAL_PLAN_SLUGS stays full for internal resolution.
-export const MARKETED_PLAN_SLUGS = ['basic', 'pro'] as const
+// Pricing v2: the tiers we advertise. Free is removed as a marketed plan
+// (internal fallback only). Teams (slug `business`) is BACK as a visible 3rd
+// tier (RESOLVED 2026-06-30, supersedes the earlier "hide Business" D3 call).
+// Every marketed surface (pricing page, plan comparison, tier picker) iterates
+// THIS list; CANONICAL_PLAN_SLUGS stays full for internal resolution.
+export const MARKETED_PLAN_SLUGS = ['basic', 'pro', 'business'] as const
 export type MarketedPlanSlug = (typeof MARKETED_PLAN_SLUGS)[number]
 
 export function isDowngrade(from: string, to: string): boolean {
@@ -232,29 +244,26 @@ export const PRICING_PAGE_PLANS: PricingPlanDef[] = [
       { label: 'Priority support · 24h response' },
     ],
   },
-  // Business is HIDDEN from marketed surfaces (D3) — the pricing page filters to
-  // MARKETED_PLAN_SLUGS. This def is kept so the card can render if Business is
-  // re-enabled later; the price is parked (not advertised).
+  // Teams (slug `business`) — visible 3rd tier again. 5 TB base, 2 seats
+  // included, €54.95/mo. Storage add-on €10.99/TB, seat add-on €4.99/user.
   {
     id: 'business',
     name: PLANS.business.label,
     priceMonthly: PLANS.business.priceMonthly,
     priceYearly: Math.round((PLANS.business.priceYearly / 12) * 100) / 100,
     seat: '/ month',
-    note: '5 TB · teams',
+    note: '5 TB · 2 seats included',
     storage: '5 TB',
     perTb: `+€${STORAGE_ADDON_EUR_PER_TB}/TB`,
-    cta: 'Contact us',
-    ctaVariant: 'ghost',
-    badge: 'Later this year',
-    comingSoon: true,
+    cta: 'Choose Teams',
+    ctaVariant: 'default',
     features: [
       { label: 'Everything in Pro' },
       { label: '5 TB encrypted storage', strong: true },
-      { label: 'Team management', strong: true },
-      { label: 'Dedicated support channel' },
-      { label: 'Custom data retention policies' },
-      { label: 'Priority egress bandwidth' },
+      { label: '2 users included', strong: true },
+      { label: `Add storage at €${STORAGE_ADDON_EUR_PER_TB}/TB` },
+      { label: `Add seats at €${USER_ADDON_EUR_PER_SEAT}/user` },
+      { label: 'Shared folders · team management' },
     ],
   },
 ]
