@@ -2223,39 +2223,47 @@ function openUpgrade(plan: string) {
                   </div>
                 </div>
               ) : cancelConfirm ? (
-                // Flattened cancel-to-Free panel (task 0944): ONE calm level.
-                // No card-in-card. Period-end facts are plain prose; the downsell
-                // is a single inline secondary option, not a nested card.
+                // "Before you go" retention moment (task 1058 redesign): a calm,
+                // honest "what you'd lose" framing — NOT a scare. One level, no
+                // card-in-card. The before→after block uses a subtle paper panel
+                // (never alarming red); all sizes/dates are mono; amber is reserved
+                // for the Keep primary + the downsell accent only.
                 <div className="mt-3 p-4 bg-paper-2 border border-line rounded-lg space-y-3.5">
-                  <div className="text-sm font-semibold text-ink">Cancel your plan?</div>
+                  <div className="text-sm font-semibold text-ink">Before you go</div>
 
-                  {/* What changes — plain prose, mono for the dates/sizes-as-data */}
+                  {/* One honest line — real plan label + real renewal date (mono) */}
                   <p className="text-[13px] text-ink-2 leading-relaxed">
-                    Your {meta.label} plan{currentExtraTB > 0 ? ` and ${currentExtraTB} TB of extra storage` : ''} ends{' '}
-                    <span className="font-mono text-ink">{formatDate(sub?.current_period_end ?? null)}</span>.
-                    After that, your storage drops to <span className="font-mono text-ink">5 GB</span> (Free).
+                    Cancelling drops {planMeta[effectivePlan]?.label ?? 'your plan'} to Free at your renewal{' '}
+                    (<span className="font-mono text-ink">{formatDate(sub?.current_period_end ?? null)}</span>).
                   </p>
+
+                  {/* Before → after — subtle panel, NOT alarming. Each row: a small
+                      down indicator + mono sizes from real plan metadata. */}
+                  <div className="bg-paper-2 border border-line rounded-md p-3.5 space-y-2.5">
+                    <div className="flex items-center gap-2.5 text-[13px] text-ink-2">
+                      <Icon name="arrow-up" size={13} className="rotate-180 text-ink-4 shrink-0" />
+                      <span>
+                        <span className="font-mono text-ink">{formatStorageSI(meta.storageGB * 1_000_000_000)}</span>
+                        <span className="font-mono text-ink-4"> → </span>
+                        <span className="font-mono text-ink">5 GB</span> encrypted storage
+                      </span>
+                    </div>
+                    {/* Version-history row intentionally OMITTED: Free has no defined
+                        version-history value in PLAN_META (only Starter/Basic = 30d,
+                        Pro = Unlimited), so showing a Free figure would be invented. */}
+                    <p className="text-[12px] text-ink-3 leading-relaxed pl-[23px]">
+                      Your files stay — uploads just pause once you&apos;re over 5 GB.
+                    </p>
+                  </div>
+
+                  {/* Yearly pre-paid — honest reassurance, kept calm (mono amount) */}
                   {sub?.billing_cycle === 'yearly' && sub.current_period_end && remainingDays(sub.current_period_end) > 0 && (
                     <p className="text-[12px] text-ink-3 leading-relaxed">
-                      You have pre-paid <span className="font-mono">EUR {currentPriceYearly.toFixed(2)}</span> for the year — you keep full access until then.
+                      You&apos;ve pre-paid <span className="font-mono">EUR {currentPriceYearly.toFixed(2)}</span> for the year — full access stays until then.
                     </p>
                   )}
 
-                  {/* Honest usage warning + inline Review link */}
-                  {usedBytes > 5_000_000_000 && (
-                    <p className="text-[13px] text-red leading-relaxed">
-                      You&apos;re using <span className="font-mono">{formatStorageSI(usedBytes)}</span> — export anything you need before your plan ends.{' '}
-                      <a
-                        href="/?sort=size&order=desc"
-                        onClick={(e) => { e.preventDefault(); navigate('/?sort=size&order=desc'); setCancelConfirm(false); }}
-                        className="underline text-red hover:text-ink transition-colors"
-                      >
-                        Review my files
-                      </a>
-                    </p>
-                  )}
-
-                  {/* Secondary downsell — a single inline option, NOT a nested card */}
+                  {/* Downsell — keep the existing lower-plan logic, present cleanly as an amber link */}
                   {(() => {
                     const currentRank = planRank[effectivePlan] ?? 0
                     const lowerPlans = orderedPaidPlans
@@ -2263,16 +2271,16 @@ function openUpgrade(plan: string) {
                       .map((p) => ({ id: p, ...(planMeta[p] ?? planMeta.free) }))
                     if (lowerPlans.length === 0) return null
                     return (
-                      <div className="pt-1 text-[12.5px] text-ink-3 leading-relaxed">
-                        Not ready to lose your storage? Keep more for less:{' '}
+                      <div className="pt-0.5 text-[12.5px] text-ink-3 leading-relaxed">
+                        Not ready?{' '}
                         {lowerPlans.map((lp, i) => (
                           <span key={lp.id}>
                             {i > 0 && <span className="text-ink-4"> · </span>}
                             <button
                               onClick={() => { setCancelConfirm(false); setDowngradeTarget(lp.id); }}
-                              className="font-medium text-amber-deep hover:text-amber underline transition-colors"
+                              className="font-medium text-amber-deep hover:text-amber transition-colors"
                             >
-                              Switch to {lp.label} (<span className="font-mono">EUR {lp.priceMonthly.toFixed(2)}/mo · {formatStorageSI(lp.storageGB * 1_000_000_000)}</span>)
+                              Switch to {lp.label} — <span className="font-mono">EUR {lp.priceMonthly.toFixed(2)}/mo · {formatStorageSI(lp.storageGB * 1_000_000_000)}</span>
                             </button>
                           </span>
                         ))}
@@ -2287,7 +2295,6 @@ function openUpgrade(plan: string) {
                       variant="amber"
                       onClick={() => setCancelConfirm(false)}
                     >
-                      <Icon name="shield" size={15} className="mr-1.5" />
                       Keep {planMeta[effectivePlan]?.label ?? 'plan'}
                     </BBButton>
                     <button
@@ -2295,7 +2302,7 @@ function openUpgrade(plan: string) {
                       onClick={() => void handleCancelSubscription()}
                       disabled={cancelLoading}
                     >
-                      {cancelLoading ? 'Cancelling...' : 'Cancel plan'}
+                      {cancelLoading ? 'Cancelling...' : 'Cancel anyway'}
                     </button>
                   </div>
                 </div>
