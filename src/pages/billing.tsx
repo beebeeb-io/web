@@ -2002,17 +2002,30 @@ function openUpgrade(plan: string) {
                       </span>
                     </div>
                     <p className="text-xs text-ink-2 leading-relaxed">
-                      Your {meta.label} plan is active until{' '}
+                      Your {meta.label} plan stays fully active until{' '}
                       <strong className="font-mono">{formatDate(sub.current_period_end)}</strong>.
                       {sub.billing_cycle === 'yearly' && remainingDays(sub.current_period_end) > 30 && (
                         <> You have pre-paid for the full year.</>
                       )}
                     </p>
-                    <p className="text-xs text-ink-3">
-                      After {formatDate(sub.current_period_end)}, your account drops to Free (5 GB).
-                      {usedBytes > 5_000_000_000 && (
-                        <> Make sure to export files above the limit.</>
-                      )}
+                    {/* WP-B (task 1060): the true wipe model — at period-end the
+                        account closes and ALL files are permanently deleted. The
+                        remaining paid period IS the download window. Honest, calm,
+                        no "drops to Free" (Free is admin-only). */}
+                    <p className="text-xs text-ink-2 leading-relaxed">
+                      Your files will be permanently deleted on{' '}
+                      <strong className="font-mono text-ink">{formatDate(sub.current_period_end)}</strong>
+                      {(() => {
+                        const left = remainingDays(sub.current_period_end)
+                        return left > 0 ? (
+                          <> (<span className="font-mono">{left} day{left !== 1 ? 's' : ''}</span> left)</>
+                        ) : null
+                      })()}
+                      . Download them first — the{' '}
+                      <span className="font-mono">bb</span> CLI or the desktop app can pull your whole vault.
+                    </p>
+                    <p className="text-xs text-ink-3 leading-relaxed">
+                      We can&apos;t recover this. Reactivate any time before then to keep everything.
                     </p>
                   </div>
                   <BBButton
@@ -2231,43 +2244,35 @@ function openUpgrade(plan: string) {
                 <div className="mt-3 p-4 bg-paper-2 border border-line rounded-lg space-y-3.5">
                   <div className="text-sm font-semibold text-ink">Before you go</div>
 
-                  {/* One honest line — real plan label + real renewal date (mono) */}
+                  {/* WP-B (task 1060): the TRUE wipe model. Cancelling keeps full
+                      access until period-end; AT that date the account closes and
+                      ALL files are permanently deleted — regardless of size (Free is
+                      admin-only, there is no Free landing). Honest + calm, not a
+                      scare; the one genuinely alarming fact (permanent deletion on a
+                      specific date) is stated plainly. */}
                   <p className="text-[13px] text-ink-2 leading-relaxed">
-                    Cancelling drops {planMeta[effectivePlan]?.label ?? 'your plan'} to Free at your renewal{' '}
-                    (<span className="font-mono text-ink">{formatDate(sub?.current_period_end ?? null)}</span>).
+                    Cancelling keeps {planMeta[effectivePlan]?.label ?? 'your plan'} until{' '}
+                    <span className="font-mono text-ink">{formatDate(sub?.current_period_end ?? null)}</span>.{' '}
+                    <strong className="text-ink">
+                      On <span className="font-mono">{formatDate(sub?.current_period_end ?? null)}</span>, your account
+                      closes and all your files are permanently deleted.
+                    </strong>
                   </p>
 
-                  {/* Before → after — subtle panel, NOT alarming. Each row: a small
-                      down indicator + mono sizes from real plan metadata. */}
-                  <div className="bg-paper-2 border border-line rounded-md p-3.5 space-y-2.5">
-                    <div className="flex items-center gap-2.5 text-[13px] text-ink-2">
-                      <Icon name="arrow-up" size={13} className="rotate-180 text-ink-4 shrink-0" />
-                      <span>
-                        <span className="font-mono text-ink">{formatStorageSI(meta.storageGB * 1_000_000_000)}</span>
-                        <span className="font-mono text-ink-4"> → </span>
-                        <span className="font-mono text-ink">5 GB</span> encrypted storage
-                      </span>
+                  {/* Download-everything-first — the prominent escape hatch. The
+                      remaining paid period IS the download window. Shown ALWAYS
+                      (not only over-quota): every byte goes, so everyone should
+                      pull their vault before the date. */}
+                  <div className="bg-paper-2 border border-amber/40 rounded-md p-3.5 space-y-2">
+                    <div className="flex items-center gap-2 text-[13px] font-semibold text-ink">
+                      <Icon name="download" size={14} className="text-amber-deep shrink-0" />
+                      Download everything first
                     </div>
-                    {/* Version-history row intentionally OMITTED: Free has no defined
-                        version-history value in PLAN_META (only Starter/Basic = 30d,
-                        Pro = Unlimited), so showing a Free figure would be invented. */}
-                    <p className="text-[12px] text-ink-3 leading-relaxed pl-[23px]">
-                      {usedBytes > 5_000_000_000
-                        ? 'Files above your 5 GB free limit will be deleted after your plan ends. Files within 5 GB stay.'
-                        : 'Your files stay — new uploads just pause once you’re over 5 GB.'}
-                    </p>
-                  </div>
-
-                  {/* Over-quota export recommendation — honest, calm, brand voice.
-                      Only shown when current usage exceeds the Free quota, because
-                      that is the only case where data is actually at risk: after a
-                      60-day grace, the server auto-deletes the oldest over-quota
-                      files to fit 5 GB (billing_lifecycle.rs). Files within 5 GB are
-                      kept indefinitely, so we never imply blanket deletion. */}
-                  {usedBytes > 5_000_000_000 && (
                     <p className="text-[12.5px] text-ink-2 leading-relaxed">
-                      You&apos;re using <span className="font-mono text-ink">{formatStorageSI(usedBytes)}</span>. To keep everything, download what&apos;s over 5 GB first — the{' '}
-                      <span className="font-mono">bb</span> CLI or the desktop app can pull your whole vault.{' '}
+                      {usedBytes > 0 && (
+                        <>You&apos;re storing <span className="font-mono text-ink">{formatStorageSI(usedBytes)}</span>. </>
+                      )}
+                      The <span className="font-mono">bb</span> CLI or the desktop app can pull your whole vault in one go.{' '}
                       <a
                         href="/?sort=size&order=desc"
                         onClick={(e) => { e.preventDefault(); navigate('/?sort=size&order=desc'); setCancelConfirm(false); }}
@@ -2275,9 +2280,9 @@ function openUpgrade(plan: string) {
                       >
                         Review my files
                       </a>
-                      . We can&apos;t recover files once they&apos;re deleted.
+                      . We can&apos;t recover them once they&apos;re deleted.
                     </p>
-                  )}
+                  </div>
 
                   {/* Yearly pre-paid — honest reassurance, kept calm (mono amount) */}
                   {sub?.billing_cycle === 'yearly' && sub.current_period_end && remainingDays(sub.current_period_end) > 0 && (
