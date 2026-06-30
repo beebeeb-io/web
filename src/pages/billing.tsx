@@ -2252,9 +2252,32 @@ function openUpgrade(plan: string) {
                         version-history value in PLAN_META (only Starter/Basic = 30d,
                         Pro = Unlimited), so showing a Free figure would be invented. */}
                     <p className="text-[12px] text-ink-3 leading-relaxed pl-[23px]">
-                      Your files stay — uploads just pause once you&apos;re over 5 GB.
+                      {usedBytes > 5_000_000_000
+                        ? 'Your files stay accessible until then; new uploads pause once you’re over 5 GB.'
+                        : 'Your files stay — new uploads just pause once you’re over 5 GB.'}
                     </p>
                   </div>
+
+                  {/* Over-quota export recommendation — honest, calm, brand voice.
+                      Only shown when current usage exceeds the Free quota, because
+                      that is the only case where data is actually at risk: after a
+                      60-day grace, the server auto-deletes the oldest over-quota
+                      files to fit 5 GB (billing_lifecycle.rs). Files within 5 GB are
+                      kept indefinitely, so we never imply blanket deletion. */}
+                  {usedBytes > 5_000_000_000 && (
+                    <p className="text-[12.5px] text-ink-2 leading-relaxed">
+                      You&apos;re using <span className="font-mono text-ink">{formatStorageSI(usedBytes)}</span>. To keep everything, download what&apos;s over 5 GB first — the{' '}
+                      <span className="font-mono">bb</span> CLI or the desktop app can pull your whole vault.{' '}
+                      <a
+                        href="/?sort=size&order=desc"
+                        onClick={(e) => { e.preventDefault(); navigate('/?sort=size&order=desc'); setCancelConfirm(false); }}
+                        className="text-amber-deep hover:text-amber transition-colors"
+                      >
+                        Review my files
+                      </a>
+                      . We can&apos;t recover files once they&apos;re deleted.
+                    </p>
+                  )}
 
                   {/* Yearly pre-paid — honest reassurance, kept calm (mono amount) */}
                   {sub?.billing_cycle === 'yearly' && sub.current_period_end && remainingDays(sub.current_period_end) > 0 && (
