@@ -541,7 +541,7 @@ export function Photos() {
                 surface="photos"
                 targetPlan="basic"
                 heading="Photo backup needs a paid plan."
-                body="Basic gives you 1 TB of encrypted storage and full photo and video sync from the apps."
+                body="Basic gives you 200 GB of encrypted storage and full photo and video sync from the apps — start a 14-day free trial, no charge until day 15."
                 onUpgrade={() => navigate('/pricing?plan=basic')}
               />
             </div>

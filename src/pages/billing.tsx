@@ -59,7 +59,7 @@ import {
 import { PlanComparisonTable } from '../components/plan-comparison'
 import { InvoiceList } from '../components/billing/InvoiceList'
 import { TransactionList } from '../components/billing/TransactionList'
-import { PLAN_META, PLAN_RANK, getDowngradeOptions, CANONICAL_PLAN_SLUGS } from '../lib/plan-constants'
+import { PLAN_META, PLAN_RANK, getDowngradeOptions, CANONICAL_PLAN_SLUGS, MARKETED_PLAN_SLUGS } from '../lib/plan-constants'
 
 /* ── Plan metadata (imported from plan-constants.ts) ──── */
 
@@ -2376,7 +2376,15 @@ function openUpgrade(plan: string) {
               const downgradeCooldownDate = sub?.downgrade_cooldown_until
                 ? formatDate(sub.downgrade_cooldown_until)
                 : null
-              return CANONICAL_PLAN_SLUGS.map((slug) => {
+              // Pricing v2: show only the marketed tiers (Basic, Pro). Free and
+              // Business are not marketed (D3), but a subscriber currently ON one
+              // of them must still see their own tier, so include effectivePlan.
+              // Order follows CANONICAL_PLAN_SLUGS for a stable low→high layout.
+              const marketedSet = new Set<string>(MARKETED_PLAN_SLUGS)
+              const tierSlugs = CANONICAL_PLAN_SLUGS.filter(
+                (slug) => marketedSet.has(slug) || slug === effectivePlan,
+              )
+              return tierSlugs.map((slug) => {
               const pm = planMeta[slug]
               if (!pm) return null
               const isCurrent = slug === effectivePlan
@@ -2412,7 +2420,7 @@ function openUpgrade(plan: string) {
                     {slug === 'free'
                       ? '5 GB'
                       : slug === 'business'
-                        ? 'Teams · SLA'
+                        ? `${formatStorageSI(pm.storageGB * 1_000_000_000)} · teams`
                         : `${formatStorageSI(pm.storageGB * 1_000_000_000)} base`}
                   </div>
                   <div className="mt-auto">

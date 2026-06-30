@@ -18,7 +18,16 @@ export interface PlanMeta {
   comingSoon?: boolean
 }
 
+// Storage add-on rate — €10.99/TB, unchanged across pricing v2. Pro's base is
+// 1 TB at €10.99 and each extra TB adds €10.99, so the per-TB rate is flat.
+// (Mirrors core's STORAGE_ADDON_CENTS_PER_TB = 1099; the WASM bridge is the
+// source of truth for charged amounts — this is the display copy.)
+export const STORAGE_ADDON_EUR_PER_TB = 10.99
+
 const PLANS: { [K in 'free' | 'basic' | 'pro' | 'business']: PlanMeta } = {
+  // Free is REMOVED as a marketed plan (pricing v2). It stays here only as the
+  // internal lapsed/zero/fallback state — never surfaced on marketed surfaces
+  // (see MARKETED_PLAN_SLUGS). Do not add it back to the pricing grid.
   free: {
     label: 'Free',
     priceMonthly: 0,
@@ -29,27 +38,30 @@ const PLANS: { [K in 'free' | 'basic' | 'pro' | 'business']: PlanMeta } = {
   },
   basic: {
     label: 'Basic',
-    priceMonthly: 10.99,
-    priceYearly: 109.90,
-    storageGB: 1000,
-    tagline: '1 TB of truly private storage',
-    features: ['Everything in Free', '30-day version history'],
+    priceMonthly: 3.99,
+    priceYearly: 39.90,
+    storageGB: 200,
+    tagline: '200 GB of truly private storage',
+    features: ['200 GB encrypted storage', '30-day version history', '14-day free trial'],
   },
   pro: {
     label: 'Pro',
-    priceMonthly: 54.95,
-    priceYearly: 549.50,
-    storageGB: 5000,
-    tagline: '5 TB for power users and creators',
-    features: ['Everything in Basic', '5 TB encrypted storage', 'Unlimited version history', 'Advanced sharing controls'],
+    priceMonthly: 10.99,
+    priceYearly: 109.90,
+    storageGB: 1000,
+    tagline: '1 TB base, expandable to 99 TB',
+    features: ['Everything in Basic', '1 TB encrypted storage', 'Add storage at €10.99/TB', 'Unlimited version history', 'Advanced sharing controls', '14-day free trial'],
   },
+  // Business is deprioritized (no users, no "coming soon" promise) and HIDDEN
+  // from marketed surfaces per pricing v2 D3. The price is parked — kept at the
+  // old €109.90 only so internal resolution has a number; do NOT market it.
   business: {
     label: 'Business',
     priceMonthly: 109.90,
     priceYearly: 1099.00,
-    storageGB: 10000,
-    tagline: '10 TB for teams and heavy storage',
-    features: ['Everything in Pro', '10 TB encrypted storage'],
+    storageGB: 5000,
+    tagline: '5 TB for teams and heavy storage',
+    features: ['Everything in Pro', '5 TB encrypted storage'],
     comingSoon: true,
   },
 }
@@ -98,6 +110,14 @@ export const CANONICAL_PLAN_SLUGS = ['free', 'basic', 'pro', 'business'] as cons
 export type CanonicalPlanSlug = (typeof CANONICAL_PLAN_SLUGS)[number]
 
 export const CANONICAL_PAID_PLAN_SLUGS = ['basic', 'pro', 'business'] as const
+
+// ── Marketed plan slugs ──────────────────────────────────────────────────────
+// Pricing v2: the only tiers we advertise. Free is removed as a marketed plan
+// (internal fallback only) and Business is hidden (D3 — deprioritized, price
+// parked). Every marketed surface (pricing page, plan comparison, tier picker)
+// iterates THIS list; CANONICAL_PLAN_SLUGS stays full for internal resolution.
+export const MARKETED_PLAN_SLUGS = ['basic', 'pro'] as const
+export type MarketedPlanSlug = (typeof MARKETED_PLAN_SLUGS)[number]
 
 export function isDowngrade(from: string, to: string): boolean {
   const fromRank = PLAN_RANK[from] ?? 0
@@ -168,38 +188,18 @@ export interface PricingPlanDef {
  */
 export const PRICING_PAGE_PLANS: PricingPlanDef[] = [
   {
-    id: 'free',
-    name: PLANS.free.label,
-    priceMonthly: PLANS.free.priceMonthly,
-    priceYearly: PLANS.free.priceYearly,
-    seat: null,
-    note: 'Forever. No card needed.',
-    storage: '5 GB',
-    cta: 'Create account',
-    ctaVariant: 'default',
-    features: [
-      { label: 'E2E encryption · zero-knowledge' },
-      { label: 'Unlimited devices' },
-      { label: 'Link sharing · passphrase · expiry' },
-      { label: 'Photos & drive' },
-      { label: 'Web, desktop & mobile apps' },
-      { label: 'Community support' },
-    ],
-  },
-  {
     id: 'basic',
     name: PLANS.basic.label,
     priceMonthly: PLANS.basic.priceMonthly,
     priceYearly: Math.round((PLANS.basic.priceYearly / 12) * 100) / 100,
     seat: '/ month',
-    note: `1 TB · €${PLANS.basic.priceMonthly}/TB`,
-    storage: '1 TB',
-    perTb: `€${PLANS.basic.priceMonthly}/TB`,
-    cta: 'Subscribe',
+    note: '200 GB · 14-day free trial',
+    storage: '200 GB',
+    cta: 'Start 14-day trial',
     ctaVariant: 'default',
     features: [
-      { label: 'Everything in Free' },
-      { label: '1 TB encrypted storage', strong: true },
+      { label: '200 GB encrypted storage', strong: true },
+      { label: 'E2E encryption · zero-knowledge' },
       { label: 'Photo library backup' },
       { label: 'Recovery via trusted contact' },
       { label: 'EU jurisdiction of choice' },
@@ -213,37 +213,44 @@ export const PRICING_PAGE_PLANS: PricingPlanDef[] = [
     priceMonthly: PLANS.pro.priceMonthly,
     priceYearly: Math.round((PLANS.pro.priceYearly / 12) * 100) / 100,
     seat: '/ month',
-    note: `5 TB · €${PLANS.pro.priceMonthly / 5}/TB`,
-    storage: '5 TB',
-    perTb: `€${PLANS.pro.priceMonthly / 5}/TB`,
-    cta: 'Subscribe',
+    // Pro is a 1 TB base; storage is add-on driven at a FLAT €10.99/TB (not
+    // base/5 — pricing v2 dropped the 5 TB base). The base TB equals the base
+    // price, so per-TB = the add-on rate.
+    note: `1 TB base · +€${STORAGE_ADDON_EUR_PER_TB}/TB`,
+    storage: '1 TB',
+    perTb: `+€${STORAGE_ADDON_EUR_PER_TB}/TB`,
+    cta: 'Start 14-day trial',
     ctaVariant: 'amber',
     highlight: true,
     features: [
       { label: 'Everything in Basic' },
-      { label: '5 TB encrypted storage', strong: true },
+      { label: '1 TB encrypted storage', strong: true },
+      { label: 'Add storage at €10.99/TB → 99 TB', strong: true },
       { label: 'Unlimited version history', strong: true },
       { label: 'Desktop sync · CLI access' },
       { label: 'Shared folders' },
       { label: 'Priority support · 24h response' },
     ],
   },
+  // Business is HIDDEN from marketed surfaces (D3) — the pricing page filters to
+  // MARKETED_PLAN_SLUGS. This def is kept so the card can render if Business is
+  // re-enabled later; the price is parked (not advertised).
   {
     id: 'business',
     name: PLANS.business.label,
     priceMonthly: PLANS.business.priceMonthly,
     priceYearly: Math.round((PLANS.business.priceYearly / 12) * 100) / 100,
     seat: '/ month',
-    note: '10 TB · coming soon',
-    storage: '10 TB',
-    perTb: `€${PLANS.business.priceMonthly / 10}/TB`,
-    cta: 'Coming soon',
+    note: '5 TB · teams',
+    storage: '5 TB',
+    perTb: `+€${STORAGE_ADDON_EUR_PER_TB}/TB`,
+    cta: 'Contact us',
     ctaVariant: 'ghost',
-    badge: 'Coming soon',
+    badge: 'Later this year',
     comingSoon: true,
     features: [
       { label: 'Everything in Pro' },
-      { label: '10 TB encrypted storage', strong: true },
+      { label: '5 TB encrypted storage', strong: true },
       { label: 'Team management', strong: true },
       { label: 'Dedicated support channel' },
       { label: 'Custom data retention policies' },
