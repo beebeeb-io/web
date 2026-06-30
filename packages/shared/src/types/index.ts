@@ -471,6 +471,28 @@ export interface Subscription {
    */
   mandate_method?: 'creditcard' | 'directdebit' | null
   /**
+   * Plan-change rate-limit eligibility (task 1056, WP-3). The downgrade/switch
+   * flow is limited to `plan_changes_limit` changes per `plan_change_window_days`
+   * (counted from billing audit events). The web pre-computes the switch-modal
+   * gate from these instead of the obsolete single `downgrade_cooldown_until`:
+   * it always shows "{used} of {limit} plan changes in the last {window} days",
+   * and when `can_change_plan` is false it disables Confirm and surfaces the
+   * specific `plan_changes_next_available_at` date.
+   */
+  plan_changes_used?: number
+  /** `max_changes` allowed per window (task 1056). */
+  plan_changes_limit?: number
+  /** Rolling window size in days (task 1056). */
+  plan_change_window_days?: number
+  /**
+   * When the next plan-change slot frees: the OLDEST in-window event's
+   * `created_at + window_days`, as an RFC3339 string. Populated only when at the
+   * limit (`can_change_plan === false`); null when a slot is free now (task 1056).
+   */
+  plan_changes_next_available_at?: string | null
+  /** `plan_changes_used < plan_changes_limit` — the real switch gate (task 1056). */
+  can_change_plan?: boolean
+  /**
    * Extra storage purchased via the storage add-on (task 0943). The
    * `GET /billing/subscription` response carries this so the post-checkout
    * confirmation poll can detect an instant-pay STORAGE upgrade (plan stays the

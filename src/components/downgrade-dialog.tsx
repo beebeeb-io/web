@@ -14,11 +14,22 @@ interface DowngradeDialogProps {
   currentUsageBytes: number
   effectiveDate: string | null
   /**
-   * ISO timestamp until which a fresh downgrade is blocked (server-side
-   * cooldown). When set and in the future, the confirm action is disabled and
-   * the dialog states the date calmly (informational, never an alarming wall).
-   * The tier card that opens this dialog disables its own "Downgrade" affordance
-   * for the same reason, so this is a belt-and-suspenders fallback for context.
+   * Plan-change rate-limit eligibility (task 1056, WP-3). The real gate: the
+   * downgrade/switch flow is limited to `planChangesLimit` changes per
+   * `planChangeWindowDays`. The dialog ALWAYS shows a calm "{used} of {limit}
+   * plan changes in the last {window} days" line; when `canChangePlan` is false
+   * it disables Confirm and surfaces the specific `planChangesNextAvailableAt`
+   * date (human format, never raw ISO).
+   */
+  planChangesUsed?: number
+  planChangesLimit?: number
+  planChangeWindowDays?: number
+  planChangesNextAvailableAt?: string | null
+  canChangePlan?: boolean
+  /**
+   * ISO timestamp until which a fresh downgrade is blocked (legacy single
+   * cooldown). Kept only as a belt-and-suspenders fallback — the rate-limit
+   * eligibility above is the real gate now (task 1056).
    */
   cooldownUntil?: string | null
   open: boolean
@@ -31,6 +42,11 @@ export function DowngradeDialog({
   targetPlan,
   currentUsageBytes,
   effectiveDate,
+  planChangesUsed,
+  planChangesLimit,
+  planChangeWindowDays,
+  planChangesNextAvailableAt,
+  canChangePlan,
   cooldownUntil,
   open,
   onClose,
@@ -53,12 +69,26 @@ export function DowngradeDialog({
     ? new Date(new Date(effectiveDate).getTime() + 60 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
     : null
 
-  // Downgrade cooldown: a downgrade was made recently and a fresh one is blocked
-  // until this date. Render the date as a calm human string (never the raw ISO).
-  const cooldownActive = cooldownUntil ? new Date(cooldownUntil).getTime() > Date.now() : false
-  const cooldownDate = cooldownUntil
-    ? new Date(cooldownUntil).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-    : null
+  const humanDate = (iso: string) =>
+    new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+
+  // Plan-change rate-limit (task 1056, WP-3) — the real gate. The server
+  // pre-computes used/limit/window + the next-available date so we never leak
+  // the raw "plan change limit reached" 400 on submit.
+  const hasEligibility = typeof planChangesLimit === 'number' && typeof planChangesUsed === 'number'
+  const rateLimited = canChangePlan === false
+  const nextAvailableDate = planChangesNextAvailableAt ? humanDate(planChangesNextAvailableAt) : null
+
+  // Legacy single cooldown — fallback only when the server hasn't sent the
+  // rate-limit eligibility (so older responses still block sanely).
+  const cooldownActive =
+    !hasEligibility && cooldownUntil ? new Date(cooldownUntil).getTime() > Date.now() : false
+  const cooldownDate = cooldownUntil ? humanDate(cooldownUntil) : null
+
+  // Disable Confirm when the rate-limit (or legacy cooldown) blocks a change.
+  const blocked = rateLimited || cooldownActive
+  // Prefer the precise rate-limit date; fall back to the legacy cooldown date.
+  const blockedUntilDate = nextAvailableDate ?? cooldownDate
 
   const handleConfirm = useCallback(async () => {
     setLoading(true)
@@ -138,7 +168,40 @@ export function DowngradeDialog({
             </div>
           )}
 
-          {cooldownActive && cooldownDate && (
+          {/* Always show the calm rate-limit line so the user sees the limit
+              upfront — "X of N used", plus the next-available date informationally
+              even when a change is still allowed (task 1056). */}
+          {hasEligibility && (
+            <div
+              className={`flex gap-2 rounded-md border p-3.5 ${
+                blocked ? 'border-line-2 bg-paper-3' : 'border-line bg-paper-2'
+              }`}
+            >
+              <Icon name="clock" size={14} className="text-ink-3 mt-0.5 shrink-0" />
+              <div className="text-[12.5px] text-ink-2 leading-relaxed">
+                <p>
+                  You've made <span className="font-mono text-ink">{planChangesUsed}</span> of{' '}
+                  <span className="font-mono text-ink">{planChangesLimit}</span> plan changes in the
+                  last {planChangeWindowDays} days.
+                </p>
+                {blocked && blockedUntilDate ? (
+                  <p className="mt-1 text-ink">
+                    Your next plan change is available after{' '}
+                    <span className="font-mono text-ink">{blockedUntilDate}</span>.
+                  </p>
+                ) : nextAvailableDate ? (
+                  <p className="mt-1">
+                    Next change available after{' '}
+                    <span className="font-mono text-ink">{nextAvailableDate}</span>.
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          )}
+
+          {/* Legacy single-cooldown fallback — only when the server hasn't sent
+              the rate-limit eligibility above. */}
+          {!hasEligibility && cooldownActive && cooldownDate && (
             <div className="flex gap-2 rounded-md border border-line bg-paper-2 p-3.5">
               <Icon name="clock" size={14} className="text-ink-3 mt-0.5 shrink-0" />
               <div className="text-[12.5px] text-ink-2 leading-relaxed">
@@ -157,12 +220,14 @@ export function DowngradeDialog({
             size="lg"
             className="w-full justify-center"
             onClick={handleConfirm}
-            disabled={loading || cooldownActive}
+            disabled={loading || blocked}
           >
             {loading
               ? 'Processing...'
-              : cooldownActive && cooldownDate
-              ? `Available after ${cooldownDate}`
+              : blocked && blockedUntilDate
+              ? `Available after ${blockedUntilDate}`
+              : blocked
+              ? 'Plan change limit reached'
               : isOverQuota
               ? `I understand, switch to ${targetMeta.label}`
               : 'Confirm switch'}

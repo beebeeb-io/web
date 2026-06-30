@@ -1,10 +1,24 @@
 import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
-import { MARKETED_PLAN_SLUGS, PLAN_LABELS, PLAN_PRICE_LABELS, PLAN_META } from '../lib/plan-constants'
+import { MARKETED_PLAN_SLUGS, PLAN_LABELS, PLAN_PRICE_LABELS, PLAN_META, PLAN_RANK } from '../lib/plan-constants'
 
 interface PlanComparisonProps {
   currentPlan: string
   onUpgrade: (plan: string) => void
+  /**
+   * Open the downgrade/switch dialog for a lower-tier target (task 1056). The
+   * tfoot CTA is rank-aware: a target ranked below the current plan is a
+   * DOWNGRADE, not an upgrade — for a Pro user, Starter (100 GB) and Basic
+   * (200 GB) must read "Downgrade" and route here, not to checkout.
+   */
+  onDowngrade?: (plan: string) => void
+  /**
+   * Plan-change rate-limit eligibility (task 1056). When `false`, the Downgrade
+   * CTA is disabled with a next-available-date tooltip — same gate as the modal.
+   */
+  canChangePlan?: boolean
+  /** Human next-available date for the disabled-Downgrade tooltip (never raw ISO). */
+  nextAvailableLabel?: string | null
 }
 
 // The marketed tiers (pricing v2: Starter, Basic, Pro, Teams). Free is removed.
@@ -26,7 +40,13 @@ const plans = MARKETED_PLAN_SLUGS
 const planLabels = PLAN_LABELS
 const planPrices = PLAN_PRICE_LABELS
 
-export function PlanComparisonTable({ currentPlan, onUpgrade }: PlanComparisonProps) {
+export function PlanComparisonTable({
+  currentPlan,
+  onUpgrade,
+  onDowngrade,
+  canChangePlan,
+  nextAvailableLabel,
+}: PlanComparisonProps) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
@@ -73,13 +93,42 @@ export function PlanComparisonTable({ currentPlan, onUpgrade }: PlanComparisonPr
                   </td>
                 )
               }
+              // Current plan → no CTA (the "Current" badge is in the header).
+              if (p === currentPlan) {
+                return <td key={p} className="text-center py-3 px-3" />
+              }
+              // Rank-aware CTA (task 1056): a target ranked above current is an
+              // upgrade (checkout); ranked below is a downgrade (switch dialog).
+              const targetRank = PLAN_RANK[p] ?? 0
+              const currentRank = PLAN_RANK[currentPlan] ?? 0
+              const isDowngrade = targetRank < currentRank
+              if (isDowngrade) {
+                const blocked = canChangePlan === false
+                return (
+                  <td key={p} className="text-center py-3 px-3">
+                    <BBButton
+                      size="sm"
+                      variant="default"
+                      onClick={() => onDowngrade?.(p)}
+                      disabled={blocked}
+                      title={
+                        blocked
+                          ? nextAvailableLabel
+                            ? `Available after ${nextAvailableLabel}`
+                            : 'Plan change limit reached'
+                          : undefined
+                      }
+                    >
+                      Downgrade
+                    </BBButton>
+                  </td>
+                )
+              }
               return (
                 <td key={p} className="text-center py-3 px-3">
-                  {p !== currentPlan ? (
-                    <BBButton size="sm" variant={p === 'pro' ? 'amber' : 'default'} onClick={() => onUpgrade(p)}>
-                      Upgrade
-                    </BBButton>
-                  ) : null}
+                  <BBButton size="sm" variant={p === 'pro' ? 'amber' : 'default'} onClick={() => onUpgrade(p)}>
+                    Upgrade
+                  </BBButton>
                 </td>
               )
             })}

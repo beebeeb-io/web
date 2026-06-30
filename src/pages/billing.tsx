@@ -588,6 +588,12 @@ export function Billing() {
   const [downgradeTarget, setDowngradeTarget] = useState<string | null>(null)
   const [cancellingDowngrade, setCancellingDowngrade] = useState(false)
 
+  // Plan-change rate-limit (task 1056) — human date for the at-limit tier-card
+  // subtext (never raw ISO). Null when not at the limit or no date available.
+  const planChangeNextAvailableLabel = sub?.plan_changes_next_available_at
+    ? formatDate(sub.plan_changes_next_available_at)
+    : null
+
   // Invoice preferences
   const [invoiceSendEmail, setInvoiceSendEmail] = useState(true)
   const [invoiceEmail, setInvoiceEmail] = useState('')
@@ -753,6 +759,13 @@ export function Billing() {
 function openUpgrade(plan: string) {
     setUpgradePlan(plan)
     setUpgradeOpen(true)
+  }
+
+  // Open the downgrade/switch dialog for a lower-tier target (task 1056). The
+  // comparison table's marketed slugs never include `free`, so every target here
+  // is a real plan change (the /cancel path to free is reached elsewhere).
+  function openDowngrade(plan: string) {
+    setDowngradeTarget(plan)
   }
 
   function dismissSuccess() {
@@ -2440,13 +2453,30 @@ function openUpgrade(plan: string) {
                         <Icon name="chevron-right" size={11} />
                       </button>
                     ) : isDown ? (
-                      <button
-                        onClick={() => slug === 'free' ? void startCancelFlow() : setDowngradeTarget(slug)}
-                        className="inline-flex items-center gap-1 text-[12px] font-medium text-ink-3 hover:text-ink transition-colors"
-                      >
-                        Downgrade
-                        <Icon name="chevron-right" size={11} />
-                      </button>
+                      // Plan-change rate-limit (task 1056): disable the downgrade
+                      // affordance when at the limit (a real /downgrade, not the
+                      // /cancel path to free) and show the next-available date.
+                      slug !== 'free' && sub?.can_change_plan === false ? (
+                        <div className="flex flex-col gap-0.5">
+                          <span className="inline-flex items-center gap-1 text-[12px] font-medium text-ink-4 cursor-not-allowed">
+                            Downgrade
+                            <Icon name="chevron-right" size={11} />
+                          </span>
+                          <span className="text-[10.5px] text-ink-4 leading-tight">
+                            {planChangeNextAvailableLabel
+                              ? `Available after ${planChangeNextAvailableLabel}`
+                              : 'Plan change limit reached'}
+                          </span>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => slug === 'free' ? void startCancelFlow() : setDowngradeTarget(slug)}
+                          className="inline-flex items-center gap-1 text-[12px] font-medium text-ink-3 hover:text-ink transition-colors"
+                        >
+                          Downgrade
+                          <Icon name="chevron-right" size={11} />
+                        </button>
+                      )
                     ) : null}
                   </div>
                 </div>
@@ -2684,7 +2714,13 @@ function openUpgrade(plan: string) {
             </div>
             {showComparison ? (
               <div className="p-5">
-                <PlanComparisonTable currentPlan={effectivePlan} onUpgrade={openUpgrade} />
+                <PlanComparisonTable
+                  currentPlan={effectivePlan}
+                  onUpgrade={openUpgrade}
+                  onDowngrade={openDowngrade}
+                  canChangePlan={sub?.can_change_plan}
+                  nextAvailableLabel={planChangeNextAvailableLabel}
+                />
               </div>
             ) : (
             <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-line">
@@ -3004,6 +3040,13 @@ function openUpgrade(plan: string) {
           targetPlan={downgradeTarget}
           currentUsageBytes={usedBytes}
           effectiveDate={sub?.current_period_end ?? null}
+          // Plan-change rate-limit eligibility (task 1056) — the real switch gate.
+          planChangesUsed={sub?.plan_changes_used}
+          planChangesLimit={sub?.plan_changes_limit}
+          planChangeWindowDays={sub?.plan_change_window_days}
+          planChangesNextAvailableAt={sub?.plan_changes_next_available_at ?? null}
+          canChangePlan={sub?.can_change_plan}
+          cooldownUntil={sub?.downgrade_cooldown_until ?? null}
           open={!!downgradeTarget}
           onClose={() => setDowngradeTarget(null)}
           onSuccess={() => {

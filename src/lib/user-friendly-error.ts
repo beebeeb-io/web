@@ -43,6 +43,22 @@ function isNetworkError(err: unknown): boolean {
   return false
 }
 
+/**
+ * Plan-change rate-limit (task 1056, WP-3). The modal pre-computes eligibility
+ * and disables Confirm at the limit, so this should rarely fire — but a race
+ * (another tab/device used the last slot between fetch and submit) can still
+ * surface the raw server 400 "plan change limit reached: at most N plan changes
+ * are allowed per D days…". Map it to a calm line, parsing N/D when present.
+ */
+function planChangeLimitMessage(message: string): string | null {
+  if (!/plan change limit reached/i.test(message)) return null
+  const m = message.match(/at most (\d+) plan changes? are allowed per (\d+) days?/i)
+  if (m) {
+    return `You've reached the limit of ${m[1]} plan changes per ${m[2]} days. You can make another change later.`
+  }
+  return "You've reached the plan-change limit for now. You can make another change later."
+}
+
 export function userFriendlyError(err: unknown): string {
   // Network / offline takes priority — a 5xx during a flaky connection is
   // really "you have no connection", not "the server is down".
@@ -51,6 +67,12 @@ export function userFriendlyError(err: unknown): string {
   }
 
   if (err instanceof ApiError) {
+    // Plan-change rate-limit (task 1056) — a 400 whose message we want to
+    // soften, matched on the stable message fragment before generic status
+    // handling swallows it.
+    const planLimit = planChangeLimitMessage(err.message)
+    if (planLimit) return planLimit
+
     const status = err.status
     // Typed quota errors come back with a machine-readable `code` so we don't
     // pattern-match the human message. Branch on these BEFORE the generic
@@ -74,8 +96,10 @@ export function userFriendlyError(err: unknown): string {
     return 'Something went wrong. Try again.'
   }
 
-  if (err instanceof Error && looksUserFriendly(err.message)) {
-    return err.message
+  if (err instanceof Error) {
+    const planLimit = planChangeLimitMessage(err.message)
+    if (planLimit) return planLimit
+    if (looksUserFriendly(err.message)) return err.message
   }
 
   return 'Something went wrong. Try again.'
