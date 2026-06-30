@@ -44,19 +44,25 @@ function isNetworkError(err: unknown): boolean {
 }
 
 /**
- * Plan-change rate-limit (task 1056, WP-3). The modal pre-computes eligibility
- * and disables Confirm at the limit, so this should rarely fire — but a race
- * (another tab/device used the last slot between fetch and submit) can still
- * surface the raw server 400 "plan change limit reached: at most N plan changes
- * are allowed per D days…". Map it to a calm line, parsing N/D when present.
+ * Upgrade rate-limit (task 1057). Upgrades (strictly-higher tier) are capped at
+ * N per D days to stop cycling; downgrades are NEVER capped. The UI pre-computes
+ * eligibility and disables the upgrade CTAs at the limit, so this should rarely
+ * fire — but a race (another tab/device used the last slot between fetch and
+ * submit) can still surface the raw server 400 "upgrade limit reached: at most N
+ * upgrades are allowed per D days. Your next upgrade is available on DATE.".
+ * Map it to a calm line, preserving the next-available date when present.
  */
-function planChangeLimitMessage(message: string): string | null {
-  if (!/plan change limit reached/i.test(message)) return null
-  const m = message.match(/at most (\d+) plan changes? are allowed per (\d+) days?/i)
-  if (m) {
-    return `You've reached the limit of ${m[1]} plan changes per ${m[2]} days. You can make another change later.`
+function upgradeLimitMessage(message: string): string | null {
+  if (!/upgrade limit reached/i.test(message)) return null
+  const date = message.match(/next upgrade is available on ([^.]+)\./i)
+  if (date) {
+    return `You've reached the upgrade limit for now. Your next upgrade is available on ${date[1].trim()}.`
   }
-  return "You've reached the plan-change limit for now. You can make another change later."
+  const m = message.match(/at most (\d+) upgrades? are allowed per (\d+) days?/i)
+  if (m) {
+    return `You've reached the limit of ${m[1]} upgrades per ${m[2]} days. You can upgrade again later.`
+  }
+  return "You've reached the upgrade limit for now. You can upgrade again later."
 }
 
 export function userFriendlyError(err: unknown): string {
@@ -67,11 +73,11 @@ export function userFriendlyError(err: unknown): string {
   }
 
   if (err instanceof ApiError) {
-    // Plan-change rate-limit (task 1056) — a 400 whose message we want to
-    // soften, matched on the stable message fragment before generic status
-    // handling swallows it.
-    const planLimit = planChangeLimitMessage(err.message)
-    if (planLimit) return planLimit
+    // Upgrade rate-limit (task 1057) — a 400 whose message we want to soften,
+    // matched on the stable message fragment before generic status handling
+    // swallows it.
+    const upgradeLimit = upgradeLimitMessage(err.message)
+    if (upgradeLimit) return upgradeLimit
 
     const status = err.status
     // Typed quota errors come back with a machine-readable `code` so we don't
@@ -97,8 +103,8 @@ export function userFriendlyError(err: unknown): string {
   }
 
   if (err instanceof Error) {
-    const planLimit = planChangeLimitMessage(err.message)
-    if (planLimit) return planLimit
+    const upgradeLimit = upgradeLimitMessage(err.message)
+    if (upgradeLimit) return upgradeLimit
     if (looksUserFriendly(err.message)) return err.message
   }
 

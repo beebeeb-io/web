@@ -59,7 +59,7 @@ import {
 import { PlanComparisonTable } from '../components/plan-comparison'
 import { InvoiceList } from '../components/billing/InvoiceList'
 import { TransactionList } from '../components/billing/TransactionList'
-import { PLAN_META, PLAN_RANK, getDowngradeOptions, CANONICAL_PLAN_SLUGS, MARKETED_PLAN_SLUGS } from '../lib/plan-constants'
+import { PLAN_META, PLAN_RANK } from '../lib/plan-constants'
 
 /* ── Plan metadata (imported from plan-constants.ts) ──── */
 
@@ -115,11 +115,6 @@ function remainingDays(iso: string | null): number {
 
 /** Plans ordered by tier, used for downgrade suggestions. */
 const orderedPaidPlans = ['basic', 'pro', 'business'] as const
-
-function formatEuro(amount: number): string {
-  if (!Number.isFinite(amount)) return '€0.00'
-  return `€${amount % 1 === 0 ? amount.toFixed(0) : amount.toFixed(2)}`
-}
 
 function upgradeCardFromApiPlan(plan: Plan, fallbackSortOrder: number): UpgradePlanCard {
   return {
@@ -386,7 +381,6 @@ export function Billing() {
   // Pause flow (task 0544)
   const [pauseLoading, setPauseLoading] = useState<30 | 60 | 90 | null>(null)
   const [resumeLoading, setResumeLoading] = useState(false)
-  const [showComparison, setShowComparison] = useState(false)
   // Billing cycle switch confirmation
   const [cycleSwitchConfirm, setCycleSwitchConfirm] = useState<'monthly' | 'yearly' | null>(null)
   const [cycleSwitchLoading, setCycleSwitchLoading] = useState(false)
@@ -588,10 +582,11 @@ export function Billing() {
   const [downgradeTarget, setDowngradeTarget] = useState<string | null>(null)
   const [cancellingDowngrade, setCancellingDowngrade] = useState(false)
 
-  // Plan-change rate-limit (task 1056) — human date for the at-limit tier-card
+  // Upgrade rate-limit (task 1057) — human date for the at-limit upgrade-CTA
   // subtext (never raw ISO). Null when not at the limit or no date available.
-  const planChangeNextAvailableLabel = sub?.plan_changes_next_available_at
-    ? formatDate(sub.plan_changes_next_available_at)
+  // DOWNGRADES are never gated; this only governs UPGRADE affordances.
+  const upgradeNextAvailableLabel = sub?.upgrade_next_available_at
+    ? formatDate(sub.upgrade_next_available_at)
     : null
 
   // Invoice preferences
@@ -1241,10 +1236,13 @@ function openUpgrade(plan: string) {
     : fallbackUpgradePlanIds.map(upgradeCardFromFallback)
   const currentSortOrder = allUpgradePlans.find((plan) => plan.id === effectivePlan)?.sortOrder ?? planRank[effectivePlan]
   // Only plans strictly ABOVE the user's current tier are real upgrade targets.
-  // Teams (slug `business`) is now a marketed, purchasable top tier — a Pro user
-  // can upgrade to Teams; a Teams user has no higher tier.
+  // Task 1057 — Teams (slug `business`) is COMING SOON and must NEVER be offered
+  // as an upgrade (no "Upgrade to Teams" CTA anywhere). Exclude any coming-soon
+  // plan from the upgrade set, so for a Pro user `nextPlan` is null → the
+  // Current-plan card renders no upgrade CTA.
   const upgradePlans = allUpgradePlans
     .filter((plan) => plan.id !== effectivePlan)
+    .filter((plan) => !planMeta[plan.id]?.comingSoon)
     .filter((plan) => currentSortOrder === undefined || plan.sortOrder > currentSortOrder)
     .sort((a, b) => a.sortOrder - b.sortOrder)
   // Derive the primary-CTA target from the CURRENT plan: the lowest tier strictly
@@ -2375,114 +2373,32 @@ function openUpgrade(plan: string) {
           )}
         </div>
 
-        {/* ── Switch Plan tier grid (mockup #8) ───────────
-            Presentational tier selector. Each tier routes through the SAME
-            existing handlers: an upgrade opens UpgradeDialog (openUpgrade);
-            a downgrade opens DowngradeDialog (setDowngradeTarget); the current
-            tier is just marked. No new data flow. */}
+        {/* ── Plan switcher (single source — task 1057) ───
+            ONE plan-switcher: the "Compare plans" comparison table. It is
+            rank-aware (Upgrade / Downgrade / Current / Coming-soon) and routes
+            through the SAME handlers — an upgrade opens the upgrade dialog
+            (openUpgrade), a downgrade opens the downgrade dialog (openDowngrade).
+            Upgrades are gated by the 2/60d cap (can_upgrade); downgrades are
+            never gated. The old "Switch plan" tier grid was removed — having two
+            switchers was confusing. Renders for everyone (a free user sees every
+            paid tier as an Upgrade; a paid user sees rank-aware Up/Downgrade). */}
         <Card className="overflow-hidden">
           <div className="px-5 py-4 border-b border-line">
-            <SectionLabel className="mb-1">Switch plan</SectionLabel>
+            <SectionLabel className="mb-1">Compare plans</SectionLabel>
             <div className="text-sm text-ink-2">
-              Move to a different tier. Changes apply at your next renewal.
+              {effectivePlan === 'free'
+                ? 'All paid plans include encrypted storage, photo library, and EU data residency.'
+                : 'Move to a different tier. Upgrades apply immediately; downgrades apply at your next renewal.'}
             </div>
           </div>
-          <div className="p-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {(() => {
-              // Same downgrade set the (now-removed) legacy "smaller plan" block
-              // used, so the tier grid's downgrade affordances route identically.
-              const downgradeSet = new Set(getDowngradeOptions(effectivePlan))
-              // Pricing v2: show the marketed tiers (Basic, Pro, Teams). Free is
-              // not marketed, but a subscriber currently ON it must still see
-              // their own tier, so include effectivePlan.
-              // Order follows CANONICAL_PLAN_SLUGS for a stable low→high layout.
-              const marketedSet = new Set<string>(MARKETED_PLAN_SLUGS)
-              const tierSlugs = CANONICAL_PLAN_SLUGS.filter(
-                (slug) => marketedSet.has(slug) || slug === effectivePlan,
-              )
-              return tierSlugs.map((slug) => {
-              const pm = planMeta[slug]
-              if (!pm) return null
-              const isCurrent = slug === effectivePlan
-              const currentRank = planRank[effectivePlan] ?? 0
-              const slugRank = planRank[slug] ?? 0
-              const isUpgrade = slugRank > currentRank && pm.comingSoon !== true
-              const isDown = downgradeSet.has(slug) || (slug === 'free' && effectivePlan !== 'free')
-              const comingSoon = pm.comingSoon === true
-              return (
-                <div
-                  key={slug}
-                  className={`relative rounded-lg border p-4 flex flex-col ${
-                    isCurrent ? 'border-amber bg-amber-bg/30' : 'border-line bg-paper'
-                  }`}
-                >
-                  {isCurrent && (
-                    <span className="absolute -top-2 right-3 px-1.5 py-0.5 rounded bg-amber text-[oklch(0.22_0.01_70)] text-[9px] font-bold uppercase tracking-wider">
-                      Current
-                    </span>
-                  )}
-                  {!isCurrent && comingSoon && (
-                    <span className="absolute -top-2 right-3 px-1.5 py-0.5 rounded bg-paper-3 border border-line text-ink-3 text-[9px] font-bold uppercase tracking-wider">
-                      Later this year
-                    </span>
-                  )}
-                  <div className={`text-sm font-bold mb-0.5 ${comingSoon && !isCurrent ? 'text-ink-3' : 'text-ink'}`}>
-                    {pm.label}
-                  </div>
-                  <div className="font-mono text-[12px] text-ink-2 mb-0.5">
-                    {pm.priceMonthly === 0 ? 'EUR 0/mo' : `EUR ${pm.priceMonthly.toFixed(2)}/mo`}
-                  </div>
-                  <div className="text-[11px] text-ink-3 mb-3">
-                    {slug === 'free'
-                      ? '5 GB'
-                      : slug === 'business'
-                        ? `${formatStorageSI(pm.storageGB * 1_000_000_000)} · 2 seats`
-                        : `${formatStorageSI(pm.storageGB * 1_000_000_000)} base`}
-                  </div>
-                  <div className="mt-auto">
-                    {isCurrent ? (
-                      <span className="text-[11px] text-ink-3">Your plan</span>
-                    ) : comingSoon ? (
-                      <span className="text-[11px] text-ink-4">Notify me</span>
-                    ) : isUpgrade ? (
-                      <button
-                        onClick={() => openUpgrade(slug)}
-                        className="inline-flex items-center gap-1 text-[12px] font-medium text-amber-deep hover:text-amber transition-colors"
-                      >
-                        Upgrade
-                        <Icon name="chevron-right" size={11} />
-                      </button>
-                    ) : isDown ? (
-                      // Plan-change rate-limit (task 1056): disable the downgrade
-                      // affordance when at the limit (a real /downgrade, not the
-                      // /cancel path to free) and show the next-available date.
-                      slug !== 'free' && sub?.can_change_plan === false ? (
-                        <div className="flex flex-col gap-0.5">
-                          <span className="inline-flex items-center gap-1 text-[12px] font-medium text-ink-4 cursor-not-allowed">
-                            Downgrade
-                            <Icon name="chevron-right" size={11} />
-                          </span>
-                          <span className="text-[10.5px] text-ink-4 leading-tight">
-                            {planChangeNextAvailableLabel
-                              ? `Available after ${planChangeNextAvailableLabel}`
-                              : 'Plan change limit reached'}
-                          </span>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => slug === 'free' ? void startCancelFlow() : setDowngradeTarget(slug)}
-                          className="inline-flex items-center gap-1 text-[12px] font-medium text-ink-3 hover:text-ink transition-colors"
-                        >
-                          Downgrade
-                          <Icon name="chevron-right" size={11} />
-                        </button>
-                      )
-                    ) : null}
-                  </div>
-                </div>
-              )
-            })
-            })()}
+          <div className="p-5">
+            <PlanComparisonTable
+              currentPlan={effectivePlan}
+              onUpgrade={openUpgrade}
+              onDowngrade={openDowngrade}
+              canUpgrade={sub?.can_upgrade}
+              upgradeNextAvailableLabel={upgradeNextAvailableLabel}
+            />
           </div>
         </Card>
 
@@ -2693,78 +2609,11 @@ function openUpgrade(plan: string) {
           </div>
         )}
 
-        {/* ── Upgrade CTAs ───────────────────────────── */}
-        {upgradePlans.length > 0 && (
-          <div className="border border-line rounded-xl overflow-hidden bg-paper">
-            <div className="px-5 py-4 border-b border-line flex items-center justify-between">
-              <div>
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-4 mb-1">
-                  Unlock more
-                </div>
-                <div className="text-sm text-ink-2">
-                  All paid plans include encrypted storage, photo library, and EU data residency.
-                </div>
-              </div>
-              <button
-                onClick={() => setShowComparison(!showComparison)}
-                className="text-[12px] text-amber-deep hover:text-amber font-medium transition-colors shrink-0 ml-4"
-              >
-                {showComparison ? 'Hide comparison' : 'Compare all plans'}
-              </button>
-            </div>
-            {showComparison ? (
-              <div className="p-5">
-                <PlanComparisonTable
-                  currentPlan={effectivePlan}
-                  onUpgrade={openUpgrade}
-                  onDowngrade={openDowngrade}
-                  canChangePlan={sub?.can_change_plan}
-                  nextAvailableLabel={planChangeNextAvailableLabel}
-                />
-              </div>
-            ) : (
-            <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-line">
-              {upgradePlans.map((plan) => (
-                <button
-                  key={plan.id}
-                  onClick={() => openUpgrade(plan.id)}
-                  className="p-5 text-left hover:bg-paper-2 transition-colors cursor-pointer group"
-                >
-                  <div className="text-sm font-semibold mb-0.5 group-hover:text-amber-deep transition-colors">
-                    {plan.label}
-                  </div>
-                  <div className="flex items-baseline gap-1 mb-2">
-                    <span className="font-mono text-lg font-bold">
-                      {formatEuro(plan.priceMonthly)}
-                    </span>
-                    <span className="text-xs text-ink-3">/mo</span>
-                  </div>
-                  <div className="text-xs text-ink-3 mb-3">{plan.storageLabel}</div>
-                  {plan.features.length > 0 && (
-                    <ul className="space-y-1 mb-4">
-                      {plan.features.map((feature) => (
-                        <li key={feature} className="flex gap-1.5 text-xs leading-snug text-ink-3">
-                          <span className="text-amber-deep">-</span>
-                          <span>{feature}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-deep">
-                    Subscribe
-                    <Icon name="chevron-right" size={10} />
-                  </span>
-                </button>
-              ))}
-            </div>
-            )}
-          </div>
-        )}
-
-        {/* Legacy "Switch to a smaller plan" downgrade cards removed in 0942 —
-            the Switch Plan tier grid above now drives downgrades via the SAME
-            setDowngradeTarget handler (and getDowngradeOptions). The pending-
-            downgrade status + cooldown still surface in the Current plan card. */}
+        {/* Task 1057 — the duplicate "Unlock more / Compare plans" section was
+            removed. The single plan-switcher (the "Compare plans" comparison
+            table above, right after the Current-plan card) is now the only
+            switcher. Downgrades route through the same openDowngrade handler;
+            upgrades through openUpgrade, gated by the 2/60d cap. */}
 
         {/* Payment history + invoices live in the summary view (#7); not
             duplicated here. Invoice preferences (a management setting) stays. */}
@@ -3040,13 +2889,7 @@ function openUpgrade(plan: string) {
           targetPlan={downgradeTarget}
           currentUsageBytes={usedBytes}
           effectiveDate={sub?.current_period_end ?? null}
-          // Plan-change rate-limit eligibility (task 1056) — the real switch gate.
-          planChangesUsed={sub?.plan_changes_used}
-          planChangesLimit={sub?.plan_changes_limit}
-          planChangeWindowDays={sub?.plan_change_window_days}
-          planChangesNextAvailableAt={sub?.plan_changes_next_available_at ?? null}
-          canChangePlan={sub?.can_change_plan}
-          cooldownUntil={sub?.downgrade_cooldown_until ?? null}
+          // Task 1057 — downgrades are NEVER gated; no rate-limit props.
           open={!!downgradeTarget}
           onClose={() => setDowngradeTarget(null)}
           onSuccess={() => {

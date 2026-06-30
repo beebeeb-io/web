@@ -471,27 +471,27 @@ export interface Subscription {
    */
   mandate_method?: 'creditcard' | 'directdebit' | null
   /**
-   * Plan-change rate-limit eligibility (task 1056, WP-3). The downgrade/switch
-   * flow is limited to `plan_changes_limit` changes per `plan_change_window_days`
-   * (counted from billing audit events). The web pre-computes the switch-modal
-   * gate from these instead of the obsolete single `downgrade_cooldown_until`:
-   * it always shows "{used} of {limit} plan changes in the last {window} days",
-   * and when `can_change_plan` is false it disables Confirm and surfaces the
-   * specific `plan_changes_next_available_at` date.
+   * UPGRADE rate-limit eligibility (task 1057). Upgrades (strictly-higher tier)
+   * are capped at `upgrade_limit` per `upgrade_window_days` (default 2/60d) to
+   * stop upgrade cycling. The web disables the UPGRADE CTAs from these and shows
+   * "Next upgrade available {date}" when `can_upgrade === false`. DOWNGRADES are
+   * NEVER gated — they are always allowed and apply at the next renewal — so
+   * there is intentionally no downgrade-eligibility field here (the 1056
+   * `plan_changes_*` / `can_change_plan` set was removed).
    */
-  plan_changes_used?: number
-  /** `max_changes` allowed per window (task 1056). */
-  plan_changes_limit?: number
-  /** Rolling window size in days (task 1056). */
-  plan_change_window_days?: number
+  upgrades_used?: number
+  /** `max_upgrades` allowed per window (task 1057). */
+  upgrade_limit?: number
+  /** Rolling upgrade-window size in days (task 1057). */
+  upgrade_window_days?: number
   /**
-   * When the next plan-change slot frees: the OLDEST in-window event's
+   * When the next upgrade slot frees: the OLDEST in-window upgrade's
    * `created_at + window_days`, as an RFC3339 string. Populated only when at the
-   * limit (`can_change_plan === false`); null when a slot is free now (task 1056).
+   * limit (`can_upgrade === false`); null when a slot is free now (task 1057).
    */
-  plan_changes_next_available_at?: string | null
-  /** `plan_changes_used < plan_changes_limit` — the real switch gate (task 1056). */
-  can_change_plan?: boolean
+  upgrade_next_available_at?: string | null
+  /** `upgrades_used < upgrade_limit` — the upgrade gate (task 1057). */
+  can_upgrade?: boolean
   /**
    * Extra storage purchased via the storage add-on (task 0943). The
    * `GET /billing/subscription` response carries this so the post-checkout

@@ -6,19 +6,21 @@ interface PlanComparisonProps {
   currentPlan: string
   onUpgrade: (plan: string) => void
   /**
-   * Open the downgrade/switch dialog for a lower-tier target (task 1056). The
-   * tfoot CTA is rank-aware: a target ranked below the current plan is a
-   * DOWNGRADE, not an upgrade — for a Pro user, Starter (100 GB) and Basic
-   * (200 GB) must read "Downgrade" and route here, not to checkout.
+   * Open the downgrade/switch dialog for a lower-tier target. The tfoot CTA is
+   * rank-aware: a target ranked below the current plan is a DOWNGRADE, not an
+   * upgrade — for a Pro user, Starter (100 GB) and Basic (200 GB) read
+   * "Downgrade" and route here, not to checkout. Task 1057 — downgrades are
+   * NEVER gated.
    */
   onDowngrade?: (plan: string) => void
   /**
-   * Plan-change rate-limit eligibility (task 1056). When `false`, the Downgrade
-   * CTA is disabled with a next-available-date tooltip — same gate as the modal.
+   * UPGRADE rate-limit eligibility (task 1057). When `false`, the UPGRADE CTA is
+   * disabled with a "Next upgrade available {date}" tooltip — same gate as the
+   * checkout path. Downgrades are unaffected (always enabled).
    */
-  canChangePlan?: boolean
-  /** Human next-available date for the disabled-Downgrade tooltip (never raw ISO). */
-  nextAvailableLabel?: string | null
+  canUpgrade?: boolean
+  /** Human next-available date for the disabled-Upgrade tooltip (never raw ISO). */
+  upgradeNextAvailableLabel?: string | null
 }
 
 // The marketed tiers (pricing v2: Starter, Basic, Pro, Teams). Free is removed.
@@ -44,8 +46,8 @@ export function PlanComparisonTable({
   currentPlan,
   onUpgrade,
   onDowngrade,
-  canChangePlan,
-  nextAvailableLabel,
+  canUpgrade,
+  upgradeNextAvailableLabel,
 }: PlanComparisonProps) {
   return (
     <div className="overflow-x-auto">
@@ -103,31 +105,40 @@ export function PlanComparisonTable({
               const currentRank = PLAN_RANK[currentPlan] ?? 0
               const isDowngrade = targetRank < currentRank
               if (isDowngrade) {
-                const blocked = canChangePlan === false
+                // Task 1057 — downgrades are NEVER gated; always enabled.
                 return (
                   <td key={p} className="text-center py-3 px-3">
                     <BBButton
                       size="sm"
                       variant="default"
                       onClick={() => onDowngrade?.(p)}
-                      disabled={blocked}
-                      title={
-                        blocked
-                          ? nextAvailableLabel
-                            ? `Available after ${nextAvailableLabel}`
-                            : 'Plan change limit reached'
-                          : undefined
-                      }
                     >
                       Downgrade
                     </BBButton>
                   </td>
                 )
               }
+              // Task 1057 — UPGRADES are gated by the 2/60d cap. When at the
+              // limit, disable the CTA and surface the next-available date.
+              const upgradeBlocked = canUpgrade === false
               return (
                 <td key={p} className="text-center py-3 px-3">
-                  <BBButton size="sm" variant={p === 'pro' ? 'amber' : 'default'} onClick={() => onUpgrade(p)}>
-                    Upgrade
+                  <BBButton
+                    size="sm"
+                    variant={p === 'pro' ? 'amber' : 'default'}
+                    onClick={() => onUpgrade(p)}
+                    disabled={upgradeBlocked}
+                    title={
+                      upgradeBlocked
+                        ? upgradeNextAvailableLabel
+                          ? `Next upgrade available ${upgradeNextAvailableLabel}`
+                          : 'Upgrade limit reached'
+                        : undefined
+                    }
+                  >
+                    {upgradeBlocked && upgradeNextAvailableLabel
+                      ? `Available ${upgradeNextAvailableLabel}`
+                      : 'Upgrade'}
                   </BBButton>
                 </td>
               )
