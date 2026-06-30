@@ -2253,7 +2253,7 @@ function openUpgrade(plan: string) {
                         Pro = Unlimited), so showing a Free figure would be invented. */}
                     <p className="text-[12px] text-ink-3 leading-relaxed pl-[23px]">
                       {usedBytes > 5_000_000_000
-                        ? 'Your files stay accessible until then; new uploads pause once you’re over 5 GB.'
+                        ? 'Files above your 5 GB free limit will be deleted after your plan ends. Files within 5 GB stay.'
                         : 'Your files stay — new uploads just pause once you’re over 5 GB.'}
                     </p>
                   </div>
@@ -2294,19 +2294,35 @@ function openUpgrade(plan: string) {
                       .map((p) => ({ id: p, ...(planMeta[p] ?? planMeta.free) }))
                     if (lowerPlans.length === 0) return null
                     return (
-                      <div className="pt-0.5 text-[12.5px] text-ink-3 leading-relaxed">
-                        Not ready?{' '}
-                        {lowerPlans.map((lp, i) => (
-                          <span key={lp.id}>
-                            {i > 0 && <span className="text-ink-4"> · </span>}
-                            <button
-                              onClick={() => { setCancelConfirm(false); setDowngradeTarget(lp.id); }}
-                              className="font-medium text-amber-deep hover:text-amber transition-colors"
-                            >
-                              Switch to {lp.label} — <span className="font-mono">EUR {lp.priceMonthly.toFixed(2)}/mo · {formatStorageSI(lp.storageGB * 1_000_000_000)}</span>
-                            </button>
-                          </span>
-                        ))}
+                      <div className="pt-0.5 text-[12.5px] text-ink-3 leading-relaxed space-y-1">
+                        <div>
+                          Not ready?{' '}
+                          {lowerPlans.map((lp, i) => (
+                            <span key={lp.id}>
+                              {i > 0 && <span className="text-ink-4"> · </span>}
+                              <button
+                                onClick={() => { setCancelConfirm(false); setDowngradeTarget(lp.id); }}
+                                className="font-medium text-amber-deep hover:text-amber transition-colors"
+                              >
+                                Switch to {lp.label} — <span className="font-mono">EUR {lp.priceMonthly.toFixed(2)}/mo · {formatStorageSI(lp.storageGB * 1_000_000_000)}</span>
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                        {/* Over-quota-for-target note: if current usage exceeds the
+                            SMALLEST offered lower tier, switching there still needs the
+                            user to free up data to fit. Honest, consistent with
+                            DowngradeDialog's over-quota section. */}
+                        {(() => {
+                          const smallest = lowerPlans.reduce((a, b) => (b.storageGB < a.storageGB ? b : a))
+                          const limit = smallest.storageGB * 1_000_000_000
+                          if (usedBytes <= limit) return null
+                          return (
+                            <p className="text-[12px] text-ink-3">
+                              You&apos;re using <span className="font-mono">{formatStorageSI(usedBytes)}</span> — to fit {smallest.label}&apos;s <span className="font-mono">{formatStorageSI(limit)}</span> you&apos;d first need to free up <span className="font-mono">{formatStorageSI(usedBytes - limit)}</span>.
+                            </p>
+                          )
+                        })()}
                       </div>
                     )
                   })()}
