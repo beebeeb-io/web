@@ -392,6 +392,12 @@ export interface Plan {
   is_active?: boolean
   sort_order?: number
   badge?: string | null
+  /** Pricing v2: false for tiers shown but not yet sellable (e.g. Teams/business). */
+  purchasable?: boolean
+  /** Pricing v2: true for a "coming soon" tier rendered without a checkout CTA. */
+  coming_soon?: boolean
+  /** Pricing v2: length of the free trial in days (e.g. 14 for Starter/Basic/Pro). */
+  trial_days?: number
   stripe_updated_at?: string | null
   local_updated_at?: string | null
   last_pushed_at?: string | null

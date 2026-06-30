@@ -1,24 +1,25 @@
 import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
-import { MARKETED_PLAN_SLUGS, PLAN_LABELS, PLAN_PRICE_LABELS } from '../lib/plan-constants'
+import { MARKETED_PLAN_SLUGS, PLAN_LABELS, PLAN_PRICE_LABELS, PLAN_META } from '../lib/plan-constants'
 
 interface PlanComparisonProps {
   currentPlan: string
   onUpgrade: (plan: string) => void
 }
 
-// The marketed tiers (pricing v2: Basic, Pro, Teams). Free is removed.
-// Teams (slug `business`) is back as a visible 3rd column; each row carries a
-// `business` value. Teams has no 14-day trial (per spec).
-const features: Array<{ name: string; basic: boolean | string; pro: boolean | string; business: boolean | string }> = [
-  { name: 'Encrypted storage', basic: '200 GB', pro: '1 TB', business: '5 TB' },
-  { name: 'Extra storage add-on', basic: false, pro: '€10.99/TB', business: '€10.99/TB' },
-  { name: '14-day free trial', basic: true, pro: true, business: false },
-  { name: 'Version history', basic: '30 days', pro: 'Unlimited', business: 'Unlimited' },
-  { name: 'Link sharing', basic: true, pro: true, business: true },
-  { name: 'Passphrase protection', basic: true, pro: true, business: true },
-  { name: 'Priority support', basic: false, pro: true, business: true },
-  { name: 'EU data residency', basic: true, pro: true, business: true },
+// The marketed tiers (pricing v2: Starter, Basic, Pro, Teams). Free is removed.
+// Each row carries a value per marketed slug. Teams (slug `business`) is COMING
+// SOON — shown as a column but not upgradeable (no checkout). Teams has no
+// 14-day trial; Starter/Basic/Pro do.
+const features: Array<{ name: string; starter: boolean | string; basic: boolean | string; pro: boolean | string; business: boolean | string }> = [
+  { name: 'Encrypted storage', starter: '100 GB', basic: '200 GB', pro: '1 TB', business: '5 TB' },
+  { name: 'Extra storage add-on', starter: false, basic: false, pro: '€10.99/TB', business: '€10.99/TB' },
+  { name: '14-day free trial', starter: true, basic: true, pro: true, business: false },
+  { name: 'Version history', starter: '30 days', basic: '30 days', pro: 'Unlimited', business: 'Unlimited' },
+  { name: 'Link sharing', starter: true, basic: true, pro: true, business: true },
+  { name: 'Passphrase protection', starter: true, basic: true, pro: true, business: true },
+  { name: 'Priority support', starter: false, basic: false, pro: true, business: true },
+  { name: 'EU data residency', starter: true, basic: true, pro: true, business: true },
 ]
 
 const plans = MARKETED_PLAN_SLUGS
@@ -61,15 +62,27 @@ export function PlanComparisonTable({ currentPlan, onUpgrade }: PlanComparisonPr
         <tfoot>
           <tr>
             <td />
-            {plans.map((p) => (
-              <td key={p} className="text-center py-3 px-3">
-                {p !== currentPlan ? (
-                  <BBButton size="sm" variant={p === 'pro' ? 'amber' : 'default'} onClick={() => onUpgrade(p)}>
-                    Upgrade
-                  </BBButton>
-                ) : null}
-              </td>
-            ))}
+            {plans.map((p) => {
+              // Teams (business) is coming-soon: not upgradeable, no checkout.
+              if (PLAN_META[p]?.comingSoon) {
+                return (
+                  <td key={p} className="text-center py-3 px-3">
+                    <span className="font-mono text-[10px] uppercase tracking-wider text-ink-4">
+                      Coming soon
+                    </span>
+                  </td>
+                )
+              }
+              return (
+                <td key={p} className="text-center py-3 px-3">
+                  {p !== currentPlan ? (
+                    <BBButton size="sm" variant={p === 'pro' ? 'amber' : 'default'} onClick={() => onUpgrade(p)}>
+                      Upgrade
+                    </BBButton>
+                  ) : null}
+                </td>
+              )
+            })}
           </tr>
         </tfoot>
       </table>

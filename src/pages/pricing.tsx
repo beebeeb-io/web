@@ -51,7 +51,7 @@ const faqItems: FaqItem[] = [
   },
   {
     q: 'Is there a free trial?',
-    a: 'Yes. Both Basic and Pro come with a 14-day free trial — no charge until day 15, and you can cancel any time before then. There is no permanently free tier: we do not mine your data to subsidise one, so a fair price is the only thing keeping the lights on.',
+    a: 'Yes. Starter, Basic and Pro all come with a 14-day free trial — no charge until day 15, and you can cancel any time before then. There is no permanently free tier: we do not mine your data to subsidise one, so a fair price is the only thing keeping the lights on.',
   },
   {
     q: 'What makes Beebeeb different from other encrypted storage?',
@@ -234,7 +234,9 @@ export function Pricing() {
     if (!apiPlans) return fallbackPlans
     return fallbackPlans.map(fp => {
       const ap = apiPlans.find(p => p.id === fp.id)
-      if (!ap || fp.comingSoon) return fp
+      // Keep the static coming-soon card if either the constant or the server
+      // marks it coming-soon / not purchasable (Teams stays non-checkout).
+      if (!ap || fp.comingSoon || ap.coming_soon || ap.purchasable === false) return fp
       const monthlyEq = ap.price_yearly_eur > 0 ? ap.price_yearly_eur / 12 : 0
       const tbCount = Math.round(ap.storage_bytes / 1_000_000_000_000)
       const perTbMonthly = tbCount > 0
@@ -331,9 +333,11 @@ export function Pricing() {
             </div>
           </div>
 
-          {/* Plans grid — 3 marketed tiers, centered as a group (not stretched). */}
+          {/* Plans grid — 4 marketed tiers (Starter · Basic · Pro · Teams),
+              centered as a group (not stretched). Teams renders as a coming-soon
+              card with no checkout CTA. */}
           <div className="flex justify-center p-7 bg-paper-2">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 w-full max-w-[860px]">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 w-full max-w-[1120px]">
               {plans.map((p) => (
                 <PlanCard key={p.id} plan={p} cycle={cycle} onSelect={handleSelect} />
               ))}
@@ -404,7 +408,7 @@ export function Pricing() {
         {/* Bottom CTA */}
         <div className="text-center pb-4">
           <p className="text-[11.5px] text-ink-4">
-            14-day free trial on Basic and Pro — no charge until day 15, cancel anytime.
+            14-day free trial on Starter, Basic and Pro — no charge until day 15, cancel anytime.
             Operated by Initlabs B.V., Wijchen, Netherlands.
           </p>
         </div>
