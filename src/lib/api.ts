@@ -1626,6 +1626,40 @@ export async function getPlans(): Promise<Plan[]> {
   return data.plans
 }
 
+// ── WP-0: payment-method availability engine ────────────────────────────────
+
+/** A payment method offered to the user for a given charge. */
+export interface OfferedMethod {
+  /** Mollie method id, e.g. "directdebit", "ideal", "paypal". */
+  method_id: string
+  /** Human-readable display name. */
+  display_name: string
+  /** Maximum amount this method can collect in cents, or null = unlimited. */
+  max_amount_cents: number | null
+  /** Whether this method supports recurring charges. */
+  recurring: boolean
+}
+
+/**
+ * Fetch which payment methods are available for a given charge amount.
+ *
+ * @param amountCents - Gross charge amount in cents.
+ * @param sequenceType - "first" (default), "recurring", or "oneoff".
+ */
+export async function getAvailableMethods(
+  amountCents: number,
+  sequenceType: 'first' | 'recurring' | 'oneoff' = 'first',
+): Promise<OfferedMethod[]> {
+  const params = new URLSearchParams({
+    amount_cents: String(amountCents),
+    sequence_type: sequenceType,
+  })
+  const data = await request<{ methods: OfferedMethod[] }>(
+    `/api/v1/billing/available-methods?${params}`,
+  )
+  return data.methods
+}
+
 export async function getSubscription(): Promise<Subscription> {
   return request<Subscription>('/api/v1/billing/subscription')
 }
