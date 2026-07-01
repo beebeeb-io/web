@@ -23,10 +23,21 @@ export const WEB_URL = process.env.E2E_WEB_URL ?? 'http://localhost:5173'
 
 /** Mark the welcome-tour preference seen SERVER-SIDE so the full-screen
  *  checklist (which opens whenever the server pref lacks seen:true) never
- *  mounts its click-blocking backdrop. Uses the page's authenticated cookies. */
+ *  mounts its click-blocking backdrop. Uses the page's authenticated cookies.
+ *
+ *  `page.request` does not reliably auto-attach the context's `bb_session`
+ *  cookie when the API origin's port differs from the page's (e.g. the
+ *  isolated harness's :3003 API vs :5173 web dev server) — same cross-port
+ *  gap `bundle-share.spec.ts` already works around: read the cookie from the
+ *  context and pass it explicitly rather than relying on automatic reuse. */
 export async function setWelcomeTourSeen(page: Page): Promise<void> {
+  const sessionCookie = (await page.context().cookies()).find((c) => c.name === 'bb_session')
+  if (!sessionCookie) {
+    throw new Error('bb_session cookie not present on page context before setWelcomeTourSeen')
+  }
   const res = await page.request.put(`${API_URL}/api/v1/preferences/welcome_tour`, {
     data: { seen: true, completed: [] },
+    headers: { Cookie: `bb_session=${sessionCookie.value}` },
   })
   if (!res.ok()) {
     throw new Error(`failed to set welcome_tour preference: ${res.status()} ${await res.text()}`)
