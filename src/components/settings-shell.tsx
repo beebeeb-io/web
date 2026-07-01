@@ -23,6 +23,7 @@ const navItems: NavItem[] = [
   { id: 'import', label: 'Import', icon: 'download', href: '/settings/import' },
   { id: 'referrals', label: 'Referrals', icon: 'share', href: '/settings/referrals' },
   { id: 'developer', label: 'Developer', icon: 'key', href: '/settings/developer' },
+  { id: 'support', label: 'Support', icon: 'mail', href: '/settings/support' },
 ]
 
 interface SettingsShellProps {

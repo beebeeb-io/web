@@ -76,6 +76,8 @@ const SettingsPrivacy       = lazyNamed(() => import('./pages/settings/privacy')
 const SettingsAppearance    = lazyNamed(() => import('./pages/settings/appearance'),    'SettingsAppearance')
 const SettingsDeveloper     = lazyNamed(() => import('./pages/settings/developer'),     'SettingsDeveloper')
 const SettingsReferrals     = lazyNamed(() => import('./pages/settings/referrals'),     'SettingsReferrals')
+const SettingsSupport       = lazyNamed(() => import('./pages/settings/support'),        'SettingsSupport')
+const SettingsSupportTicket = lazyNamed(() => import('./pages/settings/support-ticket'), 'SettingsSupportTicket')
 const SettingsImport        = lazyNamed(() => import('./pages/settings/import'),        'SettingsImport')
 const DropboxCallback       = lazyNamed(() => import('./pages/settings/import/dropbox-callback'), 'DropboxCallback')
 const GoogleCallback        = lazyNamed(() => import('./pages/settings/import/google-callback'),  'GoogleCallback')
@@ -402,6 +404,8 @@ export function App() {
           <Route path="/settings/appearance" element={<ProtectedRoute><SettingsAppearance /></ProtectedRoute>} />
           <Route path="/settings/developer" element={<ProtectedRoute><SettingsDeveloper /></ProtectedRoute>} />
           <Route path="/settings/referrals" element={<ProtectedRoute><SettingsReferrals /></ProtectedRoute>} />
+          <Route path="/settings/support" element={<ProtectedRoute><SettingsSupport /></ProtectedRoute>} />
+          <Route path="/settings/support/:id" element={<ProtectedRoute><SettingsSupportTicket /></ProtectedRoute>} />
           <Route path="/settings/import" element={<ProtectedRoute><SettingsImport /></ProtectedRoute>} />
           <Route path="/settings/import/dropbox/callback" element={<ProtectedRoute><DropboxCallback /></ProtectedRoute>} />
           <Route path="/settings/import/google/callback" element={<ProtectedRoute><GoogleCallback /></ProtectedRoute>} />
