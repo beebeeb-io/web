@@ -7,8 +7,9 @@
  * 0865 checkout-redirect spec's mocking + boot pattern.
  *
  * Gates (task 0905 §"Acceptance criteria" — web):
- *   1. Start-trial CTA: a Free-plan user sees "Start 14-day free trial" + the
- *      honest "No card required" subtext.
+ *   1. Start-trial CTA: a Free-plan user sees "Start 14-day Pro trial" (task
+ *      1064, D5: labels now name the tier they act on) + the honest "No card
+ *      required" subtext.
  *   2. Trialing banner: GET /billing/subscription → {status:'trialing',
  *      trial_ends_at:<10 days out>} renders "N days left in your free trial" with
  *      an "Add payment method" convert CTA.
@@ -177,11 +178,18 @@ async function bootBilling(page: Page, path: string) {
 }
 
 test.describe('0905 14-day free trial — web UI (UNIT C)', () => {
-  test('GATE 1 — Free user sees the "Start 14-day free trial" CTA + honest subtext', async ({ page }) => {
+  test('GATE 1 — Free user sees the "Start 14-day Pro trial" CTA + honest subtext', async ({ page }) => {
     await installMocks(page, { sub: FREE_SUB })
     await bootBilling(page, '/settings/billing')
+    // The trial CTA lives on the "change" view (post-0942 summary/change
+    // split — "Choose a plan" opens it), not the /settings/billing summary.
+    await page.getByRole('button', { name: /Choose a plan/i }).click()
     await expect(page.getByText(/Plan & billing/i).first()).toBeVisible({ timeout: 15_000 })
-    await expect(page.getByRole('button', { name: /Start 14-day free trial/i })).toBeVisible({ timeout: 10_000 })
+    // Task 1064 (D5): the CTA now names the tier it acts on ("Start 14-day Pro
+    // trial") instead of a generic "Start 14-day free trial" that always
+    // started a Pro trial regardless of label — the per-tier "Compare plans"
+    // table is the precise entry point for other tiers.
+    await expect(page.getByRole('button', { name: /Start 14-day Pro trial/i })).toBeVisible({ timeout: 10_000 })
     await expect(page.getByText(/No card required\. Cancel anytime — you keep your files\./i)).toBeVisible()
     await page.screenshot({ path: 'e2e/screenshots/0905-gate1-start-trial-cta.png', fullPage: true })
   })

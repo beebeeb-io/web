@@ -61,6 +61,13 @@ import { PlanComparisonTable } from '../components/plan-comparison'
 import { InvoiceList } from '../components/billing/InvoiceList'
 import { TransactionList } from '../components/billing/TransactionList'
 import { PLAN_META, PLAN_RANK } from '../lib/plan-constants'
+import {
+  type PendingCheckout,
+  makePreState,
+  setPendingCheckout,
+  clearPendingCheckout,
+  getPendingCheckout,
+} from '../lib/pending-checkout'
 
 /* ── Plan metadata (imported from plan-constants.ts) ──── */
 
@@ -114,7 +121,15 @@ function remainingDays(iso: string | null): number {
   return diffMs > 0 ? Math.ceil(diffMs / (1000 * 60 * 60 * 24)) : 0
 }
 
-/** Plans ordered by tier, used for downgrade suggestions. */
+/** Plans ordered by tier, used for downgrade suggestions.
+ *
+ * Includes `business` (Teams) for rank ordering, but Teams is `comingSoon` —
+ * not purchasable via checkout (server rejects it — task 1050) — so every
+ * consumer of this list MUST also exclude `comingSoon` plans before offering
+ * one as an actual downgrade/downsell target (task 1064, D8: the cancel
+ * downsell iterated this list without that guard — latent today only because
+ * Teams is the top rank and can never be "lower" than the current plan, but a
+ * real bug the moment a plan above Teams ships). */
 const orderedPaidPlans = ['basic', 'pro', 'business'] as const
 
 function upgradeCardFromApiPlan(plan: Plan, fallbackSortOrder: number): UpgradePlanCard {
@@ -238,96 +253,11 @@ function MeterBar({
 
 /* ── Checkout watchdog + pre-checkout intent (task 0946) ───
 
-   A persisted "intent" is written to localStorage just before EVERY redirect to
-   the hosted Mollie checkout — plan upgrade, billing-cycle switch, trial convert,
-   AND storage instant-pay. It carries two things:
-
-   - `pre`: the subscription state captured *before* the redirect (plan, cycle,
-     status, extra_storage_tb, storage_tb_quantity, current_period_end,
-     mandate_method). This is the ground truth the reconcile-on-load compares a
-     fresh subscription against — NOT a post-reload baseline (which would already
-     be the upgraded value if the grant landed before the reload). Comparing to
-     `pre` is what makes confirmation survive a reload of /billing?upgraded=true.
-   - `target`: what the user bought, so we can confirm an exact plan/cycle match.
-
-   `kind` distinguishes a storage add-on (plan/cycle unchanged, only storage
-   rises) from a plan checkout. 24h TTL, same as the legacy record. */
-
-const PENDING_CHECKOUT_KEY = 'bb_pending_checkout'
-
-interface CheckoutPreState {
-  plan: string
-  cycle: string | undefined
-  status: string | undefined
-  periodEnd: string | null | undefined
-  extraStorageTb: number
-  storageTbQuantity: number
-  mandateMethod: 'creditcard' | 'directdebit' | null | undefined
-}
-
-interface PendingCheckout {
-  // 'plan' = plan upgrade / cycle switch / trial convert; 'storage' = add-on.
-  kind: 'plan' | 'storage'
-  // What was bought. For storage, `cycle` mirrors the current cycle (unused by
-  // the storage reconcile path, which keys off the storage delta).
-  plan: string
-  cycle: string
-  // Pre-checkout server truth — the reconcile baseline.
-  pre: CheckoutPreState
-  ts: number
-}
-
-function makePreState(sub: Subscription | null | undefined): CheckoutPreState {
-  return {
-    plan: sub?.plan ?? 'free',
-    cycle: sub?.billing_cycle,
-    status: sub?.status,
-    periodEnd: sub?.current_period_end,
-    extraStorageTb: sub?.extra_storage_tb ?? 0,
-    storageTbQuantity: sub?.storage_tb_quantity ?? 0,
-    mandateMethod: sub?.mandate_method,
-  }
-}
-
-function setPendingCheckout(
-  kind: 'plan' | 'storage',
-  plan: string,
-  cycle: string,
-  pre: CheckoutPreState,
-) {
-  try {
-    localStorage.setItem(
-      PENDING_CHECKOUT_KEY,
-      JSON.stringify({ kind, plan, cycle, pre, ts: Date.now() } satisfies PendingCheckout),
-    )
-  } catch { /* storage unavailable — watchdog/reconcile simply won't fire */ }
-}
-
-function clearPendingCheckout() {
-  localStorage.removeItem(PENDING_CHECKOUT_KEY)
-}
-
-function getPendingCheckout(): PendingCheckout | null {
-  try {
-    const raw = localStorage.getItem(PENDING_CHECKOUT_KEY)
-    if (!raw) return null
-    const data = JSON.parse(raw) as Partial<PendingCheckout> & { ts?: number }
-    if (typeof data.ts !== 'number' || Date.now() - data.ts > 24 * 60 * 60 * 1000) {
-      localStorage.removeItem(PENDING_CHECKOUT_KEY)
-      return null
-    }
-    // Back-compat: a legacy record ({plan,cycle,ts}) has no kind/pre. Treat it as
-    // a plan checkout with an empty pre-state — the reconcile then falls back to
-    // the target-match / any-change heuristics rather than a delta compare.
-    return {
-      kind: data.kind === 'storage' ? 'storage' : 'plan',
-      plan: data.plan ?? 'free',
-      cycle: data.cycle ?? 'monthly',
-      pre: data.pre ?? makePreState(null),
-      ts: data.ts,
-    }
-  } catch { return null }
-}
+   Extracted to ../lib/pending-checkout.ts (task 1064 / D6) so every redirect
+   site — this page, upgrade-dialog.tsx, AND trial-banner.tsx — shares the SAME
+   precise shape instead of some call sites writing a legacy minimal record
+   that makes the reconcile fall back to weaker heuristics. See that module's
+   header comment for the full pre/kind rationale. */
 
 /* ── Main component ────────────────────────────────────── */
 
@@ -763,6 +693,28 @@ function openUpgrade(plan: string) {
   // is a real plan change (the /cancel path to free is reached elsewhere).
   function openDowngrade(plan: string) {
     setDowngradeTarget(plan)
+  }
+
+  // Comparison-table "Upgrade" entry point for a Free-plan user (task 1064,
+  // D5). Previously EVERY tier's Upgrade CTA — and the separate "Start 14-day
+  // free trial" button above — always started a PRO trial, regardless of which
+  // tier's card the user actually clicked; the comparison table's own "14-day
+  // free trial" row implies Starter/Basic/Pro all trial (only Teams, the
+  // `comingSoon` tier, has no trial). So: an eligible Free user (not already
+  // trialing, hasn't used their trial) clicking a trial-capable tier starts a
+  // trial for THAT tier; Teams (or any non-trial-eligible/`comingSoon` plan)
+  // falls through to normal checkout, as does anyone not trial-eligible.
+  function handleUpgradeOrTrial(plan: string) {
+    const eligibleForTrial =
+      effectivePlan === 'free' &&
+      sub?.status !== 'trialing' &&
+      !trialUsed &&
+      !planMeta[plan]?.comingSoon
+    if (eligibleForTrial) {
+      void handleStartTrial(plan)
+      return
+    }
+    openUpgrade(plan)
   }
 
   function dismissSuccess() {
@@ -1643,8 +1595,17 @@ function openUpgrade(plan: string) {
                 <p className="text-[13.5px] text-ink-2 leading-relaxed mb-4">
                   You have full {meta.label} access until{' '}
                   <strong className="font-mono">{formatDate(sub.trial_ends_at)}</strong>.
-                  No card required — if you do nothing, your account simply returns to Free (5 GB).
-                  Your files stay encrypted either way.
+                  {/* Task 1064 (D1 residual): "returns to Free (5 GB)" named a
+                      marketed plan that no longer exists (Free is admin-only —
+                      see WP-B/task 1060). A lapsed trial is a DIFFERENT server
+                      path from cancel, though: it drops to the 5 GB quota with
+                      a 60-day grace before any deletion (billing_lifecycle.rs),
+                      not the cancel wipe-at-period-end model — so this stays
+                      honest about the real (gentler) trial-lapse behavior
+                      instead of borrowing the cancel copy verbatim. */}
+                  {' '}No card required — if you do nothing, your account simply
+                  drops to a 5 GB quota (uploads pause above that; existing files
+                  stay put). Your files stay encrypted either way.
                 </p>
                 <BBButton
                   variant="amber"
@@ -1713,9 +1674,20 @@ function openUpgrade(plan: string) {
                       sub?.status !== 'trialing' && (
                         <button
                           className="text-[13px] text-ink-3 hover:text-red transition-colors disabled:opacity-50"
-                          onClick={() => setView('change')}
+                          disabled={winbackStartingLoading}
+                          onClick={() => {
+                            // Task 1064 (D7): this used to just switch to the
+                            // full plan-comparison view — a mismatch with what
+                            // "Cancel" says it does. Now it opens the SAME
+                            // view AND starts the actual cancel sequence
+                            // (win-back check → offer/pause/confirm), so the
+                            // user who clicked "Cancel" lands directly in the
+                            // cancel flow instead of a neutral compare screen.
+                            setView('change')
+                            void startCancelFlow()
+                          }}
                         >
-                          Cancel
+                          {winbackStartingLoading ? 'Cancel...' : 'Cancel'}
                         </button>
                       )}
                   </div>
@@ -1741,8 +1713,12 @@ function openUpgrade(plan: string) {
                         </span>
                       </div>
                       <MeterBar percent={100} variant="secondary" />
+                      {/* Server-truth per-TB price (task 1064, D4) — was a hard-coded
+                          "EUR 10.99" literal that could drift from what Mollie actually
+                          bills; reuses the same `addonPerTbCents` breakdown computed
+                          above from the server's `addon_per_tb_cents` (task 0947). */}
                       <div className="font-mono text-[11px] text-ink-4 mt-1.5">
-                        EUR 10.99 / extra TB · billed {sub?.billing_cycle === 'yearly' ? 'annually' : 'monthly'}
+                        EUR {formatCentsAsEur(addonPerTbCents)} / extra TB · billed {sub?.billing_cycle === 'yearly' ? 'annually' : 'monthly'}
                       </div>
                     </>
                   )}
@@ -2169,7 +2145,14 @@ function openUpgrade(plan: string) {
                    trialing, trial not previously used), the amber primary action
                    is "Start 14-day free trial" (task 0905, Pattern B — no card).
                    A 409 trial_already_used flips `trialUsed` and we fall back to
-                   the normal paid checkout entry. */
+                   the normal paid checkout entry.
+                   Task 1064 (D5): this pair used to hardcode Pro for the trial
+                   and Basic for straight-to-checkout regardless of which tier
+                   card the user actually wants — the labels now name the tier
+                   they act on, and BOTH start a trial for their own tier (every
+                   marketed tier except Teams offers one; see the "Compare
+                   plans" table below, which is the precise per-tier entry
+                   point via handleUpgradeOrTrial). */
                 sub?.status !== 'trialing' && !trialUsed ? (
                   <>
                     <BBButton
@@ -2178,13 +2161,14 @@ function openUpgrade(plan: string) {
                       onClick={() => void handleStartTrial('pro')}
                       disabled={trialStarting !== null}
                     >
-                      {trialStarting ? 'Starting trial...' : 'Start 14-day free trial'}
+                      {trialStarting === 'pro' ? 'Starting trial...' : 'Start 14-day Pro trial'}
                     </BBButton>
                     <BBButton
                       size="md"
-                      onClick={() => openUpgrade('basic')}
+                      onClick={() => void handleStartTrial('basic')}
+                      disabled={trialStarting !== null}
                     >
-                      Subscribe to Basic
+                      {trialStarting === 'basic' ? 'Starting trial...' : 'Start 14-day Basic trial'}
                     </BBButton>
                   </>
                 ) : (
@@ -2374,11 +2358,15 @@ function openUpgrade(plan: string) {
                     </p>
                   )}
 
-                  {/* Downsell — keep the existing lower-plan logic, present cleanly as an amber link */}
+                  {/* Downsell — keep the existing lower-plan logic, present cleanly as an amber link.
+                      Explicitly excludes comingSoon plans (task 1064, D8) — Teams
+                      (`business`) is not purchasable via checkout, so it must never be
+                      offered as a retention downsell even though it's latent today
+                      (it's the top rank, so it never satisfies "< currentRank" yet). */}
                   {(() => {
                     const currentRank = planRank[effectivePlan] ?? 0
                     const lowerPlans = orderedPaidPlans
-                      .filter((p) => (planRank[p] ?? 0) < currentRank && (planRank[p] ?? 0) > 0)
+                      .filter((p) => (planRank[p] ?? 0) < currentRank && (planRank[p] ?? 0) > 0 && !planMeta[p]?.comingSoon)
                       .map((p) => ({ id: p, ...(planMeta[p] ?? planMeta.free) }))
                     if (lowerPlans.length === 0) return null
                     return (
@@ -2440,7 +2428,12 @@ function openUpgrade(plan: string) {
                     onClick={() => void startCancelFlow()}
                     disabled={winbackStartingLoading}
                   >
-                    {winbackStartingLoading ? 'Cancel plan...' : 'Cancel plan'}
+                    {/* Task 1064 (D7): "Cancel plan..." read as if cancelling
+                        were already in flight — it's just the win-back
+                        eligibility check that runs before the offer/pause/
+                        confirm panel opens. "Checking..." names what's
+                        actually happening. */}
+                    {winbackStartingLoading ? 'Checking...' : 'Cancel plan'}
                   </button>
                 </div>
               )
@@ -2532,7 +2525,7 @@ function openUpgrade(plan: string) {
           <div className="p-5">
             <PlanComparisonTable
               currentPlan={effectivePlan}
-              onUpgrade={openUpgrade}
+              onUpgrade={handleUpgradeOrTrial}
               onDowngrade={openDowngrade}
               canUpgrade={sub?.can_upgrade}
               upgradeNextAvailableLabel={upgradeNextAvailableLabel}
@@ -2545,7 +2538,11 @@ function openUpgrade(plan: string) {
             hosted portal. Shows the card on file (brand + last4 + expiry, digits
             in mono) with a secondary "Update payment method", or an honest "No
             payment method on file" + "Add payment method" when the server has
-            none (404). The button redirects to the provider's hosted re-auth. */}
+            none (404). The button redirects to the provider's hosted re-auth.
+            SEPA-aware (task 1064, D3): a directdebit mandate gets the same IBAN
+            + mandate-reference fidelity as the summary view's payment-method
+            card, instead of a misleading "Card" fallback — same field checks
+            (type === 'directdebit' OR the mandate fields present) as above. */}
         {effectivePlan !== 'free' && sub?.status !== 'trialing' && pmLoaded && (
           <div className="border border-line rounded-xl overflow-hidden bg-paper">
             <div className="px-5 py-4 border-b border-line">
@@ -2555,25 +2552,50 @@ function openUpgrade(plan: string) {
             </div>
             <div className="px-5 py-4 flex items-center justify-between gap-4">
               {paymentMethod ? (
-                <div className="flex items-center gap-3 min-w-0">
-                  <Icon name="shield" size={16} className="text-ink-3 shrink-0" />
-                  <div className="min-w-0">
-                    <div className="text-[13px] text-ink flex items-center gap-2 flex-wrap">
-                      <span className="font-medium">{paymentMethod.brand ?? 'Card'}</span>
-                      {paymentMethod.last4 && (
-                        <span className="font-mono text-ink-2">•••• {paymentMethod.last4}</span>
+                paymentMethod.type === 'directdebit' || paymentMethod.iban_masked || paymentMethod.mandate_reference ? (
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="shrink-0 inline-flex items-center justify-center px-2 py-1 rounded-md border border-line bg-paper-2 font-mono text-[10px] font-semibold uppercase tracking-wide text-ink-2">
+                      SEPA
+                    </span>
+                    <div className="min-w-0">
+                      <div className="font-mono text-[13px] text-ink truncate">
+                        {paymentMethod.iban_masked
+                          ?? (paymentMethod.iban_last4 ? `•••• ${paymentMethod.iban_last4}` : 'SEPA Direct Debit')}
+                      </div>
+                      {(paymentMethod.account_holder_name || paymentMethod.mandate_reference) && (
+                        <div className="text-[11.5px] text-ink-3 mt-0.5 truncate">
+                          {paymentMethod.account_holder_name && (
+                            <span>{paymentMethod.account_holder_name}</span>
+                          )}
+                          {paymentMethod.account_holder_name && paymentMethod.mandate_reference && ' · '}
+                          {paymentMethod.mandate_reference && (
+                            <>mandate <span className="font-mono">{paymentMethod.mandate_reference}</span></>
+                          )}
+                        </div>
                       )}
                     </div>
-                    {paymentMethod.exp_month && paymentMethod.exp_year && (
-                      <div className="text-[11.5px] text-ink-3 mt-0.5">
-                        Expires{' '}
-                        <span className="font-mono">
-                          {String(paymentMethod.exp_month).padStart(2, '0')}/{paymentMethod.exp_year}
-                        </span>
-                      </div>
-                    )}
                   </div>
-                </div>
+                ) : (
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Icon name="shield" size={16} className="text-ink-3 shrink-0" />
+                    <div className="min-w-0">
+                      <div className="text-[13px] text-ink flex items-center gap-2 flex-wrap">
+                        <span className="font-medium">{paymentMethod.brand ?? 'Card'}</span>
+                        {paymentMethod.last4 && (
+                          <span className="font-mono text-ink-2">•••• {paymentMethod.last4}</span>
+                        )}
+                      </div>
+                      {paymentMethod.exp_month && paymentMethod.exp_year && (
+                        <div className="text-[11.5px] text-ink-3 mt-0.5">
+                          Expires{' '}
+                          <span className="font-mono">
+                            {String(paymentMethod.exp_month).padStart(2, '0')}/{paymentMethod.exp_year}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
               ) : (
                 <div className="flex items-center gap-3 min-w-0">
                   <Icon name="shield" size={16} className="text-ink-3 shrink-0" />

@@ -151,6 +151,15 @@ function installMocks(
       counters.lastCheckoutBody = JSON.parse(route.request().postData() ?? '{}')
       return json(route, { url: 'https://www.mollie.com/checkout/mock-session' })
     }
+    // Task 1064 (D5): a Free-plan trial-eligible user's comparison-table/CTA
+    // clicks now start a TRIAL, not checkout — so GATE 6 (which audits the
+    // UpgradeDialog's copy) mocks trial/start as already-exhausted (409
+    // trial_already_used), the real server response for a user who used their
+    // trial. That flips billing.tsx's `trialUsed` and falls back to
+    // `openUpgrade`, reaching the same dialog this test asserts on.
+    if (url.includes('/billing/trial/start')) {
+      return json(route, { error: 'trial_already_used' }, 409)
+    }
 
     // ── drive / preferences (loadData side-fetches) ──
     if (url.includes('/files')) return json(route, { files: [] })
@@ -238,13 +247,22 @@ test.describe('0865 checkout redirect + poll-confirmed success', () => {
   test('GATE 6 — copy audit: no user-visible Stripe on checkout path, single amber, no emoji', async ({ page }) => {
     await installMocks(page, { subForRequest: () => FREE_SUB })
     await bootBilling(page, '/settings/billing')
+    // The upgrade CTA lives on the "change" view (post-0942 summary/change
+    // split — "Choose a plan" opens it), not the /settings/billing summary.
+    await page.getByRole('button', { name: /Choose a plan/i }).click()
     await expect(page.getByText(/Plan & billing/i).first()).toBeVisible({ timeout: 15_000 })
     // Open the upgrade dialog (the checkout entry point that holds the copy).
-    // task 0905 renamed the Free-plan paid entry to "Subscribe to Basic" (the
-    // amber primary is now "Start 14-day free trial"); the dialog is unchanged.
-    await page.getByRole('button', { name: /Subscribe to Basic/i }).first().click()
+    // Task 1064 (D5): a trial-eligible Free user's CTAs now start a TRIAL, not
+    // checkout, so this clicks "Start 14-day Pro trial" — mocked above to 409
+    // trial_already_used, which billing.tsx falls back to `openUpgrade` for
+    // (the real behavior for a user who already used their trial).
+    await page.getByRole('button', { name: /Start 14-day Pro trial/i }).first().click()
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 10_000 })
-    await expect(page.getByText(/Choose your payment method on the next step/i)).toBeVisible()
+    // The dialog opens on the billing-cycle step; "Continue" advances to
+    // BillingInfoStep, which holds the "Choose your payment method on the
+    // next step" copy this gate audits.
+    await page.getByRole('button', { name: /^Continue$/i }).click()
+    await expect(page.getByText(/Choose your payment method on the next step/i)).toBeVisible({ timeout: 10_000 })
     // No enumerated method list, no "Stripe", no emoji in the dialog.
     const dialogText = (await page.getByRole('dialog').textContent()) ?? ''
     expect(dialogText).not.toMatch(/Stripe/i)

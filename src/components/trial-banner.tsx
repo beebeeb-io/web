@@ -7,10 +7,14 @@
  * to a paid subscription.
  *
  * Convert flow REUSES the 0865 checkout redirect + poll-confirmed return machine:
- * `convertTrial()` returns the Mollie hosted-checkout `{url}`; we write the
- * `bb_pending_checkout` marker (so billing.tsx's poll can confirm the now-active
- * subscription on return) and `window.location.href = url`. The two typed 409s
- * are surfaced and routed:
+ * `convertTrial()` returns the Mollie hosted-checkout `{url}`; we stamp the
+ * precise `bb_pending_checkout` shape (task 1064 / D6 — see `../lib/pending-
+ * checkout.ts`) with a real pre-checkout snapshot via `makePreState(sub)`, so
+ * billing.tsx's reconcile-on-load compares against the ACTUAL pre-convert state
+ * (status: 'trialing') and confirms via the precise trial→active transition
+ * clause, instead of falling through to the legacy record's empty `pre` and the
+ * weaker delta-compare heuristic. Then `window.location.href = url`. The two
+ * typed 409s are surfaced and routed:
  *   - `trial_not_active`         → trial lapsed; send to the normal plan picker.
  *   - `trial_already_subscribed` → already converted; send to billing management.
  *
@@ -27,8 +31,7 @@ import { Icon } from '@beebeeb/shared'
 import { useDriveData } from '../lib/drive-data-context'
 import { useToast } from './toast'
 import { convertTrial, ApiError } from '../lib/api'
-
-const PENDING_CHECKOUT_KEY = 'bb_pending_checkout'
+import { setPendingCheckout, makePreState } from '../lib/pending-checkout'
 
 /** Whole days remaining until an RFC3339 instant (ceil; never negative). */
 function daysLeft(iso: string): number {
@@ -60,15 +63,13 @@ export function TrialBanner() {
     setConverting(true)
     try {
       const { url } = await convertTrial()
-      // Mirror the 0865 redirect plumbing: stamp the pending-checkout marker so
-      // billing.tsx's poll-confirmed return machine recognises and confirms the
-      // now-active subscription, then redirect to Mollie's hosted checkout.
-      try {
-        localStorage.setItem(
-          PENDING_CHECKOUT_KEY,
-          JSON.stringify({ plan: sub!.plan, cycle: sub!.billing_cycle, ts: Date.now() }),
-        )
-      } catch { /* private mode — non-fatal, the poll still falls back to plan-change detection */ }
+      // Mirror the 0865 redirect plumbing: stamp the SAME precise pending-
+      // checkout shape billing.tsx itself writes before a checkout redirect
+      // (task 1064 / D6) — `kind: 'plan'` + a real `pre` snapshot of the
+      // still-trialing subscription — so the reconcile-on-load confirms via
+      // the exact trial→active transition instead of the legacy shape's empty
+      // `pre` falling through to the heuristic delta-compare.
+      setPendingCheckout('plan', sub!.plan ?? 'free', sub!.billing_cycle ?? 'monthly', makePreState(sub))
       window.location.href = url
     } catch (err) {
       // Surface the typed 409s and route the user to the right place.
