@@ -1,12 +1,12 @@
-# Graph Report - web  (2026-06-30)
+# Graph Report - web  (2026-07-01)
 
 ## Corpus Check
-- 350 files · ~406,488 words
+- 352 files · ~408,761 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1878 nodes · 2622 edges · 59 communities detected
-- Extraction: 79% EXTRACTED · 21% INFERRED · 0% AMBIGUOUS · INFERRED: 560 edges (avg confidence: 0.8)
+- 1887 nodes · 2634 edges · 59 communities detected
+- Extraction: 79% EXTRACTED · 21% INFERRED · 0% AMBIGUOUS · INFERRED: 565 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Community Hubs (Navigation)
@@ -25,53 +25,53 @@
 - [[_COMMUNITY_Community 12|Community 12]]
 - [[_COMMUNITY_Community 13|Community 13]]
 - [[_COMMUNITY_Community 14|Community 14]]
-- [[_COMMUNITY_Community 18|Community 18]]
+- [[_COMMUNITY_Community 15|Community 15]]
 - [[_COMMUNITY_Community 19|Community 19]]
 - [[_COMMUNITY_Community 20|Community 20]]
 - [[_COMMUNITY_Community 22|Community 22]]
 - [[_COMMUNITY_Community 23|Community 23]]
 - [[_COMMUNITY_Community 24|Community 24]]
 - [[_COMMUNITY_Community 29|Community 29]]
-- [[_COMMUNITY_Community 33|Community 33]]
-- [[_COMMUNITY_Community 39|Community 39]]
+- [[_COMMUNITY_Community 30|Community 30]]
+- [[_COMMUNITY_Community 34|Community 34]]
+- [[_COMMUNITY_Community 35|Community 35]]
 - [[_COMMUNITY_Community 41|Community 41]]
 - [[_COMMUNITY_Community 43|Community 43]]
-- [[_COMMUNITY_Community 53|Community 53]]
-- [[_COMMUNITY_Community 54|Community 54]]
+- [[_COMMUNITY_Community 45|Community 45]]
 - [[_COMMUNITY_Community 55|Community 55]]
-- [[_COMMUNITY_Community 57|Community 57]]
-- [[_COMMUNITY_Community 60|Community 60]]
+- [[_COMMUNITY_Community 56|Community 56]]
+- [[_COMMUNITY_Community 58|Community 58]]
 - [[_COMMUNITY_Community 61|Community 61]]
 - [[_COMMUNITY_Community 62|Community 62]]
-- [[_COMMUNITY_Community 64|Community 64]]
-- [[_COMMUNITY_Community 66|Community 66]]
+- [[_COMMUNITY_Community 63|Community 63]]
+- [[_COMMUNITY_Community 65|Community 65]]
 - [[_COMMUNITY_Community 67|Community 67]]
 - [[_COMMUNITY_Community 68|Community 68]]
 - [[_COMMUNITY_Community 69|Community 69]]
 - [[_COMMUNITY_Community 70|Community 70]]
-- [[_COMMUNITY_Community 73|Community 73]]
-- [[_COMMUNITY_Community 76|Community 76]]
-- [[_COMMUNITY_Community 78|Community 78]]
-- [[_COMMUNITY_Community 81|Community 81]]
-- [[_COMMUNITY_Community 83|Community 83]]
+- [[_COMMUNITY_Community 71|Community 71]]
+- [[_COMMUNITY_Community 74|Community 74]]
+- [[_COMMUNITY_Community 77|Community 77]]
+- [[_COMMUNITY_Community 79|Community 79]]
+- [[_COMMUNITY_Community 82|Community 82]]
 - [[_COMMUNITY_Community 84|Community 84]]
 - [[_COMMUNITY_Community 85|Community 85]]
-- [[_COMMUNITY_Community 93|Community 93]]
+- [[_COMMUNITY_Community 86|Community 86]]
 - [[_COMMUNITY_Community 94|Community 94]]
 - [[_COMMUNITY_Community 95|Community 95]]
-- [[_COMMUNITY_Community 98|Community 98]]
-- [[_COMMUNITY_Community 102|Community 102]]
-- [[_COMMUNITY_Community 103|Community 103]]
+- [[_COMMUNITY_Community 96|Community 96]]
+- [[_COMMUNITY_Community 99|Community 99]]
 - [[_COMMUNITY_Community 104|Community 104]]
-- [[_COMMUNITY_Community 106|Community 106]]
-- [[_COMMUNITY_Community 115|Community 115]]
-- [[_COMMUNITY_Community 120|Community 120]]
+- [[_COMMUNITY_Community 105|Community 105]]
+- [[_COMMUNITY_Community 107|Community 107]]
+- [[_COMMUNITY_Community 116|Community 116]]
 - [[_COMMUNITY_Community 121|Community 121]]
-- [[_COMMUNITY_Community 123|Community 123]]
-- [[_COMMUNITY_Community 196|Community 196]]
+- [[_COMMUNITY_Community 122|Community 122]]
+- [[_COMMUNITY_Community 125|Community 125]]
+- [[_COMMUNITY_Community 197|Community 197]]
 
 ## God Nodes (most connected - your core abstractions)
-1. `request()` - 127 edges
+1. `request()` - 132 edges
 2. `showToast()` - 61 edges
 3. `getDataViewMemory0()` - 42 edges
 4. `takeObject()` - 42 edges
@@ -89,48 +89,48 @@
   e2e/helpers/thumb-fixtures.ts → src/pages/drive.tsx
 - `openPreview()` --calls--> `handleFileAction()`  [INFERRED]
   e2e/helpers/thumb-fixtures.ts → src/pages/starred.tsx
-- `fetchAndDecryptLargeThumbnail()` --calls--> `getApiUrl()`  [INFERRED]
-  src/lib/thumbnail.ts → packages/shared/src/api/config.ts
 - `fetchAndDecryptThumbnail()` --calls--> `getApiUrl()`  [INFERRED]
   src/lib/thumbnail.ts → packages/shared/src/api/config.ts
+- `opaqueRegisterStart()` --calls--> `request()`  [INFERRED]
+  src/lib/api.ts → packages/shared/src/api/request.ts
 
 ## Communities
 
 ### Community 0 - "Community 0"
 Cohesion: 0.01
-Nodes (154): clearSessionConfirmed(), fireConnectionStatus(), fireErrorNotifier(), fireSessionExpired(), markSessionConfirmed(), wasSessionConfirmed(), delay(), paceIfNeeded() (+146 more)
+Nodes (163): clearSessionConfirmed(), fireConnectionStatus(), fireErrorNotifier(), fireSessionExpired(), markSessionConfirmed(), wasSessionConfirmed(), delay(), paceIfNeeded() (+155 more)
 
 ### Community 1 - "Community 1"
 Cohesion: 0.02
-Nodes (111): handleProceed(), validate(), handleNewFolder(), handleCopy(), formatBytes(), handleConvert(), handleDelete(), handleDownload() (+103 more)
+Nodes (100): handleProceed(), validate(), handleResend(), handleVerify(), if(), decryptAll(), handleNewFolder(), handleSubmit() (+92 more)
 
 ### Community 2 - "Community 2"
 Cohesion: 0.04
-Nodes (84): attachFreshToken(), buildRequest(), listFiles(), listFilesPage(), opaqueLoginFinish(), opaqueLoginStart(), autoUpgradeToV1(), computeRecoveryCheck() (+76 more)
+Nodes (86): attachFreshToken(), buildRequest(), hexToBytes(), opaqueLoginFinish(), opaqueLoginStart(), verify2fa(), autoUpgradeToV1(), computeRecoveryCheck() (+78 more)
 
 ### Community 3 - "Community 3"
 Cohesion: 0.07
 Nodes (69): addHeapObject(), compute_recovery_check(), debugString(), decodeText(), decompress_gzip(), decrypt_chunk(), decrypt_chunks(), decrypt_metadata() (+61 more)
 
 ### Community 4 - "Community 4"
-Cohesion: 0.05
-Nodes (33): onRegionChanged(), resolveName(), decryptAll(), downloadBundleItem(), downloadSharedFile(), canStreamToServiceWorker(), createBlobSink(), createSwSink() (+25 more)
+Cohesion: 0.03
+Nodes (26): BillingBanner(), BillingSuspendedOverlay(), FileList(), timeAgo(), IncidentBanner(), NewFolderDialog(), notificationIcon(), toDisplay() (+18 more)
 
 ### Community 5 - "Community 5"
-Cohesion: 0.04
-Nodes (22): BillingBanner(), BillingSuspendedOverlay(), FileList(), if(), timeAgo(), IncidentBanner(), NewFolderDialog(), notificationIcon() (+14 more)
+Cohesion: 0.05
+Nodes (40): getApiUrl(), load(), downloadBundleItem(), downloadSharedFile(), downloadVersion(), getFileRequestPublic(), uploadToFileRequest(), dispatchDecrypted() (+32 more)
 
 ### Community 6 - "Community 6"
-Cohesion: 0.05
-Nodes (25): getApiUrl(), load(), onUpdated(), savePermissions(), setExpiry(), downloadVersion(), getFileRequestPublic(), patchInvite() (+17 more)
-
-### Community 7 - "Community 7"
 Cohesion: 0.08
 Nodes (28): uploadThumbnail(), uploadThumbnailLarge(), encryptedUpload(), withNetworkRetry(), basename(), isLikelyAlbumArtOrIcon(), splitName(), encryptAndUploadLargeThumbnail() (+20 more)
 
-### Community 8 - "Community 8"
+### Community 7 - "Community 7"
 Cohesion: 0.07
-Nodes (35): handleCodeSubmit(), handlePasskeyUnlock(), handleRestore(), base64urlToBuffer(), bufferToBase64url(), credentialToAuthenticationJSON(), credentialToRegistrationJSON(), deletePasskey() (+27 more)
+Nodes (22): downloadDropboxFile(), expandDropboxPaths(), expandOne(), rateLimitedFetch(), sleepMs(), expandFolder(), expandGoogleDrivePaths(), GoogleAuthError (+14 more)
+
+### Community 8 - "Community 8"
+Cohesion: 0.08
+Nodes (31): handleCodeSubmit(), handlePasskeyUnlock(), handleRestore(), base64urlToBuffer(), bufferToBase64url(), credentialToAuthenticationJSON(), credentialToRegistrationJSON(), deletePasskey() (+23 more)
 
 ### Community 9 - "Community 9"
 Cohesion: 0.11
@@ -145,80 +145,80 @@ Cohesion: 0.18
 Nodes (11): clearSession(), dbDelete(), dbGet(), dbPut(), deriveKey(), getVaultTTL(), openDB(), persistSession() (+3 more)
 
 ### Community 12 - "Community 12"
+Cohesion: 0.13
+Nodes (4): commitQuery(), handleSubmit(), loadRecent(), saveRecent()
+
+### Community 13 - "Community 13"
 Cohesion: 0.11
 Nodes (3): Row(), AndroidKeyboard(), IOSKeyboard()
 
-### Community 13 - "Community 13"
+### Community 14 - "Community 14"
 Cohesion: 0.14
 Nodes (7): restoreFile(), buildDetailsMeta(), displayName(), handleRestore(), handleRestoreAll(), handleRestoreSelected(), restoreInWaves()
 
-### Community 14 - "Community 14"
+### Community 15 - "Community 15"
 Cohesion: 0.36
 Nodes (13): clearVault(), computeKeyCheck(), dbClear(), dbGet(), dbPut(), deriveWrappingKey(), hasVault(), importAesKey() (+5 more)
 
-### Community 18 - "Community 18"
-Cohesion: 0.32
-Nodes (9): devAutoAuth(), cacheVaultKey(), clearVaultKey(), dbDelete(), dbGet(), dbPut(), getVaultKey(), initSessionVault() (+1 more)
-
 ### Community 19 - "Community 19"
-Cohesion: 0.23
-Nodes (5): formatBytes(), formatStorageSI(), formatStorageSI(), upgradeCardFromFallback(), upgradeCardFromPlanMeta()
-
-### Community 20 - "Community 20"
 Cohesion: 0.17
 Nodes (4): load(), handleDownloadCiphertext(), downloadFile(), handleLoadMore()
 
-### Community 22 - "Community 22"
-Cohesion: 0.29
-Nodes (6): escapeRe(), openImagePreview(), openPreview(), previewImage(), previewOverlay(), uploadAndWait()
+### Community 20 - "Community 20"
+Cohesion: 0.32
+Nodes (9): devAutoAuth(), cacheVaultKey(), clearVaultKey(), dbDelete(), dbGet(), dbPut(), getVaultKey(), initSessionVault() (+1 more)
 
-### Community 23 - "Community 23"
+### Community 22 - "Community 22"
 Cohesion: 0.2
 Nodes (2): dayLabel(), groupByDay()
 
+### Community 23 - "Community 23"
+Cohesion: 0.25
+Nodes (5): formatBytes(), formatStorageSI(), formatStorageSI(), upgradeCardFromFallback(), upgradeCardFromPlanMeta()
+
 ### Community 24 - "Community 24"
-Cohesion: 0.18
-Nodes (5): handleResend(), handleVerify(), resendVerification(), handleResend(), handleSubmit()
+Cohesion: 0.29
+Nodes (6): escapeRe(), openImagePreview(), openPreview(), previewImage(), previewOverlay(), uploadAndWait()
 
 ### Community 29 - "Community 29"
 Cohesion: 0.22
+Nodes (3): onUpdated(), savePermissions(), setExpiry()
+
+### Community 30 - "Community 30"
+Cohesion: 0.22
 Nodes (2): formatEta(), formatSpeed()
 
-### Community 33 - "Community 33"
-Cohesion: 0.33
-Nodes (5): downloadDropboxFile(), expandDropboxPaths(), expandOne(), rateLimitedFetch(), sleepMs()
+### Community 34 - "Community 34"
+Cohesion: 0.22
+Nodes (2): onRegionChanged(), resolveName()
 
-### Community 39 - "Community 39"
+### Community 35 - "Community 35"
+Cohesion: 0.36
+Nodes (8): listFiles(), listFilesPage(), canStreamToServiceWorker(), createBlobSink(), createSwSink(), downloadAsZip(), expandToFiles(), collectAllChildren()
+
+### Community 41 - "Community 41"
 Cohesion: 0.25
 Nodes (1): ApiError
 
-### Community 41 - "Community 41"
+### Community 43 - "Community 43"
 Cohesion: 0.29
 Nodes (2): pipelineStage(), stageLabel()
 
-### Community 43 - "Community 43"
+### Community 45 - "Community 45"
 Cohesion: 0.29
 Nodes (4): copyToClipboard(), handleCopy(), handleRevoke(), revokeShare()
 
-### Community 53 - "Community 53"
-Cohesion: 0.38
-Nodes (5): allowsFunctional(), getConsent(), hasConsented(), setConsent(), update()
-
-### Community 54 - "Community 54"
+### Community 55 - "Community 55"
 Cohesion: 0.38
 Nodes (3): getStored(), isValidDensity(), isValidFontSize()
 
-### Community 55 - "Community 55"
+### Community 56 - "Community 56"
 Cohesion: 0.38
-Nodes (4): expandFolder(), expandGoogleDrivePaths(), GoogleAuthError, listGoogleDriveFolder()
+Nodes (5): allowsFunctional(), getConsent(), hasConsented(), setConsent(), update()
 
-### Community 57 - "Community 57"
+### Community 58 - "Community 58"
 Cohesion: 0.29
 Nodes (3): ApiError, IncorrectPasswordError, SessionTooOldForConfirmationError
-
-### Community 60 - "Community 60"
-Cohesion: 0.4
-Nodes (3): openManageShares(), createShareLink(), openRowMenu()
 
 ### Community 61 - "Community 61"
 Cohesion: 0.4
@@ -226,63 +226,63 @@ Nodes (2): blob(), createFolder()
 
 ### Community 62 - "Community 62"
 Cohesion: 0.4
+Nodes (3): openManageShares(), createShareLink(), openRowMenu()
+
+### Community 63 - "Community 63"
+Cohesion: 0.4
 Nodes (2): computeStep(), writeLocalStep()
 
-### Community 64 - "Community 64"
+### Community 65 - "Community 65"
 Cohesion: 0.4
 Nodes (2): consumePendingExport(), hasPendingExport()
 
-### Community 66 - "Community 66"
+### Community 67 - "Community 67"
 Cohesion: 0.4
 Nodes (2): fromBase64url(), readRequestPublicKey()
 
-### Community 67 - "Community 67"
+### Community 68 - "Community 68"
 Cohesion: 0.33
 Nodes (1): ErrorBoundary
 
-### Community 68 - "Community 68"
+### Community 69 - "Community 69"
 Cohesion: 0.4
 Nodes (2): statusLabel(), statusVariant()
 
-### Community 69 - "Community 69"
+### Community 70 - "Community 70"
 Cohesion: 0.4
 Nodes (2): decodeAndConvert(), pcmToWavBlob()
 
-### Community 70 - "Community 70"
+### Community 71 - "Community 71"
 Cohesion: 0.47
 Nodes (4): ensureLang(), getHighlighter(), langLabel(), toShikiLang()
 
-### Community 73 - "Community 73"
+### Community 74 - "Community 74"
 Cohesion: 0.4
 Nodes (1): MemoryStorage
 
-### Community 76 - "Community 76"
+### Community 77 - "Community 77"
 Cohesion: 0.7
 Nodes (4): FOLDER_COLOR_KEY(), getFolderColor(), getFolderColorDot(), setFolderColor()
 
-### Community 78 - "Community 78"
+### Community 79 - "Community 79"
 Cohesion: 0.5
 Nodes (2): Avatar(), getInitials()
 
-### Community 81 - "Community 81"
+### Community 82 - "Community 82"
 Cohesion: 0.5
 Nodes (2): AnnouncementBanner(), severityClasses()
 
-### Community 83 - "Community 83"
+### Community 84 - "Community 84"
 Cohesion: 0.5
 Nodes (2): hashString(), pickIndicesFromPhrase()
 
-### Community 84 - "Community 84"
+### Community 85 - "Community 85"
 Cohesion: 0.4
 Nodes (2): ImpersonationBanner(), useImpersonation()
 
-### Community 85 - "Community 85"
+### Community 86 - "Community 86"
 Cohesion: 0.5
 Nodes (2): getExtension(), getMimeLabel()
-
-### Community 93 - "Community 93"
-Cohesion: 0.67
-Nodes (2): signUp(), uniqueEmail()
 
 ### Community 94 - "Community 94"
 Cohesion: 0.67
@@ -290,117 +290,117 @@ Nodes (2): signUp(), uniqueEmail()
 
 ### Community 95 - "Community 95"
 Cohesion: 0.67
+Nodes (2): signUp(), uniqueEmail()
+
+### Community 96 - "Community 96"
+Cohesion: 0.67
 Nodes (2): signupAndUnlock(), uniqueEmail()
 
-### Community 98 - "Community 98"
+### Community 99 - "Community 99"
 Cohesion: 0.83
 Nodes (3): clearTauriSession(), isTauri(), pushTauriSession()
 
-### Community 102 - "Community 102"
+### Community 104 - "Community 104"
 Cohesion: 0.83
 Nodes (3): extractDroppedItems(), processEntries(), readDirectoryEntry()
 
-### Community 103 - "Community 103"
+### Community 105 - "Community 105"
 Cohesion: 0.5
 Nodes (2): ContextMenu(), isPreviewable()
 
-### Community 104 - "Community 104"
-Cohesion: 0.5
-Nodes (2): handleSubmit(), reportShareLink()
-
-### Community 106 - "Community 106"
+### Community 107 - "Community 107"
 Cohesion: 0.83
 Nodes (3): getMenuItems(), getPendingItems(), SharedContextMenu()
 
-### Community 115 - "Community 115"
+### Community 116 - "Community 116"
 Cohesion: 1.0
 Nodes (2): createBundleShareLink(), selectRow()
 
-### Community 120 - "Community 120"
+### Community 121 - "Community 121"
 Cohesion: 1.0
 Nodes (2): checkPasswordPwned(), sha1Hex()
 
-### Community 121 - "Community 121"
+### Community 122 - "Community 122"
 Cohesion: 1.0
 Nodes (2): deriveSasWords(), fnv1a()
 
-### Community 123 - "Community 123"
+### Community 125 - "Community 125"
 Cohesion: 1.0
 Nodes (2): ch(), migratePreferences()
 
-### Community 196 - "Community 196"
+### Community 197 - "Community 197"
 Cohesion: 1.0
 Nodes (1): WasmChunkEncryptor
 
 ## Knowledge Gaps
 - **1 isolated node(s):** `WasmChunkEncryptor`
   These have ≤1 connection - possible missing edges or undocumented components.
-- **Thin community `Community 23`** (11 nodes): `actionText()`, `dayLabel()`, `DeviceBadge()`, `groupByDay()`, `isAlarmingEvent()`, `isSecurityEvent()`, `loadingMore()`, `metaFor()`, `timeLabel()`, `wsToActivity()`, `activity.tsx`
+- **Thin community `Community 22`** (11 nodes): `actionText()`, `dayLabel()`, `DeviceBadge()`, `groupByDay()`, `isAlarmingEvent()`, `isSecurityEvent()`, `loadingMore()`, `metaFor()`, `timeLabel()`, `wsToActivity()`, `activity.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 29`** (10 nodes): `barColor()`, `borderColor()`, `computeEta()`, `computeSpeed()`, `formatChunkSize()`, `formatEta()`, `formatSpeed()`, `phaseLabel()`, `regionLabel()`, `upload-progress-card.tsx`
+- **Thin community `Community 30`** (10 nodes): `barColor()`, `borderColor()`, `computeEta()`, `computeSpeed()`, `formatChunkSize()`, `formatEta()`, `formatSpeed()`, `phaseLabel()`, `regionLabel()`, `upload-progress-card.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 39`** (8 nodes): `ApiError`, `.constructor()`, `installMocks()`, `pageImpl()`, `resetCaptures()`, `setListPage()`, `stubStream()`, `upload-share-mocks.ts`
+- **Thin community `Community 34`** (9 nodes): `formatStorageSI()`, `onDown()`, `onFileUploaded()`, `onKey()`, `onRegionChanged()`, `pruned()`, `PwaInstallBanner()`, `resolveName()`, `drive-layout.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 41`** (8 nodes): `computeEta()`, `computeSpeed()`, `formatBytes()`, `formatEta()`, `formatSpeed()`, `pipelineStage()`, `stageLabel()`, `upload-progress.tsx`
+- **Thin community `Community 41`** (8 nodes): `ApiError`, `.constructor()`, `installMocks()`, `pageImpl()`, `resetCaptures()`, `setListPage()`, `stubStream()`, `upload-share-mocks.ts`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 43`** (8 nodes): `computeEta()`, `computeSpeed()`, `formatBytes()`, `formatEta()`, `formatSpeed()`, `pipelineStage()`, `stageLabel()`, `upload-progress.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 61`** (6 nodes): `blob()`, `createFolder()`, `deleteFile()`, `listChildIds()`, `listRootFolderIds()`, `folder-pagination.spec.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 62`** (6 nodes): `computeStep()`, `OnboardingProvider()`, `readLocalStep()`, `useOnboarding()`, `writeLocalStep()`, `onboarding-context.tsx`
+- **Thin community `Community 63`** (6 nodes): `computeStep()`, `OnboardingProvider()`, `readLocalStep()`, `useOnboarding()`, `writeLocalStep()`, `onboarding-context.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 64`** (6 nodes): `browserStorage()`, `consumePendingExport()`, `dataExportDownloadFilename()`, `hasPendingExport()`, `markPendingExport()`, `export-intent.ts`
+- **Thin community `Community 65`** (6 nodes): `browserStorage()`, `consumePendingExport()`, `dataExportDownloadFilename()`, `hasPendingExport()`, `markPendingExport()`, `export-intent.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 66`** (6 nodes): `formatBytes()`, `fromBase64url()`, `onDrop()`, `prevent()`, `readRequestPublicKey()`, `upload-request.tsx`
+- **Thin community `Community 67`** (6 nodes): `formatBytes()`, `fromBase64url()`, `onDrop()`, `prevent()`, `readRequestPublicKey()`, `upload-request.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 67`** (6 nodes): `ErrorBoundary`, `.componentDidCatch()`, `.constructor()`, `.getDerivedStateFromError()`, `.render()`, `error-boundary.tsx`
+- **Thin community `Community 68`** (6 nodes): `ErrorBoundary`, `.componentDidCatch()`, `.constructor()`, `.getDerivedStateFromError()`, `.render()`, `error-boundary.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 68`** (6 nodes): `formatCents()`, `formatDate()`, `methodLabel()`, `statusLabel()`, `statusVariant()`, `TransactionList.tsx`
+- **Thin community `Community 69`** (6 nodes): `formatCents()`, `formatDate()`, `methodLabel()`, `statusLabel()`, `statusVariant()`, `TransactionList.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 69`** (6 nodes): `decodeAndConvert()`, `formatTime()`, `handleSeek()`, `pcmToWavBlob()`, `togglePlay()`, `audio-preview.tsx`
+- **Thin community `Community 70`** (6 nodes): `decodeAndConvert()`, `formatTime()`, `handleSeek()`, `pcmToWavBlob()`, `togglePlay()`, `audio-preview.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 73`** (5 nodes): `MemoryStorage`, `.getItem()`, `.removeItem()`, `.setItem()`, `export-intent.test.ts`
+- **Thin community `Community 74`** (5 nodes): `MemoryStorage`, `.getItem()`, `.removeItem()`, `.setItem()`, `export-intent.test.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 78`** (5 nodes): `Avatar()`, `formatRelativeDate()`, `getInitials()`, `SecuredBadge()`, `public-profile.tsx`
+- **Thin community `Community 79`** (5 nodes): `Avatar()`, `formatRelativeDate()`, `getInitials()`, `SecuredBadge()`, `public-profile.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 81`** (5 nodes): `AnnouncementBanner()`, `readDismissed()`, `severityClasses()`, `writeDismissed()`, `announcement-banner.tsx`
+- **Thin community `Community 82`** (5 nodes): `AnnouncementBanner()`, `readDismissed()`, `severityClasses()`, `writeDismissed()`, `announcement-banner.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 83`** (5 nodes): `handleChange()`, `handleVerify()`, `hashString()`, `pickIndicesFromPhrase()`, `mnemonic-verify.tsx`
+- **Thin community `Community 84`** (5 nodes): `handleChange()`, `handleVerify()`, `hashString()`, `pickIndicesFromPhrase()`, `mnemonic-verify.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 84`** (5 nodes): `ImpersonationBanner()`, `ImpersonationProvider()`, `useImpersonation()`, `impersonation-banner.tsx`, `impersonation-context.tsx`
+- **Thin community `Community 85`** (5 nodes): `ImpersonationBanner()`, `ImpersonationProvider()`, `useImpersonation()`, `impersonation-banner.tsx`, `impersonation-context.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 85`** (5 nodes): `formatSize()`, `getExtension()`, `getMimeLabel()`, `handleDownload()`, `unsupported-preview.tsx`
+- **Thin community `Community 86`** (5 nodes): `formatSize()`, `getExtension()`, `getMimeLabel()`, `handleDownload()`, `unsupported-preview.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 93`** (4 nodes): `blockDevAutoLogin()`, `signUp()`, `cli-auth-redirect.spec.ts`, `uniqueEmail()`
+- **Thin community `Community 94`** (4 nodes): `blockDevAutoLogin()`, `signUp()`, `cli-auth-redirect.spec.ts`, `uniqueEmail()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 94`** (4 nodes): `blockDevAutoLogin()`, `signUp()`, `export-resume.spec.ts`, `uniqueEmail()`
+- **Thin community `Community 95`** (4 nodes): `blockDevAutoLogin()`, `signUp()`, `export-resume.spec.ts`, `uniqueEmail()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 95`** (4 nodes): `escapeRegex()`, `signupAndUnlock()`, `refresh-stability.spec.ts`, `uniqueEmail()`
+- **Thin community `Community 96`** (4 nodes): `escapeRegex()`, `signupAndUnlock()`, `refresh-stability.spec.ts`, `uniqueEmail()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 103`** (4 nodes): `ContextMenu()`, `isPreviewable()`, `context-menu.tsx`, `preview.ts`
+- **Thin community `Community 105`** (4 nodes): `ContextMenu()`, `isPreviewable()`, `context-menu.tsx`, `preview.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 104`** (4 nodes): `handleKeyDown()`, `handleSubmit()`, `reportShareLink()`, `report-dialog.tsx`
+- **Thin community `Community 116`** (3 nodes): `createBundleShareLink()`, `selectRow()`, `bundle-share.spec.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 115`** (3 nodes): `createBundleShareLink()`, `selectRow()`, `bundle-share.spec.ts`
+- **Thin community `Community 121`** (3 nodes): `checkPasswordPwned()`, `sha1Hex()`, `hibp.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 120`** (3 nodes): `checkPasswordPwned()`, `sha1Hex()`, `hibp.ts`
+- **Thin community `Community 122`** (3 nodes): `deriveSasWords()`, `fnv1a()`, `sas-words.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 121`** (3 nodes): `deriveSasWords()`, `fnv1a()`, `sas-words.ts`
+- **Thin community `Community 125`** (3 nodes): `ch()`, `migratePreferences()`, `notifications.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 123`** (3 nodes): `ch()`, `migratePreferences()`, `notifications.tsx`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 196`** (2 nodes): `WasmChunkEncryptor`, `beebeeb_wasm.d.ts`
+- **Thin community `Community 197`** (2 nodes): `WasmChunkEncryptor`, `beebeeb_wasm.d.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `showToast()` connect `Community 1` to `Community 0`, `Community 2`, `Community 6`, `Community 7`, `Community 104`, `Community 11`, `Community 43`, `Community 13`, `Community 24`?**
-  _High betweenness centrality (0.055) - this node is a cross-community bridge._
-- **Why does `request()` connect `Community 0` to `Community 1`, `Community 2`, `Community 6`, `Community 8`, `Community 9`, `Community 24`?**
-  _High betweenness centrality (0.044) - this node is a cross-community bridge._
-- **Why does `getApiUrl()` connect `Community 6` to `Community 0`, `Community 9`, `Community 4`, `Community 7`?**
-  _High betweenness centrality (0.040) - this node is a cross-community bridge._
-- **Are the 122 inferred relationships involving `request()` (e.g. with `opaqueRegisterStart()` and `opaqueLoginStart()`) actually correct?**
-  _`request()` has 122 INFERRED edges - model-reasoned connections that need verification._
+- **Why does `showToast()` connect `Community 1` to `Community 0`, `Community 2`, `Community 6`, `Community 7`, `Community 11`, `Community 45`, `Community 14`, `Community 29`?**
+  _High betweenness centrality (0.052) - this node is a cross-community bridge._
+- **Why does `request()` connect `Community 0` to `Community 1`, `Community 2`, `Community 5`, `Community 8`, `Community 9`?**
+  _High betweenness centrality (0.037) - this node is a cross-community bridge._
+- **Why does `getApiUrl()` connect `Community 5` to `Community 0`, `Community 9`, `Community 6`?**
+  _High betweenness centrality (0.032) - this node is a cross-community bridge._
+- **Are the 127 inferred relationships involving `request()` (e.g. with `opaqueRegisterStart()` and `opaqueLoginStart()`) actually correct?**
+  _`request()` has 127 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 57 inferred relationships involving `showToast()` (e.g. with `doEncryptedUpload()` and `handleDownload()`) actually correct?**
   _`showToast()` has 57 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `WasmChunkEncryptor` to the rest of the system?**
