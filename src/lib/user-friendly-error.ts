@@ -91,6 +91,14 @@ export function userFriendlyError(err: unknown): string {
     if (err.code === 'quota_exceeded') {
       return 'Storage full. Free up space or upgrade your plan to keep uploading.'
     }
+    if (err.code === 'downgrade_blocked_over_quota') {
+      // Task 1061 (WP-C): the DowngradeDialog already shows the precise
+      // "free up X" blocking state before the user can even submit, so this
+      // is the fallback for the rare race (freed space in another tab,
+      // re-filled it here) — the server's own message already names the
+      // exact amount and target tier.
+      return looksUserFriendly(err.message) ? err.message : 'Free up storage before switching to this plan.'
+    }
     if (status === 401) return 'Your session expired. Sign in again.'
     if (status === 403) return "You don't have permission to do that."
     if (status === 404) return 'Not found.'

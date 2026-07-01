@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
@@ -35,18 +36,20 @@ export function DowngradeDialog({
   const [error, setError] = useState<string | null>(null)
   const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
   const { showToast } = useToast()
+  const navigate = useNavigate()
 
   const targetMeta = PLAN_META[targetPlan] ?? PLAN_META.free
   const currentMeta = PLAN_META[currentPlan] ?? PLAN_META.free
   const targetQuotaBytes = targetMeta.storageGB * 1_000_000_000
+  // Task 1061 (WP-C, decision 2): a downgrade below current usage is BLOCKED,
+  // not scheduled with a 60-day grace + auto-delete. `isOverQuota` now drives a
+  // hard blocking state — there is no path to confirm this switch until the
+  // account is back under the target tier's limit.
   const isOverQuota = currentUsageBytes > targetQuotaBytes
+  const bytesToFreeUp = currentUsageBytes - targetQuotaBytes
   const formattedDate = effectiveDate
     ? new Date(effectiveDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
     : 'end of billing period'
-
-  const graceDeadline = effectiveDate
-    ? new Date(new Date(effectiveDate).getTime() + 60 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-    : null
 
   const handleConfirm = useCallback(async () => {
     setLoading(true)
@@ -85,12 +88,21 @@ export function DowngradeDialog({
 
         <div className="p-[22px] space-y-4">
           <div className="text-[13px] text-ink-2 leading-relaxed">
-            <p>Your plan will change to <strong className="text-ink">{targetMeta.label}</strong> on <strong className="font-mono text-ink">{formattedDate}</strong>.</p>
-            <p className="mt-1">Until then, you keep full {currentMeta.label} access.</p>
+            {isOverQuota ? (
+              <p>
+                You can switch to <strong className="text-ink">{targetMeta.label}</strong> once you're under its
+                storage limit. Nothing changes on your account yet.
+              </p>
+            ) : (
+              <>
+                <p>Your plan will change to <strong className="text-ink">{targetMeta.label}</strong> on <strong className="font-mono text-ink">{formattedDate}</strong>.</p>
+                <p className="mt-1">Until then, you keep full {currentMeta.label} access.</p>
+              </>
+            )}
           </div>
 
           <div className="rounded-md border border-line bg-paper-2 p-3.5">
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-3 mb-2">After {formattedDate}</div>
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-3 mb-2">{isOverQuota ? 'If you switch' : `After ${formattedDate}`}</div>
             <ul className="space-y-1.5 text-[12.5px] text-ink-2">
               <li className="flex gap-2">
                 <Icon name="cloud" size={12} className="text-ink-3 mt-0.5 shrink-0" />
@@ -106,54 +118,64 @@ export function DowngradeDialog({
             </ul>
           </div>
 
-          {isOverQuota && (
+          {/* Task 1061 (WP-C, decision 2) — BLOCKING state. There is no 60-day
+              grace and no auto-delete any more: a downgrade below current usage
+              cannot be scheduled at all until enough storage is freed. */}
+          {isOverQuota ? (
             <div className="rounded-md border border-red/30 bg-red/5 p-3.5">
               <div className="flex items-center gap-2 mb-2">
                 {/* alert-triangle is not in the icon set — using info as the closest warning indicator */}
                 <Icon name="info" size={14} className="text-red shrink-0" />
                 <span className="text-[13px] font-semibold text-ink">
-                  You are using {formatStorageSI(currentUsageBytes)} of {formatStorageSI(targetQuotaBytes)}
+                  Free up {formatStorageSI(bytesToFreeUp)} to switch to {targetMeta.label}
                 </span>
               </div>
-              <ul className="space-y-1 text-[12.5px] text-ink-2 ml-[22px]">
-                <li>Uploads are blocked until you are under {formatStorageSI(targetQuotaBytes)}</li>
-                <li>You have 60 days to reduce your storage</li>
-                {graceDeadline && (
-                  <li>After {graceDeadline}, your oldest files will be automatically deleted until you are under the limit</li>
-                )}
-                <li>Starred files are deleted last</li>
-              </ul>
+              <p className="text-[12.5px] text-ink-2 ml-[22px] leading-relaxed">
+                You're using {formatStorageSI(currentUsageBytes)}, but {targetMeta.label} allows{' '}
+                {formatStorageSI(targetQuotaBytes)}. We won't delete anything to make this switch fit —
+                delete or move files, then try again.
+              </p>
+            </div>
+          ) : (
+            /* Task 1057 — a downgrade always applies at renewal; state that plainly
+               (no rate-limit gate, no "available after" date for downgrades). */
+            <div className="flex gap-2 rounded-md border border-line bg-paper-2 p-3.5">
+              <Icon name="clock" size={14} className="text-ink-3 mt-0.5 shrink-0" />
+              <div className="text-[12.5px] text-ink-2 leading-relaxed">
+                This change applies at your next renewal on{' '}
+                <span className="font-mono text-ink">{formattedDate}</span>. You can switch
+                back any time before then.
+              </div>
             </div>
           )}
-
-          {/* Task 1057 — a downgrade always applies at renewal; state that plainly
-              (no rate-limit gate, no "available after" date for downgrades). */}
-          <div className="flex gap-2 rounded-md border border-line bg-paper-2 p-3.5">
-            <Icon name="clock" size={14} className="text-ink-3 mt-0.5 shrink-0" />
-            <div className="text-[12.5px] text-ink-2 leading-relaxed">
-              This change applies at your next renewal on{' '}
-              <span className="font-mono text-ink">{formattedDate}</span>. You can switch
-              back any time before then.
-            </div>
-          </div>
 
           {error && (
             <div className="text-sm text-red text-center">{error}</div>
           )}
 
-          <BBButton
-            variant={isOverQuota ? 'danger' : 'default'}
-            size="lg"
-            className="w-full justify-center"
-            onClick={handleConfirm}
-            disabled={loading}
-          >
-            {loading
-              ? 'Processing...'
-              : isOverQuota
-              ? `I understand, switch to ${targetMeta.label}`
-              : 'Confirm switch'}
-          </BBButton>
+          {isOverQuota ? (
+            <BBButton
+              variant="default"
+              size="lg"
+              className="w-full justify-center"
+              onClick={() => {
+                onClose()
+                navigate('/')
+              }}
+            >
+              Manage storage
+            </BBButton>
+          ) : (
+            <BBButton
+              variant="default"
+              size="lg"
+              className="w-full justify-center"
+              onClick={handleConfirm}
+              disabled={loading}
+            >
+              {loading ? 'Processing...' : 'Confirm switch'}
+            </BBButton>
+          )}
         </div>
       </div>
     </div>
