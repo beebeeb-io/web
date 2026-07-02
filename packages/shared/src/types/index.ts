@@ -1178,40 +1178,29 @@ export interface AdminBillingStats {
 /**
  * Admin runtime config — GET /api/v1/admin/config (admin settings page).
  * Reconciled field-by-field against the server emission site
- * `beebeeb-api/src/routes/admin.rs` `admin_config()` json! @ 6880-6888 (task 0752,
- * runtime-probed 2026-06-10). The server emits EXACTLY: notifications_configured,
- * notification_connector_count, stripe_configured, stripe_webhook_configured,
- * email_backend, blob_store, opaque_enabled. Everything else below is a PHANTOM the
- * admin Settings page reads defensively — kept optional (not deleted) so those reads
- * type-check; they render "not configured" because the server never sends them.
+ * `beebeeb-api/src/routes/admin.rs` `admin_config()` json! @ 6923-6931 (task 0752,
+ * runtime-probed 2026-06-10; re-verified task 1151). The server emits EXACTLY:
+ * notifications_configured, notification_connector_count, stripe_configured,
+ * stripe_webhook_configured, email_backend, blob_store, opaque_enabled. There is no
+ * `email`/`slack`/`turnstile` nested object — those were a phantom removed in 1151;
+ * do not reintroduce fields here without a matching server emission.
  */
 export interface AdminConfig {
-  // ── Actually emitted by GET /admin/config (server admin.rs:6880-6888) ──
-  /** Active notification connectors > 0 — server admin.rs:6881. */
+  // ── Actually emitted by GET /admin/config (server admin.rs:6923-6931) ──
+  /** Active notification connectors > 0 — server admin.rs:6924. */
   notifications_configured?: boolean
-  /** Count of active notification connectors — server admin.rs:6882. */
+  /** Count of active notification connectors — server admin.rs:6925. */
   notification_connector_count?: number
-  /** Live billing wired (`STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET`) — server admin.rs:6883. */
+  /** Live billing wired (`STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET`) — server admin.rs:6926. */
   stripe_configured?: boolean
-  /** Webhook secret set so signatures are verified, not skipped — server admin.rs:6884. */
+  /** Webhook secret set so signatures are verified, not skipped — server admin.rs:6927. */
   stripe_webhook_configured?: boolean
-  /** Email backend label (e.g. "smtp" / "console") — server admin.rs:6885. */
+  /** Email backend label (e.g. "smtp" / "console") — server admin.rs:6928. */
   email_backend?: string
-  /** Default storage pool provider label (e.g. "s3" / "local") — server admin.rs:6886. */
+  /** Default storage pool provider label (e.g. "s3" / "local") — server admin.rs:6929. */
   blob_store?: string
-  /** Always true — OPAQUE auth is enabled — server admin.rs:6887. */
+  /** Always true — OPAQUE auth is enabled — server admin.rs:6930. */
   opaque_enabled?: boolean
-
-  // ── PHANTOM: read by admin settings.tsx (defensively, `?.`) but the server
-  //    does NOT emit these. Optional, not deleted, so the reads type-check.
-  //    Follow-up (not this task): rewire settings.tsx to the real fields above
-  //    (email_backend instead of `email`, etc.) and drop these.
-  /** PHANTOM — server emits the flat `email_backend` (above), not an `email` object. */
-  email?: { provider: string | null; configured: boolean } | null
-  /** PHANTOM — server does not emit a `slack` config object. */
-  slack?: { configured: boolean; webhook_url_prefix: string | null } | null
-  /** PHANTOM — server does not emit `turnstile` (task 0750; admin.rs has no such key). */
-  turnstile?: { configured: boolean; sitekey_prefix?: string } | null
 }
 
 export type AbuseReportStatus = 'pending' | 'reviewing' | 'actioned' | 'dismissed'
