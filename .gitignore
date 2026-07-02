@@ -82,3 +82,4 @@ graphify-out/cache/
 graphify-out/.graphify_root
 app.json
 .claude/worktrees/
+/e2e/screenshots/

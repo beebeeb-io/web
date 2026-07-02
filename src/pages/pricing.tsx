@@ -5,13 +5,16 @@ import { BBChip } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useToast } from '../components/toast'
 import { getToken, createCheckoutSession, getPlans, type Plan } from '../lib/api'
-import { PRICING_PAGE_PLANS, type PricingPlanDef } from '../lib/plan-constants'
+import { PRICING_PAGE_PLANS, MARKETED_PLAN_SLUGS, type PricingPlanDef } from '../lib/plan-constants'
 
 type BillingCycle = 'monthly' | 'yearly'
 
 type PlanDef = PricingPlanDef
 
-const fallbackPlans = PRICING_PAGE_PLANS
+// Pricing v2: market Basic, Pro, and Teams (slug `business`). Free is removed.
+// Teams is back as a visible 3rd tier (RESOLVED 2026-06-30).
+const marketed = new Set<string>(MARKETED_PLAN_SLUGS)
+const fallbackPlans = PRICING_PAGE_PLANS.filter((p) => marketed.has(p.id))
 
 const trustPoints: [string, string, string][] = [
   ['shield', 'All plans E2E encrypted', 'AES-256-GCM · keys never leave your device'],
@@ -47,8 +50,8 @@ const faqItems: FaqItem[] = [
     a: 'We support SEPA Direct Debit, Visa, Mastercard, and invoice billing for Business plans. All prices are in EUR, billed in EUR — no currency conversion surprises. VAT is handled automatically with reverse charge for EU businesses.',
   },
   {
-    q: 'Is there a free tier?',
-    a: 'Yes. The Free plan gives you 5 GB of end-to-end encrypted storage with no time limit and no credit card required. Upgrade when you need more space.',
+    q: 'Is there a free trial?',
+    a: 'Yes. Starter, Basic and Pro all come with a 14-day free trial — no charge until day 15, and you can cancel any time before then. There is no permanently free tier: we do not mine your data to subsidise one, so a fair price is the only thing keeping the lights on.',
   },
   {
     q: 'What makes Beebeeb different from other encrypted storage?',
@@ -231,7 +234,9 @@ export function Pricing() {
     if (!apiPlans) return fallbackPlans
     return fallbackPlans.map(fp => {
       const ap = apiPlans.find(p => p.id === fp.id)
-      if (!ap || fp.comingSoon) return fp
+      // Keep the static coming-soon card if either the constant or the server
+      // marks it coming-soon / not purchasable (Teams stays non-checkout).
+      if (!ap || fp.comingSoon || ap.coming_soon || ap.purchasable === false) return fp
       const monthlyEq = ap.price_yearly_eur > 0 ? ap.price_yearly_eur / 12 : 0
       const tbCount = Math.round(ap.storage_bytes / 1_000_000_000_000)
       const perTbMonthly = tbCount > 0
@@ -328,11 +333,15 @@ export function Pricing() {
             </div>
           </div>
 
-          {/* Plans grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 p-7 bg-paper-2">
-            {plans.map((p) => (
-              <PlanCard key={p.id} plan={p} cycle={cycle} onSelect={handleSelect} />
-            ))}
+          {/* Plans grid — 4 marketed tiers (Starter · Basic · Pro · Teams),
+              centered as a group (not stretched). Teams renders as a coming-soon
+              card with no checkout CTA. */}
+          <div className="flex justify-center p-7 bg-paper-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 w-full max-w-[1120px]">
+              {plans.map((p) => (
+                <PlanCard key={p.id} plan={p} cycle={cycle} onSelect={handleSelect} />
+              ))}
+            </div>
           </div>
 
           {/* Trust strip */}
@@ -399,7 +408,7 @@ export function Pricing() {
         {/* Bottom CTA */}
         <div className="text-center pb-4">
           <p className="text-[11.5px] text-ink-4">
-            Start free with 5 GB — no credit card required. Cancel paid plans anytime.
+            14-day free trial on Starter, Basic and Pro — no charge until day 15, cancel anytime.
             Operated by Initlabs B.V., Wijchen, Netherlands.
           </p>
         </div>

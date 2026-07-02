@@ -94,7 +94,6 @@ export function UpgradeNudgeModal({
       const { url } = await createCheckoutSession({
         plan: nextSlug,
         billing_cycle: 'yearly',
-        seats: 1,
       })
       window.location.href = url
     } catch (err) {

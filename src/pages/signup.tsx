@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useState } from 'react'
-import { Link, useSearchParams, useNavigate } from 'react-router-dom'
+import { Link, useSearchParams, useNavigate, useLocation } from 'react-router-dom'
 import { AuthShell } from '../components/auth-shell'
 import { BBButton } from '@beebeeb/shared'
 import { BBCheckbox } from '@beebeeb/shared'
@@ -13,9 +13,19 @@ export const REFERRAL_CODE_KEY   = 'bb_ref_code'
 
 export function Signup() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [searchParams] = useSearchParams()
 
-  const [email, setEmail] = useState('')
+  // When onboarding's gated register-start is rejected (403 pilot_key_required),
+  // it bounces back here with the email + entered key + the server's message so
+  // we can re-render the form with the error inline next to the key field.
+  const navState = location.state as
+    | { email?: string; pilotKey?: string; pilotKeyError?: string }
+    | null
+
+  const [email, setEmail] = useState(navState?.email ?? '')
+  const [pilotKey, setPilotKey] = useState(navState?.pilotKey ?? '')
+  const [pilotKeyError, setPilotKeyError] = useState(navState?.pilotKeyError ?? '')
   const [accepted, setAccepted] = useState(false)
   const [error, setError] = useState('')
 
@@ -36,6 +46,7 @@ export function Signup() {
   function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setError('')
+    setPilotKeyError('')
 
     if (!email.trim()) {
       setError('Email is required.')
@@ -48,7 +59,14 @@ export function Signup() {
       return
     }
 
-    navigate('/onboarding', { state: { email } })
+    if (!pilotKey.trim()) {
+      setPilotKeyError('A pilot access key is required while Beebeeb is in private development.')
+      return
+    }
+
+    // The key is verified server-side at register-start (during onboarding). We
+    // carry it forward in router state; onboarding threads it onto that request.
+    navigate('/onboarding', { state: { email, pilotKey: pilotKey.trim() } })
   }
 
   return (
@@ -60,6 +78,17 @@ export function Signup() {
       hideTrust
     >
       <form onSubmit={handleSubmit}>
+        {/* Private-development notice — honest, brief, no amber (reserved for the CTA). */}
+        <div className="mb-4 rounded-lg border border-line bg-paper-2 px-3.5 py-3">
+          <p className="text-[13px] font-semibold text-ink mb-0.5">
+            Beebeeb is in private development
+          </p>
+          <p className="text-xs text-ink-3 leading-relaxed">
+            Signups are limited to pilot users right now — you'll need an access key.
+            Contact the team if you're a pilot.
+          </p>
+        </div>
+
         <BBInput
           label="Email"
           type="email"
@@ -68,6 +97,20 @@ export function Signup() {
           onChange={(e) => setEmail(e.currentTarget.value)}
           icon="mail"
           className="mb-3.5"
+          required
+        />
+
+        <BBInput
+          label="Pilot access key"
+          type="text"
+          placeholder="Enter your access key"
+          value={pilotKey}
+          onChange={(e) => { setPilotKey(e.currentTarget.value); setPilotKeyError('') }}
+          icon="key"
+          className="mb-3.5"
+          autoComplete="off"
+          error={pilotKeyError || undefined}
+          data-testid="pilot-key-input"
           required
         />
 
@@ -96,7 +139,7 @@ export function Signup() {
           variant="amber"
           size="lg"
           className="w-full"
-          disabled={!accepted || !email.trim()}
+          disabled={!accepted || !email.trim() || !pilotKey.trim()}
         >
           Continue
         </BBButton>

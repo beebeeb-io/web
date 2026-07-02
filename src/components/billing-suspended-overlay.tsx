@@ -4,7 +4,7 @@ import { Icon } from '@beebeeb/shared'
 import { useAuth } from '../lib/auth-context'
 import { useDriveData } from '../lib/drive-data-context'
 import { useNavigate } from 'react-router-dom'
-import { createPortalSession } from '../lib/api'
+import { updatePaymentMethod } from '../lib/api'
 
 export function BillingSuspendedOverlay() {
   const { user } = useAuth()
@@ -24,11 +24,9 @@ export function BillingSuspendedOverlay() {
 
   async function handleUpdatePayment() {
     try {
-      const result = await createPortalSession()
-      if (result) {
-        window.location.href = result.url
-        return
-      }
+      const { url } = await updatePaymentMethod()
+      window.location.href = url
+      return
     } catch {
       // fall through to billing settings
     }

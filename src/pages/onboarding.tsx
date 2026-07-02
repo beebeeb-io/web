@@ -7,6 +7,7 @@ import { BBLogo } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { MnemonicVerify } from '../components/mnemonic-verify'
 import {
+  ApiError,
   opaqueRegisterStart,
   opaqueRegisterFinish,
 } from '../lib/api'
@@ -124,8 +125,11 @@ export function Onboarding() {
   const { refreshUser } = useAuth()
   const { setMasterKey, cryptoReady, cryptoError } = useKeys()
 
-  const navState = location.state as { email?: string } | null
+  const navState = location.state as { email?: string; pilotKey?: string } | null
   const email = navState?.email ?? ''
+  // Pilot access key, collected on the signup page while Beebeeb is in private
+  // development. Threaded onto the gated OPAQUE register-start request below.
+  const pilotKey = navState?.pilotKey ?? ''
 
   // Redirect to signup if no email in router state
   useEffect(() => {
@@ -197,7 +201,7 @@ export function Onboarding() {
       // 1. OPAQUE registration (2-round-trip)
       setProcessingStatus('Setting up account encryption...')
       const regStart = await opaqueRegistrationStart(password)
-      const serverResp = await opaqueRegisterStart(email, toBase64(regStart.message))
+      const serverResp = await opaqueRegisterStart(email, toBase64(regStart.message), pilotKey)
       const serverMsg = Uint8Array.from(atob(serverResp.server_message), c => c.charCodeAt(0))
       const regUpload = await opaqueRegistrationFinish(regStart.state, password, serverMsg)
 
@@ -277,10 +281,21 @@ export function Onboarding() {
       await refreshUser()
       navigate('/', { replace: true })
     } catch (err) {
+      // Pilot gate (private development): register-start rejects a missing/wrong
+      // key with a typed 403. The key field lives on /signup, so bounce back
+      // there with the server's message to render inline next to that field —
+      // rather than a generic onboarding error the user can't act on here.
+      if (err instanceof ApiError && err.status === 403 && err.code === 'pilot_key_required') {
+        navigate('/signup', {
+          replace: true,
+          state: { email, pilotKey, pilotKeyError: err.message },
+        })
+        return
+      }
       setError(userFriendlyError(err))
       setStep('password')
     }
-  }, [masterKeyBytes, email, password, confirmPassword, cryptoReady, cryptoError, setMasterKey, refreshUser, navigate])
+  }, [masterKeyBytes, email, pilotKey, password, confirmPassword, cryptoReady, cryptoError, setMasterKey, refreshUser, navigate])
 
   if (!email) return null
 

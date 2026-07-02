@@ -261,14 +261,26 @@ export async function signup(
 
 // ─── OPAQUE auth endpoints ─────────────────────────
 
+/**
+ * OPAQUE registration, round 1. While Beebeeb is in private development the
+ * server gates this endpoint behind a shared pilot access key: pass the
+ * user-entered key as `pilotKey` and it rides as the `X-Beebeeb-Pilot-Key`
+ * header. A missing/wrong key is rejected HERE with a typed 403
+ * (`error: "pilot_key_required"`) BEFORE anything is created server-side, so
+ * the gate must be enforced on this (register-start) request — not finish.
+ */
 export async function opaqueRegisterStart(
   email: string,
   clientMessage: string,
+  pilotKey?: string,
 ): Promise<{ server_message: string }> {
   const body: Record<string, unknown> = { email, client_message: clientMessage }
+  const headers: Record<string, string> = {}
+  if (pilotKey) headers['X-Beebeeb-Pilot-Key'] = pilotKey
   return request('/api/v1/opaque/register-start', {
     method: 'POST',
     body: JSON.stringify(body),
+    headers,
   })
 }
 
@@ -1654,6 +1666,40 @@ export async function getPlans(): Promise<Plan[]> {
   return data.plans
 }
 
+// ── WP-0: payment-method availability engine ────────────────────────────────
+
+/** A payment method offered to the user for a given charge. */
+export interface OfferedMethod {
+  /** Mollie method id, e.g. "directdebit", "ideal", "paypal". */
+  method_id: string
+  /** Human-readable display name. */
+  display_name: string
+  /** Maximum amount this method can collect in cents, or null = unlimited. */
+  max_amount_cents: number | null
+  /** Whether this method supports recurring charges. */
+  recurring: boolean
+}
+
+/**
+ * Fetch which payment methods are available for a given charge amount.
+ *
+ * @param amountCents - Gross charge amount in cents.
+ * @param sequenceType - "first" (default), "recurring", or "oneoff".
+ */
+export async function getAvailableMethods(
+  amountCents: number,
+  sequenceType: 'first' | 'recurring' | 'oneoff' = 'first',
+): Promise<OfferedMethod[]> {
+  const params = new URLSearchParams({
+    amount_cents: String(amountCents),
+    sequence_type: sequenceType,
+  })
+  const data = await request<{ methods: OfferedMethod[] }>(
+    `/api/v1/billing/available-methods?${params}`,
+  )
+  return data.methods
+}
+
 export async function getSubscription(): Promise<Subscription> {
   return request<Subscription>('/api/v1/billing/subscription')
 }
@@ -1694,14 +1740,388 @@ export async function getInvoices(): Promise<Invoice[]> {
   }))
 }
 
+// ─── Billing profile + VAT (task 0919) ───────────────
+// D2 billing data collected before the Mollie redirect. The server runs VIES on
+// PUT for B2B + cross-border (country != "NL") VAT numbers and returns the verdict
+// in the `vat_validated` STRING field. See docs/billing/compliance/00-build-spec.md §7.
+
+export type CustomerType = 'b2c' | 'b2b'
+
+/**
+ * Company registration register, REQUIRED for B2B. The server constrains it to
+ * this enum (case-insensitive, stored uppercased) and rejects null for a B2B
+ * customer with 400 ("company_registration_type is required for a B2B customer").
+ * Mirrors `COMPANY_REG_TYPES` in server billing.rs.
+ */
+export type CompanyRegistrationType =
+  | 'KVK'
+  | 'HRB'
+  | 'SIREN'
+  | 'KBO'
+  | 'CVR'
+  | 'ORGNR'
+  | 'OTHER'
+
+/**
+ * VIES verdict the server attaches to a saved billing profile (`vat_validated`).
+ * It is a STRING — the server always returns 200 (never 400 for a bad number).
+ *   valid          → VIES valid → reverse charge / 0% VAT
+ *   invalid        → well-formed but not VIES-registered → inline invalid error
+ *   invalid_format → fails the per-country format check → inline invalid error
+ *   unreachable    → VIES service down → "charged with local VAT" copy
+ *   unchecked      → no VIES run (domestic NL B2B, or no VAT number / B2C)
+ */
+export type VatState =
+  | 'valid'
+  | 'invalid'
+  | 'invalid_format'
+  | 'unreachable'
+  | 'unchecked'
+
+/** VAT treatment returned by the engine. Mirrors `vat_engine::resolve_vat`. */
+export type VatTreatment =
+  | 'domestic'
+  | 'oss_destination'
+  | 'reverse_charge'
+  | 'out_of_scope'
+  | 'micro_threshold_home'
+
+/** Editable billing-profile fields (PUT body). B2B fields are optional. */
+export interface BillingProfilePayload {
+  full_name: string
+  billing_country: string // ISO-3166-1 alpha-2
+  billing_street: string
+  billing_postal: string
+  billing_city: string
+  customer_type: CustomerType
+  company_name?: string | null
+  vat_number?: string | null
+  company_registration_number?: string | null
+  company_registration_type?: CompanyRegistrationType | null
+}
+
+/** Billing profile as returned on read — payload plus the VIES verdict string. */
+export interface BillingProfile extends BillingProfilePayload {
+  vat_validated: VatState
+}
+
+/** Normalise a raw `vat_validated` value into a known VatState. */
+function normalizeVatState(raw: unknown): VatState {
+  switch (raw) {
+    case 'valid':
+    case 'invalid':
+    case 'invalid_format':
+    case 'unreachable':
+      return raw
+    default:
+      return 'unchecked'
+  }
+}
+
+/**
+ * GET /api/v1/billing/profile — the current user's billing profile, or an empty
+ * shell with the same field names when none has been saved yet. We normalise
+ * nulls into the shape the form expects.
+ */
+export async function getBillingProfile(): Promise<BillingProfile> {
+  const raw = await request<Partial<BillingProfile>>('/api/v1/billing/profile')
+  return {
+    full_name: raw.full_name ?? '',
+    billing_country: raw.billing_country ?? '',
+    billing_street: raw.billing_street ?? '',
+    billing_postal: raw.billing_postal ?? '',
+    billing_city: raw.billing_city ?? '',
+    customer_type: raw.customer_type === 'b2b' ? 'b2b' : 'b2c',
+    company_name: raw.company_name ?? null,
+    vat_number: raw.vat_number ?? null,
+    company_registration_number: raw.company_registration_number ?? null,
+    company_registration_type: raw.company_registration_type ?? null,
+    vat_validated: normalizeVatState(raw.vat_validated),
+  }
+}
+
+/**
+ * PUT /api/v1/billing/profile — persist the billing profile BEFORE redirecting
+ * to Mollie. The server validates the country, runs VIES for cross-border B2B
+ * VAT numbers, and returns the stored profile incl. the `vat_validated` STRING
+ * verdict so the caller can reflect reverse-charge / invalid / local-VAT status.
+ * The server returns 200 even for an invalid number — the verdict is in the body.
+ */
+export async function saveBillingProfile(
+  payload: BillingProfilePayload,
+): Promise<BillingProfile> {
+  const raw = await request<Partial<BillingProfile>>('/api/v1/billing/profile', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+  // The server echoes the stored row; fall back to the payload for any field it
+  // does not return so the form stays consistent.
+  return {
+    full_name: raw.full_name ?? payload.full_name,
+    billing_country: raw.billing_country ?? payload.billing_country,
+    billing_street: raw.billing_street ?? payload.billing_street,
+    billing_postal: raw.billing_postal ?? payload.billing_postal,
+    billing_city: raw.billing_city ?? payload.billing_city,
+    customer_type: raw.customer_type === 'b2b' ? 'b2b' : payload.customer_type,
+    company_name: raw.company_name ?? payload.company_name ?? null,
+    vat_number: raw.vat_number ?? payload.vat_number ?? null,
+    company_registration_number:
+      raw.company_registration_number ?? payload.company_registration_number ?? null,
+    company_registration_type:
+      raw.company_registration_type ?? payload.company_registration_type ?? null,
+    vat_validated: normalizeVatState(raw.vat_validated),
+  }
+}
+
+/** Live VAT-inclusive price preview. All amounts are integer cents. */
+export interface VatPreview {
+  net_cents: number
+  vat_rate_bps: number
+  vat_amount_cents: number
+  gross_cents: number
+  treatment: VatTreatment
+  /** True when the engine resolved reverse charge — the "btw verlegd / Art. 196"
+   *  note applies. Carried through from the server's `reverse_charge_note`. */
+  reverse_charge_note: boolean
+}
+
+/** Raw vat-preview body as the server sends it: the VAT amount key is
+ *  `vat_cents` (NOT `vat_amount_cents`). See server billing.rs. */
+interface RawVatPreview {
+  net_cents: number
+  vat_rate_bps: number
+  vat_cents: number
+  gross_cents: number
+  treatment: VatTreatment
+  reverse_charge_note?: boolean
+}
+
+/**
+ * GET /api/v1/billing/vat-preview — the VAT-inclusive price for a plan/cycle as
+ * the user picks country + customer type, BEFORE they commit. `country` + `type`
+ * are passed explicitly, so this NEVER previews reverse_charge (that only applies
+ * after a profile VIES pass); the conservative D5 default shows destination/home
+ * VAT.
+ *
+ * The server returns the VAT amount under `vat_cents`; we normalise it to
+ * `vat_amount_cents` so the UI never reads an undefined key (which rendered the
+ * VAT line as EUR 0.00).
+ */
+export async function getVatPreview(params: {
+  plan: string
+  cycle: 'monthly' | 'yearly'
+  country: string
+  type: CustomerType
+  quantity?: number
+}): Promise<VatPreview> {
+  const qs = new URLSearchParams({
+    plan: params.plan,
+    cycle: params.cycle,
+    country: params.country,
+    type: params.type,
+  })
+  if (params.quantity != null) qs.set('quantity', String(params.quantity))
+  const raw = await request<RawVatPreview>(`/api/v1/billing/vat-preview?${qs.toString()}`)
+  return {
+    net_cents: raw.net_cents,
+    vat_rate_bps: raw.vat_rate_bps,
+    vat_amount_cents: raw.vat_cents,
+    gross_cents: raw.gross_cents,
+    treatment: raw.treatment,
+    reverse_charge_note: raw.reverse_charge_note ?? false,
+  }
+}
+
+/** A row from GET /api/v1/billing/invoices (Mollie/VAT-compliant invoices). */
+export interface BillingInvoice {
+  id: string
+  invoice_number: string
+  invoice_date: string
+  amount_gross_cents: number
+  amount_net_cents: number
+  vat_amount_cents: number
+  vat_rate_bps: number
+  status: string
+  vat_treatment: VatTreatment
+  pdf_url: string
+}
+
+/** Raw invoice row as the server sends it: the invoice number key is `number`
+ *  (NOT `invoice_number`). Other keys (id, *_cents, pdf_url, …) already match. */
+interface RawBillingInvoice extends Omit<BillingInvoice, 'invoice_number'> {
+  number: string
+}
+
+/**
+ * GET /api/v1/billing/invoices — the VAT-compliant invoice list backed by the
+ * `invoices` table (NOT Stripe). Each row carries a `pdf_url` pointing at
+ * `/api/v1/billing/invoices/{id}/pdf`. `stripe_configured` is always false now.
+ *
+ * The server returns the invoice number under `number`; we normalise it to
+ * `invoice_number` so the list cell, the download aria-label, and the saved PDF
+ * filename are populated (they previously read an undefined key → blank/"undefined").
+ */
+export async function getBillingInvoices(): Promise<BillingInvoice[]> {
+  const data = await request<{ invoices: RawBillingInvoice[]; stripe_configured?: boolean }>(
+    '/api/v1/billing/invoices',
+  )
+  return (data.invoices ?? []).map(({ number, ...rest }) => ({
+    ...rest,
+    invoice_number: number,
+  }))
+}
+
+/**
+ * Download an invoice PDF (GET /api/v1/billing/invoices/{id}/pdf). The endpoint
+ * is authenticated, so we fetch with the bearer token + cookie and hand back a
+ * Blob the caller saves — a plain `window.open` would 401.
+ */
+export async function downloadInvoicePdf(invoiceId: string): Promise<Blob> {
+  const token = getToken()
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const res = await fetch(
+    `${API_URL}/api/v1/billing/invoices/${invoiceId}/pdf`,
+    { headers, credentials: 'include' },
+  )
+  if (!res.ok) {
+    throw new ApiError(res.statusText, res.status)
+  }
+  return res.blob()
+}
+
+/**
+ * A money movement from GET /api/v1/billing/transactions (task 0936) — the
+ * payment-history ledger, SEPARATE from the legal `invoices` documents.
+ *
+ * `kind: 'payment'` is a charge (positive `amount_gross_cents`); `kind: 'refund'`
+ * is a credit note (NEGATIVE amount). `method` is the Mollie payment method
+ * (`ideal` / `creditcard` / `directdebit` / …) and is `null` for refunds and for
+ * pre-0936 payment rows. `invoice_number` / `invoice_pdf_url` link a payment to
+ * its invoice when one exists; refunds carry `credit_note_number` +
+ * `original_invoice_number` instead.
+ */
+export interface BillingTransaction {
+  id: string
+  kind: 'payment' | 'refund'
+  date: string
+  status: string
+  amount_gross_cents: number
+  currency: string
+  method: string | null
+  description?: string | null
+  invoice_id?: string | null
+  invoice_number?: string | null
+  invoice_pdf_url?: string | null
+  credit_note_number?: string
+  original_invoice_number?: string
+  credit_note_pdf_url?: string
+  /** Mollie payment id (`tr_…`) for a payment, or refund id for a refund. */
+  reference?: string | null
+}
+
+/**
+ * GET /api/v1/billing/transactions — the caller's payment history (money
+ * movements), newest-first. Distinct from `getBillingInvoices` (legal docs):
+ * this lists the actual charges + refunds, with method + status + the linked
+ * invoice. AuthUser-scoped server-side.
+ */
+export async function getBillingTransactions(): Promise<BillingTransaction[]> {
+  const data = await request<{ transactions: BillingTransaction[] }>(
+    '/api/v1/billing/transactions',
+  )
+  return data.transactions ?? []
+}
+
+/**
+ * Download the full payment history as a CSV (task 0942). GET
+ * /api/v1/billing/transactions/export returns a `text/csv` attachment; the
+ * endpoint is authenticated so a plain `window.open` would 401 — we fetch with
+ * the bearer token + cookie, then trigger a browser download of the blob using
+ * the server-provided filename (Content-Disposition) when present.
+ */
+export async function exportBillingTransactions(): Promise<void> {
+  const token = getToken()
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const res = await fetch(`${API_URL}/api/v1/billing/transactions/export`, {
+    headers,
+    credentials: 'include',
+  })
+  if (!res.ok) {
+    throw new ApiError(res.statusText, res.status)
+  }
+  // Prefer the server's filename from Content-Disposition; fall back to a sane default.
+  const disposition = res.headers.get('content-disposition') ?? ''
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition)
+  const filename = match?.[1] ? decodeURIComponent(match[1]) : 'beebeeb-payment-history.csv'
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
 export async function createCheckoutSession(params: {
   plan: string
   billing_cycle: string
-  seats?: number
 }): Promise<{ url: string }> {
+  // The server derives the amount from plan + billing_cycle (server-authoritative
+  // money); the client never sends a price. All plans are single-user, so there is
+  // no seats field — the previous `seats: 1` was a no-op the server ignored.
   return request<{ url: string }>('/api/v1/billing/checkout', {
     method: 'POST',
     body: JSON.stringify(params),
+  })
+}
+
+/**
+ * Start a 14-day free trial (task 0905, Pattern B — no card required).
+ *
+ * `POST /api/v1/billing/trial/start` sets the subscription to `status:'trialing'`
+ * + `trial_ends_at = now()+14d` and grants the chosen plan's quota immediately —
+ * NO Mollie call, NO payment method. Returns the new trialing subscription row.
+ *
+ * The server enforces one-trial-per-account. On a 409 the thrown ApiError carries
+ * a machine-readable `.code` the caller branches on:
+ *   - `trial_already_used`             → user already had a trial; fall back to
+ *                                        the normal paid checkout (hide the CTA).
+ *   - `trial_has_active_subscription`  → user already has an active paid sub.
+ * A 400 means the plan or billing_cycle is invalid.
+ */
+export async function startTrial(params: {
+  plan: string
+  billing_cycle: string
+}): Promise<Subscription> {
+  return request<Subscription>('/api/v1/billing/trial/start', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
+/**
+ * Convert an active trial to a paid subscription (task 0905, UNIT B).
+ *
+ * `POST /api/v1/billing/trial/convert` (no body) creates the Mollie €0 first
+ * payment (mandate capture) and the deferred subscription (`startDate =
+ * trial_ends_at`, no double charge) and returns the Mollie hosted-checkout
+ * `{url}` — the caller redirects to it exactly like `createCheckoutSession`,
+ * REUSING the 0865 poll-confirmed return machine (set the pending-checkout
+ * marker before redirecting).
+ *
+ * On a 409 the thrown ApiError's `.code` tells the caller where to route:
+ *   - `trial_not_active`        → the trial lapsed to Free; send the user to the
+ *                                 normal plan picker / checkout, NOT convert.
+ *   - `trial_already_subscribed`→ already converted; send to billing management.
+ * A 400 means Mollie is not configured server-side.
+ */
+export async function convertTrial(): Promise<{ url: string }> {
+  return request<{ url: string }>('/api/v1/billing/trial/convert', {
+    method: 'POST',
   })
 }
 
@@ -1723,6 +2143,16 @@ export async function createPortalSession(): Promise<{ url: string } | null> {
 
 export async function getPaymentMethod(): Promise<PaymentMethod> {
   return request<PaymentMethod>('/api/v1/billing/payment-method')
+}
+
+/**
+ * Start a native payment-method update (task 0925). Provider-agnostic: under
+ * Mollie this returns a hosted card re-auth checkout URL; for legacy Stripe
+ * customers it returns a Stripe portal URL. The client just redirects the
+ * browser to `url`. 404 if there is no active subscription.
+ */
+export async function updatePaymentMethod(): Promise<{ url: string }> {
+  return request<{ url: string }>('/api/v1/billing/payment-method/update', { method: 'POST' })
 }
 
 export async function cancelSubscription(): Promise<{ message: string; cancel_at?: string }> {
@@ -1763,11 +2193,16 @@ export async function claimWinback(): Promise<WinbackClaimResponse> {
   return request<WinbackClaimResponse>('/api/v1/billing/winback-claim', { method: 'POST' })
 }
 
-export async function switchBillingCycle(billing_cycle: 'monthly' | 'yearly'): Promise<{ billing_cycle: string }> {
-  return request<{ billing_cycle: string }>('/api/v1/billing/switch-cycle', {
-    method: 'POST',
-    body: JSON.stringify({ billing_cycle }),
-  })
+export async function switchBillingCycle(
+  billing_cycle: 'monthly' | 'yearly',
+): Promise<{ billing_cycle: string; annual_billing_start?: string }> {
+  return request<{ billing_cycle: string; annual_billing_start?: string }>(
+    '/api/v1/billing/switch-cycle',
+    {
+      method: 'POST',
+      body: JSON.stringify({ billing_cycle }),
+    },
+  )
 }
 
 export async function downgradePlan(params: {
@@ -1776,13 +2211,12 @@ export async function downgradePlan(params: {
   effective_date: string
   current_plan: string
   new_plan: string
-  storage_warning: {
-    current_bytes: number
-    new_quota_bytes: number
-    grace_days: number
-    auto_delete_date: string
-  } | null
 }> {
+  // Task 1061 (WP-C, decision 2): a downgrade below current usage is now
+  // rejected outright (422 `downgrade_blocked_over_quota`) rather than
+  // scheduled with a `storage_warning` — the DowngradeDialog pre-computes the
+  // over-quota state client-side from props it already has, so a 200 response
+  // here is always under-quota by construction.
   return request('/api/v1/billing/downgrade', {
     method: 'POST',
     body: JSON.stringify(params),
@@ -1806,6 +2240,13 @@ export interface StorageAddonState {
   storage_addon_price_cents: number | null
   base_storage_tb: number
   effective_storage_bytes: number
+  /**
+   * Set by the POST /addons apply response when the change was charged off-session
+   * to a SEPA Direct Debit mandate (task 0941): the grant is DEFERRED until the
+   * mandate settles (a few days). Drives the "upgrade pending" UI. Absent/false for
+   * synchronous (credit-card) applies, which grant immediately.
+   */
+  pending?: boolean
 }
 
 /** GET /api/v1/billing/addons — current add-on state */
@@ -1899,7 +2340,44 @@ export async function updateStorageAddons(params: {
     storage_addon_price_cents: typeof raw.storage_addon_price_cents === 'number' ? raw.storage_addon_price_cents : null,
     base_storage_tb: baseTB,
     effective_storage_bytes: effectiveBytes,
+    pending: raw.pending === true,
   }
+}
+
+/**
+ * Instant-pay storage add-on checkout (task 0941, SEPA two-path). For a SEPA
+ * Direct Debit subscriber, charging the mandate settles in a few days; this
+ * endpoint instead returns a hosted Mollie redirect for an instant one-off
+ * payment that grants the extra storage via webhook on `paid` — it creates NO
+ * mandate charge. The caller redirects the browser to `checkout_url`.
+ *
+ * POST /api/v1/billing/storage-addon/checkout
+ *   body { extra_storage_tb, extra_users? } → { checkout_url }
+ */
+export async function createStorageAddonCheckout(params: {
+  extra_storage_tb: number
+  extra_users?: number
+}): Promise<{ checkout_url: string }> {
+  return request<{ checkout_url: string }>('/api/v1/billing/storage-addon/checkout', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
+/**
+ * Task 1062 (WP-D, decision 5) — settle the dunning arrears in full with a
+ * one-off Mollie charge. The server computes the REAL outstanding amount from
+ * Mollie's truth (not an estimate) and returns a hosted checkout URL; the
+ * caller redirects the browser there. On `paid`, the webhook un-freezes the
+ * account (`billing_state` -> `'active'`) — the user returns to a normal,
+ * writable account.
+ *
+ * POST /api/v1/billing/pay-overdue → { checkout_url, arrears_cents }
+ */
+export async function payOverdue(): Promise<{ checkout_url: string; arrears_cents: number }> {
+  return request<{ checkout_url: string; arrears_cents: number }>('/api/v1/billing/pay-overdue', {
+    method: 'POST',
+  })
 }
 
 /**

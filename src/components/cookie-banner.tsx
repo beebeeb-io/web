@@ -1,12 +1,13 @@
 /**
  * GDPR cookie consent banner.
  *
- * Beebeeb uses session cookies for authentication (always essential) and
- * loads Stripe.js on /billing for payment processing (functional).
+ * Beebeeb uses session cookies for authentication (always essential). Payments
+ * are handled by redirecting to our payment provider's own hosted page — no
+ * third-party payment JS or cookies run on beebeeb.io.
  *
  * Two explicit choices:
- *   Accept all         → essential + functional (Stripe on /billing)
- *   Essential only     → auth only; Stripe blocked on /billing with a notice
+ *   Accept all         → essential + functional
+ *   Essential only     → essential (auth session) only
  *
  * Consent is stored in localStorage under 'bb_cookie_consent'. The banner
  * does not reappear once a choice is made.
@@ -51,8 +52,8 @@ export function CookieBanner() {
       <div className="pointer-events-auto w-full max-w-3xl mx-auto flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-line bg-paper-2/95 backdrop-blur-sm shadow-2 px-4 py-3 animate-slide-in-up">
         {/* Text */}
         <p className="text-[12px] text-ink-2 leading-relaxed flex-1">
-          We use session cookies for authentication (always on). On the billing page,
-          Stripe sets cookies for payment processing.{' '}
+          We use session cookies for authentication (always on). Payments happen on
+          our payment provider's hosted page — no third-party cookies are set on beebeeb.io.{' '}
           <Link
             to="/cookies"
             className="underline underline-offset-2 text-ink-2 hover:text-ink transition-colors"

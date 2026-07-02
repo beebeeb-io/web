@@ -392,6 +392,12 @@ export interface Plan {
   is_active?: boolean
   sort_order?: number
   badge?: string | null
+  /** Pricing v2: false for tiers shown but not yet sellable (e.g. Teams/business). */
+  purchasable?: boolean
+  /** Pricing v2: true for a "coming soon" tier rendered without a checkout CTA. */
+  coming_soon?: boolean
+  /** Pricing v2: length of the free trial in days (e.g. 14 for Starter/Basic/Pro). */
+  trial_days?: number
   stripe_updated_at?: string | null
   local_updated_at?: string | null
   last_pushed_at?: string | null
@@ -443,6 +449,91 @@ export interface Subscription {
   storage_grace_deadline?: string | null
   /** Set when status === 'paused' (task 0544). ISO timestamp when billing resumes. */
   pause_until?: string | null
+  /**
+   * Set when status === 'trialing' (task 0905, 14-day free trial). RFC3339
+   * timestamp when the trial ends — drives the "N days left" banner and the
+   * convert/add-payment CTA. Null/absent for non-trial subscriptions.
+   */
+  trial_ends_at?: string | null
+  /**
+   * Whether the active billing provider supports subscription pause/resume
+   * (task 0924). True only under Stripe; false under Mollie (no native pause).
+   * The web cancel flow gates its "Pause instead?" step on this — a Mollie sub
+   * can never newly enter the pause card (where pauseSubscription() would 501).
+   */
+  pause_supported?: boolean
+  /**
+   * The active mandate's payment method (task 0941). `'directdebit'` = a SEPA
+   * mandate, which can only be charged off-session (settles in a few days) — the
+   * storage-add-on flow then offers an instant pay-now path alongside the mandate
+   * charge. `'creditcard'` (or null) = synchronous, immediate-charge UX. Null for
+   * trial/legacy subs without a captured mandate.
+   */
+  mandate_method?: 'creditcard' | 'directdebit' | null
+  /**
+   * UPGRADE rate-limit eligibility (task 1057). Upgrades (strictly-higher tier)
+   * are capped at `upgrade_limit` per `upgrade_window_days` (default 2/60d) to
+   * stop upgrade cycling. The web disables the UPGRADE CTAs from these and shows
+   * "Next upgrade available {date}" when `can_upgrade === false`. DOWNGRADES are
+   * NEVER gated — they are always allowed and apply at the next renewal — so
+   * there is intentionally no downgrade-eligibility field here (the 1056
+   * `plan_changes_*` / `can_change_plan` set was removed).
+   */
+  upgrades_used?: number
+  /** `max_upgrades` allowed per window (task 1057). */
+  upgrade_limit?: number
+  /** Rolling upgrade-window size in days (task 1057). */
+  upgrade_window_days?: number
+  /**
+   * When the next upgrade slot frees: the OLDEST in-window upgrade's
+   * `created_at + window_days`, as an RFC3339 string. Populated only when at the
+   * limit (`can_upgrade === false`); null when a slot is free now (task 1057).
+   */
+  upgrade_next_available_at?: string | null
+  /** `upgrades_used < upgrade_limit` — the upgrade gate (task 1057). */
+  can_upgrade?: boolean
+  /**
+   * Extra storage purchased via the storage add-on (task 0943). The
+   * `GET /billing/subscription` response carries this so the post-checkout
+   * confirmation poll can detect an instant-pay STORAGE upgrade (plan stays the
+   * same, only this rises) — not just plan/cycle changes. TB count, 0 when none.
+   */
+  extra_storage_tb?: number
+  /**
+   * The pinned storage-quantity axis (task 0867). For Business plans it is the
+   * provisioned TB count; for flat plans it mirrors `extra_storage_tb`. Optional
+   * because the subscription endpoint does not always include it — the poll
+   * treats an increase here as confirmation when present.
+   */
+  storage_tb_quantity?: number
+  /**
+   * Authoritative billed total in cents — the amount Mollie actually charges on
+   * this subscription row (task 0947). The `/billing` summary headline renders
+   * the monthly total from THIS, not a client-side WASM recompute (which folded
+   * in a hard-coded €10.99/TB that could drift from Mollie). Null for
+   * legacy/Stripe/mock subscriptions that never captured a Mollie amount — the
+   * web then falls back to `base_plan_cents + addon_cents`.
+   */
+  mollie_amount_cents?: number | null
+  /**
+   * The catalog-authoritative recurring BASE price (cents) for plan + cycle +
+   * seats, with NO add-ons folded in (task 0947). Drives the "Pro €54.95/mo"
+   * line in the breakdown. 0 for free / plans with no catalog price.
+   */
+  base_plan_cents?: number
+  /**
+   * The add-on total (cents) for the cycle — extra storage + extra users — from
+   * the server's per-unit prices (task 0947). Rendered as a separate "+ N TB ×
+   * €X.XX/mo" line in the breakdown. 0 when no add-ons.
+   */
+  addon_cents?: number
+  /**
+   * Per-TB storage add-on price (cents) for this plan, sourced from the server's
+   * `storage_addon_price_cents` (task 0947) — NOT a hard-coded literal. The web
+   * renders "N TB × €{addon_per_tb_cents/100}/mo" from this. Null for plans with
+   * no storage add-on.
+   */
+  addon_per_tb_cents?: number | null
 }
 
 export interface Invoice {
@@ -477,6 +568,16 @@ export interface PaymentMethod {
   exp_year?: number
   iban_last4?: string
   is_default: boolean
+  /**
+   * SEPA Direct Debit details (Mollie directdebit mandates, task 0942). Additive,
+   * nullable — only present for a SEPA mandate; null/absent for card/legacy.
+   *   iban_masked          — pre-masked IBAN, e.g. "NL10 •••• •••• •••• 9438"
+   *   mandate_reference    — Mollie mandate ref, e.g. "SD54-2280-8872-1850"
+   *   account_holder_name  — mandate account holder, e.g. "T. Test"
+   */
+  iban_masked?: string | null
+  mandate_reference?: string | null
+  account_holder_name?: string | null
 }
 
 export interface ReferralStats {

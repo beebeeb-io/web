@@ -24,6 +24,7 @@ import { useSearchIndex, type NodeNameResolver } from '../hooks/use-search-index
 import { QuotaWarning } from './quota-warning'
 import { QuickAccess } from './quick-access'
 import { EmailVerifyBanner } from './email-verify-banner'
+import { TrialBanner } from './trial-banner'
 import { AnnouncementBanner } from './announcement-banner'
 import { IosAppBanner } from './ios-app-banner'
 import { formatStorageSI } from '../lib/format'
@@ -721,6 +722,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
         <IosAppBanner />
         <AnnouncementBanner />
         <EmailVerifyBanner />
+        <TrialBanner />
         {isFrozen && (
           <div className="bg-amber/10 border-b border-amber/20 px-4 py-2.5 text-center text-[13px] text-ink-2">
             Your account is frozen. You can view and download files but cannot upload, delete, or share.{' '}

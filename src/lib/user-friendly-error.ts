@@ -43,6 +43,28 @@ function isNetworkError(err: unknown): boolean {
   return false
 }
 
+/**
+ * Upgrade rate-limit (task 1057). Upgrades (strictly-higher tier) are capped at
+ * N per D days to stop cycling; downgrades are NEVER capped. The UI pre-computes
+ * eligibility and disables the upgrade CTAs at the limit, so this should rarely
+ * fire — but a race (another tab/device used the last slot between fetch and
+ * submit) can still surface the raw server 400 "upgrade limit reached: at most N
+ * upgrades are allowed per D days. Your next upgrade is available on DATE.".
+ * Map it to a calm line, preserving the next-available date when present.
+ */
+function upgradeLimitMessage(message: string): string | null {
+  if (!/upgrade limit reached/i.test(message)) return null
+  const date = message.match(/next upgrade is available on ([^.]+)\./i)
+  if (date) {
+    return `You've reached the upgrade limit for now. Your next upgrade is available on ${date[1].trim()}.`
+  }
+  const m = message.match(/at most (\d+) upgrades? are allowed per (\d+) days?/i)
+  if (m) {
+    return `You've reached the limit of ${m[1]} upgrades per ${m[2]} days. You can upgrade again later.`
+  }
+  return "You've reached the upgrade limit for now. You can upgrade again later."
+}
+
 export function userFriendlyError(err: unknown): string {
   // Network / offline takes priority — a 5xx during a flaky connection is
   // really "you have no connection", not "the server is down".
@@ -51,6 +73,12 @@ export function userFriendlyError(err: unknown): string {
   }
 
   if (err instanceof ApiError) {
+    // Upgrade rate-limit (task 1057) — a 400 whose message we want to soften,
+    // matched on the stable message fragment before generic status handling
+    // swallows it.
+    const upgradeLimit = upgradeLimitMessage(err.message)
+    if (upgradeLimit) return upgradeLimit
+
     const status = err.status
     // Typed quota errors come back with a machine-readable `code` so we don't
     // pattern-match the human message. Branch on these BEFORE the generic
@@ -63,6 +91,14 @@ export function userFriendlyError(err: unknown): string {
     if (err.code === 'quota_exceeded') {
       return 'Storage full. Free up space or upgrade your plan to keep uploading.'
     }
+    if (err.code === 'downgrade_blocked_over_quota') {
+      // Task 1061 (WP-C): the DowngradeDialog already shows the precise
+      // "free up X" blocking state before the user can even submit, so this
+      // is the fallback for the rare race (freed space in another tab,
+      // re-filled it here) — the server's own message already names the
+      // exact amount and target tier.
+      return looksUserFriendly(err.message) ? err.message : 'Free up storage before switching to this plan.'
+    }
     if (status === 401) return 'Your session expired. Sign in again.'
     if (status === 403) return "You don't have permission to do that."
     if (status === 404) return 'Not found.'
@@ -74,8 +110,10 @@ export function userFriendlyError(err: unknown): string {
     return 'Something went wrong. Try again.'
   }
 
-  if (err instanceof Error && looksUserFriendly(err.message)) {
-    return err.message
+  if (err instanceof Error) {
+    const upgradeLimit = upgradeLimitMessage(err.message)
+    if (upgradeLimit) return upgradeLimit
+    if (looksUserFriendly(err.message)) return err.message
   }
 
   return 'Something went wrong. Try again.'

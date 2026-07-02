@@ -6,13 +6,15 @@ import { Icon } from '@beebeeb/shared'
 import { useToast } from './toast'
 import { createCheckoutSession } from '../lib/api'
 import { userFriendlyError } from '../lib/user-friendly-error'
+import { BillingInfoStep } from './billing/BillingInfoStep'
 
 type BillingCycle = 'monthly' | 'yearly'
+type Step = 'cycle' | 'billing-info'
 
 interface UpgradeDialogProps {
   planId: string
   planName: string
-  /** Monthly price (displayed, not used for calculation — Stripe is source of truth) */
+  /** Monthly price (displayed only — the server derives the charged amount) */
   pricePerSeat: number
   /** Annual total price */
   priceYearlySeat: number
@@ -22,6 +24,19 @@ interface UpgradeDialogProps {
   onClose: () => void
   /** Reserved for future non-redirect upgrade flows. */
   onSuccess?: () => void
+  /**
+   * Persist the pre-checkout intent just before the redirect (task 0946). The
+   * parent owns the live subscription, so it builds the pre-state snapshot; the
+   * dialog only hands back the chosen plan/cycle. Called immediately before
+   * `window.location.href = url`. Replaces the dialog's old raw localStorage
+   * write so EVERY plan path stamps the same unified intent shape.
+   */
+  onBeforeRedirect?: (plan: string, cycle: BillingCycle) => void
+  /**
+   * TB of active storage add-on on the current subscription. When non-zero,
+   * the cycle selector shows a note that the add-on will also switch cycles.
+   */
+  activeAddOnStorageTb?: number
 }
 
 export function UpgradeDialog({
@@ -31,9 +46,11 @@ export function UpgradeDialog({
   priceYearlySeat,
   open,
   onClose,
+  onBeforeRedirect,
+  activeAddOnStorageTb = 0,
 }: UpgradeDialogProps) {
   const [cycle, setCycle] = useState<BillingCycle>('yearly')
-  const [loading, setLoading] = useState(false)
+  const [step, setStep] = useState<Step>('cycle')
   const [error, setError] = useState<string | null>(null)
   const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
   const { showToast } = useToast()
@@ -43,34 +60,51 @@ export function UpgradeDialog({
   const yearlyTotal = priceYearlySeat
   const yearlySavings = (monthlyTotal * 12) - yearlyTotal
   const monthlyEquiv = yearlyTotal / 12
+  const netCentsFallback = Math.round((cycle === 'yearly' ? yearlyTotal : monthlyTotal) * 100)
 
-  const handleSubmit = useCallback(async () => {
-    setLoading(true)
+  // Reset to the cycle step whenever the dialog is reopened, so a closed-mid-flow
+  // dialog never reopens stuck on the billing-info step.
+  const handleClose = useCallback(() => {
+    setStep('cycle')
     setError(null)
+    onClose()
+  }, [onClose])
+
+  // Final leg: the billing profile is already persisted (BillingInfoStep PUTs it
+  // before calling us), so create the Mollie checkout session and redirect — the
+  // existing 0865 pending-checkout watchdog marker is stamped here as before.
+  const proceedToPayment = useCallback(async () => {
     try {
       const { url } = await createCheckoutSession({
         plan: planId,
         billing_cycle: cycle,
-        seats: 1,
       })
-      try { localStorage.setItem('bb_pending_checkout', JSON.stringify({ plan: planId, cycle, ts: Date.now() })) } catch { /* ok */ }
+      // Stamp the unified pre-checkout intent (task 0946). The parent owns the
+      // live subscription, so it captures the pre-state snapshot; if no callback
+      // was wired, fall back to the legacy minimal marker so the abandoned-
+      // checkout watchdog still works.
+      if (onBeforeRedirect) {
+        onBeforeRedirect(planId, cycle)
+      } else {
+        try { localStorage.setItem('bb_pending_checkout', JSON.stringify({ kind: 'plan', plan: planId, cycle, ts: Date.now() })) } catch { /* ok */ }
+      }
       window.location.href = url
     } catch (checkoutErr) {
       if (checkoutErr instanceof Error && 'status' in checkoutErr && (checkoutErr as { status: number }).status === 400) {
         showToast({
           icon: 'x',
           title: 'Billing not configured',
-          description: 'Stripe integration is pending. Contact support to upgrade.',
+          description: 'Payments are not set up yet. Contact support to upgrade.',
           danger: true,
         })
-        onClose()
+        handleClose()
         return
       }
-      setError(userFriendlyError(checkoutErr))
-    } finally {
-      setLoading(false)
+      // Re-throw so BillingInfoStep surfaces the error inline and keeps its
+      // submitting state from sticking.
+      throw new Error(userFriendlyError(checkoutErr))
     }
-  }, [planId, cycle, onClose, showToast])
+  }, [planId, cycle, handleClose, showToast, onBeforeRedirect])
 
   if (!open) return null
 
@@ -79,19 +113,33 @@ export function UpgradeDialog({
       {/* Backdrop */}
       <div
         className="absolute inset-0 bg-ink/40"
-        onClick={onClose}
+        onClick={handleClose}
       />
 
       {/* Dialog */}
-      <div ref={focusTrapRef} role="dialog" aria-modal="true" aria-label={`Upgrade to ${planName}`} className="relative w-full max-w-[600px] mx-4 bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
+      <div ref={focusTrapRef} role="dialog" aria-modal="true" aria-label={`Upgrade to ${planName}`} className="relative w-full max-w-[600px] mx-4 bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden max-h-[90vh] overflow-y-auto">
         {/* Header */}
-        <div className="flex items-center gap-2.5 px-[22px] py-3.5 border-b border-line">
-          <h3 className="text-base font-bold">Upgrade to {planName}</h3>
-          <button onClick={onClose} aria-label="Close" className="ml-2 text-ink-3 hover:text-ink transition-colors">
+        <div className="flex items-center gap-2.5 px-[22px] py-3.5 border-b border-line sticky top-0 bg-paper z-10">
+          <h3 className="text-base font-bold">
+            {step === 'billing-info' ? 'Billing information' : `Upgrade to ${planName}`}
+          </h3>
+          <button onClick={handleClose} aria-label="Close" className="ml-2 text-ink-3 hover:text-ink transition-colors">
             <Icon name="x" size={16} />
           </button>
         </div>
 
+        {step === 'billing-info' ? (
+          <div className="p-[22px]">
+            <BillingInfoStep
+              planId={planId}
+              planName={planName}
+              cycle={cycle}
+              netCentsFallback={netCentsFallback}
+              onProceed={proceedToPayment}
+              onBack={() => setStep('cycle')}
+            />
+          </div>
+        ) : (
         <div className="p-[22px]">
           {/* Billing cycle */}
           <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-3 mb-2">
@@ -153,6 +201,13 @@ export function UpgradeDialog({
             </button>
           </div>
 
+          {/* Add-on coupling note: shown when a storage add-on will also switch cycles */}
+          {activeAddOnStorageTb > 0 && cycle === 'yearly' && (
+            <p className="text-[11px] text-ink-3 mb-3">
+              Your {activeAddOnStorageTb} TB storage add-on will also switch to annual billing.
+            </p>
+          )}
+
           {/* Summary */}
           <div className="p-3.5 bg-ink text-paper rounded-md mb-3">
             <div className="flex items-baseline mb-0.5">
@@ -163,7 +218,7 @@ export function UpgradeDialog({
             </div>
             <div className="text-[11px] opacity-60">
               EUR {cycle === 'yearly' ? yearlyTotal.toFixed(2) : monthlyTotal.toFixed(2)}{' '}
-              / {cycle === 'yearly' ? 'year' : 'month'} · cancel anytime
+              / {cycle === 'yearly' ? 'year' : 'month'} excl. VAT · cancel anytime
             </div>
           </div>
 
@@ -175,17 +230,25 @@ export function UpgradeDialog({
             variant="amber"
             size="lg"
             className="w-full justify-center"
-            onClick={handleSubmit}
-            disabled={loading}
+            onClick={() => { setError(null); setStep('billing-info') }}
+            data-testid="upgrade-continue"
           >
-            {loading ? 'Processing...' : 'Subscribe'}
-            {!loading && <Icon name="chevron-right" size={13} className="ml-1" />}
+            Continue
+            <Icon name="chevron-right" size={13} className="ml-1" />
           </BBButton>
 
+          {/*
+            Non-enumerated payment-method copy (0865): we don't list specific
+            methods here because the set Mollie actually offers depends on the
+            account config Guus controls — advertising one we don't enable would
+            be an honest-voice violation. Guus to confirm the enabled method set,
+            then we can enumerate (e.g. "Card · iDEAL · SEPA") if desired.
+          */}
           <div className="text-[11px] text-ink-4 text-center mt-2">
-            Card · Apple Pay · SEPA Direct Debit · iDEAL
+            Next: billing details, then choose your payment method
           </div>
         </div>
+        )}
       </div>
     </div>
   )

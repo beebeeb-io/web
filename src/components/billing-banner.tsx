@@ -25,7 +25,7 @@ export function BillingBanner() {
             <strong>{daysLeft} days</strong> to reduce your storage below your plan limit.
             After that, your oldest files will be automatically deleted.
           </span>
-          <BBButton size="sm" variant="amber" onClick={() => navigate('/billing')}>
+          <BBButton size="sm" variant="amber" onClick={() => navigate('/settings/billing')}>
             Manage storage
           </BBButton>
         </div>
