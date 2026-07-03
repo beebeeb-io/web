@@ -886,6 +886,8 @@ export async function initUpload(metadata: {
   /** True when the file is an image or video. Set by the client at upload time
    *  because MIME types are encrypted — the server cannot infer media type. */
   is_media?: boolean
+  /** True when this upload is the Keep Both result of a same-name conflict. */
+  conflict_created?: boolean
 }): Promise<UploadInitResponse> {
   try {
     const v2 = await request<UploadInitV2Response>('/api/v1/uploads/init', {
@@ -896,6 +898,7 @@ export async function initUpload(metadata: {
         parent_id: metadata.parent_id,
         profile: 'web',
         is_media: metadata.is_media ?? false,
+        conflict_created: metadata.conflict_created ?? false,
       }),
     })
     return { ...v2, protocol: 'v2' }

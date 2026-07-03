@@ -215,7 +215,7 @@ export function Drive() {
   }, [externalDecryptedNames])
 
   // ─── Duplicate-file conflict dialog ─────────────────
-  type ResolvedUpload = { file: File; replaceFileId?: string; finalName?: string }
+  type ResolvedUpload = { file: File; replaceFileId?: string; finalName?: string; conflictCreated?: boolean }
   interface PendingConflictUpload {
     conflicts: ConflictItem[]
     autoVersioned: ResolvedUpload[]
@@ -289,6 +289,7 @@ export function Drive() {
     mime_type: n.mime_type ?? '',
     size_bytes: n.size_bytes,
     is_folder: n.is_folder,
+    is_trashed: n.is_trashed,
     parent_id: n.parent_id,
     chunk_count: n.chunk_count ?? 1,
     is_starred: n.is_starred,
@@ -931,7 +932,7 @@ export function Drive() {
           ? new File([r.file], r.finalName, { type: r.file.type })
           : r.file
       uploadFilesRef.current.set(uploadId, fileToUpload)
-      doEncryptedUpload(uploadId, fileToUpload, r.replaceFileId)
+      doEncryptedUpload(uploadId, fileToUpload, r.replaceFileId, r.conflictCreated === true)
     })
   }
 
@@ -1063,7 +1064,7 @@ export function Drive() {
       ...conflicts.map((c) => {
         const finalName = getUniqueName(c.newFile.name, existingNames, usedInBatch)
         usedInBatch.add(finalName.toLowerCase())
-        return { file: c.newFile, finalName }
+        return { file: c.newFile, finalName, conflictCreated: true }
       }),
     ]
     queueResolvedUploads(resolved)
@@ -1081,7 +1082,7 @@ export function Drive() {
    *   this ID — same key as the original, so old versions remain decryptable.
    *   When undefined (normal / Keep-both mode), generates a fresh UUID.
    */
-  async function doEncryptedUpload(uploadId: string, file: File, replaceFileId?: string) {
+  async function doEncryptedUpload(uploadId: string, file: File, replaceFileId?: string, conflictCreated = false) {
     if (!isUnlocked || !cryptoReady) {
       showToast({
         icon: 'lock',
@@ -1125,7 +1126,7 @@ export function Drive() {
               : u,
           ),
         )
-      }, undefined, undefined, abortController.signal, getFileKey)
+      }, undefined, undefined, abortController.signal, getFileKey, { conflictCreated })
       const uploadedFileId = uploadedFile.id
 
       // Update the encrypted search index with the new file

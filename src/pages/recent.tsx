@@ -25,6 +25,9 @@ import { useWsEvent } from '../lib/ws-context'
 import { useSelfHealRefetch } from '../hooks/use-self-heal-refetch'
 import { userFriendlyError } from '../lib/user-friendly-error'
 import { EmptyRecent } from '../components/empty-states/empty-recent'
+import { mergeRecentlyChangedFiles } from '../lib/recent-files'
+
+const RECENT_LIMIT = 50
 
 export function Recent() {
   const { getFileKey, getFileKeyForFile, isUnlocked, cryptoReady } = useKeys()
@@ -45,8 +48,11 @@ export function Recent() {
   const fetchFiles = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await listFiles(undefined, false, { recent: true })
-      setFiles(data)
+      const [liveFiles, trashedFiles] = await Promise.all([
+        listFiles(undefined, false, { recent: true, limit: RECENT_LIMIT }),
+        listFiles(undefined, true, { recent: true, limit: RECENT_LIMIT }),
+      ])
+      setFiles(mergeRecentlyChangedFiles(liveFiles, trashedFiles, RECENT_LIMIT))
     } catch (err) {
       console.error('[Recent] Failed to load recent files:', err)
       showToast({ icon: 'x', title: 'Failed to load recent files', danger: true })
@@ -113,6 +119,16 @@ export function Recent() {
   }
 
   async function handleFileAction(action: string, file: DriveFile) {
+    if (file.is_trashed) {
+      showToast({
+        icon: 'trash',
+        title: 'Moved to trash',
+        description: 'Open Trash to restore or permanently delete this item.',
+      })
+      navigate('/trash')
+      return
+    }
+
     switch (action) {
       case 'open':
         if (file.is_folder) navigate('/')
@@ -158,17 +174,22 @@ export function Recent() {
   }
 
   async function handleBulkTrash(ids: string[]) {
+    const liveIds = ids.filter((id) => !files.find((f) => f.id === id)?.is_trashed)
+    if (liveIds.length === 0) {
+      navigate('/trash')
+      return
+    }
     try {
-      await bulkTrashFiles(ids)
-      setFiles((prev) => prev.filter((f) => !ids.includes(f.id)))
-      showToast({ icon: 'trash', title: 'Moved to trash', description: `${ids.length} file${ids.length !== 1 ? 's' : ''} moved to trash` })
+      await bulkTrashFiles(liveIds)
+      setFiles((prev) => prev.filter((f) => !liveIds.includes(f.id)))
+      showToast({ icon: 'trash', title: 'Moved to trash', description: `${liveIds.length} file${liveIds.length !== 1 ? 's' : ''} moved to trash` })
     } catch (err) {
       showToast({ icon: 'trash', title: 'Failed to trash', description: userFriendlyError(err), danger: true })
     }
   }
 
   async function handleBulkDownload(ids: string[]) {
-    const filesToDownload = files.filter((f) => ids.includes(f.id) && !f.is_folder)
+    const filesToDownload = files.filter((f) => ids.includes(f.id) && !f.is_folder && !f.is_trashed)
     for (const file of filesToDownload) {
       await handleFileDownload(file)
     }
@@ -187,7 +208,7 @@ export function Recent() {
       hasThumbnail: file.has_thumbnail ?? false,
       createdAt: file.created_at,
       updatedAt: file.updated_at,
-      location: 'Recent',
+      location: file.is_trashed ? 'Trash' : 'Recent',
       cipher: isUnlocked ? 'AES-256-GCM' : undefined,
       keyId: isUnlocked ? file.id : undefined,
       noteEncrypted: file.note_encrypted ?? null,
@@ -198,6 +219,7 @@ export function Recent() {
   const shareFile = files.find((f) => f.id === shareFileId) ?? null
   const moveFile = files.find((f) => f.id === moveFileId) ?? null
   const renameFile = files.find((f) => f.id === renameFileId) ?? null
+  const trashedCount = files.filter((f) => f.is_trashed).length
 
   return (
     <DriveLayout>
@@ -207,8 +229,17 @@ export function Recent() {
           <div className="text-sm font-semibold text-ink">Recent</div>
           <div className="text-[11px] text-ink-3 font-mono tabular-nums">
             {files.length} item{files.length !== 1 ? 's' : ''}
+            {trashedCount > 0 ? ` · ${trashedCount} in trash` : ' · current files'}
           </div>
         </div>
+        <button
+          type="button"
+          onClick={() => navigate('/settings/activity')}
+          className="ml-auto inline-flex items-center gap-1.5 text-[12px] text-ink-2 hover:text-ink transition-colors"
+        >
+          <Icon name="activity" size={13} />
+          Activity log
+        </button>
       </div>
 
       <FileList

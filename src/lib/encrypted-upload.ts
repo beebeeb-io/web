@@ -62,6 +62,10 @@ export interface SharedFolderUploadContext {
 
 type FileKeyResolver = (fileId: string) => Promise<Uint8Array>
 
+interface EncryptedUploadOptions {
+  conflictCreated?: boolean
+}
+
 export async function encryptedUpload(
   file: File,
   fileId: string,
@@ -73,6 +77,7 @@ export async function encryptedUpload(
   sharedFolderContext?: SharedFolderUploadContext,
   signal?: AbortSignal,
   deriveFileKeyForId?: FileKeyResolver,
+  options: EncryptedUploadOptions = {},
 ): Promise<DriveFile> {
   onProgress?.({ stage: 'Preparing', progress: 0 })
 
@@ -134,6 +139,7 @@ export async function encryptedUpload(
       chunk_count: fallbackChunkCount,
       parent_id: parentId ?? null,
       is_media: isMedia,
+      conflict_created: options.conflictCreated ?? false,
     }), signal)
 
     serverFileId = init.file_id

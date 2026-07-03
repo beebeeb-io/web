@@ -515,6 +515,7 @@ export function Shared() {
       mime_type: subtitle,
       size_bytes: invite.size_bytes ?? 0,
       is_folder: invite.is_folder ?? false,
+      is_trashed: false,
       parent_id: null,
       chunk_count: invite.chunk_count ?? 1,
       is_starred: false,

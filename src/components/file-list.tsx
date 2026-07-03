@@ -1226,6 +1226,11 @@ export function FileList({
                 v{file.version_number}
               </span>
             )}
+            {file.is_trashed && (
+              <BBChip variant="default" className="gap-1 py-0 text-[9.5px]">
+                <Icon name="trash" size={9} /> Deleted
+              </BBChip>
+            )}
           </div>
           <div className="text-[11px] text-ink-3 mt-0.5 flex items-center gap-1.5 flex-wrap">
             {!file.is_folder && name !== null ? (() => {

@@ -65,6 +65,8 @@ export interface DriveFile {
   mime_type: string | null
   size_bytes: number
   is_folder: boolean
+  /** True when the file has been moved to trash. Returned by list_files. */
+  is_trashed: boolean
   parent_id: string | null
   chunk_count: number
   is_starred?: boolean
