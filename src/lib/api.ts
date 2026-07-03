@@ -1671,6 +1671,41 @@ export async function getPlans(): Promise<Plan[]> {
   return data.plans
 }
 
+// ── Promo codes (task 11, spec §4) ───────────────────────────────────────────
+
+/** A usable promo code quoted against a specific plan + billing cycle. */
+export interface PromoQuote {
+  valid: true
+  discount_type: string
+  value: number
+  duration: string
+  duration_cycles: number | null
+  first_charge_cents: number
+  recurring_cents_during_discount: number
+  recurring_cents_after: number
+  /** Ready-to-display sentence, e.g. "€4.50/month for 3 months, then €9.00/month". */
+  description_schedule: string
+}
+
+export type PromoValidation = PromoQuote | { valid: false }
+
+/**
+ * `POST /api/v1/billing/promo/validate` — public, unauthenticated, IP rate-limited.
+ * ALWAYS returns 200. `{valid: false}` covers every failure reason (unknown,
+ * expired, exhausted, wrong plan, disabled) by design — no enumeration oracle
+ * beyond bare validity, so the caller must not try to distinguish reasons.
+ */
+export async function validatePromo(params: {
+  code: string
+  plan: string
+  billing_cycle: string
+}): Promise<PromoValidation> {
+  return request<PromoValidation>('/api/v1/billing/promo/validate', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
 // ── WP-0: payment-method availability engine ────────────────────────────────
 
 /** A payment method offered to the user for a given charge. */
@@ -2071,14 +2106,51 @@ export async function exportBillingTransactions(): Promise<void> {
   URL.revokeObjectURL(url)
 }
 
+/**
+ * `{trial: true, ...}` response from `POST /api/v1/billing/checkout` when a
+ * 100%-off promo code is applied — the checkout becomes an instant extended
+ * trial instead of a Mollie redirect (task 8, spec §4). `message` is a
+ * ready-to-display sentence, e.g. "3 months free — no payment needed today."
+ */
+export interface CheckoutTrialResult {
+  trial: true
+  id: string
+  plan: string
+  billing_cycle: string
+  status: string
+  trial_ends_at: string
+  plan_version?: number
+  promo_code: string
+  message: string
+}
+
+export type CheckoutResult = { url: string } | CheckoutTrialResult
+
+// Overloaded so existing no-promo call sites (upgrade-dialog, upgrade-nudge-modal)
+// keep destructuring `{ url }` unchanged — the trial branch is only reachable
+// when a promo_code is actually supplied, so their types stay narrow. Only a
+// caller that opts into `promo_code` gets the full `CheckoutResult` union and
+// must handle the `{trial: true}` shape.
 export async function createCheckoutSession(params: {
   plan: string
   billing_cycle: string
-}): Promise<{ url: string }> {
+  promo_code?: undefined
+}): Promise<{ url: string }>
+export async function createCheckoutSession(params: {
+  plan: string
+  billing_cycle: string
+  promo_code: string
+}): Promise<CheckoutResult>
+export async function createCheckoutSession(params: {
+  plan: string
+  billing_cycle: string
+  /** Task 8 — an applied promo code. Omit/undefined for the unchanged no-discount checkout. */
+  promo_code?: string
+}): Promise<CheckoutResult> {
   // The server derives the amount from plan + billing_cycle (server-authoritative
   // money); the client never sends a price. All plans are single-user, so there is
   // no seats field — the previous `seats: 1` was a no-op the server ignored.
-  return request<{ url: string }>('/api/v1/billing/checkout', {
+  return request<CheckoutResult>('/api/v1/billing/checkout', {
     method: 'POST',
     body: JSON.stringify(params),
   })

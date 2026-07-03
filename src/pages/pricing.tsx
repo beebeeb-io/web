@@ -1,10 +1,18 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { BBButton } from '@beebeeb/shared'
 import { BBChip } from '@beebeeb/shared'
+import { BBInput } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useToast } from '../components/toast'
-import { getToken, createCheckoutSession, getPlans, type Plan } from '../lib/api'
+import {
+  getToken,
+  createCheckoutSession,
+  getPlans,
+  validatePromo,
+  type Plan,
+  type PromoQuote,
+} from '../lib/api'
 import { PRICING_PAGE_PLANS, MARKETED_PLAN_SLUGS, type PricingPlanDef } from '../lib/plan-constants'
 
 type BillingCycle = 'monthly' | 'yearly'
@@ -78,10 +86,13 @@ function PlanCard({
   plan,
   cycle,
   onSelect,
+  promoSchedule,
 }: {
   plan: PlanDef
   cycle: BillingCycle
   onSelect: (id: string) => void
+  /** Ready-to-display promo schedule sentence for this specific plan, if an applied code applies here. */
+  promoSchedule?: string
 }) {
   const displayPrice =
     cycle === 'yearly' && plan.priceYearly > 0
@@ -129,6 +140,12 @@ function PlanCard({
             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm bg-amber-bg text-amber-deep text-[10px] font-semibold font-mono">
               Save €{saved} / year
             </span>
+          </div>
+        )}
+        {promoSchedule && (
+          <div className="mt-1.5 flex items-start gap-1 text-[11px] font-medium text-green">
+            <Icon name="check" size={11} className="mt-[2.5px] shrink-0" />
+            <span>{promoSchedule}</span>
           </div>
         )}
       </div>
@@ -257,6 +274,71 @@ export function Pricing() {
     })
   }, [apiPlans])
 
+  // ── Promo code (task 11, spec §4) ─────────────────────────────────────────
+  // The "Have a promo code?" disclosure lives near the cycle toggle (one input
+  // for the whole page, not per-card) because a single code is what the user
+  // types once at checkout. But a code can be plan-specific, and the server's
+  // /promo/validate collapses EVERY failure reason — including "doesn't apply
+  // to this plan" — into the same {valid:false} (anti-enumeration, no
+  // differentiated error). So on Apply we quote the code against every
+  // purchasable plan in parallel: any plan it's valid for shows the schedule
+  // next to its price; if it's valid for none, that's the one honest
+  // "This code isn't valid." — nothing more.
+  const [promoOpen, setPromoOpen] = useState(false)
+  const [promoInput, setPromoInput] = useState('')
+  const [promoApplying, setPromoApplying] = useState(false)
+  const [promoInvalid, setPromoInvalid] = useState(false)
+  const [promoAppliedCode, setPromoAppliedCode] = useState<string | null>(null)
+  const [promoQuotes, setPromoQuotes] = useState<Record<string, PromoQuote>>({})
+
+  const applyPromo = useCallback(async (rawCode: string, forCycle: BillingCycle) => {
+    const code = rawCode.trim()
+    if (!code) return
+    setPromoApplying(true)
+    setPromoInvalid(false)
+    try {
+      const purchasable = plans.filter((p) => !p.comingSoon)
+      const results = await Promise.all(
+        purchasable.map(async (p) => {
+          const res = await validatePromo({ code, plan: p.id, billing_cycle: forCycle })
+          return [p.id, res] as const
+        }),
+      )
+      const quotes: Record<string, PromoQuote> = {}
+      for (const [planId, res] of results) {
+        if (res.valid) quotes[planId] = res
+      }
+      if (Object.keys(quotes).length === 0) {
+        setPromoInvalid(true)
+        setPromoQuotes({})
+        setPromoAppliedCode(null)
+      } else {
+        setPromoQuotes(quotes)
+        setPromoAppliedCode(code)
+      }
+    } catch {
+      setPromoInvalid(true)
+      setPromoQuotes({})
+      setPromoAppliedCode(null)
+    } finally {
+      setPromoApplying(false)
+    }
+  }, [plans])
+
+  // Re-quote a previously-applied code when the billing cycle changes — the
+  // schedule (and whether the code even applies) is cycle-dependent.
+  useEffect(() => {
+    if (promoAppliedCode) {
+      void applyPromo(promoAppliedCode, cycle)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cycle])
+
+  function handlePromoInputChange(value: string) {
+    setPromoInput(value)
+    if (promoInvalid) setPromoInvalid(false)
+  }
+
   async function handleSelect(planId: string) {
     if (planId === 'free') {
       navigate(isLoggedIn ? '/' : '/signup')
@@ -267,11 +349,24 @@ export function Pricing() {
       return
     }
     try {
-      const { url } = await createCheckoutSession({
-        plan: planId,
-        billing_cycle: cycle,
-      })
-      window.location.href = url
+      const result = promoAppliedCode
+        ? await createCheckoutSession({
+            plan: planId,
+            billing_cycle: cycle,
+            promo_code: promoAppliedCode,
+          })
+        : await createCheckoutSession({ plan: planId, billing_cycle: cycle })
+      if ('trial' in result) {
+        showToast({
+          icon: 'check',
+          title: 'Your free trial has started',
+          description: result.message,
+        })
+        window.dispatchEvent(new Event('beebeeb:plan-changed'))
+        navigate('/')
+        return
+      }
+      window.location.href = result.url
     } catch (err) {
       showToast({
         icon: 'x',
@@ -331,6 +426,51 @@ export function Pricing() {
                 </span>
               </button>
             </div>
+
+            {/* Promo code disclosure — collapsed by default */}
+            <div className="mt-4 max-w-[340px] mx-auto">
+              <button
+                onClick={() => setPromoOpen((v) => !v)}
+                className="inline-flex items-center gap-1 text-[12px] font-medium text-ink-3 hover:text-ink-2 transition-colors cursor-pointer"
+              >
+                Have a promo code?
+                <Icon
+                  name="chevron-down"
+                  size={12}
+                  className={`transition-transform duration-200 ${promoOpen ? 'rotate-180' : ''}`}
+                />
+              </button>
+              {promoOpen && (
+                <div className="mt-2.5 text-left">
+                  <BBInput
+                    value={promoInput}
+                    onChange={(e) => handlePromoInputChange(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && promoInput.trim() && !promoApplying) {
+                        void applyPromo(promoInput, cycle)
+                      }
+                    }}
+                    placeholder="Promo code"
+                    error={promoInvalid ? "This code isn't valid." : undefined}
+                    trailing={
+                      <BBButton
+                        size="sm"
+                        variant="ghost"
+                        disabled={!promoInput.trim() || promoApplying}
+                        onClick={() => void applyPromo(promoInput, cycle)}
+                      >
+                        {promoApplying ? 'Checking…' : 'Apply'}
+                      </BBButton>
+                    }
+                  />
+                  {promoAppliedCode && !promoInvalid && (
+                    <p className="text-[11px] text-green mt-1.5">
+                      "{promoAppliedCode}" applied — see the discounted plans below.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Plans grid — 4 marketed tiers (Starter · Basic · Pro · Teams),
@@ -339,7 +479,13 @@ export function Pricing() {
           <div className="flex justify-center p-7 bg-paper-2">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 w-full max-w-[1120px]">
               {plans.map((p) => (
-                <PlanCard key={p.id} plan={p} cycle={cycle} onSelect={handleSelect} />
+                <PlanCard
+                  key={p.id}
+                  plan={p}
+                  cycle={cycle}
+                  onSelect={handleSelect}
+                  promoSchedule={promoQuotes[p.id]?.description_schedule}
+                />
               ))}
             </div>
           </div>
