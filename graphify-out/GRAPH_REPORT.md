@@ -1,7 +1,7 @@
 # Graph Report - web-1182  (2026-07-03)
 
 ## Corpus Check
-- 366 files · ~391,467 words
+- 366 files · ~391,563 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
@@ -94,8 +94,8 @@
   e2e/helpers/thumb-fixtures.ts → src/pages/drive.tsx
 - `openPreview()` --calls--> `handleFileAction()`  [INFERRED]
   e2e/helpers/thumb-fixtures.ts → src/pages/starred.tsx
-- `getApiUrl()` --calls--> `fetchAndDecryptLargeThumbnail()`  [INFERRED]
-  packages/shared/src/api/config.ts → src/lib/thumbnail.ts
+- `fetchAndDecryptLargeThumbnail()` --calls--> `getApiUrl()`  [INFERRED]
+  src/lib/thumbnail.ts → packages/shared/src/api/config.ts
 
 ## Communities
 

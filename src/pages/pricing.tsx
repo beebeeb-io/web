@@ -348,12 +348,20 @@ export function Pricing() {
       navigate(`/signup?plan=${planId}&cycle=${cycle}`)
       return
     }
+    // Gate on the PER-PLAN quote, not just "some code is applied" — a promo
+    // code can be plan-restricted (see applyPromo above), and /promo/validate
+    // deliberately can't tell us why a code didn't quote for a given plan
+    // (anti-enumeration). If this specific plan never got a valid quote, treat
+    // checkout exactly like "no code applied" rather than forwarding a code
+    // the server would reject for a plan-mismatch reason — that mismatch could
+    // otherwise surface as a differentiated error out of the catch below.
+    const promoCodeForThisPlan = promoQuotes[planId] ? promoAppliedCode : null
     try {
-      const result = promoAppliedCode
+      const result = promoCodeForThisPlan
         ? await createCheckoutSession({
             plan: planId,
             billing_cycle: cycle,
-            promo_code: promoAppliedCode,
+            promo_code: promoCodeForThisPlan,
           })
         : await createCheckoutSession({ plan: planId, billing_cycle: cycle })
       if ('trial' in result) {
