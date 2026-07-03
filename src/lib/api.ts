@@ -243,6 +243,8 @@ export type {
   WorkspaceMembersResponse,
 } from '@beebeeb/shared'
 
+export type { ActivityEncryptedNameSnapshot } from '@beebeeb/shared'
+
 // DEPRECATED: legacy JSON-password signup bypasses OPAQUE. It still has an
 // active caller in auth-context and must be removed when signup migrates fully
 // to the OPAQUE register flow.

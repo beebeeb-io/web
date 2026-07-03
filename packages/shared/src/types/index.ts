@@ -893,6 +893,13 @@ export interface ActivityResponse {
   page: number
 }
 
+export interface ActivityEncryptedNameSnapshot {
+  file_id: string
+  name_encrypted?: string | null
+  old_name_encrypted?: string | null
+  new_name_encrypted?: string | null
+}
+
 export interface AccountActivityEvent {
   id: string
   type: string
@@ -901,6 +908,7 @@ export interface AccountActivityEvent {
   outcome: string
   device: string | null
   country_code: string | null
+  encrypted_name_snapshot?: ActivityEncryptedNameSnapshot | null
   created_at: string
 }
 
@@ -1418,6 +1426,7 @@ export interface MyActivityEvent {
   outcome: string
   device: string | null
   country_code: string | null
+  encrypted_name_snapshot?: ActivityEncryptedNameSnapshot | null
   created_at: string
 }
 

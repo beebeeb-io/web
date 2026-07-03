@@ -4,6 +4,12 @@ import { SettingsShell, SettingsHeader } from '../../components/settings-shell'
 import { Icon } from '@beebeeb/shared'
 import type { IconName } from '@beebeeb/shared'
 import { getMyActivity, ApiError, type MyActivityEvent } from '../../lib/api'
+import { useKeys } from '../../lib/key-context'
+import {
+  FILE_ACTIVITY_EVENT_TYPES,
+  decryptActivitySnapshotName,
+  hydrateActivityEventDescriptions,
+} from '../../lib/account-activity-names'
 
 const PAGE_SIZE = 50
 
@@ -11,7 +17,7 @@ const PAGE_SIZE = 50
  *  user whose entire audit log is file operations can't spin forever. */
 const MAX_AUTO_PAGES = 20
 
-/** Security event types shown on this page. File operations are excluded.
+/** Security event types shown on this page.
  *  These MUST match the event strings the server actually writes to
  *  `audit_log` (verified against repos/server/.../routes/{auth,opaque_auth,
  *  password,account,account_activity}.rs via `log_chained`). */
@@ -40,6 +46,11 @@ const SECURITY_EVENT_TYPES = new Set([
   // Admin impersonation
   'admin.user.impersonation_start',
   'admin.user.impersonation_session_created',
+])
+
+const ACTIVITY_EVENT_TYPES = new Set([
+  ...SECURITY_EVENT_TYPES,
+  ...FILE_ACTIVITY_EVENT_TYPES,
 ])
 
 /** Events that warrant visual warning (amber highlight). */
@@ -91,6 +102,24 @@ function actionMeta(type: string): ActionMeta {
     case 'admin.user.impersonation_start':
     case 'admin.user.impersonation_session_created':
       return { label: 'Admin access', icon: 'eye', badgeClass: 'bg-red/10 text-red' }
+    case 'file.create':
+      return { label: 'Folder created', icon: 'folder', badgeClass: 'bg-paper-2 text-ink-2 border border-line' }
+    case 'file.upload':
+    case 'file.uploaded':
+      return { label: 'Upload', icon: 'upload', badgeClass: 'bg-green/10 text-green border border-green/20' }
+    case 'file.downloaded':
+      return { label: 'Download', icon: 'download', badgeClass: 'bg-paper-2 text-ink-2 border border-line' }
+    case 'file.rename':
+      return { label: 'Renamed', icon: 'file', badgeClass: 'bg-paper-2 text-ink-2 border border-line' }
+    case 'file.trash':
+      return { label: 'Moved to trash', icon: 'trash', badgeClass: 'bg-amber-bg text-amber-deep border border-amber-deep/20' }
+    case 'file.restore':
+      return { label: 'Restored', icon: 'file', badgeClass: 'bg-green/10 text-green border border-green/20' }
+    case 'file.delete':
+    case 'file.permanent_delete':
+      return { label: 'Deleted', icon: 'trash', badgeClass: 'bg-red/10 text-red border border-red/20' }
+    case 'file.conflict_created':
+      return { label: 'Conflict copy', icon: 'copy', badgeClass: 'bg-paper-2 text-ink-2 border border-line' }
     default:
       return { label: type.replace(/[._]/g, ' '), icon: 'clock', badgeClass: 'bg-paper-2 text-ink-2 border border-line' }
   }
@@ -110,6 +139,7 @@ function relativeTime(iso: string): string {
 }
 
 export function SettingsActivity() {
+  const { getFileKey, isUnlocked } = useKeys()
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [notDeployed, setNotDeployed] = useState(false)
@@ -138,8 +168,8 @@ export function SettingsActivity() {
         const res = await getMyActivity({ limit: PAGE_SIZE, offset: currentOffset })
         setOptedIn(res.opted_in)
 
-        const securityEvents = res.events.filter(e => SECURITY_EVENT_TYPES.has(e.type))
-        collected.push(...securityEvents)
+        const visibleEvents = res.events.filter(e => ACTIVITY_EVENT_TYPES.has(e.type))
+        collected.push(...visibleEvents)
         currentOffset += res.events.length
 
         // A short page means the server has no more rows.
@@ -148,7 +178,14 @@ export function SettingsActivity() {
         if (collected.length > 0 || !serverHasMore) break
       }
 
-      setEvents(prev => (append ? [...prev, ...collected] : collected))
+      const displayEvents = isUnlocked
+        ? await hydrateActivityEventDescriptions(collected, async (fileId, encryptedName) => {
+            const fileKey = await getFileKey(fileId)
+            return decryptActivitySnapshotName(fileKey, encryptedName)
+          })
+        : collected
+
+      setEvents(prev => (append ? [...prev, ...displayEvents] : displayEvents))
       setHasMore(serverHasMore)
       setOffset(currentOffset)
     } catch (err) {
@@ -159,11 +196,11 @@ export function SettingsActivity() {
       setLoading(false)
       setLoadingMore(false)
     }
-  }, [])
+  }, [getFileKey, isUnlocked])
 
   useEffect(() => {
     load(0, false)
-  }, [])
+  }, [load])
 
   function handleLoadMore() {
     load(offset, true)
@@ -172,8 +209,8 @@ export function SettingsActivity() {
   return (
     <SettingsShell activeSection="activity">
       <SettingsHeader
-        title="Security activity"
-        subtitle="Sign-ins, device registrations, and security changes on your account."
+        title="Activity"
+        subtitle="Sign-ins, device registrations, security changes, and file activity on your account."
       />
 
       <div className="px-7 py-6">
@@ -218,7 +255,7 @@ export function SettingsActivity() {
                   {events.length === 0 ? (
                     <tr>
                       <td colSpan={4} className="px-3 py-6 text-center text-ink-3">
-                        No security events recorded yet.
+                        No activity events recorded yet.
                       </td>
                     </tr>
                   ) : (

@@ -14,6 +14,11 @@ import {
   type SecurityScore,
   type AccountSession,
 } from '../lib/api'
+import { useKeys } from '../lib/key-context'
+import {
+  decryptActivitySnapshotName,
+  hydrateActivityEventDescriptions,
+} from '../lib/account-activity-names'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -280,6 +285,7 @@ function ActivityRow({ event, last }: ActivityRowProps) {
 
 export function AccountActivityPanel() {
   const { showToast } = useToast()
+  const { getFileKey, isUnlocked } = useKeys()
   const [activity, setActivity] = useState<AccountActivity | null>(null)
   const [score, setScore] = useState<SecurityScore | null>(null)
   const [sessions, setSessions] = useState<AccountSession[]>([])
@@ -295,7 +301,16 @@ export function AccountActivityPanel() {
           getSecurityScore(),
           getAccountSessions(),
         ])
-        setActivity(activityData)
+        const displayActivity = isUnlocked
+          ? {
+              ...activityData,
+              events: await hydrateActivityEventDescriptions(activityData.events, async (fileId, encryptedName) => {
+                const fileKey = await getFileKey(fileId)
+                return decryptActivitySnapshotName(fileKey, encryptedName)
+              }),
+            }
+          : activityData
+        setActivity(displayActivity)
         setScore(scoreData)
         setSessions(sessionsData.sessions)
       } catch {
@@ -305,7 +320,7 @@ export function AccountActivityPanel() {
       }
     }
     void load()
-  }, [])
+  }, [getFileKey, isUnlocked])
 
   const handleRevoke = useCallback(async (id: string) => {
     setRevoking(id)
