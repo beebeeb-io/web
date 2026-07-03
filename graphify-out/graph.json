@@ -26,7 +26,7 @@
       "file_type": "code",
       "source_file": "vite.config.ts",
       "source_location": "L15",
-      "id": "web_1182_vite_config_preloadwasmplugin",
+      "id": "web_vite_config_preloadwasmplugin",
       "community": 113,
       "norm_label": "preloadwasmplugin()"
     },
@@ -35,7 +35,7 @@
       "file_type": "code",
       "source_file": "vite.config.ts",
       "source_location": "L40",
-      "id": "web_1182_vite_config_devcspplugin",
+      "id": "web_vite_config_devcspplugin",
       "community": 113,
       "norm_label": "devcspplugin()"
     },
@@ -17832,9 +17832,9 @@
       "source_location": "L15",
       "weight": 1.0,
       "_src": "vite_config_ts",
-      "_tgt": "web_1182_vite_config_preloadwasmplugin",
+      "_tgt": "web_vite_config_preloadwasmplugin",
       "source": "vite_config_ts",
-      "target": "web_1182_vite_config_preloadwasmplugin",
+      "target": "web_vite_config_preloadwasmplugin",
       "confidence_score": 1.0
     },
     {
@@ -17844,9 +17844,9 @@
       "source_location": "L40",
       "weight": 1.0,
       "_src": "vite_config_ts",
-      "_tgt": "web_1182_vite_config_devcspplugin",
+      "_tgt": "web_vite_config_devcspplugin",
       "source": "vite_config_ts",
-      "target": "web_1182_vite_config_devcspplugin",
+      "target": "web_vite_config_devcspplugin",
       "confidence_score": 1.0
     },
     {
