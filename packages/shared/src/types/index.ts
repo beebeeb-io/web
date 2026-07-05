@@ -1336,6 +1336,12 @@ export interface RunFileEntry {
   error: string | null
   started_at: string | null
   completed_at: string | null
+  /** When this file_migrations row was seeded — used to distinguish "just
+   *  queued" from "stuck" for rows still pending (task 1226). */
+  created_at: string
+  /** Last worker heartbeat/progress timestamp; null if no worker has ever
+   *  claimed the row, or if it hasn't started copying yet (task 1226). */
+  last_heartbeat_at: string | null
 }
 
 export interface LifecycleRunEvent {
