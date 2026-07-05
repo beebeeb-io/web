@@ -1177,11 +1177,14 @@ export interface AdminBillingStats {
   }
   recent_invoices: Array<{
     id: string
+    number: string
     user_id: string
     amount_cents: number
     currency: string
     status: 'paid' | 'open' | 'void' | 'uncollectible'
     created_at: string
+    user_email?: string
+    buyer_full_name?: string | null
   }>
 }
 
