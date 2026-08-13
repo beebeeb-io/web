@@ -38,7 +38,6 @@ describe('sanitizeRedirect', () => {
     ['prefix lookalike', '/cli-auth-evil'],
     ['subpath under allowlisted route', '/cli-auth/extra'],
     ['different non-allowlisted route', '/billing'],
-    ['root', '/'],
     ['trailing slash variant', '/cli-auth/'],
   ])('rejects non-allowlisted path: %s', (_label, vector) => {
     expect(sanitizeRedirect(vector)).toBeNull()
@@ -47,6 +46,14 @@ describe('sanitizeRedirect', () => {
   // /settings/privacy is allowlisted for the GDPR data-export resume (task 0720).
   test('accepts /settings/privacy (data-export resume route)', () => {
     expect(sanitizeRedirect('/settings/privacy')).toBe('/settings/privacy')
+  })
+
+  // "/" is allowlisted (task 0839) so a copied deep-link `/?folder=<id>` survives
+  // the login bounce and lands back at the exact vault location. It is our own
+  // same-origin root and the match is still EXACT, so it is not an open redirect.
+  test('accepts the Drive root and preserves its ?folder= deep-link query', () => {
+    expect(sanitizeRedirect('/')).toBe('/')
+    expect(sanitizeRedirect('/?folder=abc-123')).toBe('/?folder=abc-123')
   })
 
   // ── Control-character smuggling ────────────────────────────────────────────

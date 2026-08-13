@@ -81,6 +81,14 @@ async function runGate(masterKey: Uint8Array, deps: ReturnType<typeof depsForAcc
   return { persisted, unlocked, error }
 }
 
+// Every `recover_from_phrase` here is a REAL 256 MiB Argon2id derivation (~1.5-3s
+// on a CI runner) and the cases below need two of them plus the recovery-check
+// derivations — which lands them either side of bun's 5s default per-test
+// timeout, so CI failed intermittently on machine speed rather than on the gate.
+// The explicit budget is deliberately generous: this suite must fail on a BROKEN
+// gate, never on a slow machine.
+const CRYPTO_TIMEOUT_MS = 30_000
+
 describe('recovery-phrase unlock validation (task 0874)', () => {
   test('a checksum-valid but WRONG phrase is REJECTED — never persisted, never unlocks', async () => {
     // The account was created with phrase A.
@@ -101,7 +109,7 @@ describe('recovery-phrase unlock validation (task 0874)', () => {
     expect(result.persisted).toBe(false)
     expect(result.unlocked).toBe(false)
     expect(result.error).toBe('Incorrect recovery phrase. Check your words and try again.')
-  })
+  }, CRYPTO_TIMEOUT_MS)
 
   test('the CORRECT phrase still unlocks and persists the key', async () => {
     const phrase = (generate_recovery_phrase() as { phrase: string }).phrase
@@ -115,7 +123,7 @@ describe('recovery-phrase unlock validation (task 0874)', () => {
     expect(result.persisted).toBe(true)
     expect(result.unlocked).toBe(true)
     expect(result.error).toBe('')
-  })
+  }, CRYPTO_TIMEOUT_MS)
 
   test('a non-mismatch server/network error is re-thrown — never read as valid', async () => {
     const accountKey = recover_from_phrase(
@@ -132,5 +140,5 @@ describe('recovery-phrase unlock validation (task 0874)', () => {
     }
 
     await expect(recoveredKeyMatchesAccount(accountKey, deps)).rejects.toThrow()
-  })
+  }, CRYPTO_TIMEOUT_MS)
 })
