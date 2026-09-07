@@ -1066,9 +1066,15 @@ export interface AdminStatsRevenuePlan {
 
 export interface AdminStats {
   users: {
+    /** People only — soft-deleted rows and `is_test_account` fixtures excluded (server `admin.rs` `human_user_count_sql`). */
     total: number
+    /** Subset of `total` that signed up through the 0928 pilot-key gate. */
+    pilots?: number
+    /** Automation fixtures, reported rather than hidden so a growing count is visible. */
+    test_accounts?: number
     active_7d: number
     active_30d?: number
+    /** Humans only, same predicate as `total`. */
     signups_today: number
     /** Daily signup counts for the last 7 days, oldest → today. */
     signups_last_7d?: number[]
