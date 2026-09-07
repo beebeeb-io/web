@@ -20,6 +20,23 @@ jobs:
       - run: bun test # unit tests (test/, scoped via bunfig.toml) — 0740b: was never in CI
       - run: bun run build
 
+  claims-guard:
+    name: Claims guard
+    runs-on: ubuntu-latest
+    # Phased rollout (plan 2026-09-06-premortem-05-claims-regression-ci-guard,
+    # Task 2 sequencing): web is not yet clean (nginx.conf/src/lib/hibp.ts still
+    # reach api.pwnedpasswords.com; provider names; "Unlimited version history";
+    # phantom regions in real product copy) — those are plan Tasks 3/4/6/7.
+    # Promote to a required gate once `bash scripts/claims-guard/claims-guard.sh`
+    # exits 0 here.
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Run claims guard
+        run: bash scripts/claims-guard/claims-guard.sh
+
   # ── Browser-level regression gate (task 0866) ───────────────────────────────
   # Runs the real Playwright suite against a self-bootstrapped full stack:
   # Postgres 17 (service) + a freshly-built debug `beebeeb-api` + Vite, driven by
