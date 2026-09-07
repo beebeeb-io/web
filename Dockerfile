@@ -39,11 +39,19 @@ RUN sed -i 's|"@beebeeb/shared": "workspace:\*"|"@beebeeb/shared": "/shared"|' p
 ARG VITE_API_URL=https://api.beebeeb.io
 ENV VITE_API_URL=$VITE_API_URL
 
+# Build provenance. The build context has no .git (.dockerignore:18) and line 29
+# removes any that slipped in, so the SHA must be injected. version.json is a
+# non-hashed control file like wasm-sri.json: the SPA-fallback location in
+# nginx.conf sets Cache-Control: no-cache on it, so it can never go stale.
+ARG GIT_SHA=unknown
+ENV GIT_SHA=$GIT_SHA
+
 # Skip the `tsc --noEmit` step that ships in package.json's `build` script.
 # Type-checking belongs in CI, not in the production image — and tsc here
 # fails to resolve `react` from `/shared/src/*.tsx` because /shared has no
 # node_modules of its own. Run vite + the WASM SRI generator directly.
-RUN bunx vite build && node gen-wasm-sri.mjs
+RUN bunx vite build && node gen-wasm-sri.mjs && \
+    printf '{"sha":"%s","built_at":"%s"}\n' "$GIT_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > dist/version.json
 
 # --- Runner ---
 FROM nginx:1.27-alpine AS runner
