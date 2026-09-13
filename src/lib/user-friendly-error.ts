@@ -8,10 +8,49 @@
  * short message → generic fallback. Keep strings ≤ 8 words where possible.
  */
 
-import { ApiError } from './api'
+import { ApiError, AccountDeletedError } from './api'
 
 /** Maximum length below which we trust the existing message as user-facing. */
 const SHORT_MESSAGE_MAX = 80
+
+/**
+ * Task 1404 — exact brand-voice copy for the `account_deleted` 403 (task
+ * 1403): say what happened, say it can't be undone. Both dates are
+ * date-only (no time) in the viewer's locale, per the login-page mapping
+ * this backs. Pure formatter so it can be shared between an
+ * `AccountDeletedError` (thrown by the raw-fetch login/passkey calls in
+ * api.ts, which have the full body) and any other caller that already has
+ * the two raw RFC3339 strings.
+ */
+export function formatAccountDeletedMessage(
+  deletedAt: unknown,
+  shredAfter: unknown,
+): string | null {
+  const deleted = formatDateOnly(deletedAt)
+  const shredded = formatDateOnly(shredAfter)
+  if (!deleted || !shredded) return null
+  return `This account was deleted on ${deleted}. Its encrypted data will be shredded on ${shredded}. We can't recover it.`
+}
+
+/** RFC3339 → date-only, locale-formatted ("September 13, 2026"). Null on anything unparseable. */
+function formatDateOnly(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return null
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
+}
+
+/**
+ * `accountDeletedMessage(err)` — the account_deleted-specific mapping,
+ * usable directly in a catch block before falling back to
+ * `userFriendlyError()`'s generic handling. Returns null for anything else
+ * (including an `AccountDeletedError` with an unparseable date — falls back
+ * to the generic message rather than render a malformed sentence).
+ */
+export function accountDeletedMessage(err: unknown): string | null {
+  if (!(err instanceof AccountDeletedError)) return null
+  return formatAccountDeletedMessage(err.deletedAt, err.shredAfter)
+}
 
 /**
  * Look at the error's status (if any) and decide whether the underlying
@@ -71,6 +110,13 @@ export function userFriendlyError(err: unknown): string {
   if (isNetworkError(err)) {
     return 'Check your connection and try again.'
   }
+
+  // Task 1404 — defense in depth: the login page catches AccountDeletedError
+  // directly (it needs the exact copy inline, not this generic mapper), but
+  // route it here too in case it ever surfaces through some other generic
+  // catch-all that already calls userFriendlyError().
+  const accountDeleted = accountDeletedMessage(err)
+  if (accountDeleted) return accountDeleted
 
   if (err instanceof ApiError) {
     // Upgrade rate-limit (task 1057) — a 400 whose message we want to soften,
