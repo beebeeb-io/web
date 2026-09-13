@@ -145,6 +145,11 @@ test.describe('account_deleted login copy (task 1404)', () => {
 
     const errorBox = page.locator('p.text-red, p.text-xs.text-red').first()
     await expect(errorBox).toBeVisible({ timeout: 10_000 })
+
+    // Verification evidence (task 1404) — the login form showing the exact
+    // deletion copy, for docs/_qa-evidence/1404/.
+    await page.screenshot({ path: 'test-results/1404-account-deleted-login.png', fullPage: false })
+
     const errorText = (await errorBox.textContent())?.trim() ?? ''
 
     // Exact brand copy — both sentences, both clauses. Not a substring probe:
