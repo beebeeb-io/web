@@ -9,7 +9,12 @@
 import { mock } from 'bun:test'
 
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  // task 1404 — account-deleted-copy.test.ts constructs `new ApiError(msg,
+  // status, code)` against the REAL module; when this mock wins bun's
+  // process-global mock.module race, its ApiError must carry the same
+  // 3-arg shape (including `code`) or that test's `err.code` checks silently
+  // see `undefined` instead of 'account_deleted'.
+  constructor(message: string, readonly status: number, readonly code?: string) {
     super(message)
   }
 }

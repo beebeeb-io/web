@@ -110,6 +110,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (err instanceof ApiError && err.status === 401) {
           clearToken()
         }
+        // Task 1404 — a soft-deleted account (task 1403's account_deleted
+        // 403) needs NO special handling here: `request()` (shared) already
+        // clears the token and fires the central `registerAccountDeletedHandler`
+        // (app.tsx) with the full body BEFORE this catch even runs, which
+        // stashes the exact "deleted on <date>… shredded on <date>…" copy and
+        // redirects to /login. `user` stays null either way, which is also
+        // what ProtectedRoute needs to bounce here on its own. See
+        // packages/shared/src/api/request.ts + src/lib/account-deleted-notice.ts.
       } finally {
         setLoading(false)
       }

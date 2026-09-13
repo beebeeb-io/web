@@ -2,6 +2,13 @@
  * Cross-cutting notifier hooks consumed by `request()`:
  *  - `notifyError`:        a toast surface for "could not reach server"
  *  - `onSessionExpired`:   global 401 handler (typically: hard-reload to /login)
+ *  - `onAccountDeleted`:   global 403 `account_deleted` handler (task 1404) —
+ *                          the SESSION/credentials were fine, the ACCOUNT is
+ *                          gone (task 1403). Distinct from session expiry: an
+ *                          app registers this to sign out + show the exact
+ *                          "deleted on <date>… shredded on <date>…" copy,
+ *                          from WHICHEVER call happens to surface it — not
+ *                          just an initial boot request.
  *  - `onConnectionStatus`: connectivity transitions (`flaky` ↔ `ok`)
  *
  * Apps register their handlers at startup. Shared code is decoupled from any
@@ -10,10 +17,19 @@
 
 type ErrorNotifier = (message: string) => void
 type SessionExpiredHandler = () => void
+/**
+ * Receives the full parsed 403 body (`{error, message, deleted_at,
+ * shred_after}`) — this is the one error whose UI copy needs fields beyond
+ * the `code` that `ApiError` already carries, so `request()` hands the raw
+ * body straight to the registered handler instead of extending `ApiError`'s
+ * shape for a single error type.
+ */
+type AccountDeletedHandler = (body: Record<string, unknown>) => void
 type ConnectionStatusHandler = (status: 'ok' | 'flaky') => void
 
 let notifyError: ErrorNotifier | null = null
 let onSessionExpired: SessionExpiredHandler | null = null
+let onAccountDeleted: AccountDeletedHandler | null = null
 let onConnectionStatus: ConnectionStatusHandler | null = null
 
 export function registerErrorNotifier(fn: ErrorNotifier): void {
@@ -22,6 +38,10 @@ export function registerErrorNotifier(fn: ErrorNotifier): void {
 
 export function registerSessionExpiredHandler(fn: SessionExpiredHandler): void {
   onSessionExpired = fn
+}
+
+export function registerAccountDeletedHandler(fn: AccountDeletedHandler): void {
+  onAccountDeleted = fn
 }
 
 export function registerConnectionStatusHandler(fn: ConnectionStatusHandler): void {
@@ -35,6 +55,10 @@ export function fireErrorNotifier(message: string): void {
 
 export function fireSessionExpired(): void {
   onSessionExpired?.()
+}
+
+export function fireAccountDeleted(body: Record<string, unknown>): void {
+  onAccountDeleted?.(body)
 }
 
 export function fireConnectionStatus(status: 'ok' | 'flaky'): void {

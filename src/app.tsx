@@ -15,7 +15,9 @@ import { OfflineBanner } from './components/offline-banner'
 import { ImpersonationProvider } from './lib/impersonation-context'
 import { ImpersonationBanner } from './components/impersonation-banner'
 import { DevAuthGate } from './components/dev-auth-gate'
-import { registerErrorNotifier, registerSessionExpiredHandler } from './lib/api'
+import { registerAccountDeletedHandler, registerErrorNotifier, registerSessionExpiredHandler } from './lib/api'
+import { formatAccountDeletedMessage } from './lib/user-friendly-error'
+import { stashAccountDeletedNotice } from './lib/account-deleted-notice'
 import { CommandPalette } from './components/command-palette'
 import { ShortcutsCheatsheet } from './components/shortcuts-cheatsheet'
 import { useKeyboardShortcuts } from './hooks/use-keyboard-shortcuts'
@@ -224,9 +226,26 @@ function ApiErrorWiring() {
       if (isPublicPath(window.location.pathname)) return
       navigate('/login', { replace: true })
     })
+    // Task 1404 — the CENTRAL account_deleted handler. `request()` (shared)
+    // fires this on ANY authenticated call that gets the account_deleted 403
+    // — not just login.tsx's own login-finish calls — so a tab that was
+    // already open when the account got deleted elsewhere (another device,
+    // or the delete-account flow in a second tab) also gets signed out with
+    // the exact copy, not a generic error. The token is already cleared by
+    // request() itself before this fires. Stash the formatted message
+    // (login.tsx reads it on mount) then redirect, same public-route guard
+    // as session-expiry above — account_deleted can only ever originate from
+    // an authenticated call, but stay consistent regardless.
+    registerAccountDeletedHandler((body) => {
+      const msg = formatAccountDeletedMessage(body.deleted_at, body.shred_after)
+      if (msg) stashAccountDeletedNotice(msg)
+      if (isPublicPath(window.location.pathname)) return
+      navigate('/login', { replace: true })
+    })
     return () => {
       registerErrorNotifier(null as unknown as (m: string) => void)
       registerSessionExpiredHandler(null as unknown as () => void)
+      registerAccountDeletedHandler(null as unknown as (b: Record<string, unknown>) => void)
     }
   }, [showToast, navigate])
 

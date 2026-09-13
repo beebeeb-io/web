@@ -16,6 +16,8 @@ import { autoUpgradeToV1 } from '../lib/auto-upgrade'
 import { prfExtensionInputs, extractPrfOutput, getVaultWrapKey, decryptVaultBlob } from '../lib/passkey-vault'
 import { sanitizeRedirect } from '../lib/safe-redirect'
 import { consumePendingExport, DATA_EXPORT_ROUTE } from '../lib/export-intent'
+import { accountDeletedMessage } from '../lib/user-friendly-error'
+import { consumeAccountDeletedNotice } from '../lib/account-deleted-notice'
 
 export function Login() {
   const navigate = useNavigate()
@@ -26,7 +28,11 @@ export function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
-  const [error, setError] = useState('')
+  // Task 1404 — an already-authenticated tab can land here via ProtectedRoute
+  // after its own getMe() 403s with account_deleted (auth-context.tsx boot()
+  // stashes the formatted copy before that redirect). Pick it up once on
+  // mount so the exact same message shows here as on a fresh failed login.
+  const [error, setError] = useState(() => consumeAccountDeletedNotice() ?? '')
   const [submitting, setSubmitting] = useState(false)
 
   // 2FA state
@@ -159,6 +165,15 @@ export function Login() {
         setSubmitting(false)
         return
       }
+      // task 1404 — soft-deleted account (task 1403's account_deleted 403).
+      // Credentials were correct; the account itself is gone. Say so plainly
+      // instead of the generic "Authentication failed."
+      const deletedMsg = accountDeletedMessage(opaqueErr)
+      if (deletedMsg) {
+        setError(deletedMsg)
+        setSubmitting(false)
+        return
+      }
       setError('Authentication failed. Please try again.')
     } finally {
       setSubmitting(false)
@@ -246,6 +261,13 @@ export function Login() {
       if (passkeyFallbackErr instanceof ApiError && passkeyFallbackErr.code === 'opaque_ksf_outdated') {
         setPasskeyNeedsPassword(false)
         setNeedsKsfMigration(true)
+        setPasskeyFallbackSubmitting(false)
+        return
+      }
+      // task 1404 — soft-deleted account, same as the main password path.
+      const fallbackDeletedMsg = accountDeletedMessage(passkeyFallbackErr)
+      if (fallbackDeletedMsg) {
+        setPasskeyFallbackError(fallbackDeletedMsg)
         setPasskeyFallbackSubmitting(false)
         return
       }
@@ -351,7 +373,9 @@ export function Login() {
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Passkey authentication failed')
+      // task 1404 — soft-deleted account on the passkey path.
+      const deletedMsg = accountDeletedMessage(err)
+      setError(deletedMsg ?? (err instanceof Error ? err.message : 'Passkey authentication failed'))
     } finally {
       setPasskeyLoading(false)
     }

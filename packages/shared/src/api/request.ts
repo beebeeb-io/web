@@ -29,6 +29,7 @@ import { ApiError } from './errors'
 import { getApiUrl } from './config'
 import { clearToken, getToken } from './token'
 import {
+  fireAccountDeleted,
   fireConnectionStatus,
   fireErrorNotifier,
   fireSessionExpired,
@@ -164,6 +165,22 @@ export async function request<T>(
       const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
       const code = typeof body.error === 'string' ? body.error : undefined
       const message = (body.message ?? body.error ?? res.statusText) as string
+
+      // Soft-deleted account (task 1403/1404) — the session/credentials were
+      // fine, the ACCOUNT itself is gone. Always a 403, never a 401 (the
+      // server checks this only AFTER credentials/session are verified, so
+      // it can't be used to enumerate accounts). Treat it like a forced
+      // sign-out regardless of WHICH call surfaced it — a fresh login
+      // attempt, or any authenticated call on a tab that was already open
+      // when the account got deleted elsewhere — by dropping any local
+      // token and notifying apps with the full body (this is the one error
+      // whose UI copy needs deleted_at/shred_after, not just `code`) so they
+      // can render the exact copy and redirect. Mirrors the 401 session-
+      // expiry handling below, for "the account, not the session, is gone".
+      if (code === 'account_deleted') {
+        if (token) clearToken()
+        fireAccountDeleted(body)
+      }
 
       if (res.status === 401) {
         if (code === 'opaque_ksf_outdated') {
