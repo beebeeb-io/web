@@ -98,9 +98,17 @@ export function installMocks(): void {
   }))
 
   // ./api — superset: the capturing upload surface (contract) + listFilesPage /
-  // FILE_LIST_HARD_CAP (folder-share). listFilesPage delegates to the shared pager.
+  // FILE_LIST_HARD_CAP (folder-share), PLUS every other name any co-running
+  // test imports from ./api — API_URL added for breach-check.ts (task 1367;
+  // its `import { API_URL } from './api'` otherwise resolves against this
+  // mock with a missing export whenever a test file that imports
+  // breach-check.ts happens to load in the same bun test process after this
+  // mock has registered — bun's mock.module is process-global, so the failure
+  // is load-order-dependent, not deterministic locally). listFilesPage
+  // delegates to the shared pager.
   mock.module('../../src/lib/api', () => ({
     ApiError,
+    API_URL: 'https://api.beebeeb.io',
     FILE_LIST_HARD_CAP: 50_000,
     listFilesPage: async (opts: { parentId?: string; cursor?: string }) => pageImpl(opts),
     initUpload: async (metadata: unknown) => {
