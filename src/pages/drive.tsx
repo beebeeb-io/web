@@ -2626,7 +2626,6 @@ export function Drive() {
             cipher: 'AES-256-GCM',
             region: 'Europe',
             city: 'Falkenstein',
-            provider: 'Hetzner',
           }
           return trust
         })()}
