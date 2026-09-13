@@ -1,21 +1,31 @@
 /**
  * Cross-navigation handoff for the account_deleted redirect (task 1404).
  *
- * The login page's own submit handlers catch `AccountDeletedError` directly
- * and show the copy inline — no handoff needed there. This file exists for
- * the OTHER case: an already-authenticated tab whose account gets deleted
- * elsewhere (another device, an admin action). That tab's next `getMe()`
- * call (auth-context.tsx boot) 403s with no login form to write an inline
- * error into — `ProtectedRoute` just redirects to `/login` because `user`
- * stays null. We stash the formatted message here immediately before that
- * redirect, and the login page picks it up on mount.
+ * `request()` (@beebeeb/shared) fires a CENTRAL `account_deleted` handler
+ * (registered in app.tsx's `ApiErrorWiring`) on ANY authenticated call that
+ * gets the typed 403 — not just an active login submit. That handler has no
+ * login form to write an inline error into (it may fire from a background
+ * `getMe()`, a sync poll, anything), so it formats the exact copy and stashes
+ * it here immediately before redirecting to `/login`, where this module's
+ * `consumeAccountDeletedNotice()` picks it up on mount. The SAME function is
+ * also what a login-page catch block reads for an in-progress login attempt
+ * (`user-friendly-error.ts`'s `accountDeletedMessage`) — the central handler
+ * stashes the notice synchronously before the `ApiError` it also throws is
+ * ever observed by an awaiting caller, so it's always there to read either
+ * way.
  *
  * sessionStorage (not an in-memory module var) so it survives the actual
  * navigation to /login.
  */
 const KEY = 'bb_account_deleted_notice'
 
-function storage(): Storage | null {
+export interface NoticeStorage {
+  getItem(key: string): string | null
+  setItem(key: string, value: string): void
+  removeItem(key: string): void
+}
+
+function browserStorage(): NoticeStorage | null {
   if (typeof window === 'undefined') return null
   try {
     return window.sessionStorage
@@ -26,14 +36,16 @@ function storage(): Storage | null {
   }
 }
 
-export function stashAccountDeletedNotice(message: string): void {
-  storage()?.setItem(KEY, message)
+export function stashAccountDeletedNotice(
+  message: string,
+  storage = browserStorage(),
+): void {
+  storage?.setItem(KEY, message)
 }
 
 /** Reads and clears the stashed notice. Returns null if none is pending. */
-export function consumeAccountDeletedNotice(): string | null {
-  const s = storage()
-  const value = s?.getItem(KEY) ?? null
-  if (value) s?.removeItem(KEY)
+export function consumeAccountDeletedNotice(storage = browserStorage()): string | null {
+  const value = storage?.getItem(KEY) ?? null
+  if (value) storage?.removeItem(KEY)
   return value
 }

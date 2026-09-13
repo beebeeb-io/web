@@ -19,6 +19,7 @@ export {
 export {
   registerErrorNotifier,
   registerSessionExpiredHandler,
+  registerAccountDeletedHandler,
   registerConnectionStatusHandler,
   markSessionConfirmed,
   clearSessionConfirmed,

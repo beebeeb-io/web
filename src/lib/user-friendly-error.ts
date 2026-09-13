@@ -8,7 +8,8 @@
  * short message → generic fallback. Keep strings ≤ 8 words where possible.
  */
 
-import { ApiError, AccountDeletedError } from './api'
+import { ApiError } from './api'
+import { consumeAccountDeletedNotice, type NoticeStorage } from './account-deleted-notice'
 
 /** Maximum length below which we trust the existing message as user-facing. */
 const SHORT_MESSAGE_MAX = 80
@@ -16,11 +17,11 @@ const SHORT_MESSAGE_MAX = 80
 /**
  * Task 1404 — exact brand-voice copy for the `account_deleted` 403 (task
  * 1403): say what happened, say it can't be undone. Both dates are
- * date-only (no time) in the viewer's locale, per the login-page mapping
- * this backs. Pure formatter so it can be shared between an
- * `AccountDeletedError` (thrown by the raw-fetch login/passkey calls in
- * api.ts, which have the full body) and any other caller that already has
- * the two raw RFC3339 strings.
+ * date-only (no time) in the viewer's locale. Pure formatter, called from
+ * app.tsx's central `registerAccountDeletedHandler` (the ONE place that
+ * receives the raw `{deleted_at, shred_after}` body — see
+ * `packages/shared/src/api/request.ts`'s `fireAccountDeleted`) right before
+ * it stashes the result via `stashAccountDeletedNotice`.
  */
 export function formatAccountDeletedMessage(
   deletedAt: unknown,
@@ -41,15 +42,23 @@ function formatDateOnly(value: unknown): string | null {
 }
 
 /**
- * `accountDeletedMessage(err)` — the account_deleted-specific mapping,
- * usable directly in a catch block before falling back to
- * `userFriendlyError()`'s generic handling. Returns null for anything else
- * (including an `AccountDeletedError` with an unparseable date — falls back
- * to the generic message rather than render a malformed sentence).
+ * `accountDeletedMessage(err)` — usable directly in a catch block before
+ * falling back to `userFriendlyError()`'s generic handling. `request()`
+ * (shared) fires the central `account_deleted` handler (app.tsx), which
+ * formats + stashes the exact copy via `stashAccountDeletedNotice`,
+ * SYNCHRONOUSLY, before the `ApiError` it also throws is ever observed by an
+ * awaiting caller — so by the time any catch block here runs, the notice is
+ * already there to consume. Falls back to a generic-but-honest line only if
+ * the notice is somehow missing (e.g. already consumed by a race, or the
+ * handler wasn't registered yet) rather than showing nothing.
+ *
+ * `storage` is test-only — an explicit override so unit tests don't need a
+ * real `window.sessionStorage` (absent under `bun test`'s non-DOM runtime).
+ * Production call sites omit it and get the real browser storage.
  */
-export function accountDeletedMessage(err: unknown): string | null {
-  if (!(err instanceof AccountDeletedError)) return null
-  return formatAccountDeletedMessage(err.deletedAt, err.shredAfter)
+export function accountDeletedMessage(err: unknown, storage?: NoticeStorage): string | null {
+  if (!(err instanceof ApiError) || err.code !== 'account_deleted') return null
+  return consumeAccountDeletedNotice(storage) ?? "This account has been deleted. We can't recover it."
 }
 
 /**
@@ -111,7 +120,7 @@ export function userFriendlyError(err: unknown): string {
     return 'Check your connection and try again.'
   }
 
-  // Task 1404 — defense in depth: the login page catches AccountDeletedError
+  // Task 1404 — defense in depth: the login page calls accountDeletedMessage()
   // directly (it needs the exact copy inline, not this generic mapper), but
   // route it here too in case it ever surfaces through some other generic
   // catch-all that already calls userFriendlyError().

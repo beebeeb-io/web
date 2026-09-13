@@ -14,7 +14,6 @@ import {
   type LoginResult,
   type SignupResult,
   clearToken,
-  getApiUrl,
   getMe,
   getToken,
   login as apiLogin,
@@ -22,8 +21,6 @@ import {
   signup as apiSignup,
   verify2fa as apiVerify2fa,
 } from './api'
-import { formatAccountDeletedMessage } from './user-friendly-error'
-import { stashAccountDeletedNotice } from './account-deleted-notice'
 
 /** Same-origin pub/sub channel used to sync logout across tabs. */
 const AUTH_CHANNEL_NAME = 'beebeeb-auth'
@@ -113,34 +110,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (err instanceof ApiError && err.status === 401) {
           clearToken()
         }
-        // Task 1404 — an already-authenticated tab whose account was deleted
-        // elsewhere (task 1403's account_deleted 403 on getMe() too). `user`
-        // stays null below, so ProtectedRoute already redirects to /login —
-        // we just need to clear the now-dead token and hand the honest copy
-        // across that redirect. `code` survives through request()'s generic
-        // ApiError unmodified; the two dates don't (shared ApiError only
-        // keeps `code`, not the rest of the body — see user-friendly-error.ts),
-        // so re-fetch them directly. Best-effort: the account is gone either
-        // way, this only affects whether the login page can show the exact
-        // dates or has to fall back silently.
-        if (err instanceof ApiError && err.status === 403 && err.code === 'account_deleted') {
-          clearToken()
-          try {
-            const token = getToken()
-            const headers: Record<string, string> = {}
-            if (token) headers['Authorization'] = `Bearer ${token}`
-            const res = await fetch(`${getApiUrl()}/api/v1/auth/me`, {
-              headers,
-              credentials: 'include',
-            })
-            const body = (await res.json().catch(() => ({}))) as Record<string, unknown>
-            const msg = formatAccountDeletedMessage(body.deleted_at, body.shred_after)
-            if (msg) stashAccountDeletedNotice(msg)
-          } catch {
-            // Couldn't recover the exact dates — the redirect to /login still
-            // happens via `user` staying null; it just won't carry a notice.
-          }
-        }
+        // Task 1404 — a soft-deleted account (task 1403's account_deleted
+        // 403) needs NO special handling here: `request()` (shared) already
+        // clears the token and fires the central `registerAccountDeletedHandler`
+        // (app.tsx) with the full body BEFORE this catch even runs, which
+        // stashes the exact "deleted on <date>… shredded on <date>…" copy and
+        // redirects to /login. `user` stays null either way, which is also
+        // what ProtectedRoute needs to bounce here on its own. See
+        // packages/shared/src/api/request.ts + src/lib/account-deleted-notice.ts.
       } finally {
         setLoading(false)
       }

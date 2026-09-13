@@ -15,6 +15,7 @@ import {
   getApiUrl,
   getToken,
   markSessionConfirmed,
+  registerAccountDeletedHandler,
   registerConnectionStatusHandler,
   registerErrorNotifier,
   registerOnTokenCleared,
@@ -143,6 +144,7 @@ export {
   clearToken,
   getApiUrl,
   getToken,
+  registerAccountDeletedHandler,
   registerConnectionStatusHandler,
   registerErrorNotifier,
   request,
@@ -322,66 +324,15 @@ export async function opaqueLoginStart(
   })
 }
 
-/**
- * Thrown when a soft-deleted account's credentials/session were proven valid
- * but the account itself is gone (task 1403's `account_deleted` 403
- * contract: `{error:"account_deleted", message, deleted_at, shred_after}`).
- *
- * Web-local, not `@beebeeb/shared`'s `ApiError` — `request()`/`ApiError`
- * only preserve the machine-readable `code`, not the rest of the error
- * body (see `packages/shared/src/api/request.ts`), and this is the one
- * error whose UI copy needs two extra RFC3339 fields from that body.
- * Extending the shared error shape is out of scope for this web-only task
- * (task 1403's contract note flags admin/mobile copy as a follow-up), so
- * the handful of call sites below bypass `request()` with a raw `fetch()`
- * for just this branch (mirrors the existing `confirmAction`/
- * `confirmActionPlaintext` bespoke-error pattern above).
- */
-export class AccountDeletedError extends Error {
-  deletedAt: string
-  shredAfter: string
-  constructor(deletedAt: string, shredAfter: string) {
-    super('This account has been deleted.')
-    this.name = 'AccountDeletedError'
-    this.deletedAt = deletedAt
-    this.shredAfter = shredAfter
-  }
-}
-
-/** Extract `{deleted_at, shred_after}` from a parsed error body, or null if it doesn't match. */
-function accountDeletedFields(body: Record<string, unknown>): { deletedAt: string; shredAfter: string } | null {
-  if (body.error !== 'account_deleted') return null
-  if (typeof body.deleted_at !== 'string' || typeof body.shred_after !== 'string') return null
-  return { deletedAt: body.deleted_at, shredAfter: body.shred_after }
-}
-
 export async function opaqueLoginFinish(
   email: string,
   clientMessage: string,
   serverState: string,
 ): Promise<{ user_id: string; session_token: string; requires_2fa?: boolean; partial_token?: string }> {
-  // Raw fetch, not request() — see AccountDeletedError above. No session
-  // token exists yet at this point in the login flow, so the only thing
-  // lost versus request() here is its retry-on-network-blip and 429 pacing.
-  const res = await fetch(`${API_URL}/api/v1/opaque/login-finish`, {
+  const data = await request<{ user_id: string; session_token: string; requires_2fa?: boolean; partial_token?: string }>('/api/v1/opaque/login-finish', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify({ email, client_message: clientMessage, server_state: serverState }),
   })
-  const body = (await res
-    .json()
-    .catch(() => ({ error: 'Server returned an invalid response' }))) as Record<string, unknown>
-  if (!res.ok) {
-    const deleted = accountDeletedFields(body)
-    if (deleted) throw new AccountDeletedError(deleted.deletedAt, deleted.shredAfter)
-    throw new ApiError(
-      (body.message ?? body.error ?? res.statusText) as string,
-      res.status,
-      typeof body.error === 'string' ? body.error : undefined,
-    )
-  }
-  const data = body as { user_id: string; session_token: string; requires_2fa?: boolean; partial_token?: string }
   if (!data.requires_2fa && data.session_token) {
     setToken(data.session_token)
     setEmail(email)
@@ -2841,28 +2792,10 @@ export async function finishPasskeyLogin(
   authState: string,
   userId: string,
 ): Promise<LoginResult> {
-  // Raw fetch, not request() — same reason as opaqueLoginFinish above:
-  // recovering deleted_at/shred_after from a 403 account_deleted body needs
-  // the full body, which request()/ApiError (shared) discard.
-  const res = await fetch(`${API_URL}/api/v1/auth/passkey/login-finish`, {
+  const data = await request<LoginResult>('/api/v1/auth/passkey/login-finish', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify({ credential, auth_state: authState, user_id: userId }),
   })
-  const body = (await res
-    .json()
-    .catch(() => ({ error: 'Server returned an invalid response' }))) as Record<string, unknown>
-  if (!res.ok) {
-    const deleted = accountDeletedFields(body)
-    if (deleted) throw new AccountDeletedError(deleted.deletedAt, deleted.shredAfter)
-    throw new ApiError(
-      (body.message ?? body.error ?? res.statusText) as string,
-      res.status,
-      typeof body.error === 'string' ? body.error : undefined,
-    )
-  }
-  const data = body as LoginResult
   if (data.session_token) {
     setToken(data.session_token)
   }

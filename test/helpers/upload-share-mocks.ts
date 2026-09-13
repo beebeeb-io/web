@@ -9,19 +9,13 @@
 import { mock } from 'bun:test'
 
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  // task 1404 — account-deleted-copy.test.ts constructs `new ApiError(msg,
+  // status, code)` against the REAL module; when this mock wins bun's
+  // process-global mock.module race, its ApiError must carry the same
+  // 3-arg shape (including `code`) or that test's `err.code` checks silently
+  // see `undefined` instead of 'account_deleted'.
+  constructor(message: string, readonly status: number, readonly code?: string) {
     super(message)
-  }
-}
-
-// task 1404 — bun's mock.module is process-global; this stub must export
-// EVERY name any co-running test imports from ./api, including this one
-// (account-deleted-copy.test.ts imports it directly from the real module,
-// but when this mock wins the global registration race it needs to resolve
-// here too).
-export class AccountDeletedError extends Error {
-  constructor(readonly deletedAt: string, readonly shredAfter: string) {
-    super('This account has been deleted.')
   }
 }
 
@@ -107,7 +101,6 @@ export function installMocks(): void {
   // FILE_LIST_HARD_CAP (folder-share). listFilesPage delegates to the shared pager.
   mock.module('../../src/lib/api', () => ({
     ApiError,
-    AccountDeletedError,
     FILE_LIST_HARD_CAP: 50_000,
     listFilesPage: async (opts: { parentId?: string; cursor?: string }) => pageImpl(opts),
     initUpload: async (metadata: unknown) => {
