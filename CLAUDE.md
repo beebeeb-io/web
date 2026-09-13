@@ -174,6 +174,20 @@ When opening the ShareDialog, ALWAYS pass `isFolder={file.is_folder}`. Folder sh
 
 For full component reference: use `/beebeeb:components` skill.
 
+## How we work (evidence, design, done, parallel agents)
+
+The full rules live in the workspace `CLAUDE.md` → "How we work" (also summarised in the workspace `AGENTS.md`). Read them; they apply here. The repo-specific instantiation:
+
+- **The count-shaped truth line:** `bun test 2>&1 | tee /tmp/bb-web-test.log` → `N pass, 0 fail`;
+  `bunx playwright test 2>&1 | tee /tmp/bb-web-e2e.log` → `N passed` — assert N, not the absence of
+  "failed". A Playwright filter that matched 0 tests is a red. `bunx tsc --noEmit; echo exit=$?`.
+- **UI tasks are verified in a browser** (Playwright screenshots in the task's evidence path), never
+  by curl. A new spec is trusted only after it has been seen to fail against a deliberate mutation.
+- **Design before code:** `../../design/hifi/*.jsx` wins over the code; deviations are recorded in
+  the task file before the code changes.
+- **`@beebeeb/shared` edits happen in `packages/shared/src/` here, then `make sync-shared`** — the
+  mirror guard exists precisely because a silently drifting copy is an unreviewed number.
+
 ## Graphify
 
 This repo has a knowledge graph at graphify-out/.
