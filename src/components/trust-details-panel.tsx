@@ -11,7 +11,6 @@ export interface TrustFile {
   createdAt: string
   city?: string
   region?: string
-  provider?: string
   cipher?: string
 }
 
@@ -63,7 +62,6 @@ export function TrustDetailsPanel({
 
   const city = file.city ?? 'Falkenstein'
   const region = file.region ?? 'Europe'
-  const provider = file.provider ?? 'Hetzner'
   const cipher = file.cipher ?? 'AES-256-GCM'
 
   async function handleDownloadCiphertext() {
@@ -91,7 +89,6 @@ export function TrustDetailsPanel({
     { label: 'Encrypted at', value: formatTimestamp(file.createdAt) },
     { label: 'Encrypted by', value: 'This browser' },
     { label: 'Stored in', value: `${region} · ${city}` },
-    { label: 'Provider', value: provider },
     { label: 'File size', value: formatBytes(file.sizeBytes), mono: true },
   ]
 

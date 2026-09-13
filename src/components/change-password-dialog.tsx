@@ -18,7 +18,7 @@ import {
   toBase64,
   fromBase64,
 } from '../lib/crypto'
-import { checkPasswordPwned } from '../lib/hibp'
+import { checkPasswordBreached } from '../lib/breach-check'
 import { clearVault } from '../lib/vault'
 
 interface ChangePasswordDialogProps {
@@ -93,12 +93,12 @@ export function ChangePasswordDialog({ open, onClose, onSuccess }: ChangePasswor
         return
       }
 
-      // (b) Client-side breach check (HIBP k-anonymity). Only the first 5 chars
-      //     of the SHA-1 hash leave the device; the full password/hash never do.
-      //     Fail-open on a service outage (checkFailed) so we don't block a
-      //     legitimate change on a third-party being down.
-      const breach = await checkPasswordPwned(newPw)
-      if (breach.pwned) {
+      // (b) Breach check against OUR OWN corpus (k-anonymity: only the first 5
+      //     chars of the SHA-1 leave the device, and only to api.beebeeb.io).
+      //     Fail-open — an unseeded corpus or a transient error never blocks a
+      //     legitimate password change.
+      const breach = await checkPasswordBreached(newPw)
+      if (breach.breached) {
         setError(
           `This password has appeared in ${breach.count.toLocaleString()} known data breaches. ` +
             'Choose a different one.',

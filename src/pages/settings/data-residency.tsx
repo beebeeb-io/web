@@ -15,7 +15,6 @@ const FALLBACK_REGIONS: AvailableRegion[] = [{
   continent: 'europe',
   display_name: 'Europe',
   example_city: 'Falkenstein',
-  provider: 'Hetzner',
   is_default: true,
 }]
 
@@ -79,7 +78,7 @@ function RegionCard({ region, selected, disabled, onClick }: RegionCardProps) {
           )}
         </div>
         <div className="text-[12px] text-ink-3 mt-0.5 font-mono">
-          {locationLabel} · {region.provider}
+          {locationLabel}
         </div>
       </div>
 
@@ -200,7 +199,7 @@ export function SettingsDataResidency() {
               <Icon name="shield" size={13} className="text-amber-deep shrink-0 mt-0.5" />
               <div className="text-[12px] text-ink-3 leading-relaxed">
                 <strong className="text-ink-2">Existing files stay where they are.</strong>{' '}
-                Only new uploads use your preferred region. All regions are in the EU — Hetzner data centers, governed by EU law.
+                Only new uploads use your preferred region. All data is stored in Falkenstein, Germany, under EU law.
               </div>
             </div>
           </div>

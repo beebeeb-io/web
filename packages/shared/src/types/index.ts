@@ -1535,7 +1535,10 @@ export interface AvailableRegion {
   /** Representative city, e.g. "Falkenstein". Server (storage.rs `RegionInfo`)
    *  emits this as `example_city` — NOT `city`. */
   example_city: string
-  provider: string
+  /** No `provider` field — the brand rule (docs/canon/data-residency.md) is
+   *  name the city, never the hosting provider, in user-facing copy. The
+   *  server's `RegionInfo.provider` is `#[serde(skip_serializing)]` (task
+   *  1367) so `/api/v1/regions` never sends one. */
   is_default: boolean
 }
 

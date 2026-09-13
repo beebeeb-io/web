@@ -95,7 +95,7 @@ import type {
   WorkspaceMembersResponse,
 } from '@beebeeb/shared'
 
-const API_URL = import.meta.env.VITE_API_URL || 'https://api.beebeeb.io'
+export const API_URL = import.meta.env.VITE_API_URL || 'https://api.beebeeb.io'
 const STATUS_URL = import.meta.env.VITE_STATUS_URL || 'https://status.beebeeb.io'
 
 setApiUrl(API_URL)

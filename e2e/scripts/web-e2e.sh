@@ -106,6 +106,21 @@ start_backend() {
   # DROP DATABASE raced an open connection — flaked the ~30-restart per-file
   # isolation run (0740c). A stable secret always matches a fresh OR stale DB.
   [ -n "${OPAQUE_SETUP:-}" ] || OPAQUE_SETUP="$("$API_BIN" --generate-opaque-setup 2>/dev/null | grep -oE '[A-Za-z0-9+/=]{40,}' | head -1)"
+  # Tiny, LOCALLY-GENERATED pwned-passwords fixture corpus (task 1367 Task 4) —
+  # NOT the real HIBP dataset (see docs/ops/pwned-corpus.md: never download that
+  # off-path job here). Schema per that doc: pwned_prefixes(prefix, suffixes).
+  # Seeded with a couple of well-known breached passwords so
+  # change-password.spec.ts can exercise the "breached" branch of
+  # GET /api/v1/auth/pwned-range/{prefix} end-to-end, isolated per run in
+  # $BLOB_DIR (destroyed on teardown, never touches a shared/prod path).
+  PWNED_CORPUS_DB="$BLOB_DIR/pwned-fixture.sqlite"
+  sqlite3 "$PWNED_CORPUS_DB" <<'SQL'
+CREATE TABLE pwned_prefixes (prefix TEXT PRIMARY KEY, suffixes TEXT NOT NULL);
+-- SHA-1('password123456') = 98A16C09B0759E63EF7DF53592724E8EEDDB953A
+INSERT INTO pwned_prefixes (prefix, suffixes) VALUES ('98A16', 'C09B0759E63EF7DF53592724E8EEDDB953A:9999999');
+-- SHA-1('password') = 5BAA61E4C9B93F3F0682250B6CF8331B7EE68FD8
+INSERT INTO pwned_prefixes (prefix, suffixes) VALUES ('5BAA6', '1E4C9B93F3F0682250B6CF8331B7EE68FD8:9999999');
+SQL
   DATABASE_URL="$DATABASE_URL" BB_PORT="$API_PORT" \
     CORS_ORIGINS="http://localhost:$VITE_PORT" \
     BLOB_STORE=local BLOB_STORE_PATH="$BLOB_DIR" \
@@ -113,6 +128,7 @@ start_backend() {
     SHARE_WRAPPING_KEY=0000000000000000000000000000000000000000000000000000000000000002 \
     OPAQUE_SERVER_SETUP="$OPAQUE_SETUP" \
     SECRET_FINGERPRINTS_PATH="$BLOB_DIR/.secret-fingerprints" \
+    BEEBEEB_PWNED_CORPUS_PATH="$PWNED_CORPUS_DB" \
     BB_RATE_LIMIT_DISABLED=1 \
     APP_URL="http://localhost:$VITE_PORT" API_URL="http://localhost:$API_PORT" \
     setsid "$API_BIN" >/tmp/bb-web-e2e-api.log 2>&1 &
