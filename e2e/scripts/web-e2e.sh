@@ -121,6 +121,16 @@ INSERT INTO pwned_prefixes (prefix, suffixes) VALUES ('98A16', 'C09B0759E63EF7DF
 -- SHA-1('password') = 5BAA61E4C9B93F3F0682250B6CF8331B7EE68FD8
 INSERT INTO pwned_prefixes (prefix, suffixes) VALUES ('5BAA6', '1E4C9B93F3F0682250B6CF8331B7EE68FD8:9999999');
 SQL
+  # BB_REQUIRE_PILOT_KEY / BB_PILOT_SIGNUP_KEY (task 1411): passed through
+  # ONLY when the caller set them — no new default here (making the gate the
+  # CI default is task 1406's job). Empty string is behaviorally identical to
+  # unset for both (server's bool_flag/evaluate() both treat "" as falsy/empty,
+  # see beebeeb-api/src/env_flags.rs + pilot_gate.rs), so this never changes
+  # existing runs. Lets e2e/pilot-key-registration.spec.ts actually exercise
+  # the gate when invoked as e.g.
+  #   BB_REQUIRE_PILOT_KEY=1 BB_PILOT_SIGNUP_KEY=test-pilot-key \
+  #     ./e2e/scripts/web-e2e.sh e2e/pilot-key-registration.spec.ts
+  # — that spec self-skips (not a false pass/fail) when the gate is off.
   DATABASE_URL="$DATABASE_URL" BB_PORT="$API_PORT" \
     CORS_ORIGINS="http://localhost:$VITE_PORT" \
     BLOB_STORE=local BLOB_STORE_PATH="$BLOB_DIR" \
@@ -131,6 +141,8 @@ SQL
     BEEBEEB_PWNED_CORPUS_PATH="$PWNED_CORPUS_DB" \
     BB_RATE_LIMIT_DISABLED=1 \
     APP_URL="http://localhost:$VITE_PORT" API_URL="http://localhost:$API_PORT" \
+    BB_REQUIRE_PILOT_KEY="${BB_REQUIRE_PILOT_KEY:-}" \
+    BB_PILOT_SIGNUP_KEY="${BB_PILOT_SIGNUP_KEY:-}" \
     setsid "$API_BIN" >/tmp/bb-web-e2e-api.log 2>&1 &
   API_PID=$!
   # -m10 (not -m3): the FIRST auto-login also creates the dev user (Argon2id
