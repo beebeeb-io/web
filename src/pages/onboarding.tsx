@@ -223,6 +223,7 @@ export function Onboarding() {
         referralSource,
         referralSharerId,
         referralCode,
+        pilotKey,
       )
       // Clear referral attribution after it has been sent
       localStorage.removeItem(REFERRAL_SOURCE_KEY)

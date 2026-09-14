@@ -270,8 +270,14 @@ export async function signup(
  * server gates this endpoint behind a shared pilot access key: pass the
  * user-entered key as `pilotKey` and it rides as the `X-Beebeeb-Pilot-Key`
  * header. A missing/wrong key is rejected HERE with a typed 403
- * (`error: "pilot_key_required"`) BEFORE anything is created server-side, so
- * the gate must be enforced on this (register-start) request — not finish.
+ * (`error: "pilot_key_required"`) BEFORE anything is created server-side.
+ *
+ * The server RE-ENFORCES the same gate on register-finish (the OPAQUE flow is
+ * stateless across the two round trips, so a finish that skipped a gated
+ * start must not slip through) — see `opaqueRegisterFinish` below. Both
+ * requests must carry the header (task 1411; a prior version of this comment
+ * claimed only start needed it, which was wrong and let the header get
+ * dropped on finish).
  */
 export async function opaqueRegisterStart(
   email: string,
@@ -288,6 +294,13 @@ export async function opaqueRegisterStart(
   })
 }
 
+/**
+ * OPAQUE registration, round 2 — creates the account row. Carries the SAME
+ * pilot access key as `opaqueRegisterStart` (task 1411): the server
+ * re-checks the gate here too (it's also where `is_pilot` gets stamped), so
+ * omitting the header makes an otherwise-successful signup 403 with
+ * `pilot_key_required` on the very last step.
+ */
 export async function opaqueRegisterFinish(
   email: string,
   clientMessage: string,
@@ -296,7 +309,10 @@ export async function opaqueRegisterFinish(
   referralSource?: string,
   referralSharerId?: string,
   referralCode?: string,
+  pilotKey?: string,
 ): Promise<{ user_id: string; session_token: string }> {
+  const headers: Record<string, string> = {}
+  if (pilotKey) headers['X-Beebeeb-Pilot-Key'] = pilotKey
   const data = await request<{ user_id: string; session_token: string }>('/api/v1/opaque/register-finish', {
     method: 'POST',
     body: JSON.stringify({
@@ -308,6 +324,7 @@ export async function opaqueRegisterFinish(
       ...(referralSharerId && { referral_sharer_id: referralSharerId }),
       ...(referralCode && { referral_code: referralCode }),
     }),
+    headers,
   })
   setToken(data.session_token)
   setEmail(email)
