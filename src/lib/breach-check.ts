@@ -5,8 +5,9 @@
  * digest are sent to `GET /api/v1/auth/pwned-range/{prefix}` on api.beebeeb.io,
  * which answers from the node-local HaveIBeenPwned corpus (tasks 0766/0767).
  * The full password and full hash never leave the device, and no request goes
- * to any third party — the direct api.pwnedpasswords.com call this replaces was
- * a US-fronted origin banned by the no-US-systems rule (task 0995).
+ * to any third party — the direct third-party HaveIBeenPwned range-query call
+ * this replaces was a US-fronted origin banned by the no-US-systems rule
+ * (task 0995).
  *
  * Fail-OPEN: any network/parse failure, or an unseeded corpus (empty body),
  * resolves to "not breached" so a password change is never blocked.
