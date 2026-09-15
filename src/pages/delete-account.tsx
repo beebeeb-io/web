@@ -6,6 +6,7 @@ import { BBInput } from '@beebeeb/shared'
 import { BBCheckbox } from '@beebeeb/shared'
 import { StepUpAuth } from '../components/step-up-auth'
 import { deleteAccountPermanently, ApiError } from '../lib/api'
+import { useAuth } from '../lib/auth-context'
 
 const deletionItems: [string, string][] = [
   ['All files and versions', 'Encrypted blobs shredded from all regions'],
@@ -16,6 +17,7 @@ const deletionItems: [string, string][] = [
 
 export function DeleteAccount() {
   const navigate = useNavigate()
+  const { logout } = useAuth()
   const [confirmation, setConfirmation] = useState('')
   const [understood, setUnderstood] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -37,6 +39,14 @@ export function DeleteAccount() {
       setError(null)
       try {
         await deleteAccountPermanently(confirmation, token)
+        // Clear AuthContext's `user`, KeyContext's `isUnlocked`, and the
+        // vault/session storage via the same sign-out routine every other
+        // logout path uses (task 1407) — the account is already gone
+        // server-side, but the client still believes it's signed in and
+        // unlocked. Without this, GuestRoute (app.tsx) bounces the /login
+        // navigation below straight back to `/` because `user && isUnlocked`
+        // are both still truthy, showing the deleted user's stale Drive.
+        await logout()
         navigate('/login', { replace: true })
       } catch (e) {
         if (e instanceof ApiError && e.status === 403) {
@@ -47,7 +57,7 @@ export function DeleteAccount() {
         setLoading(false)
       }
     },
-    [confirmation, navigate],
+    [confirmation, navigate, logout],
   )
 
   return (
