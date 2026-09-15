@@ -100,20 +100,11 @@ async function deleteAccountViaUi(page: Page) {
   await page.getByLabel(/^password$/i).fill(TEST_PASSWORD)
   await page.getByRole('button', { name: /^delete account$/i }).click()
 
-  // delete-account.tsx navigates('/login', {replace: true}) on success.
+  // delete-account.tsx navigates('/login', {replace: true}) on success, after
+  // running the sign-out routine (task 1407) — no bounce back to `/`, and no
+  // hard-navigation workaround needed any more (see e2e's own regression
+  // spec: delete-account-clears-state.spec.ts).
   await page.waitForURL(/\/login/, { timeout: 15_000 })
-
-  // KNOWN pre-existing bug (found while building this spec, unrelated to
-  // task 1404): delete-account.tsx's success path never clears AuthContext's
-  // `user` or the vault's `isUnlocked` state before navigating. GuestRoute
-  // (app.tsx) redirects `/login` back to `/` whenever `user && isUnlocked`
-  // are BOTH still truthy, so in-app SPA navigation bounces straight back to
-  // a stale drive view (server session is actually already dead — only the
-  // client's in-memory state is stale). A real user hitting this either
-  // reloads or waits for the next failed authenticated call's global 401
-  // handler to sort it out. Force that here with a hard navigation, which
-  // re-runs AuthProvider's boot() from a clean slate.
-  await page.goto('/login')
 }
 
 test.describe('account_deleted login copy (task 1404)', () => {

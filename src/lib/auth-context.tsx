@@ -201,7 +201,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       channelRef.current?.postMessage({ type: 'logout' } satisfies AuthBroadcastMessage)
     } catch { /* channel may already be closed during teardown */ }
     await onLogoutCallback?.()
-    await apiLogout()
+    // Best-effort server-side logout — the session may already be gone (e.g.
+    // account deletion invalidates ALL of the user's sessions server-side
+    // before this ever runs, task 1407) or the network may be down. Local
+    // state must clear regardless: callers rely on `user` being null the
+    // moment this resolves to decide whether it's safe to navigate to a
+    // guest-only route. Mirrors the identical best-effort handling already
+    // used by the BroadcastChannel receiver above.
+    try {
+      await apiLogout()
+    } catch { /* ignore — local cleanup is what matters here */ }
     setUser(null)
   }, [])
 
