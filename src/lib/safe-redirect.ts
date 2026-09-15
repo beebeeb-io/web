@@ -43,9 +43,10 @@ export function sanitizeRedirect(raw: string | null | undefined): string | null 
   if (!raw) return null
 
   // Must be a plain relative path: exactly one leading "/" then a path char.
-  // Rejects absolute URLs ("https://evil", "javascript:…"), protocol-relative
-  // ("//evil.com"), and backslash smuggling ("/\evil.com" — browsers normalise
-  // "\" to "/"), plus bare values like "evil.com".
+  // Rejects an absolute URL (a scheme such as "https:" or "javascript:"
+  // followed by "://"), a protocol-relative host (a leading double slash),
+  // and backslash smuggling (a leading "/\" — browsers normalise "\" to
+  // "/"), plus a bare hostname with no leading slash at all.
   if (raw[0] !== '/') return null
   if (raw[1] === '/' || raw[1] === '\\') return null
 

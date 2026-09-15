@@ -1,0 +1,67 @@
+# path|token|evidence (evidence is mandatory and is what a reviewer reads)
+#
+# Task 1420 — first .claims-allow file for web. banned-origin (breach-check.ts
+# pwnedpasswords comment) and the safe-redirect.ts doc-comment "evil"/"evil.com"
+# illustrative examples were FIXED by rewording, not allow-listed here — see
+# the commit that fixed them alongside this file.
+
+# ── host-allowlist ──────────────────────────────────────────────────────────
+# App Store link — the iOS app's real listing, referenced wherever we prompt
+# a web user to install the app.
+src/components/empty-states/empty-drive.tsx|apps.apple.com|App Store link for the iOS app (empty-state install prompt)
+src/components/empty-states/empty-photos.tsx|apps.apple.com|same — App Store link, empty-state install prompt
+src/components/ios-app-banner.tsx|apps.apple.com|same — App Store link, the site-wide iOS install banner
+
+# Dropbox import feature — user-initiated OAuth + file listing/download using
+# the user's own Dropbox token; no beebeeb ciphertext, key material, or
+# account data egresses. Same class as the Google import feature below.
+src/lib/dropbox-import.ts|content.dropboxapi.com|Dropbox import: user-initiated file download via the user's own OAuth token
+src/lib/dropbox-import.ts|api.dropboxapi.com|Dropbox import: user-initiated folder listing via the user's own OAuth token
+src/pages/settings/import.tsx|api.dropboxapi.com|same Dropbox import flow, settings entry point
+src/pages/settings/import.tsx|www.dropbox.com|Dropbox OAuth authorize redirect — user-initiated consent screen
+src/pages/settings/import/dropbox-callback.tsx|api.dropboxapi.com|Dropbox OAuth callback: token exchange + account lookup using the user's own auth code
+
+# Google Drive import feature — user-initiated OAuth + file listing using the
+# user's own token, mirrored server-side (repos/server/.claims-allow:
+# beebeeb-api/src/routes/import.rs|oauth2.googleapis.com) per pre-mortem 05
+# spec §9 Q1: "user-initiated migration; reads FROM the third party using the
+# user's own token; no beebeeb ciphertext, key material, or account data
+# egresses." Same open question as the server side — if Guus rules against
+# it, this comes out too (decision 1379 still open on the server's similar
+# import-adjacent hosts).
+src/lib/google-import.ts|www.googleapis.com|Google Drive import: user-initiated file listing via the user's own OAuth token
+src/pages/settings/import.tsx|www.googleapis.com|same Google import flow, settings entry point (OAuth scope string)
+src/pages/settings/import.tsx|accounts.google.com|Google OAuth consent screen redirect, user-initiated
+
+# Our own docs subdomain.
+src/pages/forgot-password.tsx|docs.beebeeb.io|link to our own recovery docs page
+src/pages/onboarding.tsx|docs.beebeeb.io|link to our own docs, onboarding welcome copy
+
+# Social-share intent links — user-initiated share buttons, not a data-path
+# dependency. Same reasoning already accepted for site's x.com/mastodon.social
+# share links (repos/site/.claims-allow).
+src/pages/settings/referrals.tsx|x.com|user-initiated referral-share intent link (share button)
+src/pages/settings/referrals.tsx|wa.me|user-initiated referral-share intent link (WhatsApp share button)
+
+# Citation to the upstream open-source library's own GitHub repo in a type
+# declaration's doc-comment — not a runtime fetch.
+src/types/mammoth.d.ts|github.com|doc-comment citing mammoth.js's own GitHub repo (no @types/mammoth exists); not a runtime call
+
+# ── phantom-region (Helsinki/Ede, all honestly coming-soon-labelled) ───────
+# Same precedent already ruled on for site (decision 1414) and mobile
+# (decision 1413): Helsinki and Ede are real, committed roadmap regions per
+# docs/canon/data-residency.md's "The truth" section — every occurrence here
+# is either (a) explicitly labelled "coming soon"/"roadmap" in the same
+# sentence or an adjacent comment, or (b) a generic IANA timezone-zone name
+# picker that has nothing to do with Beebeeb storage regions at all.
+src/components/drive-layout.tsx|helsinki|REGION_META lookup table, comment above explicitly labels Helsinki/Ede "coming-soon roadmap regions" (decision 1413/1414 precedent)
+src/components/drive-layout.tsx|Helsinki|same REGION_META entry, display label
+src/components/drive-layout.tsx| ede:|same REGION_META table, Ede entry
+src/components/drive-layout.tsx|'Ede,|same REGION_META table, Ede display label
+src/pages/pricing.tsx| Ede)|pricing FAQ answer: "More EU regions (Helsinki and Ede) are coming soon" — explicit coming-soon label in the same sentence
+src/pages/pricing.tsx|Helsinki|same FAQ answer, same sentence
+src/pages/settings/data-residency.tsx| Ede |comment: "Falkenstein is live; Helsinki + Ede are roadmap regions (activate on S3)" — explicit roadmap label
+src/pages/settings/data-residency.tsx|Helsinki|same comment
+src/pages/settings/data-residency.tsx|helsinki|countryFromCity() lookup map, same roadmap-region reasoning as the comment directly above it
+src/pages/settings/data-residency.tsx| ede:|same lookup map, Ede entry
+src/lib/timezones.ts|Helsinki|NOT a region claim — "Europe/Helsinki" is a standard IANA tz-database zone name in a generic timezone picker, unrelated to Beebeeb storage regions
