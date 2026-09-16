@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { envTestAccount, loginAndProvision } from './helpers/auth'
+import { fillSignupForm } from './helpers/signup'
 
 /**
  * E2E tests for authentication flows.
@@ -53,20 +54,13 @@ test.describe('Authentication', () => {
   test('signup flow: fill form, submit, redirected to /onboarding', async ({ page }) => {
     const email = uniqueEmail()
 
-    await page.goto('/signup')
-    await expect(page).toHaveURL(/\/signup/)
-
-    // /signup is email + consent only — the password is collected on the
-    // /onboarding password step, after the recovery-phrase screens. This
-    // test was originally written for an older single-page signup flow;
-    // updating it here to match the current shape (closes 0011).
-    await page.getByLabel(/email/i).fill(email)
-    await page
-      .getByRole('checkbox', { name: /Beebeeb cannot recover/i })
-      .click()
-
-    // Submit
-    await page.getByRole('button', { name: /^continue$/i }).click()
+    // /signup is email + pilot access key + consent — the password is
+    // collected on the /onboarding password step, after the recovery-phrase
+    // screens. This test was originally written for an older single-page
+    // signup flow; updating it here to match the current shape (closes
+    // 0011). The pilot access key field has been required client-side since
+    // task 0928 — fillSignupForm fills it with the shared default (task 1406).
+    await fillSignupForm(page, { email })
 
     // Should redirect to onboarding (recovery phrase screen)
     await expect(page).toHaveURL(/\/onboarding/, { timeout: 10_000 })

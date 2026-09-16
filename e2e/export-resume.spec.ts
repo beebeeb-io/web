@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
+import { createAccount, fillSignupForm, reachPasswordStep, uniqueEmail } from './helpers/signup'
 
 /**
  * Task 0720 — a data-export captured before an auth bounce resumes to
@@ -10,44 +11,22 @@ import { test, expect, type Page } from '@playwright/test'
  * harder resume half end-to-end through a real login.
  */
 
-const uniqueEmail = () =>
-  `e2e-export-${Date.now()}-${Math.random().toString(36).slice(2)}@beebeeb.io`
 const STRONG_PW = 'correct-horse-battery-staple-9'
 
 async function blockDevAutoLogin(page: Page) {
   await page.route('**/dev/auto-login', (route) => route.fulfill({ status: 404 }))
 }
 
-/** Sign up a fresh account through the UI; returns its creds + recovery phrase. */
+/**
+ * Sign up a fresh account through the UI; returns its creds + recovery
+ * phrase. Uses the shared helper (task 1406) — this spec's copy predated the
+ * pilot-access-key field (task 0928) and was stale.
+ */
 async function signUp(page: Page): Promise<{ email: string; password: string; recoveryPhrase: string }> {
-  const email = uniqueEmail()
-  await page.goto('/signup')
-  await page.getByLabel(/email/i).fill(email)
-  await page.getByRole('checkbox', { name: /Beebeeb cannot recover/i }).click()
-  await page.getByRole('button', { name: /continue/i }).click()
-
-  await expect(page).toHaveURL(/\/onboarding/, { timeout: 15_000 })
-  const wordEls = page.locator('span.font-mono.text-sm.font-medium')
-  await expect(wordEls).toHaveCount(12, { timeout: 15_000 })
-  const phraseWords = (await wordEls.allInnerTexts()).map((w) => w.trim())
-  await page.getByRole('checkbox', { name: /I've saved my recovery phrase offline/i }).click()
-  await page.getByRole('button', { name: /I saved it/i }).click()
-
-  const verifyLabels = page.locator('label', { hasText: /^Word #\d+$/ })
-  const labelCount = await verifyLabels.count()
-  for (let i = 0; i < labelCount; i++) {
-    const labelText = (await verifyLabels.nth(i).innerText()).trim()
-    const m = labelText.match(/Word #(\d+)/)
-    if (!m) throw new Error(`unexpected verify label: ${labelText}`)
-    await page.getByLabel(labelText, { exact: true }).fill(phraseWords[parseInt(m[1], 10) - 1])
-  }
-  await page.getByRole('button', { name: /^verify$/i }).click()
-
-  const pw = page.getByPlaceholder('At least 12 characters')
-  await expect(pw).toBeVisible({ timeout: 10_000 })
-  await pw.fill(STRONG_PW)
-  await page.getByPlaceholder('Type it again').fill(STRONG_PW)
-  await page.getByRole('button', { name: /create account/i }).click()
+  const email = uniqueEmail('e2e-export')
+  await fillSignupForm(page, { email })
+  const phraseWords = await reachPasswordStep(page)
+  await createAccount(page, STRONG_PW)
   await page.waitForURL(/\/(?:$|\?|#)/, { timeout: 25_000 })
 
   return { email, password: STRONG_PW, recoveryPhrase: phraseWords.join(' ') }
