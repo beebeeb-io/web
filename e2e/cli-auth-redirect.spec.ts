@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
+import { createAccount, fillSignupForm, reachPasswordStep, uniqueEmail } from './helpers/signup'
 
 /**
  * Task 0551 — CLI device-auth redirect preservation.
@@ -17,9 +18,6 @@ import { test, expect, type Page } from '@playwright/test'
  * Runs on the dedicated :3003 harness (make web-e2e SPECS=e2e/cli-auth-redirect.spec.ts).
  */
 
-const uniqueEmail = () =>
-  `e2e-cliauth-${Date.now()}-${Math.random().toString(36).slice(2)}@beebeeb.io`
-
 const STRONG_PW = 'correct-horse-battery-staple-9'
 
 /** In dev/e2e, DevAuthGate POSTs /dev/auto-login on every page load and would
@@ -30,46 +28,15 @@ async function blockDevAutoLogin(page: Page) {
 
 /**
  * Drive the real UI signup → recovery-phrase → password flow to create a fresh
- * account, returning its credentials + the generated 12-word phrase. Mirrors
- * the known-good pattern in onboarding-password.spec.ts.
+ * account, returning its credentials + the generated 12-word phrase. Uses the
+ * shared helper (task 1406) — this spec's copy predated the pilot-access-key
+ * field (task 0928) and was stale.
  */
 async function signUp(page: Page): Promise<{ email: string; password: string; recoveryPhrase: string }> {
-  const email = uniqueEmail()
-
-  await page.goto('/signup')
-  await expect(page).toHaveURL(/\/signup/)
-  await page.getByLabel(/email/i).fill(email)
-  await page.getByRole('checkbox', { name: /Beebeeb cannot recover/i }).click()
-  await page.getByRole('button', { name: /continue/i }).click()
-
-  // Recovery-phrase display step — read the 12 words out of the DOM.
-  await expect(page).toHaveURL(/\/onboarding/, { timeout: 15_000 })
-  const wordEls = page.locator('span.font-mono.text-sm.font-medium')
-  await expect(wordEls).toHaveCount(12, { timeout: 15_000 })
-  const phraseWords = (await wordEls.allInnerTexts()).map((w) => w.trim())
-  expect(phraseWords.length).toBe(12)
-
-  await page.getByRole('checkbox', { name: /I've saved my recovery phrase offline/i }).click()
-  await page.getByRole('button', { name: /I saved it/i }).click()
-
-  // Verify step — fill the randomly-requested words from the captured phrase.
-  const verifyLabels = page.locator('label', { hasText: /^Word #\d+$/ })
-  const labelCount = await verifyLabels.count()
-  expect(labelCount).toBeGreaterThan(0)
-  for (let i = 0; i < labelCount; i++) {
-    const labelText = (await verifyLabels.nth(i).innerText()).trim()
-    const m = labelText.match(/Word #(\d+)/)
-    if (!m) throw new Error(`unexpected verify label: ${labelText}`)
-    await page.getByLabel(labelText, { exact: true }).fill(phraseWords[parseInt(m[1], 10) - 1])
-  }
-  await page.getByRole('button', { name: /^verify$/i }).click()
-
-  // Password step.
-  const pw = page.getByPlaceholder('At least 12 characters')
-  await expect(pw).toBeVisible({ timeout: 10_000 })
-  await pw.fill(STRONG_PW)
-  await page.getByPlaceholder('Type it again').fill(STRONG_PW)
-  await page.getByRole('button', { name: /create account/i }).click()
+  const email = uniqueEmail('e2e-cliauth')
+  await fillSignupForm(page, { email })
+  const phraseWords = await reachPasswordStep(page)
+  await createAccount(page, STRONG_PW)
 
   // Account created → lands on the drive.
   await page.waitForURL(/\/(?:$|\?|#)/, { timeout: 25_000 })

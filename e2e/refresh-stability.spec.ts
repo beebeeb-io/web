@@ -1,4 +1,5 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect } from '@playwright/test'
+import { signupAndUnlock } from './helpers/signup'
 
 /**
  * E2E regression test for task 0028 — admin / settings page refresh stability.
@@ -19,65 +20,7 @@ import { test, expect, type Page } from '@playwright/test'
  *   3. Web dev server on 5173
  */
 
-const uniqueEmail = () =>
-  `e2e-${Date.now()}-${Math.random().toString(36).slice(2)}@beebeeb.io`
-
 const TEST_PASSWORD = 'RefreshStable1234'
-
-/**
- * Drive the full signup flow (email → recovery phrase → verify → password)
- * and land on `/` with the vault unlocked. Returns once the drive is visible.
- *
- * Reuses the same recovery-phrase-extraction trick as
- * onboarding-password.spec.ts: read the 12 words out of the DOM, then re-type
- * the random subset the verify step asks for.
- */
-async function signupAndUnlock(page: Page) {
-  await page.goto('/signup')
-  await expect(page).toHaveURL(/\/signup/)
-  await page.getByLabel(/email/i).fill(uniqueEmail())
-  await page.getByRole('checkbox', { name: /Beebeeb cannot recover/i }).click()
-  await page.getByRole('button', { name: /^continue$/i }).click()
-
-  // Display step — wait for the 12-word phrase, capture, acknowledge.
-  await expect(page).toHaveURL(/\/onboarding/, { timeout: 10_000 })
-  const wordEls = page.locator('span.font-mono.text-sm.font-medium')
-  await expect(wordEls).toHaveCount(12, { timeout: 15_000 })
-  const phraseWords = (await wordEls.allInnerTexts()).map((w) => w.trim())
-  expect(phraseWords.length).toBe(12)
-
-  await page
-    .getByRole('checkbox', { name: /I've saved my recovery phrase offline/i })
-    .click()
-  await page.getByRole('button', { name: /I saved it/i }).click()
-
-  // Verify step — fill every "Word #N" with the right word.
-  const verifyLabels = page.locator('label', { hasText: /^Word #\d+$/ })
-  const labelCount = await verifyLabels.count()
-  expect(labelCount).toBeGreaterThan(0)
-  for (let i = 0; i < labelCount; i++) {
-    const labelText = (await verifyLabels.nth(i).innerText()).trim()
-    const m = labelText.match(/Word #(\d+)/)
-    if (!m) throw new Error(`unexpected verify label: ${labelText}`)
-    const wordIdx = parseInt(m[1], 10) - 1
-    await page.getByLabel(labelText, { exact: true }).fill(phraseWords[wordIdx])
-  }
-  await page.getByRole('button', { name: /^verify$/i }).click()
-
-  // Password step — set device password and create the account.
-  const passwordField = page.getByPlaceholder('At least 12 characters')
-  await expect(passwordField).toBeVisible({ timeout: 5_000 })
-  await passwordField.fill(TEST_PASSWORD)
-  await page.getByPlaceholder('Type it again').fill(TEST_PASSWORD)
-  await page.getByRole('button', { name: /create account/i }).click()
-
-  // Wait until we land on `/` (drive). OPAQUE registration + key wrap can take
-  // a few seconds on a cold worker, especially during cargo-watch rebuilds.
-  await page.waitForURL(/\/(?:$|\?|#)/, { timeout: 30_000 })
-  await expect(page.getByText(/All files/i).first()).toBeVisible({
-    timeout: 10_000,
-  })
-}
 
 test.describe('Page refresh stability (task 0028)', () => {
   // This spec creates a brand-new account via the real /signup → onboarding UI,
@@ -110,7 +53,7 @@ test.describe('Page refresh stability (task 0028)', () => {
     page,
   }) => {
     test.setTimeout(60_000)
-    await signupAndUnlock(page)
+    await signupAndUnlock(page, { password: TEST_PASSWORD })
 
     for (const path of refreshStablePaths) {
       await test.step(`refresh on ${path} stays on ${path}`, async () => {

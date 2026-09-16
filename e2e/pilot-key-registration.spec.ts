@@ -1,4 +1,5 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect } from '@playwright/test'
+import { PILOT_KEY, createAccount, fillSignupForm, reachPasswordStep } from './helpers/signup'
 
 /**
  * E2E regression test for task 1411.
@@ -35,7 +36,6 @@ import { test, expect, type Page } from '@playwright/test'
  */
 
 const API = process.env.E2E_API_URL ?? 'http://localhost:3001'
-const PILOT_KEY = process.env.BB_TEST_PILOT_KEY ?? 'test-pilot-key'
 const uniqueEmail = () =>
   `e2e-pilot-${Date.now()}-${Math.random().toString(36).slice(2)}@beebeeb.io`
 const PASSWORD = 'CorrectHorseBattery9!'
@@ -63,49 +63,6 @@ async function pilotGateIsOn(): Promise<boolean> {
   return body.error === 'pilot_key_required'
 }
 
-async function fillSignupForm(page: Page, email: string, pilotKey: string) {
-  await page.goto('/signup')
-  await expect(page).toHaveURL(/\/signup/)
-  await page.getByLabel(/email/i).fill(email)
-  await page.getByTestId('pilot-key-input').fill(pilotKey)
-  await page.getByRole('checkbox', { name: /Beebeeb cannot recover/i }).click()
-  await page.getByRole('button', { name: /^continue$/i }).click()
-}
-
-/**
- * Drives display -> verify -> password steps on /onboarding, reading the
- * generated 12-word recovery phrase out of the DOM and re-typing the words
- * the verify step asks for. Mirrors the helper in onboarding-password.spec.ts.
- */
-async function reachPasswordStep(page: Page) {
-  await expect(page).toHaveURL(/\/onboarding/, { timeout: 10_000 })
-  const wordEls = page.locator('span.font-mono.text-sm.font-medium')
-  await expect(wordEls).toHaveCount(12, { timeout: 15_000 })
-  const phraseWords = (await wordEls.allInnerTexts()).map((w) => w.trim())
-  expect(phraseWords.length).toBe(12)
-
-  await page
-    .getByRole('checkbox', { name: /I've saved my recovery phrase offline/i })
-    .click()
-  await page.getByRole('button', { name: /I saved it/i }).click()
-
-  const verifyLabels = page.locator('label', { hasText: /^Word #\d+$/ })
-  const labelCount = await verifyLabels.count()
-  expect(labelCount).toBeGreaterThan(0)
-  for (let i = 0; i < labelCount; i++) {
-    const labelText = (await verifyLabels.nth(i).innerText()).trim()
-    const m = labelText.match(/Word #(\d+)/)
-    if (!m) throw new Error(`unexpected verify label: ${labelText}`)
-    const wordIdx = parseInt(m[1], 10) - 1
-    await page.getByLabel(labelText, { exact: true }).fill(phraseWords[wordIdx])
-  }
-  await page.getByRole('button', { name: /^verify$/i }).click()
-
-  await expect(page.getByPlaceholder('At least 12 characters')).toBeVisible({
-    timeout: 5_000,
-  })
-}
-
 test.describe('Pilot key gate — full registration flow (task 1411)', () => {
   test.use({ storageState: { cookies: [], origins: [] } })
 
@@ -129,12 +86,9 @@ test.describe('Pilot key gate — full registration flow (task 1411)', () => {
     page,
   }) => {
     const email = uniqueEmail()
-    await fillSignupForm(page, email, PILOT_KEY)
+    await fillSignupForm(page, { email, pilotKey: PILOT_KEY })
     await reachPasswordStep(page)
-
-    await page.getByPlaceholder('At least 12 characters').fill(PASSWORD)
-    await page.getByPlaceholder('Type it again').fill(PASSWORD)
-    await page.getByRole('button', { name: /create account/i }).click()
+    await createAccount(page, PASSWORD)
 
     // Reaching the drive proves BOTH register-start AND register-finish
     // succeeded with the pilot key attached — the exact regression this test
@@ -155,12 +109,9 @@ test.describe('Pilot key gate — full registration flow (task 1411)', () => {
     page,
   }) => {
     const email = uniqueEmail()
-    await fillSignupForm(page, email, 'definitely-the-wrong-key')
+    await fillSignupForm(page, { email, pilotKey: 'definitely-the-wrong-key' })
     await reachPasswordStep(page)
-
-    await page.getByPlaceholder('At least 12 characters').fill(PASSWORD)
-    await page.getByPlaceholder('Type it again').fill(PASSWORD)
-    await page.getByRole('button', { name: /create account/i }).click()
+    await createAccount(page, PASSWORD)
 
     // Bounced back to /signup with the server's typed pilot-key error inline
     // next to the key field (onboarding.tsx's 403 pilot_key_required handler

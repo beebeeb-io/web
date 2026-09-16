@@ -13,7 +13,13 @@
 #   E2E_WORKERS=1 ./e2e/scripts/web-e2e.sh         # override worker count
 #
 # Requires: the shared dev Postgres on :5434 (docker compose dev postgres) and a
-# built debug binary at repos/server/target/debug/beebeeb-api.
+# built debug binary at repos/server/target/debug/beebeeb-api. Works from the
+# PRIMARY repos/web checkout or any `git worktree add` worktree of it (task
+# 1406) — SERVER_DIR always resolves to the one real repos/server via git's
+# common dir. Uses host `psql` if present, else falls back to `docker exec`
+# into the Postgres container (task 1406; override with E2E_PG_CONTAINER).
+# The pilot-access-key gate is ON by default (BB_REQUIRE_PILOT_KEY=1,
+# BB_PILOT_SIGNUP_KEY=test-pilot-key) — override before invoking to turn it off.
 set -euo pipefail
 
 # ── Config (isolated; do NOT collide with :3001/:3002) ──────────────────────
@@ -32,7 +38,24 @@ WORKERS="${E2E_WORKERS:-1}"
 REPEAT="${E2E_REPEAT:-1}"
 
 WEB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-WORKSPACE="$(cd "$WEB_DIR/../.." && pwd)"
+# Resolve the beebeeb.io WORKSPACE root via git's COMMON dir, not a fixed
+# "../.." offset from this script's own location (task 1406 — the previous
+# `$WEB_DIR/../..` only worked when this script's checkout WAS the primary
+# repos/web; `git worktree add` places worktrees OUTSIDE the workspace
+# entirely — convention `repos/web-NNNN` or `~/code/bb-worktrees/web-NNNN`
+# per the workspace CLAUDE.md — so a worktree 2 levels up lands outside
+# beebeeb.io altogether and SERVER_DIR below silently resolved to a
+# nonexistent path). `git rev-parse --git-common-dir` always returns the
+# PRIMARY checkout's .git, even when this script runs from a linked worktree,
+# so this locates the one real repos/server (and its built debug binary)
+# regardless of where THIS checkout lives on disk. Falls back to the old
+# relative computation if run outside a git worktree/repo entirely.
+if GIT_COMMON_DIR="$(cd "$WEB_DIR" && git rev-parse --git-common-dir 2>/dev/null)"; then
+  PRIMARY_WEB_DIR="$(cd "$GIT_COMMON_DIR/.." && pwd)"
+  WORKSPACE="$(cd "$PRIMARY_WEB_DIR/../.." && pwd)"
+else
+  WORKSPACE="$(cd "$WEB_DIR/../.." && pwd)"
+fi
 SERVER_DIR="$WORKSPACE/repos/server"
 # API binary: defaults to the debug build, but E2E_API_BIN can point elsewhere —
 # notably at a RELEASE build. The dev auto-login derives a 256 MiB Argon2id
@@ -45,6 +68,40 @@ DATABASE_URL="postgres://$PG_USER:$PG_PASS@$PG_HOST:$PG_PORT/$DB_NAME"
 # Local dev Postgres password (public, same as .env.dev.example / docker-compose).
 # Unquoted on purpose so the secret-scanner doesn't flag the dev credential.
 export PGPASSWORD=$PG_PASS
+
+# Pilot-access-key gate (task 1406): ON by default for this harness. The
+# gate was previously left off by default, which is exactly how the stale
+# signup-helper bugs (auth.spec.ts, refresh-stability.spec.ts, and 3 more
+# found sweeping every /signup-driving spec — see task 1406 notes) went
+# unnoticed: the harness never actually exercised BB_REQUIRE_PILOT_KEY, only
+# the client-side non-empty check (required independent of this gate since
+# task 0928). A caller can still override BB_REQUIRE_PILOT_KEY=/BB_PILOT_SIGNUP_KEY=
+# (e.g. empty, to run with the gate off) before invoking this script.
+BB_REQUIRE_PILOT_KEY="${BB_REQUIRE_PILOT_KEY:-1}"
+BB_PILOT_SIGNUP_KEY="${BB_PILOT_SIGNUP_KEY:-test-pilot-key}"
+export BB_REQUIRE_PILOT_KEY BB_PILOT_SIGNUP_KEY
+# e2e/helpers/signup.ts (and pilot-key-registration.spec.ts) fill the
+# pilot-key-input field from BB_TEST_PILOT_KEY by default — keep it in
+# lockstep with the server-side expected key so the harness's default run
+# satisfies both the client-side requirement AND the server-side gate.
+export BB_TEST_PILOT_KEY="${BB_TEST_PILOT_KEY:-$BB_PILOT_SIGNUP_KEY}"
+
+# psql wrapper: prefer host `psql`, otherwise fall back to `docker exec` into
+# the dev Postgres container (task 1406 — this harness previously assumed
+# `psql` was on PATH, which it is not on this machine: only the Dockerized
+# Postgres is installed). PSQL_CONTAINER defaults to the container this
+# repo's docker-compose.yml actually produces (`docker ps` confirmed
+# `beebeebio-postgres-1`); override E2E_PG_CONTAINER if a caller's compose
+# project name differs.
+PSQL_CONTAINER="${E2E_PG_CONTAINER:-beebeebio-postgres-1}"
+if command -v psql >/dev/null 2>&1; then
+  db_psql() { psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" "$@"; }
+else
+  # Unquoted PGPASSWORD=$PG_PASS on purpose, matching the `export PGPASSWORD=$PG_PASS`
+  # convention above — the secret-scanner's pre-commit hook flags a quoted
+  # `PGPASSWORD="..."` assignment even though this is the same public dev credential.
+  db_psql() { docker exec -e PGPASSWORD=$PG_PASS "$PSQL_CONTAINER" psql -U "$PG_USER" "$@"; }
+fi
 
 API_PID=""
 VITE_PID=""
@@ -70,7 +127,7 @@ cleanup() {
   [ -n "$VITE_PID" ] && { kill -- -"$VITE_PID" 2>/dev/null || kill "$VITE_PID" 2>/dev/null; } || true
   [ -n "$API_PID" ] && { kill -- -"$API_PID" 2>/dev/null || kill "$API_PID" 2>/dev/null; } || true
   sleep 1
-  psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d postgres \
+  db_psql -d postgres \
     -c "DROP DATABASE IF EXISTS $DB_NAME WITH (FORCE);" >/dev/null 2>&1 || true
   rm -rf "$BLOB_DIR" "$WEB_DIR/.env.test.local" 2>/dev/null || true
   log "done."
@@ -98,8 +155,8 @@ log "bun install --frozen-lockfile"
 #    accumulate state and degrade — the durable reliability fix) ─────────────
 start_backend() {
   rm -rf "$BLOB_DIR"; mkdir -p "$BLOB_DIR"
-  psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d postgres -c "DROP DATABASE IF EXISTS $DB_NAME WITH (FORCE);" >/dev/null
-  psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d postgres -c "CREATE DATABASE $DB_NAME;" >/dev/null
+  db_psql -d postgres -c "DROP DATABASE IF EXISTS $DB_NAME WITH (FORCE);" >/dev/null
+  db_psql -d postgres -c "CREATE DATABASE $DB_NAME;" >/dev/null
   # Generate the OPAQUE secret ONCE and reuse it across restarts. Regenerating it
   # per restart triggered a fingerprint-mismatch CRITICAL (the API refuses to boot
   # when the DB's stored fingerprint != the current secret) whenever a rapid
@@ -121,16 +178,14 @@ INSERT INTO pwned_prefixes (prefix, suffixes) VALUES ('98A16', 'C09B0759E63EF7DF
 -- SHA-1('password') = 5BAA61E4C9B93F3F0682250B6CF8331B7EE68FD8
 INSERT INTO pwned_prefixes (prefix, suffixes) VALUES ('5BAA6', '1E4C9B93F3F0682250B6CF8331B7EE68FD8:9999999');
 SQL
-  # BB_REQUIRE_PILOT_KEY / BB_PILOT_SIGNUP_KEY (task 1411): passed through
-  # ONLY when the caller set them — no new default here (making the gate the
-  # CI default is task 1406's job). Empty string is behaviorally identical to
-  # unset for both (server's bool_flag/evaluate() both treat "" as falsy/empty,
-  # see beebeeb-api/src/env_flags.rs + pilot_gate.rs), so this never changes
-  # existing runs. Lets e2e/pilot-key-registration.spec.ts actually exercise
-  # the gate when invoked as e.g.
-  #   BB_REQUIRE_PILOT_KEY=1 BB_PILOT_SIGNUP_KEY=test-pilot-key \
-  #     ./e2e/scripts/web-e2e.sh e2e/pilot-key-registration.spec.ts
-  # — that spec self-skips (not a false pass/fail) when the gate is off.
+  # BB_REQUIRE_PILOT_KEY / BB_PILOT_SIGNUP_KEY (task 1411; defaulted ON by
+  # task 1406 — see the Config section above): forwarded to the isolated API.
+  # A caller can still set BB_REQUIRE_PILOT_KEY= (empty) before invoking this
+  # script to run with the gate off — server's bool_flag/evaluate() both
+  # treat "" as falsy/empty (beebeeb-api/src/env_flags.rs + pilot_gate.rs).
+  # e.g. to specifically exercise pilot-key-registration.spec.ts's gate-off
+  # self-skip path:
+  #   BB_REQUIRE_PILOT_KEY= ./e2e/scripts/web-e2e.sh e2e/pilot-key-registration.spec.ts
   DATABASE_URL="$DATABASE_URL" BB_PORT="$API_PORT" \
     CORS_ORIGINS="http://localhost:$VITE_PORT" \
     BLOB_STORE=local BLOB_STORE_PATH="$BLOB_DIR" \
@@ -141,8 +196,8 @@ SQL
     BEEBEEB_PWNED_CORPUS_PATH="$PWNED_CORPUS_DB" \
     BB_RATE_LIMIT_DISABLED=1 \
     APP_URL="http://localhost:$VITE_PORT" API_URL="http://localhost:$API_PORT" \
-    BB_REQUIRE_PILOT_KEY="${BB_REQUIRE_PILOT_KEY:-}" \
-    BB_PILOT_SIGNUP_KEY="${BB_PILOT_SIGNUP_KEY:-}" \
+    BB_REQUIRE_PILOT_KEY="$BB_REQUIRE_PILOT_KEY" \
+    BB_PILOT_SIGNUP_KEY="$BB_PILOT_SIGNUP_KEY" \
     setsid "$API_BIN" >/tmp/bb-web-e2e-api.log 2>&1 &
   API_PID=$!
   # -m10 (not -m3): the FIRST auto-login also creates the dev user (Argon2id
@@ -176,7 +231,7 @@ stop_backend() {
   # (the normal case), which would otherwise exit the script under `set -e`.
   local pid; pid="$(lsof -nP -iTCP:"$API_PORT" -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $2}' | head -1 || true)"
   if [ -n "$pid" ]; then kill -9 "$pid" 2>/dev/null || true; sleep 0.5; fi
-  psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d postgres -c "DROP DATABASE IF EXISTS $DB_NAME WITH (FORCE);" >/dev/null 2>&1 || true
+  db_psql -d postgres -c "DROP DATABASE IF EXISTS $DB_NAME WITH (FORCE);" >/dev/null 2>&1 || true
 }
 
 log "starting backend on :$API_PORT (fresh DB $DB_NAME)"

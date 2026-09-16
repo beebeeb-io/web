@@ -1,4 +1,5 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect } from '@playwright/test'
+import { fillSignupForm, reachPasswordStep, uniqueEmail } from './helpers/signup'
 
 /**
  * E2E test for the signup → onboarding password step's live strength feedback.
@@ -13,54 +14,6 @@ import { test, expect, type Page } from '@playwright/test'
  *   2. API on 3001
  *   3. Web dev server on 5173
  */
-
-const uniqueEmail = () =>
-  `e2e-${Date.now()}-${Math.random().toString(36).slice(2)}@beebeeb.io`
-
-/**
- * Drives the signup flow up to the password step (display → verify → password)
- * by reading the generated 12-word recovery phrase out of the DOM, clicking
- * the saved checkbox, and re-typing the words the verify step picks at random.
- */
-async function reachPasswordStep(page: Page) {
-  // 1) /signup — fill email + accept consent
-  await page.goto('/signup')
-  await expect(page).toHaveURL(/\/signup/)
-  await page.getByLabel(/email/i).fill(uniqueEmail())
-  await page.getByRole('checkbox', { name: /Beebeeb cannot recover/i }).click()
-  await page.getByRole('button', { name: /continue/i }).click()
-
-  // 2) /onboarding (display step) — wait for the 12-word phrase to render.
-  await expect(page).toHaveURL(/\/onboarding/, { timeout: 10_000 })
-  const wordEls = page.locator('span.font-mono.text-sm.font-medium')
-  await expect(wordEls).toHaveCount(12, { timeout: 15_000 })
-  const phraseWords = (await wordEls.allInnerTexts()).map((w) => w.trim())
-  expect(phraseWords.length).toBe(12)
-
-  // Acknowledge + continue to verify step
-  await page
-    .getByRole('checkbox', { name: /I've saved my recovery phrase offline/i })
-    .click()
-  await page.getByRole('button', { name: /I saved it/i }).click()
-
-  // 3) /onboarding (verify step) — find every "Word #N" input and fill from phrase
-  const verifyLabels = page.locator('label', { hasText: /^Word #\d+$/ })
-  const labelCount = await verifyLabels.count()
-  expect(labelCount).toBeGreaterThan(0)
-  for (let i = 0; i < labelCount; i++) {
-    const labelText = (await verifyLabels.nth(i).innerText()).trim()
-    const m = labelText.match(/Word #(\d+)/)
-    if (!m) throw new Error(`unexpected verify label: ${labelText}`)
-    const wordIdx = parseInt(m[1], 10) - 1
-    await page.getByLabel(labelText, { exact: true }).fill(phraseWords[wordIdx])
-  }
-  await page.getByRole('button', { name: /^verify$/i }).click()
-
-  // 4) /onboarding (password step) — wait until the password input is in view
-  await expect(page.getByPlaceholder('At least 12 characters')).toBeVisible({
-    timeout: 5_000,
-  })
-}
 
 test.describe('Onboarding password step', () => {
   // This spec drives the real /signup → onboarding flow, so it must run
@@ -80,6 +33,7 @@ test.describe('Onboarding password step', () => {
   test('shows live strength feedback (weak → fair → strong) and confirm-match (task 0026)', async ({
     page,
   }) => {
+    await fillSignupForm(page, { email: uniqueEmail() })
     await reachPasswordStep(page)
 
     const passwordField = page.getByPlaceholder('At least 12 characters')
