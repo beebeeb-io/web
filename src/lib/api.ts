@@ -66,7 +66,6 @@ import type {
   Plan,
   ReferralEntry,
   ReferralStats,
-  RegionsResponse,
   SecurityScore,
   Session,
   ShareInfo,
@@ -210,7 +209,6 @@ export type {
   Plan,
   ReferralEntry,
   ReferralStats,
-  RegionsResponse,
   SecurityFactor,
   SecurityScore,
   Session,
@@ -3494,11 +3492,6 @@ export async function freezeAccount(): Promise<{ frozen: boolean }> {
 /** POST /api/v1/me/unfreeze — re-enable processing */
 export async function unfreezeAccount(): Promise<{ frozen: boolean }> {
   return request<{ frozen: boolean }>('/api/v1/me/unfreeze', { method: 'POST' })
-}
-
-/** GET /api/v1/regions — list all available storage regions */
-export async function getAvailableRegions(): Promise<RegionsResponse> {
-  return request<RegionsResponse>('/api/v1/regions')
 }
 
 /** GET /api/v1/me/region — current user's preferred region + available list */
