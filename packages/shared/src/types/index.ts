@@ -1542,9 +1542,6 @@ export interface AvailableRegion {
   is_default: boolean
 }
 
-export interface RegionsResponse {
-  regions: AvailableRegion[]
-}
 
 export interface UserRegionResponse {
   preferred_region: string | null
