@@ -181,6 +181,9 @@ The full rules live in the workspace `CLAUDE.md` → "How we work" (also summari
 - **The count-shaped truth line:** `bun test 2>&1 | tee /tmp/bb-web-test.log` → `N pass, 0 fail`;
   `bunx playwright test 2>&1 | tee /tmp/bb-web-e2e.log` → `N passed` — assert N, not the absence of
   "failed". A Playwright filter that matched 0 tests is a red. `bunx tsc --noEmit; echo exit=$?`.
+- **Sign-up rate limit in local e2e (task 1425, 2026-09-17):** `BB_RATE_LIMIT_DISABLED=1` on the API
+  process now also lifts the `SignupLimiter` (3 sign-ups/hour/IP), not just the generic per-IP/user
+  middleware — several sign-up specs can run back-to-back against one dev API without hitting `429`.
 - **UI tasks are verified in a browser** (Playwright screenshots in the task's evidence path), never
   by curl. A new spec is trusted only after it has been seen to fail against a deliberate mutation.
 - **Design before code:** `../../design/hifi/*.jsx` wins over the code; deviations are recorded in
