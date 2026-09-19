@@ -18,10 +18,12 @@ import {
   registerAccountDeletedHandler,
   registerConnectionStatusHandler,
   registerErrorNotifier,
+  provenanceHeaders,
   registerOnTokenCleared,
   registerSessionExpiredHandler,
   request,
   setApiUrl,
+  setClientInfo,
   setToken,
 } from '@beebeeb/shared'
 import type {
@@ -98,6 +100,14 @@ export const API_URL = import.meta.env.VITE_API_URL || 'https://api.beebeeb.io'
 const STATUS_URL = import.meta.env.VITE_STATUS_URL || 'https://status.beebeeb.io'
 
 setApiUrl(API_URL)
+// Writer-provenance (task 1436): tags every request through the shared
+// `request()` client so the server's `object_versions.created_by_client` /
+// `created_by_client_version` columns are filled for web writes.
+// `__APP_VERSION__` is the Vite `define` from package.json's version (see
+// vite.config.ts), the same string shown in Settings → About — it only
+// exists once Vite has processed the module, so `typeof` guards the many
+// `bun test` unit tests that import this file directly (no Vite define step).
+setClientInfo('web', typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'dev')
 registerOnTokenCleared(() => {
   clearEmail()
   void clearTauriSession()
@@ -961,6 +971,10 @@ async function uploadChunkRequest(
   const token = getToken()
   const headers: Record<string, string> = {
     'Content-Type': 'application/octet-stream',
+    // Chunk uploads stream binary via raw fetch() (task 0447), bypassing the
+    // shared request() client — so the writer-provenance headers (task 1436)
+    // have to be added by hand here too.
+    ...provenanceHeaders(),
   }
   if (token) {
     headers['Authorization'] = `Bearer ${token}`
