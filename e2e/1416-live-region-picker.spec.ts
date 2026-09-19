@@ -1,6 +1,28 @@
 import { test, expect } from '@playwright/test'
+import path from 'path'
+import { mkdirSync } from 'fs'
 
 const API_URL = process.env.E2E_API_URL ?? 'http://localhost:3001'
+
+/**
+ * Opt-in only. The default CI/harness run executes every `e2e/*.spec.ts`
+ * against a fresh backend with NO Helsinki pool seeded, so this spec would
+ * fail red there — it needs an API booted with a LIVE second pool
+ * (continent=helsinki, provider=local, is_active=true) which requires an API
+ * restart to pick up (`StorageRegistry` only gets a live `BlobStore` client
+ * for a pool after restart — see the comment block below).
+ *
+ * Recipe to run this spec for real (the 1416 step-3 rung):
+ *   1. Through the real admin API, seed:
+ *        POST /api/v1/admin/regions        (a region row)
+ *        POST /api/v1/admin/datacenters     (a datacenter row bound to it)
+ *        POST /api/v1/admin/storage-pools   ({ provider: "local", continent: "helsinki", is_active: true })
+ *   2. Restart the API — new pools only get a live client after a restart;
+ *      `is_active` toggles alone apply live, but a brand-new pool does not.
+ *   3. Run just this spec with the gate open:
+ *        E2E_LIVE_REGION=1 bunx playwright test e2e/1416-live-region-picker.spec.ts
+ */
+test.skip(!process.env.E2E_LIVE_REGION, 'needs an API booted with a live second pool (continent=helsinki); run via the 1416 step-3 recipe with E2E_LIVE_REGION=1')
 
 /**
  * Task 1416, step 3 — the last open rung: prove a region flipped live
@@ -27,14 +49,17 @@ const API_URL = process.env.E2E_API_URL ?? 'http://localhost:3001'
  * for this run, the isolated :3019 instance with the helsinki pool live).
  */
 
-// Absolute path under the WORKSPACE root (not this worktree, which git
-// worktree add places OUTSIDE the workspace entirely — see the workspace
-// CLAUDE.md "Multi-repo working directories" and e2e/scripts/web-e2e.sh's
-// WORKSPACE-resolution comment for the same gotcha). A relative `__dirname`
-// traversal from a worktree lands outside the repo tree entirely.
-const EVIDENCE_DIR = '/Users/guuslangelaar/Development/Beebeeb/beebeeb.io/docs/_qa-evidence/1416/step3'
+// Defaults to a repo-relative test-results dir (works from any worktree,
+// unlike a hardcoded absolute workspace-root path). Override with
+// E2E_EVIDENCE_DIR to land screenshots under the workspace's tracked
+// docs/_qa-evidence/1416/step3/ for the real step-3 evidence capture — see
+// the workspace CLAUDE.md "Multi-repo working directories" for why a
+// worktree's own relative paths don't reach that tree.
+const EVIDENCE_DIR = process.env.E2E_EVIDENCE_DIR ?? path.join(process.cwd(), 'test-results', '1416-step3')
 
 test('helsinki region: live in /api/v1/regions AND selectable in the web picker', async ({ page }) => {
+  mkdirSync(EVIDENCE_DIR, { recursive: true })
+
   // dev@beebeeb.dev is REUSED across repeated local runs against the same
   // DB (global.setup.ts's dev auto-login) — reset any preference left over
   // from a prior run so `handleSelect`'s `continent === preferred` early

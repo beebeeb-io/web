@@ -188,6 +188,15 @@ The full rules live in the workspace `CLAUDE.md` → "How we work" (also summari
   middleware — several sign-up specs can run back-to-back against one dev API without hitting `429`.
 - **UI tasks are verified in a browser** (Playwright screenshots in the task's evidence path), never
   by curl. A new spec is trusted only after it has been seen to fail against a deliberate mutation.
+- **Live-region rung is opt-in (task 1416 step 3, `e2e/1416-live-region-picker.spec.ts`):** the
+  default e2e run has no Helsinki pool seeded, so the spec is gated behind
+  `test.skip(!process.env.E2E_LIVE_REGION, ...)`. To run it for real: seed a region +
+  datacenter + a `provider:"local"` storage pool with `continent:"helsinki"` and
+  `is_active:true` through the admin API, restart the API (new pools need one restart;
+  `is_active` toggles apply live), then
+  `E2E_LIVE_REGION=1 bunx playwright test e2e/1416-live-region-picker.spec.ts`. Screenshots land
+  under `E2E_EVIDENCE_DIR` (default `test-results/1416-step3/`, override to point at the
+  workspace's tracked `docs/_qa-evidence/1416/step3/` for the real evidence capture).
 - **Design before code:** `../../design/hifi/*.jsx` wins over the code; deviations are recorded in
   the task file before the code changes.
 - **`@beebeeb/shared` edits happen in `packages/shared/src/` here, then `make sync-shared`** — the
