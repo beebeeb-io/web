@@ -147,6 +147,12 @@ Thumbnails are WebP format, generated client-side in `src/lib/thumbnail.ts`. The
 
 Decrypted thumbnails are cached persistently via the Cache API (`beebeeb-thumbnails-v2`, max 10,000 entries) so they survive page reloads. In-memory `Map<string, string>` of object URLs provides the hot cache for the current session.
 
+`encryptThumbnailBlob` / `decryptThumbnailBlob` (both exported) run AES-256-GCM directly via WebCrypto, independently of core's `beebeeb-wasm` build — wire format `nonce(12) || ciphertext`, no AAD, raw 32-byte FileKey. Proven byte-compatible with core's `encrypt_chunk`/`decrypt_chunk` (audit item K3, task 1383) by `test/thumbnail-kat.test.ts` against the pinned `thumbnail_encrypt` vector in `repos/core/test-vectors/vectors.json`, plus a live cross-check through the committed WASM build in both directions.
+
+## Share-key wrapping
+
+`wrapKeyForShare` / `unwrapKeyFromShare` (`src/lib/crypto.ts`) also run AES-256-GCM directly via WebCrypto, independently of core — wire format `nonce(12) || ciphertext(48)` = 60 bytes, no AAD, raw 32-byte wrap key. Used for share links (`share-dialog.tsx`, `share-link.ts`, `share-view.tsx`) to double-encrypt a file key or bundle-item key under a client-side key that lives only in the URL fragment. Proven byte-compatible with core's `encrypt_chunk`/`decrypt_chunk` (audit item K3, task 1383) by `test/share-wrap-kat.test.ts` against the pinned `share_key_wrap` vector in `repos/core/test-vectors/vectors.json`, plus a live cross-check through the committed WASM build in both directions.
+
 ## Uploads (streaming encryption)
 
 `src/lib/encrypted-upload.ts` encrypts files via the shared core streaming
