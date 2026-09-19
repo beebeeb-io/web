@@ -1,8 +1,9 @@
 import React, { useState, useCallback, useEffect, lazy, Suspense } from 'react'
-import { BrowserRouter, Navigate, Route, Routes, useNavigate, useLocation } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes, useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { AuthProvider, useAuth } from './lib/auth-context'
 import { KeyProvider, useKeys } from './lib/key-context'
+import { sanitizeRedirect } from './lib/safe-redirect'
 import { WsProvider } from './lib/ws-context'
 import { SyncProvider } from './lib/sync-context'
 import { OnboardingProvider } from './lib/onboarding-context'
@@ -158,12 +159,34 @@ function RedirectPreservingSearch({ to }: { to: string }) {
 function GuestRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
   const { isUnlocked } = useKeys()
+  const [searchParams] = useSearchParams()
 
   if (loading) return null
   // Only redirect to app if user is fully authenticated AND vault is unlocked.
   // An authenticated user with a locked vault needs to stay on login to
   // unlock or provision their device.
-  if (user && isUnlocked) return <Navigate to="/" replace />
+  if (user && isUnlocked) {
+    // Task 1437 — this branch can fire a STALE render after login.tsx's
+    // navigateAfterLogin() has ALREADY navigated the user to their real
+    // `?next=` destination (notably the CLI device-auth round-trip,
+    // /cli-auth?code=…): `isUnlocked` flipping true (inside setMasterKey /
+    // unlockVault, on the OPAQUE-login or device-provision success path)
+    // and the router committing the new location land in separate React
+    // render passes, so GuestRoute — still matched against its own
+    // (by-then-stale) `/login?next=…` location — can render ONE MORE TIME
+    // after the URL has already moved on. Hard-coding "/" here would let
+    // that stale render win the race with its own `replace` navigation,
+    // silently bouncing the user off the CLI-authorize prompt onto the
+    // drive (the exact bug: reaches /cli-auth?code=… correctly, then ~1s
+    // later re-navigates to "/"). Honouring the SAME allowlisted `next`
+    // login.tsx itself would follow (safe-redirect.ts) makes both
+    // navigations agree on the destination, so whichever one the render
+    // race lands on, the user still ends up where they were headed —
+    // eliminating the race as a user-visible symptom rather than trying to
+    // win a timing contest against React's scheduling.
+    const fromQuery = sanitizeRedirect(searchParams.get('next'))
+    return <Navigate to={fromQuery ?? '/'} replace />
+  }
   return <>{children}</>
 }
 
