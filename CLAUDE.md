@@ -70,6 +70,8 @@ against the pinned kdf.rs vectors). All crypto runs in core via `WasmSearchIndex
 
 Backend runs at `http://localhost:3001`. API client is in `src/lib/api.ts`. All endpoints documented in the server repo's CLAUDE.md.
 
+Every request through the shared `request()` client (`packages/shared/src/api/request.ts`) carries `X-Beebeeb-Client: web` and `X-Beebeeb-Client-Version: <package.json version>` once `setClientInfo('web', __APP_VERSION__)` runs at startup (`src/lib/api.ts`, task 1436) — the server records both on every `object_versions` row (server PR #23 / task 1369) for writer-provenance queries. The raw-`fetch()` chunk-PUT path (`uploadChunkRequest`) attaches the same pair by hand via `provenanceHeaders()`, since it bypasses `request()` to stream binary. `setClientInfo()` is opt-in per consuming app — admin does not call it, so admin traffic through the same shared package stays untagged.
+
 ## Design tokens (Tailwind 4 @theme)
 
 Defined in `src/index.css`. Key colors:

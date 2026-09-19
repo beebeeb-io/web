@@ -26,7 +26,7 @@
  */
 
 import { ApiError } from './errors'
-import { getApiUrl } from './config'
+import { getApiUrl, provenanceHeaders } from './config'
 import { clearToken, getToken } from './token'
 import {
   fireAccountDeleted,
@@ -105,6 +105,10 @@ export async function request<T>(
   if (token) {
     headers['Authorization'] = `Bearer ${token}`
   }
+  // Writer-provenance headers (task 1436) — only sent once the consuming app
+  // has opted in via `setClientInfo()`. Admin never calls it, so admin
+  // traffic carries neither header (see `setClientInfo`'s doc comment).
+  Object.assign(headers, provenanceHeaders())
 
   const apiUrl = getApiUrl()
   // `credentials: 'include'` is what makes the httpOnly bb_session cookie
