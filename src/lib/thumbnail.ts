@@ -117,7 +117,13 @@ export async function generateThumbnail(file: File): Promise<Blob | null> {
   }
 }
 
-async function encryptThumbnailBlob(
+/**
+ * Encrypt already-encoded thumbnail bytes with AES-256-GCM. Wire format:
+ * nonce(12) || ciphertext (includes the 16-byte GCM tag) — no AAD, raw
+ * 32-byte `fileKey` (no KDF). Exported (K3) so a KAT test can exercise the
+ * real production encrypt path directly instead of reimplementing it.
+ */
+export async function encryptThumbnailBlob(
   thumbnailBlob: Blob,
   fileKey: Uint8Array,
 ): Promise<Uint8Array> {
@@ -141,6 +147,36 @@ async function encryptThumbnailBlob(
   encrypted.set(nonce, 0)
   encrypted.set(new Uint8Array(ciphertext), 12)
   return encrypted
+}
+
+/**
+ * Decrypt a thumbnail blob previously produced by `encryptThumbnailBlob`.
+ * `encrypted` is the wire format above: nonce(12) || ciphertext. Extracted
+ * (K3) from the near-identical logic that used to be duplicated inline in
+ * `fetchAndDecryptThumbnail` and `fetchAndDecryptLargeThumbnail` — both now
+ * call this so the two sizes can never drift, and a KAT test can exercise
+ * the real production decrypt path directly.
+ */
+export async function decryptThumbnailBlob(
+  encrypted: Uint8Array,
+  fileKey: Uint8Array,
+): Promise<ArrayBuffer> {
+  const nonce = encrypted.slice(0, 12)
+  const ciphertext = encrypted.slice(12)
+
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    fileKey.buffer as ArrayBuffer,
+    'AES-GCM',
+    false,
+    ['decrypt'],
+  )
+
+  return crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: nonce.buffer as ArrayBuffer },
+    cryptoKey,
+    ciphertext.buffer as ArrayBuffer,
+  )
 }
 
 export async function encryptAndUploadThumbnail(
@@ -209,22 +245,7 @@ export async function fetchAndDecryptLargeThumbnail(
     const encrypted = new Uint8Array(await res.arrayBuffer())
     if (encrypted.length < 13) return null
 
-    const nonce = encrypted.slice(0, 12)
-    const ciphertext = encrypted.slice(12)
-
-    const cryptoKey = await crypto.subtle.importKey(
-      'raw',
-      fileKey.buffer as ArrayBuffer,
-      'AES-GCM',
-      false,
-      ['decrypt'],
-    )
-
-    const plainBytes = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: nonce.buffer as ArrayBuffer },
-      cryptoKey,
-      ciphertext.buffer as ArrayBuffer,
-    )
+    const plainBytes = await decryptThumbnailBlob(encrypted, fileKey)
 
     const blob = new Blob([plainBytes], { type: THUMB_FORMAT })
     const url = URL.createObjectURL(blob)
@@ -288,22 +309,7 @@ export async function fetchAndDecryptThumbnail(
     const encrypted = new Uint8Array(await res.arrayBuffer())
     if (encrypted.length < 13) return null
 
-    const nonce = encrypted.slice(0, 12)
-    const ciphertext = encrypted.slice(12)
-
-    const cryptoKey = await crypto.subtle.importKey(
-      'raw',
-      fileKey.buffer as ArrayBuffer,
-      'AES-GCM',
-      false,
-      ['decrypt'],
-    )
-
-    const plainBytes = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: nonce.buffer as ArrayBuffer },
-      cryptoKey,
-      ciphertext.buffer as ArrayBuffer,
-    )
+    const plainBytes = await decryptThumbnailBlob(encrypted, fileKey)
 
     await putCachedBlob(fileId, plainBytes)
 
