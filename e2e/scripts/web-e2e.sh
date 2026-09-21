@@ -304,7 +304,17 @@ first=1
 # and use it instead of the default config when present.
 spec_config_for() {
   local base="${1%.spec.ts}"
+  # Codex review (PR #47, task 1441): under `set -e`, `spec_config="$(spec_config_for
+  # "$spec")"` propagates a nonzero exit from this function to the whole script —
+  # `[ -f ... ] && echo ...` alone returns 1 (no echo) whenever the spec has NO
+  # dedicated config, which is every spec except the 3 self-mocked ones. The
+  # default glob's first entry (e2e/1416-live-region-picker.spec.ts) has none, so
+  # the harness — including the CI job, which runs it with no arguments — would
+  # exit right after bringing up services, before ever invoking Playwright. The
+  # explicit `return 0` makes the "no dedicated config" case an intentional empty
+  # result, not a failure the caller's `set -e` can catch.
   [ -f "${base}.config.ts" ] && echo "--config=${base}.config.ts"
+  return 0
 }
 
 for spec in "${SPECS[@]}"; do

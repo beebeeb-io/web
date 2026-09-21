@@ -216,8 +216,24 @@ test.describe('0865 checkout redirect + poll-confirmed success', () => {
     // FREE_SUB until the real 3s deadline, then the next poll (driven by the
     // product's own 2s→4s backoff timer, which still ticks in real wall-clock
     // time regardless of StrictMode) returns PRO_SUB.
-    const start = Date.now()
-    await installMocks(page, { subForRequest: () => (Date.now() - start >= 3_000 ? PRO_SUB : FREE_SUB) })
+    //
+    // Codex review (PR #47): anchor the 3s deadline to the FIRST intercepted
+    // subscription request, not to test-setup time. `bootBilling` still has to
+    // navigate, load WASM, and reach cryptoReady before the app fires its first
+    // /billing/subscription call — on a cold Vite transform or slow CI runner
+    // that alone can eat multiple seconds, which (anchored to test-setup time)
+    // could let the very first request already be past the deadline and return
+    // PRO_SUB immediately, collapsing "Finalizing" to zero duration exactly like
+    // the bug this fix removes. Anchoring to the first actual request instead
+    // means the 3s window always starts when the app itself starts polling,
+    // regardless of how long getting there took.
+    let anchorAt: number | null = null
+    await installMocks(page, {
+      subForRequest: () => {
+        if (anchorAt === null) anchorAt = Date.now()
+        return Date.now() - anchorAt >= 3_000 ? PRO_SUB : FREE_SUB
+      },
+    })
     await bootBilling(page, '/settings/billing?upgraded=true')
     await expect(page.getByText(/Finalizing your upgrade/i)).toBeVisible({ timeout: 15_000 })
     await page.screenshot({ path: 'e2e/screenshots/0865-gate3-finalizing.png', fullPage: true })
