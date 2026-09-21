@@ -198,9 +198,26 @@ test.describe('0865 checkout redirect + poll-confirmed success', () => {
   })
 
   test('GATE 3 — poll-confirmed success flips Finalizing → Upgrade complete', async ({ page }) => {
-    // First 2 polls return free (still provisioning), then pro (webhook landed).
-    // Poll #0 is the initial loadData() fetch; flip on the 3rd subscription GET.
-    await installMocks(page, { subForRequest: (n) => (n >= 3 ? PRO_SUB : FREE_SUB) })
+    // Return FREE (still provisioning) for the first ~3s of wall-clock time,
+    // then PRO (webhook landed). Task 1441: this used to gate on the raw
+    // subscription-GET CALL COUNT (`n >= 3`), which assumed exactly one
+    // sequential poller. In reality /billing/subscription is fetched by THREE
+    // independent mount-time consumers — DriveDataProvider's own
+    // getPlans()+getSubscription() (drive-data-context.tsx), Billing's own
+    // loadData(), and the upgrade-confirm poll effect's immediate first
+    // call — and React.StrictMode (dev-only) double-invokes every one of
+    // them, so a fresh mount fires ~6-9 concurrent/duplicate
+    // /billing/subscription requests within ~500ms (confirmed via trace:
+    // 9 requests in a 429ms window). That raced the counter past `n >= 3`
+    // almost instantly, so "Finalizing" rendered for only a few ms — a coin
+    // flip whether Playwright's assertion polling ever observed it (measured
+    // 1/8 pass rate). Gating on ELAPSED TIME instead is immune to how many
+    // concurrent/duplicate requests fire on mount: every one of them returns
+    // FREE_SUB until the real 3s deadline, then the next poll (driven by the
+    // product's own 2s→4s backoff timer, which still ticks in real wall-clock
+    // time regardless of StrictMode) returns PRO_SUB.
+    const start = Date.now()
+    await installMocks(page, { subForRequest: () => (Date.now() - start >= 3_000 ? PRO_SUB : FREE_SUB) })
     await bootBilling(page, '/settings/billing?upgraded=true')
     await expect(page.getByText(/Finalizing your upgrade/i)).toBeVisible({ timeout: 15_000 })
     await page.screenshot({ path: 'e2e/screenshots/0865-gate3-finalizing.png', fullPage: true })
