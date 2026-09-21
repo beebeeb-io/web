@@ -197,11 +197,21 @@ test.describe('0905 14-day free trial — web UI (UNIT C)', () => {
   test('GATE 2 — trialing subscription renders the "N days left" banner + convert CTA', async ({ page }) => {
     await installMocks(page, { sub: trialingSub() })
     await bootBilling(page, '/settings/billing')
-    await expect(page.getByText(/Plan & billing/i).first()).toBeVisible({ timeout: 15_000 })
+    // Task 1449: this used to wait on `getByText(/Plan & billing/i)` first —
+    // the wrong locator for this gate. "Plan & billing" is the SettingsHeader
+    // title only for the loading/error states and the "change" view
+    // (src/pages/billing.tsx:1183,1199,1317); GATE 2 boots straight to
+    // `/settings/billing` with no `?view=change`, so the page settles on the
+    // "summary" view, whose header is "Billing" (billing.tsx:1312) — "Plan &
+    // billing" never appears there once loaded. The old assertion only ever
+    // passed by racing the transient loading-spinner title against how fast
+    // the mocked fetches resolve relative to first commit — flaky by
+    // construction. Wait on the actual gate content instead, with the full
+    // 15s budget the removed line had.
     // The "N days left in your free trial" copy renders on BOTH surfaces — the
     // billing-page summary card (h2) AND the global drive/settings banner (span).
     // Assert both are present (proves the page summary + the global banner wire).
-    await expect(page.getByText(/days left in your free trial/i).first()).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByText(/days left in your free trial/i).first()).toBeVisible({ timeout: 15_000 })
     expect(await page.getByText(/days left in your free trial/i).count()).toBeGreaterThanOrEqual(1)
     await expect(page.getByRole('heading', { name: /days left in your free trial/i })).toBeVisible()
     // Convert CTA present (the billing-card summary holds it).
@@ -212,7 +222,17 @@ test.describe('0905 14-day free trial — web UI (UNIT C)', () => {
   test('GATE 3 — convert click POSTs /trial/convert and redirects to the Mollie URL', async ({ page }) => {
     const counters = await installMocks(page, { sub: trialingSub() })
     await bootBilling(page, '/settings/billing')
-    await expect(page.getByText(/days left in your free trial/i)).toBeVisible({ timeout: 15_000 })
+    // Task 1449: this copy renders on BOTH surfaces (see GATE 2's comment
+    // above) — the billing-page h2 AND the global TrialBanner span
+    // (src/components/trial-banner.tsx:137-138, fed by useDriveData(), a
+    // SEPARATE fetch from billing.tsx's own `sub` state). Whichever
+    // consumer's fetch resolves first decides whether one or both are
+    // mounted at any given instant — a real race (same defect class as task
+    // 1441's triple-fetcher root cause). Missing `.first()` here threw a
+    // strict-mode violation whenever both were mounted simultaneously
+    // (reproduced: 1 of 5 harness runs — "strict mode violation: resolved to
+    // 2 elements"). `.first()` matches the pattern GATE 2 already uses.
+    await expect(page.getByText(/days left in your free trial/i).first()).toBeVisible({ timeout: 15_000 })
 
     // Click the convert CTA. The handler stamps bb_pending_checkout (0865 reuse)
     // then sets window.location.href to the mocked Mollie URL — assert the nav.
