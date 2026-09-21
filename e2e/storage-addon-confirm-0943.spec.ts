@@ -262,11 +262,16 @@ async function bootBilling(page: Page, path: string) {
  * failure screenshots show the plain post-dismiss "Billing" summary already
  * reflecting the FINAL upgraded state). Must run BEFORE bootBilling
  * (addInitScript executes before any page script, pre-navigation).
- * `mandateMethod` is intentionally omitted (stays null) — seeding
- * 'directdebit' flips the FIRST-FRAME copy to "Upgrade on its way" (task
- * 0946, F4, billing.tsx:1335) which none of these tests assert on; A2's
- * later SEPA-pending copy comes from a separate, unconfirmed-state render
- * block untouched by this.
+ * `mandateMethod` must mirror the fixture's REAL `sub.mandate_method` — the
+ * production redirect always calls `makePreState(sub)`, which persists
+ * whatever the actual subscription's mandate is, so a null here would seed
+ * a checkout intent the app can never produce (Codex review, PR #48). A1/A2/B
+ * mock `PRO_SUB_SEPA` (`mandate_method: 'directdebit'`), so they pass
+ * `'directdebit'` and assert the SEPA-aware FIRST-FRAME copy ("Upgrade on
+ * its way", task 0946 F4, billing.tsx:1335) instead of the generic
+ * "Finalizing your upgrade". REGRESSION mocks `FREE_SUB` (no mandate on
+ * file — a card/instant-pay upgrade), so it omits this and keeps the
+ * generic copy.
  */
 async function seedIntent(
   page: Page,
@@ -280,6 +285,7 @@ async function seedIntent(
     periodEnd?: string | null
     extraStorageTb?: number
     storageTbQuantity?: number
+    mandateMethod?: 'creditcard' | 'directdebit' | null
   },
 ) {
   await page.addInitScript((intent) => {
@@ -295,7 +301,7 @@ async function seedIntent(
       periodEnd: pre.periodEnd ?? null,
       extraStorageTb: pre.extraStorageTb ?? 0,
       storageTbQuantity: pre.storageTbQuantity ?? 0,
-      mandateMethod: null,
+      mandateMethod: pre.mandateMethod ?? null,
     },
     ts: Date.now(),
   })
@@ -306,6 +312,7 @@ test.describe('0943 storage-addon confirmation + real-time WS', () => {
     await seedIntent(page, 'storage', 'pro', 'monthly', {
       plan: 'pro', cycle: 'monthly', status: 'active',
       periodEnd: PRO_SUB_SEPA.current_period_end,
+      mandateMethod: 'directdebit',
     })
     await fakeWebSocket(page)
     // Task 1441/1449: gate on ELAPSED TIME, not a shared call count — multiple
@@ -326,7 +333,11 @@ test.describe('0943 storage-addon confirmation + real-time WS', () => {
           : { plan: 'pro', extra_storage_tb: 0, base_storage_tb: 2, max_storage_tb: 20, effective_storage_bytes: 2_000_000_000_000 },
     })
     await bootBilling(page, '/settings/billing?upgraded=true')
-    await expect(page.getByText(/Finalizing your upgrade/i)).toBeVisible({ timeout: 15_000 })
+    // Fixture's real mandate is 'directdebit' (PRO_SUB_SEPA) — the intent
+    // carries that through, so the FIRST-FRAME copy is the SEPA-aware
+    // "Upgrade on its way" (task 0946 F4, billing.tsx:1335), not the generic
+    // "Finalizing your upgrade" (Codex review, PR #48).
+    await expect(page.getByText(/Upgrade on its way/i)).toBeVisible({ timeout: 15_000 })
     await page.screenshot({ path: 'e2e/screenshots/0943-a1-finalizing.png', fullPage: true })
     await expect(page.getByText(/Upgrade complete/i)).toBeVisible({ timeout: 25_000 })
     await page.screenshot({ path: 'e2e/screenshots/0943-a1-complete.png', fullPage: true })
@@ -336,12 +347,14 @@ test.describe('0943 storage-addon confirmation + real-time WS', () => {
     await seedIntent(page, 'storage', 'pro', 'monthly', {
       plan: 'pro', cycle: 'monthly', status: 'active',
       periodEnd: PRO_SUB_SEPA.current_period_end,
+      mandateMethod: 'directdebit',
     })
     await fakeWebSocket(page)
     // Sub stays at the SEPA baseline (deferred debit not yet settled).
     await installMocks(page, { subForRequest: () => PRO_SUB_SEPA })
     await bootBilling(page, '/settings/billing?upgraded=true')
-    await expect(page.getByText(/Finalizing your upgrade/i)).toBeVisible({ timeout: 15_000 })
+    // SEPA-aware first-frame copy (see A1's comment above).
+    await expect(page.getByText(/Upgrade on its way/i)).toBeVisible({ timeout: 15_000 })
     // Wait out the ~30s poll cap → SEPA-aware pending copy.
     await expect(page.getByText(/Upgrade pending/i)).toBeVisible({ timeout: 45_000 })
     await expect(page.getByText(/charged to your SEPA mandate/i)).toBeVisible()
@@ -355,6 +368,7 @@ test.describe('0943 storage-addon confirmation + real-time WS', () => {
     await seedIntent(page, 'storage', 'pro', 'monthly', {
       plan: 'pro', cycle: 'monthly', status: 'active',
       periodEnd: PRO_SUB_SEPA.current_period_end,
+      mandateMethod: 'directdebit',
     })
     await fakeWebSocket(page)
     // The sub stays at the SEPA baseline (extra 0) — including for every
@@ -367,7 +381,8 @@ test.describe('0943 storage-addon confirmation + real-time WS', () => {
         ({ plan: 'pro', extra_storage_tb: 2, base_storage_tb: 2, max_storage_tb: 20, effective_storage_bytes: 4_000_000_000_000 }),
     })
     await bootBilling(page, '/settings/billing?upgraded=true')
-    await expect(page.getByText(/Finalizing your upgrade/i)).toBeVisible({ timeout: 15_000 })
+    // SEPA-aware first-frame copy (see A1's comment above).
+    await expect(page.getByText(/Upgrade on its way/i)).toBeVisible({ timeout: 15_000 })
     // Flip the backend to its post-grant state, THEN push the WS event. The WS
     // handler's refetch now returns the upgraded sub → instant confirm.
     const delivered = await page.evaluate(async () => {
