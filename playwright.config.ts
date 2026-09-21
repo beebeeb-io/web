@@ -83,14 +83,15 @@ export default defineConfig({
     {
       name: 'authenticated',
       testMatch: /\.spec\.ts$/,
-      // checkout-redirect-0865.spec.ts is fully self-contained (every API call
-      // mocked with page.route, no server needed) and ships its OWN dedicated
-      // config (checkout-redirect-0865.config.ts) with the timeout (90s) its
-      // GATE 4 needs — this project's global test timeout (30s) guarantees
-      // GATE 4 fails, and dragging in global.setup's real storageState for a
-      // spec that neither needs nor wants it is also wrong (task 1441). Run it
-      // via its own config: `bunx playwright test --config=e2e/checkout-redirect-0865.config.ts`.
-      testIgnore: /checkout-redirect-0865\.spec\.ts$/,
+      // checkout-redirect-0865.spec.ts, trial-0905.spec.ts, and
+      // storage-addon-confirm-0943.spec.ts are all fully self-contained
+      // (every API call mocked with page.route, no server needed) and each
+      // ships its OWN dedicated config (own timeout) — this project's global
+      // test timeout (30s) and global.setup/storageState dependency are both
+      // wrong for them (task 1441; task 1449 extended the same defense in
+      // depth to the other two). Run each via its own config, e.g.
+      // `bunx playwright test --config=e2e/trial-0905.config.ts`.
+      testIgnore: /(checkout-redirect-0865|trial-0905|storage-addon-confirm-0943)\.spec\.ts$/,
       dependencies: ['setup'],
       use: {
         storageState: STORAGE_STATE,

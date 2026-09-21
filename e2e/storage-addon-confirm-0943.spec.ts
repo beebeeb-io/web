@@ -244,13 +244,82 @@ async function bootBilling(page: Page, path: string) {
   )
 }
 
+/**
+ * Task 1449: seed the pre-checkout intent (task 0946, `bb_pending_checkout`,
+ * src/lib/pending-checkout.ts) that the REAL app stamps via
+ * `setPendingCheckout(kind, plan, cycle, makePreState(sub))` just before
+ * EVERY hosted-checkout redirect (plan upgrade, storage instant-pay). This
+ * spec lands DIRECTLY on `?upgraded=true` (simulating the return trip)
+ * instead of clicking through the real UI, so without this the
+ * reconcile-on-load in billing.tsx (src/pages/billing.tsx:433-499) finds no
+ * intent and falls back to the "any active paid plan" heuristic — which
+ * wrongly confirms an instant-pay STORAGE add-on on the very first poll
+ * tick, since plan/status never change for a storage-only grant (only
+ * extra_storage_tb rises — see `reflectsUpgrade()`, billing.tsx:375-413).
+ * Reproduced: all 4 tests in this file failed identically before this fix —
+ * the confirm→complete→10s-auto-dismiss cycle completed before the
+ * `Finalizing your upgrade` assertion's very first stable frame (evidence:
+ * failure screenshots show the plain post-dismiss "Billing" summary already
+ * reflecting the FINAL upgraded state). Must run BEFORE bootBilling
+ * (addInitScript executes before any page script, pre-navigation).
+ * `mandateMethod` is intentionally omitted (stays null) — seeding
+ * 'directdebit' flips the FIRST-FRAME copy to "Upgrade on its way" (task
+ * 0946, F4, billing.tsx:1335) which none of these tests assert on; A2's
+ * later SEPA-pending copy comes from a separate, unconfirmed-state render
+ * block untouched by this.
+ */
+async function seedIntent(
+  page: Page,
+  kind: 'plan' | 'storage',
+  targetPlan: string,
+  targetCycle: string,
+  pre: {
+    plan: string
+    cycle?: string
+    status?: string
+    periodEnd?: string | null
+    extraStorageTb?: number
+    storageTbQuantity?: number
+  },
+) {
+  await page.addInitScript((intent) => {
+    localStorage.setItem('bb_pending_checkout', JSON.stringify(intent))
+  }, {
+    kind,
+    plan: targetPlan,
+    cycle: targetCycle,
+    pre: {
+      plan: pre.plan,
+      cycle: pre.cycle,
+      status: pre.status,
+      periodEnd: pre.periodEnd ?? null,
+      extraStorageTb: pre.extraStorageTb ?? 0,
+      storageTbQuantity: pre.storageTbQuantity ?? 0,
+      mandateMethod: null,
+    },
+    ts: Date.now(),
+  })
+}
+
 test.describe('0943 storage-addon confirmation + real-time WS', () => {
   test('A1 — storage add-on poll-confirms (plan unchanged, extra_storage_tb rises)', async ({ page }) => {
-    // Poll #0 = initial loadData fetch (baseline, 0 TB). After 3 GETs the grant
-    // has landed → +2 TB. Plan stays "pro" the whole time.
+    await seedIntent(page, 'storage', 'pro', 'monthly', {
+      plan: 'pro', cycle: 'monthly', status: 'active',
+      periodEnd: PRO_SUB_SEPA.current_period_end,
+    })
     await fakeWebSocket(page)
+    // Task 1441/1449: gate on ELAPSED TIME, not a shared call count — multiple
+    // independent /billing/subscription consumers (DriveDataProvider,
+    // billing.tsx's own loadData(), this poll effect) race a raw counter past
+    // any n>=N threshold within milliseconds of mount (task 1441's proven
+    // root cause for the identical pattern in checkout-redirect-0865.spec.ts).
+    // Anchor to the FIRST intercepted request, not test-setup time.
+    let anchorAt: number | null = null
     await installMocks(page, {
-      subForRequest: (n) => (n >= 3 ? PRO_SUB_SEPA_UPGRADED : PRO_SUB_SEPA),
+      subForRequest: () => {
+        if (anchorAt === null) anchorAt = Date.now()
+        return Date.now() - anchorAt >= 3_000 ? PRO_SUB_SEPA_UPGRADED : PRO_SUB_SEPA
+      },
       addonForRequest: (n) =>
         n >= 1
           ? { plan: 'pro', extra_storage_tb: 2, base_storage_tb: 2, max_storage_tb: 20, effective_storage_bytes: 4_000_000_000_000 }
@@ -264,6 +333,10 @@ test.describe('0943 storage-addon confirmation + real-time WS', () => {
   })
 
   test('A2 — SEPA mandate, sub never changes → honest pending state, not "couldn\'t confirm"', async ({ page }) => {
+    await seedIntent(page, 'storage', 'pro', 'monthly', {
+      plan: 'pro', cycle: 'monthly', status: 'active',
+      periodEnd: PRO_SUB_SEPA.current_period_end,
+    })
     await fakeWebSocket(page)
     // Sub stays at the SEPA baseline (deferred debit not yet settled).
     await installMocks(page, { subForRequest: () => PRO_SUB_SEPA })
@@ -279,6 +352,10 @@ test.describe('0943 storage-addon confirmation + real-time WS', () => {
   })
 
   test('B — real-time billing_updated WS confirms immediately', async ({ page }) => {
+    await seedIntent(page, 'storage', 'pro', 'monthly', {
+      plan: 'pro', cycle: 'monthly', status: 'active',
+      periodEnd: PRO_SUB_SEPA.current_period_end,
+    })
     await fakeWebSocket(page)
     // The sub stays at the SEPA baseline (extra 0) — including for every
     // initial-load GET, so the baseline snapshot is captured as 0 TB — until the
@@ -307,8 +384,24 @@ test.describe('0943 storage-addon confirmation + real-time WS', () => {
   })
 
   test('REGRESSION — a PLAN upgrade (free → pro) still poll-confirms', async ({ page }) => {
+    // Seeded so this exercises the SAME intent-based reflectsUpgrade() path a
+    // real plan-upgrade checkout return uses (rather than incidentally
+    // passing via the no-intent legacy fallback, which happens to also
+    // accept "any active paid plan" and would mask a regression there).
+    await seedIntent(page, 'plan', 'pro', 'yearly', {
+      plan: 'free', cycle: 'monthly', status: 'active', periodEnd: null,
+    })
     await fakeWebSocket(page)
-    await installMocks(page, { subForRequest: (n) => (n >= 3 ? PRO_SUB_PLAN : FREE_SUB) })
+    // Elapsed-time gate (see A1's comment) — a shared call count races past
+    // n>=3 within milliseconds of mount under multiple concurrent
+    // /billing/subscription consumers, collapsing "Finalizing" to ~0 duration.
+    let anchorAt: number | null = null
+    await installMocks(page, {
+      subForRequest: () => {
+        if (anchorAt === null) anchorAt = Date.now()
+        return Date.now() - anchorAt >= 3_000 ? PRO_SUB_PLAN : FREE_SUB
+      },
+    })
     await bootBilling(page, '/settings/billing?upgraded=true')
     await expect(page.getByText(/Finalizing your upgrade/i)).toBeVisible({ timeout: 15_000 })
     await expect(page.getByText(/Upgrade complete/i)).toBeVisible({ timeout: 25_000 })
