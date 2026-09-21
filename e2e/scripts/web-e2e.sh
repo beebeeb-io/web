@@ -289,7 +289,36 @@ first=1
 # cross-contaminates specs into loud-red (proven: settings-restructure 6-fail in a
 # shared run → 6-pass/1-fail in isolation). Costs ~one backend restart per file;
 # the reliability bar (REPEAT) still re-runs each spec REPEAT× on its own backend.
+# Some spec files (checkout-redirect-0865, trial-0905, storage-addon-confirm-0943)
+# are fully self-contained — every API call is mocked with page.route, no server
+# needed — and ship their OWN dedicated Playwright config (own timeout, no
+# global.setup/storageState dependency; see each file's own header comment for
+# "Run: bunx playwright test --config=..."). Running such a file through the
+# DEFAULT playwright.config.ts instead (this loop's plain invocation below) is
+# wrong on two counts: it drags in the 'authenticated' project's global.setup +
+# real storageState these specs neither need nor want, AND it applies the
+# default config's 30s global test timeout — task 1441's GATE 4 needs ~45s to
+# reach its "poll window elapsed" assertion and the dedicated config sets
+# timeout:90_000 specifically for that; under the default 30s timeout it fails
+# EVERY time, not flakily. Auto-detect a same-named "<spec>.config.ts" sibling
+# and use it instead of the default config when present.
+spec_config_for() {
+  local base="${1%.spec.ts}"
+  # Codex review (PR #47, task 1441): under `set -e`, `spec_config="$(spec_config_for
+  # "$spec")"` propagates a nonzero exit from this function to the whole script —
+  # `[ -f ... ] && echo ...` alone returns 1 (no echo) whenever the spec has NO
+  # dedicated config, which is every spec except the 3 self-mocked ones. The
+  # default glob's first entry (e2e/1416-live-region-picker.spec.ts) has none, so
+  # the harness — including the CI job, which runs it with no arguments — would
+  # exit right after bringing up services, before ever invoking Playwright. The
+  # explicit `return 0` makes the "no dedicated config" case an intentional empty
+  # result, not a failure the caller's `set -e` can catch.
+  [ -f "${base}.config.ts" ] && echo "--config=${base}.config.ts"
+  return 0
+}
+
 for spec in "${SPECS[@]}"; do
+  spec_config="$(spec_config_for "$spec")"
   for run in $(seq 1 "$REPEAT"); do
     if [ "$first" -eq 0 ]; then
       # Restart with bounded retry: across ~30 rapid restarts the detached API
@@ -306,13 +335,13 @@ for spec in "${SPECS[@]}"; do
     fi
     first=0
     rm -rf playwright/.auth 2>/dev/null || true   # re-auth against the fresh account
-    log "playwright $spec (run $run/$REPEAT, workers=$WORKERS)"
+    log "playwright $spec ${spec_config:+(own config: $spec_config) }(run $run/$REPEAT, workers=$WORKERS)"
     if ! backend_alive; then
       echo "BACKEND DOWN before $spec — the :$API_PORT API is not responding (see /tmp/bb-web-e2e-api.log). This is infra, not a test failure."
       tail -20 /tmp/bb-web-e2e-api.log
       rc=2; break 2
     fi
-    if ! bunx playwright test "$spec" --workers="$WORKERS" --reporter=line; then
+    if ! bunx playwright test "$spec" $spec_config --workers="$WORKERS" --reporter=line; then
       if ! backend_alive; then
         echo "↳ NOTE: the :$API_PORT backend DIED during $spec — infra (backend down), NOT real test flake. Re-run on a healthy backend."
         rc=2; break 2
