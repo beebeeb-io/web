@@ -345,4 +345,136 @@ test.describe('0957 checkout-confirmation resilience (spec §3.3 Component C)', 
     await expect(page.getByText(/didn.t complete checkout/i)).not.toBeVisible()
     await page.screenshot({ path: path.join(EVIDENCE_DIR, 'E-noflag-late-settle-resolved.png'), fullPage: true })
   })
+
+  // ── Task 1469 — the two entry points 0957 missed ──────────────────────────
+  // Both scenarios below: click the real DOM entry point with the checkout
+  // redirect INTERCEPTED (mocked /billing/checkout + a mocked hosted-checkout
+  // URL, same pattern as e2e/trial-0905.spec.ts GATE 3), confirm the browser
+  // actually navigates there (proving the click really fired the redirect),
+  // then navigate back to the app's own origin (mirrors returning from a real
+  // hosted checkout — bb_pending_checkout lives in THAT origin's localStorage,
+  // untouched by navigating away to the mocked checkout host) and assert the
+  // intent a REAL click persisted, not a seeded fixture.
+
+  test('F — pricing.tsx: the plan-purchase button persists a pre-checkout intent before the checkout redirect (task 1469)', async ({ page }) => {
+    const CHECKOUT_URL = 'https://checkout.mollie.test/1469-pricing-mock'
+    const counters = await installMocks(page, { subForRequest: () => FREE_SUB })
+    await page.route('**/api/v1/billing/checkout', (route) => json(route, { url: CHECKOUT_URL, payment_id: PAYMENT_ID }))
+    await page.route(CHECKOUT_URL, (route) =>
+      route.fulfill({ status: 200, contentType: 'text/html', body: '<html><body>mock checkout</body></html>' }),
+    )
+
+    await bootBilling(page, '/pricing')
+
+    // pricing.tsx's `isLoggedIn = !!getToken()` reads the LEGACY localStorage
+    // session slot (packages/shared/src/api/token.ts) — auth-context.tsx's
+    // boot migrates it to the httpOnly cookie and calls `clearToken()` within
+    // the same tick, so by the time ANY route renders, that slot is already
+    // empty (pre-existing behavior, unrelated to task 1469 — see this file's
+    // header comment / the task's Notes for the full finding). The REAL
+    // session lives in the cookie the whole time (every mocked API call
+    // above already succeeds under it) — only this UI-level "am I logged
+    // in" read is stale. Re-seed it post-boot so `isLoggedIn` reflects the
+    // (real, cookie-backed) logged-in state on the next render, same as it
+    // would if a caller still explicitly held a bearer token.
+    await page.evaluate(() => localStorage.setItem('bb_session', 'e2e-1469-reseeded-token'))
+    // Force a re-render so `isLoggedIn` (recomputed fresh every render, not
+    // memoized) picks up the reseeded value — also pins cycle to 'monthly'
+    // for the pre-state assertion below.
+    await page.getByRole('button', { name: 'Monthly' }).click()
+
+    // pricing.tsx fetches its own Subscription on mount once isLoggedIn is
+    // true (task 1469) — wait for BOTH /billing/subscription callers
+    // (DriveDataProvider's own, already fired during boot + pricing.tsx's,
+    // fired by the re-render above) before clicking, so the pre-state below
+    // reflects the real subscription rather than racing the click.
+    await expect.poll(() => counters.subscriptionGets, { timeout: 15_000 }).toBeGreaterThanOrEqual(2)
+    await page.waitForTimeout(300) // let the resolved fetch's setState flush
+
+    // All three marketed non-Business cards render "Start 14-day trial" —
+    // click the first (Starter). Which plan is irrelevant to what's under
+    // test (setPendingCheckout firing before the redirect); the mocked
+    // /billing/checkout returns the same shape regardless of plan.
+    await page.getByRole('button', { name: /Start 14-day trial/i }).first().click()
+    await page.waitForURL(CHECKOUT_URL, { timeout: 15_000 })
+    await page.screenshot({ path: path.join(EVIDENCE_DIR, 'F-pricing-redirect.png'), fullPage: true })
+
+    // Return to the app origin — the click's localStorage write lives there.
+    await page.goto(`${WEB}/pricing`)
+    const raw = await page.evaluate(() => localStorage.getItem('bb_pending_checkout'))
+    expect(raw).toBeTruthy()
+    const parsed = JSON.parse(raw!)
+    expect(parsed.kind).toBe('plan')
+    expect(parsed.plan).toBe('starter')
+    expect(parsed.cycle).toBe('monthly') // the Monthly toggle click above
+    expect(parsed.paymentId).toBe(PAYMENT_ID)
+    // A complete pre-state (every key makePreState reads) — the pre-1469 bug
+    // persisted NOTHING at all (no bb_pending_checkout key whatsoever).
+    expect(Object.keys(parsed.pre).sort()).toEqual(
+      ['cycle', 'extraStorageTb', 'mandateMethod', 'periodEnd', 'plan', 'status', 'storageTbQuantity'].sort(),
+    )
+    // The real FREE_SUB the mock served — proves it's the fetched
+    // subscription's actual field values, not a placeholder.
+    expect(parsed.pre).toEqual({
+      plan: 'free', cycle: 'monthly', status: 'active', periodEnd: null,
+      extraStorageTb: 0, storageTbQuantity: 0, mandateMethod: null,
+    })
+    await page.screenshot({ path: path.join(EVIDENCE_DIR, 'F-pricing-intent-persisted.png'), fullPage: true })
+  })
+
+  test('G — drive.tsx: the upgrade-nudge modal "Upgrade now" persists a pre-checkout intent before the checkout redirect (task 1469)', async ({ page }) => {
+    const CHECKOUT_URL = 'https://checkout.mollie.test/1469-nudge-mock'
+    await installMocks(page, { subForRequest: () => FREE_SUB })
+
+    // Drive over-fetches beyond installMocks' reconcile-focused surface —
+    // override/add the extra endpoints the drive page itself needs. A more
+    // SPECIFIC page.route registered AFTER installMocks() takes priority
+    // (Playwright resolves routes most-recently-registered-first).
+    await page.route('**/api/v1/files/usage', (route) =>
+      json(route, { used_bytes: 85_000_000_000, plan_limit_bytes: 100_000_000_000, plan_name: 'free' }),
+    )
+    await page.route('**/api/v1/billing/usage', (route) =>
+      json(route, { used_bytes: 85_000_000_000, quota_bytes: 100_000_000_000, percentage: 85 }),
+    )
+    // Sync engine — empty snapshot + a token so SyncClient.start() resolves
+    // cleanly instead of erroring (the modal doesn't depend on sync.ready,
+    // but a clean snapshot keeps the page from spamming reconnect attempts).
+    await page.route('**/api/v1/sync/snapshot', (route) => json(route, { seq_id: 0, nodes: [] }))
+    await page.route('**/api/v1/sync/stream-token', (route) => json(route, { stream_token: 'mock-stream-token' }))
+    await page.route('**/api/v1/sync/stream**', (route) =>
+      route.fulfill({ status: 200, contentType: 'text/event-stream', headers: CORS, body: '' }),
+    )
+    await page.route('**/api/v1/billing/checkout', (route) => json(route, { url: CHECKOUT_URL, payment_id: PAYMENT_ID }))
+    await page.route(CHECKOUT_URL, (route) =>
+      route.fulfill({ status: 200, contentType: 'text/html', body: '<html><body>mock checkout</body></html>' }),
+    )
+
+    await bootBilling(page, '/')
+    // used_bytes/plan_limit_bytes = 85 000 000 000/100 000 000 000 = 85% —
+    // over the 80% shouldShowUpgradeNudge threshold — the modal auto-opens.
+    await expect(page.getByRole('dialog', { name: /Upgrade to Starter/i })).toBeVisible({ timeout: 20_000 })
+    await page.screenshot({ path: path.join(EVIDENCE_DIR, 'G-nudge-modal-shown.png'), fullPage: true })
+
+    await page.getByRole('button', { name: /^Upgrade now$/i }).click()
+    await page.waitForURL(CHECKOUT_URL, { timeout: 15_000 })
+    await page.screenshot({ path: path.join(EVIDENCE_DIR, 'G-nudge-redirect.png'), fullPage: true })
+
+    // Return to the app origin — the click's localStorage write lives there.
+    await page.goto(`${WEB}/`)
+    const raw = await page.evaluate(() => localStorage.getItem('bb_pending_checkout'))
+    expect(raw).toBeTruthy()
+    const parsed = JSON.parse(raw!)
+    expect(parsed.kind).toBe('plan')
+    expect(parsed.plan).toBe('starter') // UPGRADE_CHAIN.free
+    expect(parsed.cycle).toBe('yearly')
+    expect(parsed.paymentId).toBe(PAYMENT_ID)
+    expect(Object.keys(parsed.pre).sort()).toEqual(
+      ['cycle', 'extraStorageTb', 'mandateMethod', 'periodEnd', 'plan', 'status', 'storageTbQuantity'].sort(),
+    )
+    expect(parsed.pre).toEqual({
+      plan: 'free', cycle: 'monthly', status: 'active', periodEnd: null,
+      extraStorageTb: 0, storageTbQuantity: 0, mandateMethod: null,
+    })
+    await page.screenshot({ path: path.join(EVIDENCE_DIR, 'G-nudge-intent-persisted.png'), fullPage: true })
+  })
 })

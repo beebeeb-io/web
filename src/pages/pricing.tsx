@@ -4,15 +4,19 @@ import { BBButton } from '@beebeeb/shared'
 import { BBChip } from '@beebeeb/shared'
 import { BBInput } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
+import type { Subscription } from '@beebeeb/shared'
 import { useToast } from '../components/toast'
 import {
   getToken,
   createCheckoutSession,
   getPlans,
+  getSubscription,
   validatePromo,
+  type CheckoutResult,
   type Plan,
   type PromoQuote,
 } from '../lib/api'
+import { setPendingCheckout, makePreState } from '../lib/pending-checkout'
 import { PRICING_PAGE_PLANS, MARKETED_PLAN_SLUGS, type PricingPlanDef } from '../lib/plan-constants'
 
 type BillingCycle = 'monthly' | 'yearly'
@@ -80,6 +84,52 @@ function yearlySavings(plan: PlanDef): number {
 function formatEur(n: number): string {
   if (n === 0) return '€0'
   return n % 1 === 0 ? `€${n}` : `€${n.toFixed(2)}`
+}
+
+/** Narrow shape of `createCheckoutSession` this function actually calls — lets
+ * `test/pricing-checkout-intent-1469.test.ts` inject a stub directly as a
+ * plain argument instead of `mock.module`-ing `../lib/api` (which is
+ * process-global and process-wide-collides with every OTHER suite that mocks
+ * that module — see `test/helpers/upload-share-mocks.ts`'s doc comment for
+ * the exact hazard). */
+type CreateCheckoutSessionFn = (params: {
+  plan: string
+  billing_cycle: string
+  promo_code?: string
+}) => Promise<CheckoutResult>
+
+/**
+ * Starts a plan checkout for the logged-in plan-purchase button (task 1469).
+ * Exported (not inlined in `handleSelect`) so it's directly unit-testable
+ * without rendering the page — `test/pricing-checkout-intent-1469.test.ts`
+ * injects a stub `checkout` fn and asserts `setPendingCheckout` persists the
+ * intent BEFORE the caller's next statement (`window.location.href =
+ * result.url`) runs.
+ *
+ * For the `{trial: true}` branch (server started a free trial instead of a
+ * hosted checkout — task 1064/D5) there is no redirect at all, so no intent
+ * is persisted; `handleSelect` routes the user straight to `/` instead.
+ */
+export async function startPlanCheckout(
+  planId: string,
+  cycle: BillingCycle,
+  promoCode: string | null,
+  subscription: Subscription | null,
+  // `createCheckoutSession` is overloaded so TS narrows the return type per
+  // no-promo/promo call shape (see api.ts's comment on the overloads); a
+  // plain reference to it doesn't structurally match this function's single,
+  // wider parameter type. The cast is safe: the underlying implementation
+  // signature IS `(params: {plan, billing_cycle, promo_code?}) =>
+  // Promise<CheckoutResult>` — identical to CreateCheckoutSessionFn.
+  checkout: CreateCheckoutSessionFn = createCheckoutSession as CreateCheckoutSessionFn,
+): Promise<CheckoutResult> {
+  const result = promoCode
+    ? await checkout({ plan: planId, billing_cycle: cycle, promo_code: promoCode })
+    : await checkout({ plan: planId, billing_cycle: cycle })
+  if (!('trial' in result)) {
+    setPendingCheckout('plan', planId, cycle, makePreState(subscription), result.payment_id)
+  }
+  return result
 }
 
 function PlanCard({
@@ -247,6 +297,20 @@ export function Pricing() {
     getPlans().then(setApiPlans).catch(() => {})
   }, [])
 
+  // Task 1469: the plan-purchase button below redirects straight to a hosted
+  // checkout for a logged-in user — it needs the current `Subscription` for
+  // `makePreState` (startPlanCheckout above), the same pre-checkout snapshot
+  // every other checkout entry point stamps via `setPendingCheckout`
+  // (pending-checkout.ts's module doc). A failed/slow fetch just leaves this
+  // `null` — startPlanCheckout still persists an intent, falling back to the
+  // Free default `makePreState(null)` already treated as "no better
+  // information" by the reconcile path, rather than losing the intent.
+  const [subscription, setSubscription] = useState<Subscription | null>(null)
+  useEffect(() => {
+    if (!isLoggedIn) return
+    getSubscription().then(setSubscription).catch(() => {})
+  }, [isLoggedIn])
+
   const plans = useMemo(() => {
     if (!apiPlans) return fallbackPlans
     return fallbackPlans.map(fp => {
@@ -357,13 +421,7 @@ export function Pricing() {
     // otherwise surface as a differentiated error out of the catch below.
     const promoCodeForThisPlan = promoQuotes[planId] ? promoAppliedCode : null
     try {
-      const result = promoCodeForThisPlan
-        ? await createCheckoutSession({
-            plan: planId,
-            billing_cycle: cycle,
-            promo_code: promoCodeForThisPlan,
-          })
-        : await createCheckoutSession({ plan: planId, billing_cycle: cycle })
+      const result = await startPlanCheckout(planId, cycle, promoCodeForThisPlan, subscription)
       if ('trial' in result) {
         showToast({
           icon: 'check',

@@ -14,7 +14,9 @@ import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
+import type { Subscription } from '@beebeeb/shared'
 import { createCheckoutSession } from '../lib/api'
+import { setPendingCheckout, makePreState } from '../lib/pending-checkout'
 import { formatBytes } from '../lib/format'
 import { planCanAddStorage } from '../lib/plan-pricing'
 import {
@@ -56,11 +58,44 @@ export function shouldShowUpgradeNudge(usedBytes: number, quotaBytes: number): b
 
 // ── Modal ─────────────────────────────────────────────────────────────────────
 
+/** Narrow shape of `createCheckoutSession` this function actually calls — lets
+ * `test/upgrade-nudge-checkout-intent-1469.test.ts` inject a stub directly as
+ * a plain argument instead of `mock.module`-ing `../lib/api` (which is
+ * process-global and process-wide-collides with every OTHER suite that mocks
+ * that module — see `test/helpers/upload-share-mocks.ts`'s doc comment for
+ * the exact hazard). */
+type CreateCheckoutSessionFn = (params: {
+  plan: string
+  billing_cycle: string
+}) => Promise<{ url: string; payment_id?: string }>
+
+/**
+ * Starts the "Upgrade now" checkout for the storage-quota nudge (task 1469).
+ * Exported (not inlined in `handleUpgrade`) so it's directly unit-testable
+ * without rendering the modal — `test/upgrade-nudge-checkout-intent-1469.test.ts`
+ * injects a stub `checkout` fn and asserts `setPendingCheckout` persists the
+ * intent BEFORE the caller's next statement (`window.location.href = url`)
+ * runs. `subscription` is the live value the caller already holds (drive.tsx
+ * passes `useDriveData().planDetails.subscription`, already fetched by
+ * `DriveDataProvider` — no redundant fetch needed here).
+ */
+export async function startUpgradeCheckout(
+  nextSlug: string,
+  subscription: Subscription | null,
+  checkout: CreateCheckoutSessionFn = createCheckoutSession,
+): Promise<{ url: string; payment_id?: string }> {
+  const result = await checkout({ plan: nextSlug, billing_cycle: 'yearly' })
+  setPendingCheckout('plan', nextSlug, 'yearly', makePreState(subscription), result.payment_id)
+  return result
+}
+
 export interface UpgradeNudgeModalProps {
   usedBytes: number
   quotaBytes: number
   /** Plan slug from /api/v1/files/usage — e.g. "free", "basic" */
   currentPlan: string
+  /** Current subscription (task 1469) — pre-checkout snapshot for the persisted intent. */
+  subscription: Subscription | null
   onClose: () => void
 }
 
@@ -68,6 +103,7 @@ export function UpgradeNudgeModal({
   usedBytes,
   quotaBytes,
   currentPlan,
+  subscription,
   onClose,
 }: UpgradeNudgeModalProps) {
   const navigate = useNavigate()
@@ -91,10 +127,7 @@ export function UpgradeNudgeModal({
     setLoading(true)
     setCheckoutError(null)
     try {
-      const { url } = await createCheckoutSession({
-        plan: nextSlug,
-        billing_cycle: 'yearly',
-      })
+      const { url } = await startUpgradeCheckout(nextSlug, subscription)
       window.location.href = url
     } catch (err) {
       // Stripe not configured or error — fall through to billing page
@@ -102,7 +135,7 @@ export function UpgradeNudgeModal({
       setCheckoutError(err instanceof Error ? err.message : 'Could not start checkout')
       navigate('/billing')
     }
-  }, [nextSlug, navigate])
+  }, [nextSlug, navigate, subscription])
 
   const handleAddStorage = useCallback(() => {
     dismiss()
