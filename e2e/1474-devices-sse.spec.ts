@@ -23,14 +23,22 @@
  */
 import { test, expect, type Page, type Route } from '@playwright/test'
 import path from 'path'
+import { mkdirSync } from 'node:fs'
 
 const WEB = process.env.E2E_WEB_URL ?? 'http://localhost:5187'
 
-// Absolute, NOT relative to this file — this spec runs from a worktree under
-// ~/code/bb-worktrees/web-1474, which is outside the workspace tree entirely
-// (a sibling checkout, not nested under it), so `path.resolve(__dirname, …)`
-// cannot reach the workspace's `.claude/tasks/_qa-evidence/`.
-const EVIDENCE_DIR = '/Users/guuslangelaar/Development/Beebeeb/beebeeb.io/.claude/tasks/_qa-evidence/1474'
+// Defaults to a repo-relative test-results dir (works from any worktree,
+// unlike a hardcoded absolute workspace-root path — this spec runs from a
+// worktree under ~/code/bb-worktrees/web-1474, which is outside the
+// workspace tree entirely, a sibling checkout, not nested under it, so a
+// hardcoded workspace-root path only ever worked on one machine/checkout).
+// Mirrors checkout-confirmation-resilience-0957.spec.ts's pattern (PR #53
+// review). Override with E2E_EVIDENCE_DIR to land screenshots under the
+// workspace's tracked `.claude/tasks/_qa-evidence/1474/` for the real
+// evidence capture, e.g.:
+//   E2E_EVIDENCE_DIR=/Users/guuslangelaar/Development/Beebeeb/beebeeb.io/.claude/tasks/_qa-evidence/1474 \
+//     bunx playwright test -c e2e/1474-devices-sse.config.ts
+const EVIDENCE_DIR = process.env.E2E_EVIDENCE_DIR ?? path.join(process.cwd(), 'test-results', '1474-evidence')
 
 const AUTH_USER = {
   user_id: '00000000-0000-0000-0000-000000000474',
@@ -181,7 +189,12 @@ async function bootDevices(page: Page) {
     localStorage.setItem('bb_cookie_consent', 'all')
     localStorage.setItem('beebeeb_onboarding_state', JSON.stringify({ step: 'done' }))
   })
-  await page.goto(`${WEB}/devices`)
+  // Relative, not `${WEB}/devices` — resolves against whichever config's
+  // `use.baseURL` is active (this spec's own e2e/1474-devices-sse.config.ts
+  // pins that to :5187) instead of duplicating a hardcoded port default
+  // inside the spec (Codex review, PR #57: a literal `${WEB}` origin here
+  // stayed pinned to :5187 even if a config served the app elsewhere).
+  await page.goto('/devices')
   await page.waitForFunction(
     () => document.body.dataset.cryptoReady === 'true',
     { timeout: 20_000 },
@@ -189,6 +202,10 @@ async function bootDevices(page: Page) {
 }
 
 test.describe('1474 — devices.tsx useSessionSSE opens with a fresh stream token', () => {
+  test.beforeAll(() => {
+    mkdirSync(EVIDENCE_DIR, { recursive: true })
+  })
+
   test('a logged-in /devices page receives one SSE event and re-renders', async ({ page }) => {
     const counters = await installMocks(page)
     await bootDevices(page)
@@ -230,7 +247,7 @@ test.describe('1474 — devices.tsx useSessionSSE opens with a fresh stream toke
     await page.addInitScript(() => {
       localStorage.setItem('bb_cookie_consent', 'all')
     })
-    await page.goto(`${WEB}/devices`)
+    await page.goto('/devices')
     await page.waitForURL(/\/login/, { timeout: 15_000 })
     await page.screenshot({
       path: path.join(EVIDENCE_DIR, '1474-03-logged-out-bounced-to-login.png'),

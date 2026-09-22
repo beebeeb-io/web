@@ -95,7 +95,14 @@ export default defineConfig({
       // wrapped in <GuestRoute> (app.tsx) — an authenticated + unlocked
       // session gets redirected away before the page ever renders, so this
       // spec belongs in the unauthenticated project below instead.
-      testIgnore: /(checkout-redirect-0865|trial-0905|storage-addon-confirm-0943|checkout-confirmation-resilience-0957|forgot-password-recovery)\.spec\.ts$/,
+      // 1474-devices-sse.spec.ts: same "fully self-contained, own config"
+      // shape as the specs above — boots its own webServer on :5187 (task
+      // 1474's brief: avoid colliding with another lane's dev server or the
+      // :3003 e2e harness). Left unignored here it would still match this
+      // project's `\.spec\.ts$` and get picked up by the shared webServer
+      // above (default :5173), producing a connection error against its
+      // hardcoded port (Codex review, PR #57).
+      testIgnore: /(checkout-redirect-0865|trial-0905|storage-addon-confirm-0943|checkout-confirmation-resilience-0957|forgot-password-recovery|1474-devices-sse)\.spec\.ts$/,
       dependencies: ['setup'],
       use: {
         storageState: STORAGE_STATE,
