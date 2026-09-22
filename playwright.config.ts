@@ -91,7 +91,11 @@ export default defineConfig({
       // wrong for them (task 1441; task 1449 extended the same defense in
       // depth to the other two). Run each via its own config, e.g.
       // `bunx playwright test --config=e2e/trial-0905.config.ts`.
-      testIgnore: /(checkout-redirect-0865|trial-0905|storage-addon-confirm-0943)\.spec\.ts$/,
+      // forgot-password-recovery.spec.ts (task 1372 T8): /forgot-password is
+      // wrapped in <GuestRoute> (app.tsx) — an authenticated + unlocked
+      // session gets redirected away before the page ever renders, so this
+      // spec belongs in the unauthenticated project below instead.
+      testIgnore: /(checkout-redirect-0865|trial-0905|storage-addon-confirm-0943|forgot-password-recovery)\.spec\.ts$/,
       dependencies: ['setup'],
       use: {
         storageState: STORAGE_STATE,
@@ -101,7 +105,7 @@ export default defineConfig({
     // ── Step 2b: tests that must run unauthenticated (login page, etc.) ───────
     {
       name: 'unauthenticated',
-      testMatch: /auth\.spec\.ts|login\.spec\.ts/,
+      testMatch: /auth\.spec\.ts|login\.spec\.ts|forgot-password-recovery\.spec\.ts/,
       // No storageState — fresh context
     },
   ],

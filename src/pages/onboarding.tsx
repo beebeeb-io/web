@@ -249,7 +249,6 @@ export function Onboarding() {
           '- Open the link in an incognito tab — watch it decrypt in the browser',
           '',
           '## Need help?',
-          '- Docs: https://docs.beebeeb.io',
           '- Support: support@beebeeb.io',
           '',
           'You can delete this file anytime.',
