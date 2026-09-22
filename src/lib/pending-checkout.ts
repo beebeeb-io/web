@@ -112,6 +112,37 @@ export function persistTrialConvertIntent(
   setPendingCheckout('plan', sub?.plan ?? 'free', sub?.billing_cycle ?? 'monthly', makePreState(sub), paymentId)
 }
 
+/**
+ * task 1469 follow-up (Codex review on PR #54, thread PRRT_kwDOSLX6Nc6k2gf2,
+ * src/pages/pricing.tsx:130): what should the checkout watchdog's "Continue"
+ * button DO for a persisted `kind: 'plan'` intent?
+ *
+ * A saved plan that differs from the subscription's CURRENT plan is a plan
+ * PURCHASE (or a tier change) — resuming it must recreate checkout for the
+ * saved plan + cycle, the same `createCheckoutSession` request every other
+ * plan-purchase entry point (pricing.tsx's `startPlanCheckout`,
+ * upgrade-dialog.tsx, upgrade-nudge-modal.tsx) makes. Only when the saved
+ * plan MATCHES the current plan is the abandoned checkout genuinely an
+ * in-place billing-cycle switch — that's the one case
+ * `switchBillingCycle(cycle)` is the correct call for. Before this, the
+ * Continue handler called `switchBillingCycle` unconditionally and never
+ * read `pending.plan` at all, so resuming a Starter/Pro purchase silently
+ * switched the cycle of whatever plan the user was ALREADY on (or failed
+ * outright on a free current plan, which has no cycle to switch).
+ *
+ * Pure so it's unit-testable without rendering billing.tsx — the handler
+ * there is wired through it.
+ */
+export function resolveResumeAction(
+  pending: Pick<PendingCheckout, 'plan' | 'cycle'>,
+  currentPlan: string,
+): { kind: 'checkout'; plan: string; cycle: string } | { kind: 'switch-cycle'; cycle: 'monthly' | 'yearly' } {
+  if (pending.plan !== currentPlan) {
+    return { kind: 'checkout', plan: pending.plan, cycle: pending.cycle }
+  }
+  return { kind: 'switch-cycle', cycle: pending.cycle === 'yearly' ? 'yearly' : 'monthly' }
+}
+
 export function clearPendingCheckout() {
   localStorage.removeItem(PENDING_CHECKOUT_KEY)
 }

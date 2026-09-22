@@ -127,7 +127,7 @@ export function Drive() {
   const { isFrozen } = useFrozen()
   const { user } = useAuth()
   const { getFileKey, getMasterKey, getFileKeyForFile, isUnlocked, cryptoReady, cryptoError } = useKeys()
-  const { usage: driveUsage, incomingCount: driveIncomingCount, refreshUsage: refreshDriveUsage, setOffline: setDriveOffline, unpinFolders } = useDriveData()
+  const { usage: driveUsage, planDetails: drivePlanDetails, incomingCount: driveIncomingCount, refreshUsage: refreshDriveUsage, setOffline: setDriveOffline, unpinFolders } = useDriveData()
   const { indexFile, reindexFields, unindexFile } = useSearchIndex()
   const sync = useSync()
   const { refresh: refreshOnboarding } = useOnboarding()
@@ -2764,6 +2764,7 @@ export function Drive() {
           usedBytes={storageUsage.used_bytes}
           quotaBytes={storageUsage.plan_limit_bytes}
           currentPlan={storageUsage.plan_name}
+          subscription={drivePlanDetails.subscription}
           onClose={() => setShowUpgradeNudge(false)}
         />
       )}

@@ -35,6 +35,7 @@ import {
   exportBillingTransactions,
   startTrial,
   convertTrial,
+  createCheckoutSession,
   ApiError,
   type Subscription,
   type BillingInvoice,
@@ -68,6 +69,7 @@ import {
   setPendingCheckout,
   clearPendingCheckout,
   getPendingCheckout,
+  resolveResumeAction,
 } from '../lib/pending-checkout'
 import {
   reflectsUpgrade as reflectsUpgradeCore,
@@ -322,6 +324,11 @@ export function Billing() {
   // Billing cycle switch confirmation
   const [cycleSwitchConfirm, setCycleSwitchConfirm] = useState<'monthly' | 'yearly' | null>(null)
   const [cycleSwitchLoading, setCycleSwitchLoading] = useState(false)
+  // Checkout-watchdog "Continue" resume (task 1469 fix, Codex PR #54 review) —
+  // only used for the `resolveResumeAction` checkout branch (recreating
+  // checkout for a saved plan that differs from the current one); the
+  // cycle-switch branch reuses `cycleSwitchLoading` via handleSwitchBillingCycle.
+  const [resumeCheckoutLoading, setResumeCheckoutLoading] = useState(false)
   // 14-day free trial (task 0905). `trialStarting` tracks the plan currently
   // being started; `trialUsed` is set when the server reports the user already
   // had a trial (409 trial_already_used) so we hide the CTA and fall back to the
@@ -1115,6 +1122,45 @@ function openUpgrade(plan: string) {
   }
 
   /**
+   * Checkout-watchdog "Continue" — resume an abandoned `kind: 'plan'`
+   * checkout (task 1469 fix, Codex PR #54 review, thread
+   * PRRT_kwDOSLX6Nc6k2gf2). `resolveResumeAction` decides which of two very
+   * different resumes this is:
+   * - the saved plan differs from the CURRENT plan → this was a plan
+   *   PURCHASE, not a cycle switch. Recreate checkout for the saved plan +
+   *   cycle (the same request every other plan-purchase entry point makes)
+   *   and re-persist the intent exactly like `startPlanCheckout` does, so
+   *   the reconcile-on-load still has a `pre` baseline after the new
+   *   redirect.
+   * - the saved plan MATCHES the current plan → this genuinely is an
+   *   in-place cycle switch; `handleSwitchBillingCycle` is correct as-is.
+   */
+  async function handleResumeCheckout(pending: PendingCheckout) {
+    const action = resolveResumeAction(pending, effectivePlan)
+    if (action.kind === 'switch-cycle') {
+      await handleSwitchBillingCycle(action.cycle as 'monthly' | 'yearly')
+      return
+    }
+    setResumeCheckoutLoading(true)
+    try {
+      const { url, payment_id } = await createCheckoutSession({
+        plan: action.plan,
+        billing_cycle: action.cycle,
+      })
+      setPendingCheckout(pending.kind, action.plan, action.cycle, makePreState(sub), payment_id)
+      window.location.href = url
+    } catch (err) {
+      showToast({
+        icon: 'x',
+        title: 'Could not resume checkout',
+        description: err instanceof Error ? err.message : 'Please try again.',
+        danger: true,
+      })
+      setResumeCheckoutLoading(false)
+    }
+  }
+
+  /**
    * Start a 14-day free trial (task 0905, Pattern B — no card). On success the
    * subscription flips to `trialing` immediately; we refresh state so the page
    * shows the trialing summary + the global "N days left" banner. A 409
@@ -1513,6 +1559,8 @@ function openUpgrade(plan: string) {
               <span className="flex-1 text-ink-2">
                 {pendingCheckout.kind === 'storage' ? (
                   <>You started adding storage but didn't complete checkout.</>
+                ) : pendingCheckout.plan !== effectivePlan ? (
+                  <>You started upgrading to <span className="font-semibold text-ink">{PLAN_META[pendingCheckout.plan]?.label ?? pendingCheckout.plan}</span> but didn't complete checkout.</>
                 ) : (
                   <>You started switching to <span className="font-semibold text-ink">{pendingCheckout.cycle}</span> billing but didn't complete checkout.</>
                 )}
@@ -1521,9 +1569,10 @@ function openUpgrade(plan: string) {
                 <BBButton
                   size="sm"
                   variant="amber"
-                  onClick={() => void handleSwitchBillingCycle(pendingCheckout.cycle as 'monthly' | 'yearly')}
+                  disabled={resumeCheckoutLoading}
+                  onClick={() => void handleResumeCheckout(pendingCheckout)}
                 >
-                  Continue
+                  {resumeCheckoutLoading ? 'Starting checkout...' : 'Continue'}
                 </BBButton>
               )}
               <button
