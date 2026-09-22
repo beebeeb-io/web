@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import type { AuthUser } from '@beebeeb/shared'
 import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '../components/icons'
 import { BBToggle } from '../components/bb-toggle'
 import { useToast } from '../components/toast'
+import { useAuth, isAuthenticated } from '../lib/auth-context'
 import {
   listClientDevices,
   listClientSessions,
@@ -10,7 +12,7 @@ import {
   deleteClientDevice,
   setDeviceNotifications,
   getApiUrl,
-  getToken,
+  getStreamToken,
   type ClientDevice,
   type ClientSession,
 } from '../lib/api'
@@ -104,50 +106,153 @@ function sessionTypeLabel(type: string): string {
 
 // ─── SSE hook ───────────────────────────────────
 
+const SSE_BASE_BACKOFF_MS = 1_000
+const SSE_MAX_BACKOFF_MS = 30_000
+
+/**
+ * Task 1474 — builds the `/clients/sessions/live` URL from a freshly minted
+ * stream token (server PR #68: the endpoint now takes a required `token`
+ * query param, the same short-lived token type `/sync/stream-token` mints
+ * for the WS path — no more Bearer/cookie fallback, and the legacy
+ * `getToken()` localStorage slot is never read here). Pure so it's
+ * unit-testable without a network stack or EventSource polyfill.
+ */
+export function buildSessionSSEUrl(streamToken: string): string {
+  return `${getApiUrl()}/api/v1/clients/sessions/live?token=${encodeURIComponent(streamToken)}`
+}
+
+/**
+ * Task 1474 — the async connect decision extracted into a pure, injectable
+ * function (same shape as `attemptConnect` in `hooks/use-websocket.ts` /
+ * task 1471's Codex finding on PR #55, thread PRRT_kwDOSLX6Nc6k3xUz): the
+ * caller re-checks `isCurrent()` after the `await getStreamToken()` so a
+ * connect attempt started while authenticated can't open a stream on behalf
+ * of an effect that has since torn down (logout, unmount, a fresh
+ * reconnect superseding it).
+ *
+ * Gates on `isAuthenticated(user)` — the auth-context truth task 1471
+ * introduced — never the legacy `bb_session` localStorage slot, which reads
+ * a real cookie-session user as logged out (see `isAuthenticated`'s doc
+ * comment in `lib/auth-context.tsx`).
+ */
+export async function attemptSessionSSEConnect(deps: {
+  user: AuthUser | null
+  getStreamToken: () => Promise<{ stream_token: string }>
+  openSource: (url: string) => void
+  scheduleRetry: () => void
+  isCurrent: () => boolean
+}): Promise<void> {
+  const { user, getStreamToken: fetchStreamToken, openSource, scheduleRetry, isCurrent } = deps
+
+  if (!isAuthenticated(user)) return
+
+  let streamToken: string
+  try {
+    const { stream_token } = await fetchStreamToken()
+    streamToken = stream_token
+  } catch {
+    if (!isCurrent()) return
+    scheduleRetry()
+    return
+  }
+
+  if (!isCurrent()) return
+  openSource(buildSessionSSEUrl(streamToken))
+}
+
 function useSessionSSE(
   onEvent: (data: ClientSession) => void,
 ) {
+  const { user } = useAuth()
+  const authed = isAuthenticated(user)
   const callbackRef = useRef(onEvent)
   callbackRef.current = onEvent
+  const userRef = useRef(user)
+  userRef.current = user
 
+  // Effect keys off the boolean, not the `user` object reference — `user`
+  // can get a fresh identity from a `refreshUser()` call without becoming
+  // un/re-authenticated, and that must not tear down and reopen a live
+  // stream for no reason.
   useEffect(() => {
-    const token = getToken()
-    if (!token) return
+    if (!authed) return
 
-    const url = `${getApiUrl()}/api/v1/clients/sessions/live?token=${encodeURIComponent(token)}`
-    const es = new EventSource(url)
+    let cancelled = false
+    const isCurrent = () => !cancelled
 
-    es.addEventListener('heartbeat', (e) => {
+    let es: EventSource | null = null
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+    let backoff = SSE_BASE_BACKOFF_MS
+
+    const handleEvt = (e: Event) => {
       try {
         const data = JSON.parse((e as MessageEvent).data) as ClientSession
         callbackRef.current(data)
       } catch {
         // ignore malformed events
       }
-    })
+    }
 
-    es.addEventListener('session_created', (e) => {
-      try {
-        const data = JSON.parse((e as MessageEvent).data) as ClientSession
-        callbackRef.current(data)
-      } catch {
-        // ignore
-      }
-    })
+    const scheduleReconnect = () => {
+      const delay = backoff
+      backoff = Math.min(backoff * 2, SSE_MAX_BACKOFF_MS)
+      reconnectTimer = setTimeout(connect, delay)
+    }
 
-    es.addEventListener('session_stopped', (e) => {
-      try {
-        const data = JSON.parse((e as MessageEvent).data) as ClientSession
-        callbackRef.current(data)
-      } catch {
-        // ignore
-      }
-    })
+    const connect = () => {
+      void attemptSessionSSEConnect({
+        user: userRef.current,
+        getStreamToken,
+        isCurrent,
+        scheduleRetry: scheduleReconnect,
+        openSource: (url) => {
+          if (es) {
+            es.close()
+            es = null
+          }
+
+          const opened = new EventSource(url)
+          es = opened
+
+          opened.addEventListener('heartbeat', handleEvt)
+          opened.addEventListener('session_created', handleEvt)
+          opened.addEventListener('session_stopped', handleEvt)
+
+          opened.onopen = () => {
+            backoff = SSE_BASE_BACKOFF_MS
+          }
+
+          // Task 1474 — the stream token is short-lived (1h TTL) and native
+          // EventSource auto-retries the SAME URL on error, which would
+          // replay a now-stale token forever. Close it ourselves and run
+          // the full `connect()` flow again (fresh token via
+          // `getStreamToken()`) instead of letting the browser retry.
+          opened.onerror = () => {
+            if (es === opened) {
+              opened.close()
+              es = null
+            }
+            if (!isCurrent()) return
+            scheduleReconnect()
+          }
+        },
+      })
+    }
+
+    connect()
 
     return () => {
-      es.close()
+      cancelled = true
+      if (reconnectTimer !== null) {
+        clearTimeout(reconnectTimer)
+        reconnectTimer = null
+      }
+      if (es) {
+        es.close()
+        es = null
+      }
     }
-  }, [])
+  }, [authed])
 }
 
 // ─── Component ──────────────────────────────────
