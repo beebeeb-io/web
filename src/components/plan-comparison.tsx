@@ -1,6 +1,6 @@
 import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
-import { MARKETED_PLAN_SLUGS, PLAN_LABELS, PLAN_PRICE_LABELS, PLAN_META, PLAN_RANK } from '../lib/plan-constants'
+import { MARKETED_PLAN_SLUGS, PLAN_LABELS, PLAN_PRICE_LABELS, PLAN_META, PLAN_RANK, STORAGE_ADDON_EUR_PER_TB } from '../lib/plan-constants'
 
 interface PlanComparisonProps {
   currentPlan: string
@@ -29,7 +29,7 @@ interface PlanComparisonProps {
 // 14-day trial; Starter/Basic/Pro do.
 const features: Array<{ name: string; starter: boolean | string; basic: boolean | string; pro: boolean | string; business: boolean | string }> = [
   { name: 'Encrypted storage', starter: '100 GB', basic: '200 GB', pro: '1 TB', business: '5 TB' },
-  { name: 'Extra storage add-on', starter: false, basic: false, pro: '€10.99/TB', business: '€10.99/TB' },
+  { name: 'Extra storage add-on', starter: false, basic: false, pro: `€${STORAGE_ADDON_EUR_PER_TB}/TB`, business: `€${STORAGE_ADDON_EUR_PER_TB}/TB` },
   { name: '14-day free trial', starter: true, basic: true, pro: true, business: false },
   { name: 'Version history', starter: '30 days', basic: '30 days', pro: '30 days', business: '30 days' },
   { name: 'Link sharing', starter: true, basic: true, pro: true, business: true },

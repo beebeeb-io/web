@@ -18,11 +18,13 @@ export interface PlanMeta {
   comingSoon?: boolean
 }
 
-// Storage add-on rate — €10.99/TB, unchanged across pricing v2. Pro's base is
-// 1 TB at €10.99 and each extra TB adds €10.99, so the per-TB rate is flat.
-// (Mirrors core's STORAGE_ADDON_CENTS_PER_TB = 1099; the WASM bridge is the
+// Storage add-on rate — €14.99/TB (raised from €10.99/TB, Guus ruling
+// 2026-09-22, task 1463). Pro's base is 1 TB at €10.99 (Pro base price,
+// unchanged) and each extra TB adds €14.99 — base and add-on rates now
+// diverge; the per-TB rate is flat only across extra TBs, not vs. the base.
+// (Mirrors core's STORAGE_ADDON_CENTS_PER_TB = 1499; the WASM bridge is the
 // source of truth for charged amounts — this is the display copy.)
-export const STORAGE_ADDON_EUR_PER_TB = 10.99
+export const STORAGE_ADDON_EUR_PER_TB = 14.99
 
 // Seat add-on rate — €4.99/user beyond the 2 seats Teams includes.
 // (Mirrors core's USER_ADDON_CENTS = 499.)
@@ -65,13 +67,13 @@ const PLANS: { [K in 'free' | 'starter' | 'basic' | 'pro' | 'business']: PlanMet
     priceYearly: 109.90,
     storageGB: 1000,
     tagline: '1 TB base, expandable to 99 TB',
-    features: ['Everything in Basic', '1 TB encrypted storage', 'Add storage at €10.99/TB', '30-day version history', 'Advanced sharing controls', '14-day free trial'],
+    features: ['Everything in Basic', '1 TB encrypted storage', 'Add storage at €14.99/TB', '30-day version history', 'Advanced sharing controls', '14-day free trial'],
   },
   // Teams (internal slug `business`) is the MARKETED 4th tier, shown as a
   // COMING SOON card (Guus 2026-06-30): visible in the lineup but NOT
   // purchasable yet — the public checkout path rejects `business` (server task
   // 1050) and the UI renders a coming-soon badge + non-checkout CTA instead.
-  // €54.95/mo, 5 TB base + 2 seats included, +€10.99/TB, +€4.99/user beyond 2.
+  // €54.95/mo, 5 TB base + 2 seats included, +€14.99/TB, +€4.99/user beyond 2.
   // Slug stays `business` (no migration; no users). Numbers mirror core @ f205507.
   business: {
     label: 'Teams',
@@ -84,7 +86,7 @@ const PLANS: { [K in 'free' | 'starter' | 'basic' | 'pro' | 'business']: PlanMet
       'Everything in Pro',
       '5 TB encrypted storage',
       '2 users included',
-      'Add storage at €10.99/TB',
+      'Add storage at €14.99/TB',
       'Add seats at €4.99/user',
     ],
   },
@@ -261,9 +263,10 @@ export const PRICING_PAGE_PLANS: PricingPlanDef[] = [
     priceMonthly: PLANS.pro.priceMonthly,
     priceYearly: Math.round((PLANS.pro.priceYearly / 12) * 100) / 100,
     seat: '/ month',
-    // Pro is a 1 TB base; storage is add-on driven at a FLAT €10.99/TB (not
-    // base/5 — pricing v2 dropped the 5 TB base). The base TB equals the base
-    // price, so per-TB = the add-on rate.
+    // Pro is a 1 TB base; storage is add-on driven at a FLAT €14.99/TB (not
+    // base/5 — pricing v2 dropped the 5 TB base). Since the €14.99/TB add-on
+    // raise (Guus ruling 2026-09-22, task 1463), the base TB no longer equals
+    // the add-on rate — base stays €10.99, each extra TB is €14.99.
     note: `1 TB base · +€${STORAGE_ADDON_EUR_PER_TB}/TB`,
     storage: '1 TB',
     perTb: `+€${STORAGE_ADDON_EUR_PER_TB}/TB`,
@@ -273,7 +276,7 @@ export const PRICING_PAGE_PLANS: PricingPlanDef[] = [
     features: [
       { label: 'Everything in Basic' },
       { label: '1 TB encrypted storage', strong: true },
-      { label: 'Add storage at €10.99/TB → 99 TB', strong: true },
+      { label: 'Add storage at €14.99/TB → 99 TB', strong: true },
       { label: '30-day version history', strong: true },
       { label: 'Desktop sync · CLI access' },
       { label: 'Shared folders' },
@@ -283,7 +286,7 @@ export const PRICING_PAGE_PLANS: PricingPlanDef[] = [
   // Teams (slug `business`) — visible 4th tier but COMING SOON: shown with a
   // "Coming soon" badge and a non-checkout "Notify me" CTA. Not purchasable yet
   // (server rejects `business` at checkout — task 1050). 5 TB base, 2 seats
-  // included, €54.95/mo. Storage add-on €10.99/TB, seat add-on €4.99/user.
+  // included, €54.95/mo. Storage add-on €14.99/TB, seat add-on €4.99/user.
   {
     id: 'business',
     name: PLANS.business.label,
