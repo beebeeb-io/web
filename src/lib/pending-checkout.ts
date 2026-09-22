@@ -93,6 +93,25 @@ export function setPendingCheckout(
   } catch { /* storage unavailable — watchdog/reconcile simply won't fire */ }
 }
 
+/**
+ * Build + persist the pending-checkout intent for a trial→paid conversion
+ * (task 0957 follow-up, PR #53 review). Factored out so EVERY trial-convert
+ * call site stamps the IDENTICAL `paymentId`-carrying shape instead of each
+ * one hand-rolling its own `setPendingCheckout` call: before this, the
+ * billing-page "Convert now" button passed `payment_id` through but
+ * `trial-banner.tsx`'s site-wide banner destructured only `{ url }` from
+ * `convertTrial()` and silently dropped it, so a conversion started from the
+ * banner lost the direct `GET /payment/{id}/status` reconciliation path and
+ * fell back to the weaker poll/WS-only route. One shared helper means the
+ * two callers cannot drift like that again.
+ */
+export function persistTrialConvertIntent(
+  sub: Subscription | null | undefined,
+  paymentId: string | undefined,
+) {
+  setPendingCheckout('plan', sub?.plan ?? 'free', sub?.billing_cycle ?? 'monthly', makePreState(sub), paymentId)
+}
+
 export function clearPendingCheckout() {
   localStorage.removeItem(PENDING_CHECKOUT_KEY)
 }

@@ -80,3 +80,54 @@ export function reflectsUpgrade(intent: PendingCheckout | null, s: Subscription)
 export function reflectsUpgradeNoIntent(s: Subscription): boolean {
   return s.plan !== 'free' && ACTIVE_STATUSES.has(s.status)
 }
+
+/** What `upgradeConfirm` (billing.tsx's own banner state) may hold. */
+export type UpgradeConfirmState = 'finalizing' | 'complete' | 'unconfirmed'
+
+export interface ReconcileSignalOutcome {
+  /** Clear the persisted pending-checkout intent AND the watchdog UI state
+   *  built on it (`clearPendingCheckout()`, `intentRef.current = null`,
+   *  `setPendingCheckoutState(null)` in billing.tsx). */
+  resolveIntent: boolean
+  /** Flip the visible `?upgraded=true` confirmation banner to 'complete'. */
+  showComplete: boolean
+}
+
+/**
+ * What a reconcile signal — the `billing_updated` WS event, or the
+ * `beebeeb:ws-connected` reconnect catch-up (spec §3.3 item 3) — should do
+ * once a fresh subscription has been fetched (task 0957 follow-up, PR #53
+ * review).
+ *
+ * Two INDEPENDENT questions, previously conflated into one `showUpgraded &&
+ * upgradeConfirm !== 'complete' && reflectsUpgrade(latest)` condition in
+ * billing.tsx's `reconcileOnSignal`:
+ *
+ *  - `resolveIntent`: does the fresh subscription satisfy the pending
+ *    checkout intent? This must NOT depend on `showUpgraded` — the intent is
+ *    a localStorage record of what the user is waiting for, written before
+ *    ANY redirect (trial convert, plan upgrade, cycle switch, storage
+ *    instant-pay), several of which don't even use the `?upgraded=true`
+ *    return flow. If the return URL lost that flag (proxy/history
+ *    normalization) but the payment settles server-side after this tab's own
+ *    30s poll already gave up, a WS reconnect refreshing the subscription
+ *    must still resolve the intent — otherwise the checkout watchdog spins
+ *    to a false "didn't complete checkout" until the intent's 24h TTL, even
+ *    though the change landed.
+ *  - `showComplete`: should the VISIBLE `?upgraded=true` confirmation banner
+ *    flip to 'complete' right now? There is no such banner when
+ *    `showUpgraded` is false, and no point re-flipping one already showing
+ *    'complete'.
+ */
+export function reconcileSignalOutcome(
+  intent: PendingCheckout | null,
+  latest: Subscription,
+  showUpgraded: boolean,
+  upgradeConfirm: UpgradeConfirmState,
+): ReconcileSignalOutcome {
+  const resolveIntent = reflectsUpgrade(intent, latest)
+  return {
+    resolveIntent,
+    showComplete: resolveIntent && showUpgraded && upgradeConfirm !== 'complete',
+  }
+}

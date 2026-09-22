@@ -29,20 +29,20 @@
  */
 import { test, expect, type Page, type Route } from '@playwright/test'
 import path from 'node:path'
+import { mkdirSync } from 'node:fs'
 
 const WEB = process.env.E2E_WEB_URL ?? 'http://localhost:5173'
 
-// Evidence path per the task file's convention (workspace-root
-// `.claude/tasks/_qa-evidence/0957/`). This spec runs from EITHER the
-// primary checkout (`<workspace>/repos/web/e2e`, 3 levels below the
-// workspace root) OR a task worktree (`~/code/bb-worktrees/web-NNNN/e2e`,
-// which is NOT 3 levels below the workspace root — a relative `../../../`
-// from there resolves to the wrong place entirely). Rather than guess the
-// on-disk relationship, this defaults to the workspace's known absolute
-// path, overridable via env for CI / a different machine.
-const EVIDENCE_DIR =
-  process.env.E2E_EVIDENCE_DIR_0957 ??
-  '/Users/guuslangelaar/Development/Beebeeb/beebeeb.io/.claude/tasks/_qa-evidence/0957'
+// Defaults to a repo-relative test-results dir (works from any worktree,
+// unlike a hardcoded absolute workspace-root path — PR #53 review: the old
+// default was one developer's macOS path, so the suite failed taking
+// evidence screenshots on any other machine/CI runner where that path can't
+// be created). Override with E2E_EVIDENCE_DIR to land screenshots under the
+// workspace's tracked `.claude/tasks/_qa-evidence/0957/` for the real
+// evidence capture, e.g.:
+//   E2E_EVIDENCE_DIR=/Users/guuslangelaar/Development/Beebeeb/beebeeb.io/.claude/tasks/_qa-evidence/0957 \
+//     bunx playwright test -c e2e/checkout-confirmation-resilience-0957.config.ts
+const EVIDENCE_DIR = process.env.E2E_EVIDENCE_DIR ?? path.join(process.cwd(), 'test-results', '0957-evidence')
 
 const FREE_SUB = {
   plan: 'free',
@@ -219,6 +219,10 @@ function proIntent(overrides: Record<string, unknown> = {}) {
 }
 
 test.describe('0957 checkout-confirmation resilience (spec §3.3 Component C)', () => {
+  test.beforeAll(() => {
+    mkdirSync(EVIDENCE_DIR, { recursive: true })
+  })
+
   test('A — reconcile-on-load confirms via GET /payment/{id}/status, WS suppressed, no ?upgraded flag', async ({ page }) => {
     // Subscription ALREADY reflects the upgrade (the webhook landed, but the
     // ONLY signal we have is the persisted intent + the new endpoint — no
@@ -289,5 +293,56 @@ test.describe('0957 checkout-confirmation resilience (spec §3.3 Component C)', 
     // harness, so this is the only way to exercise the reconnect listener.
     await page.evaluate(() => window.dispatchEvent(new CustomEvent('beebeeb:ws-connected')))
     await expect.poll(() => counters.subscriptionGets, { timeout: 10_000 }).toBeGreaterThan(before)
+  })
+
+  // PR #53 review (task 0957 follow-up): `reconcileOnSignal`'s clear/confirm
+  // used to live inside `if (showUpgraded && ...)`. When the checkout return
+  // URL loses `?upgraded=true` AND the payment only settles server-side
+  // AFTER this tab's own 30s reconcile-on-load poll has already given up
+  // (deadline reached, no more attempts scheduled), a WS reconnect was the
+  // ONLY remaining signal that could catch it — and used to refresh the
+  // subscription without ever resolving the intent, leaving the "didn't
+  // complete checkout" watchdog stuck until the intent's 24h TTL even though
+  // the payment had, in fact, completed.
+  test('E — no ?upgraded flag: a payment that settles only AFTER the 30s poll gives up still resolves via WS-reconnect (no watchdog left stuck)', async ({ page }) => {
+    let settled = false
+    const counters = await installMocks(page, {
+      // Endpoint absent/degraded (paymentStatus omitted → 404) — isolates
+      // this test to the plain subscription-poll + WS-reconnect path the
+      // finding is about, not the direct payment-status check.
+      subForRequest: () => (settled ? PRO_SUB : FREE_SUB),
+    })
+    // No ?upgraded=true — the return flag was lost.
+    await bootBilling(page, '/settings/billing', proIntent())
+
+    // The watchdog offers to resume the abandoned-looking checkout while the
+    // payment hasn't landed — same UX as scenario C, proving this setup is
+    // real (not vacuously "nothing shows because nothing was pending").
+    await expect(page.getByText(/didn.t complete checkout/i)).toBeVisible({ timeout: 15_000 })
+
+    // Let the reconcile-on-load poll exhaust its OWN 30s deadline without
+    // ever seeing the upgrade (subForRequest keeps returning FREE_SUB) —
+    // this IS "settles after the 30s poll": nothing client-side is going to
+    // confirm this on its own anymore.
+    await page.waitForTimeout(32_000)
+    const beforeReconnect = counters.subscriptionGets
+
+    // NOW the payment settles server-side, and the socket reconnects — the
+    // only remaining signal that could catch it.
+    settled = true
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('beebeeb:ws-connected')))
+
+    // The WS-reconnect catch-up actually refetched...
+    await expect.poll(() => counters.subscriptionGets, { timeout: 10_000 }).toBeGreaterThan(beforeReconnect)
+    // ...and resolved the intent: cleared from the SAME localStorage record
+    // the watchdog reads from...
+    await expect.poll(
+      () => page.evaluate(() => localStorage.getItem('bb_pending_checkout')),
+      { timeout: 10_000 },
+    ).toBeNull()
+    // ...so the watchdog must be gone too — never left showing a false
+    // "didn't complete checkout" under a subscription that has completed.
+    await expect(page.getByText(/didn.t complete checkout/i)).not.toBeVisible()
+    await page.screenshot({ path: path.join(EVIDENCE_DIR, 'E-noflag-late-settle-resolved.png'), fullPage: true })
   })
 })

@@ -72,6 +72,7 @@ import {
 import {
   reflectsUpgrade as reflectsUpgradeCore,
   reflectsUpgradeNoIntent,
+  reconcileSignalOutcome,
 } from '../lib/checkout-reconcile'
 
 /* ── Plan metadata (imported from plan-constants.ts) ──── */
@@ -593,20 +594,38 @@ export function Billing() {
       // Always refresh app-wide storage/quota UI on a billing change.
       window.dispatchEvent(new Event('beebeeb:plan-changed'))
       refreshPlanDetails()
-      // If a checkout return banner is still showing AND this update is the one
-      // we were waiting for, flip to complete now (no poll-tick latency). F5:
-      // accept the flip from EITHER `finalizing` (poll still running) OR
-      // `unconfirmed` (the 30s poll already gave up) — a genuine later WS event
-      // for a slow webhook / settled SEPA debit must still resolve the banner,
-      // not just silently refresh the data underneath a stuck "still processing".
-      if (showUpgraded && upgradeConfirm !== 'complete' && reflectsUpgrade(latest)) {
-        setUpgradeConfirm('complete')
+      // task 0957 follow-up (PR #53 review): the two decisions below are
+      // INDEPENDENT — resolving the intent must not require `showUpgraded`.
+      // The intent is a localStorage record of what the user is waiting for;
+      // if the return URL lost `?upgraded=true` (proxy/history
+      // normalization) and the payment settles only after this tab's own
+      // 30s poll already gave up, a WS reconnect refreshing the subscription
+      // must still clear the intent — otherwise the checkout watchdog spins
+      // to a false "didn't complete checkout" until the intent's 24h TTL,
+      // even though the change landed. See `reconcileSignalOutcome`'s doc
+      // comment in checkout-reconcile.ts for the full contract + tests.
+      const { resolveIntent, showComplete } = reconcileSignalOutcome(
+        intentRef.current, latest, showUpgraded, upgradeConfirm,
+      )
+      if (resolveIntent) {
         clearPendingCheckout()
         intentRef.current = null
+        // Also clears the checkout watchdog banner (`pendingCheckout`
+        // state) — it reads the SAME intent this just resolved, so it must
+        // not keep offering "didn't complete checkout" once it has.
+        setPendingCheckoutState(null)
         void loadData()
       }
+      // If a checkout return banner is still showing AND this update is the
+      // one we were waiting for, flip to complete now (no poll-tick
+      // latency). F5: accept the flip from EITHER `finalizing` (poll still
+      // running) OR `unconfirmed` (the 30s poll already gave up) — a genuine
+      // later WS event for a slow webhook / settled SEPA debit must still
+      // resolve the banner, not just silently refresh the data underneath a
+      // stuck "still processing".
+      if (showComplete) setUpgradeConfirm('complete')
     })()
-  }, [showUpgraded, upgradeConfirm, reflectsUpgrade, refreshPlanDetails, loadData])
+  }, [showUpgraded, upgradeConfirm, refreshPlanDetails, loadData])
 
   useWsEvent(['billing_updated'], reconcileOnSignal)
 

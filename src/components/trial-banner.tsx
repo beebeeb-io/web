@@ -7,14 +7,16 @@
  * to a paid subscription.
  *
  * Convert flow REUSES the 0865 checkout redirect + poll-confirmed return machine:
- * `convertTrial()` returns the Mollie hosted-checkout `{url}`; we stamp the
- * precise `bb_pending_checkout` shape (task 1064 / D6 — see `../lib/pending-
- * checkout.ts`) with a real pre-checkout snapshot via `makePreState(sub)`, so
+ * `convertTrial()` returns the Mollie hosted-checkout `{url, payment_id}`; we
+ * stamp the precise `bb_pending_checkout` shape (task 1064 / D6, `payment_id`
+ * added task 0957 — see `../lib/pending-checkout.ts`'s `persistTrialConvertIntent`)
+ * with a real pre-checkout snapshot of the still-trialing subscription, so
  * billing.tsx's reconcile-on-load compares against the ACTUAL pre-convert state
  * (status: 'trialing') and confirms via the precise trial→active transition
  * clause, instead of falling through to the legacy record's empty `pre` and the
- * weaker delta-compare heuristic. Then `window.location.href = url`. The two
- * typed 409s are surfaced and routed:
+ * weaker delta-compare heuristic — and can reach the direct
+ * `GET /payment/{id}/status` check via the carried `payment_id`. Then
+ * `window.location.href = url`. The two typed 409s are surfaced and routed:
  *   - `trial_not_active`         → trial lapsed; send to the normal plan picker.
  *   - `trial_already_subscribed` → already converted; send to billing management.
  *
@@ -31,7 +33,7 @@ import { Icon } from '@beebeeb/shared'
 import { useDriveData } from '../lib/drive-data-context'
 import { useToast } from './toast'
 import { convertTrial, ApiError } from '../lib/api'
-import { setPendingCheckout, makePreState } from '../lib/pending-checkout'
+import { persistTrialConvertIntent } from '../lib/pending-checkout'
 
 /** Whole days remaining until an RFC3339 instant (ceil; never negative). */
 function daysLeft(iso: string): number {
@@ -62,14 +64,17 @@ export function TrialBanner() {
     if (converting) return
     setConverting(true)
     try {
-      const { url } = await convertTrial()
+      const { url, payment_id } = await convertTrial()
       // Mirror the 0865 redirect plumbing: stamp the SAME precise pending-
       // checkout shape billing.tsx itself writes before a checkout redirect
       // (task 1064 / D6) — `kind: 'plan'` + a real `pre` snapshot of the
-      // still-trialing subscription — so the reconcile-on-load confirms via
-      // the exact trial→active transition instead of the legacy shape's empty
-      // `pre` falling through to the heuristic delta-compare.
-      setPendingCheckout('plan', sub!.plan ?? 'free', sub!.billing_cycle ?? 'monthly', makePreState(sub))
+      // still-trialing subscription, AND `payment_id` (task 0957) — via the
+      // shared `persistTrialConvertIntent` helper so this call site cannot
+      // drift from billing.tsx's own trial-convert caller again (PR #53
+      // review: this used to omit payment_id, losing the direct
+      // `GET /payment/{id}/status` reconciliation path for banner-started
+      // conversions).
+      persistTrialConvertIntent(sub, payment_id)
       window.location.href = url
     } catch (err) {
       // Surface the typed 409s and route the user to the right place.

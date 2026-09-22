@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { reflectsUpgrade, reflectsUpgradeNoIntent } from '../src/lib/checkout-reconcile'
+import { reflectsUpgrade, reflectsUpgradeNoIntent, reconcileSignalOutcome } from '../src/lib/checkout-reconcile'
 import type { PendingCheckout, CheckoutPreState } from '../src/lib/pending-checkout'
 import type { Subscription } from '@beebeeb/shared'
 
@@ -137,5 +137,59 @@ describe('reflectsUpgrade — the reconcile state machine (task 0957, spec §3.3
     expect(reflectsUpgradeNoIntent(sub({ plan: 'free', status: 'active' }))).toBe(false)
     expect(reflectsUpgradeNoIntent(sub({ plan: 'pro', status: 'past_due' }))).toBe(false)
     expect(reflectsUpgradeNoIntent(sub({ plan: 'pro', status: 'canceled' }))).toBe(false)
+  })
+})
+
+// PR #53 review (task 0957 follow-up): `reconcileOnSignal` in billing.tsx (the
+// `billing_updated` WS handler AND the `beebeeb:ws-connected` reconnect
+// catch-up) only cleared/confirmed the pending intent inside
+// `if (showUpgraded && ...)`. When the checkout return URL lost
+// `?upgraded=true` and the payment settled only AFTER the 30s poll gave up,
+// a later WS reconnect refreshed the subscription but never resolved the
+// intent — the checkout watchdog kept showing a false "didn't complete
+// checkout" until the intent's 24h TTL. `reconcileSignalOutcome` extracts
+// the two independent decisions a reconcile signal must make (same pattern
+// as `reflectsUpgrade` itself — pulled out of the component so it's a pure,
+// directly testable function) so this can't regress silently again:
+//   - resolveIntent: does the fresh subscription satisfy the intent? MUST
+//     NOT depend on `showUpgraded` — the intent is a localStorage record of
+//     what the user is waiting for, independent of what the return URL says.
+//   - showComplete: should the VISIBLE `?upgraded=true` banner flip to
+//     'complete' right now? This one DOES depend on `showUpgraded` — there
+//     is no banner to flip when it's false.
+describe('reconcileSignalOutcome — what a WS reconcile signal should do (task 0957 follow-up, PR #53)', () => {
+  test('no intent at all → resolves nothing, shows nothing, regardless of showUpgraded', () => {
+    expect(reconcileSignalOutcome(null, sub({ plan: 'pro', status: 'active' }), true, 'finalizing'))
+      .toEqual({ resolveIntent: false, showComplete: false })
+    expect(reconcileSignalOutcome(null, sub({ plan: 'pro', status: 'active' }), false, 'finalizing'))
+      .toEqual({ resolveIntent: false, showComplete: false })
+  })
+
+  test('showUpgraded=true, intent satisfied, not yet complete → resolves AND shows complete (the pre-existing WS-accelerator path, unchanged)', () => {
+    const i = intent({ kind: 'plan', plan: 'pro', cycle: 'yearly', pre: pre({ plan: 'free', status: 'active' }) })
+    const latest = sub({ plan: 'pro', billing_cycle: 'yearly', status: 'active' })
+    expect(reconcileSignalOutcome(i, latest, true, 'finalizing')).toEqual({ resolveIntent: true, showComplete: true })
+    expect(reconcileSignalOutcome(i, latest, true, 'unconfirmed')).toEqual({ resolveIntent: true, showComplete: true }) // F5: the 30s poll already gave up, a late WS event must still resolve
+  })
+
+  test('showUpgraded=true but already complete → still resolves the intent (idempotent), does not re-trigger showComplete', () => {
+    const i = intent({ kind: 'plan', plan: 'pro', cycle: 'yearly', pre: pre({ plan: 'free', status: 'active' }) })
+    const latest = sub({ plan: 'pro', billing_cycle: 'yearly', status: 'active' })
+    expect(reconcileSignalOutcome(i, latest, true, 'complete')).toEqual({ resolveIntent: true, showComplete: false })
+  })
+
+  // ── The exact regression this task fixes ──────────────────────────────
+  test('NO ?upgraded flag, intent satisfied by a late-settled payment → resolves the intent even with no banner to show', () => {
+    const i = intent({ kind: 'plan', plan: 'pro', cycle: 'yearly', pre: pre({ plan: 'free', status: 'active' }) })
+    const latest = sub({ plan: 'pro', billing_cycle: 'yearly', status: 'active' })
+    // Before the fix this returned resolveIntent: false — the intent (and
+    // the watchdog banner built on it) would have stayed stuck.
+    expect(reconcileSignalOutcome(i, latest, false, 'finalizing')).toEqual({ resolveIntent: true, showComplete: false })
+  })
+
+  test('no flag, intent NOT yet satisfied → resolves nothing (still legitimately pending)', () => {
+    const i = intent({ kind: 'plan', plan: 'pro', cycle: 'yearly', pre: pre({ plan: 'free', status: 'active' }) })
+    const latest = sub({ plan: 'free', status: 'active' }) // unchanged — payment hasn't landed yet
+    expect(reconcileSignalOutcome(i, latest, false, 'finalizing')).toEqual({ resolveIntent: false, showComplete: false })
   })
 })

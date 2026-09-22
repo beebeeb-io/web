@@ -29,6 +29,7 @@ const {
   setPendingCheckout,
   clearPendingCheckout,
   getPendingCheckout,
+  persistTrialConvertIntent,
 } = await import('../src/lib/pending-checkout')
 
 beforeEach(() => {
@@ -133,5 +134,34 @@ describe('pending-checkout intent store (task 0957)', () => {
   test('malformed JSON in the key returns null without throwing (private-mode/corruption tolerant)', () => {
     localStorage.setItem(PENDING_CHECKOUT_KEY, '{not json')
     expect(getPendingCheckout()).toBeNull()
+  })
+
+  // PR #53 review (task 0957 follow-up): the billing-page `handleConvertTrial`
+  // caller persisted `payment_id`, but `trial-banner.tsx`'s `handleConvert`
+  // destructured only `{ url }` from `convertTrial()` and called the raw
+  // `setPendingCheckout` with no paymentId — so a conversion started from the
+  // site-wide banner silently lost the direct `GET /payment/{id}/status`
+  // reconciliation path. Both call sites now go through this ONE shared
+  // helper so they cannot drift again.
+  test('persistTrialConvertIntent stamps paymentId — regression for the trial-banner caller that dropped it', () => {
+    persistTrialConvertIntent(
+      { plan: 'pro', billing_cycle: 'monthly', status: 'trialing' } as Parameters<typeof persistTrialConvertIntent>[0],
+      'tr_banner_convert',
+    )
+    const got = getPendingCheckout()
+    expect(got).not.toBeNull()
+    expect(got!.kind).toBe('plan')
+    expect(got!.plan).toBe('pro')
+    expect(got!.cycle).toBe('monthly')
+    expect(got!.paymentId).toBe('tr_banner_convert')
+    expect(got!.pre).toEqual(makePreState({ plan: 'pro', billing_cycle: 'monthly', status: 'trialing' } as Parameters<typeof persistTrialConvertIntent>[0]))
+  })
+
+  test('persistTrialConvertIntent tolerates a null subscription (defaults to Free) and an omitted paymentId', () => {
+    persistTrialConvertIntent(null, undefined)
+    const got = getPendingCheckout()
+    expect(got!.plan).toBe('free')
+    expect(got!.cycle).toBe('monthly')
+    expect(got!.paymentId).toBeUndefined()
   })
 })
