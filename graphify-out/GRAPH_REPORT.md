@@ -1,11 +1,11 @@
 # Graph Report - web-1469  (2026-09-22)
 
 ## Corpus Check
-- 392 files · ~415,656 words
+- 393 files · ~435,763 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 2071 nodes · 2887 edges · 63 communities detected
+- 2073 nodes · 2888 edges · 63 communities detected
 - Extraction: 79% EXTRACTED · 21% INFERRED · 0% AMBIGUOUS · INFERRED: 602 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
@@ -28,14 +28,14 @@
 - [[_COMMUNITY_Community 15|Community 15]]
 - [[_COMMUNITY_Community 16|Community 16]]
 - [[_COMMUNITY_Community 17|Community 17]]
-- [[_COMMUNITY_Community 18|Community 18]]
-- [[_COMMUNITY_Community 21|Community 21]]
+- [[_COMMUNITY_Community 20|Community 20]]
+- [[_COMMUNITY_Community 22|Community 22]]
 - [[_COMMUNITY_Community 23|Community 23]]
-- [[_COMMUNITY_Community 24|Community 24]]
+- [[_COMMUNITY_Community 25|Community 25]]
 - [[_COMMUNITY_Community 26|Community 26]]
-- [[_COMMUNITY_Community 27|Community 27]]
-- [[_COMMUNITY_Community 32|Community 32]]
-- [[_COMMUNITY_Community 41|Community 41]]
+- [[_COMMUNITY_Community 31|Community 31]]
+- [[_COMMUNITY_Community 40|Community 40]]
+- [[_COMMUNITY_Community 42|Community 42]]
 - [[_COMMUNITY_Community 43|Community 43]]
 - [[_COMMUNITY_Community 45|Community 45]]
 - [[_COMMUNITY_Community 55|Community 55]]
@@ -102,39 +102,39 @@
 
 ### Community 0 - "Community 0"
 Cohesion: 0.01
-Nodes (169): clearSessionConfirmed(), fireAccountDeleted(), fireConnectionStatus(), fireErrorNotifier(), fireSessionExpired(), markSessionConfirmed(), wasSessionConfirmed(), delay() (+161 more)
+Nodes (168): clearSessionConfirmed(), fireAccountDeleted(), fireConnectionStatus(), fireErrorNotifier(), fireSessionExpired(), markSessionConfirmed(), wasSessionConfirmed(), delay() (+160 more)
 
 ### Community 1 - "Community 1"
 Cohesion: 0.02
-Nodes (100): handleProceed(), validate(), handleResend(), handleVerify(), handleNewFolder(), handleSubmit(), handleCopy(), savePermissions() (+92 more)
+Nodes (107): handleProceed(), validate(), handleNewFolder(), handleSubmit(), handleCopy(), formatBytes(), handleDelete(), handleDownload() (+99 more)
 
 ### Community 2 - "Community 2"
 Cohesion: 0.03
-Nodes (88): attachFreshToken(), buildRequest(), cleanName(), decryptActivitySnapshotName(), describeActivityEventWithFileName(), describeWithName(), hydrateActivityEventDescriptions(), listFiles() (+80 more)
+Nodes (94): attachFreshToken(), buildRequest(), cleanName(), decryptActivitySnapshotName(), describeActivityEventWithFileName(), describeWithName(), hydrateActivityEventDescriptions(), listFiles() (+86 more)
 
 ### Community 3 - "Community 3"
 Cohesion: 0.06
 Nodes (77): addHeapObject(), compute_recovery_check(), debugString(), decodeText(), decompress_gzip(), decrypt_chunk(), decrypt_chunks(), decrypt_metadata() (+69 more)
 
 ### Community 4 - "Community 4"
-Cohesion: 0.03
-Nodes (28): BillingBanner(), BillingSuspendedOverlay(), FileList(), if(), timeAgo(), IncidentBanner(), NewFolderDialog(), notificationIcon() (+20 more)
-
-### Community 5 - "Community 5"
 Cohesion: 0.05
 Nodes (33): onRegionChanged(), resolveName(), decryptAll(), downloadBundleItem(), downloadSharedFile(), canStreamToServiceWorker(), createBlobSink(), createSwSink() (+25 more)
 
+### Community 5 - "Community 5"
+Cohesion: 0.04
+Nodes (22): BillingBanner(), BillingSuspendedOverlay(), FileList(), if(), timeAgo(), IncidentBanner(), NewFolderDialog(), notificationIcon() (+14 more)
+
 ### Community 6 - "Community 6"
+Cohesion: 0.06
+Nodes (38): handleCodeSubmit(), handlePasskeyUnlock(), handleRestore(), base64urlToBuffer(), bufferToBase64url(), credentialToAuthenticationJSON(), credentialToRegistrationJSON(), deletePasskey() (+30 more)
+
+### Community 7 - "Community 7"
 Cohesion: 0.06
 Nodes (24): getApiUrl(), getClientInfo(), provenanceHeaders(), downloadVersion(), getFileRequestPublic(), uploadToFileRequest(), CoreSearchIndex, decryptIndex() (+16 more)
 
-### Community 7 - "Community 7"
+### Community 8 - "Community 8"
 Cohesion: 0.07
 Nodes (29): uploadThumbnail(), uploadThumbnailLarge(), encryptedUpload(), withNetworkRetry(), basename(), isLikelyAlbumArtOrIcon(), splitName(), decryptThumbnailBlob() (+21 more)
-
-### Community 8 - "Community 8"
-Cohesion: 0.08
-Nodes (35): handlePasskeyUnlock(), consumeAccountDeletedNotice(), base64urlToBuffer(), bufferToBase64url(), credentialToAuthenticationJSON(), credentialToRegistrationJSON(), deletePasskey(), finishPasskeyLogin() (+27 more)
 
 ### Community 9 - "Community 9"
 Cohesion: 0.07
@@ -145,64 +145,64 @@ Cohesion: 0.11
 Nodes (9): loadNames(), getSyncOps(), submitSyncOps(), getDeviceId(), payloadToNode(), saveLastSeq(), savePendingOps(), SyncClient (+1 more)
 
 ### Community 11 - "Community 11"
-Cohesion: 0.11
-Nodes (11): timeAgo(), getSharesForFile(), restoreFile(), loadActivity(), buildDetailsMeta(), displayName(), handleRestore(), handleRestoreAll() (+3 more)
+Cohesion: 0.13
+Nodes (8): handleConvert(), startUpgradeCheckout(), getPendingCheckout(), makePreState(), persistTrialConvertIntent(), setPendingCheckout(), handleSelect(), startPlanCheckout()
 
 ### Community 12 - "Community 12"
 Cohesion: 0.23
 Nodes (18): cacheFileList(), cacheFilePreview(), enforceRowCap(), evictOldestPreviews(), fileListDelete(), fileListGet(), fileListGetAll(), fileListPut() (+10 more)
 
 ### Community 13 - "Community 13"
-Cohesion: 0.14
-Nodes (8): handleConvert(), startUpgradeCheckout(), getPendingCheckout(), makePreState(), persistTrialConvertIntent(), setPendingCheckout(), handleSelect(), startPlanCheckout()
-
-### Community 14 - "Community 14"
 Cohesion: 0.11
 Nodes (3): Row(), AndroidKeyboard(), IOSKeyboard()
 
-### Community 15 - "Community 15"
+### Community 14 - "Community 14"
 Cohesion: 0.18
 Nodes (11): clearSession(), dbDelete(), dbGet(), dbPut(), deriveKey(), getVaultTTL(), openDB(), persistSession() (+3 more)
 
-### Community 16 - "Community 16"
-Cohesion: 0.13
-Nodes (8): handleCodeSubmit(), handleRestore(), decryptFromQr(), deriveQrKey(), encryptForQr(), recoveredKeyMatchesAccount(), depsForAccount(), runGate()
-
-### Community 17 - "Community 17"
+### Community 15 - "Community 15"
 Cohesion: 0.14
 Nodes (4): commitQuery(), handleSubmit(), loadRecent(), saveRecent()
 
-### Community 18 - "Community 18"
+### Community 16 - "Community 16"
+Cohesion: 0.14
+Nodes (7): restoreFile(), buildDetailsMeta(), displayName(), handleRestore(), handleRestoreAll(), handleRestoreSelected(), restoreInWaves()
+
+### Community 17 - "Community 17"
 Cohesion: 0.36
 Nodes (13): clearVault(), computeKeyCheck(), dbClear(), dbGet(), dbPut(), deriveWrappingKey(), hasVault(), importAesKey() (+5 more)
 
-### Community 21 - "Community 21"
+### Community 20 - "Community 20"
 Cohesion: 0.28
 Nodes (7): signUp(), signUp(), createAccount(), fillSignupForm(), reachPasswordStep(), signupAndUnlock(), uniqueEmail()
+
+### Community 22 - "Community 22"
+Cohesion: 0.17
+Nodes (4): load(), handleDownloadCiphertext(), downloadFile(), handleLoadMore()
 
 ### Community 23 - "Community 23"
 Cohesion: 0.32
 Nodes (9): devAutoAuth(), cacheVaultKey(), clearVaultKey(), dbDelete(), dbGet(), dbPut(), getVaultKey(), initSessionVault() (+1 more)
 
-### Community 24 - "Community 24"
-Cohesion: 0.17
-Nodes (4): load(), handleDownloadCiphertext(), downloadFile(), handleLoadMore()
-
-### Community 26 - "Community 26"
+### Community 25 - "Community 25"
 Cohesion: 0.2
 Nodes (2): dayLabel(), groupByDay()
 
-### Community 27 - "Community 27"
+### Community 26 - "Community 26"
 Cohesion: 0.25
 Nodes (5): formatBytes(), formatStorageSI(), formatStorageSI(), upgradeCardFromFallback(), upgradeCardFromPlanMeta()
 
-### Community 32 - "Community 32"
+### Community 31 - "Community 31"
 Cohesion: 0.22
 Nodes (2): formatEta(), formatSpeed()
 
-### Community 41 - "Community 41"
+### Community 40 - "Community 40"
 Cohesion: 0.25
 Nodes (1): ApiError
+
+### Community 42 - "Community 42"
+Cohesion: 0.29
+Nodes (3): savePermissions(), setExpiry(), patchInvite()
 
 ### Community 43 - "Community 43"
 Cohesion: 0.29
@@ -355,11 +355,11 @@ Nodes (2): ch(), migratePreferences()
 ## Knowledge Gaps
 - **2 isolated node(s):** `WasmChunkEncryptor`, `WasmSearchIndex`
   These have ≤1 connection - possible missing edges or undocumented components.
-- **Thin community `Community 26`** (11 nodes): `actionText()`, `dayLabel()`, `DeviceBadge()`, `groupByDay()`, `isAlarmingEvent()`, `isSecurityEvent()`, `loadingMore()`, `metaFor()`, `timeLabel()`, `wsToActivity()`, `activity.tsx`
+- **Thin community `Community 25`** (11 nodes): `actionText()`, `dayLabel()`, `DeviceBadge()`, `groupByDay()`, `isAlarmingEvent()`, `isSecurityEvent()`, `loadingMore()`, `metaFor()`, `timeLabel()`, `wsToActivity()`, `activity.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 32`** (10 nodes): `barColor()`, `borderColor()`, `computeEta()`, `computeSpeed()`, `formatChunkSize()`, `formatEta()`, `formatSpeed()`, `phaseLabel()`, `regionLabel()`, `upload-progress-card.tsx`
+- **Thin community `Community 31`** (10 nodes): `barColor()`, `borderColor()`, `computeEta()`, `computeSpeed()`, `formatChunkSize()`, `formatEta()`, `formatSpeed()`, `phaseLabel()`, `regionLabel()`, `upload-progress-card.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 41`** (8 nodes): `ApiError`, `.constructor()`, `installMocks()`, `pageImpl()`, `resetCaptures()`, `setListPage()`, `stubStream()`, `upload-share-mocks.ts`
+- **Thin community `Community 40`** (8 nodes): `ApiError`, `.constructor()`, `installMocks()`, `pageImpl()`, `resetCaptures()`, `setListPage()`, `stubStream()`, `upload-share-mocks.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 45`** (8 nodes): `computeEta()`, `computeSpeed()`, `formatBytes()`, `formatEta()`, `formatSpeed()`, `pipelineStage()`, `stageLabel()`, `upload-progress.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
@@ -419,8 +419,8 @@ Nodes (2): ch(), migratePreferences()
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `handleRestore()` connect `Community 16` to `Community 2`?**
-  _High betweenness centrality (0.070) - this node is a cross-community bridge._
+- **Why does `handleRestore()` connect `Community 6` to `Community 2`?**
+  _High betweenness centrality (0.063) - this node is a cross-community bridge._
 - **Are the 130 inferred relationships involving `request()` (e.g. with `provenanceHeaders()` and `getApiUrl()`) actually correct?**
   _`request()` has 130 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 57 inferred relationships involving `showToast()` (e.g. with `handleCopy()` and `handleSubmit()`) actually correct?**
