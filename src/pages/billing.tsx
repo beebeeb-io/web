@@ -11,6 +11,7 @@ import { DowngradeDialog } from '../components/downgrade-dialog'
 import { useToast } from '../components/toast'
 import {
   getSubscription,
+  getPaymentStatus,
   getBillingInvoices,
   getBillingTransactions,
   getPlans,
@@ -68,6 +69,11 @@ import {
   clearPendingCheckout,
   getPendingCheckout,
 } from '../lib/pending-checkout'
+import {
+  reflectsUpgrade as reflectsUpgradeCore,
+  reflectsUpgradeNoIntent,
+  reconcileSignalOutcome,
+} from '../lib/checkout-reconcile'
 
 /* ── Plan metadata (imported from plan-constants.ts) ──── */
 
@@ -372,45 +378,14 @@ export function Billing() {
   // /billing?upgraded=true the context subscription is ALREADY the upgraded value,
   // so a delta against it can never trip — but the delta against `intent.pre`
   // (captured before the redirect) still does.
-  const reflectsUpgrade = useCallback((s: Subscription): boolean => {
-    const intent = intentRef.current
-    if (!intent) return false
-    const pre = intent.pre
-    const ACTIVE_STATUSES = new Set(['active', 'trialing'])
-    // Storage add-on. An instant-pay STORAGE upgrade leaves plan/cycle/status
-    // unchanged and only raises extra_storage_tb (or the pinned
-    // storage_tb_quantity). Detect that FIRST — before the plan-target path —
-    // so it confirms even when plan/cycle never move. Compared against the
-    // PRE-checkout storage, so it trips on a reload after the grant landed.
-    const extraNow = s.extra_storage_tb ?? 0
-    const qtyNow = s.storage_tb_quantity ?? 0
-    if (
-      ACTIVE_STATUSES.has(s.status) &&
-      (extraNow > pre.extraStorageTb || qtyNow > pre.storageTbQuantity)
-    ) {
-      return true
-    }
-    // A storage-kind intent confirms ONLY via the storage delta above; never via
-    // the plan/cycle heuristics (the plan is expected to stay the same).
-    if (intent.kind === 'storage') return false
-    // Most precise: the subscription matches exactly what the user just bought.
-    return s.plan === intent.plan
-      && s.billing_cycle === intent.cycle
-      && ACTIVE_STATUSES.has(s.status)
-      // …but only if that is actually a CHANGE from the pre-state (a no-op
-      // "match" against an unchanged sub is not a confirmation), OR the pre-state
-      // wasn't active (a fresh paid provision from free/expired).
-      && (s.plan !== pre.plan
-        || s.billing_cycle !== pre.cycle
-        || !ACTIVE_STATUSES.has(pre.status ?? '')
-        // Trial conversion keeps the SAME plan/cycle and only moves
-        // trialing → active; both are "active" so the clause above won't fire and
-        // current_period_end may not advance (the existing period is honored).
-        // That status transition IS the confirmation signal — without this a
-        // convert-to-paid would spin to `unconfirmed` despite succeeding.
-        || (pre.status === 'trialing' && s.status === 'active')
-        || (!!pre.periodEnd && !!s.current_period_end && s.current_period_end > pre.periodEnd))
-  }, [])
+  // task 0957: the actual comparison logic is the pure, unit-tested
+  // `reflectsUpgrade` in `checkout-reconcile.ts` (extracted so it is
+  // testable without React) — this wraps it with the component's own
+  // `intentRef` so every call site here keeps its old zero-arg shape.
+  const reflectsUpgrade = useCallback(
+    (s: Subscription): boolean => reflectsUpgradeCore(intentRef.current, s),
+    [],
+  )
 
   // The `billing_updated` WS subscription (task 0943, part B) is defined AFTER
   // `loadData` (below) to avoid a temporal-dead-zone on its const binding.
@@ -457,14 +432,28 @@ export function Billing() {
     // active paid subscription as the best-effort signal (the historical 0865
     // behaviour); with an intent we always use the precise reflectsUpgrade().
     const confirmed = (s: Subscription): boolean =>
-      intent
-        ? reflectsUpgrade(s)
-        : (s.plan !== 'free' && new Set(['active', 'trialing']).has(s.status))
+      intent ? reflectsUpgrade(s) : reflectsUpgradeNoIntent(s)
 
     let attempt = 0
     const poll = async () => {
       if (cancelled) return
       try {
+        // Reconcile-on-load = source of truth (task 0957, spec §3.3 item 2).
+        // On the FIRST check only (mount / Mollie return — not every poll
+        // tick, matching the spec's "on /billing mount and on Mollie return"
+        // wording; the server's own 60s cache would make a repeat call a
+        // no-op anyway), ask the server to check Mollie directly for THIS
+        // payment — independent of the WS event and the `?upgraded=true` URL
+        // flag. This is what confirms a payment whose webhook was
+        // missed/delayed WITHIN this 30s window, instead of waiting on the
+        // async background reconciler's own schedule. Best-effort: an older
+        // intent with no `paymentId`, a server that doesn't have this route
+        // yet (404), or any other failure degrades silently to the unchanged
+        // subscription-poll path below — never blocks confirmation.
+        if (attempt === 0 && intent?.paymentId) {
+          try { await getPaymentStatus(intent.paymentId) } catch { /* degrade to poll-only */ }
+        }
+        if (cancelled) return
         const latest = await getSubscription()
         if (cancelled) return
         if (confirmed(latest)) {
@@ -588,7 +577,11 @@ export function Billing() {
   // `?upgraded=true` return is still finalizing and the new sub reflects the
   // change — confirm IMMEDIATELY instead of waiting for the next poll tick. The
   // 30s poll above stays as the fallback for a dropped/missed WS event.
-  useWsEvent(['billing_updated'], useCallback(() => {
+  //
+  // Extracted to a stable callback (task 0957) so the SAME reconcile also
+  // drives the WS-reconnect catch-up below — both are "something told us to
+  // recheck now", they just differ in WHY.
+  const reconcileOnSignal = useCallback(() => {
     void (async () => {
       let latest: Subscription
       try {
@@ -601,20 +594,57 @@ export function Billing() {
       // Always refresh app-wide storage/quota UI on a billing change.
       window.dispatchEvent(new Event('beebeeb:plan-changed'))
       refreshPlanDetails()
-      // If a checkout return banner is still showing AND this update is the one
-      // we were waiting for, flip to complete now (no poll-tick latency). F5:
-      // accept the flip from EITHER `finalizing` (poll still running) OR
-      // `unconfirmed` (the 30s poll already gave up) — a genuine later WS event
-      // for a slow webhook / settled SEPA debit must still resolve the banner,
-      // not just silently refresh the data underneath a stuck "still processing".
-      if (showUpgraded && upgradeConfirm !== 'complete' && reflectsUpgrade(latest)) {
-        setUpgradeConfirm('complete')
+      // task 0957 follow-up (PR #53 review): the two decisions below are
+      // INDEPENDENT — resolving the intent must not require `showUpgraded`.
+      // The intent is a localStorage record of what the user is waiting for;
+      // if the return URL lost `?upgraded=true` (proxy/history
+      // normalization) and the payment settles only after this tab's own
+      // 30s poll already gave up, a WS reconnect refreshing the subscription
+      // must still clear the intent — otherwise the checkout watchdog spins
+      // to a false "didn't complete checkout" until the intent's 24h TTL,
+      // even though the change landed. See `reconcileSignalOutcome`'s doc
+      // comment in checkout-reconcile.ts for the full contract + tests.
+      const { resolveIntent, showComplete } = reconcileSignalOutcome(
+        intentRef.current, latest, showUpgraded, upgradeConfirm,
+      )
+      if (resolveIntent) {
         clearPendingCheckout()
         intentRef.current = null
+        // Also clears the checkout watchdog banner (`pendingCheckout`
+        // state) — it reads the SAME intent this just resolved, so it must
+        // not keep offering "didn't complete checkout" once it has.
+        setPendingCheckoutState(null)
         void loadData()
       }
+      // If a checkout return banner is still showing AND this update is the
+      // one we were waiting for, flip to complete now (no poll-tick
+      // latency). F5: accept the flip from EITHER `finalizing` (poll still
+      // running) OR `unconfirmed` (the 30s poll already gave up) — a genuine
+      // later WS event for a slow webhook / settled SEPA debit must still
+      // resolve the banner, not just silently refresh the data underneath a
+      // stuck "still processing".
+      if (showComplete) setUpgradeConfirm('complete')
     })()
-  }, [showUpgraded, upgradeConfirm, reflectsUpgrade, refreshPlanDetails, loadData]))
+  }, [showUpgraded, upgradeConfirm, refreshPlanDetails, loadData])
+
+  useWsEvent(['billing_updated'], reconcileOnSignal)
+
+  // WS catch-up (task 0957, spec §3.3 item 3). A dropped-then-reconnected
+  // socket has NO missed-event replay (see `use-self-heal-refetch.ts`'s doc
+  // comment) — a `billing_updated` that fired WHILE we were disconnected is
+  // lost forever, not delivered late. `beebeeb:ws-connected` (dispatched by
+  // `use-websocket.ts` on `ws.onopen`) is the signal that we may have missed
+  // one. If a checkout intent is still pending, unconditionally re-run the
+  // SAME reconcile the live event would have triggered — so a webhook that
+  // landed while this tab was backgrounded/asleep/offline still confirms on
+  // reconnect instead of only via the next poll tick or a manual reload.
+  useEffect(() => {
+    const onConnected = () => {
+      if (intentRef.current) reconcileOnSignal()
+    }
+    window.addEventListener('beebeeb:ws-connected', onConnected)
+    return () => window.removeEventListener('beebeeb:ws-connected', onConnected)
+  }, [reconcileOnSignal])
 
   // Auto-dismiss the celebration card 10 s after the upgrade is CONFIRMED.
   // While finalizing (still polling) or unconfirmed ("updates automatically")
@@ -847,6 +877,12 @@ function openUpgrade(plan: string) {
     try {
       const result = await reactivateSubscription()
       if (result.action === 'checkout' && result.url) {
+        // task 0957 (spec §3.3 item 1, "on EVERY path"): reactivate's fresh-
+        // payment fallback redirected to a hosted checkout with NO persisted
+        // intent at all — the ONE plan/cycle-affecting checkout redirect in
+        // this file that skipped it. Same pattern as every other checkout
+        // call site: snapshot pre-state + target before leaving the page.
+        setPendingCheckout('plan', effectivePlan, sub?.billing_cycle ?? 'monthly', makePreState(sub), result.payment_id)
         window.location.href = result.url
         return
       }
@@ -995,17 +1031,21 @@ function openUpgrade(plan: string) {
   async function handleStorageAddonInstantPay() {
     setAddonInstantPayLoading(true)
     try {
-      const { checkout_url } = await createStorageAddonCheckout({ extra_storage_tb: sliderTB })
+      const { checkout_url, payment_id } = await createStorageAddonCheckout({ extra_storage_tb: sliderTB })
       // F2 (task 0946): persist a pre-checkout intent so the upgraded return can
       // reconcile against the PRE-state (a storage add-on leaves plan/cycle
       // untouched — only extra_storage_tb rises — so without a pre snapshot the
       // confirmation had no baseline and false-failed). kind:'storage' routes the
       // reconcile to the storage-delta path. cycle mirrors the current cycle.
+      // `payment_id` (task 0957): the server now returns the provider checkout
+      // id for THIS instant-pay charge — this was the one checkout path the
+      // spec named explicitly as writing no reconcilable intent at all.
       setPendingCheckout(
         'storage',
         effectivePlan,
         sub?.billing_cycle ?? 'monthly',
         makePreState(sub),
+        payment_id,
       )
       window.location.href = checkout_url
     } catch (err) {
@@ -1134,12 +1174,13 @@ function openUpgrade(plan: string) {
   async function handleConvertTrial() {
     setConvertLoading(true)
     try {
-      const { url } = await convertTrial()
+      const { url, payment_id } = await convertTrial()
       setPendingCheckout(
         'plan',
         sub?.plan ?? effectivePlan,
         sub?.billing_cycle ?? 'monthly',
         makePreState(sub),
+        payment_id,
       )
       window.location.href = url
     } catch (err) {
@@ -3037,7 +3078,7 @@ function openUpgrade(plan: string) {
         priceYearlySeat={upgradePlanDetails?.priceYearly ?? 383.52}
         open={upgradeOpen}
         onClose={() => setUpgradeOpen(false)}
-        onBeforeRedirect={(plan, cycle) => setPendingCheckout('plan', plan, cycle, makePreState(sub))}
+        onBeforeRedirect={(plan, cycle, paymentId) => setPendingCheckout('plan', plan, cycle, makePreState(sub), paymentId)}
         onSuccess={() => {
           void loadData()
           window.dispatchEvent(new Event('beebeeb:plan-changed'))
