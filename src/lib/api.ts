@@ -22,6 +22,7 @@ import {
   registerOnTokenCleared,
   registerSessionExpiredHandler,
   request,
+  resolveSessionToken,
   setApiUrl,
   setClientInfo,
   setToken,
@@ -158,6 +159,7 @@ export {
   registerErrorNotifier,
   request,
   registerSessionExpiredHandler,
+  resolveSessionToken,
   setToken,
 }
 

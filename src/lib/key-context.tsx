@@ -32,11 +32,49 @@ import {
   restoreSession,
   clearSession,
 } from './session-persist'
-import { getEmail, getToken, setRecoveryCheckIfAbsent } from './api'
+import { getEmail, resolveSessionToken, setRecoveryCheckIfAbsent } from './api'
 import type { DriveFile } from './api'
 import { isRequestUpload, createRequestKeyResolver, type RequestKeyResolver } from './file-request-crypto'
 import { backfillRecoveryCheckIfAbsent } from './recovery-validation'
-import { pushTauriSession, clearTauriSession } from './tauri-bridge'
+import { isTauri, pushTauriSession, clearTauriSession } from './tauri-bridge'
+
+export interface ResolveAndHandoffToTauriDeps {
+  isTauriFn?: () => boolean
+  resolveSessionTokenFn?: () => Promise<string | null>
+  pushTauriSessionFn?: (token: string, key: Uint8Array, email?: string) => Promise<void>
+}
+
+/**
+ * The desktop auto-unlock handoff DECISION, extracted out of the
+ * `handoffToTauri` `useCallback` so it's directly testable without a React
+ * render harness (task 1473; see test/1473-tauri-handoff-decision.test.ts).
+ *
+ * Checks `isTauri()` FIRST, before resolving anything — `resolveSessionToken`
+ * can hit the network (`GET /auth/session-token`) when the legacy localStorage
+ * slot is empty, and every ordinary web user has an empty slot post cookie-
+ * migration (task 0447). Without this gate, EVERY unlock on the plain web app
+ * would fire that request for a feature (the Tauri bridge) that only exists
+ * outside the browser — `pushTauriSession` itself also no-ops outside Tauri,
+ * but only AFTER the token would already have been fetched. Gating here keeps
+ * the original "strictly no-op outside Tauri" behavior intact while fixing
+ * the actual bug: resolving the token at all for a cookie-session user INSIDE
+ * Tauri, where `getToken()` alone used to come up empty and silently give up.
+ */
+export async function resolveAndHandoffToTauri(
+  key: Uint8Array,
+  email: string | null,
+  deps: ResolveAndHandoffToTauriDeps = {},
+): Promise<void> {
+  const {
+    isTauriFn = isTauri,
+    resolveSessionTokenFn = resolveSessionToken,
+    pushTauriSessionFn = pushTauriSession,
+  } = deps
+  if (!isTauriFn()) return
+  const token = await resolveSessionTokenFn()
+  if (!token) return
+  await pushTauriSessionFn(token, key, email ?? undefined)
+}
 
 interface KeyState {
   /** True once WASM is loaded and ready. */
@@ -186,11 +224,15 @@ export function KeyProvider({ children }: { children: ReactNode }) {
   // Push the (token, masterKey) pair to the Tauri desktop shell so it can
   // persist them and auto-unlock on next launch. No-op outside Tauri and on
   // any failure — the bridge is an enhancement, not part of the auth path.
+  //
+  // Task 1473: the raw token can't be read from `getToken()` alone anymore
+  // — that's the legacy localStorage slot, empty for every ordinary
+  // cookie-session user post-migration (task 0447), which used to make this
+  // silently no-op for them. `resolveAndHandoffToTauri` (below) falls back
+  // to `resolveSessionToken()`'s `GET /auth/session-token` the same way
+  // `cli-auth.tsx` already did.
   const handoffToTauri = useCallback((key: Uint8Array) => {
-    const token = getToken()
-    if (!token) return
-    const email = getEmail()
-    void pushTauriSession(token, key, email ?? undefined)
+    void resolveAndHandoffToTauri(key, getEmail())
   }, [])
 
   // Backfill the account's server-stored `recovery_check` on a PROVEN-correct-key

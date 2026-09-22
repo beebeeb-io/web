@@ -223,3 +223,47 @@ export async function request<T>(
 
   throw new ApiError('Rate limited — please wait a moment and try again', 429, 'rate_limit_exceeded')
 }
+
+export interface ResolveSessionTokenDeps {
+  getTokenFn?: () => string | null
+  requestFn?: <T>(path: string, options?: RequestInit) => Promise<T>
+}
+
+/**
+ * Resolve the raw session token STRING for callers that need to hand it off
+ * outside the normal `Authorization` header flow — the Tauri desktop bridge
+ * (`key-context.tsx` `handoffToTauri`) and the CLI device-auth handoff
+ * (`cli-auth.tsx`). ONE implementation for both (task 1473 — before this,
+ * `handoffToTauri` read only the legacy localStorage slot and silently gave
+ * up when it was empty, which is true for every user post cookie-migration).
+ *
+ * 1. `getToken()` — the legacy localStorage slot. Present only for accounts
+ *    that haven't yet migrated to cookie sessions (task 0447); no network
+ *    call.
+ * 2. Else `GET /auth/session-token` via the shared `request()` client
+ *    (`credentials: 'include'`, so the httpOnly `bb_session` cookie travels).
+ *    The server hands back the raw token ONLY for a genuine
+ *    cookie-authenticated browser session
+ *    (`routes/auth.rs::session_token_handler`) — anything else (no session,
+ *    or a PAT/Bearer-only caller) 401s/403s. That failure resolves to
+ *    `null` here rather than throwing: "no token available" is an ordinary,
+ *    expected outcome for every caller of this function, never a surfaced
+ *    error.
+ *
+ * Never logs the token. Deps are injectable for tests (default: the real
+ * `getToken()` / `request()`) — see test/1473-resolve-session-token.test.ts's
+ * header comment for why this avoids `mock.module()`.
+ */
+export async function resolveSessionToken(
+  deps: ResolveSessionTokenDeps = {},
+): Promise<string | null> {
+  const { getTokenFn = getToken, requestFn = request } = deps
+  const legacy = getTokenFn()
+  if (legacy) return legacy
+  try {
+    const body = await requestFn<{ token?: string }>('/api/v1/auth/session-token')
+    return body.token ?? null
+  } catch {
+    return null
+  }
+}

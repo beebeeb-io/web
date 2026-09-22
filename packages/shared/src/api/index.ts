@@ -24,7 +24,8 @@ export {
   markSessionConfirmed,
   clearSessionConfirmed,
 } from './notifiers'
-export { request } from './request'
+export { request, resolveSessionToken } from './request'
+export type { ResolveSessionTokenDeps } from './request'
 export {
   ApiError,
   IncorrectPasswordError,
