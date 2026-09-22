@@ -7,7 +7,6 @@ import { Icon } from '@beebeeb/shared'
 import type { Subscription } from '@beebeeb/shared'
 import { useToast } from '../components/toast'
 import {
-  getToken,
   createCheckoutSession,
   getPlans,
   getSubscription,
@@ -16,6 +15,7 @@ import {
   type Plan,
   type PromoQuote,
 } from '../lib/api'
+import { useAuth, isAuthenticated } from '../lib/auth-context'
 import { setPendingCheckout, makePreState } from '../lib/pending-checkout'
 import { PRICING_PAGE_PLANS, MARKETED_PLAN_SLUGS, type PricingPlanDef } from '../lib/plan-constants'
 
@@ -291,7 +291,13 @@ export function Pricing() {
   const [apiPlans, setApiPlans] = useState<Plan[] | null>(null)
   const navigate = useNavigate()
   const { showToast } = useToast()
-  const isLoggedIn = !!getToken()
+  // Task 1471 — derive from the auth context's cookie-session truth, not the
+  // legacy `bb_session` localStorage slot (`auth-context.tsx`'s boot effect
+  // clears it right after the httpOnly-cookie migration, so `!!getToken()`
+  // read a real signed-in user as logged out). `authLoading` is handled in
+  // `handleSelect` below.
+  const { user, loading: authLoading } = useAuth()
+  const isLoggedIn = isAuthenticated(user)
 
   useEffect(() => {
     getPlans().then(setApiPlans).catch(() => {})
@@ -404,6 +410,13 @@ export function Pricing() {
   }
 
   async function handleSelect(planId: string) {
+    // Task 1471 — while the auth boot effect is still resolving, `user` (and
+    // therefore `isLoggedIn`) is null regardless of what it will settle to,
+    // so neither branch below is trustworthy yet. Ignore the click rather
+    // than risk bouncing an about-to-be-recognized signed-in visitor to
+    // /signup — the exact bug this task fixes — for the sake of a window
+    // that's a single `getMe()` round trip at page load.
+    if (authLoading) return
     if (planId === 'free') {
       navigate(isLoggedIn ? '/' : '/signup')
       return

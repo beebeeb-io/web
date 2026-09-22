@@ -366,21 +366,14 @@ test.describe('0957 checkout-confirmation resilience (spec §3.3 Component C)', 
 
     await bootBilling(page, '/pricing')
 
-    // pricing.tsx's `isLoggedIn = !!getToken()` reads the LEGACY localStorage
-    // session slot (packages/shared/src/api/token.ts) — auth-context.tsx's
-    // boot migrates it to the httpOnly cookie and calls `clearToken()` within
-    // the same tick, so by the time ANY route renders, that slot is already
-    // empty (pre-existing behavior, unrelated to task 1469 — see this file's
-    // header comment / the task's Notes for the full finding). The REAL
-    // session lives in the cookie the whole time (every mocked API call
-    // above already succeeds under it) — only this UI-level "am I logged
-    // in" read is stale. Re-seed it post-boot so `isLoggedIn` reflects the
-    // (real, cookie-backed) logged-in state on the next render, same as it
-    // would if a caller still explicitly held a bearer token.
-    await page.evaluate(() => localStorage.setItem('bb_session', 'e2e-1469-reseeded-token'))
-    // Force a re-render so `isLoggedIn` (recomputed fresh every render, not
-    // memoized) picks up the reseeded value — also pins cycle to 'monthly'
-    // for the pre-state assertion below.
+    // pricing.tsx's `isLoggedIn` now derives from the auth context's cookie-
+    // session truth (`useAuth().user`, task 1471) instead of the legacy
+    // `bb_session` localStorage slot — no re-seed workaround needed. This
+    // suite never seeds that slot at all (the mocked `/dev/auto-login` +
+    // `/auth/me` route is the entire auth surface here), so this is the
+    // real auth path: the boot effect's `getMe()` call resolves `user` from
+    // the mock, and `isLoggedIn` follows. Pin the cycle to 'monthly' for the
+    // pre-state assertion below.
     await page.getByRole('button', { name: 'Monthly' }).click()
 
     // pricing.tsx fetches its own Subscription on mount once isLoggedIn is

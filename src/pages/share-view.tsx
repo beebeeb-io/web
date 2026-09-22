@@ -11,11 +11,11 @@ import {
   downloadSharedFile,
   downloadBundleItem,
   fetchShareCiphertextPreview,
-  getToken,
   ApiError,
   type ShareView as ShareViewData,
   type ShareItem,
 } from '../lib/api'
+import { useAuth, isAuthenticated } from '../lib/auth-context'
 import { decryptFilename, fromBase64, parseEncryptedBlob, unwrapKeyFromShare, unwrapBundleItemKey, initCrypto } from '../lib/crypto'
 import { decryptEncryptedBytes, inferChunkCountFromEncryptedSize } from '../lib/encrypted-download'
 import { withNetworkRetry } from '../lib/net-retry'
@@ -813,6 +813,13 @@ function BundleShareView({
 
 export function ShareViewPage() {
   const { token } = useParams<{ token: string }>()
+  // Task 1471 — the acquisition CTA below used to gate on `!getToken()` (the
+  // legacy `bb_session` localStorage slot), which reads a real signed-in
+  // Beebeeb user viewing their own shared link as logged out (same bug as
+  // pricing.tsx's `isLoggedIn`). Derive from the auth context instead; while
+  // it's still loading, show neither state rather than flash the CTA at a
+  // visitor who is about to be recognized as signed in.
+  const { user: authUser, loading: authLoading } = useAuth()
   const [shareData, setShareData] = useState<ShareViewData | null>(null)
   const [decryptedName, setDecryptedName] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -1558,7 +1565,7 @@ export function ShareViewPage() {
         {/* Acquisition CTA — only for unauthenticated visitors.
             We do NOT pass a sharer name: the server no longer returns one,
             and we deliberately keep the recipient anonymous. See task 0452. */}
-        {!getToken() && (() => {
+        {!authLoading && !isAuthenticated(authUser) && (() => {
           const sharerId = shareData?.sharer_id
           const params = new URLSearchParams({ ref: 'share' })
           if (sharerId) params.set('sharer', sharerId)

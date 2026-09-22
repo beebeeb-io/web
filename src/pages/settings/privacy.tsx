@@ -33,6 +33,36 @@ import { formatBytes } from '../../lib/format'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/**
+ * `RequestInit` for downloading the GDPR data-export blob — task 1471 sweep.
+ * Used to build `{ headers: token ? {Authorization: ...} : {} }` with NO
+ * `credentials: 'include'` at all, unlike every other raw-fetch call site in
+ * this codebase (api.ts, thumbnail.ts, encrypted-download.ts all ship the
+ * cookie AND an optional Bearer header). For a cookie-only user — the legacy
+ * `bb_session` localStorage slot cleared post-migration (task 0447) — that
+ * left the request with no auth at all: worse than the pricing.tsx bug,
+ * since it isn't a wrong redirect, it's a silent 401 on "Download". This
+ * page is behind `ProtectedRoute` so no auth-context gating is needed here,
+ * unlike pricing.tsx/share-view.tsx/ws-context.tsx — the fix is just always
+ * shipping the cookie, exactly like every other download call site.
+ * `getTokenFn` is injectable (default: the real `getToken`) rather than
+ * relying on `mock.module`-ing the shared token module in tests — that
+ * mock is process-global and collides with every OTHER suite that mocks
+ * the same module (see test/session-expiry-gate.test.ts's and
+ * test/pricing-checkout-intent-1469.test.ts's header comments for the
+ * exact hazard; discovered here when the full suite run left this file's
+ * localStorage-backed test reading a leaked-in mocked `getToken` from a
+ * different file). Exported so it's directly unit-testable without
+ * rendering the page.
+ */
+export function buildDataExportRequestInit(getTokenFn: () => string | null = getToken): RequestInit {
+  const token = getTokenFn()
+  return {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    credentials: 'include',
+  }
+}
+
 function formatExpiry(iso: string): string {
   const d = new Date(iso)
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
@@ -93,11 +123,8 @@ function DataExportCard() {
   }, [showToast])
 
   const downloadExport = useCallback(async (url: string) => {
-    const token = getToken()
     try {
-      const res = await fetch(url, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      })
+      const res = await fetch(url, buildDataExportRequestInit())
       if (!res.ok) {
         showToast({ icon: 'x', title: 'Download failed', danger: true })
         return

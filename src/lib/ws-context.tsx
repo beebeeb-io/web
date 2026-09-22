@@ -7,8 +7,23 @@ import {
   useState,
 } from 'react'
 import type { ReactNode } from 'react'
+import type { AuthUser } from '@beebeeb/shared'
 import { useWebSocket } from '../hooks/use-websocket'
 import type { WsEvent } from '../hooks/use-websocket'
+import { useAuth, isAuthenticated } from './auth-context'
+
+/**
+ * Whether the leader tab should attempt to open the WebSocket — task 1471.
+ * Previously `enabled` was `isLeader` alone, relying on `use-websocket.ts`'s
+ * internal `getToken()` check to skip guests; that legacy-localStorage
+ * check also silently skipped every real cookie-only user (same bug as
+ * pricing.tsx's `isLoggedIn`), so the WS never connected for an ordinary
+ * signed-in visitor. Exported so it's directly unit-testable without
+ * rendering the provider.
+ */
+export function shouldOpenWs(isLeader: boolean, user: AuthUser | null): boolean {
+  return isLeader && isAuthenticated(user)
+}
 
 type WsListener = (event: WsEvent) => void
 
@@ -59,6 +74,8 @@ const hasBroadcastChannel = typeof BroadcastChannel !== 'undefined'
  * pre-dedup baseline rather than breaking.
  */
 export function WsProvider({ children }: { children: ReactNode }) {
+  // Task 1471 — the auth-context truth `shouldOpenWs` gates on below.
+  const { user } = useAuth()
   const listenersRef = useRef<Set<WsListener>>(new Set())
 
   // When BroadcastChannel is unavailable, every tab acts as its own leader
@@ -299,8 +316,10 @@ export function WsProvider({ children }: { children: ReactNode }) {
     [dispatchLocal, post]
   )
 
-  // Only the leader opens the WS. Followers stay quiet.
-  useWebSocket({ onEvent: handleEvent, enabled: isLeader })
+  // Only the leader opens the WS, and only once there's a real signed-in
+  // user (task 1471 — see `shouldOpenWs`'s doc comment). Followers stay
+  // quiet regardless.
+  useWebSocket({ onEvent: handleEvent, enabled: shouldOpenWs(isLeader, user) })
 
   return (
     <WsContext.Provider value={{ subscribe }}>
