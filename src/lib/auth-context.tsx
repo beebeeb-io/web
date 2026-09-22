@@ -229,3 +229,28 @@ export function useAuth(): AuthState {
   }
   return ctx
 }
+
+/**
+ * The correct "is this visitor logged in" signal — task 1471.
+ *
+ * Call sites used to read `!!getToken()` (the legacy `bb_session`
+ * localStorage slot) for this. That slot only exists transiently: the boot
+ * effect above hands it to `/auth/upgrade-session` and clears it (or wipes
+ * it on a 401) almost immediately, and a normal login/signup/2FA-verify
+ * flow never writes it at all (the server sets the httpOnly cookie
+ * directly). So for a real, fully cookie-authenticated user `getToken()` is
+ * effectively always `null` — any decision branching on it reads that user
+ * as logged out.
+ *
+ * `useAuth().user` is the actual cookie-session truth (set from `getMe()`
+ * in the boot effect / after login / after signup / after 2FA-verify).
+ * Exported as a plain function of `user` — not only via the hook — so call
+ * sites that just need the boolean (and unit tests) don't need a component
+ * render. Callers that can render conditionally on `useAuth().loading`
+ * should do so too: `user` is `null` while loading resolves, same as when
+ * genuinely logged out, so a decision taken mid-load can still be wrong in
+ * the other direction for a fraction of a second.
+ */
+export function isAuthenticated(user: AuthUser | null): boolean {
+  return user !== null
+}

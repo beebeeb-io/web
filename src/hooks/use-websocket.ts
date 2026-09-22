@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react'
-import { getToken, getApiUrl, getStreamToken } from '../lib/api'
+import { getApiUrl, getStreamToken } from '../lib/api'
 
 export interface WsEvent {
   type: string
@@ -24,7 +24,11 @@ export function useWebSocket({ onEvent, enabled = true }: UseWebSocketOptions) {
   onEventRef.current = onEvent
 
   const connect = useCallback(async () => {
-    if (!getToken()) return
+    // Task 1471 — used to gate on `!getToken()` (the legacy `bb_session`
+    // localStorage slot), which also skipped every real cookie-only user,
+    // not just logged-out visitors. The caller (`ws-context.tsx`'s
+    // `shouldOpenWs`) now only sets `enabled: true` once the auth context
+    // has a real user, so this hook trusts `enabled` as the sole gate.
 
     // Exchange session token for a short-lived stream token so the full
     // session token never appears in the WebSocket upgrade URL (and access logs).
