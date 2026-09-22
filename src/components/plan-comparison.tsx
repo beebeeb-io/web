@@ -31,7 +31,7 @@ const features: Array<{ name: string; starter: boolean | string; basic: boolean 
   { name: 'Encrypted storage', starter: '100 GB', basic: '200 GB', pro: '1 TB', business: '5 TB' },
   { name: 'Extra storage add-on', starter: false, basic: false, pro: '€10.99/TB', business: '€10.99/TB' },
   { name: '14-day free trial', starter: true, basic: true, pro: true, business: false },
-  { name: 'Version history', starter: '30 days', basic: '30 days', pro: 'Unlimited', business: 'Unlimited' },
+  { name: 'Version history', starter: '30 days', basic: '30 days', pro: '30 days', business: '30 days' },
   { name: 'Link sharing', starter: true, basic: true, pro: true, business: true },
   { name: 'Passphrase protection', starter: true, basic: true, pro: true, business: true },
   { name: 'Priority support', starter: false, basic: false, pro: true, business: true },
