@@ -1,4 +1,5 @@
 import { defineConfig } from '@playwright/test'
+import path from 'path'
 
 /**
  * Standalone Playwright config for the 0957 checkout-confirmation resilience
@@ -29,6 +30,12 @@ export default defineConfig({
   // needed — every request is mocked in-spec. Foreground only.
   webServer: {
     command: `bunx vite --port ${WEB_PORT} --strictPort`,
+    // Playwright runs webServer.command from the CONFIG FILE's directory
+    // (e2e/) by default, which has no index.html/vite.config.ts — Vite then
+    // serves 404s for `/` and `/index.html` and the readiness check times
+    // out. Pin cwd to the repo root, same directory playwright.config.ts's
+    // own webServer block runs from implicitly (it lives at the root).
+    cwd: path.resolve(__dirname, '..'),
     url: WEB_URL,
     reuseExistingServer: true,
     timeout: 120_000,
