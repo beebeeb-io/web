@@ -1775,6 +1775,33 @@ export async function getSubscription(): Promise<Subscription> {
   return request<Subscription>('/api/v1/billing/subscription')
 }
 
+/**
+ * `GET /api/v1/billing/payment/{id}/status` (task 0957, spec §3.3 Component
+ * C item 2) — the reconcile-on-load "ask the server for the truth of a
+ * checkout" call. `paymentId` is the provider checkout id persisted in the
+ * pending-checkout intent (`../lib/pending-checkout.ts`). A synchronous
+ * server-side Mollie check (3s timeout, cached 60s per payment) that
+ * converges any drift BEFORE the caller re-fetches `getSubscription()` — this
+ * is what confirms a payment whose webhook was missed/delayed within the
+ * page's own poll window, instead of waiting on the async background
+ * reconciler. Callers should treat a failure (older server without this
+ * route → 404, or any other error) as "couldn't check right now" and degrade
+ * silently to the existing subscription-poll/WS path — never block or fail
+ * the page on it.
+ */
+export interface PaymentStatusResult {
+  payment_id: string
+  status: 'open' | 'pending' | 'authorized' | 'paid' | 'failed' | 'canceled' | 'expired' | 'unknown'
+  converged: boolean
+  cached: boolean
+  checked: boolean
+  timed_out?: boolean
+}
+
+export async function getPaymentStatus(paymentId: string): Promise<PaymentStatusResult> {
+  return request<PaymentStatusResult>(`/api/v1/billing/payment/${encodeURIComponent(paymentId)}/status`)
+}
+
 export async function subscribe(params: {
   plan: string
   billing_cycle: string
@@ -2155,7 +2182,7 @@ export interface CheckoutTrialResult {
   message: string
 }
 
-export type CheckoutResult = { url: string } | CheckoutTrialResult
+export type CheckoutResult = { url: string; payment_id?: string } | CheckoutTrialResult
 
 // Overloaded so existing no-promo call sites (upgrade-dialog, upgrade-nudge-modal)
 // keep destructuring `{ url }` unchanged — the trial branch is only reachable
@@ -2166,7 +2193,7 @@ export async function createCheckoutSession(params: {
   plan: string
   billing_cycle: string
   promo_code?: undefined
-}): Promise<{ url: string }>
+}): Promise<{ url: string; payment_id?: string }>
 export async function createCheckoutSession(params: {
   plan: string
   billing_cycle: string
@@ -2227,8 +2254,8 @@ export async function startTrial(params: {
  *   - `trial_already_subscribed`→ already converted; send to billing management.
  * A 400 means Mollie is not configured server-side.
  */
-export async function convertTrial(): Promise<{ url: string }> {
-  return request<{ url: string }>('/api/v1/billing/trial/convert', {
+export async function convertTrial(): Promise<{ url: string; payment_id?: string }> {
+  return request<{ url: string; payment_id?: string }>('/api/v1/billing/trial/convert', {
     method: 'POST',
   })
 }
@@ -2267,7 +2294,7 @@ export async function cancelSubscription(): Promise<{ message: string; cancel_at
   return request<{ message: string; cancel_at?: string }>('/api/v1/billing/cancel', { method: 'POST' })
 }
 
-export async function reactivateSubscription(): Promise<{ message?: string; action?: string; url?: string }> {
+export async function reactivateSubscription(): Promise<{ message?: string; action?: string; url?: string; payment_id?: string }> {
   return request<{ message: string }>('/api/v1/billing/reactivate', { method: 'POST' })
 }
 
@@ -2465,8 +2492,8 @@ export async function updateStorageAddons(params: {
 export async function createStorageAddonCheckout(params: {
   extra_storage_tb: number
   extra_users?: number
-}): Promise<{ checkout_url: string }> {
-  return request<{ checkout_url: string }>('/api/v1/billing/storage-addon/checkout', {
+}): Promise<{ checkout_url: string; payment_id?: string }> {
+  return request<{ checkout_url: string; payment_id?: string }>('/api/v1/billing/storage-addon/checkout', {
     method: 'POST',
     body: JSON.stringify(params),
   })

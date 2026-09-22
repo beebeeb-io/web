@@ -17,6 +17,14 @@
  *   through to a weaker heuristic.
  * - `target`: what the user bought, so we can confirm an exact plan/cycle
  *   match.
+ * - `paymentId` (task 0957): the provider (Mollie) checkout id, when the
+ *   caller has one. Lets the reconcile-on-load flow in billing.tsx ask
+ *   `GET /api/v1/billing/payment/{id}/status` for server-side ground truth on
+ *   THIS specific payment — independent of both the `?upgraded=true` URL flag
+ *   and the WS `billing_updated` accelerator (spec §3.3 item 2). Optional:
+ *   an older persisted record (pre-0957), or a checkout path the server
+ *   doesn't yet tag with a payment id, simply has none — the reconcile then
+ *   falls back to the pre-0957 subscription-poll/WS path unchanged.
  *
  * `kind` distinguishes a storage add-on (plan/cycle unchanged, only storage
  * rises) from a plan checkout. 24h TTL, same as the legacy record.
@@ -54,6 +62,8 @@ export interface PendingCheckout {
   // Pre-checkout server truth — the reconcile baseline.
   pre: CheckoutPreState
   ts: number
+  // task 0957 — the provider checkout id, when known. See the module doc.
+  paymentId?: string
 }
 
 export function makePreState(sub: Subscription | null | undefined): CheckoutPreState {
@@ -73,11 +83,12 @@ export function setPendingCheckout(
   plan: string,
   cycle: string,
   pre: CheckoutPreState,
+  paymentId?: string,
 ) {
   try {
     localStorage.setItem(
       PENDING_CHECKOUT_KEY,
-      JSON.stringify({ kind, plan, cycle, pre, ts: Date.now() } satisfies PendingCheckout),
+      JSON.stringify({ kind, plan, cycle, pre, ts: Date.now(), paymentId } satisfies PendingCheckout),
     )
   } catch { /* storage unavailable — watchdog/reconcile simply won't fire */ }
 }
@@ -104,6 +115,7 @@ export function getPendingCheckout(): PendingCheckout | null {
       cycle: data.cycle ?? 'monthly',
       pre: data.pre ?? makePreState(null),
       ts: data.ts,
+      paymentId: typeof data.paymentId === 'string' ? data.paymentId : undefined,
     }
   } catch { return null }
 }

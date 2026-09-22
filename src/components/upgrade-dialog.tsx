@@ -30,8 +30,12 @@ interface UpgradeDialogProps {
    * dialog only hands back the chosen plan/cycle. Called immediately before
    * `window.location.href = url`. Replaces the dialog's old raw localStorage
    * write so EVERY plan path stamps the same unified intent shape.
+   *
+   * `paymentId` (task 0957): the provider checkout id from the checkout
+   * response, when the server returned one — threaded through so the
+   * persisted intent carries it for `/billing`'s reconcile-on-load.
    */
-  onBeforeRedirect?: (plan: string, cycle: BillingCycle) => void
+  onBeforeRedirect?: (plan: string, cycle: BillingCycle, paymentId?: string) => void
   /**
    * TB of active storage add-on on the current subscription. When non-zero,
    * the cycle selector shows a note that the add-on will also switch cycles.
@@ -75,7 +79,7 @@ export function UpgradeDialog({
   // existing 0865 pending-checkout watchdog marker is stamped here as before.
   const proceedToPayment = useCallback(async () => {
     try {
-      const { url } = await createCheckoutSession({
+      const { url, payment_id } = await createCheckoutSession({
         plan: planId,
         billing_cycle: cycle,
       })
@@ -84,7 +88,7 @@ export function UpgradeDialog({
       // was wired, fall back to the legacy minimal marker so the abandoned-
       // checkout watchdog still works.
       if (onBeforeRedirect) {
-        onBeforeRedirect(planId, cycle)
+        onBeforeRedirect(planId, cycle, payment_id)
       } else {
         try { localStorage.setItem('bb_pending_checkout', JSON.stringify({ kind: 'plan', plan: planId, cycle, ts: Date.now() })) } catch { /* ok */ }
       }

@@ -95,7 +95,7 @@ export default defineConfig({
       // wrapped in <GuestRoute> (app.tsx) — an authenticated + unlocked
       // session gets redirected away before the page ever renders, so this
       // spec belongs in the unauthenticated project below instead.
-      testIgnore: /(checkout-redirect-0865|trial-0905|storage-addon-confirm-0943|forgot-password-recovery)\.spec\.ts$/,
+      testIgnore: /(checkout-redirect-0865|trial-0905|storage-addon-confirm-0943|checkout-confirmation-resilience-0957|forgot-password-recovery)\.spec\.ts$/,
       dependencies: ['setup'],
       use: {
         storageState: STORAGE_STATE,
