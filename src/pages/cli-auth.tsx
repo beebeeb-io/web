@@ -26,7 +26,7 @@ import { BBLogo } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
-import { getToken, getApiUrl } from '../lib/api'
+import { getApiUrl, resolveSessionToken } from '../lib/api'
 import { toBase64 } from '../lib/crypto'
 
 // ─── Param validation ─────────────────────────────────────────────────────────
@@ -210,23 +210,15 @@ export function CliAuth() {
 
     try {
       // task 0447 — with the session token now in an httpOnly cookie, JS
-      // can no longer read it from localStorage. Ask the server for it.
-      // The endpoint authenticates via the cookie and only hands back the
-      // raw token when the request actually came in on a cookie session
-      // (PATs / Bearer-only callers get 403). The raw token never goes
-      // back into localStorage — it lives in this closure long enough to
+      // can no longer read it from localStorage. `resolveSessionToken()`
+      // (task 1473 — shared with the Tauri desktop handoff) tries the
+      // legacy localStorage slot first, then asks the server. The endpoint
+      // authenticates via the cookie and only hands back the raw token when
+      // the request actually came in on a cookie session (PATs /
+      // Bearer-only callers get 403). The raw token never goes back into
+      // localStorage — it lives in this closure long enough to
       // encrypt-and-ship to the CLI, then it falls out of scope.
-      let sessionToken = getToken()
-      if (!sessionToken) {
-        const res = await fetch(`${getApiUrl()}/api/v1/auth/session-token`, {
-          credentials: 'include',
-        })
-        if (!res.ok) {
-          throw new Error('No active session — please sign in again.')
-        }
-        const body = await res.json() as { token?: string }
-        sessionToken = body.token ?? null
-      }
+      const sessionToken = await resolveSessionToken()
       if (!sessionToken) throw new Error('No active session — please sign in again.')
 
       const masterKey = getMasterKey()
