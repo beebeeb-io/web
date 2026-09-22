@@ -96,18 +96,24 @@ export function ForgotPassword() {
             (password manager, printed copy in a fireproof location).
           </p>
 
-          <div className="pt-2 space-y-2">
+          <div className="pt-2 space-y-2 border-t border-line mt-1">
+            <p className="text-[12.5px] font-semibold text-ink pt-3">What we can still do</p>
+            <p className="text-[12.5px] text-ink-2 leading-relaxed">
+              We cannot decrypt your files or reset your vault — that is the
+              architecture, not a policy we can make an exception to. We can help
+              you close the account, confirm what was stored, and answer questions
+              about billing.
+            </p>
             <a
-              href="https://docs.beebeeb.io/recovery"
-              target="_blank"
-              rel="noopener noreferrer"
+              href="mailto:support@beebeeb.io"
               className="flex items-center gap-1.5 text-[12.5px] text-amber-deep hover:underline underline-offset-2"
             >
-              <Icon name="link" size={12} />
-              Recovery guide — preventing this in future
+              <Icon name="mail" size={12} />
+              support@beebeeb.io
             </a>
-            <p className="text-[12px] text-ink-4">
-              If you need to delete this account, sign in on a device that still has access, then go to Settings &gt; Privacy.
+            <p className="text-[12px] text-ink-4 leading-relaxed">
+              Include the email address on the account. Do not send us your
+              recovery phrase — it is useless to us and dangerous to send.
             </p>
           </div>
 
