@@ -12,11 +12,18 @@
  * dev-auto-login bypass account has no OPAQUE password file and cannot
  * exercise this dialog's step-up auth.
  *
- * The isolated e2e backend (e2e/scripts/web-e2e.sh) seeds a tiny, locally-
- * generated pwned-passwords fixture corpus containing SHA-1('password123456')
- * so the "breached" branch is exercised end-to-end, not just fail-open.
+ * REQUIRES the isolated e2e harness (`e2e/scripts/web-e2e.sh`) — it is the
+ * only backend that both (a) seeds the tiny, locally-generated pwned-
+ * passwords fixture corpus containing SHA-1('password123456'), so the
+ * "breached" branch is exercised end-to-end instead of failing open, and
+ * (b) enables the pilot-key gate (`BB_REQUIRE_PILOT_KEY=1`) that the signup
+ * flow below must satisfy. Run: `./e2e/scripts/web-e2e.sh e2e/change-password.spec.ts`
+ * — no manual env overrides needed; the pilot key this spec types
+ * (`PILOT_KEY` from `./helpers/signup`, env `BB_TEST_PILOT_KEY`) is kept in
+ * lockstep with the harness's own default (task 1466).
  */
 import { test, expect, type Page } from '@playwright/test'
+import { PILOT_KEY } from './helpers/signup'
 
 const uniqueEmail = () =>
   `e2e-changepw-${Date.now()}-${Math.random().toString(36).slice(2)}@beebeeb.io`
@@ -34,9 +41,11 @@ async function signupAndUnlock(page: Page): Promise<void> {
   await page.goto('/signup')
   await expect(page).toHaveURL(/\/signup/)
   await page.getByLabel(/email/i).fill(uniqueEmail())
-  // Private-development pilot gate — unconditionally required client-side;
-  // any non-empty value satisfies it (see account-deleted.spec.ts).
-  await page.getByLabel(/pilot access key/i).fill('e2e-test-key')
+  // Pilot-access-key gate — required client-side unconditionally (task 0928)
+  // AND server-side when the isolated harness's gate is on (task 1406/1411).
+  // MUST match the harness's BB_PILOT_SIGNUP_KEY — imported from the shared
+  // helper (single source of truth, task 1466) rather than hardcoded here.
+  await page.getByLabel(/pilot access key/i).fill(PILOT_KEY)
   await page.getByRole('checkbox', { name: /Beebeeb cannot recover/i }).click()
   await page.getByRole('button', { name: /^continue$/i }).click()
 

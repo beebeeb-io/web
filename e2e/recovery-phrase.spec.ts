@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { PILOT_KEY } from './helpers/signup'
 
 /**
  * E2E test for the recovery phrase password reset flow.
@@ -6,6 +7,13 @@ import { test, expect } from '@playwright/test'
  * Verifies the fix for the "Session expired" bug where the client
  * expected `opaque_server_message` from the start endpoint but the
  * server only returns `recovery_token`.
+ *
+ * Runs on the isolated e2e harness (task 1466): `./e2e/scripts/web-e2e.sh
+ * e2e/recovery-phrase.spec.ts` — no manual env overrides needed. This spec
+ * calls POST /api/v1/auth/signup directly (not through the /signup UI), so
+ * it must present the pilot-key gate's `X-Beebeeb-Pilot-Key` header itself —
+ * PILOT_KEY from the shared helper is kept in lockstep with the harness's
+ * BB_PILOT_SIGNUP_KEY (single source of truth).
  */
 
 // API origin for direct signup calls. Under the isolated e2e harness this is the
@@ -29,10 +37,13 @@ test.describe('Recovery phrase password reset', () => {
   test('recovery page loads and shows proper error for invalid phrase (not "Session expired")', async ({ page }) => {
     test.setTimeout(60_000)
 
-    // Create a test account via API so the email exists
+    // Create a test account via API so the email exists. The pilot-key gate
+    // (BB_REQUIRE_PILOT_KEY, on by default on the isolated harness) is
+    // enforced on this endpoint too (pilot_gate.rs), so present the header.
     const email = `e2e-recover-${Date.now()}@beebeeb.io`
     const signupResp = await page.request.post(`${API}/api/v1/auth/signup`, {
       data: { email, password: 'TestPassword2026!' },
+      headers: { 'X-Beebeeb-Pilot-Key': PILOT_KEY },
     })
     expect(signupResp.ok()).toBeTruthy()
 

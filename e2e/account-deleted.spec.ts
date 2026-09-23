@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
+import { PILOT_KEY } from './helpers/signup'
 
 /**
  * E2E for task 1404 — the login form must show the exact honest copy for a
@@ -12,10 +13,8 @@ import { test, expect, type Page } from '@playwright/test'
  * either succeeds or 401s generically (the exact bug 1403 fixes), so this
  * spec's final assertion will fail until then. That's expected, not a flake.
  *
- * Prerequisites (same as auth.spec.ts / refresh-stability.spec.ts):
- *   1. Postgres on 5434
- *   2. API on 3001 (with server task 1403 merged)
- *   3. Web dev server on 5173
+ * Runs on the isolated e2e harness (task 1466): `./e2e/scripts/web-e2e.sh
+ * e2e/account-deleted.spec.ts` — no manual env overrides needed.
  */
 
 const uniqueEmail = () =>
@@ -34,12 +33,12 @@ async function signupAndUnlock(page: Page, email: string) {
   await page.goto('/signup')
   await expect(page).toHaveURL(/\/signup/)
   await page.getByLabel(/email/i).fill(email)
-  // Private-development pilot gate (added after refresh-stability.spec.ts's
-  // signupAndUnlock was written — that spec is presumably now stale too).
-  // The field is unconditionally required client-side regardless of whether
-  // the server enforces it (BB_REQUIRE_PILOT_KEY, off in this local .env) —
-  // any non-empty value satisfies both.
-  await page.getByLabel(/pilot access key/i).fill('e2e-test-key')
+  // Pilot-access-key gate — required client-side unconditionally (task 0928)
+  // AND server-side when the isolated harness's gate is on (task 1406/1411,
+  // ON by default). MUST match the harness's BB_PILOT_SIGNUP_KEY — imported
+  // from the shared helper (single source of truth, task 1466) rather than
+  // hardcoded here.
+  await page.getByLabel(/pilot access key/i).fill(PILOT_KEY)
   await page.getByRole('checkbox', { name: /Beebeeb cannot recover/i }).click()
   await page.getByRole('button', { name: /^continue$/i }).click()
 
