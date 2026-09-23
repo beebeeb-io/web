@@ -21,15 +21,26 @@ test.describe('Codex fixes verification', () => {
     await page.screenshot({ path: '../../qa-screenshots/verify-01-billing-nav.png' })
   })
 
-  // Fix 2: Payment method card removed from billing page
+  // Fix 2: the Stripe-embedded payment-method CARD (ae1ee9f, task 0925's
+  // predecessor) is gone — NOT "no page text says payment method". A page-wide
+  // /payment method/i regex also matches the (legitimate, unrelated) billing
+  // subtitle "Manage your plan, payment method, and invoices." and the native,
+  // non-Stripe "Update/Add payment method" card that task 0925/0942 shipped
+  // afterwards (see git log -p ae1ee9f -- src/pages/billing.tsx, task 1482) —
+  // so the old assertion failed on copy that was never the removed component.
+  // What ae1ee9f actually deleted was `PaymentSetupForm`: a Stripe
+  // `<Elements><PaymentElement/></Elements>` mounted inline, with a "Save
+  // payment method" submit action — a string that appears nowhere else in the
+  // app (current billing.tsx has zero Stripe imports;
+  // `handleUpdatePaymentMethod` only ever redirects to a hosted URL). Assert
+  // THAT: no Stripe iframe ever mounts on the page, and no "Save payment
+  // method" action exists — both unique to the deleted card, neither shared
+  // with the current native section's copy.
   test('2. billing page has no payment method card', async ({ page }) => {
     await page.goto('/settings/billing')
     await page.waitForTimeout(5000)
-    const content = await page.locator('body').textContent() ?? ''
-    // Should NOT show payment method related text
-    expect(content).not.toMatch(/payment method/i)
-    expect(content).not.toMatch(/card ending/i)
-    expect(content).not.toMatch(/Add payment method/i)
+    await expect(page.locator('iframe[name*="__privateStripeFrame"], iframe[src*="js.stripe.com"]')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Save payment method' })).toHaveCount(0)
     await page.screenshot({ path: '../../qa-screenshots/verify-02-no-payment-card.png' })
   })
 

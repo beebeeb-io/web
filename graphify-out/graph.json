@@ -35,7 +35,7 @@
       "file_type": "code",
       "source_file": "vite.config.ts",
       "source_location": "L15",
-      "id": "web_1466_vite_config_preloadwasmplugin",
+      "id": "web_1482_vite_config_preloadwasmplugin",
       "community": 120,
       "norm_label": "preloadwasmplugin()"
     },
@@ -44,7 +44,7 @@
       "file_type": "code",
       "source_file": "vite.config.ts",
       "source_location": "L40",
-      "id": "web_1466_vite_config_devcspplugin",
+      "id": "web_1482_vite_config_devcspplugin",
       "community": 120,
       "norm_label": "devcspplugin()"
     },
@@ -5785,7 +5785,7 @@
       "label": "gotoSettingsPage()",
       "file_type": "code",
       "source_file": "e2e/codex-fixes.spec.ts",
-      "source_location": "L119",
+      "source_location": "L130",
       "id": "e2e_codex_fixes_spec_gotosettingspage",
       "community": 172,
       "norm_label": "gotosettingspage()"
@@ -18885,9 +18885,9 @@
       "source_location": "L15",
       "weight": 1.0,
       "_src": "vite_config_ts",
-      "_tgt": "web_1466_vite_config_preloadwasmplugin",
+      "_tgt": "web_1482_vite_config_preloadwasmplugin",
       "source": "vite_config_ts",
-      "target": "web_1466_vite_config_preloadwasmplugin",
+      "target": "web_1482_vite_config_preloadwasmplugin",
       "confidence_score": 1.0
     },
     {
@@ -18897,9 +18897,9 @@
       "source_location": "L40",
       "weight": 1.0,
       "_src": "vite_config_ts",
-      "_tgt": "web_1466_vite_config_devcspplugin",
+      "_tgt": "web_1482_vite_config_devcspplugin",
       "source": "vite_config_ts",
-      "target": "web_1466_vite_config_devcspplugin",
+      "target": "web_1482_vite_config_devcspplugin",
       "confidence_score": 1.0
     },
     {
@@ -29598,7 +29598,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "e2e/codex-fixes.spec.ts",
-      "source_location": "L119",
+      "source_location": "L130",
       "weight": 1.0,
       "_src": "e2e_codex_fixes_spec_ts",
       "_tgt": "e2e_codex_fixes_spec_gotosettingspage",
