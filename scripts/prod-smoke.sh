@@ -37,29 +37,43 @@
 # API/Vite started) and the CLI at the real https://api.beebeeb.io. This is a
 # REAL PRODUCTION MUTATION (creates + deletes a real account) — refused
 # unless BB_PROD_SMOKE_OK=1 is set, and even then this script does not decide
-# to run it; a human does. The verification-code path is intentionally NOT
-# hardcoded to a specific admin endpoint (none exists yet) — set
-# E2E_PROD_VERIFICATION_CODE after reading the code via whatever admin/API
-# path applies (see e2e/prod-smoke/helpers.ts's readVerificationCode).
+# to run it; a human does. `--target prod --prove-red` is refused outright —
+# the deliberate-corruption RED proof is local-only (see RED PROOF below).
+#
+# The verification code cannot be supplied up front — it doesn't exist until
+# the suite's own step 1 creates the account (task 1495, Codex P1
+# prod-smoke.sh:269). Instead this script prints where to write it, and the
+# suite POLLS that path for up to 10 minutes once step 2 starts (see
+# e2e/prod-smoke/helpers.ts's readVerificationCode, source='file').
 #
 # ── RED PROOF ─────────────────────────────────────────────────────────────
 # --prove-red (equivalently E2E_SMOKE_FORCE_BAD_BYTES=1) flips a byte of the
 # downloaded file before the byte-compare in step 3, so that assertion is
 # PROVEN load-bearing rather than a tautology (workspace "How we work": a new
-# assertion isn't trusted until it's been seen to fail). It also doubles as
-# the CLEANUP proof: the forced failure happens well after the account is
-# created but before the suite's own step 10 (UI delete-account) ever runs,
-# so a green "0 leftover smoke accounts" after a --prove-red run is proof the
-# trap-based cleanup below — not the happy-path UI step — did the deleting.
+# assertion isn't trusted until it's been seen to fail). LOCAL ONLY — refused
+# together with --target prod. It also doubles as the CLEANUP proof: the
+# forced failure happens well after the account is created but before the
+# suite's own step 10 (UI delete-account) ever runs, so a green "0 leftover
+# smoke accounts" after a --prove-red run is proof the trap-based cleanup
+# below — not the happy-path UI step — did the deleting.
 #
 # ── Cleanup ───────────────────────────────────────────────────────────────
 # Trap-based (EXIT/INT/TERM): stops the isolated API/Vite (by PID only —
-# never pkill by name), then hard-deletes the run's smoke account directly
-# from the shared DB regardless of where the run stopped. The `users` table
-# uses ON DELETE CASCADE (see repos/server/beebeeb-api/src/user_purge.rs) so
-# one DELETE removes every child row (files, sessions, shares, …) too. This
-# runs even on the happy path, where it's a harmless no-op — step 10 already
-# deleted the account via the real UI by then.
+# never pkill by name), then:
+#   --target local: hard-deletes the run's smoke account directly from the
+#     shared DB regardless of where the run stopped (see the `cleanup()`
+#     function below for why this is NOT a bare `DELETE FROM users` — several
+#     tables lack ON DELETE CASCADE despite user_purge.rs's header comment
+#     claiming otherwise). Harmless no-op on the happy path — step 10 already
+#     deleted the account via the real UI by then.
+#   --target prod: NEVER touches the database directly (task 1495, Codex P1
+#     prod-smoke.sh:175 — "prod has no failure cleanup"). If the run's scratch
+#     credentials file still exists (meaning step 10 did not run its own
+#     delete-account-and-clear-the-file sequence), signs in FRESH with those
+#     per-run credentials and performs a REAL soft-delete through the public
+#     API — see e2e/prod-smoke/cleanup-account.ts's header for the full
+#     mechanism and its documented dependency on task 1501 (the purge-worker
+#     FK bug) for the eventual hard purge.
 
 set -euo pipefail
 
@@ -83,6 +97,12 @@ case "$TARGET" in
   local|prod) ;;
   *) echo "usage: $0 --target local|prod [--prove-red]" >&2; exit 1 ;;
 esac
+if [ "$TARGET" = "prod" ] && [ "$PROVE_RED" = "1" ]; then
+  echo "refusing --target prod --prove-red: this would deliberately corrupt a download from a" >&2
+  echo "REAL production account just to prove step 3's assertion is load-bearing — that proof" >&2
+  echo "is local-only. Run '$0 --target local --prove-red' instead (task 1495)." >&2
+  exit 1
+fi
 [ "$PROVE_RED" = "1" ] && export E2E_SMOKE_FORCE_BAD_BYTES=1
 
 log() { printf '\033[35m[prod-smoke]\033[0m %s\n' "$*"; }
@@ -136,6 +156,14 @@ db_psql() { docker exec -i -e PGPASSWORD=beebeeb_dev "$PSQL_CONTAINER" psql -U b
 
 SCRATCH_DIR="$WEB_DIR/.prod-smoke-scratch/$RUN_ID"
 mkdir -p "$SCRATCH_DIR"
+
+# Scratch credentials handoff (task 1495, Codex P1 prod-smoke.sh:175) — the
+# run's spec (prod-smoke.spec.ts) writes {email, password} here right after
+# signup and again right after the password change, and deletes the file as
+# the LAST action of its own successful step 10. Only wired up (exported) for
+# --target prod below; --target local's spec sees the env var unset and
+# never writes it, since local cleanup below deletes straight from the DB.
+CRED_FILE="$SCRATCH_DIR/prod-credentials.json"
 
 API_PID=""
 VITE_PID=""
@@ -218,6 +246,26 @@ SQL
     log "leftover rows for $SMOKE_EMAIL after cleanup: $left"
   fi
 
+  # --target prod: NEVER a direct DB mutation (task 1495, Codex P1
+  # prod-smoke.sh:175). If the scratch credentials file still exists, the
+  # run did not reach its own step 10 (which deletes it as the LAST action of
+  # a successful UI account deletion) — sign in fresh and delete through the
+  # real API. See e2e/prod-smoke/cleanup-account.ts's header for the full
+  # mechanism; this is a best-effort soft delete, not fatal to the run's own
+  # exit code if it fails (logged loudly either way).
+  if [ "$TARGET" = "prod" ]; then
+    if [ -f "$CRED_FILE" ]; then
+      log "prod credentials file present — the account may still exist; running API-based cleanup delete…"
+      if E2E_SMOKE_CREDENTIALS_FILE="$CRED_FILE" bun run "$WEB_DIR/e2e/prod-smoke/cleanup-account.ts"; then
+        log "cleanup-account.ts succeeded."
+      else
+        log "cleanup-account.ts FAILED — the account may still exist in production for $SMOKE_EMAIL. Check manually."
+      fi
+    else
+      log "no prod credentials file at $CRED_FILE — nothing to clean up (step 10 already deleted the account, or the run never reached signup)."
+    fi
+  fi
+
   rm -rf "$SCRATCH_DIR" 2>/dev/null || true
   rm -f "$WEB_DIR/.env.test.local" 2>/dev/null || true
   log "cleanup done."
@@ -261,13 +309,19 @@ if [ "$TARGET" = "prod" ]; then
 
   export E2E_WEB_URL="https://app.beebeeb.io"
   export E2E_NO_WEBSERVER=1
-  export E2E_VERIFICATION_SOURCE="${E2E_VERIFICATION_SOURCE:-manual}"
+  export E2E_VERIFICATION_SOURCE="file"
+  export E2E_PROD_VERIFICATION_CODE_FILE="$SCRATCH_DIR/verification-code"
   export E2E_CLI_API_URL="${E2E_CLI_API_URL:-https://api.beebeeb.io}"
-  if [ "$E2E_VERIFICATION_SOURCE" = "manual" ] && [ -z "${E2E_PROD_VERIFICATION_CODE:-}" ]; then
-    echo "E2E_VERIFICATION_SOURCE=manual but E2E_PROD_VERIFICATION_CODE is not set." >&2
-    echo "Read the verification code via whatever admin/API path applies, then export it, then re-run." >&2
-    exit 1
-  fi
+  export E2E_SMOKE_CREDENTIALS_FILE="$CRED_FILE"
+
+  # The verification code doesn't exist until the suite's own step 1 creates
+  # the account — no way to supply it up front (Codex P1, prod-smoke.sh:269).
+  # Step 2 polls the path below for up to 10 minutes instead of failing
+  # immediately; this just prints where, early, so it's not a silent wait.
+  log "PROD VERIFICATION CODE: once step 1 (signup) completes, look up the 6-digit code sent to $SMOKE_EMAIL and write it to:"
+  log "  $E2E_PROD_VERIFICATION_CODE_FILE"
+  log "  e.g.: echo 123456 > '$E2E_PROD_VERIFICATION_CODE_FILE'"
+  log "Step 2 waits up to 10 minutes for that file — this run will NOT fail immediately if it's not there yet."
 
   build_cli
   export E2E_CLI_BIN="$CLI_BIN_PATH"

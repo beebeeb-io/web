@@ -10,6 +10,10 @@ import {
   spawnCliLogin,
   runCli,
   readCliSessionToken,
+  randomPassword,
+  writeSmokeCredentials,
+  clearSmokeCredentials,
+  signIn,
   type VerificationCodeSource,
 } from './helpers'
 
@@ -55,58 +59,12 @@ async function dismissWelcomeTourIfPresent(page: Page): Promise<void> {
   }
 }
 
-/**
- * Sign in via the real /login UI — NOT `e2e/helpers/auth.ts`'s
- * `loginAndProvision`. Found the hard way (task 1495 notes, step 6): that
- * shared helper's `getByLabel(/^password$/i)` times out because
- * `src/pages/login.tsx`'s Password `<label>` has no `htmlFor`/wrapping
- * association with its `<input>` — a real, pre-existing bug (the helper's
- * only other caller, auth.spec.ts, is gated behind an env var that's
- * essentially never set, so this path silently went unexercised). Matches
- * the working pattern `cli-auth-redirect.spec.ts` already uses for exactly
- * this reason: target the password field by placeholder.
- *
- * Handles both branches — an existing vault (password-only) or a fresh
- * browser context with no vault (DeviceProvision: recovery-phrase prompt) —
- * exactly like `loginAndProvision`, just with selectors that actually work.
- */
-async function signIn(
-  page: Page,
-  opts: { email: string; password: string; recoveryPhrase?: string },
-): Promise<void> {
-  await page.goto('/login')
-  await page.waitForSelector('body[data-crypto-ready="true"]', { timeout: 20_000 })
-  await page.getByLabel(/email/i).fill(opts.email)
-  await page.getByPlaceholder('Your password').fill(opts.password)
-  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
-
-  const phraseInput = page.getByPlaceholder('word1 word2 word3 ... word12')
-  const driveReached = page
-    .waitForURL(/\/(?:$|\?|#)/, { timeout: 20_000 })
-    .then(() => 'drive' as const)
-    .catch(() => null)
-  const provisionShown = phraseInput
-    .waitFor({ state: 'visible', timeout: 20_000 })
-    .then(() => 'provision' as const)
-    .catch(() => null)
-  const winner = await Promise.race([driveReached, provisionShown])
-
-  if (winner === 'drive') return
-  if (winner !== 'provision') {
-    throw new Error('signIn: did not reach the drive or the DeviceProvision recovery-phrase prompt')
-  }
-  if (!opts.recoveryPhrase) {
-    throw new Error('signIn: DeviceProvision is shown but no recoveryPhrase was supplied')
-  }
-  await phraseInput.fill(opts.recoveryPhrase)
-  await page.getByRole('button', { name: /restore vault/i }).click()
-  await page.waitForURL(/\/(?:$|\?|#)/, { timeout: 20_000 })
-}
-
 const RUN_ID = process.env.E2E_SMOKE_RUN_ID ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 const EMAIL = `smoke+${RUN_ID}@beebeeb.io`
-const PASSWORD_INITIAL = 'ProdSmoke-Initial-8214!'
-const PASSWORD_CHANGED = 'ProdSmoke-Changed-4471!'
+// Random per-run passwords (task 1495, Codex extra #4) — never a fixed
+// committed literal, never logged. See helpers.ts's randomPassword doc.
+const PASSWORD_INITIAL = randomPassword()
+const PASSWORD_CHANGED = randomPassword()
 
 const MAILPIT_URL = process.env.E2E_MAILPIT_URL ?? 'http://localhost:8025'
 const VERIFICATION_SOURCE = (process.env.E2E_VERIFICATION_SOURCE ?? 'mailpit') as VerificationCodeSource
@@ -124,7 +82,6 @@ const fileName = `prod-smoke-${RUN_ID}.txt`
 const fileContent = `Beebeeb prod-smoke ${RUN_ID} :: ${crypto.randomBytes(24).toString('hex')}\n`
 
 let recoveryPhrase = ''
-let cliSessionToken: string | null = null
 
 test.describe.serial('Production smoke — one throwaway account, real UI (task 1495)', () => {
   let context: BrowserContext
@@ -161,10 +118,20 @@ test.describe.serial('Production smoke — one throwaway account, real UI (task 
     await page.waitForURL(/\/(?:$|\?|#)/, { timeout: 30_000 })
     await expect(page.getByText(/All files/i).first()).toBeVisible({ timeout: 10_000 })
     await dismissWelcomeTourIfPresent(page)
+
+    // Scratch credentials handoff for the EXIT-trap cleanup (Codex P1,
+    // prod-smoke.sh:175) — a no-op for --target local (env var unset). Write
+    // this as the LAST thing in the test, right after the account is
+    // confirmed to exist, so the window where the trap could fire with a
+    // stale/missing credentials file is as small as possible.
+    writeSmokeCredentials(EMAIL, PASSWORD_INITIAL)
   })
 
-  test('2. email verification (code read from the dev mail sink)', async () => {
-    test.setTimeout(45_000)
+  test('2. email verification (mailpit locally, a polled scratch file on prod)', async () => {
+    // The `file` source (prod) can legitimately wait up to 10 minutes for a
+    // human to read the code and write it — well past the suite's 90s default
+    // (playwright.prod-smoke.config.ts). `mailpit` (local) stays fast.
+    test.setTimeout(VERIFICATION_SOURCE === 'file' ? 11 * 60_000 : 45_000)
     const code = await readVerificationCode(EMAIL, { source: VERIFICATION_SOURCE, mailpitUrl: MAILPIT_URL })
 
     const banner = page.getByRole('status').filter({ hasText: /verification code/i })
@@ -287,7 +254,7 @@ test.describe.serial('Production smoke — one throwaway account, real UI (task 
     expect(output).toContain('Logged in as')
     expect(output).toContain(EMAIL)
 
-    cliSessionToken = readCliSessionToken(CLI_HOME!)
+    const cliSessionToken = readCliSessionToken(CLI_HOME!)
     expect(cliSessionToken, 'bb login should have persisted a session_token under the isolated HOME').toBeTruthy()
 
     const lsOutput = runCli(CLI_BIN!, ['ls'], CLI_HOME!, CLI_API_URL)
@@ -307,6 +274,11 @@ test.describe.serial('Production smoke — one throwaway account, real UI (task 
     await dialog.getByRole('button', { name: /^change password$/i }).click()
 
     await expect(dialog).toBeHidden({ timeout: 15_000 })
+
+    // Re-point the EXIT-trap's scratch credentials at the NEW password —
+    // from here on, a trap-fired cleanup must sign in with PASSWORD_CHANGED,
+    // not the now-stale PASSWORD_INITIAL. No-op on --target local.
+    writeSmokeCredentials(EMAIL, PASSWORD_CHANGED)
   })
 
   test('9. recover with the phrase on a fresh context; the file decrypts', async ({ browser }) => {
@@ -330,6 +302,38 @@ test.describe.serial('Production smoke — one throwaway account, real UI (task 
 
   test('10. delete the account; afterwards login fails and the API returns 401', async () => {
     test.setTimeout(45_000)
+
+    // Capture a session token minted from the CURRENT (post-password-change,
+    // test 8) cookie session, and prove it's valid, BEFORE triggering
+    // deletion. Codex P2 (prod-smoke.spec.ts:362): the OLD check used
+    // `cliSessionToken` from test 7, but test 8's password change invalidates
+    // ALL sessions (src/lib/api.ts's change-password-finish handling — server:
+    // routes/password.rs's change_password_finish does `DELETE FROM sessions`
+    // then mints one fresh one) — so that token was ALREADY 401 by the time
+    // this test ran, making the post-delete 401 assertion pass for the wrong
+    // reason regardless of whether delete-account itself revokes sessions.
+    // `GET /auth/session-token` (routes/auth.rs, task 0447) hands back the raw
+    // bearer token for whichever session the CALLER'S COOKIE is currently
+    // authenticated as — `page`'s cookie was refreshed by test 8's response
+    // and untouched since (test 9 used a SEPARATE browser context), so this
+    // is exactly "a session after the password change".
+    const tokenRes = await page.request.get(`${CLI_API_URL}/api/v1/auth/session-token`)
+    expect(tokenRes.ok(), 'GET /auth/session-token must succeed for the current cookie session').toBeTruthy()
+    const { token: freshSessionToken } = (await tokenRes.json()) as { token: string }
+    expect(freshSessionToken, 'session-token endpoint should return a non-empty token').toBeTruthy()
+
+    const preDeleteMe = await page.request.get(`${CLI_API_URL}/api/v1/auth/me`, {
+      headers: { Authorization: `Bearer ${freshSessionToken}` },
+    })
+    // This is the assertion that makes the post-delete 401 below meaningful —
+    // seen RED by commenting out the deletion call below and re-running: the
+    // account then never gets deleted, so THIS check still passes (200) but
+    // the post-delete 401 assertion fails with "expected 401, got 200" (task
+    // 1495 notes has the pasted failure).
+    expect(preDeleteMe.status(), 'freshly captured post-password-change session must be valid before deletion').toBe(
+      200,
+    )
+
     await page.goto('/settings/delete-account')
     await expect(page.getByText(/Delete your account/i)).toBeVisible({ timeout: 10_000 })
 
@@ -352,14 +356,23 @@ test.describe.serial('Production smoke — one throwaway account, real UI (task 
     await expect(errorBox).toBeVisible({ timeout: 10_000 })
     await expect(page).toHaveURL(/\/login/)
 
-    // (b) the API: a session minted BEFORE deletion (the CLI's, from step 7)
-    // must now 401 — account deletion revokes every session row server-side
-    // (server: DELETE FROM sessions WHERE user_id = $1, routes/account.rs).
-    if (cliSessionToken) {
-      const res = await page.request.get(`${CLI_API_URL}/api/v1/auth/me`, {
-        headers: { Authorization: `Bearer ${cliSessionToken}` },
-      })
-      expect(res.status(), 'a pre-deletion session token must 401 once the account is deleted').toBe(401)
-    }
+    // (b) the API: the session proven valid ABOVE, immediately before
+    // deletion, must now 401 — account deletion revokes every session row
+    // server-side (server: DELETE FROM sessions WHERE user_id = $1,
+    // routes/account.rs). Unconditional (not `if (cliSessionToken)`) —
+    // freshSessionToken always exists by this point, the earlier check threw
+    // otherwise.
+    const postDeleteMe = await page.request.get(`${CLI_API_URL}/api/v1/auth/me`, {
+      headers: { Authorization: `Bearer ${freshSessionToken}` },
+    })
+    expect(
+      postDeleteMe.status(),
+      'a session valid immediately before deletion must now 401 once the account is deleted',
+    ).toBe(401)
+
+    // Account confirmed deleted through both surfaces — the EXIT trap no
+    // longer needs to (and must not try to) delete it again. Last action of
+    // the happy path.
+    clearSmokeCredentials()
   })
 })
