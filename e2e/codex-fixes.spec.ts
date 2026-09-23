@@ -30,15 +30,31 @@ test.describe('Codex fixes verification', () => {
   // so the old assertion failed on copy that was never the removed component.
   // What ae1ee9f actually deleted was `PaymentSetupForm`: a Stripe
   // `<Elements><PaymentElement/></Elements>` mounted inline, with a "Save
-  // payment method" submit action — a string that appears nowhere else in the
-  // app (current billing.tsx has zero Stripe imports;
-  // `handleUpdatePaymentMethod` only ever redirects to a hosted URL). Assert
-  // THAT: no Stripe iframe ever mounts on the page, and no "Save payment
-  // method" action exists — both unique to the deleted card, neither shared
-  // with the current native section's copy.
+  // payment method" submit action.
+  //
+  // Codex review (PR #59, task 1482): a DOM-only check (iframe / "Save
+  // payment method" button) only distinguishes the two once the old form has
+  // been driven open — the removed card's INITIAL state ("Add payment
+  // method", no click yet) rendered the same text as the current native
+  // card, so a resurrected-but-unclicked old card would pass a DOM-only
+  // check. The state-independent tell is the dependency itself: the removed
+  // card loaded Stripe.js via a lazy `useState` initializer that ran on
+  // EVERY `/billing` mount — before any click, on any plan — while
+  // `handleUpdatePaymentMethod` (current code) only ever redirects
+  // (`window.location.href`) and never fetches anything from Stripe.
+  // Assert that unconditionally: no request to any *.stripe.com host is ever
+  // made merely by loading the page, plus the two DOM markers as a second
+  // layer for the interactive case.
   test('2. billing page has no payment method card', async ({ page }) => {
+    const stripeRequests: string[] = []
+    page.on('request', (req) => {
+      if (/\bstripe\.com\b/i.test(req.url())) stripeRequests.push(req.url())
+    })
+
     await page.goto('/settings/billing')
     await page.waitForTimeout(5000)
+
+    expect(stripeRequests, `unexpected Stripe network request(s): ${stripeRequests.join(', ')}`).toHaveLength(0)
     await expect(page.locator('iframe[name*="__privateStripeFrame"], iframe[src*="js.stripe.com"]')).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Save payment method' })).toHaveCount(0)
     await page.screenshot({ path: '../../qa-screenshots/verify-02-no-payment-card.png' })
