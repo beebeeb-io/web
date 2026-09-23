@@ -75,6 +75,11 @@ playwright-report/
 qa-screenshots/
 playwright/.auth/
 
+# scripts/prod-smoke.sh's per-run scratch (CLI binary, isolated HOME, blobs,
+# logs) — trap-cleaned on every exit; ignored defensively in case a run is
+# ever killed -9 before its trap can run (task 1495).
+.prod-smoke-scratch/
+
 # Graphify per-file AST cache — local incremental data, not for the repo.
 # graph.json / graph.html / GRAPH_REPORT.md (the rest of graphify-out/) are
 # intentionally tracked.
