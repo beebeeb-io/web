@@ -1,4 +1,3 @@
-import { clearTauriSession } from './tauri-bridge'
 import { collectPaged } from './paginate'
 import {
   opaqueLoginStart as wasmOpaqueLoginStart,
@@ -111,7 +110,6 @@ setApiUrl(API_URL)
 setClientInfo('web', typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'dev')
 registerOnTokenCleared(() => {
   clearEmail()
-  void clearTauriSession()
 })
 
 // ─── Email storage (parallel to token) ──────────────

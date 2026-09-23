@@ -211,8 +211,8 @@ export function CliAuth() {
     try {
       // task 0447 — with the session token now in an httpOnly cookie, JS
       // can no longer read it from localStorage. `resolveSessionToken()`
-      // (task 1473 — shared with the Tauri desktop handoff) tries the
-      // legacy localStorage slot first, then asks the server. The endpoint
+      // (task 1473) tries the legacy localStorage slot first, then asks
+      // the server. The endpoint
       // authenticates via the cookie and only hands back the raw token when
       // the request actually came in on a cookie session (PATs /
       // Bearer-only callers get 403). The raw token never goes back into
