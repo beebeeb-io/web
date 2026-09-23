@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { PILOT_KEY } from './helpers/signup'
 
 /**
  * E2E test for the file upload flow.
@@ -8,10 +9,12 @@ import { test, expect } from '@playwright/test'
  * (no test-only seams) so a regression in any layer — auth, multipart
  * parsing, blob storage, listing query — fails the test.
  *
- * Prerequisites (same as other specs):
- *   1. Postgres:  docker compose -f ../../docker-compose.yml up -d postgres
- *   2. API:       cd ../server && cargo run -p beebeeb-api
- *   3. Web:       bun dev
+ * Runs on the isolated e2e harness (task 1466): `./e2e/scripts/web-e2e.sh
+ * e2e/upload.spec.ts` — no manual env overrides needed. This spec calls
+ * POST /api/v1/auth/signup directly (not through the /signup UI), so it must
+ * present the pilot-key gate's `X-Beebeeb-Pilot-Key` header itself — PILOT_KEY
+ * from the shared helper is kept in lockstep with the harness's
+ * BB_PILOT_SIGNUP_KEY (single source of truth, task 1466).
  */
 
 // Honor the harness-provided API URL so this spec runs against the isolated
@@ -36,9 +39,13 @@ test.describe('Upload E2E', () => {
     const fileBytes = Buffer.from('Hello from the Beebeeb upload E2E test.\n', 'utf-8')
     const nameEncrypted = makeNameEncrypted(filename)
 
-    // 1. Signup creates the account and returns a session token.
+    // 1. Signup creates the account and returns a session token. The
+    //    pilot-key gate (BB_REQUIRE_PILOT_KEY, on by default on the isolated
+    //    harness) is enforced on THIS endpoint too (pilot_gate.rs) — not just
+    //    the UI form — so a direct API call must present the header.
     const signup = await page.request.post(`${API}/api/v1/auth/signup`, {
       data: { email, password: PASSWORD },
+      headers: { 'X-Beebeeb-Pilot-Key': PILOT_KEY },
     })
     expect(signup.ok()).toBeTruthy()
     const { session_token } = await signup.json()

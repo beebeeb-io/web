@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
+import { PILOT_KEY } from './helpers/signup'
 
 /**
  * E2E for task 1407 — after in-app account deletion the success path must
@@ -28,8 +29,9 @@ import { test, expect, type Page } from '@playwright/test'
  *      (bb_vault_ttl is a user PREFERENCE, not vault state — intentionally
  *      NOT cleared by logout, so it is not asserted here.)
  *
- * Prerequisites: an isolated local API + Postgres DB (see task 1407's
- * verification recipe) — never the shared :3001 dev API.
+ * Runs on the isolated e2e harness (task 1466): `./e2e/scripts/web-e2e.sh
+ * e2e/delete-account-clears-state.spec.ts` — never the shared :3001 dev API,
+ * no manual env overrides needed.
  */
 
 const uniqueEmail = () =>
@@ -48,7 +50,9 @@ async function signupAndUnlock(page: Page, email: string) {
   await page.goto('/signup')
   await expect(page).toHaveURL(/\/signup/)
   await page.getByLabel(/email/i).fill(email)
-  await page.getByLabel(/pilot access key/i).fill('e2e-test-key')
+  // MUST match the harness's BB_PILOT_SIGNUP_KEY — imported from the shared
+  // helper (single source of truth, task 1466) rather than hardcoded here.
+  await page.getByLabel(/pilot access key/i).fill(PILOT_KEY)
   await page.getByRole('checkbox', { name: /Beebeeb cannot recover/i }).click()
   await page.getByRole('button', { name: /^continue$/i }).click()
 
