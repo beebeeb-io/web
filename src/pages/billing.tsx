@@ -49,6 +49,7 @@ import {
 } from '../lib/api'
 import { useDriveData } from '../lib/drive-data-context'
 import { useWsEvent } from '../lib/ws-context'
+import { userFriendlyError } from '../lib/user-friendly-error'
 
 import { formatStorageSI } from '../lib/format'
 import { StorageBreakdown } from '../components/storage-breakdown'
@@ -76,6 +77,7 @@ import {
   reflectsUpgradeNoIntent,
   reconcileSignalOutcome,
 } from '../lib/checkout-reconcile'
+import { resolveHasUsedTrial, isTrialEligible } from '../lib/trial-eligibility'
 
 /* ── Plan metadata (imported from plan-constants.ts) ──── */
 
@@ -330,9 +332,17 @@ export function Billing() {
   // cycle-switch branch reuses `cycleSwitchLoading` via handleSwitchBillingCycle.
   const [resumeCheckoutLoading, setResumeCheckoutLoading] = useState(false)
   // 14-day free trial (task 0905). `trialStarting` tracks the plan currently
-  // being started; `trialUsed` is set when the server reports the user already
-  // had a trial (409 trial_already_used) so we hide the CTA and fall back to the
-  // normal paid checkout. `convertLoading` tracks the convert/add-payment flow.
+  // being started; `trialUsed` is an OPTIMISTIC local flip set when the server
+  // reports the user already had a trial (409 trial_already_used) — kept as a
+  // same-tab fallback for the instant between that 409 and `sub` re-fetching.
+  // `convertLoading` tracks the convert/add-payment flow.
+  //
+  // Task 1517: the authoritative signal is `sub?.has_used_trial` (server-sent
+  // on every `GET /billing/subscription`, mirrors `users.has_used_trial`) —
+  // `hasUsedTrial` below combines both so a returning user whose trial was
+  // used weeks ago (no 409 this session at all) never sees a trial CTA in the
+  // first place, instead of discovering ineligibility only after clicking
+  // "Start trial" and getting a 409.
   const [trialStarting, setTrialStarting] = useState<string | null>(null)
   const [trialUsed, setTrialUsed] = useState(false)
   const [convertLoading, setConvertLoading] = useState(false)
@@ -679,6 +689,14 @@ export function Billing() {
     sub?.status === 'cancelling' ? (sub.plan ?? 'free') :
     (sub?.plan ?? 'free')
   const meta = planMeta[effectivePlan] ?? planMeta.free
+  // Task 1517 — authoritative trial-eligibility signal. `sub?.has_used_trial`
+  // is the server truth (set the moment ANY trial was ever started, whether
+  // it lapsed, converted, or is still running); `trialUsed` is the optimistic
+  // same-session flip from a live 409 (see its declaration above). Every
+  // trial CTA below gates on this, not on `trialUsed` alone, so a user who
+  // already used their trial — even in a PAST session, before this page ever
+  // loaded — never sees "Start trial" and instead goes straight to checkout.
+  const hasUsedTrial = resolveHasUsedTrial(sub?.has_used_trial, trialUsed)
   const apiPlan = plans?.find(p => p.id === effectivePlan)
   const currentPriceMonthly = apiPlan?.price_eur ?? meta.priceMonthly
   const currentPriceYearly = apiPlan?.price_yearly_eur ?? meta.priceYearly
@@ -738,15 +756,19 @@ function openUpgrade(plan: string) {
   // tier's card the user actually clicked; the comparison table's own "14-day
   // free trial" row implies Starter/Basic/Pro all trial (only Teams, the
   // `comingSoon` tier, has no trial). So: an eligible Free user (not already
-  // trialing, hasn't used their trial) clicking a trial-capable tier starts a
-  // trial for THAT tier; Teams (or any non-trial-eligible/`comingSoon` plan)
-  // falls through to normal checkout, as does anyone not trial-eligible.
+  // trialing, hasn't used their trial — task 1517: checked via `hasUsedTrial`,
+  // the server-truth `has_used_trial` combined with any same-session 409)
+  // clicking a trial-capable tier starts a trial for THAT tier; Teams (or any
+  // non-trial-eligible/`comingSoon` plan, or an account that already used its
+  // trial) falls through to normal checkout instead of ever attempting
+  // `startTrial()`.
   function handleUpgradeOrTrial(plan: string) {
-    const eligibleForTrial =
-      effectivePlan === 'free' &&
-      sub?.status !== 'trialing' &&
-      !trialUsed &&
-      !planMeta[plan]?.comingSoon
+    const eligibleForTrial = isTrialEligible({
+      effectivePlan,
+      subStatus: sub?.status,
+      hasUsedTrial,
+      targetComingSoon: planMeta[plan]?.comingSoon,
+    })
     if (eligibleForTrial) {
       void handleStartTrial(plan)
       return
@@ -1199,10 +1221,14 @@ function openUpgrade(plan: string) {
         await loadData()
         return
       }
+      // Task 1517 — never surface a raw error body (a server 409 for this
+      // endpoint can come back double-JSON-encoded; `request()` now unwraps
+      // that, but `userFriendlyError` is the belt-and-suspenders that keeps
+      // ANY opaque/JSON-shaped fragment from ever reaching this toast).
       showToast({
         icon: 'x',
         title: 'Could not start your trial',
-        description: err instanceof Error ? err.message : 'Please try again.',
+        description: userFriendlyError(err),
         danger: true,
       })
     } finally {
@@ -1252,10 +1278,12 @@ function openUpgrade(plan: string) {
         setConvertLoading(false)
         return
       }
+      // Task 1517 — see the matching comment in handleStartTrial: never show
+      // a raw error body in a toast.
       showToast({
         icon: 'x',
         title: 'Could not add a payment method',
-        description: err instanceof Error ? err.message : 'Please try again.',
+        description: userFriendlyError(err),
         danger: true,
       })
       setConvertLoading(false)
@@ -2234,10 +2262,12 @@ function openUpgrade(plan: string) {
             <div className="mt-4 flex gap-2">
               {effectivePlan === 'free' ? (
                 /* Free plan. When the user is eligible (status not already
-                   trialing, trial not previously used), the amber primary action
-                   is "Start 14-day free trial" (task 0905, Pattern B — no card).
-                   A 409 trial_already_used flips `trialUsed` and we fall back to
-                   the normal paid checkout entry.
+                   trialing, trial not previously used — task 1517: gated on
+                   `hasUsedTrial`, the server-truth `has_used_trial` field, not
+                   just a same-session 409), the amber primary action is "Start
+                   14-day free trial" (task 0905, Pattern B — no card). A 409
+                   trial_already_used flips `trialUsed` (defense-in-depth for a
+                   race) and we fall back to the normal paid checkout entry.
                    Task 1064 (D5): this pair used to hardcode Pro for the trial
                    and Basic for straight-to-checkout regardless of which tier
                    card the user actually wants — the labels now name the tier
@@ -2245,7 +2275,7 @@ function openUpgrade(plan: string) {
                    marketed tier except Teams offers one; see the "Compare
                    plans" table below, which is the precise per-tier entry
                    point via handleUpgradeOrTrial). */
-                sub?.status !== 'trialing' && !trialUsed ? (
+                sub?.status !== 'trialing' && !hasUsedTrial ? (
                   <>
                     <BBButton
                       variant="amber"
@@ -2312,8 +2342,9 @@ function openUpgrade(plan: string) {
             </div>
 
             {/* Trial offer subtext — honest, no emojis. Only under the Free-plan
-                eligible state (task 0905). */}
-            {effectivePlan === 'free' && sub?.status !== 'trialing' && !trialUsed && (
+                eligible state (task 0905); gated on `hasUsedTrial` (task 1517)
+                so an account that already used its trial never sees this. */}
+            {effectivePlan === 'free' && sub?.status !== 'trialing' && !hasUsedTrial && (
               <p className="mt-2.5 text-[11.5px] text-ink-3">
                 14 days free. No card required. Cancel anytime — you keep your files.
               </p>

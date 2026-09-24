@@ -458,6 +458,20 @@ export interface Subscription {
    */
   trial_ends_at?: string | null
   /**
+   * One-trial-per-account marker (task 0905/1517), mirrors `users.has_used_trial`.
+   * `true` once the account has EVER started a trial (whether it lapsed,
+   * converted, or is still running) — the server enforces this server-side on
+   * `POST /billing/trial/start` (409 `trial_already_used`), but the client MUST
+   * also read it to decide whether to show a trial CTA at all: task 1517 found
+   * every "Start trial" / compare-table "Upgrade" CTA blindly attempting a
+   * trial first and only discovering ineligibility from the 409, which (a)
+   * wastes a round trip and (b) surfaced a raw, unparsed error body when the
+   * server's conflict payload didn't unwrap cleanly. Gate the trial CTAs on
+   * this field directly — true means go straight to paid checkout, never
+   * attempt `startTrial()`.
+   */
+  has_used_trial?: boolean
+  /**
    * Whether the active billing provider supports subscription pause/resume
    * (task 0924). True only under Stripe; false under Mollie (no native pause).
    * The web cancel flow gates its "Pause instead?" step on this — a Mollie sub

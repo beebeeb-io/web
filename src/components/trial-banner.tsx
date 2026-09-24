@@ -34,6 +34,7 @@ import { useDriveData } from '../lib/drive-data-context'
 import { useToast } from './toast'
 import { convertTrial, ApiError } from '../lib/api'
 import { persistTrialConvertIntent } from '../lib/pending-checkout'
+import { userFriendlyError } from '../lib/user-friendly-error'
 
 /** Whole days remaining until an RFC3339 instant (ceil; never negative). */
 function daysLeft(iso: string): number {
@@ -110,10 +111,11 @@ export function TrialBanner() {
           return
         }
       }
+      // Task 1517 — never surface a raw error body in this toast.
       showToast({
         icon: 'x',
         title: 'Could not add a payment method',
-        description: err instanceof Error ? err.message : 'Please try again.',
+        description: userFriendlyError(err),
         danger: true,
       })
       setConverting(false)
