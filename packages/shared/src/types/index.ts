@@ -1191,7 +1191,12 @@ export interface AdminBillingStats {
   recent_invoices: Array<{
     id: string
     number: string
-    user_id: string
+    // Nullable (server PR #84, task 1369): a GDPR Art. 17 purge can delete
+    // the user while the invoice (a legal/bookkeeping record) is retained,
+    // so the FK is now ON DELETE SET NULL rather than blocking the purge.
+    // Kept in sync with repos/admin's own consumption of this same field —
+    // see AdminInvoiceListItem in repos/admin/src/lib/api.ts.
+    user_id: string | null
     amount_cents: number
     currency: string
     status: 'paid' | 'open' | 'void' | 'uncollectible'
@@ -1309,7 +1314,10 @@ export interface LifecycleRun {
   id: string
   pool_id: string
   target_pool_id: string
-  started_by: string
+  // Nullable (server PR #84, task 1369): a GDPR Art. 17 purge can delete the
+  // admin/system actor who started this run while the lifecycle run record
+  // itself (an operational audit record) is retained.
+  started_by: string | null
   started_at: string
   current_phase: LifecyclePhase
   outcome: LifecycleOutcome
