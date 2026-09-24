@@ -866,7 +866,14 @@ export interface PasskeyInfo {
 export interface PasskeyRegisterStartResponse {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   publicKey: any
-  reg_state: string
+  /**
+   * Task 1493: the registration challenge state now stays server-side
+   * (single-use, 5-minute TTL, bound to the caller's user_id). The client
+   * only gets this opaque id back and echoes it to `register-finish` — it
+   * never sees or edits the actual WebAuthn state any more (was
+   * `reg_state: string`, a client-editable base64 blob).
+   */
+  reg_id: string
 }
 
 export interface PasskeyLoginStartResponse {

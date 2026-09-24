@@ -8,27 +8,19 @@ import { Icon } from '@beebeeb/shared'
 import { useToast } from '../../components/toast'
 import { useKeys } from '../../lib/key-context'
 import { ChangePasswordDialog } from '../../components/change-password-dialog'
+import { StepUpAuth } from '../../components/step-up-auth'
 import { encryptForQr, generateCode } from '../../lib/qr-crypto'
 import {
   listSessions, revokeSession,
   listPasskeys, deletePasskey,
-  startPasskeyRegistration, finishPasskeyRegistration,
-  storeVaultKeyEscrow,
   setup2fa, enable2fa, disable2fa,
   getMe,
   getMySignIns,
-  serverOptsToCreateOptions, credentialToRegistrationJSON,
   type Session, type PasskeyInfo, type MySignIn,
 } from '../../lib/api'
-import { toBase64 } from '../../lib/crypto'
 import { getVaultTTL, setVaultTTL, TTL_OPTIONS } from '../../lib/session-persist'
-import {
-  prfExtensionInputs,
-  extractPrfOutput,
-  getVaultWrapKey,
-  encryptVaultBlob,
-  removeVaultWrapKey,
-} from '../../lib/passkey-vault'
+import { removeVaultWrapKey } from '../../lib/passkey-vault'
+import { useAddPasskeyFlow } from '../../hooks/use-add-passkey-flow'
 import QRCode from 'qrcode'
 
 /* ── Recovery phrase ────────────────────────────── */
@@ -237,65 +229,31 @@ function PasskeysSection() {
   const { getMasterKey, isUnlocked } = useKeys()
   const [passkeys, setPasskeys] = useState<PasskeyInfo[]>([])
   const [deletingId, setDeletingId] = useState<string | null>(null)
-  const [addingPasskey, setAddingPasskey] = useState(false)
 
   useEffect(() => {
     listPasskeys().then(setPasskeys).catch(() => {})
   }, [])
 
-  const handleAdd = useCallback(async () => {
-    setAddingPasskey(true)
-    try {
-      const { publicKey, reg_state } = await startPasskeyRegistration()
-      const createOpts = serverOptsToCreateOptions(publicKey)
-
-      // Request PRF extension for vault key derivation
-      const prfExt = prfExtensionInputs()
-      const credential = await navigator.credentials.create({
-        publicKey: {
-          ...createOpts,
-          extensions: {
-            ...createOpts.extensions,
-            ...prfExt,
-          },
-        },
-      }) as PublicKeyCredential | null
-      if (!credential) {
-        showToast({ icon: 'x', title: 'Passkey creation cancelled', danger: true })
-        return
-      }
-      const json = credentialToRegistrationJSON(credential)
-      const info = await finishPasskeyRegistration(json, reg_state)
-
-      // Wrap master key for passkey vault unlock
-      if (isUnlocked) {
-        try {
-          const credentialId = credential.id
-          const extensionResults = credential.getClientExtensionResults()
-          const prfOutput = extractPrfOutput(extensionResults)
-          const wrapKey = await getVaultWrapKey(credentialId, prfOutput, true)
-
-          if (wrapKey) {
-            const masterKey = getMasterKey()
-            const encryptedBlob = await encryptVaultBlob(wrapKey, masterKey)
-            await storeVaultKeyEscrow(credentialId, toBase64(encryptedBlob))
-          }
-        } catch (escrowErr) {
-          if (import.meta.env.DEV) {
-            console.warn('[settings/security] Vault key escrow failed:', escrowErr)
-          }
-        }
-      }
-
+  // Task 1493: adding a passkey now requires a fresh step-up (password, or
+  // a passkey assertion for passkey-only accounts) before the server will
+  // issue a registration challenge. `useAddPasskeyFlow` owns the step-up
+  // modal + the WebAuthn create ceremony + vault-key escrow wrapping —
+  // shared with passkey-setup.tsx and security.tsx.
+  const { stepUpOpen, adding, requestAddPasskey, closeStepUp, handleStepUpConfirmed } = useAddPasskeyFlow({
+    isUnlocked,
+    getMasterKey,
+    onAdded: (info) => {
       setPasskeys((prev) => [...prev, info])
       showToast({ icon: 'check', title: 'Passkey added' })
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to add passkey'
-      showToast({ icon: 'x', title: msg, danger: true })
-    } finally {
-      setAddingPasskey(false)
-    }
-  }, [showToast, isUnlocked, getMasterKey])
+    },
+    onError: (message) => {
+      showToast({ icon: 'x', title: message, danger: true })
+    },
+  })
+
+  const handleAdd = useCallback(() => {
+    requestAddPasskey()
+  }, [requestAddPasskey])
 
   const handleDelete = useCallback(async (id: string) => {
     try {
@@ -314,6 +272,13 @@ function PasskeysSection() {
       label="Passkeys"
       hint="Sign in with your device's biometrics instead of a password."
     >
+      <StepUpAuth
+        open={stepUpOpen}
+        onConfirmed={handleStepUpConfirmed}
+        onClose={closeStepUp}
+        description="Confirm your identity before adding a new passkey."
+        submitLabel="Continue"
+      />
       <div className="flex flex-col gap-2 max-w-[420px]">
         {passkeys.map((pk) => (
           <div key={pk.id ?? ''} className="flex flex-col gap-1">
@@ -346,9 +311,9 @@ function PasskeysSection() {
             )}
           </div>
         ))}
-        <BBButton size="sm" variant="ghost" onClick={handleAdd} disabled={addingPasskey}>
+        <BBButton size="sm" variant="ghost" onClick={handleAdd} disabled={adding}>
           <Icon name="plus" size={12} className="mr-1.5" />
-          {addingPasskey ? 'Adding...' : 'Add passkey'}
+          {adding ? 'Adding...' : 'Add passkey'}
         </BBButton>
       </div>
     </SettingsRow>
