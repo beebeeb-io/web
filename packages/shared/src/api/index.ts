@@ -30,5 +30,6 @@ export {
   ApiError,
   IncorrectPasswordError,
   SessionTooOldForConfirmationError,
+  parseErrorBody,
 } from './errors'
 export * from '../types'

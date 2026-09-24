@@ -21,6 +21,49 @@ export class ApiError extends Error {
 }
 
 /**
+ * Parse a non-2xx JSON error body into a clean `{ code, message }` pair.
+ *
+ * The normal shape is `{ "error": "<code>", "message": "<human text>" }` (or
+ * just `{ "error": "<code>" }` for endpoints that use the code itself as the
+ * human-readable slug, e.g. `already_redeemed`). Task 1517 found a class of
+ * server error paths that double-encode instead: the top-level `error` field
+ * is itself a JSON-stringified `{ error, message }` object rather than a bare
+ * code (root cause: `beebeeb-api`'s `ApiError::Conflict(String)` was given a
+ * pre-`json!(...).to_string()`-ed payload at a few call sites — e.g. the
+ * trial endpoints — but the generic `Conflict` render path wraps whatever
+ * string it gets in ANOTHER `{ "error": <string> }`, so the inner JSON never
+ * gets unwrapped server-side). Without this, `.code` ends up being the whole
+ * JSON string (never matching a caller's `===` check) and `.message` ends up
+ * being that same raw JSON blob — which was surfacing verbatim in toasts.
+ *
+ * Detects that shape and unwraps it so callers still get a clean `.code` /
+ * `.message`. Falls through to the plain shape when `error` isn't itself
+ * parseable JSON, so this is a no-op for every normal response.
+ */
+export function parseErrorBody(
+  body: Record<string, unknown>,
+  fallbackMessage: string,
+): { code: string | undefined; message: string } {
+  let code = typeof body.error === 'string' ? body.error : undefined
+  let message = (body.message ?? body.error ?? fallbackMessage) as string
+
+  if (code && code.startsWith('{')) {
+    try {
+      const inner = JSON.parse(code) as Record<string, unknown>
+      if (typeof inner.error === 'string') {
+        code = inner.error
+        message = typeof inner.message === 'string' ? inner.message : message
+      }
+    } catch {
+      // Not actually JSON after all — leave code/message as the raw string;
+      // still better than throwing here.
+    }
+  }
+
+  return { code, message }
+}
+
+/**
  * Thrown by `confirmAction` (and similar step-up flows) when the server
  * rejects the password during step-up re-auth. Distinct from `ApiError(401)`
  * because a wrong password during step-up must NOT clear the user's session
