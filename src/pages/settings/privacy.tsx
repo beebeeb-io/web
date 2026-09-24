@@ -12,7 +12,9 @@
 import { useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { SettingsShell, SettingsHeader } from '../../components/settings-shell'
-import { BBButton, BBToggle, getTelemetryConsent, setTelemetryConsent } from '@beebeeb/shared'
+import {
+  BBButton, BBToggle, getTelemetryConsent, setTelemetryConsent, isTelemetryConfigured,
+} from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useToast } from '../../components/toast'
 import { useAuth } from '../../lib/auth-context'
@@ -255,7 +257,17 @@ function ActivityTrackingCard() {
 
 // ── 2b. Error reports card ────────────────────────────────────────────────────
 
-function ErrorReportsCard() {
+/**
+ * Rendered by the parent whenever `isTelemetryConfigured() || getTelemetryConsent()`
+ * — i.e. either telemetry has a real DSN, or a user is already opted in from an
+ * earlier window when it did (task 1369b, Codex P2 on this same PR). While
+ * `configured` is false, the toggle can only turn CONSENT OFF, never back on:
+ * offering a fresh opt-in here would recreate the original bug (an opt-in that
+ * silently sends nothing), but a user who already said yes must still be able to
+ * see that and revoke it — otherwise a later deploy that restores the DSN would
+ * resume reporting before they ever got a chance to look at this setting again.
+ */
+function ErrorReportsCard({ configured }: { configured: boolean }) {
   const [on, setOn] = useState(getTelemetryConsent())
   return (
     <Card title="Error reports">
@@ -272,7 +284,11 @@ function ErrorReportsCard() {
         </div>
         <BBToggle
           on={on}
-          onChange={(next) => { setTelemetryConsent(next); setOn(next) }}
+          onChange={(next) => {
+            if (next && !configured) return // no DSN to opt in to — revoke-only until it's back
+            setTelemetryConsent(next)
+            setOn(next)
+          }}
           aria-label="Send error reports"
         />
       </div>
@@ -450,6 +466,12 @@ function YourRightsCard() {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export function SettingsPrivacy() {
+  const telemetryConfigured = isTelemetryConfigured()
+  // Show the card once telemetry has a real DSN, OR whenever a user is already
+  // opted in from an earlier window when it did — a stranded "on" must stay
+  // visible and revocable (Codex P2, task 1369b), never just silently hidden.
+  const showErrorReports = telemetryConfigured || getTelemetryConsent()
+
   return (
     <SettingsShell activeSection="privacy">
       <SettingsHeader
@@ -460,7 +482,7 @@ export function SettingsPrivacy() {
       <div className="flex flex-col gap-5 py-4">
         <DataExportCard />
         <ActivityTrackingCard />
-        <ErrorReportsCard />
+        {showErrorReports && <ErrorReportsCard configured={telemetryConfigured} />}
         <RestrictProcessingCard />
         <DeleteAccountCard />
         <YourRightsCard />
