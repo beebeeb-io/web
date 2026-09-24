@@ -5,10 +5,11 @@ import { defineConfig } from '@playwright/test'
  * requires a fresh step-up). Runs ONLY 1493-passkey-add-step-up.spec.ts
  * against a fully isolated stack the spec's author boots by hand:
  *   - server built from branch fix/1493-passkey-register-server-state-step-up
- *     (worktree ~/code/bb-worktrees/server-1493-e2e), a scratch DB
- *     (bb_1493_e2e), on :3101
+ *     (throwaway worktree, e.g. ~/code/bb-worktrees/server-1493-e2e2), a
+ *     scratch DB (bb_1493_e2e2), on :3101
  *   - this repo's `bunx vite` on :5273, VITE_API_URL pinned at the :3101 API
- *     (.env.local)
+ *     (.env.development.local — a bare .env.local is overridden by the
+ *     committed .env.development, see the spec's header comment)
  *
  * No global setup / storageState — each test drives its own fresh account
  * via the dev-only `/dev/auto-login` bypass (`?dev_email=...`), which is
