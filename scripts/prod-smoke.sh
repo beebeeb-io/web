@@ -342,10 +342,20 @@ build_cli() {
   fi
 
   local cli_src="$SCRATCH_DIR/cli-src"
+  # Set the global BEFORE calling `git worktree add`, not after (Codex P2 on
+  # PR #62): if SIGINT/SIGTERM lands while the checkout is still running — or
+  # in the gap between it returning and the assignment — the EXIT/INT/TERM
+  # trap fires with CLI_WORKTREE_PATH still empty, cleanup() skips `git
+  # worktree remove`, and the primary repos/cli's `.git/worktrees/<name>`
+  # registration is left dangling once the scratch dir is rm -rf'd out from
+  # under it (a retry reusing the same RUN_ID/path would then fail outright).
+  # Safe to assign early: cleanup()'s `git worktree remove --force
+  # "$CLI_WORKTREE_PATH"` simply fails (2>/dev/null) and falls through to
+  # rm -rf + prune when nothing was ever registered at that path.
+  CLI_WORKTREE_PATH="$cli_src"
   log "checking out disposable cli worktree @ $cli_rev into ${cli_src}…"
   git -C "$CLI_DIR" worktree add --detach --quiet "$cli_src" "$cli_rev" \
     || { echo "git worktree add failed for $cli_src @ $cli_rev" >&2; exit 1; }
-  CLI_WORKTREE_PATH="$cli_src"
 
   log "building bb CLI (repos/cli @ $(git -C "$cli_src" rev-parse --short HEAD), git-dependency build, no local core patch) into scratch target-dir…"
   ( cd "$cli_src" && cargo build --target-dir "$SCRATCH_DIR/cli-target" ) \
