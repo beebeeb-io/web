@@ -1,5 +1,6 @@
 import { Component } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
+import { reportError } from '@beebeeb/shared'
 import { ServerError } from '../pages/errors/server-error'
 
 interface Props {
@@ -22,8 +23,8 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    // Log to console now; Sentry integration later
     console.error('[ErrorBoundary] Uncaught error:', error, info.componentStack)
+    reportError(error, { boundary: 'react', componentStack: info.componentStack ?? '' })
   }
 
   render() {
