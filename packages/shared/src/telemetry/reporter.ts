@@ -40,6 +40,19 @@ interface State extends Required<Omit<TelemetryInit, 'storage'>> {
 
 let state: State | null = null
 
+/**
+ * Consent (opt-in flag + install id) lives in its own storage reference,
+ * independent of `state`/the transport half. This is set on every
+ * `initTelemetry` call regardless of whether the DSN is present or valid —
+ * so a user's choice stays readable and revocable even while telemetry is
+ * currently wired to no DSN (or a broken one). Without this split, removing
+ * or breaking the DSN would silently strand a previously-set "on" flag in
+ * storage where the user can no longer see or clear it, ready to resume
+ * reporting the moment a valid DSN comes back (Codex review, web PR #63,
+ * task 1369).
+ */
+let consentStorage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null = null
+
 /** `https://<key>@errors.beebeeb.io/<project>` → endpoint + public key. */
 function parseDsn(dsn: string): { endpoint: string; key: string } {
   const u = new URL(dsn)
@@ -62,51 +75,66 @@ function randomHex(bytes: number): string {
  * committed as a fallback default anywhere in this file.
  */
 export function initTelemetry(opts: TelemetryInit): void {
-  if (!opts.dsn) {
-    state = null
-    return
+  // Consent storage is wired up unconditionally, BEFORE anything that could
+  // throw — a user's opt-in/out choice must stay visible and revocable no
+  // matter what happens to DSN parsing below.
+  try {
+    consentStorage = opts.storage ?? globalThis.localStorage ?? null
+  } catch {
+    consentStorage = null
   }
-  const { endpoint, key } = parseDsn(opts.dsn)
-  state = {
-    dsn: opts.dsn,
-    client: opts.client,
-    release: opts.release,
-    environment: opts.environment,
-    storage: opts.storage ?? globalThis.localStorage,
-    fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis),
-    now: opts.now ?? (() => Date.now()),
-    endpoint,
-    key,
-    seen: new Set(),
-    sent: 0,
-    lastSentAt: -Infinity,
+
+  state = null
+  if (!opts.dsn) return
+
+  try {
+    const { endpoint, key } = parseDsn(opts.dsn)
+    state = {
+      dsn: opts.dsn,
+      client: opts.client,
+      release: opts.release,
+      environment: opts.environment,
+      storage: opts.storage ?? globalThis.localStorage,
+      fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis),
+      now: opts.now ?? (() => Date.now()),
+      endpoint,
+      key,
+      seen: new Set(),
+      sent: 0,
+      lastSentAt: -Infinity,
+    }
+  } catch {
+    // A malformed DSN (typo, bad copy-paste) must never throw out of here —
+    // this runs at module-boot time in main.tsx, before createRoot(). Stay
+    // fully inert instead of blanking the app (Codex review, web PR #63).
+    state = null
   }
 }
 
 export function getTelemetryConsent(): boolean {
   try {
-    return state?.storage.getItem(CONSENT_KEY) === 'on'
+    return consentStorage?.getItem(CONSENT_KEY) === 'on'
   } catch {
     return false
   }
 }
 
 export function setTelemetryConsent(on: boolean): void {
-  if (!state) return
+  if (!consentStorage) return
   try {
     if (on) {
-      state.storage.setItem(CONSENT_KEY, 'on')
-      if (!state.storage.getItem(INSTALL_KEY)) state.storage.setItem(INSTALL_KEY, randomHex(16))
+      consentStorage.setItem(CONSENT_KEY, 'on')
+      if (!consentStorage.getItem(INSTALL_KEY)) consentStorage.setItem(INSTALL_KEY, randomHex(16))
     } else {
-      state.storage.removeItem(CONSENT_KEY)
-      state.storage.removeItem(INSTALL_KEY)
+      consentStorage.removeItem(CONSENT_KEY)
+      consentStorage.removeItem(INSTALL_KEY)
     }
   } catch { /* storage unavailable — stay off */ }
 }
 
 function installId(): string {
   try {
-    return state?.storage.getItem(INSTALL_KEY) ?? 'unknown'
+    return consentStorage?.getItem(INSTALL_KEY) ?? 'unknown'
   } catch {
     return 'unknown'
   }
@@ -184,4 +212,5 @@ export function reportError(err: unknown, extra?: Record<string, string | number
 
 export function __resetTelemetryForTests(): void {
   state = null
+  consentStorage = null
 }

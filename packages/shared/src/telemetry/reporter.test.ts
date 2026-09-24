@@ -149,3 +149,56 @@ describe('volume control', () => {
     await Bun.sleep(1)
   })
 })
+
+// Codex review findings on web PR #63 (2026-09-24), both confirmed against the
+// code before being fixed:
+describe('malformed / absent configuration (Codex P1 + P2)', () => {
+  it('P1: a malformed DSN never throws out of initTelemetry — it must stay inert, not blank the app', () => {
+    __resetTelemetryForTests()
+    // initTelemetry() runs at module-boot time in main.tsx, before createRoot().
+    // A synchronous throw here previously meant ANY invalid VITE_ERROR_REPORTING_DSN
+    // value (a typo, a copy-paste mistake) would blank the entire app for every user —
+    // exactly the "never a white screen" failure mode this codebase forbids elsewhere
+    // (WasmGuard's own rule). Telemetry must degrade to "off", never take the app down.
+    expect(() => initTelemetry({
+      dsn: 'not-a-valid-dsn',
+      client: 'web',
+      release: 'web@1.0.0',
+      environment: 'test',
+      storage: memStorage(),
+    })).not.toThrow()
+    expect(getTelemetryConsent()).toBe(false)
+    expect(() => reportError(new Error('boom'))).not.toThrow()
+  })
+
+  it('P2: consent stays readable and revocable even when there is no valid DSN configured', async () => {
+    const storage = memStorage()
+    // Consent is granted while a real DSN is configured...
+    initTelemetry({
+      dsn: 'https://pub1234567890@errors.beebeeb.io/1',
+      client: 'web', release: 'web@1.0.0', environment: 'test', storage,
+    })
+    setTelemetryConsent(true)
+    expect(getTelemetryConsent()).toBe(true)
+
+    // ...then the DSN is removed (e.g. ops temporarily unsets
+    // VITE_ERROR_REPORTING_DSN) and the app re-inits with the SAME storage.
+    // Without this fix, getTelemetryConsent() would silently read as `false`
+    // (state === null), the settings toggle would render "off" even though the
+    // user never revoked anything, and clicking it to actually turn it off
+    // would be a no-op — leaving the stale `on` flag in storage to silently
+    // resume reporting the moment a DSN comes back, with no chance for the
+    // user to have turned it off in between.
+    initTelemetry({ dsn: '', client: 'web', release: 'web@1.0.0', environment: 'test', storage })
+    expect(getTelemetryConsent()).toBe(true)
+    setTelemetryConsent(false)
+    expect(getTelemetryConsent()).toBe(false)
+    expect(storage.getItem('bb_error_install')).toBeNull()
+
+    // And reportError still can't send anything without a valid DSN, consent
+    // notwithstanding — no transport, no event.
+    setTelemetryConsent(true)
+    reportError(new Error('boom'))
+    await Bun.sleep(1)
+  })
+})
