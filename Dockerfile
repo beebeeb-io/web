@@ -39,6 +39,16 @@ RUN sed -i 's|"@beebeeb/shared": "workspace:\*"|"@beebeeb/shared": "/shared"|' p
 ARG VITE_API_URL=https://api.beebeeb.io
 ENV VITE_API_URL=$VITE_API_URL
 
+# Error-reporting DSN (task 1369) — same "inlined at build time" story as
+# VITE_API_URL above. No default: an empty/unset value keeps the shared
+# telemetry reporter (`@beebeeb/shared/telemetry`) a no-op (see
+# `reporter.ts::initTelemetry`), so a build that forgets to pass this arg
+# fails safe (no reporting) rather than silently defaulting to some DSN. The
+# lead passes the real value from `deploy/glitchtip/README.md` at build
+# time — it is NEVER hard-coded here.
+ARG VITE_ERROR_REPORTING_DSN=
+ENV VITE_ERROR_REPORTING_DSN=$VITE_ERROR_REPORTING_DSN
+
 # Build provenance. The build context has no .git (.dockerignore:18) and line 29
 # removes any that slipped in, so the SHA must be injected. version.json is a
 # non-hashed control file like wasm-sri.json: the SPA-fallback location in
