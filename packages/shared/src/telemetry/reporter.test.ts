@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'bun:test'
 import {
   initTelemetry, reportError, getTelemetryConsent, setTelemetryConsent, __resetTelemetryForTests,
+  isTelemetryConfigured,
 } from './reporter'
 
 function memStorage() {
@@ -200,5 +201,52 @@ describe('malformed / absent configuration (Codex P1 + P2)', () => {
     setTelemetryConsent(true)
     reportError(new Error('boom'))
     await Bun.sleep(1)
+  })
+})
+
+// Task 1369b: the settings "Error reports" card must only render while
+// telemetry is actually wired to a real DSN — otherwise it offers an opt-in
+// that silently sends nothing (errors.beebeeb.io has no DNS record yet).
+// `isTelemetryConfigured()` is the single source of truth the UI gates on.
+describe('isTelemetryConfigured', () => {
+  it('is false before initTelemetry has ever been called', () => {
+    __resetTelemetryForTests()
+    expect(isTelemetryConfigured()).toBe(false)
+  })
+
+  it('is false with an empty DSN (the shipped no-DNS-yet state)', () => {
+    __resetTelemetryForTests()
+    initTelemetry({ dsn: '', client: 'web', release: 'web@1.0.0', environment: 'test', storage: memStorage() })
+    expect(isTelemetryConfigured()).toBe(false)
+  })
+
+  it('is false with a malformed DSN that fails to parse', () => {
+    __resetTelemetryForTests()
+    initTelemetry({
+      dsn: 'not-a-valid-dsn', client: 'web', release: 'web@1.0.0', environment: 'test',
+      storage: memStorage(),
+    })
+    expect(isTelemetryConfigured()).toBe(false)
+  })
+
+  it('is true once initTelemetry succeeds with a valid DSN', () => {
+    __resetTelemetryForTests()
+    initTelemetry({
+      dsn: 'https://pub1234567890@errors.beebeeb.io/1', client: 'web', release: 'web@1.0.0',
+      environment: 'test', storage: memStorage(),
+    })
+    expect(isTelemetryConfigured()).toBe(true)
+  })
+
+  it('flips back to false if telemetry is re-initialized with no DSN', () => {
+    __resetTelemetryForTests()
+    const storage = memStorage()
+    initTelemetry({
+      dsn: 'https://pub1234567890@errors.beebeeb.io/1', client: 'web', release: 'web@1.0.0',
+      environment: 'test', storage,
+    })
+    expect(isTelemetryConfigured()).toBe(true)
+    initTelemetry({ dsn: '', client: 'web', release: 'web@1.0.0', environment: 'test', storage })
+    expect(isTelemetryConfigured()).toBe(false)
   })
 })

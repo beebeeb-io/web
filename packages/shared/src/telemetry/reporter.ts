@@ -111,6 +111,19 @@ export function initTelemetry(opts: TelemetryInit): void {
   }
 }
 
+/**
+ * True only when `initTelemetry` was called with a DSN that parsed
+ * successfully — i.e. `state` is non-null. While this is false, `reportError`
+ * is a guaranteed no-op (no DSN → nothing to send to), so any UI offering an
+ * opt-in to "send crash reports" is describing a capability the app does not
+ * currently have and must not render (task 1369: the settings card was
+ * shipping unconditionally, offering an opt-in that silently sent nothing
+ * while errors.beebeeb.io had no DNS record).
+ */
+export function isTelemetryConfigured(): boolean {
+  return state !== null
+}
+
 export function getTelemetryConsent(): boolean {
   try {
     return consentStorage?.getItem(CONSENT_KEY) === 'on'

@@ -2,7 +2,31 @@ import { test, expect } from '@playwright/test'
 
 const INGEST = /errors\.beebeeb\.io\/api\/\d+\/envelope\//
 
-test('the toggle renders with the honest copy', async ({ page }) => {
+// Task 1369b: the "Error reports" settings card renders `isTelemetryConfigured()
+// && <ErrorReportsCard />` — it must not exist in the DOM at all while telemetry
+// has no DSN wired up (the shipped state until errors.beebeeb.io has DNS). Before
+// this fix the card rendered unconditionally, offering an opt-in that silently
+// sent nothing — this test was RED on main (the card was present with no DSN).
+test('the error reports card is absent when telemetry has no DSN configured', async ({ page }) => {
+  test.skip(
+    !!process.env.VITE_ERROR_REPORTING_DSN,
+    'this run has a DSN baked into the served build — see the "present" test below',
+  )
+  await page.goto('/settings/privacy')
+  // Prove the page actually loaded before asserting an absence — an
+  // absence on a blank/broken page is not evidence of the gate working.
+  await expect(page.getByText('Restrict processing')).toBeVisible({ timeout: 15000 })
+  await expect(page.getByText('Send error reports')).toHaveCount(0)
+})
+
+test('the toggle renders with the honest copy once telemetry has a DSN', async ({ page }) => {
+  // Only meaningful with VITE_ERROR_REPORTING_DSN set for this test run (see
+  // e2e/scripts/error-telemetry-dsn.sh / package.json's test:e2e:telemetry) —
+  // main.tsx's initTelemetry() is a guaranteed no-op on an empty DSN
+  // (errors.beebeeb.io has no DNS record yet, task 1369), and NO real or fake
+  // DSN is committed as a default anywhere. Without the env var this test's own
+  // assertions (not the app) fail loudly rather than silently pass on a no-op.
+  test.skip(!process.env.E2E_ERROR_TELEMETRY, 'set VITE_ERROR_REPORTING_DSN + E2E_ERROR_TELEMETRY=1 to run')
   await page.goto('/settings/privacy')
   await expect(page.getByText('Send error reports')).toBeVisible({ timeout: 15000 })
   await expect(page.getByText('Off by default.')).toBeVisible()

@@ -12,7 +12,9 @@
 import { useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { SettingsShell, SettingsHeader } from '../../components/settings-shell'
-import { BBButton, BBToggle, getTelemetryConsent, setTelemetryConsent } from '@beebeeb/shared'
+import {
+  BBButton, BBToggle, getTelemetryConsent, setTelemetryConsent, isTelemetryConfigured,
+} from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useToast } from '../../components/toast'
 import { useAuth } from '../../lib/auth-context'
@@ -460,7 +462,7 @@ export function SettingsPrivacy() {
       <div className="flex flex-col gap-5 py-4">
         <DataExportCard />
         <ActivityTrackingCard />
-        <ErrorReportsCard />
+        {isTelemetryConfigured() && <ErrorReportsCard />}
         <RestrictProcessingCard />
         <DeleteAccountCard />
         <YourRightsCard />
