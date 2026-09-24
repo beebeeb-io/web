@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect, lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import type { ReactNode } from 'react'
+import { reportError } from '@beebeeb/shared'
 import { AuthProvider, useAuth } from './lib/auth-context'
 import { KeyProvider, useKeys } from './lib/key-context'
 import { sanitizeRedirect } from './lib/safe-redirect'
@@ -275,10 +276,12 @@ function ApiErrorWiring() {
   // Global handler for unhandled promise rejections (useEffect async errors,
   // fire-and-forget fetches, etc.). These do NOT trigger the React ErrorBoundary
   // — class component boundaries only catch render-phase errors. This handler
-  // logs them in dev and provides a hook for Sentry in production.
+  // logs them in dev and reports to our own GlitchTip in Falkenstein when the
+  // user has opted in.
   useEffect(() => {
     function handleUnhandledRejection(ev: PromiseRejectionEvent) {
       console.error('[unhandledRejection] Unhandled promise rejection:', ev.reason)
+      reportError(ev.reason, { boundary: 'unhandledrejection' })
       // Do NOT call ev.preventDefault() — keep the browser's native
       // "Uncaught (in promise)" warning visible in DevTools.
     }

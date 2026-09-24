@@ -12,7 +12,7 @@
 import { useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { SettingsShell, SettingsHeader } from '../../components/settings-shell'
-import { BBButton } from '@beebeeb/shared'
+import { BBButton, BBToggle, getTelemetryConsent, setTelemetryConsent } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useToast } from '../../components/toast'
 import { useAuth } from '../../lib/auth-context'
@@ -253,6 +253,33 @@ function ActivityTrackingCard() {
   )
 }
 
+// ── 2b. Error reports card ────────────────────────────────────────────────────
+
+function ErrorReportsCard() {
+  const [on, setOn] = useState(getTelemetryConsent())
+  return (
+    <Card title="Error reports">
+      <div className="flex items-start gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="text-[13px] font-medium text-ink">Send error reports</div>
+          <p className="text-[12px] text-ink-3 mt-1 leading-snug">
+            Off by default. When on, this app sends us the technical details of a crash: the error
+            message, where in our code it happened, your platform and app version, and a random ID
+            for this install. It never sends file names, folder names, links, your email, your
+            account ID, or anything from inside your files. Reports go to our own server in
+            Falkenstein, Germany and are deleted after 90 days.
+          </p>
+        </div>
+        <BBToggle
+          on={on}
+          onChange={(next) => { setTelemetryConsent(next); setOn(next) }}
+          aria-label="Send error reports"
+        />
+      </div>
+    </Card>
+  )
+}
+
 // ── 3. Restrict processing card ───────────────────────────────────────────────
 
 function RestrictProcessingCard() {
@@ -433,6 +460,7 @@ export function SettingsPrivacy() {
       <div className="flex flex-col gap-5 py-4">
         <DataExportCard />
         <ActivityTrackingCard />
+        <ErrorReportsCard />
         <RestrictProcessingCard />
         <DeleteAccountCard />
         <YourRightsCard />
