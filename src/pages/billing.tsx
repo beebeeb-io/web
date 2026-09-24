@@ -1172,6 +1172,28 @@ function openUpgrade(plan: string) {
       setPendingCheckout(pending.kind, action.plan, action.cycle, makePreState(sub), payment_id)
       window.location.href = url
     } catch (err) {
+      // Task 1518 (server PR #94) — the subscription this resume was trying
+      // to recreate got reset because it was created while Mollie was in
+      // test mode; the account is back on the free plan server-side. The
+      // stale pending-checkout marker is now moot, and the page's `sub`
+      // state still shows the pre-reset plan — reload it so the summary
+      // reflects reality before the toast even lands.
+      if (err instanceof ApiError && err.code === 'billing_reset_test_mode') {
+        clearPendingCheckout()
+        // Also clears the checkout watchdog banner — it reads the same
+        // intent this resume was trying to recreate, and offering to
+        // "resume" a checkout for a now-reset subscription would just
+        // reproduce this same error again.
+        setPendingCheckoutState(null)
+        await loadData()
+        showToast({
+          icon: 'info',
+          title: 'Subscription reset',
+          description: userFriendlyError(err),
+        })
+        setResumeCheckoutLoading(false)
+        return
+      }
       showToast({
         icon: 'x',
         title: 'Could not resume checkout',
