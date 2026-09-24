@@ -28,8 +28,11 @@
 #     -Atc "select count(*) from users where email like 'smoke+%'"
 # BB_RATE_LIMIT_DISABLED=1 and the pilot-key gate are set explicitly on this
 # instance — never assumed from whatever the shared :3001 API happens to be
-# running with. Also builds `repos/cli` (main, unmodified) into a SCRATCH
-# target-dir inside this worktree and runs it with an ISOLATED HOME — the
+# running with. Also builds `repos/cli` (origin/main by default, or
+# E2E_CLI_REV) from a DISPOSABLE `git worktree add --detach` copy — never the
+# primary repos/cli checkout itself (task 1502: building inside the primary
+# silently rewrote its Cargo.lock via the local `.cargo/config.toml` core
+# patch) — into a SCRATCH target-dir and runs it with an ISOLATED HOME — the
 # operator's real ~ holds a live prod CLI session and is never touched.
 #
 # ── --target prod ────────────────────────────────────────────────────────
@@ -167,6 +170,10 @@ CRED_FILE="$SCRATCH_DIR/prod-credentials.json"
 
 API_PID=""
 VITE_PID=""
+# Disposable `git worktree add --detach` checkout of repos/cli that build_cli()
+# compiles the CLI from (task 1502) — set as soon as the worktree is created
+# so cleanup() can always remove it, even if the build itself then fails.
+CLI_WORKTREE_PATH=""
 
 # Guards re-entrancy: a signal-triggered trap (INT/TERM) calls `exit` at the
 # end of cleanup(), which itself fires the EXIT trap again — without this
@@ -184,6 +191,18 @@ cleanup() {
   if [ -n "$VITE_PID" ]; then kill -- -"$VITE_PID" 2>/dev/null || kill "$VITE_PID" 2>/dev/null || true; fi
   if [ -n "$API_PID" ]; then kill -- -"$API_PID" 2>/dev/null || kill "$API_PID" 2>/dev/null || true; fi
   sleep 1
+
+  # Remove the disposable cli worktree (task 1502) — `git worktree remove`
+  # (not a bare `rm -rf`) so the PRIMARY repos/cli checkout's
+  # .git/worktrees/<name> administrative entry is cleaned up promptly rather
+  # than left dangling until a future `git worktree prune`.
+  if [ -n "$CLI_WORKTREE_PATH" ]; then
+    log "removing disposable cli worktree ${CLI_WORKTREE_PATH}…"
+    git -C "$CLI_DIR" worktree remove --force "$CLI_WORKTREE_PATH" 2>/dev/null || {
+      rm -rf "$CLI_WORKTREE_PATH" 2>/dev/null || true
+      git -C "$CLI_DIR" worktree prune 2>/dev/null || true
+    }
+  fi
 
   # Trap-based account cleanup (see header) — runs unconditionally, hits the
   # shared DB directly, independent of whether the suite's own step 10
@@ -279,19 +298,88 @@ if ! command -v setsid >/dev/null 2>&1; then
   setsid() { exec "$@"; }
 fi
 
-# ── Build the CLI (repos/cli @ main, UNMODIFIED) into a scratch target-dir
-#    INSIDE THIS WORKTREE — never repos/cli's own target/, never repos/cli's
-#    source. Safe for both targets (pure compile, no prod contact). ────────
+# ── Build the CLI from a DISPOSABLE `git worktree add --detach` copy of
+#    repos/cli — never inside the primary repos/cli checkout itself. ───────
+#
+# (task 1502) The previous version ran `cargo build` directly inside
+# CLI_DIR. repos/cli/.cargo/config.toml is gitignored, local-dev-only, and
+# `[patch]`es the beebeeb-core/beebeeb-types git dependency to `../core` — so
+# every build inside the primary checkout silently REWROTE its Cargo.lock,
+# dropping the `source = "git+https://github.com/beebeeb-io/core?rev=…"`
+# lines for both crates (seen red below: reproduced on 2026-09-23's harness
+# run and again while fixing this task — see the diff in the task's Notes).
+# The lead had to hand-restore it with `git checkout -- Cargo.lock` both
+# times, and nothing stopped a THIRD accidental rewrite from ever landing.
+#
+# Fix: `git worktree add --detach` a throwaway checkout of repos/cli into
+# SCRATCH_DIR and build there. A worktree shares the parent repo's objects
+# and refs but is a SEPARATE working tree with its own (nonexistent)
+# .cargo/config.toml — so it builds against the beebeeb-core GIT DEPENDENCY,
+# not a local path patch, exactly like CI and the release build do. That is
+# deliberate: this harness is meant to smoke-test what actually ships, and a
+# fresh worktree gives us that for free instead of having to reason about
+# whether `cargo build --locked` would also refuse to rewrite the lock under
+# the patch (untested; the worktree sidesteps the question entirely).
 build_cli() {
   wait_for_load
-  log "building bb CLI (repos/cli @ $(git -C "$CLI_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)) into scratch target-dir…"
-  ( cd "$CLI_DIR" && cargo build --target-dir "$SCRATCH_DIR/cli-target" ) \
+
+  # Snapshot the primary checkout's HEAD + working-tree status before
+  # touching anything, so the post-build assertion below has a baseline
+  # (see that assertion for why: `git worktree add` on the primary's own
+  # repo must not perturb either).
+  local cli_head_before cli_status_before
+  cli_head_before="$(git -C "$CLI_DIR" rev-parse HEAD)"
+  cli_status_before="$(git -C "$CLI_DIR" status --porcelain)"
+
+  # <rev> defaults to origin/main (CI-identical); E2E_CLI_REV pins a specific
+  # commit instead (e.g. to reproduce a specific harness run).
+  local cli_rev="${E2E_CLI_REV:-}"
+  if [ -z "$cli_rev" ]; then
+    log "fetching origin/main for repos/cli (updates only .git/refs/remotes — never the primary checkout's tracked files or HEAD)…"
+    git -C "$CLI_DIR" fetch --quiet origin main \
+      || { echo "git fetch origin main failed in $CLI_DIR" >&2; exit 1; }
+    cli_rev="$(git -C "$CLI_DIR" rev-parse origin/main)"
+  fi
+
+  local cli_src="$SCRATCH_DIR/cli-src"
+  # Set the global BEFORE calling `git worktree add`, not after (Codex P2 on
+  # PR #62): if SIGINT/SIGTERM lands while the checkout is still running — or
+  # in the gap between it returning and the assignment — the EXIT/INT/TERM
+  # trap fires with CLI_WORKTREE_PATH still empty, cleanup() skips `git
+  # worktree remove`, and the primary repos/cli's `.git/worktrees/<name>`
+  # registration is left dangling once the scratch dir is rm -rf'd out from
+  # under it (a retry reusing the same RUN_ID/path would then fail outright).
+  # Safe to assign early: cleanup()'s `git worktree remove --force
+  # "$CLI_WORKTREE_PATH"` simply fails (2>/dev/null) and falls through to
+  # rm -rf + prune when nothing was ever registered at that path.
+  CLI_WORKTREE_PATH="$cli_src"
+  log "checking out disposable cli worktree @ $cli_rev into ${cli_src}…"
+  git -C "$CLI_DIR" worktree add --detach --quiet "$cli_src" "$cli_rev" \
+    || { echo "git worktree add failed for $cli_src @ $cli_rev" >&2; exit 1; }
+
+  log "building bb CLI (repos/cli @ $(git -C "$cli_src" rev-parse --short HEAD), git-dependency build, no local core patch) into scratch target-dir…"
+  ( cd "$cli_src" && cargo build --target-dir "$SCRATCH_DIR/cli-target" ) \
     || { echo "cli build failed — see output above" >&2; exit 1; }
   CLI_BIN_PATH="$SCRATCH_DIR/cli-target/debug/bb"
   [ -x "$CLI_BIN_PATH" ] || { echo "cli binary missing after build: $CLI_BIN_PATH" >&2; exit 1; }
   CLI_HOME_DIR="$SCRATCH_DIR/cli-home"
   mkdir -p "$CLI_HOME_DIR"
   log "cli binary: $CLI_BIN_PATH · isolated HOME: $CLI_HOME_DIR"
+
+  # Post-run assertion (task 1502's declared Verification): the primary
+  # repos/cli checkout must come out of this build byte-for-byte as it went
+  # in — neither its HEAD nor its working-tree status may have moved. This
+  # is what makes the fix a proof, not just a belief that worktrees are
+  # isolated.
+  local cli_head_after cli_status_after
+  cli_head_after="$(git -C "$CLI_DIR" rev-parse HEAD)"
+  cli_status_after="$(git -C "$CLI_DIR" status --porcelain)"
+  if [ "$cli_head_after" != "$cli_head_before" ] || [ "$cli_status_after" != "$cli_status_before" ]; then
+    echo "FATAL (task 1502 regression): the primary repos/cli checkout was touched by the CLI build." >&2
+    echo "  HEAD before=$cli_head_before after=$cli_head_after" >&2
+    echo "  status before=[$cli_status_before] after=[$cli_status_after]" >&2
+    exit 1
+  fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
