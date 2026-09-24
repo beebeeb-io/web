@@ -1,28 +1,18 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { SettingsShell, SettingsHeader } from '../components/settings-shell'
+import { StepUpAuth } from '../components/step-up-auth'
 import { BBButton } from '@beebeeb/shared'
 import { BBChip } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import {
-  startPasskeyRegistration,
-  finishPasskeyRegistration,
   listPasskeys,
   deletePasskey,
-  serverOptsToCreateOptions,
-  credentialToRegistrationJSON,
-  storeVaultKeyEscrow,
   type PasskeyInfo,
 } from '../lib/api'
 import { useKeys } from '../lib/key-context'
-import { toBase64 } from '../lib/crypto'
-import {
-  prfExtensionInputs,
-  extractPrfOutput,
-  getVaultWrapKey,
-  encryptVaultBlob,
-  removeVaultWrapKey,
-} from '../lib/passkey-vault'
+import { removeVaultWrapKey } from '../lib/passkey-vault'
+import { useAddPasskeyFlow } from '../hooks/use-add-passkey-flow'
 
 // ─── Device detection ──────────────────────────────
 
@@ -81,7 +71,6 @@ export function PasskeySetup() {
   const { getMasterKey, isUnlocked } = useKeys()
   const [device] = useState(detectDevice)
   const [passkeys, setPasskeys] = useState<PasskeyInfo[]>([])
-  const [registering, setRegistering] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
@@ -98,75 +87,29 @@ export function PasskeySetup() {
     }
   }
 
-  async function handleRegister() {
-    setError('')
-    setSuccess('')
-    setRegistering(true)
-
-    try {
-      // Step 1: Get challenge from server (binary fields are base64url strings)
-      const startRes = await startPasskeyRegistration()
-
-      // Step 2: Convert server options to browser-compatible format
-      // (base64url strings → ArrayBuffers for challenge, user.id, excludeCredentials[].id)
-      const createOptions = serverOptsToCreateOptions(startRes.publicKey)
-
-      // Step 3: Call WebAuthn API with PRF extension for vault key derivation
-      const prfExt = prfExtensionInputs()
-      const credential = await navigator.credentials.create({
-        publicKey: {
-          ...createOptions,
-          extensions: {
-            ...createOptions.extensions,
-            ...prfExt,
-          },
-        },
-      }) as PublicKeyCredential | null
-
-      if (!credential) {
-        setError('Passkey creation was cancelled')
-        setRegistering(false)
-        return
-      }
-
-      // Step 4: Convert credential response to JSON for webauthn-rs
-      // (ArrayBuffers → base64url strings)
-      const credentialData = credentialToRegistrationJSON(credential)
-
-      // Step 5: Send to server to complete registration
-      await finishPasskeyRegistration(credentialData, startRes.reg_state, device.name)
-
-      // Step 6: Wrap the master key for passkey vault unlock (if vault is unlocked)
-      if (isUnlocked) {
-        try {
-          const credentialId = credential.id
-          const extensionResults = credential.getClientExtensionResults()
-          const prfOutput = extractPrfOutput(extensionResults)
-
-          // Get or generate the vault wrap key
-          const wrapKey = await getVaultWrapKey(credentialId, prfOutput, true)
-
-          if (wrapKey) {
-            const masterKey = getMasterKey()
-            const encryptedBlob = await encryptVaultBlob(wrapKey, masterKey)
-            await storeVaultKeyEscrow(credentialId, toBase64(encryptedBlob))
-          }
-        } catch (escrowErr) {
-          // Vault key escrow is non-critical — passkey auth still works,
-          // user just needs password for vault unlock on this device
-          if (import.meta.env.DEV) {
-            console.warn('[passkey-setup] Vault key escrow failed:', escrowErr)
-          }
-        }
-      }
-
+  // Task 1493: adding a passkey now requires a fresh step-up (password, or
+  // a passkey assertion for passkey-only accounts) before the server will
+  // issue a registration challenge. `useAddPasskeyFlow` owns the step-up
+  // modal + the WebAuthn create ceremony + vault-key escrow wrapping —
+  // shared with security.tsx and settings/security.tsx.
+  const { stepUpOpen, adding, requestAddPasskey, closeStepUp, handleStepUpConfirmed } = useAddPasskeyFlow({
+    isUnlocked,
+    getMasterKey,
+    onAdded: () => {
+      setError('')
       setSuccess('Passkey created successfully')
       loadPasskeys()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create passkey')
-    } finally {
-      setRegistering(false)
-    }
+    },
+    onError: (message) => {
+      setSuccess('')
+      setError(message)
+    },
+  })
+
+  function handleRegister() {
+    setError('')
+    setSuccess('')
+    requestAddPasskey(device.name)
   }
 
   async function handleDelete(id: string) {
@@ -181,6 +124,13 @@ export function PasskeySetup() {
 
   return (
     <SettingsShell activeSection="account">
+      <StepUpAuth
+        open={stepUpOpen}
+        onConfirmed={handleStepUpConfirmed}
+        onClose={closeStepUp}
+        description="Confirm your identity before adding a new passkey."
+        submitLabel="Continue"
+      />
       <SettingsHeader
         title="Passkeys"
         subtitle="Faster sign-in. Tied to this device's secure enclave. Replaces your password on trusted devices."
@@ -223,10 +173,10 @@ export function PasskeySetup() {
           size="lg"
           className="w-full gap-2"
           onClick={handleRegister}
-          disabled={registering}
+          disabled={adding}
         >
           <Icon name="key" size={13} />
-          {registering ? 'Waiting for device...' : `Create passkey with ${device.authMethod}`}
+          {adding ? 'Waiting for device...' : `Create passkey with ${device.authMethod}`}
         </BBButton>
 
         {error && (

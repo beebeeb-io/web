@@ -3,10 +3,18 @@ import { BBButton, BBInput, Icon } from '@beebeeb/shared'
 import { useFocusTrap } from '../hooks/use-focus-trap'
 import {
   confirmAction,
+  confirmPasskey,
   IncorrectPasswordError,
   SessionTooOldForConfirmationError,
 } from '../lib/api'
 import { useToast } from './toast'
+
+// True when the browser implements the WebAuthn API at all (matches the
+// existing `showPasskeyLogin`/`canUsePasskey` checks in login.tsx,
+// vault-unlock.tsx and device-provision.tsx). Passkey-only accounts have no
+// password to type here, so this modal must offer the passkey path — not
+// just password accounts that happen to also hold a passkey.
+const webauthnSupported = typeof window !== 'undefined' && !!window.PublicKeyCredential
 
 interface StepUpAuthProps {
   open: boolean
@@ -25,6 +33,7 @@ export function StepUpAuth({
   description = 'Enter your password to continue.',
   submitLabel = 'Confirm',
 }: StepUpAuthProps) {
+  const [mode, setMode] = useState<'password' | 'passkey'>('password')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -37,6 +46,7 @@ export function StepUpAuth({
 
   useEffect(() => {
     if (!open) return
+    setMode('password')
     setPassword('')
     setError(null)
     setLoading(false)
@@ -67,17 +77,38 @@ export function StepUpAuth({
     }
   }, [close, loading, onConfirmed, password, showToast])
 
+  // Passkey-assertion step-up (task 1493) — the only path available to a
+  // passkey-only account (no password/OPAQUE credential exists to type
+  // here), and offered to every account as an alternative to typing a
+  // password. Runs `confirmPasskey()` (a fresh WebAuthn assertion against
+  // the caller's OWN passkeys) and hands the resulting X-Confirm-Token to
+  // the same `onConfirmed` callback the password path uses — callers never
+  // need to know which method produced the token.
+  const handlePasskeySubmit = useCallback(async () => {
+    if (loading) return
+    setLoading(true)
+    setError(null)
+    try {
+      const { confirmation_token } = await confirmPasskey()
+      onConfirmed(confirmation_token)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not confirm your identity')
+    } finally {
+      setLoading(false)
+    }
+  }, [loading, onConfirmed])
+
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
       if (event.key === 'Enter') {
         event.preventDefault()
-        void handleSubmit()
+        if (mode === 'password') void handleSubmit()
       } else if (event.key === 'Escape') {
         event.preventDefault()
         close()
       }
     },
-    [close, handleSubmit],
+    [close, handleSubmit, mode],
   )
 
   if (!open) return null
@@ -111,31 +142,95 @@ export function StepUpAuth({
 
         <div className="p-xl">
           <p className="text-[12.5px] text-ink-2 leading-relaxed mb-md">{description}</p>
-          <BBInput
-            label="Password"
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            placeholder="Your password"
-            autoComplete="current-password"
-            autoFocus
-            error={error ?? undefined}
-            className="mb-lg"
-          />
 
-          <div className="flex gap-2 justify-end">
-            <BBButton size="md" onClick={close} disabled={loading}>
-              Cancel
-            </BBButton>
-            <BBButton
-              size="md"
-              variant="amber"
-              onClick={handleSubmit}
-              disabled={!password || loading}
-            >
-              {loading ? 'Confirming...' : submitLabel}
-            </BBButton>
-          </div>
+          {mode === 'password' ? (
+            <>
+              <BBInput
+                label="Password"
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="Your password"
+                autoComplete="current-password"
+                autoFocus
+                error={error ?? undefined}
+                className="mb-lg"
+              />
+
+              <div className="flex items-center justify-between gap-3">
+                {webauthnSupported ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode('passkey')
+                      setError(null)
+                    }}
+                    disabled={loading}
+                    className="text-[12px] text-ink-3 hover:text-ink transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    Use a passkey instead
+                  </button>
+                ) : (
+                  <span />
+                )}
+                <div className="flex gap-2">
+                  <BBButton size="md" onClick={close} disabled={loading}>
+                    Cancel
+                  </BBButton>
+                  <BBButton
+                    size="md"
+                    variant="amber"
+                    onClick={handleSubmit}
+                    disabled={!password || loading}
+                  >
+                    {loading ? 'Confirming...' : submitLabel}
+                  </BBButton>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-2.5 rounded-md border border-line bg-paper-2 px-3 py-2.5 mb-lg">
+                <Icon name="shield" size={14} className="text-ink-3 shrink-0" />
+                <p className="text-[12px] text-ink-2 leading-relaxed">
+                  Your browser will ask you to confirm with Touch ID, Face ID, Windows Hello, or a
+                  security key.
+                </p>
+              </div>
+              {error && (
+                <p className="text-[12px] text-red mb-md" role="alert">
+                  {error}
+                </p>
+              )}
+
+              <div className="flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode('password')
+                    setError(null)
+                  }}
+                  disabled={loading}
+                  className="text-[12px] text-ink-3 hover:text-ink transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  Use your password instead
+                </button>
+                <div className="flex gap-2">
+                  <BBButton size="md" onClick={close} disabled={loading}>
+                    Cancel
+                  </BBButton>
+                  <BBButton
+                    size="md"
+                    variant="amber"
+                    onClick={handlePasskeySubmit}
+                    disabled={loading}
+                  >
+                    {loading ? 'Confirming...' : 'Confirm with passkey'}
+                  </BBButton>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

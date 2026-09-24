@@ -729,6 +729,84 @@ async function confirmActionPlaintext(
   return res.json() as Promise<{ confirmation_token: string; expires_at: string }>
 }
 
+/**
+ * Passkey-assertion step-up confirmation (task 1493). The counterpart to
+ * `confirmAction(password)` for accounts that have no password/OPAQUE
+ * credential to re-prove — a passkey-only account (`pending_signup_complete`)
+ * has `password_hash = ''` and no `opaque_password_file`, so BOTH
+ * `confirm_password` and `confirm_opaque_start` are permanently unable to
+ * re-verify it. This runs a FRESH WebAuthn assertion against the account's
+ * own passkeys via the server's `/auth/confirm-passkey-start` +
+ * `/auth/confirm-passkey-finish`, which mint the byte-identical single-use
+ * X-Confirm-Token every other step-up path does — so the return shape
+ * (`{ confirmation_token, expires_at }`) and every downstream call site are
+ * unchanged.
+ *
+ * Direct fetch (not request()), same reasoning as `confirmAction`: a
+ * cancelled/failed WebAuthn ceremony here must never clear the session or
+ * bounce the user to /login — they are still logged in.
+ */
+export async function confirmPasskey(): Promise<{ confirmation_token: string; expires_at: string }> {
+  const token = getToken()
+  const authHeaders: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+  if (token) authHeaders['Authorization'] = `Bearer ${token}`
+
+  const startRes = await fetch(`${API_URL}/api/v1/auth/confirm-passkey-start`, {
+    method: 'POST',
+    headers: authHeaders,
+    credentials: 'include',
+  })
+
+  if (!startRes.ok) {
+    const body = (await startRes
+      .json()
+      .catch(() => ({ error: 'Server returned an invalid response' }))) as Record<string, unknown>
+    throw new ApiError(
+      (body.message ?? body.error ?? startRes.statusText) as string,
+      startRes.status,
+    )
+  }
+
+  const startBody = (await startRes.json()) as { publicKey: unknown; auth_state: string }
+  const getOptions = serverOptsToGetOptions(startBody.publicKey)
+
+  const credential = (await navigator.credentials.get({
+    publicKey: getOptions,
+  }).catch(() => null)) as PublicKeyCredential | null
+
+  if (!credential) {
+    throw new ApiError('Passkey confirmation was cancelled', 0)
+  }
+
+  const credentialData = credentialToAuthenticationJSON(credential)
+
+  const finishRes = await fetch(`${API_URL}/api/v1/auth/confirm-passkey-finish`, {
+    method: 'POST',
+    headers: authHeaders,
+    body: JSON.stringify({ credential: credentialData, auth_state: startBody.auth_state }),
+    credentials: 'include',
+  })
+
+  if (finishRes.status === 401) {
+    // Mirrors confirmAction's OPAQUE-finish 401 handling: the assertion
+    // didn't verify against this account's own credentials. The session
+    // itself is still fine — do not clear it or bounce to /login.
+    throw new ApiError('Passkey confirmation failed', 401)
+  }
+  if (!finishRes.ok) {
+    const body = (await finishRes
+      .json()
+      .catch(() => ({ error: 'Server returned an invalid response' }))) as Record<string, unknown>
+    throw new ApiError(
+      (body.message ?? body.error ?? finishRes.statusText) as string,
+      finishRes.status,
+    )
+  }
+  return finishRes.json() as Promise<{ confirmation_token: string; expires_at: string }>
+}
+
 export async function verifyEmail(
   code: string,
 ): Promise<{ message: string }> {
@@ -2819,20 +2897,38 @@ export function credentialToAuthenticationJSON(credential: PublicKeyCredential):
   }
 }
 
-export async function startPasskeyRegistration(): Promise<PasskeyRegisterStartResponse> {
+/**
+ * POST /api/v1/auth/passkey/register-start — task 1493 (P0 security fix):
+ * the server now requires a FRESH step-up proof before it will issue a
+ * registration challenge at all (a bare session can no longer add a
+ * persistent sign-in passkey on its own). `confirmToken` is the single-use
+ * `X-Confirm-Token` minted by `confirmAction()` (password/OPAQUE) or
+ * `confirmPasskey()` (for passkey-only accounts) — same header pattern as
+ * `requestDataExport`. Without it the server 403s
+ * `{"error":"confirmation_required"}`.
+ */
+export async function startPasskeyRegistration(confirmToken: string): Promise<PasskeyRegisterStartResponse> {
   return request<PasskeyRegisterStartResponse>('/api/v1/auth/passkey/register-start', {
     method: 'POST',
+    headers: { 'X-Confirm-Token': confirmToken },
   })
 }
 
+/**
+ * POST /api/v1/auth/passkey/register-finish — task 1493: the server holds
+ * the registration challenge itself now (single-use, bound to the caller),
+ * so the client sends back only the opaque `reg_id` it got from
+ * `startPasskeyRegistration`, never the WebAuthn state itself (was
+ * `reg_state: string`).
+ */
 export async function finishPasskeyRegistration(
   credential: ReturnType<typeof credentialToRegistrationJSON>,
-  regState: string,
+  regId: string,
   name?: string,
 ): Promise<PasskeyInfo> {
   return request<PasskeyInfo>('/api/v1/auth/passkey/register-finish', {
     method: 'POST',
-    body: JSON.stringify({ credential, reg_state: regState, name }),
+    body: JSON.stringify({ credential, reg_id: regId, name }),
   })
 }
 
