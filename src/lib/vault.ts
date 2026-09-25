@@ -19,6 +19,15 @@ interface VaultEntry {
   nonce: Uint8Array
   keyCheck: Uint8Array
   email?: string
+  /**
+   * Task 1529 continuation (web #73, Codex P2): set true on every entry
+   * `wrapAndStore` writes (which, as of the 1529 fix, is ALWAYS a real
+   * non-empty/non-whitespace secret — see the guard below). Lets
+   * `clearEmptyPasswordVault` skip its 600k-iteration PBKDF2 probe for
+   * entries already known-safe, instead of re-deriving on every boot for
+   * the lifetime of the device.
+   */
+  checked?: boolean
 }
 
 // ─── IndexedDB helpers ─────────────────────────────
@@ -64,6 +73,16 @@ function dbClear(db: IDBDatabase): Promise<void> {
     const tx = db.transaction(STORE_NAME, 'readwrite')
     const store = tx.objectStore(STORE_NAME)
     const request = store.clear()
+    request.onsuccess = () => resolve()
+    request.onerror = () => reject(request.error)
+  })
+}
+
+function dbDelete(db: IDBDatabase, key: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite')
+    const store = tx.objectStore(STORE_NAME)
+    const request = store.delete(key)
     request.onsuccess = () => resolve()
     request.onerror = () => reject(request.error)
   })
@@ -126,6 +145,21 @@ export async function wrapAndStore(
   masterKey: Uint8Array,
   password: string,
 ): Promise<void> {
+  // Task 1529 (P0): wrapAndStore('') derives an AES key from PBKDF2 of an
+  // empty string — anyone with read access to this browser's IndexedDB
+  // could unwrap the master key with no secret at all. Never silently do
+  // this; every caller must supply a real, non-empty secret. Callers on a
+  // session-only path (e.g. passkey sign-in with no password) must use
+  // setMasterKeyDirect instead of routing through setMasterKey/wrapAndStore.
+  //
+  // Continuation (web #73, Codex P2): a whitespace-only secret (' ', '\n',
+  // '\t\t') PBKDF2-derives to a DIFFERENT (non-empty) key than '' does, so
+  // it isn't literally the empty-secret bug — but it's exactly the same
+  // class of "no real secret" mistake (e.g. a bug that trims elsewhere and
+  // ends up passing a lone space), so it's refused for the same reason.
+  if (!password?.trim()) {
+    throw new Error('wrapAndStore: refusing to wrap the master key under an empty secret')
+  }
   const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES))
   const nonce = crypto.getRandomValues(new Uint8Array(NONCE_BYTES))
 
@@ -147,6 +181,10 @@ export async function wrapAndStore(
       salt,
       nonce,
       keyCheck,
+      // This entry was just written by the fixed wrapAndStore above, which
+      // guarantees `password` is real — never re-probe it as a possible
+      // empty-password legacy vault.
+      checked: true,
     })
   } finally {
     db.close()
@@ -221,6 +259,72 @@ export async function clearVault(): Promise<void> {
   } finally {
     db.close()
   }
+}
+
+/**
+ * Task 1529 remediation: detect + clear a password vault that was wrapped
+ * under an EMPTY string secret (the passkey-login provisioning bug — a
+ * passkey sign-in reached device-provision.tsx's phrase step with
+ * password === '' and called setMasterKey(key, ''), which wrapAndStore now
+ * refuses, but pre-fix devices may already carry one of these).
+ *
+ * `unwrap('')` only succeeds against a vault actually encrypted with the
+ * empty-string-derived key: a real password vault fails AES-GCM auth-tag
+ * verification against the wrong derived key and returns null, and no
+ * vault at all also returns null — so this is safe to run unconditionally
+ * whenever a 'master' entry exists.
+ *
+ * Deletes ONLY the password-vault ('master') entry, not the whole store —
+ * a device that ALSO has a legitimate PRF-wrapped passkey vault
+ * ('master-passkey', a separate entry) keeps that one, so this cleanup
+ * can't turn into a second, unrelated logout.
+ *
+ * Returns true if an empty-password vault was found and cleared.
+ *
+ * Task 1529 continuation (web #73, Codex P2 + crypto-security-reviewer):
+ * the 600k-iteration PBKDF2 probe inside `unwrap('')` is expensive, and a
+ * naive "run it every boot" makes every device with a LEGITIMATE password
+ * vault pay that cost on every hard reload, forever. Skip the probe
+ * entirely once an entry is known-safe (`checked: true` — either written
+ * that way by the current wrapAndStore, or marked so below after its first
+ * clean probe here), so the expensive path runs at most ONCE per vault
+ * entry for the lifetime of the device.
+ */
+export async function clearEmptyPasswordVault(): Promise<boolean> {
+  const db = await openDB()
+  let entry: VaultEntry | undefined
+  try {
+    entry = await dbGet(db, 'master')
+  } finally {
+    db.close()
+  }
+  if (!entry) return false
+  if (entry.checked) return false
+
+  const key = await unwrap('')
+  if (key) {
+    key.fill(0)
+    const deleteDb = await openDB()
+    try {
+      await dbDelete(deleteDb, 'master')
+    } finally {
+      deleteDb.close()
+    }
+    return true
+  }
+
+  // Not an empty-password vault — a real secret. Mark it checked so this
+  // (expensive) probe never runs again for this entry; best-effort, never
+  // blocks or fails the caller if the write itself fails.
+  try {
+    const markDb = await openDB()
+    try {
+      await dbPut(markDb, { ...entry, checked: true })
+    } finally {
+      markDb.close()
+    }
+  } catch { /* best effort — harmless to re-probe next boot if this fails */ }
+  return false
 }
 
 // ─── Passkey vault (PRF-wrapped) ──────────────────

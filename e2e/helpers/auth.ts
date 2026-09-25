@@ -72,9 +72,15 @@ export async function loginAndProvision(
 
   // Two possible terminal states after submit:
   //   (a) vaultExists  → unlockVault → navigate('/') → on the drive
-  //   (b) !vaultExists → render <DeviceProvision> → recovery phrase prompt
+  //   (b) !vaultExists → render <DeviceProvision> → 12-box recovery phrase
   // Race the two so we don't hang on whichever doesn't apply.
-  const provisionLocator = page.getByLabel(/recovery phrase/i)
+  //
+  // Task 1528: DeviceProvision is now 12 individually-labeled word boxes
+  // ("Recovery word 1".."Recovery word 12"), not one textarea labeled
+  // "Recovery phrase" — that label has no associated control anymore (it's
+  // a heading over the grid). Box 1 accepts a full space-separated paste
+  // and splits it across all 12 boxes (see device-provision.tsx applyWords).
+  const provisionLocator = page.getByLabel('Recovery word 1', { exact: true })
   const driveReached = page
     .waitForURL(/\/(?:$|\?|#)/, { timeout: overall })
     .then(() => 'drive' as const)

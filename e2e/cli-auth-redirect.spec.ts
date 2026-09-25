@@ -147,7 +147,10 @@ test.describe('CLI auth — redirect preservation (0551)', () => {
     // Exact name: "Sign in with passkey" also matches a loose /sign in/ regex.
     await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
-    const phraseInput = page.getByPlaceholder('word1 word2 word3 ... word12')
+    // Task 1528: DeviceProvision is now 12 individually-labeled word boxes,
+    // not one textarea — box 1 accepts a full space-separated paste and
+    // splits it across all 12 (device-provision.tsx applyWords).
+    const phraseInput = page.getByLabel('Recovery word 1', { exact: true })
     await phraseInput.waitFor({ state: 'visible', timeout: 25_000 })
     await phraseInput.fill(acct.recoveryPhrase)
     await page.getByRole('button', { name: /restore vault/i }).click()
@@ -211,7 +214,7 @@ test.describe('CLI auth — redirect preservation (0551)', () => {
     await page.getByPlaceholder('Your password').fill(acct.password)
     await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
-    const phraseInput = page.getByPlaceholder('word1 word2 word3 ... word12')
+    const phraseInput = page.getByLabel('Recovery word 1', { exact: true })
     await phraseInput.waitFor({ state: 'visible', timeout: 25_000 })
     await phraseInput.fill(acct.recoveryPhrase)
     await page.getByRole('button', { name: /restore vault/i }).click()
