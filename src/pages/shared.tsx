@@ -54,6 +54,19 @@ function timeAgo(dateStr: string): string {
   return `${weeks}w ago`
 }
 
+/**
+ * Task 1545, finding 4: an owner's "Shared → By me" list rendered a
+ * multi-file bundle share as if it were a single file, hiding how many
+ * files (and thus how much content) the link actually exposes. Server
+ * response (list_my_shares) already carries `share_type` + `item_count`;
+ * this reads them. Returns null for a plain file share (no chip shown).
+ */
+export function bundleChipLabel(share: Pick<MyShare, 'share_type' | 'item_count'>): string | null {
+  if (share.share_type !== 'bundle') return null
+  const n = share.item_count ?? 0
+  return `bundle · ${n} ${n === 1 ? 'file' : 'files'}`
+}
+
 // ─── Tab types ───────────────────────────────────
 
 type TabId = 'with-me' | 'by-me' | 'pending'
@@ -703,7 +716,18 @@ export function Shared() {
                           <Icon name="link" size={12} className="text-amber-deep" />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="text-[13px] font-medium text-ink truncate">{name}</div>
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="text-[13px] font-medium text-ink truncate">{name}</span>
+                            {/* Task 1545, finding 4: a bundle share used to render
+                                as if it were a single file, hiding how many files
+                                (and thus how much content) the link actually
+                                exposes. */}
+                            {bundleChipLabel(share) && (
+                              <BBChip variant="default" className="text-[9.5px] shrink-0">
+                                {bundleChipLabel(share)}
+                              </BBChip>
+                            )}
+                          </div>
                           <div className="flex items-center gap-2 text-[11px] mt-0.5">
                             {(share.open_count ?? 0) > 0 ? (
                               <>

@@ -31,6 +31,8 @@ import {
 import {
   restoreSession,
   clearSession,
+  touchSession,
+  initSessionExpiryWatcher,
 } from './session-persist'
 import { cacheKeyPersistent, cacheKeySessionOnly } from './key-cache'
 import { setRecoveryCheckIfAbsent } from './api'
@@ -204,6 +206,35 @@ export function KeyProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     document.body.dataset.cryptoReady = cryptoReady ? 'true' : 'false'
   }, [cryptoReady])
+
+  // Task 1532: install the eager-deletion watcher for the persisted session
+  // (re-armed timer + visibilitychange/pagehide — see session-persist.ts).
+  // Idempotent; safe to call once on mount regardless of lock state.
+  useEffect(() => {
+    initSessionExpiryWatcher()
+  }, [])
+
+  // Task 1532: user activity while unlocked slides the persisted session's
+  // expiry window forward (Guus ruling, 2026-09-25: sliding 60-minute
+  // inactivity timeout). Throttled to at most once per 30s so a burst of
+  // clicks/keystrokes doesn't hammer IndexedDB with writes.
+  useEffect(() => {
+    if (!isUnlocked) return
+    const TOUCH_THROTTLE_MS = 30_000
+    let lastTouchAt = 0
+    const onActivity = () => {
+      const now = Date.now()
+      if (now - lastTouchAt < TOUCH_THROTTLE_MS) return
+      lastTouchAt = now
+      void touchSession()
+    }
+    window.addEventListener('pointerdown', onActivity)
+    window.addEventListener('keydown', onActivity)
+    return () => {
+      window.removeEventListener('pointerdown', onActivity)
+      window.removeEventListener('keydown', onActivity)
+    }
+  }, [isUnlocked])
 
   // Backfill the account's server-stored `recovery_check` on a PROVEN-correct-key
   // unlock (task 0875). A handful of legacy accounts predate the signup-time

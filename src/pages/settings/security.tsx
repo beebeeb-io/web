@@ -11,12 +11,12 @@ import { useAuth } from '../../lib/auth-context'
 import { ChangePasswordDialog } from '../../components/change-password-dialog'
 import { StepUpAuth } from '../../components/step-up-auth'
 import {
-  listSessions, revokeSession,
+  getAccountSessions, revokeAccountSession, revokeAllOtherSessions,
   listPasskeys, deletePasskey,
   setup2fa, enable2fa, disable2fa,
   getMe,
   getMySignIns,
-  type Session, type PasskeyInfo, type MySignIn,
+  type AccountSession, type PasskeyInfo, type MySignIn,
 } from '../../lib/api'
 import { getVaultTTL, setVaultTTL, TTL_OPTIONS } from '../../lib/session-persist'
 import { removeVaultWrapKey } from '../../lib/passkey-vault'
@@ -115,7 +115,7 @@ function RecentSignInsSection() {
           <div className="flex items-start gap-2.5 p-3 rounded-md bg-paper-2 border border-line">
             <Icon name="eye-off" size={13} className="text-ink-3 shrink-0 mt-0.5" />
             <p className="text-[12.5px] text-ink-2 leading-relaxed">
-              Enable activity tracking in <Link to="/settings/privacy" className="text-amber-deep hover:underline">Settings &gt; Privacy</Link> to see sign-in history.
+              Enable activity tracking in <Link to="/settings/profile" className="text-amber-deep hover:underline">Settings &gt; Profile</Link> to see sign-in history.
             </p>
           </div>
         ) : signIns.length === 0 ? (
@@ -199,15 +199,15 @@ function VaultTimeoutSection() {
     setVaultTTL(val)
     showToast({
       icon: 'check',
-      title: 'Vault timeout updated',
-      description: val === 0 ? 'Password required on every refresh' : `Session persists for ${TTL_OPTIONS.find(o => o.value === val)?.label ?? 'custom duration'}`,
+      title: 'Stay unlocked updated',
+      description: val === 0 ? 'Password required on every refresh' : `Stay unlocked for up to ${TTL_OPTIONS.find(o => o.value === val)?.label ?? 'custom duration'} of inactivity on this browser`,
     })
   }
 
   return (
     <SettingsRow
-      label="Vault timeout"
-      hint="How long to remember your password across page refreshes. Longer = more convenient, shorter = more secure."
+      label="Stay unlocked"
+      hint="How long you can stay idle before this browser asks you to unlock again. Any activity resets the clock — up to 60 minutes."
     >
       <select
         value={ttl}
@@ -555,19 +555,51 @@ function TotpSection() {
 
 /* ── Devices & sessions ──────────────────────────── */
 
+// Task 1543 finding 4: the old `Session` shape (list_sessions) carried no
+// device_name/kind/country, so every row rendered the literal word "Session"
+// — a user responding to a suspected compromise had no way to tell which row
+// was which device. Reuse the richer /api/v1/account/sessions endpoint
+// (AccountSession: device_name, device_kind, country_code, last_active_at)
+// that the orphaned AccountActivityPanel already consumed but nothing ever
+// rendered.
+function sessionDeviceIcon(kind: string): 'file-code' | 'settings' | 'link' | 'shield' | 'cloud' {
+  switch (kind) {
+    case 'cli': return 'file-code'
+    case 'desktop': return 'settings'
+    case 'api': return 'link'
+    case 'ios':
+    case 'android': return 'shield'
+    default: return 'cloud'
+  }
+}
+
+function timeAgoLabel(iso: string): string {
+  const then = new Date(iso).getTime()
+  const diffMs = Date.now() - then
+  const mins = Math.floor(diffMs / 60_000)
+  if (mins < 1) return 'Active just now'
+  if (mins < 60) return `Active ${mins}m ago`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `Active ${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 30) return `Active ${days}d ago`
+  return `Active ${new Date(iso).toLocaleDateString()}`
+}
+
 function DevicesSessionsSection() {
   const { showToast } = useToast()
-  const [sessions, setSessions] = useState<Session[]>([])
+  const [sessions, setSessions] = useState<AccountSession[]>([])
   const [sessionsLoading, setSessionsLoading] = useState(true)
   const [revoking, setRevoking] = useState<string | null>(null)
+  const [revokingAll, setRevokingAll] = useState(false)
 
   useEffect(() => {
-    listSessions().then((data) => setSessions(data.sessions)).catch(() => {}).finally(() => setSessionsLoading(false))
+    getAccountSessions().then((data) => setSessions(data.sessions)).catch(() => {}).finally(() => setSessionsLoading(false))
   }, [])
 
   const confirmRevoke = useCallback(async (id: string) => {
     try {
-      await revokeSession(id)
+      await revokeAccountSession(id)
       setSessions((prev) => prev.filter((s) => s.id !== id))
       setRevoking(null)
       showToast({ icon: 'check', title: 'Session revoked' })
@@ -576,12 +608,51 @@ function DevicesSessionsSection() {
     }
   }, [showToast])
 
+  // Task 1543 finding 1: this bulk action existed server-side and in a
+  // client wrapper (revokeAllOtherSessions) but was reachable from NO
+  // rendered page — every logout affordance in the app only ever signed out
+  // the current session, one at a time. A user who suspects their account is
+  // compromised needs to kill every OTHER session in one action.
+  const handleRevokeAll = useCallback(async () => {
+    setRevokingAll(true)
+    try {
+      const result = await revokeAllOtherSessions()
+      setSessions((prev) => prev.filter((s) => s.is_current))
+      const n = result.revoked
+      showToast({ icon: 'check', title: `Signed out of ${n} other ${n === 1 ? 'session' : 'sessions'}` })
+    } catch {
+      showToast({ icon: 'x', title: 'Failed to sign out other sessions', danger: true })
+    } finally {
+      setRevokingAll(false)
+    }
+  }, [showToast])
+
+  const otherSessionsCount = sessions.filter((s) => !s.is_current).length
+
   return (
     <SettingsRow
       label="Devices & sessions"
       hint="Every device holding an active session."
     >
       <div className="flex flex-col gap-2 max-w-[480px]">
+        {!sessionsLoading && otherSessionsCount > 0 && (
+          <div className="flex justify-end mb-0.5">
+            <BBButton
+              size="sm"
+              variant="ghost"
+              onClick={() => void handleRevokeAll()}
+              disabled={revokingAll}
+              className="text-ink-3 hover:text-red"
+            >
+              {revokingAll ? (
+                <>
+                  <span className="w-3 h-3 border-[1.5px] border-current border-t-transparent rounded-full animate-spin mr-1.5 inline-block" />
+                  Signing out…
+                </>
+              ) : 'Sign out everywhere'}
+            </BBButton>
+          </div>
+        )}
         {sessionsLoading ? (
           <div className="h-8 flex items-center">
             <span className="w-3.5 h-3.5 border-2 border-line-2 border-t-ink-3 rounded-full animate-spin" />
@@ -600,15 +671,16 @@ function DevicesSessionsSection() {
                     color: s.is_current ? 'var(--color-amber)' : 'var(--color-ink-3)',
                   }}
                 >
-                  <Icon name="lock" size={11} />
+                  <Icon name={sessionDeviceIcon(s.device_kind)} size={11} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-[13px] font-medium text-ink flex items-center gap-1.5">
-                    Session
+                    <span className="truncate">{s.device_name}</span>
                     {s.is_current && <BBChip variant="amber">Current</BBChip>}
                   </div>
                   <div className="text-[11px] font-mono text-ink-3">
-                    Created {new Date(s.created_at).toLocaleDateString()} · expires {new Date(s.expires_at).toLocaleDateString()}
+                    {timeAgoLabel(s.last_active_at ?? s.created_at)}
+                    {s.country_code && <> · {s.country_code}</>}
                   </div>
                 </div>
                 {!s.is_current && (

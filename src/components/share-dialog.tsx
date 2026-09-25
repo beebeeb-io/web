@@ -1,13 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from '@beebeeb/shared'
 import { formatBytes } from '../lib/format'
 import { BBChip } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { FeedbackDialog } from './feedback-dialog'
-import { useDriveData } from '../lib/drive-data-context'
-import { UpgradeNudge } from './upgrade-nudge'
 import {
   createShare,
   createBundleShare,
@@ -488,10 +485,6 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
   // Bundle (task 0417): a single link over N>1 selected files. One file (or
   // none) falls through to the existing single-file/folder flow unchanged.
   const isBundle = (bundleFiles?.length ?? 0) > 1
-  const navigate = useNavigate()
-  const { planDetails } = useDriveData()
-  const planSlug = planDetails.subscription?.plan ?? 'free'
-  const isFree = planSlug === 'free'
   const [mode, setMode] = useState<ShareMode>('link')
   const [expiryIdx, setExpiryIdx] = useState(2)  // default: 7 days (spec 024 §1.8)
   const [maxOpensIdx, setMaxOpensIdx] = useState(4) // default: Unlimited (spec 024 §1.8)
@@ -1044,21 +1037,15 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
                       )}
                     </div>
 
-                    {/* Feature-gate nudge — surfaces only when a free user
-                        engages with paid share controls (passphrase or a
-                        non-default expiry). The basic share still works; the
-                        nudge sits next to the controls, not in front of them. */}
-                    {isFree && (passwordEnabled || expiryIdx !== 2) && (
-                      <div className="mb-[14px]">
-                        <UpgradeNudge
-                          surface="share-advanced"
-                          targetPlan="basic"
-                          heading="Passphrases and custom expiry are part of Basic."
-                          body="Your free share still works — the recipient will get the file without a passphrase, with the default 7-day expiry."
-                          onUpgrade={() => navigate('/pricing?plan=basic')}
-                        />
-                      </div>
-                    )}
+                    {/* Task 1545, finding 3: this surface used to show a
+                        free-tier nudge claiming passphrase/custom expiry
+                        "won't work" on Free — false, the server applies both
+                        unconditionally for every plan (only a flat 50-share
+                        count cap is plan-gated, see shares.rs create_share).
+                        Removed rather than left lying to users about a
+                        security setting they just configured. See task 1545
+                        notes for the product question (should this actually
+                        become a real Basic-tier gate?) queued for Guus. */}
 
                     {/* End-to-end encrypted lead-in. Double-encrypted is the
                         only mode for new shares (task 0538) — no opt-out. */}

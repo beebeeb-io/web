@@ -178,9 +178,12 @@ function UrlAnnotation() {
   const base = fullUrl.slice(0, hashIdx)
   const fragment = fullUrl.slice(hashIdx) // includes the '#'
 
-  // Extract just the key value for display truncation
-  const params = new URLSearchParams(fragment.slice(1))
-  const keyVal = params.get('key') ?? ''
+  // Extract just the key value for display truncation. Uses the same
+  // extractShareKeyToken() as the real decode paths (task 1531) — NOT
+  // URLSearchParams, which decodes '+' as a space (form-urlencoded
+  // semantics) and would show a mangled preview for a standard-base64 key
+  // containing '+'. Display-only: never used to derive the actual key.
+  const keyVal = extractShareKeyToken(fragment) ?? ''
   const keyDisplay =
     keyVal.length > 16
       ? `${keyVal.slice(0, 8)}…${keyVal.slice(-4)}`
@@ -467,7 +470,7 @@ function UnknownShareTypeCard({ shareType }: { shareType: string }) {
             <div className="px-8 py-3.5 bg-paper-2 border-t border-line">
               <div className="flex items-center justify-center gap-1.5 text-[11px] text-ink-3">
                 <Icon name="shield" size={11} className="text-amber-deep" />
-                End-to-end encrypted · Stored in Europe
+                End-to-end encrypted · Stored in Falkenstein, Germany
               </div>
             </div>
           </div>
@@ -1248,7 +1251,7 @@ export function ShareViewPage() {
               <div className="px-8 py-3.5 bg-paper-2 border-t border-line">
                 <div className="flex items-center justify-center gap-1.5 text-[11px] text-ink-3">
                   <Icon name="shield" size={11} className="text-amber-deep" />
-                  End-to-end encrypted · Stored in Europe
+                  End-to-end encrypted · Stored in Falkenstein, Germany
                 </div>
               </div>
             </div>
