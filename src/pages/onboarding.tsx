@@ -12,6 +12,7 @@ import {
   opaqueRegisterFinish,
 } from '../lib/api'
 import { REFERRAL_SOURCE_KEY, REFERRAL_SHARER_KEY, REFERRAL_CODE_KEY } from './signup'
+import { readPlanIntent, clearPlanIntent, postSignupDestination } from '../lib/plan-intent'
 import { generateRecoveryKitPDF } from '../lib/recovery-kit-pdf'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
@@ -279,7 +280,11 @@ export function Onboarding() {
       // 6. Refresh user state and navigate to drive
       setProcessingStatus('Almost there...')
       await refreshUser()
-      navigate('/', { replace: true })
+      // A plan picked on the marketing site (/signup?plan=&cycle=) opens the
+      // plan chooser on that plan with its one-click trial; otherwise the drive.
+      const planIntent = readPlanIntent()
+      clearPlanIntent()
+      navigate(postSignupDestination(planIntent), { replace: true })
     } catch (err) {
       // Pilot gate (private development): register-start rejects a missing/wrong
       // key with a typed 403. The key field lives on /signup, so bounce back
