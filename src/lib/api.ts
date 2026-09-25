@@ -2635,10 +2635,25 @@ export async function listTokens(): Promise<PersonalAccessToken[]> {
   }
 }
 
-/** Create a new personal access token. */
-export async function createToken(params: CreateTokenParams): Promise<CreateTokenResponse> {
+/**
+ * Create a new personal access token.
+ *
+ * Task 1536 (server PR #98): `POST /api/v1/tokens` now requires a fresh
+ * `X-Confirm-Token` for SESSION-authenticated callers — this app always
+ * authenticates via session (never a bare PAT), so a caller must obtain one
+ * via the existing step-up flow (`confirmAction`/`confirmPasskey` above, or
+ * the `<StepUpAuth>` component) and pass it here. `confirmToken` stays
+ * optional: omitting it sends no header at all, which the CURRENT (pre-#98)
+ * server simply ignores — harmless, not a silent bypass of anything #98 has
+ * not shipped yet.
+ */
+export async function createToken(
+  params: CreateTokenParams,
+  confirmToken?: string,
+): Promise<CreateTokenResponse> {
   return request<CreateTokenResponse>('/api/v1/tokens', {
     method: 'POST',
+    headers: confirmToken ? { 'X-Confirm-Token': confirmToken } : undefined,
     body: JSON.stringify(params),
   })
 }
