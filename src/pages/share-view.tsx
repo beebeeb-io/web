@@ -16,10 +16,11 @@ import {
   type ShareItem,
 } from '../lib/api'
 import { useAuth, isAuthenticated } from '../lib/auth-context'
-import { decryptFilename, fromBase64, parseEncryptedBlob, unwrapKeyFromShare, unwrapBundleItemKey, initCrypto } from '../lib/crypto'
+import { decryptFilename, fromBase64, toBase64url, parseEncryptedBlob, unwrapKeyFromShare, unwrapBundleItemKey, initCrypto } from '../lib/crypto'
 import { decryptEncryptedBytes, inferChunkCountFromEncryptedSize } from '../lib/encrypted-download'
 import { withNetworkRetry } from '../lib/net-retry'
 import { formatBytes } from '../lib/format'
+import { parseShareKey, extractShareKeyToken, decodeShareKeyToken } from '../lib/share-key'
 
 // ─── Meta tag helpers ─────────────────────────────────────────────────────────
 
@@ -835,8 +836,13 @@ export function ShareViewPage() {
   const [downloadError, setDownloadError] = useState<string | null>(null)
   const [manualKey, setManualKey] = useState('')
   const [unlockError, setUnlockError] = useState<string | null>(null)
-  // Tracks whether we have a usable key (from fragment or manual entry)
-  const [keyAvailable, setKeyAvailable] = useState(false)
+  // Tracks whether we have a usable key (from fragment or manual entry).
+  // Lazily initialised from the fragment (task 1531) — getKeyFromFragment is a
+  // hoisted function declaration below, so it's callable here despite the
+  // textual order — so the key-entry form never flashes for a split second on
+  // first paint when a key IS present in the URL (it used to start `false`
+  // unconditionally and only flip true once the effect below ran).
+  const [keyAvailable, setKeyAvailable] = useState(() => !!getKeyFromFragment())
   // Precise key-resolution failure (null = no hard error). Surfaced instead of
   // the generic locked UI so the recipient knows what's actually wrong (0709).
   const [keyError, setKeyError] = useState<KeyErrorKind | null>(null)
@@ -870,13 +876,18 @@ export function ShareViewPage() {
   function getKeyFromFragment(): Uint8Array | null {
     const hash = window.location.hash
     if (!hash) return null
-    const params = new URLSearchParams(hash.slice(1))
-    const keyB64 = params.get('key')
-    if (!keyB64) return null
+    // Shared with handleUnlock() below (src/lib/share-key.ts, task 1531) — the
+    // manual form used to call fromBase64() directly, which throws on the
+    // '-'/'_' that a base64url key (how every key is minted, toBase64url())
+    // contains ~75% of the time. Deliberately not URLSearchParams: it decodes
+    // '+' as a space, which would corrupt a standard-base64 key.
+    const token = extractShareKeyToken(hash)
+    if (!token) return null
     try {
-      // Accept both standard base64 and base64url (double-encrypted links use url-safe)
-      const normalized = decodeURIComponent(keyB64).replace(/-/g, '+').replace(/_/g, '/')
-      return fromBase64(normalized)
+      // Length is NOT asserted here — resolveFileKeyOutcome() below needs to
+      // tell "a key, but the wrong length" (malformed-key) apart from "no key
+      // at all" (no-key), which requires seeing a decoded-but-short array.
+      return decodeShareKeyToken(token)
     } catch {
       return null
     }
@@ -1037,23 +1048,32 @@ export function ShareViewPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shareData, keyAvailable])
 
-  /** Handle manual key entry to unlock the file. */
+  /**
+   * Handle manual key entry to unlock the file. Accepts everything
+   * getKeyFromFragment() does — base64url or standard base64, padded or not,
+   * a bare key, a `#key=…` value, or a whole pasted share link — via the
+   * SAME parser (src/lib/share-key.ts, task 1531). Pre-1531 this called
+   * fromBase64() directly, which threw on the '-'/'_' every base64url key
+   * (how every key is minted) has a ~75% chance of containing.
+   */
   const handleUnlock = useCallback(async () => {
     const trimmed = manualKey.trim()
     if (!trimmed) return
 
     setUnlockError(null)
 
+    let keyBytes: Uint8Array
     try {
-      // Validate the key can be decoded
-      fromBase64(trimmed)
+      keyBytes = parseShareKey(trimmed)
     } catch {
       setUnlockError('Invalid key format. Check that you pasted the full key.')
       return
     }
 
-    // Set the key as a URL fragment so getKeyFromFragment() picks it up
-    window.location.hash = '#key=' + encodeURIComponent(trimmed)
+    // Always re-emit as canonical base64url — whatever form the user pasted
+    // (standard base64, a bare fragment, or a whole URL), the fragment
+    // getKeyFromFragment() reads back must be a clean `#key=<base64url>`.
+    window.location.hash = '#key=' + encodeURIComponent(toBase64url(keyBytes))
     setKeyAvailable(true)
   }, [manualKey])
 
