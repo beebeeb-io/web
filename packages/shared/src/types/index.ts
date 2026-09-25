@@ -326,6 +326,12 @@ export interface MyShare {
   /** owner-wrapped RAW token — base64 of AES-GCM(masterKey, tokenUtf8),
    *  nonce(12)‖ct+tag (variable length). Null for legacy shares. */
   owner_wrapped_token?: string | null
+  /** 'file' (default) or 'bundle' — task 1545, finding 4. `file` carries no
+   *  `.file` data of its own beyond the representative item below. */
+  share_type?: string
+  /** Live membership count of a bundle share (0 for a single-file share,
+   *  which has no share_items rows). Task 1545, finding 4. */
+  item_count?: number
   file: {
     name_encrypted: string
     size_bytes: number
