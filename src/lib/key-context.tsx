@@ -19,8 +19,17 @@ import {
   computeRecoveryCheck,
   toBase64,
 } from './crypto'
-import { registerLogoutCallback } from './auth-context'
-import { wrapAndStore, unwrap, hasVault, clearVault, wrapAndStoreWithPasskey, unwrapWithPasskey } from './vault'
+import { registerLogoutCallback, registerLoginBroadcastCallback } from './auth-context'
+import {
+  wrapAndStore,
+  unwrap,
+  hasVault,
+  clearVault,
+  wrapAndStoreWithPasskey,
+  unwrapWithPasskey,
+  tagVaultEntry,
+  tagPasskeyVaultEntry,
+} from './vault'
 import { remediateEmptyPasswordVault } from './vault-remediation'
 import {
   initSessionVault,
@@ -33,11 +42,43 @@ import {
   clearSession,
 } from './session-persist'
 import { cacheKeyPersistent, cacheKeySessionOnly } from './key-cache'
-import { setRecoveryCheckIfAbsent } from './api'
+import { setRecoveryCheckIfAbsent, verifyRecoveryCheck } from './api'
 import type { DriveFile } from './api'
 import { useAuth } from './auth-context'
 import { isRequestUpload, createRequestKeyResolver, type RequestKeyResolver } from './file-request-crypto'
-import { backfillRecoveryCheckIfAbsent } from './recovery-validation'
+import { backfillRecoveryCheckIfAbsent, recoveredKeyMatchesAccount } from './recovery-validation'
+import { setExpectedUserProvider, registerAccountMismatchHandler } from '@beebeeb/shared'
+
+/**
+ * Outcome of `unlockVault` (task 1531/1534 P0 continuation, web PR #85).
+ * Widened from a plain boolean so callers can tell a genuine wrong password
+ * apart from a right-password-wrong-account "tag mismatch" (an UNTAGGED
+ * pre-fix vault entry that failed the server-side recovery_check proof) —
+ * the latter must route to device provisioning, never sit on the generic
+ * "Wrong password" dead end (see login.tsx / vault-unlock.tsx).
+ */
+export type VaultUnlockOutcome = 'unlocked' | 'wrong_password' | 'needs_provisioning'
+
+/**
+ * Task 1531/1534 (P0 continuation, web PR #85, crypto-security-reviewer
+ * P1): the exact boolean decision `getMasterKey`/`getFileKey`/
+ * `getFileKeyForFile`'s guard is built on, factored out as a plain, pure
+ * function — no ref, no React closure — so it is directly unit-testable
+ * under `bun test` (this repo has no DOM/React-rendering harness; see
+ * key-cache.ts / recovery-validation.ts / device-provision-logic.ts for the
+ * established pattern this follows). `hasKey` is `masterKeyRef.current !==
+ * null`; `residentUserId` is `residentKeyUserIdRef.current`; `targetUserId`
+ * is the resolved comparison target (`expectedUserId` if the caller passed
+ * one, else `user?.user_id ?? null`) — see those accessors' own doc
+ * comments for why a caller may need to override the default.
+ */
+export function isKeyBoundToUser(
+  hasKey: boolean,
+  residentUserId: string | null,
+  targetUserId: string | null,
+): boolean {
+  return hasKey && residentUserId === targetUserId
+}
 
 interface KeyState {
   /** True once WASM is loaded and ready. */
@@ -61,8 +102,10 @@ interface KeyState {
   setMasterKeyDirect: (key: Uint8Array, userId: string) => void
   /** Set the master key and wrap it with a passkey-derived key into IndexedDB. */
   setMasterKeyFromPasskey: (key: Uint8Array, wrapKey: Uint8Array, userId: string) => Promise<void>
-  /** Unwrap the master key from IndexedDB using password. Returns true if successful. */
-  unlockVault: (password: string, userId: string) => Promise<boolean>
+  /** Unwrap the master key from IndexedDB using password. See
+   *  {@link VaultUnlockOutcome} — 'needs_provisioning' means the password
+   *  was right but the entry could not be proven to belong to `userId`. */
+  unlockVault: (password: string, userId: string) => Promise<VaultUnlockOutcome>
   /** Unwrap the master key from IndexedDB using a passkey-derived wrap key. Returns true if successful. */
   unlockVaultWithPasskey: (wrapKey: Uint8Array, userId: string) => Promise<boolean>
   /** Derive master key from password + salt (legacy path). */
@@ -73,17 +116,31 @@ interface KeyState {
    *  account and needs to know whether it is safe to skip re-unlocking —
    *  `isUnlocked` alone does not say WHOSE key is resident. */
   isUnlockedFor: (userId: string) => boolean
-  /** Derive a per-file key from the master key (async — runs in worker). */
-  getFileKey: (fileId: string) => Promise<Uint8Array>
+  /** The account id the resident key is bound to, or null if none is
+   *  resident (task 1531/1534 P0 continuation, web PR #85). Prefer this
+   *  over a separately-read `useAuth().user.user_id` snapshot when
+   *  re-binding/re-wrapping the SAME already-resident key across a long
+   *  async flow (e.g. change-password's re-wrap) — the auth snapshot can
+   *  drift mid-flow; this ref reflects the key's own already-proven owner. */
+  getResidentUserId: () => string | null
+  /** Derive a per-file key from the master key (async — runs in worker).
+   *  `expectedUserId` (task 1531/1534 P0 continuation) is optional — omit it
+   *  to require the key bound to whoever is CURRENTLY signed in (the normal
+   *  case); pass it when the caller already holds a just-proven,
+   *  authoritative account id (see the accessor's own doc comment). Either
+   *  way, throws if the resident key is not bound to the resolved target. */
+  getFileKey: (fileId: string, expectedUserId?: string) => Promise<Uint8Array>
   /** Resolve the decryption key for a DriveFile. Files received through a file
    *  request carry a sealed content key (file_request_id + sender_ephemeral_pubkey
    *  + wrapped_content_key) and must be opened via the request-key path; all other
    *  files use the normal derive_file_key(master, id) path. Prefer this over
    *  getFileKey wherever the full file object is available (naming, preview,
-   *  download). */
-  getFileKeyForFile: (file: DriveFile) => Promise<Uint8Array>
-  /** Get the raw master key (for X25519 key exchange in sharing). */
-  getMasterKey: () => Uint8Array
+   *  download). `expectedUserId` — see `getFileKey`. */
+  getFileKeyForFile: (file: DriveFile, expectedUserId?: string) => Promise<Uint8Array>
+  /** Get the raw master key (for X25519 key exchange in sharing).
+   *  `expectedUserId` — see `getFileKey`; throws if the resident key is not
+   *  bound to the resolved target (task 1531/1534 P0 continuation). */
+  getMasterKey: (expectedUserId?: string) => Uint8Array
   /** Zero in-memory key. Vault stays in IndexedDB for re-unlock. */
   lock: () => void
   /** Full logout: zero in-memory key AND clear IndexedDB vault. */
@@ -96,7 +153,17 @@ export function KeyProvider({ children }: { children: ReactNode }) {
   const [cryptoReady, setCryptoReady] = useState(false)
   const [cryptoLoading, setCryptoLoading] = useState(true)
   const [cryptoError, setCryptoError] = useState<string | null>(null)
-  const [isUnlocked, setIsUnlocked] = useState(false)
+  // Task 1531/1534 (P0 continuation, web PR #85, crypto-security-reviewer
+  // P1): renamed from `isUnlocked` — this is now only the INTERNAL "is a key
+  // resident in memory at all" signal (a state, not a ref, so it triggers a
+  // re-render whenever a key is set/cleared). It says nothing about WHICH
+  // account that key is bound to. The PUBLIC `isUnlocked` exposed on this
+  // context (below, derived at render time) additionally requires the
+  // resident key's tag to match the CURRENTLY authenticated account — so
+  // children (search-index-context, ProtectedRoute, …) that gate on
+  // `isUnlocked` never see a truthy value for a key that is not (yet, or no
+  // longer) provably theirs.
+  const [keyPresent, setKeyPresent] = useState(false)
   const [vaultExists, setVaultExists] = useState(false)
   const [vaultChecked, setVaultChecked] = useState(false)
 
@@ -118,6 +185,24 @@ export function KeyProvider({ children }: { children: ReactNode }) {
 
   const masterKeyRef = useRef<Uint8Array | null>(null)
 
+  // Task 1531/1534 (P0 continuation, web PR #85, crypto-security-reviewer
+  // P1): the PUBLIC `isUnlocked` this context exposes — derived fresh on
+  // EVERY render from `keyPresent` (triggers the re-render) AND a synchronous
+  // comparison of the two refs above against the CURRENTLY known auth user.
+  // Not a separately-tracked state: a stored boolean can only be as fresh as
+  // the last place that remembered to update it, and the whole point here is
+  // that NO consumer (search-index-context, ProtectedRoute, …) that gates on
+  // `isUnlocked` should ever see `true` for a key that is not — yet, or any
+  // more — provably bound to `user`. During the boot window where
+  // `authLoading` is still true, `user` is `null`; a resident key from a
+  // FASTER local vault-restore reads as `untagged (false)` here until auth
+  // catches up and confirms the match, at which point this flips true on
+  // its own (no extra plumbing needed — `user` changing is what re-renders
+  // this component). The watchdog effect below still exists ALONGSIDE this:
+  // it actually zeroes the memory on a confirmed mismatch, which this
+  // derived flag alone does not do (defense in depth, not either/or).
+  const isUnlocked = isKeyBoundToUser(keyPresent, residentKeyUserIdRef.current, user?.user_id ?? null)
+
   // Wrap the master key with the tab's non-extractable session key and persist
   // to IndexedDB. Failures are swallowed — caching is an enhancement; the live
   // masterKeyRef is the source of truth within the tab. Delegates to
@@ -129,11 +214,13 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     await cacheKeyPersistent(key, userId)
   }, [])
 
-  // Returns the cached key AND the account id it was stamped for — the
-  // caller (the boot effect below) decides whether that id is trustworthy
-  // for whoever the CURRENT auth session turns out to be; restoreCachedKey
-  // itself has no way to know that yet (see the boot effect's own comment).
-  const restoreCachedKey = useCallback(async (): Promise<{ key: Uint8Array; userId: string | null } | null> => {
+  // Returns the cached key AND the account id it was stamped for. Task
+  // 1531/1534 (P0 continuation, web PR #85): session-vault-cache.ts /
+  // session-persist.ts now DELETE an untagged (pre-1531/1534) entry on read
+  // instead of handing it back — so `userId` here is always a real,
+  // already-tagged account id, never null; there is no "trust it once, heal
+  // it later" path left at this layer for a cached/persisted key.
+  const restoreCachedKey = useCallback(async (): Promise<{ key: Uint8Array; userId: string } | null> => {
     // Try in-tab session cache first (fastest, same-tab only)
     try {
       const tabEntry = await getVaultKey()
@@ -144,7 +231,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       const persisted = await restoreSession()
       if (persisted) {
         // Re-cache in the tab session for faster subsequent access
-        try { await cacheVaultKey(persisted.key, persisted.userId ?? '') } catch { /* ok */ }
+        try { await cacheVaultKey(persisted.key, persisted.userId) } catch { /* ok */ }
         return persisted
       }
     } catch { /* fall through */ }
@@ -163,7 +250,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
   // (both renders call the initializer) and initiated WASM loading during
   // render phase, which is incorrect. useEffect runs once after first commit.
   //
-  // Order matters: masterKeyRef.current is set BEFORE setIsUnlocked(true) and
+  // Order matters: masterKeyRef.current is set BEFORE setKeyPresent(true) and
   // setVaultChecked(true) are batched into a single re-render (React 18).
   // By the time ProtectedRoute re-renders, the ref holds the key AND both
   // flags are true, eliminating the race window between them.
@@ -227,7 +314,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
           // (isUnlocked → false) the moment a mismatch is detected.
           masterKeyRef.current = cached.key
           residentKeyUserIdRef.current = cached.userId
-          setIsUnlocked(true)
+          setKeyPresent(true)
         }
         setVaultChecked(true)
       })
@@ -277,7 +364,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     const { masterKey } = await deriveKeys(password, salt)
     masterKeyRef.current = masterKey
     residentKeyUserIdRef.current = userId
-    setIsUnlocked(true)
+    setKeyPresent(true)
     cacheKey(masterKey, userId)
   }, [cacheKey])
 
@@ -297,7 +384,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     masterKeyRef.current = key
     residentKeyUserIdRef.current = userId
     setVaultExists(true)
-    setIsUnlocked(true)
+    setKeyPresent(true)
     cacheKey(key, userId)
     backfillRecoveryCheck(key)
   }, [cacheKey, backfillRecoveryCheck])
@@ -313,7 +400,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
   const setMasterKeyDirect = useCallback((key: Uint8Array, userId: string) => {
     masterKeyRef.current = key
     residentKeyUserIdRef.current = userId
-    setIsUnlocked(true)
+    setKeyPresent(true)
     void cacheKeySessionOnly(key, userId)
     backfillRecoveryCheck(key)
   }, [backfillRecoveryCheck])
@@ -323,61 +410,161 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     residentKeyUserIdRef.current = userId
     await wrapAndStoreWithPasskey(key, wrapKey, userId)
     setVaultExists(true)
-    setIsUnlocked(true)
+    setKeyPresent(true)
     cacheKey(key, userId)
     backfillRecoveryCheck(key)
   }, [cacheKey, backfillRecoveryCheck])
+
+  // Task 1531/1534 (P0 continuation, web PR #85, crypto-security-reviewer):
+  // the SERVER-SIDE proof an UNTAGGED local unwrap (password/keyCheck, or
+  // passkey PRF/escrow AEAD) must pass before it is trusted. Delegates to
+  // `recoveredKeyMatchesAccount` (recovery-validation.ts — already
+  // unit-tested there, already used for the recovery-phrase provisioning
+  // gate) rather than re-implementing the same check: `verifyRecoveryCheck`
+  // resolves `true` on a genuine match, resolves `false` ONLY on a
+  // server-confirmed 400 (mismatch OR no recovery_check stored — both must
+  // refuse per the security review, since an unmatched key is unmatched
+  // either way), and re-throws on anything else (network/server failure).
+  // That re-throw is caught HERE and treated as "not verified" — an
+  // unreachable verifier must never be read as "fine, proceed" (same
+  // fail-closed rule `recoveredKeyMatchesAccount`'s own doc comment states).
+  const verifyUntaggedKey = useCallback(async (key: Uint8Array): Promise<boolean> => {
+    try {
+      return await recoveredKeyMatchesAccount(key, {
+        computeRecoveryCheckB64: async (k) => toBase64(await computeRecoveryCheck(k)),
+        verifyRecoveryCheck,
+      })
+    } catch {
+      return false
+    }
+  }, [])
 
   const unlockVaultWithPasskey = useCallback(async (wrapKey: Uint8Array, userId: string): Promise<boolean> => {
-    const key = await unwrapWithPasskey(wrapKey, userId)
-    if (!key) return false
-    masterKeyRef.current = key
+    const result = await unwrapWithPasskey(wrapKey, userId)
+    if (!result) return false
+    if (result.untagged) {
+      const verified = await verifyUntaggedKey(result.key)
+      if (!verified) {
+        zeroize(result.key)
+        return false
+      }
+      await tagPasskeyVaultEntry(userId)
+    }
+    masterKeyRef.current = result.key
     residentKeyUserIdRef.current = userId
-    setIsUnlocked(true)
-    cacheKey(key, userId)
-    backfillRecoveryCheck(key)
+    setKeyPresent(true)
+    cacheKey(result.key, userId)
+    backfillRecoveryCheck(result.key)
     return true
-  }, [cacheKey, backfillRecoveryCheck])
+  }, [cacheKey, backfillRecoveryCheck, verifyUntaggedKey])
 
-  const unlockVault = useCallback(async (password: string, userId: string): Promise<boolean> => {
-    const key = await unwrap(password, userId)
-    if (!key) return false
-    masterKeyRef.current = key
+  const unlockVault = useCallback(async (password: string, userId: string): Promise<VaultUnlockOutcome> => {
+    const result = await unwrap(password, userId)
+    if (!result) return 'wrong_password'
+    if (result.untagged) {
+      // Password + keyCheck proved SOME account's key — but this entry
+      // predates account binding, so that alone does not prove it is
+      // `userId`'s (task 1531/1534 P0: two accounts sharing a password on
+      // the same device would otherwise let the wrong one adopt it). Ask
+      // the server.
+      const verified = await verifyUntaggedKey(result.key)
+      if (!verified) {
+        zeroize(result.key)
+        // NO backfill, NO autoUpgrade with this key, nothing cached, nothing
+        // re-tagged — the caller must route to device provisioning (recovery
+        // phrase) instead of the generic "wrong password" dead end.
+        return 'needs_provisioning'
+      }
+      await tagVaultEntry(userId)
+    }
+    masterKeyRef.current = result.key
     residentKeyUserIdRef.current = userId
-    setIsUnlocked(true)
-    cacheKey(key, userId)
-    backfillRecoveryCheck(key)
-    return true
-  }, [cacheKey, backfillRecoveryCheck])
+    setKeyPresent(true)
+    cacheKey(result.key, userId)
+    backfillRecoveryCheck(result.key)
+    return 'unlocked'
+  }, [cacheKey, backfillRecoveryCheck, verifyUntaggedKey])
 
-  const getFileKey = useCallback(async (fileId: string): Promise<Uint8Array> => {
-    if (!masterKeyRef.current) {
+  // Task 1531/1534 (P0 continuation, web PR #85, crypto-security-reviewer
+  // P1): every key accessor below refuses an UNBOUND key. `expectedUserId`
+  // is OPTIONAL and defaults to `user?.user_id` (the normal case — "give me
+  // whichever key is bound to whoever is CURRENTLY signed in", which is what
+  // the overwhelming majority of call sites, e.g. search-index-context.tsx's
+  // boot effect, share-dialog, drive uploads, actually want). A caller that
+  // just proved a SPECIFIC account's identity itself — e.g. login.tsx,
+  // holding `loginResult.user_id` from the very OPAQUE/passkey response that
+  // proved it, immediately after its own `unlockVault(password, that_id)`
+  // call — may pass it explicitly instead. This mirrors `isUnlockedFor`'s
+  // existing rationale one level down: `user` is a React state snapshot that
+  // is not guaranteed to have re-rendered yet in the SAME microtask
+  // continuation a caller resumes in right after an awaited `setUser` (e.g.
+  // login.tsx's `void autoUpgradeToV1(password, getMasterKey())` fires
+  // immediately after `unlockVault` resolves) — comparing against the
+  // caller's own already-authoritative id sidesteps that race entirely
+  // rather than gambling on React's scheduler having flushed by then.
+  //
+  // Before this fix, `isUnlocked` alone was the only gate most callers
+  // checked (or none at all, deep inside a helper) — a caller could race
+  // ahead of the watchdog effect and pull a key that has not yet been, or no
+  // longer is, confirmed to belong to the signed-in account. Concretely:
+  // search-index-context.tsx's boot effect used to call `getMasterKey()` the
+  // instant `isUnlocked` first read true, which could be BEFORE `authLoading`
+  // settles; these accessors now close that window regardless of what (if
+  // anything) the caller checked first.
+  const isBoundTo = useCallback((expectedUserId?: string): boolean => {
+    const target = expectedUserId ?? (user?.user_id ?? null)
+    return isKeyBoundToUser(masterKeyRef.current !== null, residentKeyUserIdRef.current, target)
+  }, [user])
+
+  const getFileKey = useCallback(async (fileId: string, expectedUserId?: string): Promise<Uint8Array> => {
+    if (!isBoundTo(expectedUserId)) {
       throw new Error('Vault is locked — unlock first')
     }
-    return deriveFileKey(masterKeyRef.current, fileId)
-  }, [])
+    return deriveFileKey(masterKeyRef.current as Uint8Array, fileId)
+  }, [isBoundTo])
 
   // Lazily-created resolver for files received through a file request. Caches the
   // request list + unwrapped R_priv per request for the drive session.
   const requestResolverRef = useRef<RequestKeyResolver | null>(null)
 
-  const getFileKeyForFile = useCallback(async (file: DriveFile): Promise<Uint8Array> => {
-    if (!masterKeyRef.current) {
+  const getFileKeyForFile = useCallback(async (file: DriveFile, expectedUserId?: string): Promise<Uint8Array> => {
+    if (!isBoundTo(expectedUserId)) {
       throw new Error('Vault is locked — unlock first')
     }
+    const key = masterKeyRef.current as Uint8Array
     if (isRequestUpload(file)) {
       if (!requestResolverRef.current) requestResolverRef.current = createRequestKeyResolver()
-      return requestResolverRef.current.resolveFileKey(file, masterKeyRef.current)
+      return requestResolverRef.current.resolveFileKey(file, key)
     }
-    return deriveFileKey(masterKeyRef.current, file.id)
-  }, [])
+    return deriveFileKey(key, file.id)
+  }, [isBoundTo])
 
-  const getMasterKey = useCallback((): Uint8Array => {
-    if (!masterKeyRef.current) {
+  const getMasterKey = useCallback((expectedUserId?: string): Uint8Array => {
+    if (!isBoundTo(expectedUserId)) {
       throw new Error('Vault is locked — unlock first')
     }
-    return masterKeyRef.current
-  }, [])
+    // Task 1531/1534 (P0 continuation, web PR #85, crypto-security-reviewer
+    // P2): a COPY, never the shared `masterKeyRef.current` array itself.
+    // `lock()` (below) zeroes that array IN PLACE — a caller that captured
+    // this return value and then `await`s something before actually using
+    // the bytes (e.g. search-index-context.tsx's `pushBuckets`, an X25519
+    // derivation mid-upload) would otherwise silently keep running against
+    // an all-zero key the instant a concurrent `lock()` fires (a cross-tab
+    // account-mismatch reload, a 409 account_mismatch, the watchdog effect),
+    // rather than failing loudly the next time it actually needs the key.
+    // A 32-byte copy per call is negligible; the ORIGINAL array is still the
+    // one `lock()`/`fullLogout()` zero, so the security property (key
+    // material doesn't outlive its lock) is unchanged — only WHICH array a
+    // caller holds a reference to.
+    return new Uint8Array(masterKeyRef.current as Uint8Array)
+  }, [isBoundTo])
+
+  // Task 1531/1534 (P0 continuation, web PR #85): the account id the
+  // resident key is bound to, straight from the ref — never a `useAuth()`
+  // snapshot. See the KeyState doc comment for why a caller re-wrapping the
+  // SAME already-resident key across a long async flow (change-password)
+  // must prefer this over `user.user_id`.
+  const getResidentUserId = useCallback((): string | null => residentKeyUserIdRef.current, [])
 
   // Task 1531/1534 (P0). See residentKeyUserIdRef's own doc comment above —
   // this is how a caller that just proved a SPECIFIC account's identity
@@ -401,7 +588,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     requestResolverRef.current?.clear()
     requestResolverRef.current = null
     clearCachedKey()
-    setIsUnlocked(false)
+    setKeyPresent(false)
   }, [clearCachedKey])
 
   // Task 1531/1534 (P0): cross-account master-key confusion. The cached/
@@ -477,7 +664,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     clearCachedKey()
     await clearVault()
     setVaultExists(false)
-    setIsUnlocked(false)
+    setKeyPresent(false)
   }, [clearCachedKey])
 
   // Full clear on explicit logout — wipe in-memory key AND IndexedDB vault.
@@ -486,6 +673,52 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     registerLogoutCallback(fullLogout)
     return () => registerLogoutCallback(() => {})
   }, [fullLogout])
+
+  // Task 1531 (web #85 round 2): defence-in-depth header. The shared
+  // `request()` client reads this provider on every mutating call and — once
+  // server task 1554 ships — the server 409s if it doesn't match the
+  // session's real user. A FUNCTION, not a snapshot: `request()` calls it at
+  // send-time, so it always reads the ref's CURRENT value, never a stale one
+  // from whenever this effect happened to run.
+  useEffect(() => {
+    setExpectedUserProvider(() => residentKeyUserIdRef.current)
+    return () => setExpectedUserProvider(null)
+  }, [])
+
+  // Task 1531 (web #85 round 2): the server's 409 `account_mismatch`
+  // response (once task 1554 ships) means the resident key's bound id did
+  // not match the session's actual user — never trust it further. Lock it
+  // and force a fresh boot via login, mirroring how a cross-tab logout
+  // already does a hard navigation for the same "guarantee no stale
+  // in-memory state survives" reason.
+  useEffect(() => {
+    registerAccountMismatchHandler(() => {
+      lock()
+      if (typeof window !== 'undefined') window.location.href = '/login'
+    })
+    return () => registerAccountMismatchHandler(() => {})
+  }, [lock])
+
+  // Task 1531/1534 (P0 continuation, web PR #85, crypto-security-reviewer
+  // P1): auth-context.tsx's BroadcastChannel used to carry ONLY 'logout' —
+  // a login in another tab (as a DIFFERENT account than whatever key is
+  // resident HERE) had no cross-tab signal at all, so this tab could keep
+  // operating on the OLD account's key indefinitely, in the background,
+  // even though the shared cookie jar now authenticates the new account.
+  // On a 'login' broadcast for an account that does NOT match whatever is
+  // resident here, lock it and reload — the fresh boot re-establishes
+  // (or correctly refuses to establish) a key for whoever this tab's OWN
+  // next getMe() resolves to. A login for the SAME account, or arriving
+  // while nothing is resident, is a no-op (nothing to protect against).
+  useEffect(() => {
+    registerLoginBroadcastCallback((incomingUserId) => {
+      if (residentKeyUserIdRef.current && residentKeyUserIdRef.current !== incomingUserId) {
+        lock()
+        if (typeof window !== 'undefined') window.location.reload()
+      }
+    })
+    return () => registerLoginBroadcastCallback(() => {})
+  }, [lock])
 
   const value = useMemo<KeyState>(
     () => ({
@@ -502,13 +735,14 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       unlockVaultWithPasskey,
       unlock,
       isUnlockedFor,
+      getResidentUserId,
       getFileKey,
       getFileKeyForFile,
       getMasterKey,
       lock,
       fullLogout,
     }),
-    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, vaultExists, vaultChecked, setMasterKey, setMasterKeyDirect, setMasterKeyFromPasskey, unlockVault, unlockVaultWithPasskey, unlock, isUnlockedFor, getFileKey, getFileKeyForFile, getMasterKey, lock, fullLogout],
+    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, vaultExists, vaultChecked, setMasterKey, setMasterKeyDirect, setMasterKeyFromPasskey, unlockVault, unlockVaultWithPasskey, unlock, isUnlockedFor, getResidentUserId, getFileKey, getFileKeyForFile, getMasterKey, lock, fullLogout],
   )
 
   return <KeyContext.Provider value={value}>{children}</KeyContext.Provider>

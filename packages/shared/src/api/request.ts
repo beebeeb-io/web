@@ -26,10 +26,11 @@
  */
 
 import { ApiError, parseErrorBody } from './errors'
-import { getApiUrl, provenanceHeaders } from './config'
+import { getApiUrl, provenanceHeaders, expectedUserHeaders } from './config'
 import { clearToken, getToken } from './token'
 import {
   fireAccountDeleted,
+  fireAccountMismatch,
   fireConnectionStatus,
   fireErrorNotifier,
   fireSessionExpired,
@@ -110,6 +111,16 @@ export async function request<T>(
   // traffic carries neither header (see `setClientInfo`'s doc comment).
   Object.assign(headers, provenanceHeaders())
 
+  const method = (options.method ?? 'GET').toUpperCase()
+  // Task 1531 (web #85 round 2): the expected-user defence header only makes
+  // sense on a MUTATING request (server task 1554 only checks those) — a GET
+  // carries no risk of writing under the wrong account, and omitting it
+  // there keeps the header's blast radius exactly as small as the threat it
+  // defends against.
+  if (method !== 'GET' && method !== 'HEAD') {
+    Object.assign(headers, expectedUserHeaders())
+  }
+
   const apiUrl = getApiUrl()
   // `credentials: 'include'` is what makes the httpOnly bb_session cookie
   // travel on cross-origin requests (web app on app.beebeeb.io → API on
@@ -118,7 +129,6 @@ export async function request<T>(
   // Access-Control-Allow-Credentials: true to match (task 0447).
   const init: RequestInit = { ...options, headers, credentials: 'include' }
 
-  const method = (options.method ?? 'GET').toUpperCase()
   if (method !== 'GET' && method !== 'HEAD') {
     await paceIfNeeded()
   }
@@ -183,6 +193,17 @@ export async function request<T>(
       if (code === 'account_deleted') {
         if (token) clearToken()
         fireAccountDeleted(body)
+      }
+
+      // Task 1531 (web #85 round 2) / server task 1554: the server refused a
+      // mutating request because the caller's `X-Beebeeb-Expected-User`
+      // header (the resident key's bound account) did not match the
+      // session's actual user — genuine cross-account key confusion, or a
+      // stale header left over from a just-switched account. Either way the
+      // resident key must not be trusted further; the registered handler
+      // (web: key-context.tsx) locks it and routes to login.
+      if (res.status === 409 && code === 'account_mismatch') {
+        fireAccountMismatch()
       }
 
       if (res.status === 401) {

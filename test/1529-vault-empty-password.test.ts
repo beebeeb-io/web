@@ -173,7 +173,7 @@ describe('task 1529: wrapAndStore refuses an empty secret', () => {
     const key = randomKey()
     await wrapAndStore(key, 'a-real-password-123', TEST_USER_ID)
     expect(await hasVault()).toBe(true)
-    expect(await unwrap('a-real-password-123', TEST_USER_ID)).toEqual(key)
+    expect(await unwrap('a-real-password-123', TEST_USER_ID)).toEqual({ key, untagged: false })
   })
 
   // Continuation (web #73, Codex P2): a whitespace-only secret PBKDF2-derives
@@ -220,7 +220,7 @@ describe('task 1529: clearEmptyPasswordVault remediation', () => {
 
     expect(cleared).toBe(false)
     expect(await hasVault()).toBe(true)
-    expect(await unwrap('a-real-password-123', TEST_USER_ID)).toEqual(key)
+    expect(await unwrap('a-real-password-123', TEST_USER_ID)).toEqual({ key, untagged: false })
   })
 
   test('returns false when there is no vault at all', async () => {

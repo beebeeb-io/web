@@ -148,8 +148,21 @@ export function Login() {
         // just proved `password` correct) — task 1531/1534 (P0) binds the
         // unlocked key to it explicitly rather than trusting whatever key
         // may already be resident from a prior account in this same tab.
-        const ok = await unlockVault(password, loginResult.user_id)
-        if (!ok) {
+        const outcome = await unlockVault(password, loginResult.user_id)
+        if (outcome === 'needs_provisioning') {
+          // P0 continuation (web #85): password was RIGHT, but this
+          // device's saved vault entry could not be proven server-side to
+          // belong to this account (an untagged pre-1531/1534 entry that
+          // failed the recovery_check check — the two-accounts-same-
+          // password case). Route to device provisioning instead of the
+          // generic wrong-password dead end — OPAQUE already proved
+          // `password` correct, above.
+          setProvisionAuthMethod('opaque')
+          setNeedsProvision(true)
+          setSubmitting(false)
+          return
+        }
+        if (outcome !== 'unlocked') {
           setError('Wrong password — could not unlock vault on this device.')
           setSubmitting(false)
           return
@@ -159,7 +172,11 @@ export function Login() {
         // converges onto the current standard. Fire-and-forget + best-effort
         // (never throws), so it can't block navigation. Runs only now that the
         // vault is unlocked: uses the in-memory master key, never the password.
-        if (ksfVersion === 0) void autoUpgradeToV1(password, getMasterKey())
+        // getMasterKey(loginResult.user_id) — the authoritative id this
+        // unlock just proved, not a `useAuth().user` snapshot that may not
+        // have re-rendered into this closure yet (task 1531/1534 P0
+        // continuation; see getMasterKey's own doc comment).
+        if (ksfVersion === 0) void autoUpgradeToV1(password, getMasterKey(loginResult.user_id))
         navigateAfterLogin()
       } else {
         // No vault on this device — needs mnemonic provisioning. OPAQUE
@@ -210,8 +227,16 @@ export function Login() {
 
       // 2FA verified — now unlock the vault with the password from the first step
       if (vaultExists) {
-        const ok = await unlockVault(password, verifyResult.user_id)
-        if (!ok) {
+        const outcome = await unlockVault(password, verifyResult.user_id)
+        if (outcome === 'needs_provisioning') {
+          // See handleSubmit's identical branch — password was right, the
+          // local entry just could not be proven to be this account's.
+          setProvisionAuthMethod('opaque')
+          setNeedsProvision(true)
+          setPartialToken(null)
+          return
+        }
+        if (outcome !== 'unlocked') {
           setError('Could not unlock vault. Try logging in again.')
           setPartialToken(null)
           return
@@ -219,7 +244,7 @@ export function Login() {
         // v0 account that just cleared 2FA — fire the same silent V1 upgrade as
         // the non-2FA path. Best-effort, fire-and-forget; in-memory master key
         // only, never derived from the password.
-        if (pendingKsfVersion === 0) void autoUpgradeToV1(password, getMasterKey())
+        if (pendingKsfVersion === 0) void autoUpgradeToV1(password, getMasterKey(verifyResult.user_id))
       } else {
         // handleSubmit's OPAQUE handshake already proved `password` correct
         // before 2FA was ever requested — this is still the opaque path.
@@ -262,15 +287,25 @@ export function Login() {
       if (vaultExists) {
         // task 1531/1534 (P0): bind to the account this OPAQUE finish
         // response just proved, not whatever key may already be resident.
-        const ok = await unlockVault(passkeyFallbackPassword, fallbackLoginResult.user_id)
-        if (!ok) {
+        const outcome = await unlockVault(passkeyFallbackPassword, fallbackLoginResult.user_id)
+        if (outcome === 'needs_provisioning') {
+          // See handleSubmit's identical branch — password was right, the
+          // local entry just could not be proven to be this account's.
+          setPassword(passkeyFallbackPassword)
+          setProvisionAuthMethod('opaque')
+          setPasskeyNeedsPassword(false)
+          setNeedsProvision(true)
+          setPasskeyFallbackSubmitting(false)
+          return
+        }
+        if (outcome !== 'unlocked') {
           setPasskeyFallbackError('Password accepted, but could not unlock the local vault. Try your recovery phrase instead.')
           setPasskeyFallbackSubmitting(false)
           return
         }
         // Mirror of handleSubmit: silently upgrade a legacy (v0) account to V1
         // now that it's authenticated + unlocked. Best-effort, fire-and-forget.
-        if (ksfVersion === 0) void autoUpgradeToV1(passkeyFallbackPassword, getMasterKey())
+        if (ksfVersion === 0) void autoUpgradeToV1(passkeyFallbackPassword, getMasterKey(fallbackLoginResult.user_id))
         navigateAfterLogin()
       } else {
         // No local vault — hand off to device provisioning (recovery phrase).
@@ -349,6 +384,21 @@ export function Login() {
       )
 
       if (result.session_token) {
+        // Task 1531/1534 (P0 continuation, web PR #85, crypto-security-
+        // reviewer P2): bind to `result.user_id` — from `finishPasskeyLogin`,
+        // the response that actually verified the WebAuthn assertion — not
+        // `startRes.user_id`, which is merely the id `startPasskeyLogin`
+        // echoed back for the EMAIL the form was given, before any signature
+        // was checked. `result` is the authoritative "this credential proved
+        // THIS account" answer; `startRes.user_id` never proved anything on
+        // its own. Refuse rather than silently falling back if it is somehow
+        // missing on a token-bearing response (should not happen — defensive).
+        if (!result.user_id) {
+          setError('Could not confirm account identity. Try signing in again.')
+          setPasskeyLoading(false)
+          return
+        }
+        const authedUserId = result.user_id
         setToken(result.session_token)
         await refreshUser()
 
@@ -361,18 +411,18 @@ export function Login() {
         // account's session in this same tab (persisted-key cache restored
         // at boot, or a prior account that was never explicitly logged out
         // of) — trusting `isUnlocked` alone let that stale key silently
-        // carry over into startRes.user_id's session. isUnlockedFor reads
-        // the LIVE ref and compares it against startRes.user_id — the
+        // carry over into this account's session. isUnlockedFor reads
+        // the LIVE ref and compares it against `authedUserId` — the
         // account THIS passkey ceremony just proved, from the very same
         // auth response, not a React state snapshot.
-        if (isUnlockedFor(startRes.user_id)) {
+        if (isUnlockedFor(authedUserId)) {
           navigateAfterLogin()
           return
         }
         if (isUnlocked) {
           // A key WAS resident but for a DIFFERENT account — never let it
           // leak into this account's session. Clear it; the escrow/PRF
-          // unlock below loads startRes.user_id's REAL key.
+          // unlock below loads `authedUserId`'s REAL key.
           lock()
         }
 
@@ -390,7 +440,7 @@ export function Login() {
 
           if (wrapKey) {
             // Try local passkey vault first, then server escrow
-            const localOk = await unlockVaultWithPasskey(wrapKey, startRes.user_id)
+            const localOk = await unlockVaultWithPasskey(wrapKey, authedUserId)
             if (localOk) {
               navigateAfterLogin()
               return
@@ -400,7 +450,7 @@ export function Login() {
             if (escrowBlob) {
               const masterKey = await decryptVaultBlob(wrapKey, fromBase64(escrowBlob))
               if (masterKey) {
-                await setMasterKeyFromPasskey(masterKey, wrapKey, startRes.user_id)
+                await setMasterKeyFromPasskey(masterKey, wrapKey, authedUserId)
                 navigateAfterLogin()
                 return
               }

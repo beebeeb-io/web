@@ -156,10 +156,13 @@ export async function persistSession(masterKey: Uint8Array, userId: string): Pro
 }
 
 /** Returns the restored key alongside the account id (task 1531/1534) it
- *  was persisted for — `null` userId means the entry predates that field
- *  and the caller must treat it as untrusted, never matched against any
- *  real account. */
-export async function restoreSession(): Promise<{ key: Uint8Array; userId: string | null } | null> {
+ *  was persisted for. Returns null when no entry exists, TTL has lapsed,
+ *  decryption fails, or — task 1531/1534 P0 continuation, web PR #85 — the
+ *  entry PREDATES account binding (`userId` missing): an untagged entry can
+ *  only be a stale pre-1531/1534 write, so it is deleted on sight rather
+ *  than handed to the caller to load-then-maybe-lock (same rationale as
+ *  session-vault-cache.ts's `getVaultKey`). */
+export async function restoreSession(): Promise<{ key: Uint8Array; userId: string } | null> {
   const ttl = getVaultTTL()
   if (ttl === 0) return null
 
@@ -190,6 +193,11 @@ export async function restoreSession(): Promise<{ key: Uint8Array; userId: strin
     return null
   }
 
+  if (entry.userId === undefined) {
+    await clearSession()
+    return null
+  }
+
   try {
     const key = await deriveKey(token)
     const pt = await crypto.subtle.decrypt(
@@ -197,7 +205,7 @@ export async function restoreSession(): Promise<{ key: Uint8Array; userId: strin
       key,
       entry.wrapped,
     )
-    return { key: new Uint8Array(pt), userId: entry.userId ?? null }
+    return { key: new Uint8Array(pt), userId: entry.userId }
   } catch {
     await clearSession()
     return null

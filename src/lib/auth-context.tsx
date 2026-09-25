@@ -22,16 +22,32 @@ import {
   verify2fa as apiVerify2fa,
 } from './api'
 
-/** Same-origin pub/sub channel used to sync logout across tabs. */
+/** Same-origin pub/sub channel used to sync logout — and, since task 1531/
+ *  1534's continuation (web PR #85), login — across tabs. */
 const AUTH_CHANNEL_NAME = 'beebeeb-auth'
 
-type AuthBroadcastMessage = { type: 'logout' }
+type AuthBroadcastMessage =
+  | { type: 'logout' }
+  /** Task 1531/1534 (P0 continuation, crypto-security-reviewer P1): fired
+   *  after EVERY successful signup/login/2FA-verify so other tabs can tell
+   *  whether the shared session cookie just switched to a DIFFERENT
+   *  account than whatever master key they have resident — see
+   *  key-context.tsx's registered handler for what it does with this. */
+  | { type: 'login'; userId: string }
 
 /** Callback registered by KeyProvider to clear keys + vault on logout. */
 let onLogoutCallback: (() => void | Promise<void>) | null = null
 
 export function registerLogoutCallback(cb: () => void | Promise<void>): void {
   onLogoutCallback = cb
+}
+
+/** Callback registered by KeyProvider, fired on a same-origin 'login'
+ *  broadcast from another tab (task 1531/1534 P0 continuation). */
+let onLoginBroadcastCallback: ((userId: string) => void) | null = null
+
+export function registerLoginBroadcastCallback(cb: (userId: string) => void): void {
+  onLoginBroadcastCallback = cb
 }
 
 interface AuthState {
@@ -136,6 +152,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const channel = new BroadcastChannel(AUTH_CHANNEL_NAME)
     channelRef.current = channel
     const onMessage = (event: MessageEvent<AuthBroadcastMessage>) => {
+      if (event.data?.type === 'login') {
+        // Task 1531/1534 (P0 continuation): a DIFFERENT tab just
+        // authenticated as `userId` — let KeyProvider's registered handler
+        // decide whether a key resident HERE needs to be dropped. Never a
+        // hard navigation on its own; the handler reloads only on an actual
+        // mismatch (see its own doc comment in key-context.tsx).
+        onLoginBroadcastCallback?.(event.data.userId)
+        return
+      }
       if (event.data?.type !== 'logout') return
       // Local cleanup only — no re-broadcast. fullLogout (registered by
       // KeyProvider) zeroes the master key + clears the IndexedDB vault.
@@ -164,12 +189,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  // Task 1531/1534 (P0 continuation, web PR #85): best-effort — a channel
+  // that failed to open (Safari < 15.4, SSR) just means no cross-tab signal,
+  // never a reason to fail the auth call that succeeded.
+  const broadcastLogin = useCallback((userId: string) => {
+    try {
+      channelRef.current?.postMessage({ type: 'login', userId } satisfies AuthBroadcastMessage)
+    } catch { /* channel may already be closed during teardown */ }
+  }, [])
+
   const signup = useCallback(async (email: string, password: string): Promise<SignupResult> => {
     const result = await apiSignup(email, password)
     const u = await getMe()
     setUser(u)
+    broadcastLogin(u.user_id)
     return result
-  }, [])
+  }, [broadcastLogin])
 
   const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
     const result = await apiLogin(email, password)
@@ -177,16 +212,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Full login — fetch user profile
       const u = await getMe()
       setUser(u)
+      broadcastLogin(u.user_id)
     }
     return result
-  }, [])
+  }, [broadcastLogin])
 
   const verify2fa = useCallback(async (partialToken: string, code: string): Promise<LoginResult> => {
     const result = await apiVerify2fa(partialToken, code)
     const u = await getMe()
     setUser(u)
+    broadcastLogin(u.user_id)
     return result
-  }, [])
+  }, [broadcastLogin])
 
   const refreshUser = useCallback(async () => {
     const u = await getMe()

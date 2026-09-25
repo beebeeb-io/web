@@ -122,13 +122,19 @@ export async function cacheVaultKey(masterKey: Uint8Array, userId: string): Prom
 
 /**
  * Decrypt the cached vault key using the in-memory session key, returning
- * it alongside the account id (task 1531/1534) it was stamped for — `null`
- * userId means the entry predates that field and must be treated as
- * untrusted by the caller, never matched against any real account.
- * Returns null if no entry exists, init has not run, or decryption fails
- * (typically a stale entry from before the current session key existed).
+ * it alongside the account id (task 1531/1534) it was stamped for.
+ * Returns null if no entry exists, init has not run, decryption fails
+ * (typically a stale entry from before the current session key existed), or
+ * — task 1531/1534 P0 continuation, web PR #85 — the entry PREDATES account
+ * binding (`userId` missing). That last case used to return
+ * `{ key, userId: null }` and let the caller load the key first and decide
+ * whether to lock afterward; the fix here is to never hand out an unbound
+ * cached key at all — an untagged cache entry can only have been written by
+ * a pre-1531/1534 build, so it is stale by definition and is deleted on
+ * sight instead of loaded-then-maybe-locked (closes the exact window a
+ * caller could briefly treat it as the current account's key).
  */
-export async function getVaultKey(): Promise<{ key: Uint8Array; userId: string | null } | null> {
+export async function getVaultKey(): Promise<{ key: Uint8Array; userId: string } | null> {
   if (!sessionKey) return null
   const db = await openDB()
   let entry: CacheEntry | undefined
@@ -138,13 +144,17 @@ export async function getVaultKey(): Promise<{ key: Uint8Array; userId: string |
     db.close()
   }
   if (!entry) return null
+  if (entry.userId === undefined) {
+    await clearVaultKey()
+    return null
+  }
   try {
     const pt = await crypto.subtle.decrypt(
       { name: 'AES-GCM', iv: entry.nonce as unknown as BufferSource },
       sessionKey,
       entry.wrapped,
     )
-    return { key: new Uint8Array(pt), userId: entry.userId ?? null }
+    return { key: new Uint8Array(pt), userId: entry.userId }
   } catch {
     await clearVaultKey()
     return null

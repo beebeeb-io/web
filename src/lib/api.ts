@@ -18,6 +18,7 @@ import {
   registerConnectionStatusHandler,
   registerErrorNotifier,
   provenanceHeaders,
+  expectedUserHeaders,
   registerOnTokenCleared,
   registerSessionExpiredHandler,
   request,
@@ -1055,8 +1056,11 @@ async function uploadChunkRequest(
     'Content-Type': 'application/octet-stream',
     // Chunk uploads stream binary via raw fetch() (task 0447), bypassing the
     // shared request() client — so the writer-provenance headers (task 1436)
-    // have to be added by hand here too.
+    // and the expected-user defence header (task 1531, web #85 round 2)
+    // have to be added by hand here too. A chunk PUT is unambiguously a
+    // mutating request.
     ...provenanceHeaders(),
+    ...expectedUserHeaders(),
   }
   if (token) {
     headers['Authorization'] = `Bearer ${token}`

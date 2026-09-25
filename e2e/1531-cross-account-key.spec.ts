@@ -213,3 +213,122 @@ test.describe('task 1531 issue 2 (1534): cross-account master-key confusion via 
     // description for the exact repeated-failure evidence).
   })
 })
+
+/**
+ * Task 1531 P0 CONTINUATION (web PR #85, crypto-security-reviewer).
+ *
+ * A SECOND, distinct root cause in the same area, found on review of the
+ * first fix (`vault.ts` unwrap()/unwrapWithPasskey()`, key-context.tsx's
+ * `unlockVault`/`unlockVaultWithPasskey` — see those files' own "P0
+ * continuation" doc comments for the file:line citations):
+ *
+ * An UNTAGGED vault entry — the shape a device that predates the FIRST
+ * 1531/1534 fix would already have on disk — used to be adopted and
+ * silently re-tagged for whichever account's password happened to unwrap it
+ * FIRST, on local proof (password + HMAC keyCheck) ALONE. That local proof
+ * only shows "this password decrypts SOME account's vault" — not
+ * specifically the account asking. Two DIFFERENT beebeeb accounts used from
+ * the SAME browser/device, sharing a password (plausible: the same human
+ * re-uses a password across two accounts), would let the SECOND account's
+ * login silently adopt and permanently claim the FIRST account's key.
+ *
+ * This spec reproduces that exact shape on the real local stack: account A
+ * signs up on this page (a real vault gets created and tagged 'A' by the
+ * CURRENT, already-fixed wrapAndStore). The vault entry is then stripped of
+ * its tag via a direct IndexedDB write — simulating exactly what a
+ * pre-1531/1534 device's entry looks like; there is no way to reach this
+ * shape through the current UI, by design, so a direct write is the only
+ * way to reproduce it. Account B is registered from a SEPARATE browser
+ * context (so B's own signup/vault-creation never touches this page's
+ * IndexedDB — the realistic "two accounts, same human, same device"
+ * scenario, not "two tabs of the same signup"), reusing A's exact password.
+ * B then logs in — via password, on THIS page, which still carries A's
+ * now-untagged vault entry.
+ */
+test.describe('task 1531 P0 continuation (web #85): an untagged legacy vault entry never gets silently adopted', () => {
+  test('B logging in with A\'s exact password against A\'s untagged vault entry is routed to device provisioning — A\'s key is never resident under B\'s session', async ({
+    page,
+    context,
+    browser,
+  }) => {
+    test.setTimeout(180_000)
+
+    const sharedPassword = 'CrossAcct1531C-SharedPw!'
+
+    // ── 1. Account A signs up on THIS page — real vault, tagged 'A' by the
+    // current (already-fixed) wrapAndStore, and uploads a real marker file.
+    await page.goto('/?nodev=1')
+    await signupAndUnlock(page, { password: sharedPassword })
+    await uploadTextFile(page, 'a-marker.txt', 'A real content — must never be reachable under B')
+
+    // ── 2. Strip the vault entry's userId tag in place, directly in
+    // IndexedDB — reproduces a pre-1531/1534 device's on-disk shape. The
+    // wrapped/encrypted payload itself is untouched (still decrypts to A's
+    // real key under `sharedPassword`); only the account-binding tag is
+    // removed, exactly matching test/1531-account-binding.test.ts's
+    // `writeUntaggedVaultEntry` helper technique, done here live in the
+    // browser instead of bun:test's fake IndexedDB.
+    await page.evaluate(async () => {
+      const db: IDBDatabase = await new Promise((resolve, reject) => {
+        const req = indexedDB.open('beebeeb_vault', 1)
+        req.onsuccess = () => resolve(req.result)
+        req.onerror = () => reject(req.error)
+      })
+      const entry = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        const tx = db.transaction('keys', 'readonly')
+        const req = tx.objectStore('keys').get('master')
+        req.onsuccess = () => resolve(req.result as Record<string, unknown>)
+        req.onerror = () => reject(req.error)
+      })
+      delete entry.userId
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction('keys', 'readwrite')
+        const req = tx.objectStore('keys').put(entry)
+        req.onsuccess = () => resolve()
+        req.onerror = () => reject(req.error)
+      })
+      db.close()
+    })
+
+    // ── 3. Account B signs up in a SEPARATE browser context — a real,
+    // independent account on the server, reusing A's exact password. B's
+    // own vault-creation happens entirely in `bContext`'s own IndexedDB,
+    // never touching `page`'s (where A's stripped entry now sits).
+    const bContext = await browser.newContext()
+    const bPage = await bContext.newPage()
+    await bPage.goto('/?nodev=1')
+    const b = await signupAndUnlock(bPage, { password: sharedPassword })
+    await bContext.close()
+
+    // ── 4. Clear THIS page's session cookie only (not a full logout —
+    // IndexedDB, including A's now-untagged vault entry, survives) and log
+    // in as B, via password, on THIS device.
+    await context.clearCookies()
+    await page.evaluate(() => localStorage.removeItem('bb_session'))
+    await page.goto('/login?nodev=1')
+    await waitForCryptoReady(page)
+
+    await page.getByLabel(/email/i).fill(b.email)
+    // getByLabel('Password') also matches the show/hide toggle button
+    // (aria-label "Show password", case-insensitive substring) — same
+    // ambiguity auth.spec.ts already documents; target by placeholder.
+    await page.getByPlaceholder('Your password').fill(sharedPassword)
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+
+    // THE PROOF: OPAQUE proves B's password is genuinely correct for B's
+    // account, so `vaultExists` is true and `unlockVault` runs — but the
+    // local vault entry is A's, untagged, and the server-side
+    // verifyRecoveryCheck proof (computed from the key that entry actually
+    // unwraps to) can only match A's stored recovery_check, never B's. B
+    // must be routed to device provisioning (recovery phrase) — the
+    // 'needs_provisioning' outcome — NEVER silently land on the drive
+    // holding A's key just because the password happened to match.
+    await expect(page.getByText('Set up this device')).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByText('Recovery phrase')).toBeVisible()
+
+    // And confirm we genuinely never reached the drive under A's key: no
+    // drive UI, no sign of A's marker file anywhere on the page.
+    await expect(page).not.toHaveURL(/\/(?:$|\?|#)/)
+    await expect(page.getByText('a-marker.txt')).toHaveCount(0)
+  })
+})

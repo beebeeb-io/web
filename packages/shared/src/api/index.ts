@@ -8,7 +8,15 @@
 // listFiles, …). Those stay in each app's local `api.ts` and are layered on
 // top of `request()`.
 
-export { setApiUrl, getApiUrl, setClientInfo, getClientInfo, provenanceHeaders } from './config'
+export {
+  setApiUrl,
+  getApiUrl,
+  setClientInfo,
+  getClientInfo,
+  provenanceHeaders,
+  setExpectedUserProvider,
+  expectedUserHeaders,
+} from './config'
 export {
   setTokenStorageKey,
   registerOnTokenCleared,
@@ -21,6 +29,7 @@ export {
   registerSessionExpiredHandler,
   registerAccountDeletedHandler,
   registerConnectionStatusHandler,
+  registerAccountMismatchHandler,
   markSessionConfirmed,
   clearSessionConfirmed,
 } from './notifiers'
