@@ -16,8 +16,9 @@ import {
   type ShareInvite,
 } from '../lib/api'
 import { useKeys } from '../lib/key-context'
-import { decryptFilename, fromBase64, parseEncryptedBlob, zeroize } from '../lib/crypto'
-import { decryptFolderKey, decryptChildFileKey } from '../lib/folder-share-crypto'
+import { decryptFilename, parseEncryptedBlob, zeroize } from '../lib/crypto'
+import { decryptChildFileKey } from '../lib/folder-share-crypto'
+import { resolveRecipientFolderKey } from '../lib/recipient-folder-key'
 import { encryptedDownload } from '../lib/encrypted-download'
 import { formatBytes } from '../lib/format'
 
@@ -33,6 +34,9 @@ export function SharedFolder() {
   const [files, setFiles] = useState<DriveFile[]>([])
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({})
   const [folderKeyCache, setFolderKeyCache] = useState<Uint8Array | null>(null)
+  // True when no stored key blob opens this folder for us (legacy invites
+  // approved with the wrong key): say so instead of listing 'Encrypted file'.
+  const [keyMissing, setKeyMissing] = useState(false)
   const [fileKeysMap, setFileKeysMap] = useState<Record<string, string>>({})
   const [invite, setInvite] = useState<ShareInvite | null>(null)
   const [memberCount, setMemberCount] = useState(0)
@@ -47,16 +51,6 @@ export function SharedFolder() {
     return invites.find(i => i.id === inviteId) ?? null
   }, [inviteId])
 
-  const decryptFolderKeyFromInvite = useCallback(async (inv: ShareInvite): Promise<Uint8Array | null> => {
-    if (!inv.sender_public_key || !inv.encrypted_folder_key) return null
-    return decryptFolderKey(
-      getMasterKey(),
-      fromBase64(inv.sender_public_key),
-      inv.file_id,
-      fromBase64(inv.encrypted_folder_key),
-    )
-  }, [getMasterKey])
-
   const loadFiles = useCallback(async (parentId?: string) => {
     if (!folderId || !inviteId) return
     setLoading(true)
@@ -67,17 +61,23 @@ export function SharedFolder() {
         if (inv) setInvite(inv)
       }
 
-      let fk = folderKeyCache
-      if (!fk && inv) {
-        fk = await decryptFolderKeyFromInvite(inv)
-        if (fk) setFolderKeyCache(fk)
-      }
-
       const [fileList, keys, members] = await Promise.all([
         listSharedFolderFiles(folderId, parentId),
         getFolderKeys(inviteId),
         getFolderMembers(folderId).catch(() => ({ members: [], owner_id: '' })),
       ])
+
+      let fk = folderKeyCache
+      if (!fk && inv) {
+        const resolved = await resolveRecipientFolderKey(inv, getMasterKey(), keys)
+        if (resolved.status === 'ok') {
+          fk = resolved.folderKey
+          setFolderKeyCache(fk)
+          setKeyMissing(false)
+        } else {
+          setKeyMissing(true)
+        }
+      }
 
       setFiles(fileList)
       setMemberCount(members.members.length)
@@ -115,7 +115,7 @@ export function SharedFolder() {
     } finally {
       setLoading(false)
     }
-  }, [folderId, inviteId, invite, folderKeyCache, fetchInvite, decryptFolderKeyFromInvite, showToast])
+  }, [folderId, inviteId, invite, folderKeyCache, fetchInvite, getMasterKey, showToast])
 
   useEffect(() => {
     if (isUnlocked && folderId && inviteId) {
@@ -191,6 +191,21 @@ export function SharedFolder() {
 
       {loading ? (
         <div>{Array.from({ length: 6 }, (_, i) => <SharedRowSkeleton key={i} />)}</div>
+      ) : keyMissing ? (
+        <div
+          className="flex flex-col items-center justify-center h-full text-center py-20 px-6"
+          data-testid="shared-folder-key-missing"
+        >
+          <div className="w-14 h-14 mb-4 rounded-2xl flex items-center justify-center bg-paper-2 border border-line">
+            <Icon name="lock" size={24} className="text-ink-2" />
+          </div>
+          <div className="text-[15px] font-semibold text-ink mb-1">This folder can't be opened</div>
+          <div className="text-[13px] text-ink-3 max-w-[380px]">
+            The key for this folder was not stored correctly when it was shared, so we can't decrypt
+            it. {ownerEmail ? <span className="font-mono">{ownerEmail}</span> : 'The owner'} needs to
+            share it with you again.
+          </div>
+        </div>
       ) : files.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-full text-center py-20">
           <div

@@ -17,8 +17,9 @@ import {
 } from '../lib/api'
 import { useDriveData } from '../lib/drive-data-context'
 import { StorageUsageBar } from './storage-usage-bar'
-import { decryptFolderKey, decryptChildFileKey } from '../lib/folder-share-crypto'
-import { decryptFilename, fromBase64, parseEncryptedBlob, decryptFileMetadata } from '../lib/crypto'
+import { decryptChildFileKey } from '../lib/folder-share-crypto'
+import { resolveRecipientFolderKey } from '../lib/recipient-folder-key'
+import { decryptFilename, parseEncryptedBlob, decryptFileMetadata } from '../lib/crypto'
 import { useSync } from '../lib/sync-context'
 import { useSearchIndex, type NodeNameResolver } from '../hooks/use-search-index'
 import { QuotaWarning } from './quota-warning'
@@ -457,16 +458,15 @@ export function DriveLayout({ children }: { children: ReactNode }) {
       }
       const withNames = await Promise.all(folderInvites.map(async (invite) => {
         try {
-          if (!invite.sender_public_key || !invite.encrypted_folder_key || !invite.file_name_encrypted) {
+          if (!invite.sender_public_key || !invite.file_name_encrypted) {
             return { ...invite, decryptedName: 'Shared folder' }
           }
-          const folderKey = await decryptFolderKey(
-            getMasterKey(),
-            fromBase64(invite.sender_public_key),
-            invite.file_id,
-            fromBase64(invite.encrypted_folder_key),
-          )
           const keys = await getFolderKeys(invite.id)
+          const resolved = await resolveRecipientFolderKey(invite, getMasterKey(), keys)
+          if (resolved.status !== 'ok') {
+            return { ...invite, decryptedName: 'Shared folder' }
+          }
+          const folderKey = resolved.folderKey
           const folderEntry = keys.find(k => k.file_id === invite.file_id)
           if (folderEntry) {
             const fileKey = await decryptChildFileKey(folderKey, folderEntry.encrypted_file_key)
