@@ -5,6 +5,7 @@ import { BBButton } from '@beebeeb/shared'
 import { BBCheckbox } from '@beebeeb/shared'
 import { BBInput } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
+import { shouldShowPilotKeyField, buildOnboardingState, pilotKeyBlocksSubmit } from '../lib/signup-pilot-gate'
 
 // Referral keys — read here, forwarded to onboarding, cleared after signup
 export const REFERRAL_SOURCE_KEY = 'bb_ref_source'
@@ -28,6 +29,12 @@ export function Signup() {
   const [pilotKeyError, setPilotKeyError] = useState(navState?.pilotKeyError ?? '')
   const [accepted, setAccepted] = useState(false)
   const [error, setError] = useState('')
+
+  // Task 1520: the server's pilot gate is OFF by default (launched, phase 2 —
+  // BB_REQUIRE_PILOT_KEY=0 on both prod nodes). See src/lib/signup-pilot-gate.ts
+  // for the full rationale — the field only reappears after a real server
+  // refusal bounces us back here.
+  const showPilotKeyField = shouldShowPilotKeyField(navState)
 
   // Persist referral attribution from URL params into localStorage so it
   // survives the multi-step onboarding flow.
@@ -59,14 +66,16 @@ export function Signup() {
       return
     }
 
-    if (!pilotKey.trim()) {
-      setPilotKeyError('A pilot access key is required while Beebeeb is in private development.')
+    if (pilotKeyBlocksSubmit({ showPilotKeyField, pilotKey })) {
+      setPilotKeyError('A pilot access key is required to sign up.')
       return
     }
 
-    // The key is verified server-side at register-start (during onboarding). We
-    // carry it forward in router state; onboarding threads it onto that request.
-    navigate('/onboarding', { state: { email, pilotKey: pilotKey.trim() } })
+    // The key (if any) is re-checked server-side at register-start (during
+    // onboarding). buildOnboardingState carries it forward only when one was
+    // entered — most signups have none, and opaqueRegisterStart/Finish only
+    // send the X-Beebeeb-Pilot-Key header when a key is present.
+    navigate('/onboarding', { state: buildOnboardingState(email, pilotKey) })
   }
 
   return (
@@ -78,16 +87,19 @@ export function Signup() {
       hideTrust
     >
       <form onSubmit={handleSubmit}>
-        {/* Private-development notice — honest, brief, no amber (reserved for the CTA). */}
-        <div className="mb-4 rounded-lg border border-line bg-paper-2 px-3.5 py-3">
-          <p className="text-[13px] font-semibold text-ink mb-0.5">
-            Beebeeb is in private development
-          </p>
-          <p className="text-xs text-ink-3 leading-relaxed">
-            Signups are limited to pilot users right now — you'll need an access key.
-            Contact the team if you're a pilot.
-          </p>
-        </div>
+        {/* Pilot-gate notice — only shown when a real server refusal bounced
+            us back here (see showPilotKeyField above). Signups are open by
+            default; this never renders on a fresh visit to /signup. */}
+        {showPilotKeyField && (
+          <div className="mb-4 rounded-lg border border-line bg-paper-2 px-3.5 py-3">
+            <p className="text-[13px] font-semibold text-ink mb-0.5">
+              Pilot access key required
+            </p>
+            <p className="text-xs text-ink-3 leading-relaxed">
+              Signups currently require a pilot access key. Contact the team if you're a pilot.
+            </p>
+          </div>
+        )}
 
         <BBInput
           label="Email"
@@ -100,19 +112,21 @@ export function Signup() {
           required
         />
 
-        <BBInput
-          label="Pilot access key"
-          type="text"
-          placeholder="Enter your access key"
-          value={pilotKey}
-          onChange={(e) => { setPilotKey(e.currentTarget.value); setPilotKeyError('') }}
-          icon="key"
-          className="mb-3.5"
-          autoComplete="off"
-          error={pilotKeyError || undefined}
-          data-testid="pilot-key-input"
-          required
-        />
+        {showPilotKeyField && (
+          <BBInput
+            label="Pilot access key"
+            type="text"
+            placeholder="Enter your access key"
+            value={pilotKey}
+            onChange={(e) => { setPilotKey(e.currentTarget.value); setPilotKeyError('') }}
+            icon="key"
+            className="mb-3.5"
+            autoComplete="off"
+            error={pilotKeyError || undefined}
+            data-testid="pilot-key-input"
+            required
+          />
+        )}
 
         <div className="mt-2.5">
           <BBCheckbox
@@ -139,7 +153,7 @@ export function Signup() {
           variant="amber"
           size="lg"
           className="w-full"
-          disabled={!accepted || !email.trim() || !pilotKey.trim()}
+          disabled={!accepted || !email.trim() || pilotKeyBlocksSubmit({ showPilotKeyField, pilotKey })}
         >
           Continue
         </BBButton>

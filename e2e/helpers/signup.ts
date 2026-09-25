@@ -3,21 +3,21 @@ import { expect, type Page } from '@playwright/test'
 /**
  * Shared /signup → /onboarding driving helpers (task 1406).
  *
- * The "Pilot access key" field has been REQUIRED client-side since task 0928
- * (src/pages/signup.tsx: the Continue button is
- * `disabled={!accepted || !email.trim() || !pilotKey.trim()}`) — independent
- * of whether the SERVER enforces the gate (`BB_REQUIRE_PILOT_KEY`). So every
- * spec that drives the real /signup UI must fill this field with SOME
- * non-empty value or the form can never advance past step 1, regardless of
- * the backend's gate state.
+ * Task 1520: the "Pilot access key" field is NO LONGER shown by default —
+ * the server's pilot gate is OFF at launch (BB_REQUIRE_PILOT_KEY=0 on both
+ * prod nodes, phase 2) and src/pages/signup.tsx only renders the field (and
+ * requires it) after a REAL 403 pilot_key_required bounces the user back
+ * from /onboarding with `pilotKeyError` in router state — see
+ * src/lib/signup-pilot-gate.ts. So `fillSignupForm` below no longer touches
+ * that field at all; it only exists once you're already mid-flow.
  *
  * `PILOT_KEY` matches the isolated e2e harness's default
  * (`e2e/scripts/web-e2e.sh` → `BB_PILOT_SIGNUP_KEY=test-pilot-key`, task
- * 1406) so a spec using the default here passes the server-side check too
- * when the harness's gate is on — not just the client-side non-empty check.
- * Override with `BB_TEST_PILOT_KEY` to point at a different server value, or
- * pass an explicit `pilotKey` to `fillSignupForm`/`signupAndUnlock` (e.g. to
- * exercise the wrong-key rejection path — see e2e/pilot-key-registration.spec.ts).
+ * 1406). Only relevant when a caller specifically drives the gate-on
+ * recovery path via `retrySignupWithPilotKey` (see
+ * e2e/pilot-key-registration.spec.ts) — the normal happy-path specs never
+ * need it. Override with `BB_TEST_PILOT_KEY` to point at a different server
+ * value.
  */
 export const PILOT_KEY = process.env.BB_TEST_PILOT_KEY ?? 'test-pilot-key'
 
@@ -26,22 +26,42 @@ export const uniqueEmail = (prefix = 'e2e'): string =>
 
 export interface FillSignupFormOptions {
   email: string
-  /** Defaults to PILOT_KEY. Pass an explicit wrong value to test rejection. */
-  pilotKey?: string
 }
 
 /**
- * Fill and submit the /signup form (email + pilot access key + consent
- * checkbox), landing on /onboarding. Does not assert past the navigation —
- * callers that need to confirm arrival should check the URL themselves (most
- * go straight into `reachPasswordStep`, which asserts it).
+ * Fill and submit the /signup form (email + consent checkbox), landing on
+ * /onboarding. No pilot-key field on a fresh visit (task 1520) — this
+ * asserts that. Does not assert past the navigation — callers that need to
+ * confirm arrival should check the URL themselves (most go straight into
+ * `reachPasswordStep`, which asserts it).
  */
 export async function fillSignupForm(page: Page, opts: FillSignupFormOptions): Promise<void> {
   await page.goto('/signup')
   await expect(page).toHaveURL(/\/signup/)
+  await expect(page.getByTestId('pilot-key-input')).toHaveCount(0)
   await page.getByLabel(/email/i).fill(opts.email)
-  await page.getByTestId('pilot-key-input').fill(opts.pilotKey ?? PILOT_KEY)
   await page.getByRole('checkbox', { name: /Beebeeb cannot recover/i }).click()
+  await page.getByRole('button', { name: /^continue$/i }).click()
+}
+
+/**
+ * Drives the pilot-gate recovery path: from an ALREADY-bounced-back
+ * /signup (onboarding.tsx's 403 pilot_key_required catch handler routed
+ * here with `pilotKeyError` in router state, so the field is now visible +
+ * required), fill the key and resubmit — lands back on /onboarding with a
+ * FRESH mount (a new recovery phrase gets generated; the old one is void).
+ * Does not `page.goto()` — that would discard the router state carrying the
+ * bounced-back email + error.
+ */
+export async function retrySignupWithPilotKey(page: Page, pilotKey: string): Promise<void> {
+  await expect(page).toHaveURL(/\/signup/, { timeout: 15_000 })
+  await expect(page.getByTestId('pilot-key-input')).toBeVisible({ timeout: 5_000 })
+  await page.getByTestId('pilot-key-input').fill(pilotKey)
+  // The bounce-back is a fresh /signup mount: the "cannot recover" acknowledgement
+  // starts unchecked again (the email + key survive via router state), so a real
+  // user re-ticks it before Continue is enabled — do the same here.
+  const ack = page.getByRole('checkbox', { name: /Beebeeb cannot recover/i })
+  if (!(await ack.isChecked())) await ack.click()
   await page.getByRole('button', { name: /^continue$/i }).click()
 }
 
@@ -102,8 +122,6 @@ export interface SignupAndUnlockOptions {
   /** Defaults to a fresh uniqueEmail(). */
   email?: string
   password: string
-  /** Defaults to PILOT_KEY. */
-  pilotKey?: string
 }
 
 export interface SignedUpAccount {
@@ -122,7 +140,7 @@ export async function signupAndUnlock(
   opts: SignupAndUnlockOptions,
 ): Promise<SignedUpAccount> {
   const email = opts.email ?? uniqueEmail()
-  await fillSignupForm(page, { email, pilotKey: opts.pilotKey })
+  await fillSignupForm(page, { email })
   const phraseWords = await reachPasswordStep(page)
   await createAccount(page, opts.password)
 

@@ -274,18 +274,22 @@ export async function signup(
 // ─── OPAQUE auth endpoints ─────────────────────────
 
 /**
- * OPAQUE registration, round 1. While Beebeeb is in private development the
- * server gates this endpoint behind a shared pilot access key: pass the
- * user-entered key as `pilotKey` and it rides as the `X-Beebeeb-Pilot-Key`
- * header. A missing/wrong key is rejected HERE with a typed 403
- * (`error: "pilot_key_required"`) BEFORE anything is created server-side.
+ * OPAQUE registration, round 1. The server CAN gate this endpoint behind a
+ * shared pilot access key (`BB_REQUIRE_PILOT_KEY`) — OFF by default at
+ * launch (task 1520, phase 2; prod runs gate-off on both nodes). When it's
+ * on, pass the user-entered key as `pilotKey` and it rides as the
+ * `X-Beebeeb-Pilot-Key` header; a missing/wrong key is rejected HERE with a
+ * typed 403 (`error: "pilot_key_required"`) BEFORE anything is created
+ * server-side. When the gate is off (the default), omit `pilotKey` — no
+ * header is sent at all. See src/lib/signup-pilot-gate.ts for how
+ * signup.tsx decides whether to even show the field.
  *
  * The server RE-ENFORCES the same gate on register-finish (the OPAQUE flow is
  * stateless across the two round trips, so a finish that skipped a gated
  * start must not slip through) — see `opaqueRegisterFinish` below. Both
- * requests must carry the header (task 1411; a prior version of this comment
- * claimed only start needed it, which was wrong and let the header get
- * dropped on finish).
+ * requests must carry the header when a key is present (task 1411; a prior
+ * version of this comment claimed only start needed it, which was wrong and
+ * let the header get dropped on finish).
  */
 export async function opaqueRegisterStart(
   email: string,
