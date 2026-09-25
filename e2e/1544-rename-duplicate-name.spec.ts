@@ -34,6 +34,11 @@ async function dismissFirstRunOverlays(page: Page): Promise<void> {
 }
 
 test('1544: rename into an existing sibling name is blocked, not silently applied', async ({ page }) => {
+  // Signup + vault-unlock (Argon2id/OPAQUE) + two uploads + a possible
+  // welcome-tour dismiss retry (openRowMenu, helpers/drive.ts) comfortably
+  // exceed the project's 30s default under real load — matches the
+  // precedent in refresh-stability.spec.ts for the same signup-heavy shape.
+  test.setTimeout(60_000)
   await page.goto('/?nodev=1')
   await signupAndUnlock(page, { password: 'RenameCollision1544!' })
   await dismissFirstRunOverlays(page)
@@ -51,9 +56,12 @@ test('1544: rename into an existing sibling name is blocked, not silently applie
   const input = dialog.locator('input')
   await input.fill('report.pdf')
 
-  // Blocked: inline error shown, submit disabled.
-  await expect(dialog.getByText('A file named "report.pdf" already exists here.')).toBeVisible()
-  await expect(dialog.getByRole('button', { name: 'Rename' })).toBeDisabled()
+  // Blocked: inline error shown, submit disabled. Longer timeout than the
+  // 5s default — this is a synchronous render off local state (no network),
+  // but under real load the paint can lag past 5s (observed: one retry
+  // needed on a heavily-loaded box, 2026-09-25).
+  await expect(dialog.getByText('A file named "report.pdf" already exists here.')).toBeVisible({ timeout: 15_000 })
+  await expect(dialog.getByRole('button', { name: 'Rename' })).toBeDisabled({ timeout: 15_000 })
 
   await dialog.getByRole('button', { name: 'Cancel' }).click()
   await expect(dialog).not.toBeVisible()
@@ -65,6 +73,7 @@ test('1544: rename into an existing sibling name is blocked, not silently applie
 })
 
 test('1544: renaming to a genuinely free name still works', async ({ page }) => {
+  test.setTimeout(60_000)
   await page.goto('/?nodev=1')
   await signupAndUnlock(page, { password: 'RenameFreeName1544!' })
   await dismissFirstRunOverlays(page)

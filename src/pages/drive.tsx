@@ -57,7 +57,7 @@ import { userFriendlyError } from '../lib/user-friendly-error'
 import type { FileActivityEntry } from '../components/file-details-panel'
 import { timeAgo } from '../components/file-list'
 import { getRemainingBytes } from '../components/quota-warning'
-import { netQuotaDeltaBytes, exceedsQuota, type QuotaCheckItem } from '../lib/upload-quota'
+import { requiredQuotaBytes, UploadQuotaLedger, type QuotaCheckItem } from '../lib/upload-quota'
 import {
   buildNameToFileMap as buildNameToFileMapPure,
   siblingLowercaseNames,
@@ -150,6 +150,11 @@ export function Drive() {
   // Cache the File object per upload-id so we can re-invoke the encrypted
   // upload pipeline when the user clicks Retry on a failed item.
   const uploadFilesRef = useRef<Map<string, File>>(new Map())
+  // Bytes reserved by uploads queued but not yet reflected in `storageUsage`
+  // (task 1544 finding 2a) -- see UploadQuotaLedger's doc comment. A plain
+  // ref (not state): reserving/releasing must never itself trigger a
+  // re-render.
+  const quotaLedgerRef = useRef(new UploadQuotaLedger())
   const [syncedAgo, setSyncedAgo] = useState(0)
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null)
   const [shareFileId, setShareFileId] = useState<string | null>(null)
@@ -975,12 +980,24 @@ export function Drive() {
   ) {
     if (resolved.length === 0) return
 
-    // ─── Quota check (task 1544 finding 1) ───────────
+    // ─── Quota check (task 1544 findings 1 + 2) ───────────
     // Runs HERE — after conflict/auto-version resolution — so a
     // version-replace (auto-version, or explicit "Replace" from the
     // conflict dialog) is credited the existing file's size, mirroring the
     // server's replace-credit logic (uploads.rs:495-513). A "Keep both"
     // upload gets no credit — it creates a new file, same as the server.
+    //
+    // Checked against the ledger, not the raw exceedsQuota — storageUsage
+    // is React state that only updates after a fetch/refresh completes, so
+    // a SECOND call to this function (e.g. the dedup-warning banner's
+    // "Upload anyway", which queues the confirmed file directly and routes
+    // the rest through handleFilesSelected moments later) would otherwise
+    // check against the exact same stale snapshot as the first call and
+    // both could pass independently while together exceeding quota
+    // (finding 2a). requiredQuotaBytes/the ledger's reserve() also clamp
+    // each item's replace-credit to itself, never letting a shrinking
+    // replacement fund a sibling upload in the same batch (finding 2b) —
+    // doEncryptedUpload below runs once per item, independently.
     const remaining = getRemainingBytes(storageUsage?.used_bytes, storageUsage?.plan_limit_bytes)
     const quotaItems: QuotaCheckItem[] = resolved.map((r) => ({
       sizeBytes: r.file.size,
@@ -988,12 +1005,13 @@ export function Drive() {
         ? files.find((f) => f.id === r.replaceFileId)?.size_bytes
         : undefined,
     }))
-    if (exceedsQuota(quotaItems, remaining)) {
-      const netNeeded = netQuotaDeltaBytes(quotaItems)
+    if (quotaLedgerRef.current.wouldExceed(quotaItems, remaining)) {
+      const needed = requiredQuotaBytes(quotaItems)
+      const effectiveRemaining = Math.max(0, (remaining ?? 0) - quotaLedgerRef.current.reservedBytes)
       showToast({
         icon: 'shield',
         title: 'Not enough storage',
-        description: `This upload needs ${formatBytes(netNeeded)} but you only have ${formatBytes(remaining ?? 0)} remaining.`,
+        description: `This upload needs ${formatBytes(needed)} but you only have ${formatBytes(effectiveRemaining)} remaining.`,
         href: '/billing',
         danger: true,
       })
@@ -1019,6 +1037,11 @@ export function Drive() {
 
     resolved.forEach((r, i) => {
       const uploadId = newUploads[i].id
+      // Reserve this item's (clamped) quota cost against the ledger NOW,
+      // before doEncryptedUpload's async work even starts — release() is
+      // called by its success/failure paths below once this specific
+      // upload settles (task 1544 finding 2a).
+      quotaLedgerRef.current.reserve(uploadId, quotaItems[i])
       // For "Keep both", create a renamed File object so encryptedUpload
       // encrypts the new name (not the original).
       const fileToUpload =
@@ -1181,6 +1204,8 @@ export function Drive() {
       })
       setUploads((prev) => prev.filter((u) => u.id !== uploadId))
       uploadFilesRef.current.delete(uploadId)
+      // Never started — nothing to hold reserved (task 1544 finding 2a).
+      quotaLedgerRef.current.release(uploadId)
       return
     }
 
@@ -1235,6 +1260,10 @@ export function Drive() {
       setUploads((prev) => prev.filter((u) => u.id !== uploadId))
       uploadAbortRef.current.delete(uploadId)
       uploadFilesRef.current.delete(uploadId)
+      // Settled successfully — the refreshDriveUsage()/fetchFiles() calls
+      // below will make storageUsage reflect this for real; drop the
+      // reservation that stood in for it until now (task 1544 finding 2a).
+      quotaLedgerRef.current.release(uploadId)
       // Remove from paused list if this was a resume
       setPausedUploads((prev) => prev.filter((u) => u.fileId !== fileId))
       showToast({ icon: 'check', title: 'Uploaded', description: file.name })
@@ -1264,6 +1293,11 @@ export function Drive() {
       fetchFiles()
     } catch (err) {
       uploadAbortRef.current.delete(uploadId)
+      // Failed or cancelled — nothing changed server-side, so this
+      // reservation must not linger and permanently overcount a future
+      // queueResolvedUploads call (task 1544 finding 2a). Covers both
+      // branches below.
+      quotaLedgerRef.current.release(uploadId)
       if (err instanceof DOMException && err.name === 'AbortError') {
         // Cancelled by user — silently remove from list, drop the cached File
         setUploads((prev) => prev.filter((u) => u.id !== uploadId))
