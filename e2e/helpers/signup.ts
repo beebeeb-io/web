@@ -1,4 +1,5 @@
 import { expect, type Page } from '@playwright/test'
+import { waitForSignupCode } from './mail-sink'
 
 /**
  * Shared /signup → /onboarding driving helpers (task 1406).
@@ -66,15 +67,51 @@ export async function retrySignupWithPilotKey(page: Page, pilotKey: string): Pro
 }
 
 /**
- * Drive the /onboarding display → verify steps: wait for the generated
- * 12-word recovery phrase to render, capture it, acknowledge it, then
- * re-type the words the verify step asks for. Leaves the page on the
- * password step (its "At least 12 characters" field visible). Returns the
- * captured recovery phrase words in order, for callers that need to restore
- * a vault on a second device later (e.g. cli-auth-redirect.spec.ts).
+ * Drive the /onboarding code → display → verify steps: when the server has
+ * the email-code capability (task 1525 — the common case against a current
+ * server), first clears the "check your inbox" code step by reading the
+ * code back out of the mail sink (e2e/helpers/mail-sink.ts) and submitting
+ * it. Then waits for the generated 12-word recovery phrase to render,
+ * captures it, acknowledges it, and re-types the words the verify step
+ * asks for. Leaves the page on the password step (its "At least 12
+ * characters" field visible). Returns the captured recovery phrase words in
+ * order, for callers that need to restore a vault on a second device later
+ * (e.g. cli-auth-redirect.spec.ts).
+ *
+ * Requires RUST_LOG=beebeeb_api::email=info on the backend this test drives
+ * (e2e/scripts/web-e2e.sh sets this by default) — otherwise the mail sink
+ * is empty and this throws with a message saying so.
  */
 export async function reachPasswordStep(page: Page): Promise<string[]> {
   await expect(page).toHaveURL(/\/onboarding/, { timeout: 10_000 })
+
+  // Task 1525: the code step (when the server has the capability — the
+  // route is unconditionally mounted, independent of BB_SIGNUP_EMAIL_CODE)
+  // now sits BEFORE the recovery-phrase display. Handle it transparently
+  // here so every existing caller of this helper — nearly every
+  // signup-driving spec — keeps working unchanged. The legacy fallback
+  // (a 404'd email-start) skips straight to the phrase exactly as before,
+  // so this block simply never finds the code screen and falls through.
+  const codeEmailEl = page.getByTestId('signup-code-email')
+  const hasCodeStep = await codeEmailEl
+    .waitFor({ state: 'visible', timeout: 5_000 })
+    .then(() => true)
+    .catch(() => false)
+  if (hasCodeStep) {
+    const email = (await codeEmailEl.innerText()).trim()
+    const code = await waitForSignupCode(email)
+    // Filling all EMAIL_CODE_LENGTH digits auto-submits (mirrors
+    // two-factor-prompt.tsx's pattern) — do NOT also click "Verify" here:
+    // by the time a separate click lands, the code step has often already
+    // unmounted (step moved to 'display'), leaving the click waiting on a
+    // button that no longer exists until the test timeout.
+    await page.getByTestId('signup-code-input').fill(code)
+    // The auto-submit is async (signupEmailVerify round-trip, then the
+    // phrase-generation effect) — wait for the code screen to actually be
+    // gone before looking for phrase words below.
+    await expect(codeEmailEl).toBeHidden({ timeout: 10_000 })
+  }
+
   const wordEls = page.locator('span.font-mono.text-sm.font-medium')
   await expect(wordEls).toHaveCount(12, { timeout: 15_000 })
   const phraseWords = (await wordEls.allInnerTexts()).map((w) => w.trim())
