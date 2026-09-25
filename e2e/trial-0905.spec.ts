@@ -50,6 +50,36 @@ function trialingSub() {
   }
 }
 
+/**
+ * Server-realistic trial payload: trial.rs `start_trial` sets
+ * current_period_end == trial_ends_at. GATE 4 needs this shape — the payload
+ * above has current_period_end: null, which is why the "Renews" bug for a
+ * no-card trial (flow-money #5) was never caught.
+ */
+function trialingSubWithPeriodEnd() {
+  const s = trialingSub()
+  return { ...s, current_period_end: s.trial_ends_at }
+}
+
+/** Mollie cancel path: status 'cancelling', current_period_end kept as the grace end. */
+function cancellingSub() {
+  const ends = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000).toISOString()
+  return {
+    plan: 'pro', billing_cycle: 'monthly', seats: 1, region: 'eu-central',
+    status: 'cancelling', created_at: '2026-06-01T00:00:00Z',
+    current_period_end: ends, trial_ends_at: null, pending_downgrade_plan: null,
+  }
+}
+
+function activeSub() {
+  const ends = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000).toISOString()
+  return {
+    plan: 'pro', billing_cycle: 'monthly', seats: 1, region: 'eu-central',
+    status: 'active', created_at: '2026-06-01T00:00:00Z',
+    current_period_end: ends, trial_ends_at: null, pending_downgrade_plan: null,
+  }
+}
+
 const PLANS = [
   {
     id: 'free', name: 'Free', price_eur: 0, price_yearly_eur: 0,
@@ -240,5 +270,37 @@ test.describe('0905 14-day free trial — web UI (UNIT C)', () => {
     await page.waitForURL(/mollie\.com\/checkout\/trial-convert-mock/, { timeout: 15_000 })
     expect(counters.convertPosts).toBeGreaterThanOrEqual(1)
     await page.screenshot({ path: 'e2e/screenshots/0905-gate3-convert-redirect.png', fullPage: true })
+  })
+  // Flow-money #5 (P2): a no-card trial will not renew — it drops to Free on
+  // trial_ends_at. The summary footer and the change-view period line must
+  // say "Trial ends", never "Renews". Cancelling says "Access until".
+  test('GATE 4 — trialing sub shows "Trial ends", never "Renews" (summary + change view)', async ({ page }) => {
+    await installMocks(page, { sub: trialingSubWithPeriodEnd() })
+    await bootBilling(page, '/settings/billing')
+    await expect(page.getByRole('heading', { name: /days left in your free trial/i })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText(/^Trial ends /).first()).toBeVisible()
+    expect(await page.getByText(/\bRenews\b/).count()).toBe(0)
+    await page.screenshot({ path: 'e2e/screenshots/flow-money-5-trial-summary.png', fullPage: true })
+
+    await page.getByRole('button', { name: /Change plan/i }).click()
+    await expect(page.getByText(/Plan & billing/i).first()).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText(/^Trial ends /).first()).toBeVisible()
+    expect(await page.getByText(/\bRenews\b/).count()).toBe(0)
+    await page.screenshot({ path: 'e2e/screenshots/flow-money-5-trial-change.png', fullPage: true })
+  })
+
+  test('GATE 5 — cancelling sub shows "Access until" in the summary footer, never "Renews"', async ({ page }) => {
+    await installMocks(page, { sub: cancellingSub() })
+    await bootBilling(page, '/settings/billing')
+    await expect(page.getByText(/^Access until /).first()).toBeVisible({ timeout: 15_000 })
+    expect(await page.getByText(/\bRenews\b/).count()).toBe(0)
+    await page.screenshot({ path: 'e2e/screenshots/flow-money-5-cancelling-summary.png', fullPage: true })
+  })
+
+  test('GATE 6 — control: active paid sub still shows "Renews"', async ({ page }) => {
+    await installMocks(page, { sub: activeSub() })
+    await bootBilling(page, '/settings/billing')
+    await expect(page.getByText(/^Renews /).first()).toBeVisible({ timeout: 15_000 })
+    expect(await page.getByText(/Trial ends|Access until/).count()).toBe(0)
   })
 })
