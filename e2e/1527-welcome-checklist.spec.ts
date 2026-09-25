@@ -232,3 +232,46 @@ test('1527: board already dismissed (seen:true) before any in-session action →
   await reloadDriveAndWaitForWelcomeTourFetch(page)
   await expect(intro).toBeHidden({ timeout: 5_000 })
 })
+
+test('1527: upload lands while the welcome_tour GET is still in flight → board stays dismissed, upload still recorded', async ({ page }) => {
+  // Flow-3 e2e classification (thumbnail-variant red on main): under load the
+  // mount effect's GET /preferences/welcome_tour had not resolved when the
+  // spec's upload fired, so markTourStepDone wrote `tourSeenRef`'s DEFAULT
+  // (false) back to disk along with a completed set that had lost every
+  // earlier step — reopening a dismissed checklist over the drive on the
+  // next load. Any real user who drops a file before that one GET returns
+  // (slow link, a 429, a 5xx) hits the same thing.
+  const intro = await signUpToChecklist(page, 'WelcomeChecklist1527SlowPref!')
+  await setWelcomeTourPreference(page, true, ['share'])
+
+  // Hold the mount effect's GET until the upload has fully completed.
+  let release!: () => void
+  const gate = new Promise<void>((r) => { release = r })
+  await page.route('**/api/v1/preferences/welcome_tour', async (route) => {
+    if (route.request().method() === 'GET') await gate
+    await route.continue()
+  })
+
+  await page.goto('/?nodev=1')
+  await expect(page.getByText('All files').first()).toBeVisible({ timeout: 15_000 })
+  await uploadViaToolbarButton(page, 'welcome-1527-slow-pref-upload.txt')
+
+  const prefFetched = page.waitForResponse(
+    (res) => res.url().includes('/preferences/welcome_tour') && res.request().method() === 'GET',
+    { timeout: 15_000 },
+  )
+  release()
+  await prefFetched
+  // Give a deferred write (the fix) time to land before re-reading.
+  await page.waitForTimeout(1_500)
+  await page.unroute('**/api/v1/preferences/welcome_tour')
+
+  const res = await page.request.get(`${API_URL}/api/v1/preferences/welcome_tour`)
+  expect(res.ok(), `GET welcome_tour failed: ${res.status()}`).toBe(true)
+  const stored = (await res.json()) as { value: { seen?: boolean; completed?: string[] } }
+  expect(stored.value.seen, 'an upload must never flip a dismissed checklist back to seen:false').toBe(true)
+  expect(new Set(stored.value.completed ?? [])).toEqual(new Set(['share', 'upload']))
+
+  await reloadDriveAndWaitForWelcomeTourFetch(page)
+  await expect(intro).toBeHidden({ timeout: 5_000 })
+})

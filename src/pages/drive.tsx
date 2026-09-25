@@ -188,6 +188,14 @@ export function Drive() {
   // step completed in the brief window before that fetch resolves doesn't
   // wrongly persist `seen: true`.
   const tourSeenRef = useRef(false)
+  // Whether the mount effect's GET of `welcome_tour` has come back. Until it
+  // has, tourSeenRef/tourCompleted are DEFAULTS, not the user's real state:
+  // writing them would persist `seen:false` (reopening a dismissed board) and
+  // drop every earlier completed step. Completions that land in that window
+  // are parked in pendingTourStepsRef and merged into the real preference
+  // once it arrives (e2e classification of thumbnail-variant, 2026-09-25).
+  const tourPrefLoadedRef = useRef(false)
+  const pendingTourStepsRef = useRef<Set<string>>(new Set())
 
   // Mark a welcome-checklist step done from a REAL completion signal (files
   // actually queued, a step's own confirmed action) — never from a step
@@ -209,7 +217,11 @@ export function Drive() {
   // updater, and written once — StrictMode double-invokes updater
   // functions, which previously fired setPreference twice per call.
   const markTourStepDone = useCallback((id: string, opts?: { hideBoard?: boolean }) => {
-    if (!tourCompleted.has(id)) {
+    if (!tourPrefLoadedRef.current) {
+      // Real preference not read yet — never persist defaults over it.
+      pendingTourStepsRef.current.add(id)
+      setTourCompleted((prev) => (prev.has(id) ? prev : new Set(prev).add(id)))
+    } else if (!tourCompleted.has(id)) {
       const next = new Set(tourCompleted)
       next.add(id)
       setTourCompleted(next)
@@ -709,12 +721,26 @@ export function Drive() {
   useEffect(() => {
     getPreference<{ seen?: boolean; completed?: string[] }>('welcome_tour')
       .then((pref) => {
-        if (pref?.completed?.length) setTourCompleted(new Set(pref.completed))
         // Mirror the real persisted value so markTourStepDone writes it
         // back unchanged instead of clobbering it (task 1527 fix-round).
         tourSeenRef.current = !!pref?.seen
+        const merged = new Set(pref?.completed ?? [])
+        const pending = pendingTourStepsRef.current
+        const hasNew = [...pending].some((id) => !merged.has(id))
+        pending.forEach((id) => merged.add(id))
+        pending.clear()
+        tourPrefLoadedRef.current = true
+        setTourCompleted(merged)
+        if (hasNew) {
+          setPreference('welcome_tour', {
+            seen: tourSeenRef.current,
+            completed: [...merged],
+          }).catch(() => {})
+        }
         if (!pref?.seen) setTourOpen(true)
       })
+      // On a failed read we never learn the real state, so we never write
+      // it either: pending completions stay local to this mount.
       .catch(() => {})
   }, [])
 
