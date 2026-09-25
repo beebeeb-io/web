@@ -178,9 +178,12 @@ function UrlAnnotation() {
   const base = fullUrl.slice(0, hashIdx)
   const fragment = fullUrl.slice(hashIdx) // includes the '#'
 
-  // Extract just the key value for display truncation
-  const params = new URLSearchParams(fragment.slice(1))
-  const keyVal = params.get('key') ?? ''
+  // Extract just the key value for display truncation. Uses the same
+  // extractShareKeyToken() as the real decode paths (task 1531) — NOT
+  // URLSearchParams, which decodes '+' as a space (form-urlencoded
+  // semantics) and would show a mangled preview for a standard-base64 key
+  // containing '+'. Display-only: never used to derive the actual key.
+  const keyVal = extractShareKeyToken(fragment) ?? ''
   const keyDisplay =
     keyVal.length > 16
       ? `${keyVal.slice(0, 8)}…${keyVal.slice(-4)}`
