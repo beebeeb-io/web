@@ -3670,7 +3670,12 @@ export async function listAnnouncements(): Promise<{ announcements: Announcement
 // ─── Public profile ────────────────────────────────────────────────────────
 
 export interface PublicProfileShare {
-  token: string
+  // Task 1545, finding 2: the server deliberately never sends this — a
+  // share token is a secret that grants unauthenticated download access
+  // (see repos/server profile.rs's PublicShare struct comment) — so it must
+  // be treated as absent, not assumed present. Kept only so a future,
+  // deliberate server change to include it needs no client type change.
+  token?: string
   file_size: number | null
   created_at: string
   expires_at: string | null

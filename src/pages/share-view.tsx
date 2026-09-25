@@ -470,7 +470,7 @@ function UnknownShareTypeCard({ shareType }: { shareType: string }) {
             <div className="px-8 py-3.5 bg-paper-2 border-t border-line">
               <div className="flex items-center justify-center gap-1.5 text-[11px] text-ink-3">
                 <Icon name="shield" size={11} className="text-amber-deep" />
-                End-to-end encrypted · Stored in Europe
+                End-to-end encrypted · Stored in Falkenstein, Germany
               </div>
             </div>
           </div>
@@ -1251,7 +1251,7 @@ export function ShareViewPage() {
               <div className="px-8 py-3.5 bg-paper-2 border-t border-line">
                 <div className="flex items-center justify-center gap-1.5 text-[11px] text-ink-3">
                   <Icon name="shield" size={11} className="text-amber-deep" />
-                  End-to-end encrypted · Stored in Europe
+                  End-to-end encrypted · Stored in Falkenstein, Germany
                 </div>
               </div>
             </div>

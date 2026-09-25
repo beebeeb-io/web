@@ -9,12 +9,8 @@ import {
   type ShareInvite,
 } from '../lib/api'
 import { useKeys } from '../lib/key-context'
-import {
-  encryptFileKeyForSharing,
-  fromBase64,
-  toBase64,
-  zeroize,
-} from '../lib/crypto'
+import { fromBase64, toBase64 } from '../lib/crypto'
+import { buildApprovalKeyBlob } from '../lib/approve-invite-crypto'
 import { userFriendlyError } from '../lib/user-friendly-error'
 
 interface ShareApproveProps {
@@ -84,23 +80,18 @@ export function ShareApprove({ onUpdate }: ShareApproveProps) {
 
       try {
         const masterKey = getMasterKey()
-        const fileKey = await getFileKey(invite.file_id)
         const recipientPubKey = fromBase64(invite.recipient_public_key)
 
-        const { encryptedFileKey, nonce } = await encryptFileKeyForSharing(
+        // Branches on invite.is_folder_share (task 1545, finding 1): a
+        // folder-share invite must be approved with the RANDOM folder key
+        // that every child file's key is wrapped under, not a deterministic
+        // per-file key. See approve-invite-crypto.ts for the full history.
+        const combined = await buildApprovalKeyBlob(
+          invite,
           masterKey,
           recipientPubKey,
-          invite.file_id,
-          fileKey,
+          getFileKey,
         )
-
-        // Zero the file key after use
-        zeroize(fileKey)
-
-        // Combine nonce + ciphertext for transport
-        const combined = new Uint8Array(nonce.length + encryptedFileKey.length)
-        combined.set(nonce, 0)
-        combined.set(encryptedFileKey, nonce.length)
 
         await approveInvite(invite.id, toBase64(combined))
 

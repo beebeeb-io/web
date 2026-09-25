@@ -92,21 +92,34 @@ function ProfileHero({ profile }: { profile: PublicProfile }) {
 
 // ─── Share Card ───────────────────────────────────────────────────────────────
 
+/**
+ * A share on a public profile is only safely openable when the server sent
+ * a real token. Today it never does — repos/server's PublicShare struct
+ * (profile.rs) deliberately omits `token`: "it is a secret that grants
+ * unauthenticated download access and must never appear on public
+ * profiles." Without this guard, every card linked to `/s/undefined` (task
+ * 1545, finding 2). Kept as a guard (not a dead branch) so this component
+ * starts rendering real links automatically if the server ever adds one.
+ */
+export function getShareCardHref(share: Pick<PublicProfileShare, 'token'>): string | null {
+  return share.token ? `/s/${share.token}` : null
+}
+
 function ShareCard({ share }: { share: PublicProfileShare }) {
-  return (
-    <a
-      href={`/s/${share.token}`}
-      className="group flex flex-col gap-4 rounded-xl border border-line bg-paper p-5 hover:border-amber/50 hover:shadow-2 transition-all duration-200"
-      aria-label="Open encrypted shared file"
-    >
+  const href = getShareCardHref(share)
+
+  const body = (
+    <>
       {/* Top row: icon + lock badge on hover */}
       <div className="flex items-start justify-between">
         <div className="w-10 h-10 rounded-lg bg-amber-bg border border-amber/20 flex items-center justify-center shrink-0">
           <Icon name="file-text" size={18} className="text-amber-deep" />
         </div>
-        <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-          <Icon name="lock" size={13} className="text-amber-deep" />
-        </div>
+        {href && (
+          <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+            <Icon name="lock" size={13} className="text-amber-deep" />
+          </div>
+        )}
       </div>
 
       {/* Title + meta */}
@@ -136,12 +149,35 @@ function ShareCard({ share }: { share: PublicProfileShare }) {
         )}
       </div>
 
-      {/* Footer CTA */}
-      <div className="flex items-center gap-1 text-[12px] font-medium text-ink-3 group-hover:text-amber-deep transition-colors duration-200 mt-auto pt-3 border-t border-line">
-        <span>Open</span>
-        <Icon name="chevron-right" size={12} />
-      </div>
-    </a>
+      {/* Footer CTA — only shown when there is somewhere real to go */}
+      {href && (
+        <div className="flex items-center gap-1 text-[12px] font-medium text-ink-3 group-hover:text-amber-deep transition-colors duration-200 mt-auto pt-3 border-t border-line">
+          <span>Open</span>
+          <Icon name="chevron-right" size={12} />
+        </div>
+      )}
+    </>
+  )
+
+  if (href) {
+    return (
+      <a
+        href={href}
+        className="group flex flex-col gap-4 rounded-xl border border-line bg-paper p-5 hover:border-amber/50 hover:shadow-2 transition-all duration-200"
+        aria-label="Open encrypted shared file"
+      >
+        {body}
+      </a>
+    )
+  }
+
+  return (
+    <div
+      className="flex flex-col gap-4 rounded-xl border border-line bg-paper p-5"
+      aria-label="Encrypted shared file"
+    >
+      {body}
+    </div>
   )
 }
 
@@ -291,8 +327,11 @@ export function PublicProfilePage() {
                 <EmptyShares />
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {profile.shares.map((share) => (
-                    <ShareCard key={share.token} share={share} />
+                  {profile.shares.map((share, i) => (
+                    // No stable unique id is sent for a public-profile share
+                    // (server withholds the token — see getShareCardHref);
+                    // the list is server-ordered and doesn't reorder client-side.
+                    <ShareCard key={`${share.created_at}-${i}`} share={share} />
                   ))}
                 </div>
               )}
@@ -304,7 +343,7 @@ export function PublicProfilePage() {
       {/* Footer */}
       <footer className="border-t border-line px-5 py-5 text-center space-y-1">
         <p className="text-[11px] text-ink-4 leading-relaxed">
-          End-to-end encrypted · EU servers · Zero-knowledge
+          End-to-end encrypted · Stored in Falkenstein, Germany · Zero-knowledge
         </p>
         <p className="text-[11px] text-ink-4">
           Operated by{' '}
