@@ -51,8 +51,21 @@ async function readDownload(download: Download): Promise<string> {
 test('same-name re-upload becomes version 2 of the same file, with both versions downloadable', async ({ page }) => {
   test.setTimeout(180_000)
 
+  // Disable DevAuthGate's dev auto-login for this tab (src/lib/dev-auth.ts),
+  // otherwise it can race /signup and land us in the shared dev vault instead
+  // of a fresh account (observed: /signup rendered "Dev's vault", no email field).
+  await page.goto('/?nodev=1')
   await signupAndUnlock(page, { password: 'Versions-correct-horse-9' })
   await dismissFirstRunOverlays(page)
+  // The first-run coachmark tour ("Upload your first file", 1 / 2) opens
+  // asynchronously and floats above the Version history panel, intercepting
+  // clicks on the version options. Skip it whenever it shows up.
+  await page.addLocatorHandler(
+    page.getByRole('dialog', { name: 'Upload your first file' }),
+    async (tour) => {
+      await tour.getByRole('button', { name: 'Skip tour' }).click()
+    },
+  )
 
   const rows = page.getByRole('row').filter({ hasText: NAME })
 
