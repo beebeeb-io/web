@@ -8,6 +8,7 @@ import { BBButton } from '@beebeeb/shared'
 import { useTheme } from '../../lib/theme-context'
 import { useDisplay } from '../../lib/display-context'
 import { getPreference, setPreference } from '../../lib/api'
+import { useToast } from '../../components/toast'
 import type { ThemeMode } from '../../lib/theme-context'
 import type { FontSize, SidebarDensity } from '../../lib/display-context'
 import { getTimezoneGroups } from '../../lib/timezones'
@@ -237,6 +238,7 @@ export function SettingsAppearance() {
   const { fontSize, sidebarDensity, setFontSize, setSidebarDensity } = useDisplay()
   const { i18n } = useTranslation()
   const navigate = useNavigate()
+  const { showToast } = useToast()
 
   const defaultTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone
   const [region, setRegion] = useState('Europe · 24h · metric · EUR')
@@ -265,20 +267,31 @@ export function SettingsAppearance() {
   const handleShowWelcomeChecklist = useCallback(async () => {
     setReopeningTour(true)
     try {
-      const existing = await getPreference<{ seen?: boolean; completed?: string[] }>('welcome_tour').catch(() => null)
+      // Do NOT swallow a failed read into `null` here (Codex review, PR
+      // #74) — that made a transient GET failure look like "no preference
+      // exists yet" and the write below then overwrote real completed
+      // progress with []. Letting it throw aborts the write entirely.
+      const existing = await getPreference<{ seen?: boolean; completed?: string[] }>('welcome_tour')
       await setPreference('welcome_tour', {
         seen: false,
         completed: existing?.completed ?? [],
       })
     } catch {
       // Best-effort — the drive's own mount effect re-reads this
-      // preference, so even a failed write here just means it stays at
-      // whatever it already was; navigating there is still useful.
+      // preference, so a failure here just means it stays at whatever it
+      // already was; navigating there is still useful. Surface it so the
+      // user isn't left wondering why the board didn't reopen.
+      showToast({
+        icon: 'x',
+        title: 'Could not reopen the checklist',
+        description: 'Check your connection and try again.',
+        danger: true,
+      })
     } finally {
       setReopeningTour(false)
       navigate('/')
     }
-  }, [navigate])
+  }, [navigate, showToast])
 
   return (
     <SettingsShell activeSection="appearance">

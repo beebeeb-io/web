@@ -168,29 +168,48 @@ export function Drive() {
   const [trustFileId, setTrustFileId] = useState<string | null>(null)
   const [tourOpen, setTourOpen] = useState(false)
   const [tourCompleted, setTourCompleted] = useState<Set<string>>(new Set())
+  // The persisted `welcome_tour.seen` value, mirrored from disk so step
+  // completions can write it BACK UNCHANGED (task 1527 fix-round). Only two
+  // paths are allowed to flip it: this component's onClose below ("Skip for
+  // now" / "Close" → true) and the mount effect a few lines down, which
+  // re-reads the real preference on every fresh mount — including the mount
+  // that happens after the Settings "Show welcome checklist" action
+  // navigates back here having written seen:false. Defaults to false so a
+  // step completed in the brief window before that fetch resolves doesn't
+  // wrongly persist `seen: true`.
+  const tourSeenRef = useRef(false)
 
   // Mark a welcome-checklist step done from a REAL completion signal (files
   // actually queued, a step's own confirmed action) — never from a step
-  // button being clicked. Persists `seen: false` always; only the footer's
-  // "Skip for now" / "Close" (drive.tsx below) is allowed to persist
-  // `seen: true` (task 1527 — a step action used to also close the
-  // checklist for good via onClose(), which is the bug this fixes).
+  // button being clicked. Writes the persisted `seen` value back UNCHANGED
+  // (tourSeenRef, above) — never `seen: false` unconditionally. That
+  // unconditional write was the bug: it reopened the board on the next
+  // upload for anyone who had pressed "Skip for now"/"Close" (seen:true),
+  // including every user who had already dismissed the board before this
+  // feature shipped. Only the footer's "Skip for now" / "Close" (onClose
+  // below) is allowed to persist `seen: true` (task 1527 — a step action
+  // used to also close the checklist for good via onClose(), which was a
+  // separate, earlier bug this function already fixed).
   // `hideBoard` additionally hides the board locally (no persistence) for
   // steps that navigate the user away to finish the step elsewhere; the
-  // board reappears on the next drive mount because `seen` stayed false.
+  // board reappears on the next drive mount because `seen` stayed
+  // unchanged.
+  //
+  // The next `tourCompleted` set is computed here, outside the setState
+  // updater, and written once — StrictMode double-invokes updater
+  // functions, which previously fired setPreference twice per call.
   const markTourStepDone = useCallback((id: string, opts?: { hideBoard?: boolean }) => {
-    setTourCompleted((prev) => {
-      if (prev.has(id)) return prev
-      const next = new Set(prev)
+    if (!tourCompleted.has(id)) {
+      const next = new Set(tourCompleted)
       next.add(id)
+      setTourCompleted(next)
       setPreference('welcome_tour', {
-        seen: false,
+        seen: tourSeenRef.current,
         completed: [...next],
       }).catch(() => {})
-      return next
-    })
+    }
     if (opts?.hideBoard) setTourOpen(false)
-  }, [])
+  }, [tourCompleted])
 
   // The 2FA step's "done" state is derived from the account's real
   // totp_enabled flag rather than tracked manually — clicking "Set up 2FA"
@@ -681,6 +700,9 @@ export function Drive() {
     getPreference<{ seen?: boolean; completed?: string[] }>('welcome_tour')
       .then((pref) => {
         if (pref?.completed?.length) setTourCompleted(new Set(pref.completed))
+        // Mirror the real persisted value so markTourStepDone writes it
+        // back unchanged instead of clobbering it (task 1527 fix-round).
+        tourSeenRef.current = !!pref?.seen
         if (!pref?.seen) setTourOpen(true)
       })
       .catch(() => {})
@@ -2791,6 +2813,11 @@ export function Drive() {
         onCompleteStep={(id) => markTourStepDone(id, { hideBoard: true })}
         onClose={() => {
           setTourOpen(false)
+          // Skip for now / Close is one of the two places allowed to set
+          // seen:true (task 1527 fix-round) — update the mirror ref too so
+          // a later markTourStepDone (e.g. the next upload) writes it back
+          // as true instead of reverting to whatever was last fetched.
+          tourSeenRef.current = true
           setPreference('welcome_tour', {
             seen: true,
             completed: [...tourCompleted],
