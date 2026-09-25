@@ -199,15 +199,15 @@ function VaultTimeoutSection() {
     setVaultTTL(val)
     showToast({
       icon: 'check',
-      title: 'Vault timeout updated',
-      description: val === 0 ? 'Password required on every refresh' : `Session persists for ${TTL_OPTIONS.find(o => o.value === val)?.label ?? 'custom duration'}`,
+      title: 'Stay unlocked updated',
+      description: val === 0 ? 'Password required on every refresh' : `Stay unlocked for up to ${TTL_OPTIONS.find(o => o.value === val)?.label ?? 'custom duration'} of inactivity on this browser`,
     })
   }
 
   return (
     <SettingsRow
-      label="Vault timeout"
-      hint="How long to remember your password across page refreshes. Longer = more convenient, shorter = more secure."
+      label="Stay unlocked"
+      hint="How long you can stay idle before this browser asks you to unlock again. Any activity resets the clock — up to 60 minutes."
     >
       <select
         value={ttl}
