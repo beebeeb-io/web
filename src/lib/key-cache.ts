@@ -17,12 +17,12 @@ import { persistSession } from './session-persist'
  * login, passkey-PRF vault unlock/provisioning, and phrase recovery on the
  * password-authenticated path.
  */
-export async function cacheKeyPersistent(key: Uint8Array): Promise<void> {
+export async function cacheKeyPersistent(key: Uint8Array, userId: string): Promise<void> {
   try {
-    await cacheVaultKey(key)
+    await cacheVaultKey(key, userId)
   } catch { /* best effort */ }
   try {
-    await persistSession(key)
+    await persistSession(key, userId)
   } catch { /* best effort */ }
 }
 
@@ -42,9 +42,9 @@ export async function cacheKeyPersistent(key: Uint8Array): Promise<void> {
  * "session only" path was still writing a decryptable copy of the key to
  * disk — defeating the ruling it was meant to satisfy.
  */
-export async function cacheKeySessionOnly(key: Uint8Array): Promise<void> {
+export async function cacheKeySessionOnly(key: Uint8Array, userId: string): Promise<void> {
   try {
-    await cacheVaultKey(key)
+    await cacheVaultKey(key, userId)
   } catch { /* best effort */ }
   // Deliberately does NOT call persistSession — see the doc comment above.
 }

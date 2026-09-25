@@ -171,15 +171,17 @@ export function RecoverWithPhrase() {
       const newX25519Pub = await deriveX25519Public(derivedMasterKey)
 
       // 5. Finalize recovery — rotates all credentials on the server
-      await recoverWithPhraseFinalize(
+      const finalizeResult = await recoverWithPhraseFinalize(
         recoveryToken,
         toBase64(regUpload),
         toBase64(newRecoveryCheck),
         toBase64(newX25519Pub),
       )
 
-      // 6. Re-wrap master key under the new password and store in vault
-      await setMasterKey(derivedMasterKey, newPassword)
+      // 6. Re-wrap master key under the new password and store in vault.
+      // finalizeResult.user_id (task 1531/1534, P0) is the account recovery
+      // just proved server-side — bound explicitly.
+      await setMasterKey(derivedMasterKey, newPassword, finalizeResult.user_id)
 
       // Clear sensitive data from component state
       setDerivedMasterKey(null)

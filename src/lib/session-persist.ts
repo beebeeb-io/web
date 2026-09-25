@@ -30,6 +30,10 @@ interface PersistEntry {
   wrapped: ArrayBuffer
   nonce: Uint8Array
   createdAt: number
+  /** Task 1531/1534 (P0): the account this persisted key was stamped for —
+   *  see session-vault-cache.ts's identical field for the full rationale.
+   *  Not a secret (not covered by the AEAD); a plain ownership tag. */
+  userId?: string
 }
 
 // ─── TTL preference ───────────────────────────────────
@@ -124,7 +128,7 @@ async function deriveKey(token: Uint8Array): Promise<CryptoKey> {
 
 // ─── Public API ───────────────────────────────────────
 
-export async function persistSession(masterKey: Uint8Array): Promise<void> {
+export async function persistSession(masterKey: Uint8Array, userId: string): Promise<void> {
   const ttl = getVaultTTL()
   if (ttl === 0) return
 
@@ -140,7 +144,7 @@ export async function persistSession(masterKey: Uint8Array): Promise<void> {
 
   const db = await openDB()
   try {
-    await dbPut(db, { id: ENTRY_ID, wrapped, nonce, createdAt: Date.now() })
+    await dbPut(db, { id: ENTRY_ID, wrapped, nonce, createdAt: Date.now(), userId })
   } finally {
     db.close()
   }
@@ -151,7 +155,11 @@ export async function persistSession(masterKey: Uint8Array): Promise<void> {
   } catch { /* localStorage unavailable */ }
 }
 
-export async function restoreSession(): Promise<Uint8Array | null> {
+/** Returns the restored key alongside the account id (task 1531/1534) it
+ *  was persisted for — `null` userId means the entry predates that field
+ *  and the caller must treat it as untrusted, never matched against any
+ *  real account. */
+export async function restoreSession(): Promise<{ key: Uint8Array; userId: string | null } | null> {
   const ttl = getVaultTTL()
   if (ttl === 0) return null
 
@@ -189,7 +197,7 @@ export async function restoreSession(): Promise<Uint8Array | null> {
       key,
       entry.wrapped,
     )
-    return new Uint8Array(pt)
+    return { key: new Uint8Array(pt), userId: entry.userId ?? null }
   } catch {
     await clearSession()
     return null

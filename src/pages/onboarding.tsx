@@ -215,7 +215,7 @@ export function Onboarding() {
       const referralSource = localStorage.getItem(REFERRAL_SOURCE_KEY) ?? undefined
       const referralSharerId = localStorage.getItem(REFERRAL_SHARER_KEY) ?? undefined
       const referralCode = localStorage.getItem(REFERRAL_CODE_KEY) ?? undefined
-      await opaqueRegisterFinish(
+      const registerResult = await opaqueRegisterFinish(
         email,
         toBase64(regUpload),
         toBase64(x25519Pub),
@@ -230,9 +230,13 @@ export function Onboarding() {
       localStorage.removeItem(REFERRAL_SHARER_KEY)
       localStorage.removeItem(REFERRAL_CODE_KEY)
 
-      // 4. Wrap master key with password, store in IndexedDB, set in memory
+      // 4. Wrap master key with password, store in IndexedDB, set in memory.
+      // registerResult.user_id (task 1531/1534, P0) is the freshly-created
+      // account this key belongs to — bound explicitly rather than trusting
+      // whatever key might already be resident from an earlier account in
+      // this same tab/browser.
       setProcessingStatus('Securing your vault...')
-      await setMasterKey(masterKeyBytes, password)
+      await setMasterKey(masterKeyBytes, password, registerResult.user_id)
 
       // 5. Upload a welcome file so new users land on a non-empty drive
       setProcessingStatus('Setting up your vault...')

@@ -19,6 +19,12 @@ interface CacheEntry {
   id: typeof ENTRY_ID
   nonce: Uint8Array
   wrapped: ArrayBuffer
+  /** Task 1531/1534 (P0): the account this cached key was stamped for.
+   *  key-context.tsx compares this against the CURRENTLY authenticated
+   *  account before trusting a restored key — an entry from before this
+   *  field existed reads back as `undefined`, which never matches any real
+   *  account id and is therefore never auto-trusted (fail closed). */
+  userId?: string
 }
 
 let sessionKey: CryptoKey | null = null
@@ -91,8 +97,12 @@ export async function initSessionVault(): Promise<void> {
   }
 }
 
-/** Wrap the master key with the in-memory session key and persist to IDB. */
-export async function cacheVaultKey(masterKey: Uint8Array): Promise<void> {
+/** Wrap the master key with the in-memory session key and persist to IDB.
+ *  `userId` (task 1531/1534, P0) is stored ALONGSIDE the wrapped key (not
+ *  encrypted with it — it is not a secret, just an ownership tag) so a
+ *  later restore can tell whether this cached key belongs to whichever
+ *  account is currently authenticated. */
+export async function cacheVaultKey(masterKey: Uint8Array, userId: string): Promise<void> {
   if (!sessionKey) {
     throw new Error('initSessionVault must be called before cacheVaultKey')
   }
@@ -104,18 +114,21 @@ export async function cacheVaultKey(masterKey: Uint8Array): Promise<void> {
   )
   const db = await openDB()
   try {
-    await dbPut(db, { id: ENTRY_ID, nonce, wrapped })
+    await dbPut(db, { id: ENTRY_ID, nonce, wrapped, userId })
   } finally {
     db.close()
   }
 }
 
 /**
- * Decrypt the cached vault key using the in-memory session key.
+ * Decrypt the cached vault key using the in-memory session key, returning
+ * it alongside the account id (task 1531/1534) it was stamped for — `null`
+ * userId means the entry predates that field and must be treated as
+ * untrusted by the caller, never matched against any real account.
  * Returns null if no entry exists, init has not run, or decryption fails
  * (typically a stale entry from before the current session key existed).
  */
-export async function getVaultKey(): Promise<Uint8Array | null> {
+export async function getVaultKey(): Promise<{ key: Uint8Array; userId: string | null } | null> {
   if (!sessionKey) return null
   const db = await openDB()
   let entry: CacheEntry | undefined
@@ -131,7 +144,7 @@ export async function getVaultKey(): Promise<Uint8Array | null> {
       sessionKey,
       entry.wrapped,
     )
-    return new Uint8Array(pt)
+    return { key: new Uint8Array(pt), userId: entry.userId ?? null }
   } catch {
     await clearVaultKey()
     return null

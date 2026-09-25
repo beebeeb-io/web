@@ -23,7 +23,7 @@ import {
 
 export function VaultUnlock() {
   const { unlockVault, unlockVaultWithPasskey, vaultExists, setMasterKeyFromPasskey } = useKeys()
-  const { logout, refreshUser } = useAuth()
+  const { user, logout, refreshUser } = useAuth()
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -39,7 +39,13 @@ export function VaultUnlock() {
     setSubmitting(true)
 
     try {
-      const ok = await unlockVault(password)
+      // ProtectedRoute only renders VaultUnlock once `user` is already
+      // truthy (it gates on `user && !isUnlocked`) — reliable here.
+      if (!user) {
+        setError('Session expired. Please sign in again.')
+        return
+      }
+      const ok = await unlockVault(password, user.user_id)
       if (!ok) {
         setError('Wrong password. Try again.')
       }
@@ -113,8 +119,10 @@ export function VaultUnlock() {
         return
       }
 
-      // Try local passkey vault first
-      const localOk = await unlockVaultWithPasskey(wrapKey)
+      // startRes.user_id (from the SAME startPasskeyLogin response used for
+      // the WebAuthn ceremony above) is the account this unlock is proving
+      // — task 1531/1534 (P0) binds the recovered key to it explicitly.
+      const localOk = await unlockVaultWithPasskey(wrapKey, startRes.user_id)
       if (localOk) return
 
       // Fall back to server escrow
@@ -130,7 +138,7 @@ export function VaultUnlock() {
         return
       }
 
-      await setMasterKeyFromPasskey(masterKey, wrapKey)
+      await setMasterKeyFromPasskey(masterKey, wrapKey, startRes.user_id)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Passkey unlock failed.')
     } finally {

@@ -10,6 +10,7 @@ import {
   IncorrectPasswordError,
 } from '../lib/api'
 import { useKeys } from '../lib/key-context'
+import { useAuth } from '../lib/auth-context'
 import {
   opaqueRegistrationStart,
   opaqueRegistrationFinish,
@@ -49,6 +50,7 @@ function evaluateStrength(pw: string): PasswordStrength {
 
 export function ChangePasswordDialog({ open, onClose, onSuccess }: ChangePasswordDialogProps) {
   const { getMasterKey, setMasterKey } = useKeys()
+  const { user } = useAuth()
   const [currentPw, setCurrentPw] = useState('')
   const [newPw, setNewPw] = useState('')
   const [confirmPw, setConfirmPw] = useState('')
@@ -151,7 +153,8 @@ export function ChangePasswordDialog({ open, onClose, onSuccess }: ChangePasswor
       //     password, and tell the user exactly what to do instead of leaving a
       //     vague error + a silent broken state.
       try {
-        await setMasterKey(masterKey, newPw)
+        if (!user) throw new Error('No authenticated user — cannot re-wrap the vault')
+        await setMasterKey(masterKey, newPw, user.user_id)
       } catch {
         await clearVault().catch(() => {})
         setError(

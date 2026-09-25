@@ -24,7 +24,7 @@ export function Login() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { refreshUser, verify2fa } = useAuth()
-  const { unlockVault, unlockVaultWithPasskey, vaultExists, cryptoReady, cryptoError, isUnlocked, setMasterKeyFromPasskey, getMasterKey } = useKeys()
+  const { unlockVault, unlockVaultWithPasskey, vaultExists, cryptoReady, cryptoError, isUnlocked, isUnlockedFor, setMasterKeyFromPasskey, getMasterKey, lock } = useKeys()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -144,7 +144,11 @@ export function Login() {
 
       // Now unlock the local vault
       if (vaultExists) {
-        const ok = await unlockVault(password)
+        // loginResult.user_id (from the SAME OPAQUE finish response that
+        // just proved `password` correct) — task 1531/1534 (P0) binds the
+        // unlocked key to it explicitly rather than trusting whatever key
+        // may already be resident from a prior account in this same tab.
+        const ok = await unlockVault(password, loginResult.user_id)
         if (!ok) {
           setError('Wrong password — could not unlock vault on this device.')
           setSubmitting(false)
@@ -193,14 +197,20 @@ export function Login() {
   async function handle2faVerify(code: string) {
     if (!partialToken) return
     try {
-      await verify2fa(partialToken, code)
+      const verifyResult = await verify2fa(partialToken, code)
       // Same reason as handleSubmit: server has set the fresh bb_session
       // cookie, drop any stale localStorage bearer that would shadow it.
       clearToken()
 
+      if (!verifyResult.user_id) {
+        setError('Could not confirm account identity. Try logging in again.')
+        setPartialToken(null)
+        return
+      }
+
       // 2FA verified — now unlock the vault with the password from the first step
       if (vaultExists) {
-        const ok = await unlockVault(password)
+        const ok = await unlockVault(password, verifyResult.user_id)
         if (!ok) {
           setError('Could not unlock vault. Try logging in again.')
           setPartialToken(null)
@@ -242,7 +252,7 @@ export function Login() {
       const serverMsg = Uint8Array.from(atob(serverResp.server_message), c => c.charCodeAt(0))
       const ksfVersion = serverResp.ksf_version
       const loginFinish = await opaqueLoginFinish(loginStart.state, passkeyFallbackPassword, serverMsg, ksfVersion)
-      await apiOpaqueLoginFinish(email, toBase64(loginFinish.message), serverResp.server_state)
+      const fallbackLoginResult = await apiOpaqueLoginFinish(email, toBase64(loginFinish.message), serverResp.server_state)
       // Drop any stale localStorage bearer so the fresh bb_session cookie
       // is the only auth carried on subsequent requests.
       clearToken()
@@ -250,7 +260,9 @@ export function Login() {
 
       // Try unlocking the local vault with this password
       if (vaultExists) {
-        const ok = await unlockVault(passkeyFallbackPassword)
+        // task 1531/1534 (P0): bind to the account this OPAQUE finish
+        // response just proved, not whatever key may already be resident.
+        const ok = await unlockVault(passkeyFallbackPassword, fallbackLoginResult.user_id)
         if (!ok) {
           setPasskeyFallbackError('Password accepted, but could not unlock the local vault. Try your recovery phrase instead.')
           setPasskeyFallbackSubmitting(false)
@@ -340,9 +352,28 @@ export function Login() {
         setToken(result.session_token)
         await refreshUser()
 
-        if (isUnlocked) {
+        // Task 1531/1534 (P0, cross-account master-key confusion). This used
+        // to be `if (isUnlocked) { navigateAfterLogin(); return }` — but
+        // `isUnlocked` is a snapshot from THIS render, and by the point
+        // `refreshUser()` above resolves, it may not yet reflect that
+        // KeyProvider has caught up (React hasn't necessarily re-rendered
+        // yet). A key can ALREADY be resident here from a DIFFERENT
+        // account's session in this same tab (persisted-key cache restored
+        // at boot, or a prior account that was never explicitly logged out
+        // of) — trusting `isUnlocked` alone let that stale key silently
+        // carry over into startRes.user_id's session. isUnlockedFor reads
+        // the LIVE ref and compares it against startRes.user_id — the
+        // account THIS passkey ceremony just proved, from the very same
+        // auth response, not a React state snapshot.
+        if (isUnlockedFor(startRes.user_id)) {
           navigateAfterLogin()
           return
+        }
+        if (isUnlocked) {
+          // A key WAS resident but for a DIFFERENT account — never let it
+          // leak into this account's session. Clear it; the escrow/PRF
+          // unlock below loads startRes.user_id's REAL key.
+          lock()
         }
 
         // Step 5: Attempt passkey vault unlock via escrow.
@@ -359,7 +390,7 @@ export function Login() {
 
           if (wrapKey) {
             // Try local passkey vault first, then server escrow
-            const localOk = await unlockVaultWithPasskey(wrapKey)
+            const localOk = await unlockVaultWithPasskey(wrapKey, startRes.user_id)
             if (localOk) {
               navigateAfterLogin()
               return
@@ -369,7 +400,7 @@ export function Login() {
             if (escrowBlob) {
               const masterKey = await decryptVaultBlob(wrapKey, fromBase64(escrowBlob))
               if (masterKey) {
-                await setMasterKeyFromPasskey(masterKey, wrapKey)
+                await setMasterKeyFromPasskey(masterKey, wrapKey, startRes.user_id)
                 navigateAfterLogin()
                 return
               }
