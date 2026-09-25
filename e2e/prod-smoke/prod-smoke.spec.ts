@@ -2,7 +2,7 @@ import { test, expect, type Page, type BrowserContext } from '@playwright/test'
 import fs from 'node:fs'
 import crypto from 'node:crypto'
 
-import { PILOT_KEY, fillSignupForm, reachPasswordStep, createAccount } from '../helpers/signup'
+import { PILOT_KEY, fillSignupForm, reachPasswordStep, createAccount, retrySignupWithPilotKey } from '../helpers/signup'
 import { anonymousContext } from '../helpers/auth'
 import { openRowMenu, createShareLink } from '../helpers/drive'
 import {
@@ -108,14 +108,36 @@ test.describe.serial('Production smoke — one throwaway account, real UI (task 
     await context.close()
   })
 
-  test('1. signup with pilot key — recovery phrase shown + confirmed — password set', async () => {
-    test.setTimeout(60_000)
-    await fillSignupForm(page, { email: EMAIL, pilotKey: PILOT_KEY })
-    const words = await reachPasswordStep(page)
+  test('1. signup — recovery phrase shown + confirmed — password set (retries with the pilot key if the gate bounces back)', async () => {
+    // task 1520 made /signup keyless by default (matching prod,
+    // BB_REQUIRE_PILOT_KEY=0 since the phase-2 launch): fillSignupForm no
+    // longer takes a pilotKey at all. The gate can still be exercised
+    // locally by starting the isolated API with BB_REQUIRE_PILOT_KEY=1 (see
+    // scripts/prod-smoke.sh) — in that case onboarding's register-start 403s
+    // with `pilot_key_required` and bounces back to /signup with the pilot
+    // field now visible (src/lib/signup-pilot-gate.ts). Two full round-trips
+    // through the recovery-phrase flow in the worst case, so a longer budget
+    // than a single round-trip.
+    test.setTimeout(90_000)
+    await fillSignupForm(page, { email: EMAIL })
+    let words = await reachPasswordStep(page)
     recoveryPhrase = words.join(' ')
     await createAccount(page, PASSWORD_INITIAL)
 
-    await page.waitForURL(/\/(?:$|\?|#)/, { timeout: 30_000 })
+    // Success (gate off, the prod default) lands on '/'; a gate-on bounce
+    // lands back on '/signup' with the pilot field now required. Wait for
+    // either rather than asserting one, so this step is correct under both
+    // states without needing to know which one the target API is running.
+    await page.waitForURL((url) => url.pathname === '/' || url.pathname === '/signup', { timeout: 30_000 })
+
+    if (new URL(page.url()).pathname === '/signup') {
+      await retrySignupWithPilotKey(page, PILOT_KEY)
+      words = await reachPasswordStep(page)
+      recoveryPhrase = words.join(' ')
+      await createAccount(page, PASSWORD_INITIAL)
+      await page.waitForURL(/\/(?:$|\?|#)/, { timeout: 30_000 })
+    }
+
     await expect(page.getByText(/All files/i).first()).toBeVisible({ timeout: 10_000 })
     await dismissWelcomeTourIfPresent(page)
 
