@@ -60,7 +60,10 @@ test('a captured data-export resumes to /settings/privacy after re-login (0720)'
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
   // No vault on this device → device-provision via the recovery phrase.
-  const phraseInput = page.getByPlaceholder('word1 word2 word3 ... word12')
+  // Task 1528: 12 individually-labeled word boxes, not one textarea — box 1
+  // accepts a full space-separated paste and splits it across all 12
+  // (device-provision.tsx applyWords).
+  const phraseInput = page.getByLabel('Recovery word 1', { exact: true })
   await phraseInput.waitFor({ state: 'visible', timeout: 25_000 })
   await phraseInput.fill(acct.recoveryPhrase)
   await page.getByRole('button', { name: /restore vault/i }).click()

@@ -215,7 +215,10 @@ export async function signIn(
   await page.getByPlaceholder('Your password').fill(opts.password)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
-  const phraseInput = page.getByPlaceholder('word1 word2 word3 ... word12')
+  // Task 1528: DeviceProvision is now 12 individually-labeled word boxes,
+  // not one textarea — box 1 accepts a full space-separated paste and
+  // splits it across all 12 (device-provision.tsx applyWords).
+  const phraseInput = page.getByLabel('Recovery word 1', { exact: true })
   const driveReached = page
     .waitForURL(/\/(?:$|\?|#)/, { timeout: 20_000 })
     .then(() => 'drive' as const)

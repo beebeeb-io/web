@@ -91,7 +91,9 @@ async function main(): Promise<number> {
     // a recovery phrase even if DeviceProvision shows. Race a third outcome,
     // an inline login error, so a genuinely wrong/rotated password fails
     // loudly instead of hanging for the full timeout.
-    const phraseInput = page.getByPlaceholder('word1 word2 word3 ... word12')
+    // Task 1528: DeviceProvision is now 12 individually-labeled word boxes,
+    // not one textarea.
+    const phraseInput = page.getByLabel('Recovery word 1', { exact: true })
     const errorBox = page.locator('p.text-red, p.text-xs.text-red').first()
     const outcome = await Promise.race([
       page

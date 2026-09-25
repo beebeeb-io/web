@@ -69,6 +69,16 @@ function dbClear(db: IDBDatabase): Promise<void> {
   })
 }
 
+function dbDelete(db: IDBDatabase, key: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite')
+    const store = tx.objectStore(STORE_NAME)
+    const request = store.delete(key)
+    request.onsuccess = () => resolve()
+    request.onerror = () => reject(request.error)
+  })
+}
+
 // ─── Crypto helpers ────────────────────────────────
 
 async function deriveWrappingKey(
@@ -126,6 +136,15 @@ export async function wrapAndStore(
   masterKey: Uint8Array,
   password: string,
 ): Promise<void> {
+  // Task 1529 (P0): wrapAndStore('') derives an AES key from PBKDF2 of an
+  // empty string — anyone with read access to this browser's IndexedDB
+  // could unwrap the master key with no secret at all. Never silently do
+  // this; every caller must supply a real, non-empty secret. Callers on a
+  // session-only path (e.g. passkey sign-in with no password) must use
+  // setMasterKeyDirect instead of routing through setMasterKey/wrapAndStore.
+  if (!password) {
+    throw new Error('wrapAndStore: refusing to wrap the master key under an empty secret')
+  }
   const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES))
   const nonce = crypto.getRandomValues(new Uint8Array(NONCE_BYTES))
 
@@ -221,6 +240,39 @@ export async function clearVault(): Promise<void> {
   } finally {
     db.close()
   }
+}
+
+/**
+ * Task 1529 remediation: detect + clear a password vault that was wrapped
+ * under an EMPTY string secret (the passkey-login provisioning bug — a
+ * passkey sign-in reached device-provision.tsx's phrase step with
+ * password === '' and called setMasterKey(key, ''), which wrapAndStore now
+ * refuses, but pre-fix devices may already carry one of these).
+ *
+ * `unwrap('')` only succeeds against a vault actually encrypted with the
+ * empty-string-derived key: a real password vault fails AES-GCM auth-tag
+ * verification against the wrong derived key and returns null, and no
+ * vault at all also returns null — so this is safe to run unconditionally
+ * whenever a 'master' entry exists.
+ *
+ * Deletes ONLY the password-vault ('master') entry, not the whole store —
+ * a device that ALSO has a legitimate PRF-wrapped passkey vault
+ * ('master-passkey', a separate entry) keeps that one, so this cleanup
+ * can't turn into a second, unrelated logout.
+ *
+ * Returns true if an empty-password vault was found and cleared.
+ */
+export async function clearEmptyPasswordVault(): Promise<boolean> {
+  const key = await unwrap('')
+  if (!key) return false
+  key.fill(0)
+  const db = await openDB()
+  try {
+    await dbDelete(db, 'master')
+  } finally {
+    db.close()
+  }
+  return true
 }
 
 // ─── Passkey vault (PRF-wrapped) ──────────────────

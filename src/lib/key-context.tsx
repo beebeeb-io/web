@@ -20,7 +20,7 @@ import {
   toBase64,
 } from './crypto'
 import { registerLogoutCallback } from './auth-context'
-import { wrapAndStore, unwrap, hasVault, clearVault, wrapAndStoreWithPasskey, unwrapWithPasskey } from './vault'
+import { wrapAndStore, unwrap, hasVault, clearVault, clearEmptyPasswordVault, wrapAndStoreWithPasskey, unwrapWithPasskey } from './vault'
 import {
   initSessionVault,
   cacheVaultKey,
@@ -148,8 +148,23 @@ export function KeyProvider({ children }: { children: ReactNode }) {
         // already initialised it earlier in the boot sequence.
         await initSessionVault()
         if (cancelled) return
-        const exists = await hasVault()
+        let exists = await hasVault()
         if (cancelled) return
+        // Task 1529 remediation: a pre-fix device may carry a password
+        // vault wrapped under an empty-string secret (passkey-login
+        // provisioning bug). Detect + clear it before anything reads
+        // isUnlocked/vaultExists — best-effort, never blocks boot. Only the
+        // 'master' entry is touched; a co-existing PRF-wrapped passkey
+        // vault survives, so re-check hasVault() afterward rather than
+        // assuming false.
+        if (exists) {
+          try {
+            const cleared = await clearEmptyPasswordVault()
+            if (cancelled) return
+            if (cleared) exists = await hasVault()
+          } catch { /* best effort remediation; never block boot */ }
+          if (cancelled) return
+        }
         setVaultExists(exists)
         // Restore the session-encrypted key BEFORE setting vaultChecked=true.
         // ProtectedRoute guards on vaultChecked; if we set it before the
