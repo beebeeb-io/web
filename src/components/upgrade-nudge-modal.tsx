@@ -17,6 +17,12 @@ import { Icon } from '@beebeeb/shared'
 import type { Subscription } from '@beebeeb/shared'
 import { createCheckoutSession } from '../lib/api'
 import { setPendingCheckout, makePreState } from '../lib/pending-checkout'
+import { useDriveData } from '../lib/drive-data-context'
+import {
+  handleBillingResetTestMode,
+  billingResetNavigationState,
+  type BillingResetNavigationState,
+} from '../lib/billing-reset'
 import { formatBytes } from '../lib/format'
 import { planCanAddStorage } from '../lib/plan-pricing'
 import {
@@ -89,6 +95,48 @@ export async function startUpgradeCheckout(
   return result
 }
 
+/** What `handleUpgrade`'s catch block should do with a failed checkout,
+ * decided by `resolveUpgradeCheckoutFailure`. */
+export interface UpgradeCheckoutFailure {
+  /** Always '/billing' today — kept as a field (not hardcoded at the call
+   * site) so a future non-billing destination doesn't need a second shape. */
+  navigateTo: string
+  /** Present only for the `billing_reset_test_mode` case — carried via
+   * `navigate(navigateTo, { state: navigateState })` so the explanation
+   * survives the redirect instead of being discarded with this component's
+   * local state. */
+  navigateState?: BillingResetNavigationState
+  /** The inline `checkoutError` `handleUpgrade` should set before navigating
+   * away. Omitted for the billing-reset case: the modal is about to unmount
+   * on this navigation, so the local error state would never be seen — the
+   * explanation instead travels via `navigateState` and billing.tsx shows it
+   * as a toast after landing. */
+  localError?: string
+}
+
+/**
+ * Task 1518 part C — extracted from `handleUpgrade`'s catch block so it's
+ * directly unit-testable without rendering the modal (mirrors
+ * `startUpgradeCheckout` above). Routes a `billing_reset_test_mode` 409
+ * through the shared `handleBillingResetTestMode` (reloads plan state,
+ * returns the real server message) and carries that message to `/billing`
+ * via router state; any other error falls back to the pre-1518 behavior
+ * (local inline error, plain navigate).
+ */
+export async function resolveUpgradeCheckoutFailure(
+  err: unknown,
+  options: { refreshPlanDetails: () => void; dispatchPlanChanged?: () => void },
+): Promise<UpgradeCheckoutFailure> {
+  const resetMessage = await handleBillingResetTestMode(err, options)
+  if (resetMessage) {
+    return { navigateTo: '/billing', navigateState: billingResetNavigationState(resetMessage) }
+  }
+  return {
+    navigateTo: '/billing',
+    localError: err instanceof Error ? err.message : 'Could not start checkout',
+  }
+}
+
 export interface UpgradeNudgeModalProps {
   usedBytes: number
   quotaBytes: number
@@ -109,6 +157,7 @@ export function UpgradeNudgeModal({
   const navigate = useNavigate()
   const [loading, setLoading] = useState(false)
   const [checkoutError, setCheckoutError] = useState<string | null>(null)
+  const { refreshPlanDetails } = useDriveData()
 
   const nextSlug = UPGRADE_CHAIN[currentPlan] ?? null
   const currentInfo = PLAN_INFO[currentPlan] ?? PLAN_INFO.free
@@ -130,12 +179,12 @@ export function UpgradeNudgeModal({
       const { url } = await startUpgradeCheckout(nextSlug, subscription)
       window.location.href = url
     } catch (err) {
-      // Stripe not configured or error — fall through to billing page
       setLoading(false)
-      setCheckoutError(err instanceof Error ? err.message : 'Could not start checkout')
-      navigate('/billing')
+      const failure = await resolveUpgradeCheckoutFailure(err, { refreshPlanDetails })
+      if (failure.localError) setCheckoutError(failure.localError)
+      navigate(failure.navigateTo, failure.navigateState ? { state: failure.navigateState } : undefined)
     }
-  }, [nextSlug, navigate, subscription])
+  }, [nextSlug, navigate, subscription, refreshPlanDetails])
 
   const handleAddStorage = useCallback(() => {
     dismiss()

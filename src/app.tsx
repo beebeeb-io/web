@@ -151,10 +151,16 @@ function AdminRedirect() {
  * with the param stripped — and the billing page's `?upgraded` finalize/poll flow
  * (and the legacy Stripe `?success`/`?session_id` returns) would never fire.
  * Carrying `location.search` through the hop keeps the return params intact (0865).
+ *
+ * `state={location.state}` (task 1518 part C): `<Navigate>` does NOT forward
+ * router state on its own, so a `navigate('/billing', { state: {...} })` call
+ * (e.g. upgrade-nudge-modal.tsx carrying a billing-reset explanation across
+ * the nav) would silently lose it at this hop without this — the receiving
+ * `/settings/billing` page would read `useLocation().state` as `null`.
  */
 function RedirectPreservingSearch({ to }: { to: string }) {
   const location = useLocation()
-  return <Navigate to={{ pathname: to, search: location.search }} replace />
+  return <Navigate to={{ pathname: to, search: location.search }} state={location.state} replace />
 }
 
 function GuestRoute({ children }: { children: ReactNode }) {

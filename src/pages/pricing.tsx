@@ -16,6 +16,8 @@ import {
   type PromoQuote,
 } from '../lib/api'
 import { useAuth, isAuthenticated } from '../lib/auth-context'
+import { useDriveData } from '../lib/drive-data-context'
+import { handleBillingResetTestMode } from '../lib/billing-reset'
 import { setPendingCheckout, makePreState } from '../lib/pending-checkout'
 import { PRICING_PAGE_PLANS, MARKETED_PLAN_SLUGS, type PricingPlanDef } from '../lib/plan-constants'
 
@@ -291,6 +293,7 @@ export function Pricing() {
   const [apiPlans, setApiPlans] = useState<Plan[] | null>(null)
   const navigate = useNavigate()
   const { showToast } = useToast()
+  const { refreshPlanDetails } = useDriveData()
   // Task 1471 — derive from the auth context's cookie-session truth, not the
   // legacy `bb_session` localStorage slot (`auth-context.tsx`'s boot effect
   // clears it right after the httpOnly-cookie migration, so `!!getToken()`
@@ -447,6 +450,18 @@ export function Pricing() {
       }
       window.location.href = result.url
     } catch (err) {
+      // Task 1518 part C — route the reset through the shared handler so
+      // the sidebar/quota context reflects Free immediately instead of
+      // showing "Checkout failed" for a subscription that no longer exists.
+      const resetMessage = await handleBillingResetTestMode(err, { refreshPlanDetails })
+      if (resetMessage) {
+        showToast({
+          icon: 'info',
+          title: 'Subscription reset',
+          description: resetMessage,
+        })
+        return
+      }
       showToast({
         icon: 'x',
         title: 'Checkout failed',
