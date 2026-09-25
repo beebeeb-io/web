@@ -255,6 +255,48 @@ export type {
 
 export type { ActivityEncryptedNameSnapshot } from '@beebeeb/shared'
 
+// ─── Task 1525: verify the email with a code BEFORE the account exists ────
+
+/**
+ * `POST /api/v1/auth/signup/email-start` — ALWAYS resolves with the same
+ * `202 {"message": ...}` body regardless of whether `email` already has an
+ * account (server-side anti-enumeration, task 0706b's invariant applied a
+ * step earlier). New email → an 8-digit code email. Existing email → a
+ * "you already have an account" email with a sign-in link — no code, and
+ * the caller has no way to tell the two apart from this response alone.
+ *
+ * The route is unconditionally mounted (`beebeeb-api/src/routes/auth.rs`
+ * doc comment: "the routes themselves are always reachable so the web
+ * client can roll out the new screen ahead of the flag flip") — so this
+ * call either succeeds or throws a `404 ApiError` on a server that predates
+ * task 1525. Callers use that 404 as the capability signal; see
+ * `src/lib/signup-email-code.ts`'s `isLegacyFallbackError`.
+ */
+export async function signupEmailStart(email: string): Promise<{ message: string }> {
+  return request('/api/v1/auth/signup/email-start', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  })
+}
+
+/**
+ * `POST /api/v1/auth/signup/email-verify` — exchanges the 8-digit code for a
+ * short-lived, single-use `signup_ticket` bound to `email`. Wrong/expired/
+ * reused/cap-exhausted code all render as the SAME `400` (deliberately
+ * undifferentiated — no signal about which) with message "invalid or
+ * expired code"; surface `err.message` as-is, it's already honest and
+ * user-facing.
+ */
+export async function signupEmailVerify(
+  email: string,
+  code: string,
+): Promise<{ signup_ticket: string }> {
+  return request('/api/v1/auth/signup/email-verify', {
+    method: 'POST',
+    body: JSON.stringify({ email, code }),
+  })
+}
+
 // DEPRECATED: legacy JSON-password signup bypasses OPAQUE. It still has an
 // active caller in auth-context and must be removed when signup migrates fully
 // to the OPAQUE register flow.
@@ -290,13 +332,23 @@ export async function signup(
  * requests must carry the header when a key is present (task 1411; a prior
  * version of this comment claimed only start needed it, which was wrong and
  * let the header get dropped on finish).
+ *
+ * `signupTicket` (task 1525): the `signup_ticket` from a successful
+ * `signupEmailVerify`, sent as a BODY field (not a header — the server's
+ * `RegisterFinishReq::signup_ticket` doc comment: chosen so no CORS
+ * `Access-Control-Allow-Headers` change is needed). Only enforced
+ * server-side when `BB_SIGNUP_EMAIL_CODE=1`; harmless to omit or include
+ * otherwise. `register-start` validates the ticket WITHOUT consuming it (a
+ * client may retry start before finish).
  */
 export async function opaqueRegisterStart(
   email: string,
   clientMessage: string,
   pilotKey?: string,
+  signupTicket?: string,
 ): Promise<{ server_message: string }> {
   const body: Record<string, unknown> = { email, client_message: clientMessage }
+  if (signupTicket) body.signup_ticket = signupTicket
   const headers: Record<string, string> = {}
   if (pilotKey) headers['X-Beebeeb-Pilot-Key'] = pilotKey
   return request('/api/v1/opaque/register-start', {
@@ -312,6 +364,12 @@ export async function opaqueRegisterStart(
  * re-checks the gate here too (it's also where `is_pilot` gets stamped), so
  * omitting the header makes an otherwise-successful signup 403 with
  * `pilot_key_required` on the very last step.
+ *
+ * `signupTicket` (task 1525): same ticket as `opaqueRegisterStart`, sent
+ * again here. This is the call that CONSUMES it atomically (`UPDATE ...
+ * WHERE consumed_at IS NULL RETURNING`, before the `INSERT INTO users`) when
+ * `BB_SIGNUP_EMAIL_CODE=1` — a missing/wrong-email/expired/consumed ticket
+ * renders as `403 {"error": "signup_ticket_invalid"}`.
  */
 export async function opaqueRegisterFinish(
   email: string,
@@ -322,6 +380,7 @@ export async function opaqueRegisterFinish(
   referralSharerId?: string,
   referralCode?: string,
   pilotKey?: string,
+  signupTicket?: string,
 ): Promise<{ user_id: string; session_token: string }> {
   const headers: Record<string, string> = {}
   if (pilotKey) headers['X-Beebeeb-Pilot-Key'] = pilotKey
@@ -335,6 +394,7 @@ export async function opaqueRegisterFinish(
       ...(referralSource && { referral_source: referralSource }),
       ...(referralSharerId && { referral_sharer_id: referralSharerId }),
       ...(referralCode && { referral_code: referralCode }),
+      ...(signupTicket && { signup_ticket: signupTicket }),
     }),
     headers,
   })

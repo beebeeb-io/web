@@ -26,7 +26,10 @@ export function Login() {
   const { refreshUser, verify2fa } = useAuth()
   const { unlockVault, unlockVaultWithPasskey, vaultExists, cryptoReady, cryptoError, isUnlocked, setMasterKeyFromPasskey, getMasterKey } = useKeys()
 
-  const [email, setEmail] = useState('')
+  // Task 1525: the "you already have an account" signup-exists email links
+  // here with ?email=<address> so a user who mistakenly tries to sign up
+  // again doesn't have to retype it.
+  const [email, setEmail] = useState(() => searchParams.get('email') ?? '')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   // Task 1404 — an already-authenticated tab can land here via ProtectedRoute

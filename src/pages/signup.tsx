@@ -6,6 +6,9 @@ import { BBCheckbox } from '@beebeeb/shared'
 import { BBInput } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { shouldShowPilotKeyField, buildOnboardingState, pilotKeyBlocksSubmit } from '../lib/signup-pilot-gate'
+import { signupEmailStart } from '../lib/api'
+import { isLegacyFallbackError } from '../lib/signup-email-code'
+import { userFriendlyError } from '../lib/user-friendly-error'
 
 // Referral keys — read here, forwarded to onboarding, cleared after signup
 export const REFERRAL_SOURCE_KEY = 'bb_ref_source'
@@ -29,6 +32,10 @@ export function Signup() {
   const [pilotKeyError, setPilotKeyError] = useState(navState?.pilotKeyError ?? '')
   const [accepted, setAccepted] = useState(false)
   const [error, setError] = useState('')
+  // Task 1525: Continue now makes a real network call (signup/email-start)
+  // before navigating — disable the button and show a busy label for that
+  // round trip rather than letting a double-click fire it twice.
+  const [submitting, setSubmitting] = useState(false)
 
   // Task 1520: the server's pilot gate is OFF by default (launched, phase 2 —
   // BB_REQUIRE_PILOT_KEY=0 on both prod nodes). See src/lib/signup-pilot-gate.ts
@@ -50,18 +57,20 @@ export function Signup() {
     if (code) localStorage.setItem(REFERRAL_CODE_KEY, code)
   }, [searchParams])
 
-  function handleSubmit(e: FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setError('')
     setPilotKeyError('')
 
-    if (!email.trim()) {
+    const trimmedEmail = email.trim()
+
+    if (!trimmedEmail) {
       setError('Email is required.')
       return
     }
 
     const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    if (!EMAIL_RE.test(email.trim())) {
+    if (!EMAIL_RE.test(trimmedEmail)) {
       setError('Please enter a valid email address.')
       return
     }
@@ -71,11 +80,37 @@ export function Signup() {
       return
     }
 
-    // The key (if any) is re-checked server-side at register-start (during
-    // onboarding). buildOnboardingState carries it forward only when one was
-    // entered — most signups have none, and opaqueRegisterStart/Finish only
-    // send the X-Beebeeb-Pilot-Key header when a key is present.
-    navigate('/onboarding', { state: buildOnboardingState(email, pilotKey) })
+    // Task 1525: verify the email with a code BEFORE any account exists.
+    // Continue now calls /signup/email-start itself, THEN navigates — so a
+    // rate-limit or other real server refusal shows up right here, on the
+    // form the user is looking at, instead of after a silent jump to
+    // /onboarding. The key (if any) is re-checked server-side at
+    // register-start (during onboarding). buildOnboardingState carries it
+    // forward only when one was entered — most signups have none, and
+    // opaqueRegisterStart/Finish only send the X-Beebeeb-Pilot-Key header
+    // when a key is present.
+    setSubmitting(true)
+    try {
+      await signupEmailStart(trimmedEmail)
+      navigate('/onboarding', {
+        state: { ...buildOnboardingState(trimmedEmail, pilotKey), emailCodeSupported: true },
+      })
+    } catch (err) {
+      if (isLegacyFallbackError(err)) {
+        // Server predates task 1525 (no /signup/email-start route at all —
+        // a rolling deploy still mid-rollout, or a rollback). Fall back to
+        // the pre-1525 flow exactly as it worked before: no code screen, go
+        // straight to the recovery phrase.
+        navigate('/onboarding', {
+          state: { ...buildOnboardingState(trimmedEmail, pilotKey), emailCodeSupported: false },
+        })
+        return
+      }
+      // Real refusal (429 rate-limited, 400 malformed address the server
+      // disagrees with, network failure) — stay on this page and say so.
+      setError(userFriendlyError(err))
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -153,9 +188,21 @@ export function Signup() {
           variant="amber"
           size="lg"
           className="w-full"
-          disabled={!accepted || !email.trim() || pilotKeyBlocksSubmit({ showPilotKeyField, pilotKey })}
+          disabled={
+            submitting ||
+            !accepted ||
+            !email.trim() ||
+            pilotKeyBlocksSubmit({ showPilotKeyField, pilotKey })
+          }
         >
-          Continue
+          {submitting ? (
+            <span className="flex items-center justify-center gap-2">
+              <span className="inline-block w-3.5 h-3.5 border-2 border-ink/20 border-t-ink rounded-full animate-spin" />
+              Sending code...
+            </span>
+          ) : (
+            'Continue'
+          )}
         </BBButton>
 
         <p className="text-xs text-ink-3 text-center mt-4">

@@ -6,11 +6,13 @@ import { BBInput } from '@beebeeb/shared'
 import { BBLogo } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { MnemonicVerify } from '../components/mnemonic-verify'
+import { SignupEmailCodeStep } from '../components/signup-email-code-step'
 import {
   ApiError,
   opaqueRegisterStart,
   opaqueRegisterFinish,
 } from '../lib/api'
+import { initialOnboardingStep, signupTicketInvalidCopy } from '../lib/signup-email-code'
 import { REFERRAL_SOURCE_KEY, REFERRAL_SHARER_KEY, REFERRAL_CODE_KEY } from './signup'
 import { generateRecoveryKitPDF } from '../lib/recovery-kit-pdf'
 import { useAuth } from '../lib/auth-context'
@@ -27,16 +29,29 @@ import {
 import { userFriendlyError } from '../lib/user-friendly-error'
 import { encryptedUpload } from '../lib/encrypted-upload'
 
-type Step = 'display' | 'verify' | 'password' | 'processing'
+type Step = 'code' | 'display' | 'verify' | 'password' | 'processing'
 
-const STEP_NUMBER: Record<Step, number> = {
+// Task 1525: a code step now precedes the recovery-phrase display WHEN the
+// server has the capability (`navState.emailCodeSupported`, decided by
+// signup.tsx's email-start call). A legacy/stale server (404 on
+// /signup/email-start) skips it entirely — step numbers below fall back to
+// the exact pre-1525 4-step count so that path looks unchanged.
+const STEP_NUMBER_WITH_CODE: Record<Step, number> = {
+  code: 2,
+  display: 3,
+  verify: 4,
+  password: 5,
+  processing: 5,
+}
+const STEP_NUMBER_LEGACY: Record<Step, number> = {
+  code: 2, // unreachable when emailCodeSupported is false
   display: 2,
   verify: 3,
   password: 4,
   processing: 4,
 }
-
-const TOTAL_STEPS = 4
+const TOTAL_STEPS_WITH_CODE = 5
+const TOTAL_STEPS_LEGACY = 4
 
 const BULLET_POINTS = [
   { icon: 'eye' as const, title: "We can't see it", desc: 'Encrypted on your device before upload.' },
@@ -125,11 +140,18 @@ export function Onboarding() {
   const { refreshUser } = useAuth()
   const { setMasterKey, cryptoReady, cryptoError } = useKeys()
 
-  const navState = location.state as { email?: string; pilotKey?: string } | null
+  const navState = location.state as
+    | { email?: string; pilotKey?: string; emailCodeSupported?: boolean }
+    | null
   const email = navState?.email ?? ''
   // Pilot access key, collected on the signup page while Beebeeb is in private
   // development. Threaded onto the gated OPAQUE register-start request below.
   const pilotKey = navState?.pilotKey ?? ''
+  // Task 1525: whether signup.tsx's email-start call succeeded (true) or
+  // 404'd against a pre-1525 server (false, legacy fallback). Fixed for the
+  // lifetime of this mount — signup.tsx decides it once, before navigating
+  // here, so it never changes mid-flow.
+  const emailCodeSupported = navState?.emailCodeSupported ?? false
 
   // Redirect to signup if no email in router state
   useEffect(() => {
@@ -138,7 +160,22 @@ export function Onboarding() {
     }
   }, [email, navigate])
 
-  const [step, setStep] = useState<Step>('display')
+  const [step, setStep] = useState<Step>(initialOnboardingStep(navState))
+  // The signup_ticket from a completed /signup/email-verify (task 1525).
+  // Null until the code step succeeds; stays null for the legacy fallback,
+  // where the server ignores signup_ticket entirely. Threaded into
+  // register-start/finish below.
+  const [ticket, setTicket] = useState<string | null>(null)
+  // Set only when register-start/finish rejects the ticket as invalid
+  // (expired mid-flow, wrong email, already consumed) — shown once the user
+  // is bounced back to the code step.
+  const [codeStepError, setCodeStepError] = useState('')
+  // Task 1525 Codex review fix: true only when the invalid-ticket error came
+  // from register-FINISH specifically — the ambiguous case where the
+  // account may already have been created (see signupTicketInvalidCopy()'s
+  // doc comment). register-START never consumes the ticket, so an invalid
+  // ticket there is unambiguous and this stays false.
+  const [mayAlreadyHaveAccount, setMayAlreadyHaveAccount] = useState(false)
   const [phrase, setPhrase] = useState('')
   const [masterKeyBytes, setMasterKeyBytes] = useState<Uint8Array | null>(null)
   const [saved, setSaved] = useState(false)
@@ -163,19 +200,47 @@ export function Onboarding() {
     green: 'text-green',
   }
 
-  // Generate mnemonic on mount
+  // Generate mnemonic on mount — but only once the email is actually
+  // VERIFIED. Task 1525: before this, the phrase was generated the instant
+  // /onboarding mounted, so a phantom signup (an existing user who "signed
+  // up" again) was shown a recovery phrase that never got stored anywhere —
+  // locked out, no explanation. When the server has the code capability,
+  // wait for a valid `ticket` (proof the email-verify succeeded) before
+  // generating anything. The legacy fallback (emailCodeSupported === false)
+  // has no ticket to wait for and keeps the original immediate-generation
+  // behavior unchanged.
   const generated = useRef(false)
   useEffect(() => {
     if (!email || generated.current) return
     if (!cryptoReady) return
+    if (emailCodeSupported && !ticket) return
     generated.current = true
     generateRecoveryPhrase().then(({ phrase: p, masterKey: mk }) => {
       setPhrase(p)
       setMasterKeyBytes(mk)
     })
-  }, [email, cryptoReady])
+  }, [email, cryptoReady, emailCodeSupported, ticket])
 
   const words = phrase.split(' ').filter(Boolean)
+
+  const handleCodeVerified = useCallback((newTicket: string) => {
+    setTicket(newTicket)
+    setCodeStepError('')
+    setMayAlreadyHaveAccount(false)
+    setStep('display')
+  }, [])
+
+  const handleWrongEmail = useCallback(() => {
+    navigate('/signup', { replace: true, state: { email } })
+  }, [navigate, email])
+
+  // Task 1525 Codex review fix: the "Already finished setting up this
+  // account? Sign in instead" path offered only when mayAlreadyHaveAccount
+  // is set (a register-finish signup_ticket_invalid — see above). Same
+  // `?email=` prefill query param login.tsx already reads.
+  const handleSignInInstead = useCallback(() => {
+    navigate(`/login?email=${encodeURIComponent(email)}`, { replace: true })
+  }, [navigate, email])
 
   const handlePasswordSubmit = useCallback(async () => {
     if (!masterKeyBytes || !email) return
@@ -197,11 +262,27 @@ export function Onboarding() {
     setStep('processing')
     setError('')
 
+    // Task 1525 Codex review fix (see signupTicketInvalidCopy()'s doc
+    // comment): register-START only VALIDATES the ticket (never consumes
+    // it), so a signup_ticket_invalid there is unambiguous. register-FINISH
+    // consumes it atomically with the account INSERT — if ITS response is
+    // lost and the shared request() client's single network-failure retry
+    // resubmits with the now-dead ticket, the same error code comes back
+    // even though the account was actually created. Set right before the
+    // finish call (never reset after) so the catch block below can tell
+    // which of the two calls actually threw.
+    let ticketInvalidCouldMeanFinishSucceeded = false
+
     try {
       // 1. OPAQUE registration (2-round-trip)
       setProcessingStatus('Setting up account encryption...')
       const regStart = await opaqueRegistrationStart(password)
-      const serverResp = await opaqueRegisterStart(email, toBase64(regStart.message), pilotKey)
+      const serverResp = await opaqueRegisterStart(
+        email,
+        toBase64(regStart.message),
+        pilotKey,
+        ticket ?? undefined,
+      )
       const serverMsg = Uint8Array.from(atob(serverResp.server_message), c => c.charCodeAt(0))
       const regUpload = await opaqueRegistrationFinish(regStart.state, password, serverMsg)
 
@@ -215,6 +296,7 @@ export function Onboarding() {
       const referralSource = localStorage.getItem(REFERRAL_SOURCE_KEY) ?? undefined
       const referralSharerId = localStorage.getItem(REFERRAL_SHARER_KEY) ?? undefined
       const referralCode = localStorage.getItem(REFERRAL_CODE_KEY) ?? undefined
+      ticketInvalidCouldMeanFinishSucceeded = true
       await opaqueRegisterFinish(
         email,
         toBase64(regUpload),
@@ -224,6 +306,7 @@ export function Onboarding() {
         referralSharerId,
         referralCode,
         pilotKey,
+        ticket ?? undefined,
       )
       // Clear referral attribution after it has been sent
       localStorage.removeItem(REFERRAL_SOURCE_KEY)
@@ -292,14 +375,42 @@ export function Onboarding() {
         })
         return
       }
+      // Task 1525: the signup_ticket expired, was already consumed, or never
+      // matched this email (BB_SIGNUP_EMAIL_CODE=1 only). Unlike the pilot
+      // gate above, this does NOT bounce all the way to /signup — the email
+      // itself was fine, only the verification lapsed. Send the user back to
+      // the code step (still on /onboarding) to request a fresh one; the
+      // stale ticket and any generated phrase are discarded so a fresh
+      // ticket generates a fresh phrase (never register with the OLD one).
+      //
+      // Codex review (PR #79): a register-FINISH invalid-ticket is
+      // AMBIGUOUS — see signupTicketInvalidCopy()'s doc comment — so that
+      // case additionally offers a "sign in instead" path rather than only
+      // "request a new code" (which is a dead end if the account already
+      // exists: /email-start for an existing email sends a sign-in link,
+      // never a code).
+      if (err instanceof ApiError && err.status === 403 && err.code === 'signup_ticket_invalid') {
+        const { codeStepError, offerSignIn } = signupTicketInvalidCopy(
+          ticketInvalidCouldMeanFinishSucceeded ? 'register-finish' : 'register-start',
+        )
+        setTicket(null)
+        setPhrase('')
+        setMasterKeyBytes(null)
+        generated.current = false
+        setCodeStepError(codeStepError)
+        setMayAlreadyHaveAccount(offerSignIn)
+        setStep('code')
+        return
+      }
       setError(userFriendlyError(err))
       setStep('password')
     }
-  }, [masterKeyBytes, email, pilotKey, password, confirmPassword, cryptoReady, cryptoError, setMasterKey, refreshUser, navigate])
+  }, [masterKeyBytes, email, pilotKey, ticket, password, confirmPassword, cryptoReady, cryptoError, setMasterKey, refreshUser, navigate])
 
   if (!email) return null
 
-  const stepNumber = STEP_NUMBER[step]
+  const stepNumber = emailCodeSupported ? STEP_NUMBER_WITH_CODE[step] : STEP_NUMBER_LEGACY[step]
+  const totalSteps = emailCodeSupported ? TOTAL_STEPS_WITH_CODE : TOTAL_STEPS_LEGACY
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-paper px-4 py-6 sm:p-xl">
@@ -308,7 +419,7 @@ export function Onboarding() {
         <div className="flex items-center gap-4 px-5 py-4 sm:px-xl sm:py-lg border-b border-line">
           <BBLogo size={15} />
           <div className="ml-auto flex items-center gap-1.5">
-            {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
+            {Array.from({ length: totalSteps }).map((_, i) => (
               <div
                 key={i}
                 className={`w-7 h-[3px] rounded-full ${
@@ -317,7 +428,7 @@ export function Onboarding() {
               />
             ))}
             <span className="ml-2 text-xs font-medium text-ink-2">
-              {stepNumber} / {TOTAL_STEPS}
+              {stepNumber} / {totalSteps}
             </span>
           </div>
         </div>
@@ -336,6 +447,17 @@ export function Onboarding() {
           <div className="grid grid-cols-1 md:grid-cols-[1.2fr_1fr]">
             {/* Left panel */}
             <div className="p-5 sm:p-8 md:border-r border-line">
+              {step === 'code' && (
+                <SignupEmailCodeStep
+                  email={email}
+                  onVerified={handleCodeVerified}
+                  onWrongEmail={handleWrongEmail}
+                  externalError={codeStepError}
+                  offerSignInFallback={mayAlreadyHaveAccount}
+                  onSignInInstead={handleSignInInstead}
+                />
+              )}
+
               {step === 'display' && (
                 <>
                   <p className="text-xs font-medium text-ink-2 mb-2.5">
@@ -584,6 +706,13 @@ export function Onboarding() {
                 ))}
               </div>
               <div className="mt-auto">
+                {step === 'code' && (
+                  <p className="text-sm text-ink-3 leading-relaxed">
+                    We check your email before anything is created — so a
+                    mistyped address never leaves you holding a recovery
+                    phrase and password for an account that doesn't exist.
+                  </p>
+                )}
                 {step === 'display' && (
                   <>
                     <div className="mb-4">
