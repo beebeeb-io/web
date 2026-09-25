@@ -1,17 +1,26 @@
 // ─── Session persistence ────────────────────────────
-// Keeps the vault unlocked across page refreshes for a configurable TTL.
+// Keeps the vault unlocked across page refreshes with a SLIDING
+// inactivity window (task 1532, Guus ruling 2026-09-25: "60m of
+// inactivity should be good").
 //
 // On unlock: generates a random "remember token", wraps the master key
-// with it via AES-256-GCM, stores the wrapped blob + timestamp in
+// with it via AES-256-GCM, stores the wrapped blob + timestamps in
 // IndexedDB and the remember token in localStorage.
 //
-// On load: reads the token from localStorage, reads the blob from IDB,
-// checks TTL, unwraps if valid.
+// While unlocked: user activity (interaction / API use) calls
+// touchSession(), which bumps the stored `lastActivityAt` — the window
+// keeps sliding forward as long as the user keeps using the app.
+//
+// On load, and eagerly via a re-armed timer + visibilitychange/pagehide
+// listeners: if more than the window has elapsed since `lastActivityAt`,
+// the blob + token are deleted. Deletion is not deferred to the next app
+// load — an idle tab left open past the window loses its persisted key
+// on its own.
 //
 // Security tradeoff: XSS can read the token from localStorage, but the
 // master key is never in localStorage directly. An attacker would need
 // to read from both localStorage AND IndexedDB, then perform the unwrap.
-// The TTL limits the exposure window.
+// The sliding window, capped at 60 minutes, limits the exposure window.
 
 const DB_NAME = 'beebeeb_session_persist'
 const DB_VERSION = 1
@@ -23,23 +32,32 @@ const LS_TTL_KEY = 'bb_vault_ttl'
 const NONCE_BYTES = 12
 
 const DEFAULT_TTL_MS = 30 * 60 * 1000
-const MAX_TTL_MS = 30 * 24 * 60 * 60 * 1000
+const MAX_TTL_MS = 60 * 60 * 1000
 
 interface PersistEntry {
   id: typeof ENTRY_ID
   wrapped: ArrayBuffer
   nonce: Uint8Array
+  /** Diagnostic only — expiry is keyed off `lastActivityAt`, not this. */
   createdAt: number
+  /** The sliding-window anchor: bumped by touchSession() on activity. */
+  lastActivityAt: number
 }
 
-// ─── TTL preference ───────────────────────────────────
+// ─── TTL preference (Settings → Vault timeout) ────────
 
+/**
+ * The user's chosen window, clamped to MAX_TTL_MS (60 min). A value stored
+ * before task 1532 (e.g. the old 30-day option) is clamped down to 60
+ * minutes here rather than discarded to a different default — "existing
+ * stored TTLs > 60 min are clamped to 60 on next load" per the ruling.
+ */
 export function getVaultTTL(): number {
   try {
     const raw = localStorage.getItem(LS_TTL_KEY)
     if (raw) {
       const ms = parseInt(raw, 10)
-      if (!isNaN(ms) && ms > 0 && ms <= MAX_TTL_MS) return ms
+      if (!isNaN(ms) && ms > 0) return Math.min(ms, MAX_TTL_MS)
     }
   } catch { /* localStorage unavailable */ }
   return DEFAULT_TTL_MS
@@ -54,18 +72,57 @@ export function setVaultTTL(ms: number): void {
       localStorage.setItem(LS_TTL_KEY, String(clamped))
     }
   } catch { /* localStorage unavailable */ }
+
+  // Task 1532 continuation (Codex P2, web PR #77): the eager-deletion timer
+  // captures its duration at persist/restore/touch time. Without this, only
+  // shortening the setting (e.g. 60 -> 15 min) left that stale, longer-
+  // duration timer armed — an idle session would outlive the NEW window
+  // until either the old timer eventually fired or the user generated more
+  // activity (touchSession already re-arms against the current TTL, but
+  // nothing re-arms on its own while idle). Re-validate the active session
+  // against the new TTL immediately: delete it if it is already past the
+  // new window, otherwise re-arm the timer at the new remaining duration.
+  // checkAndClearIfExpired() re-reads the TTL itself, so it naturally picks
+  // up the value just written above. Skipped for clamped === 0 ("Every
+  // refresh") — that path has never touched an existing timer/entry, and
+  // effectiveTtlMs() falling back to DEFAULT_TTL_MS when unset (a separate,
+  // pre-existing quirk) makes "0" unreachable there regardless.
+  if (clamped > 0) void checkAndClearIfExpired()
 }
 
+// Options above 60 minutes (incl. the old 30-day option) are gone — task
+// 1532. The remaining options are the max INACTIVITY window, not "time
+// since login": the window keeps sliding forward while the user is active.
 export const TTL_OPTIONS = [
   { label: 'Every refresh', value: 0 },
   { label: '15 minutes', value: 15 * 60 * 1000 },
   { label: '30 minutes', value: 30 * 60 * 1000 },
   { label: '1 hour', value: 60 * 60 * 1000 },
-  { label: '4 hours', value: 4 * 60 * 60 * 1000 },
-  { label: '1 day', value: 24 * 60 * 60 * 1000 },
-  { label: '7 days', value: 7 * 24 * 60 * 60 * 1000 },
-  { label: '30 days', value: 30 * 24 * 60 * 60 * 1000 },
 ] as const
+
+// ─── Test-only window override (e2e) ──────────────────
+//
+// DEV-only: `import.meta.env.DEV` is constant-folded to `false` and this
+// whole branch is tree-shaken out of production builds (same pattern as
+// dev-auth.ts's devAutoAuth). Lets e2e/scripts/web-e2e.sh prove the
+// eager-deletion timer actually fires without waiting a real 60 minutes,
+// without adding any production-reachable way to change another user's
+// (or your own) window — this key is never read outside a DEV build, so
+// no URL param or injected localStorage value can reach it in prod.
+const LS_TEST_TTL_OVERRIDE_KEY = 'bb_e2e_ttl_override_ms'
+
+function effectiveTtlMs(): number {
+  if (import.meta.env.DEV) {
+    try {
+      const raw = localStorage.getItem(LS_TEST_TTL_OVERRIDE_KEY)
+      if (raw) {
+        const ms = parseInt(raw, 10)
+        if (!isNaN(ms) && ms > 0) return ms
+      }
+    } catch { /* ignore */ }
+  }
+  return getVaultTTL()
+}
 
 // ─── IndexedDB helpers ────────────────────────────────
 
@@ -122,10 +179,82 @@ async function deriveKey(token: Uint8Array): Promise<CryptoKey> {
   )
 }
 
+/** The anchor a pre-1532 entry (no lastActivityAt) falls back to. */
+function anchorOf(entry: PersistEntry): number {
+  return entry.lastActivityAt ?? entry.createdAt
+}
+
+// ─── Eager-deletion watcher ────────────────────────────
+//
+// The blob + token are deleted as soon as the window elapses — not only
+// lazily on the next app load. A re-armed setTimeout covers the common
+// case; visibilitychange/pagehide cover the case where the timer was
+// throttled while the tab sat in the background (browsers deprioritize
+// timers in hidden tabs), by checking as soon as the user comes back or
+// the page is about to go away.
+
+let expiryTimer: ReturnType<typeof setTimeout> | null = null
+let watcherInstalled = false
+
+function clearExpiryTimer(): void {
+  if (expiryTimer !== null) {
+    clearTimeout(expiryTimer)
+    expiryTimer = null
+  }
+}
+
+function armExpiryTimer(msUntilExpiry: number): void {
+  clearExpiryTimer()
+  expiryTimer = setTimeout(() => { void checkAndClearIfExpired() }, Math.max(0, msUntilExpiry))
+}
+
+async function checkAndClearIfExpired(): Promise<void> {
+  const ttl = effectiveTtlMs()
+  if (ttl === 0) return
+  const db = await openDB()
+  let entry: PersistEntry | undefined
+  try {
+    entry = await dbGet(db)
+  } finally {
+    db.close()
+  }
+  if (!entry) return
+  const elapsed = Date.now() - anchorOf(entry)
+  if (elapsed >= ttl) {
+    await clearSession()
+  } else {
+    armExpiryTimer(ttl - elapsed)
+  }
+}
+
+/**
+ * Installs the eager-deletion watcher (re-armed timer + visibilitychange/
+ * pagehide listeners). Idempotent — safe to call on every KeyProvider
+ * mount. No-op outside a browser (no `document`, e.g. SSR/build tooling).
+ */
+export function initSessionExpiryWatcher(): void {
+  if (watcherInstalled) return
+  watcherInstalled = true
+  if (typeof document === 'undefined') return
+  document.addEventListener('visibilitychange', () => { void checkAndClearIfExpired() })
+  window.addEventListener('pagehide', () => { void checkAndClearIfExpired() })
+  // Task 1532 continuation (Codex P2, web PR #77), other-tabs case:
+  // setVaultTTL() in ANOTHER tab only re-arms THAT tab's in-process timer
+  // (module-level `expiryTimer`, not shared across tabs). `storage` fires
+  // here — never in the tab that made the write — whenever bb_vault_ttl
+  // changes elsewhere; re-run the same recheck so this tab's timer doesn't
+  // keep running at a TTL the user just shortened (or lengthened) in a
+  // different tab.
+  window.addEventListener('storage', (e: StorageEvent) => {
+    if (e.key === LS_TTL_KEY) void checkAndClearIfExpired()
+  })
+  void checkAndClearIfExpired()
+}
+
 // ─── Public API ───────────────────────────────────────
 
 export async function persistSession(masterKey: Uint8Array): Promise<void> {
-  const ttl = getVaultTTL()
+  const ttl = effectiveTtlMs()
   if (ttl === 0) return
 
   const token = crypto.getRandomValues(new Uint8Array(32))
@@ -138,9 +267,10 @@ export async function persistSession(masterKey: Uint8Array): Promise<void> {
     masterKey as unknown as BufferSource,
   )
 
+  const now = Date.now()
   const db = await openDB()
   try {
-    await dbPut(db, { id: ENTRY_ID, wrapped, nonce, createdAt: Date.now() })
+    await dbPut(db, { id: ENTRY_ID, wrapped, nonce, createdAt: now, lastActivityAt: now })
   } finally {
     db.close()
   }
@@ -149,10 +279,12 @@ export async function persistSession(masterKey: Uint8Array): Promise<void> {
     const hex = Array.from(token).map(b => b.toString(16).padStart(2, '0')).join('')
     localStorage.setItem(LS_TOKEN_KEY, hex)
   } catch { /* localStorage unavailable */ }
+
+  armExpiryTimer(ttl)
 }
 
 export async function restoreSession(): Promise<Uint8Array | null> {
-  const ttl = getVaultTTL()
+  const ttl = effectiveTtlMs()
   if (ttl === 0) return null
 
   let hex: string | null
@@ -177,7 +309,8 @@ export async function restoreSession(): Promise<Uint8Array | null> {
   }
   if (!entry) return null
 
-  if (Date.now() - entry.createdAt > ttl) {
+  const elapsed = Date.now() - anchorOf(entry)
+  if (elapsed > ttl) {
     await clearSession()
     return null
   }
@@ -189,6 +322,7 @@ export async function restoreSession(): Promise<Uint8Array | null> {
       key,
       entry.wrapped,
     )
+    armExpiryTimer(ttl - elapsed)
     return new Uint8Array(pt)
   } catch {
     await clearSession()
@@ -196,7 +330,34 @@ export async function restoreSession(): Promise<Uint8Array | null> {
   }
 }
 
+/**
+ * Extends the sliding-expiry window — called on user interaction / API use
+ * while a session is persisted (key-context.tsx wires this to DOM activity
+ * events). No-ops if nothing is persisted, persistence is off (ttl === 0),
+ * or the window has already elapsed: touching an expired entry must never
+ * resurrect it — that case is left for the expiry timer / next
+ * restoreSession() to delete.
+ */
+export async function touchSession(): Promise<void> {
+  const ttl = effectiveTtlMs()
+  if (ttl === 0) return
+
+  const db = await openDB()
+  try {
+    const entry = await dbGet(db)
+    if (!entry) return
+    const now = Date.now()
+    if (now - anchorOf(entry) > ttl) return
+    await dbPut(db, { ...entry, lastActivityAt: now })
+  } finally {
+    db.close()
+  }
+
+  armExpiryTimer(ttl)
+}
+
 export async function clearSession(): Promise<void> {
+  clearExpiryTimer()
   try {
     localStorage.removeItem(LS_TOKEN_KEY)
   } catch { /* ok */ }
