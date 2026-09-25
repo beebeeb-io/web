@@ -456,6 +456,10 @@ bun install --frozen-lockfile || { echo "bun install failed — check the lockfi
 docker compose -f "$WORKSPACE/docker-compose.yml" up -d mailpit >/dev/null 2>&1 || true
 
 # ── Start the isolated API instance, secrets sourced from the shared .env ──
+# Capture the CALLER's pilot-gate choice before .env is sourced: a
+# BB_REQUIRE_PILOT_KEY line in $SERVER_DIR/.env must never override an explicit
+# override on the command line (Codex P2, web PR #71).
+CALLER_BB_REQUIRE_PILOT_KEY="${BB_REQUIRE_PILOT_KEY-}"
 set -a
 # shellcheck disable=SC1091
 source "$SERVER_DIR/.env"
@@ -483,7 +487,7 @@ export BB_RATE_LIMIT_DISABLED=1
 # (2026-09-25). An explicit `BB_REQUIRE_PILOT_KEY=1` in the calling
 # environment overrides this default to exercise the gate-on bounce-back
 # path instead (prod-smoke.spec.ts step 1 handles both states).
-export BB_REQUIRE_PILOT_KEY="${BB_REQUIRE_PILOT_KEY:-0}"
+export BB_REQUIRE_PILOT_KEY="${CALLER_BB_REQUIRE_PILOT_KEY:-0}"
 export BB_PILOT_SIGNUP_KEY="${BB_PILOT_SIGNUP_KEY:-test-pilot-key}"
 # Kept in lockstep with the server-side key (mirrors e2e/scripts/web-e2e.sh) —
 # e2e/helpers/signup.ts's PILOT_KEY constant reads BB_TEST_PILOT_KEY, which
