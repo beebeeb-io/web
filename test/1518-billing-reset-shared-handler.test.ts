@@ -109,6 +109,69 @@ describe('handleBillingResetTestMode()', () => {
   })
 })
 
+/**
+ * The suite above always injects `dispatchPlanChanged`, so it never actually
+ * exercises `realDispatchPlanChanged()`'s body — the mutation gate found that
+ * replacing its `window.dispatchEvent(new Event('beebeeb:plan-changed'))`
+ * with a no-op left every test above green. That event is what
+ * drive-data-context.tsx's `onPlanChanged` listener uses to refresh the
+ * sidebar's `usage` (quota bar) — `refreshPlanDetails()` alone does NOT
+ * refresh usage, only plan details, so a dropped dispatch is a real, silent
+ * sidebar-goes-stale regression, not a redundant belt-and-suspenders path.
+ *
+ * `window` doesn't exist under bun test (confirmed: referencing the bare
+ * identifier throws `ReferenceError: window is not defined`), so these tests
+ * stand up a minimal fake on `globalThis.window` for the DEFAULT (un-injected)
+ * code path specifically, and tear it down in `finally` so it can't leak into
+ * other tests/files.
+ */
+describe('handleBillingResetTestMode() — the REAL default (no dispatchPlanChanged override)', () => {
+  function withFakeWindow(): { dispatched: Event[]; restore: () => void } {
+    const dispatched: Event[] = []
+    const fakeWindow = { dispatchEvent: (event: Event) => { dispatched.push(event); return true } }
+    const g = globalThis as { window?: unknown }
+    const hadOwn = Object.prototype.hasOwnProperty.call(g, 'window')
+    const original = g.window
+    g.window = fakeWindow
+    return {
+      dispatched,
+      restore: () => {
+        if (hadOwn) g.window = original
+        else delete g.window
+      },
+    }
+  }
+
+  test('on the reset error: the real default calls window.dispatchEvent(beebeeb:plan-changed) exactly once, AND still calls refreshPlanDetails() directly', async () => {
+    const { dispatched, restore } = withFakeWindow()
+    try {
+      const refreshPlanDetails = mock(() => {})
+      const result = await handleBillingResetTestMode(resetError(), { refreshPlanDetails })
+
+      expect(result).toBe(MESSAGE)
+      expect(refreshPlanDetails).toHaveBeenCalledTimes(1)
+      expect(dispatched).toHaveLength(1)
+      expect(dispatched[0]?.type).toBe('beebeeb:plan-changed')
+    } finally {
+      restore()
+    }
+  })
+
+  test('an unrelated error: the real default touches neither window.dispatchEvent nor refreshPlanDetails', async () => {
+    const { dispatched, restore } = withFakeWindow()
+    try {
+      const refreshPlanDetails = mock(() => {})
+      const result = await handleBillingResetTestMode(new Error('network blip'), { refreshPlanDetails })
+
+      expect(result).toBeNull()
+      expect(refreshPlanDetails).not.toHaveBeenCalled()
+      expect(dispatched).toHaveLength(0)
+    } finally {
+      restore()
+    }
+  })
+})
+
 describe('billingResetNavigationState()', () => {
   test('wraps the message in the shape RedirectPreservingSearch/billing.tsx expect', () => {
     expect(billingResetNavigationState(MESSAGE)).toEqual({ billingResetMessage: MESSAGE })
