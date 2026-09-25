@@ -54,12 +54,12 @@ test.describe('Authentication', () => {
   test('signup flow: fill form, submit, redirected to /onboarding', async ({ page }) => {
     const email = uniqueEmail()
 
-    // /signup is email + pilot access key + consent — the password is
-    // collected on the /onboarding password step, after the recovery-phrase
-    // screens. This test was originally written for an older single-page
-    // signup flow; updating it here to match the current shape (closes
-    // 0011). The pilot access key field has been required client-side since
-    // task 0928 — fillSignupForm fills it with the shared default (task 1406).
+    // /signup is email + consent — the password is collected on the
+    // /onboarding password step, after the recovery-phrase screens. This
+    // test was originally written for an older single-page signup flow;
+    // updating it here to match the current shape (closes 0011). No pilot
+    // access key field by default since task 1520 (server gate is OFF at
+    // launch; fillSignupForm asserts the field is absent).
     await fillSignupForm(page, { email })
 
     // Should redirect to onboarding (recovery phrase screen)

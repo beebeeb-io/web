@@ -1,5 +1,4 @@
 import { test, expect, type Page } from '@playwright/test'
-import { PILOT_KEY } from './helpers/signup'
 
 /**
  * E2E for task 1407 — after in-app account deletion the success path must
@@ -50,9 +49,9 @@ async function signupAndUnlock(page: Page, email: string) {
   await page.goto('/signup')
   await expect(page).toHaveURL(/\/signup/)
   await page.getByLabel(/email/i).fill(email)
-  // MUST match the harness's BB_PILOT_SIGNUP_KEY — imported from the shared
-  // helper (single source of truth, task 1466) rather than hardcoded here.
-  await page.getByLabel(/pilot access key/i).fill(PILOT_KEY)
+  // No pilot-access-key field on a fresh /signup visit (task 1520) — the
+  // server's gate is OFF at launch and the field only appears after a real
+  // 403 pilot_key_required bounce (src/lib/signup-pilot-gate.ts).
   await page.getByRole('checkbox', { name: /Beebeeb cannot recover/i }).click()
   await page.getByRole('button', { name: /^continue$/i }).click()
 

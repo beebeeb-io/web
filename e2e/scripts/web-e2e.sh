@@ -18,8 +18,10 @@
 # 1406) — SERVER_DIR always resolves to the one real repos/server via git's
 # common dir. Uses host `psql` if present, else falls back to `docker exec`
 # into the Postgres container (task 1406; override with E2E_PG_CONTAINER).
-# The pilot-access-key gate is ON by default (BB_REQUIRE_PILOT_KEY=1,
-# BB_PILOT_SIGNUP_KEY=test-pilot-key) — override before invoking to turn it off.
+# The pilot-access-key gate is OFF by default (task 1520) — matching prod,
+# which launched phase 2 with BB_REQUIRE_PILOT_KEY=0 on both nodes. Override
+# BB_REQUIRE_PILOT_KEY=1 (BB_PILOT_SIGNUP_KEY=test-pilot-key) before invoking
+# to exercise the gate-ON rollback safety net (pilot-key-registration.spec.ts).
 set -euo pipefail
 
 # ── Config (isolated; do NOT collide with :3001/:3002) ──────────────────────
@@ -69,21 +71,25 @@ DATABASE_URL="postgres://$PG_USER:$PG_PASS@$PG_HOST:$PG_PORT/$DB_NAME"
 # Unquoted on purpose so the secret-scanner doesn't flag the dev credential.
 export PGPASSWORD=$PG_PASS
 
-# Pilot-access-key gate (task 1406): ON by default for this harness. The
-# gate was previously left off by default, which is exactly how the stale
-# signup-helper bugs (auth.spec.ts, refresh-stability.spec.ts, and 3 more
-# found sweeping every /signup-driving spec — see task 1406 notes) went
-# unnoticed: the harness never actually exercised BB_REQUIRE_PILOT_KEY, only
-# the client-side non-empty check (required independent of this gate since
-# task 0928). A caller can still override BB_REQUIRE_PILOT_KEY=/BB_PILOT_SIGNUP_KEY=
-# (e.g. empty, to run with the gate off) before invoking this script.
-BB_REQUIRE_PILOT_KEY="${BB_REQUIRE_PILOT_KEY:-1}"
+# Pilot-access-key gate: OFF by default (task 1520) — matches prod, which
+# launched phase 2 with BB_REQUIRE_PILOT_KEY=0 on both nodes, and matches
+# src/pages/signup.tsx, which no longer shows a pilot-key field by default
+# (src/lib/signup-pilot-gate.ts). Between task 1406 (defaulted this ON) and
+# 1520, this harness deliberately diverged from prod's gate state to catch
+# signup-helper bugs; now that prod itself is gate-off, keeping the harness
+# gate-on by default would make every ordinary /signup-driving spec exercise
+# a rollback path nothing in prod currently takes. Set BB_REQUIRE_PILOT_KEY=1
+# (BB_PILOT_SIGNUP_KEY=test-pilot-key) before invoking to specifically
+# exercise the gate-ON recovery flow — see pilot-key-registration.spec.ts,
+# whose own beforeAll probe self-skips (not false-pass/false-fail) when the
+# gate isn't actually enforced.
+BB_REQUIRE_PILOT_KEY="${BB_REQUIRE_PILOT_KEY:-0}"
 BB_PILOT_SIGNUP_KEY="${BB_PILOT_SIGNUP_KEY:-test-pilot-key}"
 export BB_REQUIRE_PILOT_KEY BB_PILOT_SIGNUP_KEY
-# e2e/helpers/signup.ts (and pilot-key-registration.spec.ts) fill the
-# pilot-key-input field from BB_TEST_PILOT_KEY by default — keep it in
-# lockstep with the server-side expected key so the harness's default run
-# satisfies both the client-side requirement AND the server-side gate.
+# e2e/helpers/signup.ts's retrySignupWithPilotKey (and
+# pilot-key-registration.spec.ts) fill the pilot-key-input field from
+# BB_TEST_PILOT_KEY by default — keep it in lockstep with the server-side
+# expected key so an opted-in gate-ON run satisfies both sides.
 export BB_TEST_PILOT_KEY="${BB_TEST_PILOT_KEY:-$BB_PILOT_SIGNUP_KEY}"
 
 # psql wrapper: prefer host `psql`, otherwise fall back to `docker exec` into
@@ -178,14 +184,14 @@ INSERT INTO pwned_prefixes (prefix, suffixes) VALUES ('98A16', 'C09B0759E63EF7DF
 -- SHA-1('password') = 5BAA61E4C9B93F3F0682250B6CF8331B7EE68FD8
 INSERT INTO pwned_prefixes (prefix, suffixes) VALUES ('5BAA6', '1E4C9B93F3F0682250B6CF8331B7EE68FD8:9999999');
 SQL
-  # BB_REQUIRE_PILOT_KEY / BB_PILOT_SIGNUP_KEY (task 1411; defaulted ON by
-  # task 1406 — see the Config section above): forwarded to the isolated API.
-  # A caller can still set BB_REQUIRE_PILOT_KEY= (empty) before invoking this
-  # script to run with the gate off — server's bool_flag/evaluate() both
-  # treat "" as falsy/empty (beebeeb-api/src/env_flags.rs + pilot_gate.rs).
-  # e.g. to specifically exercise pilot-key-registration.spec.ts's gate-off
-  # self-skip path:
-  #   BB_REQUIRE_PILOT_KEY= ./e2e/scripts/web-e2e.sh e2e/pilot-key-registration.spec.ts
+  # BB_REQUIRE_PILOT_KEY / BB_PILOT_SIGNUP_KEY (task 1411; defaulted OFF by
+  # task 1520 — see the Config section above): forwarded to the isolated API.
+  # A caller can set BB_REQUIRE_PILOT_KEY=1 before invoking this script to
+  # run with the gate ON — server's bool_flag/evaluate() treat "" as
+  # falsy/empty (beebeeb-api/src/env_flags.rs + pilot_gate.rs). e.g. to
+  # specifically exercise pilot-key-registration.spec.ts's gate-ON recovery
+  # path:
+  #   BB_REQUIRE_PILOT_KEY=1 ./e2e/scripts/web-e2e.sh e2e/pilot-key-registration.spec.ts
   DATABASE_URL="$DATABASE_URL" BB_PORT="$API_PORT" \
     CORS_ORIGINS="http://localhost:$VITE_PORT" \
     BLOB_STORE=local BLOB_STORE_PATH="$BLOB_DIR" \
