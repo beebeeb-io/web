@@ -154,6 +154,15 @@ export function userFriendlyError(err: unknown): string {
       // exact amount and target tier.
       return looksUserFriendly(err.message) ? err.message : 'Free up storage before switching to this plan.'
     }
+    if (err.code === 'billing_reset_test_mode') {
+      // Task 1518 (server PR #94) — a subscription created while Mollie was
+      // in test mode gets reset server-side; the account falls back to the
+      // free plan and has to subscribe again. The server's own message is
+      // already the exact right copy, it's just 86 chars — over
+      // SHORT_MESSAGE_MAX (80) — so it needs its own branch here instead of
+      // falling through `looksUserFriendly` into the generic fallback.
+      return err.message
+    }
     if (status === 401) return 'Your session expired. Sign in again.'
     if (status === 403) return "You don't have permission to do that."
     if (status === 404) return 'Not found.'

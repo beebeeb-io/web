@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom'
 import { SettingsShell, SettingsHeader } from '../components/settings-shell'
 import { BBButton } from '@beebeeb/shared'
 import { BBChip } from '@beebeeb/shared'
@@ -50,6 +50,7 @@ import {
 import { useDriveData } from '../lib/drive-data-context'
 import { useWsEvent } from '../lib/ws-context'
 import { userFriendlyError } from '../lib/user-friendly-error'
+import { handleBillingResetTestMode, type BillingResetNavigationState } from '../lib/billing-reset'
 
 import { formatStorageSI } from '../lib/format'
 import { StorageBreakdown } from '../components/storage-breakdown'
@@ -275,6 +276,7 @@ export function Billing() {
   const [searchParams, setSearchParams] = useSearchParams()
   const { showToast } = useToast()
   const navigate = useNavigate()
+  const location = useLocation()
   // Presentational view toggle (task 0942) — backed by the router URL so the
   // change-plan view is linkable, refresh-stable, and Back-button-friendly
   // (task 0944). 'summary' = the /billing summary (mockup #7); 'change' =
@@ -386,6 +388,28 @@ export function Billing() {
       if (pending) setPendingCheckoutState(pending)
     }
   }, [showUpgraded, searchParams])
+
+  // Task 1518 part C — upgrade-nudge-modal.tsx navigates straight here on a
+  // `billing_reset_test_mode` checkout error, carrying the real server
+  // message via router state (lost otherwise, since it discards its own
+  // component state on navigation). Consume it once and show it as a toast
+  // — `resetMessageConsumedRef` mirrors `intentReadRef` above so a later
+  // location change on this same page (e.g. a `setSearchParams` call) can't
+  // re-fire it.
+  const resetMessageConsumedRef = useRef(false)
+  useEffect(() => {
+    if (resetMessageConsumedRef.current) return
+    const state = location.state as BillingResetNavigationState | null
+    if (!state?.billingResetMessage) return
+    resetMessageConsumedRef.current = true
+    showToast({
+      icon: 'info',
+      title: 'Subscription reset',
+      description: state.billingResetMessage,
+    })
+    // Clear the state so a refresh/back-navigation doesn't re-show the toast.
+    navigate(`${location.pathname}${location.search}`, { replace: true, state: null })
+  }, [location, navigate, showToast])
 
   // Does a freshly-fetched subscription reflect the upgrade the user just made?
   // Shared by the poll (fallback), the WS handler, AND the reconcile-on-load —
@@ -1040,6 +1064,18 @@ function openUpgrade(plan: string) {
       window.dispatchEvent(new Event('beebeeb:plan-changed'))
       refreshPlanDetails()
     } catch (err) {
+      const resetMessage = await handleBillingResetTestMode(err, {
+        refreshPlanDetails,
+        reloadLocal: loadData,
+        clearPendingCheckout: () => {
+          clearPendingCheckout()
+          setPendingCheckoutState(null)
+        },
+      })
+      if (resetMessage) {
+        showToast({ icon: 'info', title: 'Subscription reset', description: resetMessage })
+        return
+      }
       showToast({
         icon: 'x',
         title: 'Could not update storage',
@@ -1078,6 +1114,19 @@ function openUpgrade(plan: string) {
       )
       window.location.href = checkout_url
     } catch (err) {
+      const resetMessage = await handleBillingResetTestMode(err, {
+        refreshPlanDetails,
+        reloadLocal: loadData,
+        clearPendingCheckout: () => {
+          clearPendingCheckout()
+          setPendingCheckoutState(null)
+        },
+      })
+      if (resetMessage) {
+        showToast({ icon: 'info', title: 'Subscription reset', description: resetMessage })
+        setAddonInstantPayLoading(false)
+        return
+      }
       showToast({
         icon: 'x',
         title: 'Could not start instant payment',
@@ -1132,6 +1181,18 @@ function openUpgrade(plan: string) {
       refreshPlanDetails()
       await loadData()
     } catch (e) {
+      const resetMessage = await handleBillingResetTestMode(e, {
+        refreshPlanDetails,
+        reloadLocal: loadData,
+        clearPendingCheckout: () => {
+          clearPendingCheckout()
+          setPendingCheckoutState(null)
+        },
+      })
+      if (resetMessage) {
+        showToast({ icon: 'info', title: 'Subscription reset', description: resetMessage })
+        return
+      }
       showToast({
         icon: 'x',
         title: 'Failed to switch billing cycle',
@@ -1172,6 +1233,33 @@ function openUpgrade(plan: string) {
       setPendingCheckout(pending.kind, action.plan, action.cycle, makePreState(sub), payment_id)
       window.location.href = url
     } catch (err) {
+      // Task 1518 (server PR #94) — the subscription this resume was trying
+      // to recreate got reset because it was created while Mollie was in
+      // test mode; the account is back on the free plan server-side. The
+      // stale pending-checkout marker is now moot, and the page's `sub`
+      // state still shows the pre-reset plan — reload it (below, via the
+      // shared handler) so the summary reflects reality before the toast
+      // even lands. Also clears the checkout watchdog banner — it reads the
+      // same intent this resume was trying to recreate, and offering to
+      // "resume" a checkout for a now-reset subscription would just
+      // reproduce this same error again.
+      const resetMessage = await handleBillingResetTestMode(err, {
+        refreshPlanDetails,
+        reloadLocal: loadData,
+        clearPendingCheckout: () => {
+          clearPendingCheckout()
+          setPendingCheckoutState(null)
+        },
+      })
+      if (resetMessage) {
+        showToast({
+          icon: 'info',
+          title: 'Subscription reset',
+          description: resetMessage,
+        })
+        setResumeCheckoutLoading(false)
+        return
+      }
       showToast({
         icon: 'x',
         title: 'Could not resume checkout',

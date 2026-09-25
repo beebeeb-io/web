@@ -6,6 +6,8 @@ import { Icon } from '@beebeeb/shared'
 import { useToast } from './toast'
 import { createCheckoutSession } from '../lib/api'
 import { userFriendlyError } from '../lib/user-friendly-error'
+import { useDriveData } from '../lib/drive-data-context'
+import { handleBillingResetTestMode } from '../lib/billing-reset'
 import { BillingInfoStep } from './billing/BillingInfoStep'
 
 type BillingCycle = 'monthly' | 'yearly'
@@ -50,6 +52,7 @@ export function UpgradeDialog({
   priceYearlySeat,
   open,
   onClose,
+  onSuccess,
   onBeforeRedirect,
   activeAddOnStorageTb = 0,
 }: UpgradeDialogProps) {
@@ -58,6 +61,7 @@ export function UpgradeDialog({
   const [error, setError] = useState<string | null>(null)
   const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
   const { showToast } = useToast()
+  const { refreshPlanDetails } = useDriveData()
 
   // All plans are single-user — no seat multiplier needed
   const monthlyTotal = pricePerSeat
@@ -94,6 +98,26 @@ export function UpgradeDialog({
       }
       window.location.href = url
     } catch (checkoutErr) {
+      // Task 1518 part C — the ordinary upgrade path used to fall through
+      // to the generic re-throw below, which BillingInfoStep showed inline
+      // under a form for a subscription that no longer exists (the server
+      // already reset it to free). Close the dialog and reload plan state
+      // instead — same treatment as billing.tsx's resume-checkout path, and
+      // via `onSuccess` if the parent wired one (billing.tsx does: reloads
+      // its own local subscription state + re-dispatches plan-changed).
+      const resetMessage = await handleBillingResetTestMode(checkoutErr, {
+        refreshPlanDetails,
+        reloadLocal: onSuccess,
+      })
+      if (resetMessage) {
+        showToast({
+          icon: 'info',
+          title: 'Subscription reset',
+          description: resetMessage,
+        })
+        handleClose()
+        return
+      }
       if (checkoutErr instanceof Error && 'status' in checkoutErr && (checkoutErr as { status: number }).status === 400) {
         showToast({
           icon: 'x',
@@ -108,7 +132,7 @@ export function UpgradeDialog({
       // submitting state from sticking.
       throw new Error(userFriendlyError(checkoutErr))
     }
-  }, [planId, cycle, handleClose, showToast, onBeforeRedirect])
+  }, [planId, cycle, handleClose, showToast, onBeforeRedirect, refreshPlanDetails, onSuccess])
 
   if (!open) return null
 
