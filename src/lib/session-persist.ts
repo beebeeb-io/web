@@ -34,6 +34,24 @@ const NONCE_BYTES = 12
 const DEFAULT_TTL_MS = 30 * 60 * 1000
 const MAX_TTL_MS = 60 * 60 * 1000
 
+// ─── Generation counter (guards a stale in-flight persistSession()) ──
+//
+// Task 1532 continuation (web PR #78, Codex P1): persistSession() reads
+// effectiveTtlMs() once, then does real async work (deriveKey/encrypt,
+// IndexedDB). A setVaultTTL(0) landing DURING that await window used to be
+// clobbered — persistSession() had already decided to persist and just
+// went ahead and committed the wrapped key + token after "Every refresh"
+// cleared them, and the timer it then armed used TTL 0's own
+// checkAndClearIfExpired() no-op (see below) to never clean it up.
+//
+// Bumped by every setVaultTTL() and clearSession() call — either one means
+// "whatever an in-flight persist decided is stale". persistSession()
+// captures the generation before starting its async work and re-checks it
+// (together with the CURRENT effective TTL) immediately before each write;
+// a mismatch aborts the commit and cleans up instead of persisting a
+// session the setting no longer allows.
+let ttlGeneration = 0
+
 interface PersistEntry {
   id: typeof ENTRY_ID
   wrapped: ArrayBuffer
@@ -51,13 +69,22 @@ interface PersistEntry {
  * before task 1532 (e.g. the old 30-day option) is clamped down to 60
  * minutes here rather than discarded to a different default — "existing
  * stored TTLs > 60 min are clamped to 60 on next load" per the ruling.
+ *
+ * `raw === null` (key was never written, or was removed) means "no
+ * preference recorded" and falls back to DEFAULT_TTL_MS. An explicit stored
+ * "0" means the user picked "Every refresh" and must read back as exactly
+ * 0 — NOT the default. (Task 1532 continuation, eng-1532c: `setVaultTTL(0)`
+ * used to `removeItem` the key, which made "explicitly chose Every refresh"
+ * indistinguishable from "never chose anything", so this function silently
+ * upgraded a 0-ms preference to the 30-min default and `persistSession`
+ * would go on to persist a session the user had just asked it not to.)
  */
 export function getVaultTTL(): number {
   try {
     const raw = localStorage.getItem(LS_TTL_KEY)
-    if (raw) {
+    if (raw !== null) {
       const ms = parseInt(raw, 10)
-      if (!isNaN(ms) && ms > 0) return Math.min(ms, MAX_TTL_MS)
+      if (!isNaN(ms) && ms >= 0) return Math.min(ms, MAX_TTL_MS)
     }
   } catch { /* localStorage unavailable */ }
   return DEFAULT_TTL_MS
@@ -65,13 +92,28 @@ export function getVaultTTL(): number {
 
 export function setVaultTTL(ms: number): void {
   const clamped = Math.max(0, Math.min(ms, MAX_TTL_MS))
+  // Bump FIRST, synchronously, before any of the async cleanup below — an
+  // in-flight persistSession() re-checks this against the value it
+  // captured at start, so the bump itself is what invalidates it, not the
+  // (fire-and-forget, async) clearSession()/checkAndClearIfExpired() calls
+  // that follow.
+  ttlGeneration++
   try {
-    if (clamped === 0) {
-      localStorage.removeItem(LS_TTL_KEY)
-    } else {
-      localStorage.setItem(LS_TTL_KEY, String(clamped))
-    }
+    // Always write, including "0" — see getVaultTTL()'s doc comment for why
+    // this can no longer be a removeItem().
+    localStorage.setItem(LS_TTL_KEY, String(clamped))
   } catch { /* localStorage unavailable */ }
+
+  if (clamped === 0) {
+    // "Every refresh": nothing should persist across a reload, including
+    // whatever was ALREADY persisted under a previous, longer-window
+    // setting — the eager-expiry watcher no-ops once ttl is 0
+    // (checkAndClearIfExpired's own `if (ttl === 0) return`), so without
+    // this the leftover blob + token would otherwise sit un-expiring in
+    // IndexedDB/localStorage until something else overwrites them.
+    void clearSession()
+    return
+  }
 
   // Task 1532 continuation (Codex P2, web PR #77): the eager-deletion timer
   // captures its duration at persist/restore/touch time. Without this, only
@@ -83,11 +125,8 @@ export function setVaultTTL(ms: number): void {
   // against the new TTL immediately: delete it if it is already past the
   // new window, otherwise re-arm the timer at the new remaining duration.
   // checkAndClearIfExpired() re-reads the TTL itself, so it naturally picks
-  // up the value just written above. Skipped for clamped === 0 ("Every
-  // refresh") — that path has never touched an existing timer/entry, and
-  // effectiveTtlMs() falling back to DEFAULT_TTL_MS when unset (a separate,
-  // pre-existing quirk) makes "0" unreachable there regardless.
-  if (clamped > 0) void checkAndClearIfExpired()
+  // up the value just written above.
+  void checkAndClearIfExpired()
 }
 
 // Options above 60 minutes (incl. the old 30-day option) are gone — task
@@ -210,7 +249,20 @@ function armExpiryTimer(msUntilExpiry: number): void {
 
 async function checkAndClearIfExpired(): Promise<void> {
   const ttl = effectiveTtlMs()
-  if (ttl === 0) return
+  if (ttl === 0) {
+    // Codex P1 (web PR #78): TTL 0 ("Every refresh") means nothing may be
+    // stored, ever — this used to `return` here, a no-op that assumed
+    // nothing could be persisted while ttl reads 0. That assumption broke
+    // the moment a persistSession() call raced setVaultTTL(0) and won (see
+    // persistSession()'s generation-counter guard above): the eager-
+    // deletion watcher — the ONLY thing standing between a stale commit and
+    // it sitting forever — silently did nothing because it, too, treated
+    // ttl===0 as "there's nothing to check". Clear unconditionally instead;
+    // clearSession() is a harmless no-op (removeItem +
+    // delete on an already-empty store) when there is nothing to delete.
+    await clearSession()
+    return
+  }
   const db = await openDB()
   let entry: PersistEntry | undefined
   try {
@@ -255,7 +307,22 @@ export function initSessionExpiryWatcher(): void {
 
 export async function persistSession(masterKey: Uint8Array): Promise<void> {
   const ttl = effectiveTtlMs()
-  if (ttl === 0) return
+  if (ttl === 0) {
+    // "Every refresh": never persist — and drop anything already sitting
+    // from before the setting was changed to this (setVaultTTL(0) already
+    // clears at the moment of the setting change; this covers a fresh
+    // unlock/login that reaches persistSession() while ttl is 0 by some
+    // other path, e.g. the DEV-only e2e override).
+    await clearSession()
+    return
+  }
+
+  // Codex P1 (web PR #78): captured BEFORE any of the async work below —
+  // setVaultTTL() bumps this synchronously (before its own async cleanup),
+  // so any setVaultTTL()/clearSession() call that lands anywhere during
+  // this function's awaits is guaranteed to have moved it by the time we
+  // check again.
+  const generation = ttlGeneration
 
   const token = crypto.getRandomValues(new Uint8Array(32))
   const nonce = crypto.getRandomValues(new Uint8Array(NONCE_BYTES))
@@ -267,12 +334,32 @@ export async function persistSession(masterKey: Uint8Array): Promise<void> {
     masterKey as unknown as BufferSource,
   )
 
+  // A setVaultTTL(0) (or any other clearSession()) that raced the
+  // crypto/IndexedDB work above must win: re-read BOTH the generation
+  // counter and the current effective TTL right before committing. Either
+  // one having moved means the setting changed (or the session was
+  // cleared) mid-flight, so this commit must be abandoned, not written
+  // after the fact — see checkAndClearIfExpired()'s TTL-0 branch above for
+  // why leaving a stale commit around was previously unrecoverable.
+  if (generation !== ttlGeneration || effectiveTtlMs() === 0) {
+    await clearSession()
+    return
+  }
+
   const now = Date.now()
   const db = await openDB()
   try {
     await dbPut(db, { id: ENTRY_ID, wrapped, nonce, createdAt: now, lastActivityAt: now })
   } finally {
     db.close()
+  }
+
+  // Re-check once more: dbPut() above is itself async (an IndexedDB
+  // transaction), so the same race could still land in the gap between the
+  // check above and the write actually landing.
+  if (generation !== ttlGeneration || effectiveTtlMs() === 0) {
+    await clearSession()
+    return
   }
 
   try {
@@ -357,6 +444,10 @@ export async function touchSession(): Promise<void> {
 }
 
 export async function clearSession(): Promise<void> {
+  // Any clear invalidates an in-flight persistSession() too — not just a
+  // direct setVaultTTL(0) — so a persist racing a plain "log out"/expiry
+  // clear can't resurrect what was just deleted either.
+  ttlGeneration++
   clearExpiryTimer()
   try {
     localStorage.removeItem(LS_TOKEN_KEY)
