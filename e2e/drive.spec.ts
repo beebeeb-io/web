@@ -95,11 +95,15 @@ test.describe('Drive E2E', () => {
 
   test('billing page loads plans', async ({ page }) => {
     test.setTimeout(90_000)
-    // /billing redirects to /settings/billing; go straight there. The SettingsHeader
-    // title "Plan & billing" renders immediately (even in the page's Loading… state),
-    // so it's a stable anchor while plan data fetches (the dev account's plan
-    // endpoints 404, but the header is unconditional) (task 0763).
-    await gotoSettings(page, '/settings/billing', page.getByRole('heading', { name: /plan & billing/i }))
+    // /billing redirects to /settings/billing; go straight there. The header is
+    // "Plan & billing" while loading / on error / in the change view, but the
+    // loaded SUMMARY view titles itself "Billing" (task 0942). Anchoring on
+    // "Plan & billing" alone only passed when the loading state happened to be
+    // on screen at the instant of the check — it went red whenever the page
+    // loaded fast (e2e classification, 2026-09-26). Accept either title, then
+    // prove the plan data actually rendered.
+    await gotoSettings(page, '/settings/billing', page.getByRole('heading', { name: /^(plan & )?billing$/i }))
+    await expect(page.getByText('Current plan').first()).toBeVisible({ timeout: 15_000 })
   })
 })
 

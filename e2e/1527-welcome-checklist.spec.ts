@@ -109,6 +109,22 @@ async function reloadDriveAndWaitForWelcomeTourFetch(page: Page): Promise<void> 
   await expect(page.getByText('All files').first()).toBeVisible({ timeout: 15_000 })
 }
 
+/**
+ * Clicks "Skip for now" and waits for the seen:true PUT it fires to land.
+ * drive.tsx writes it fire-and-forget, so a spec that navigates on the very
+ * next line can abort it in flight under load and then (correctly) find the
+ * board back — a harness race, seen once in an E2E_REPEAT=2 run on
+ * 2026-09-26 (test "Skip for now closes the checklist for good").
+ */
+async function skipChecklist(page: Page): Promise<void> {
+  const saved = page.waitForResponse(
+    (res) => res.url().includes('/preferences/welcome_tour') && res.request().method() === 'PUT',
+    { timeout: 15_000 },
+  )
+  await page.getByRole('button', { name: 'Skip for now' }).click()
+  expect((await saved).ok(), 'PUT welcome_tour {seen:true} failed').toBe(true)
+}
+
 test('1527: picking a file marks "upload" done and keeps the checklist open', async ({ page }) => {
   const intro = await signUpToChecklist(page, 'WelcomeChecklist1527Upload!')
 
@@ -163,7 +179,7 @@ test('1527: "Set up 2FA" hides the checklist, and it reopens with the same progr
 test('1527: "Skip for now" closes the checklist for good, even after a reload', async ({ page }) => {
   const intro = await signUpToChecklist(page, 'WelcomeChecklist1527Skip!')
 
-  await page.getByRole('button', { name: 'Skip for now' }).click()
+  await skipChecklist(page)
   await expect(intro).toBeHidden({ timeout: 5_000 })
 
   await page.goto('/?nodev=1')
@@ -176,7 +192,7 @@ test('1527: the Settings entry ("Show welcome checklist") reopens it', async ({ 
 
   // Close it first so the assertion below proves the Settings entry
   // reopens it, rather than it simply never having closed.
-  await page.getByRole('button', { name: 'Skip for now' }).click()
+  await skipChecklist(page)
   await expect(intro).toBeHidden({ timeout: 5_000 })
 
   await page.goto('/settings/appearance')
@@ -198,7 +214,7 @@ test('1527: skip → upload a file → reload — the board stays gone', async (
   // upload, reopening the board on the following visit.
   const intro = await signUpToChecklist(page, 'WelcomeChecklist1527SkipThenUpload!')
 
-  await page.getByRole('button', { name: 'Skip for now' }).click()
+  await skipChecklist(page)
   await expect(intro).toBeHidden({ timeout: 5_000 })
 
   // The checklist is gone, so it has no upload button of its own here —
