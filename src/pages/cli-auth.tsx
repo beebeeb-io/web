@@ -8,15 +8,19 @@
  *   1. CLI opens a WebSocket to the server and receives a short user_code.
  *   2. It opens https://app.beebeeb.io/cli-auth?code=XXXX-XXXX.
  *   3. This page fetches the CLI's ECDH public key from the server.
- *   4. On "Authorize", the browser performs an ECDH key exchange, encrypts
- *      the session token + master key, and POSTs the ciphertext to the server.
+ *   4. On "Authorize", the browser asks the server to mint a NEW session for
+ *      the CLI (POST /api/v1/auth/cli-session — its own row, shown as
+ *      "CLI (bb)" under Settings → Security), performs an ECDH key exchange,
+ *      encrypts that new token + the master key, and POSTs the ciphertext.
+ *      The browser's own session token is never handed to the CLI, so
+ *      `bb logout` or revoking the CLI never signs this browser out.
  *   5. The server forwards the encrypted payload to the CLI over the WebSocket.
  *
  * Security notes:
  * - AES-256-GCM encryption with ephemeral P-256 ECDH; the AES key is derived
  *   from the ECDH shared secret via HKDF-SHA256(info="beebeeb-cli-auth-v1").
  *   The CLI side performs the identical derivation. The server never sees
- *   plaintext credentials. Code is short-lived and single-use.
+ *   the master key. Code is short-lived and single-use.
  */
 
 import { useState, useEffect } from 'react'
@@ -26,7 +30,7 @@ import { BBLogo } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
-import { getApiUrl, resolveSessionToken } from '../lib/api'
+import { getApiUrl, resolveSessionToken, revokeAccountSession } from '../lib/api'
 import { toBase64 } from '../lib/crypto'
 
 // ─── Param validation ─────────────────────────────────────────────────────────
@@ -53,6 +57,39 @@ type PageState =
   | { kind: 'authorizing' }
   | { kind: 'success' }
   | { kind: 'error'; message: string }
+
+// ─── CLI session ──────────────────────────────────────────────────────────────
+
+/**
+ * Ask the server to mint the CLI its OWN session, bound to the pending
+ * device-auth code. Before this existed the page shipped the browser's own
+ * session token to the CLI, so `bb logout` signed the browser out and the CLI
+ * could not be revoked on its own (flow "CLI end to end", fix 2).
+ */
+async function mintCliSession(
+  code: string,
+  bearer: string,
+): Promise<{ session_id: string; session_token: string; expires_at: string }> {
+  const res = await fetch(`${getApiUrl()}/api/v1/auth/cli-session`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${bearer}` },
+    credentials: 'include',
+    body: JSON.stringify({ user_code: code }),
+  })
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    if (res.status === 404 && body) {
+      // The endpoint's own 404 (JSON body): no live device-auth flow for this code.
+      throw new Error('This code has expired or has already been used. Please run bb login again.')
+    }
+    if (res.status === 404) {
+      // The router's bare 404: this API does not have the endpoint yet.
+      throw new Error('This server cannot create a separate CLI session yet, so nothing was sent to the CLI. Try again later.')
+    }
+    throw new Error(`Could not create a CLI session (${res.status})${body ? ': ' + body : ''}. Try again.`)
+  }
+  return res.json() as Promise<{ session_id: string; session_token: string; expires_at: string }>
+}
 
 // ─── ECDH helpers ─────────────────────────────────────────────────────────────
 
@@ -209,15 +246,10 @@ export function CliAuth() {
     setState({ kind: 'authorizing' })
 
     try {
-      // task 0447 — with the session token now in an httpOnly cookie, JS
-      // can no longer read it from localStorage. `resolveSessionToken()`
-      // (task 1473) tries the legacy localStorage slot first, then asks
-      // the server. The endpoint
-      // authenticates via the cookie and only hands back the raw token when
-      // the request actually came in on a cookie session (PATs /
-      // Bearer-only callers get 403). The raw token never goes back into
-      // localStorage — it lives in this closure long enough to
-      // encrypt-and-ship to the CLI, then it falls out of scope.
+      // The browser's own token is used ONLY to authenticate the two calls
+      // below (the cookie also carries auth; Bearer is belt-and-braces). It
+      // is never put in the CLI payload — the CLI gets a freshly minted
+      // session of its own (mintCliSession).
       const sessionToken = await resolveSessionToken()
       if (!sessionToken) throw new Error('No active session — please sign in again.')
 
@@ -228,37 +260,46 @@ export function CliAuth() {
         // ── New WebSocket device-auth flow: ECDH encrypt + POST to server ──────
         if (!cliEcdhPublicB64) throw new Error('CLI public key not loaded — please refresh and try again.')
 
-        const payload = JSON.stringify({
-          session_token: sessionToken,
-          master_key_b64: masterKeyB64,
-          email: user.email,
-        })
+        const cliSession = await mintCliSession(flow.code, sessionToken)
 
-        const encrypted = await ecdhEncryptPayload(cliEcdhPublicB64, payload)
+        try {
+          const payload = JSON.stringify({
+            session_token: cliSession.session_token,
+            master_key_b64: masterKeyB64,
+            email: user.email,
+          })
 
-        const res = await fetch(`${getApiUrl()}/api/v1/auth/cli-authorize`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            // Belt-and-braces: the cookie carries auth, but send Bearer too
-            // so the cli-authorize endpoint works for any caller shape.
-            'Authorization': `Bearer ${sessionToken}`,
-          },
-          credentials: 'include',
-          body: JSON.stringify({
-            user_code: flow.code,
-            nonce_b64: encrypted.nonce_b64,
-            encrypted_payload_b64: encrypted.encrypted_payload_b64,
-            browser_ecdh_public_b64: encrypted.browser_ecdh_public_b64,
-          }),
-        })
+          const encrypted = await ecdhEncryptPayload(cliEcdhPublicB64, payload)
 
-        if (res.status === 404) {
-          throw new Error('This code has expired or has already been used. Please run bb login again.')
-        }
-        if (!res.ok) {
-          const body = await res.text().catch(() => '')
-          throw new Error(`Authorization failed (${res.status})${body ? ': ' + body : ''}. Try again.`)
+          const res = await fetch(`${getApiUrl()}/api/v1/auth/cli-authorize`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              // Belt-and-braces: the cookie carries auth, but send Bearer too
+              // so the cli-authorize endpoint works for any caller shape.
+              'Authorization': `Bearer ${sessionToken}`,
+            },
+            credentials: 'include',
+            body: JSON.stringify({
+              user_code: flow.code,
+              nonce_b64: encrypted.nonce_b64,
+              encrypted_payload_b64: encrypted.encrypted_payload_b64,
+              browser_ecdh_public_b64: encrypted.browser_ecdh_public_b64,
+            }),
+          })
+
+          if (res.status === 404) {
+            throw new Error('This code has expired or has already been used. Please run bb login again.')
+          }
+          if (!res.ok) {
+            const body = await res.text().catch(() => '')
+            throw new Error(`Authorization failed (${res.status})${body ? ': ' + body : ''}. Try again.`)
+          }
+        } catch (err) {
+          // The CLI never received the new session — don't leave it live in
+          // the account. Best effort: the error below is what the user sees.
+          void revokeAccountSession(cliSession.session_id).catch(() => {})
+          throw err
         }
 
         setState({ kind: 'success' })
@@ -347,7 +388,7 @@ export function CliAuth() {
                     </div>
                     <div className="flex items-center gap-2">
                       <Icon name="check" size={11} className="text-green shrink-0" />
-                      Stay signed in until you run <code className="font-mono text-[11px]">bb logout</code>
+                      Stay signed in for 30 days, or until you run <code className="font-mono text-[11px]">bb logout</code>
                     </div>
                   </div>
                 </div>
@@ -408,7 +449,7 @@ export function CliAuth() {
                   You can close this tab and return to your terminal.
                 </p>
                 <p className="mt-4 font-mono text-[11px] text-ink-4">
-                  You can revoke CLI access at any time via Settings → Security → Active sessions.
+                  The CLI has its own session, shown as “CLI (bb)” under Settings → Security → Devices &amp; sessions. Revoke it there at any time — this browser stays signed in.
                 </p>
               </div>
             </>
@@ -441,7 +482,7 @@ export function CliAuth() {
           <div className="px-6 py-3 bg-paper-2 border-t border-line">
             <div className="flex items-center justify-center gap-1.5 text-[11px] text-ink-3">
               <Icon name="shield" size={11} className="text-amber-deep" />
-              Credentials encrypted end-to-end — the server sees only ciphertext
+              Your key is encrypted end-to-end — the server sees only ciphertext
             </div>
           </div>
         </div>
