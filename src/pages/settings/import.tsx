@@ -1269,31 +1269,39 @@ export function SettingsImport() {
       />
 
       <div className="p-7 space-y-6">
-        {/* ── Provider card grid (when not connected) ── */}
-        {!anyConnected && (appKey || gdClientId) && (
+        {/* ── Provider card grid (when not connected) ──
+            Task 1543 finding 6: this grid used to be gated on
+            `appKey || gdClientId` — with NEITHER env var configured in the
+            production build (neither is wired as a Docker build ARG), the
+            entire section silently vanished, leaving a live-looking "Import"
+            page with no way to start an import and no messaging that the
+            feature isn't available (unlike every other unfinished settings
+            page, which shows an explicit "Coming soon" state). The grid now
+            always renders; each provider independently falls back to its own
+            honest `comingSoon` card when its env var isn't set, so a future
+            real deployment of either integration keeps working unchanged. */}
+        {!anyConnected && (
           <div>
             <div className="text-[11px] font-semibold uppercase tracking-widest text-ink-4 mb-3">
               Connect a provider
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              {appKey && (
-                <ProviderCard
-                  name="Dropbox"
-                  logo={<DropboxLogo />}
-                  status={dbxConnecting ? 'connecting' : 'disconnected'}
-                  onConnect={() => void handleConnectDropbox()}
-                  usDisclosure="Connects to Dropbox (US service). Files are downloaded directly to your browser and encrypted before upload to Beebeeb. Dropbox does not receive your encryption keys."
-                />
-              )}
-              {gdClientId && (
-                <ProviderCard
-                  name="Google Drive"
-                  logo={<GoogleDriveLogo />}
-                  status={gdConnecting ? 'connecting' : 'disconnected'}
-                  onConnect={() => void handleConnectGDrive()}
-                  usDisclosure="Connects to Google (US service). Files are downloaded directly to your browser and encrypted before upload to Beebeeb. Google does not receive your encryption keys."
-                />
-              )}
+              <ProviderCard
+                name="Dropbox"
+                logo={<DropboxLogo />}
+                status={dbxConnecting ? 'connecting' : 'disconnected'}
+                onConnect={appKey ? () => void handleConnectDropbox() : undefined}
+                comingSoon={!appKey}
+                usDisclosure={appKey ? 'Connects to Dropbox (US service). Files are downloaded directly to your browser and encrypted before upload to Beebeeb. Dropbox does not receive your encryption keys.' : undefined}
+              />
+              <ProviderCard
+                name="Google Drive"
+                logo={<GoogleDriveLogo />}
+                status={gdConnecting ? 'connecting' : 'disconnected'}
+                onConnect={gdClientId ? () => void handleConnectGDrive() : undefined}
+                comingSoon={!gdClientId}
+                usDisclosure={gdClientId ? 'Connects to Google (US service). Files are downloaded directly to your browser and encrypted before upload to Beebeeb. Google does not receive your encryption keys.' : undefined}
+              />
             </div>
           </div>
         )}

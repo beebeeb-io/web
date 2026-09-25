@@ -10,7 +10,7 @@ import { useAuth } from '../lib/auth-context'
 
 const deletionItems: [string, string][] = [
   ['All files and versions', 'Encrypted blobs shredded from all regions'],
-  ['All shared links', 'Active links will return 410 Gone'],
+  ['All shared links', 'Active links stop working immediately'],
   ['Access for team members', 'All workspace memberships revoked'],
   ['Audit logs', 'Retained 12 months per GDPR Art. 17'],
 ]

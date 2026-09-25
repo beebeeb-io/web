@@ -233,7 +233,7 @@ export function SettingsActivity() {
               <p className="mt-1">
                 Enable it in{' '}
                 <Link to="/settings/profile" className="text-amber-deep hover:underline">
-                  Settings &gt; Privacy
+                  Settings &gt; Profile
                 </Link>{' '}
                 to see your file activity history.
               </p>
