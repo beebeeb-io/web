@@ -2733,6 +2733,9 @@ export function Drive() {
 
       <WelcomeTour
         open={tourOpen}
+        // Task 1526: without this the tour's "Upload a file" step had no
+        // handler (the step has no href) and the button did nothing.
+        onUpload={browse}
         completedSteps={tourCompleted}
         onCompleteStep={(title) => {
           setTourCompleted((prev) => {
