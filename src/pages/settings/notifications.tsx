@@ -14,12 +14,24 @@ import {
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-/** Notification types where email is always on and cannot be disabled. */
-const SECURITY_TYPES: ReadonlySet<NotificationType> = new Set([
-  'new_device_login',
+/**
+ * Events the server emails today — unconditionally, with no per-user opt-out.
+ *
+ * This is the ONLY source of truth for the Email column. It mirrors the
+ * senders that exist in beebeeb-api's EmailService and are called on main:
+ *   - password_changed -> send_password_changed (routes/password.rs)
+ *   - payment_failed   -> send_payment_failed (Stripe webhook, routes/billing.rs)
+ *   - plan_expiring    -> send_trial_will_end / send_card_expiring (routes/billing.rs)
+ * Every other event has no email sender (new sign-ins are push-only via
+ * push_delivery::notify_new_login; 2FA and recovery-phrase events send
+ * nothing), and the server never reads a per-type `email` preference. So the
+ * Email switch is read-only: ON + locked for these, OFF + locked for the rest.
+ * Add a type here only in the same change that ships its server sender.
+ */
+const EMAILED_ALWAYS: ReadonlySet<NotificationType> = new Set([
   'password_changed',
-  'two_fa_changes',
-  'recovery_phrase_used',
+  'payment_failed',
+  'plan_expiring',
 ])
 
 /** Default channel state for a notification type. */
@@ -28,7 +40,9 @@ function ch(inApp: boolean, email: boolean) {
 }
 
 const DEFAULTS: NotificationPreferences = {
-  // Security — email always on
+  // `email` below is never sent to or read by the server as a preference;
+  // the Email column renders from EMAILED_ALWAYS instead.
+  // Security
   new_device_login: ch(true, true),
   password_changed: ch(true, true),
   two_fa_changes: ch(true, true),
@@ -69,7 +83,8 @@ const SECTIONS: NotificationSection[] = [
   {
     title: 'Security',
     icon: 'shield',
-    note: 'Security notifications are always sent via email.',
+    note:
+      'Password changes are always emailed to you. New sign-ins arrive as a push notification on devices with the Beebeeb app. Two-factor and recovery-phrase alerts are not emailed yet.',
     rows: [
       {
         key: 'new_device_login',
@@ -154,6 +169,7 @@ const SECTIONS: NotificationSection[] = [
   {
     title: 'Account',
     icon: 'settings',
+    note: 'Payment and plan emails are always sent.',
     rows: [
       {
         key: 'payment_failed',
@@ -233,11 +249,10 @@ export function SettingsNotifications() {
   }, [])
 
   const handleToggle = useCallback(
-    async (key: NotificationType, channel: 'in_app' | 'email', value: boolean) => {
-      // Security email toggles are locked — should not reach here, but guard anyway
-      if (channel === 'email' && SECURITY_TYPES.has(key)) return
-
-      const nextChannel = { ...prefs[key], [channel]: value }
+    async (key: NotificationType, value: boolean) => {
+      // Only the in-app channel is user-controlled. The Email column is a
+      // read-only statement of what the server sends (see EMAILED_ALWAYS).
+      const nextChannel = { ...prefs[key], in_app: value }
       const next: NotificationPreferences = { ...prefs, [key]: nextChannel }
       setPrefs(next)
 
@@ -270,7 +285,7 @@ export function SettingsNotifications() {
     <SettingsShell activeSection="notifications">
       <SettingsHeader
         title="Notifications"
-        subtitle="Choose which events you want to be notified about and how."
+        subtitle="Choose which events you are notified about in the app. The Email column shows what we email today; those emails can't be switched off."
       />
 
       {/* Endpoint-not-deployed notice */}
@@ -314,7 +329,7 @@ export function SettingsNotifications() {
               {/* Rows */}
               <div className="divide-y divide-line border-t border-b border-line mx-7 rounded-lg overflow-hidden">
                 {section.rows.map(({ key, label, description }) => {
-                  const isSecurityEmail = SECURITY_TYPES.has(key)
+                  const emailed = EMAILED_ALWAYS.has(key)
                   const pref = prefs[key]
 
                   return (
@@ -337,7 +352,7 @@ export function SettingsNotifications() {
                           <span className="sm:hidden text-[10px] text-ink-4 mb-1">In-app</span>
                           <BBToggle
                             on={pref.in_app}
-                            onChange={(val) => void handleToggle(key, 'in_app', val)}
+                            onChange={(val) => void handleToggle(key, val)}
                             disabled={saving}
                             aria-label={`${label} in-app notifications`}
                           />
@@ -347,10 +362,9 @@ export function SettingsNotifications() {
                         <div className="flex flex-col items-center w-[52px]">
                           <span className="sm:hidden text-[10px] text-ink-4 mb-1">Email</span>
                           <BBToggle
-                            on={pref.email}
-                            onChange={(val) => void handleToggle(key, 'email', val)}
-                            disabled={saving || isSecurityEmail}
-                            aria-label={`${label} email notifications${isSecurityEmail ? ' (always on)' : ''}`}
+                            on={emailed}
+                            disabled
+                            aria-label={`${label} email notifications ${emailed ? '(always sent)' : '(not emailed)'}`}
                           />
                         </div>
                       </div>
@@ -359,7 +373,7 @@ export function SettingsNotifications() {
                 })}
               </div>
 
-              {/* Section note (security always-on explanation) */}
+              {/* Section note (what is and is not emailed) */}
               {section.note && (
                 <div className="px-7 mt-2">
                   <p className="text-[11px] text-ink-4 leading-relaxed flex items-center gap-1.5">
