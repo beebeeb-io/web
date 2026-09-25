@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { BBButton } from '@beebeeb/shared'
 import { Breadcrumb } from '../components/breadcrumb'
@@ -168,6 +168,42 @@ export function Drive() {
   const [trustFileId, setTrustFileId] = useState<string | null>(null)
   const [tourOpen, setTourOpen] = useState(false)
   const [tourCompleted, setTourCompleted] = useState<Set<string>>(new Set())
+
+  // Mark a welcome-checklist step done from a REAL completion signal (files
+  // actually queued, a step's own confirmed action) — never from a step
+  // button being clicked. Persists `seen: false` always; only the footer's
+  // "Skip for now" / "Close" (drive.tsx below) is allowed to persist
+  // `seen: true` (task 1527 — a step action used to also close the
+  // checklist for good via onClose(), which is the bug this fixes).
+  // `hideBoard` additionally hides the board locally (no persistence) for
+  // steps that navigate the user away to finish the step elsewhere; the
+  // board reappears on the next drive mount because `seen` stayed false.
+  const markTourStepDone = useCallback((id: string, opts?: { hideBoard?: boolean }) => {
+    setTourCompleted((prev) => {
+      if (prev.has(id)) return prev
+      const next = new Set(prev)
+      next.add(id)
+      setPreference('welcome_tour', {
+        seen: false,
+        completed: [...next],
+      }).catch(() => {})
+      return next
+    })
+    if (opts?.hideBoard) setTourOpen(false)
+  }, [])
+
+  // The 2FA step's "done" state is derived from the account's real
+  // totp_enabled flag rather than tracked manually — clicking "Set up 2FA"
+  // only navigates to the setup page, it doesn't mean 2FA got enabled
+  // (task 1527). Merge that live signal into the persisted completed set
+  // for display; `security` is deliberately never written into
+  // `tourCompleted` itself.
+  const tourCompletedForDisplay = useMemo(() => {
+    if (!user?.totp_enabled) return tourCompleted
+    const next = new Set(tourCompleted)
+    next.add('security')
+    return next
+  }, [tourCompleted, user?.totp_enabled])
   const [pausedUploads, setPausedUploads] = useState<UploadState[]>([])
   const [uploadMenuOpen, setUploadMenuOpen] = useState(false)
 
@@ -913,6 +949,14 @@ export function Drive() {
     resolved: ResolvedUpload[],
   ) {
     if (resolved.length === 0) return
+
+    // Task 1527: the welcome checklist's "upload" step is done once a file
+    // is genuinely enqueued here — not when the picker merely opens (the
+    // previous bug marked it done on click, even if the user cancelled).
+    // This is the one place every upload path (direct, dedup-resolved,
+    // conflict-resolved, auto-versioned, drag-drop) converges before
+    // encryption starts, so it covers all of them.
+    markTourStepDone('upload')
 
     const newUploads: UploadItem[] = resolved.map((r, i) => ({
       id: `upload-${Date.now()}-${i}`,
@@ -2736,19 +2780,15 @@ export function Drive() {
         // Task 1526: without this the tour's "Upload a file" step had no
         // handler (the step has no href) and the button did nothing.
         onUpload={browse}
-        completedSteps={tourCompleted}
-        onCompleteStep={(title) => {
-          setTourCompleted((prev) => {
-            const next = new Set(prev)
-            next.add(title)
-            setPreference('welcome_tour', {
-              seen: false,
-              completed: [...next],
-            }).catch(() => {})
-            return next
-          })
-          setTourOpen(false)
-        }}
+        completedSteps={tourCompletedForDisplay}
+        // Task 1527: used only by the 'share'/'device' steps now (no cheap
+        // real-state signal exists for either) to hide the board while the
+        // user acts on the destination page — never sets seen:true, so it
+        // reappears on the next drive mount. The 'upload' step is marked
+        // done from queueResolvedUploads instead; the 'security' step is
+        // derived live from user.totp_enabled (tourCompletedForDisplay,
+        // above) and never reaches here.
+        onCompleteStep={(id) => markTourStepDone(id, { hideBoard: true })}
         onClose={() => {
           setTourOpen(false)
           setPreference('welcome_tour', {
