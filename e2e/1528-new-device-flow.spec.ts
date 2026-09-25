@@ -95,6 +95,50 @@ async function vaultEntryIds(page: Page): Promise<string[]> {
   )
 }
 
+/**
+ * All object-store keys currently in IndexedDB's beebeeb_session_persist
+ * 'session' store (session-persist.ts — the TTL-bounded, disk-persisted
+ * cache the passkey session-only path must never write to, task 1529
+ * continuation item 1).
+ */
+async function sessionPersistEntryIds(page: Page): Promise<string[]> {
+  return page.evaluate(
+    () =>
+      new Promise<string[]>((resolve) => {
+        const req = indexedDB.open('beebeeb_session_persist', 1)
+        req.onupgradeneeded = () => {
+          const db = req.result
+          if (!db.objectStoreNames.contains('session')) db.createObjectStore('session', { keyPath: 'id' })
+        }
+        req.onsuccess = () => {
+          const db = req.result
+          if (!db.objectStoreNames.contains('session')) {
+            db.close()
+            resolve([])
+            return
+          }
+          const tx = db.transaction('session', 'readonly')
+          const getAllKeysReq = tx.objectStore('session').getAllKeys()
+          getAllKeysReq.onsuccess = () => {
+            resolve(getAllKeysReq.result as string[])
+            db.close()
+          }
+          getAllKeysReq.onerror = () => {
+            resolve([])
+            db.close()
+          }
+        }
+        req.onerror = () => resolve([])
+      }),
+  )
+}
+
+/** The 'bb_spt' localStorage token session-persist.ts writes alongside its
+ *  IndexedDB blob — null when nothing has ever been persisted there. */
+async function sessionPersistToken(page: Page): Promise<string | null> {
+  return page.evaluate(() => localStorage.getItem('bb_spt'))
+}
+
 /** Simulates "this is a fresh device" for the CURRENT page: wipes every
  *  IndexedDB database, localStorage, and the session cookie — everything
  *  DeviceProvision's branching and the vault auto-unlock paths read — while
@@ -246,5 +290,42 @@ test.describe('task 1529 (P0): passkey sign-in on a new device is session-only',
     const entries = await vaultEntryIds(page)
     expect(entries).not.toContain('master')
     expect(entries).not.toContain('master-passkey')
+
+    // Continuation item 1 (Codex P1, PR #73): setMasterKeyDirect must not
+    // fall through to persistSession either — no beebeeb_session_persist
+    // IndexedDB entry, no bb_spt localStorage token. Pre-fix, this is
+    // exactly what a profile-reader could decrypt the master key from even
+    // though the 'master'/'master-passkey' vault entries above were
+    // already clean.
+    expect(await sessionPersistEntryIds(page)).toEqual([])
+    expect(await sessionPersistToken(page)).toBeNull()
+  })
+
+  test('pasting the full 12-word phrase into a MIDDLE box (not box 1) still fills all 12', async ({ page }) => {
+    // Codex P2 (PR #73): distributeWords used to fill starting at whichever
+    // box received the paste and clip to the remaining boxes — pasting all
+    // 12 words into box 7 left boxes 1-6 empty and Restore permanently
+    // disabled, contradicting the "paste all 12 into any box" copy.
+    await page.goto('/?nodev=1')
+    const account = await signupAndUnlock(page, { password: 'MiddleBoxPaste1529!' })
+    await clearLocalDeviceState(page)
+    await page.goto('/login?nodev=1')
+    await waitForCryptoReady(page)
+    await page.getByLabel(/email/i).fill(account.email)
+    await page.getByPlaceholder('Your password').fill('MiddleBoxPaste1529!')
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+    await expectOnlyPhraseScreen(page)
+
+    // Box 7 (index 6) — not the first box.
+    await page.getByLabel('Recovery word 7', { exact: true }).fill(account.recoveryPhrase)
+    const words = account.recoveryPhrase.split(' ')
+    for (let i = 0; i < 12; i++) {
+      await expect(page.getByLabel(`Recovery word ${i + 1}`, { exact: true })).toHaveValue(words[i])
+    }
+    await expect(page.getByRole('button', { name: /restore vault/i })).toBeEnabled()
+
+    await page.getByRole('button', { name: /restore vault/i }).click()
+    await page.waitForURL(/\/(?:$|\?|#)/, { timeout: 20_000 })
+    await expect(page.getByText(/All files/i).first()).toBeVisible({ timeout: 10_000 })
   })
 })

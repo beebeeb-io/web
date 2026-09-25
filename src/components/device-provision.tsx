@@ -2,10 +2,11 @@ import { type FormEvent, type KeyboardEvent, useCallback, useRef, useState } fro
 import { AuthShell } from './auth-shell'
 import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
-import { recoverFromPhrase, computeRecoveryCheck, toBase64 } from '../lib/crypto'
+import { recoverFromPhrase, computeRecoveryCheck, toBase64, zeroize } from '../lib/crypto'
 import { recoveredKeyMatchesAccount } from '../lib/recovery-validation'
 import { useKeys } from '../lib/key-context'
 import { verifyRecoveryCheck } from '../lib/api'
+import { WORD_COUNT, distributeWords, shouldWrapWithPassword, type ProvisionAuthMethod } from '../lib/device-provision-logic'
 
 // Task 1528 (Guus ruling, 2026-09-25): "username + password OR username +
 // passkey THEN the mnemonic (prefer to have just 12 inputs like on the mac
@@ -16,21 +17,29 @@ import { verifyRecoveryCheck } from '../lib/api'
 // underlying src/lib/qr-crypto.ts module are left in place, just with no
 // entry point into this screen for now). The only path is the 12-word
 // recovery phrase, modeled on repos/desktop/src/Onboarding.tsx's UnlockStep.
-const WORD_COUNT = 12
 
 interface DeviceProvisionProps {
   /**
-   * The password the user authenticated with, or '' when this device was
-   * reached via a passkey sign-in (login.tsx's handlePasskeyLogin never
-   * populates the `password` state field). Determines how the recovered
-   * master key is persisted below — see the 1529 comment in handleRestore.
+   * The password proven via a successful OPAQUE handshake, or '' when this
+   * device was reached via a passkey sign-in (login.tsx's
+   * handlePasskeyLogin never populates the `password` state field). Only
+   * meaningful when `authMethod === 'opaque'` — see `shouldWrapWithPassword`
+   * in device-provision-logic.ts for why `authMethod` (not this field's
+   * mere truthiness) decides how the recovered master key is persisted.
    */
   password: string
+  /**
+   * How login.tsx proved identity before reaching this screen. Passed
+   * explicitly (task 1529 continuation, web #73) rather than inferred from
+   * `password` — see `shouldWrapWithPassword`'s doc comment for the exact
+   * stale-password failure this prevents.
+   */
+  authMethod: ProvisionAuthMethod
   email?: string
   onProvisioned: () => void
 }
 
-export function DeviceProvision({ password, onProvisioned }: DeviceProvisionProps) {
+export function DeviceProvision({ password, authMethod, onProvisioned }: DeviceProvisionProps) {
   const { setMasterKey, setMasterKeyDirect } = useKeys()
 
   const [words, setWords] = useState<string[]>(() => Array.from({ length: WORD_COUNT }, () => ''))
@@ -41,22 +50,24 @@ export function DeviceProvision({ password, onProvisioned }: DeviceProvisionProp
   const filledCount = words.filter((w) => w.trim()).length
   const canRestore = filledCount === WORD_COUNT
 
-  // Fill starting at `index`: a paste (or typing/autofill that lands
-  // multiple space-separated words in one box) splits across the remaining
-  // boxes and moves focus to the box after the last one filled.
+  // Fill starting at `index` — unless the paste is a full 12-word phrase,
+  // which always fills every box from the start regardless of which box
+  // received it (distributeWords, task 1529 continuation item 8).
   const applyWords = useCallback((index: number, rawWords: string[]) => {
-    const clean = rawWords.map((w) => w.trim().toLowerCase()).filter(Boolean)
-    if (clean.length === 0) return
-    setError('')
+    let changed = false
+    let nextFocusIndex = index
     setWords((current) => {
-      const next = [...current]
-      clean.slice(0, WORD_COUNT - index).forEach((word, offset) => {
-        next[index + offset] = word
-      })
-      return next
+      const result = distributeWords(current, index, rawWords, WORD_COUNT)
+      changed = result.words !== current
+      nextFocusIndex = result.nextFocusIndex
+      return result.words
     })
-    const nextIndex = Math.min(index + clean.length, WORD_COUNT - 1)
-    requestAnimationFrame(() => wordRefs.current[nextIndex]?.focus())
+    // distributeWords is a no-op (returns the SAME array reference) when
+    // rawWords cleans to nothing — skip the error-clear + focus move then,
+    // matching the original early-return behavior.
+    if (!changed) return
+    setError('')
+    requestAnimationFrame(() => wordRefs.current[nextFocusIndex]?.focus())
   }, [])
 
   const updateWord = useCallback((index: number, value: string) => {
@@ -90,9 +101,16 @@ export function DeviceProvision({ password, onProvisioned }: DeviceProvisionProp
 
     setSubmitting(true)
 
+    // Owns the derived key until it's either handed off to setMasterKey/
+    // setMasterKeyDirect (which takes over ownership — set to null right
+    // after) or the function exits any other way (wrong phrase, thrown
+    // error) — the `finally` below zeroes it in every one of those cases.
+    // Crypto hygiene rule: zero key material from memory after use.
+    let masterKey: Uint8Array | null = null
+
     try {
       const trimmed = words.map((w) => w.trim().toLowerCase()).join(' ')
-      const masterKey = await recoverFromPhrase(trimmed)
+      masterKey = await recoverFromPhrase(trimmed)
 
       // recoverFromPhrase derives *a* master key from ANY checksum-valid BIP39
       // phrase — it does NOT prove the phrase belongs to this account. Without a
@@ -120,11 +138,17 @@ export function DeviceProvision({ password, onProvisioned }: DeviceProvisionProp
       // the device re-authenticates via passkey PRF (or this phrase screen
       // again) on the next visit. Only the password-authenticated path
       // wraps + persists a local vault.
-      if (password) {
+      //
+      // shouldWrapWithPassword decides from the explicit `authMethod` prop,
+      // NOT from `password`'s mere truthiness — see its doc comment
+      // (device-provision-logic.ts) for the stale-password lockout this
+      // prevents (continuation item 3).
+      if (shouldWrapWithPassword(authMethod, password)) {
         await setMasterKey(masterKey, password)
       } else {
         setMasterKeyDirect(masterKey)
       }
+      masterKey = null // ownership transferred — do not zero below
       onProvisioned()
     } catch (err) {
       setError(
@@ -133,6 +157,7 @@ export function DeviceProvision({ password, onProvisioned }: DeviceProvisionProp
           : 'Invalid recovery phrase. Check your words and try again.',
       )
     } finally {
+      if (masterKey) zeroize(masterKey)
       setSubmitting(false)
     }
   }
@@ -164,6 +189,10 @@ export function DeviceProvision({ password, onProvisioned }: DeviceProvisionProp
                 autoComplete="off"
                 autoCorrect="off"
                 spellCheck={false}
+                // Continuation item 9 (optional): stop 1Password/LastPass
+                // from offering to fill these boxes as a password field.
+                data-1p-ignore
+                data-lpignore="true"
                 disabled={submitting}
                 value={word}
                 onChange={(ev) => updateWord(index, ev.currentTarget.value)}

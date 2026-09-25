@@ -93,21 +93,40 @@ class FakeIDBDatabase {
 }
 
 /**
- * Installs a fake `globalThis.indexedDB` backed by one persistent in-memory
- * database (matches vault.ts's single DB_NAME/DB_VERSION usage — real
- * IndexedDB keeps returning the same database on repeat `open()` calls too).
- * Returns `{ reset }` to start a fresh "device" between tests.
+ * Installs a fake `globalThis.indexedDB` backed by persistent in-memory
+ * databases, ONE PER DATABASE NAME (matches real IndexedDB: `beebeeb_vault`,
+ * `beebeeb_session_cache` and `beebeeb_session_persist` are three separate
+ * databases, each with its own object stores — `open()` on each name keeps
+ * returning that name's own database, and each name's `onupgradeneeded`
+ * fires exactly once, the first time IT is opened).
+ *
+ * Task 1529 continuation (web #73): the original version of this helper
+ * ignored the database `name` entirely and kept a single shared `db`, so
+ * the FIRST module to call `open()` (whichever ran first) silently "won"
+ * and every other database name's `onupgradeneeded` never fired — a second
+ * module's `createObjectStore` call for ITS store never ran, and its first
+ * `transaction()` call threw `no object store "…"`. That was invisible as
+ * long as tests only exercised vault.ts alone; it broke the moment a test
+ * needed vault.ts + session-vault-cache.ts + session-persist.ts (three
+ * different DB_NAMEs) in the same file.
+ *
+ * Returns `{ reset }` to start a fresh "device" (all databases wiped)
+ * between tests.
  */
 export function installFakeIndexedDB(): { reset: () => void } {
-  let db: FakeIDBDatabase | null = null
+  let dbs = new Map<string, FakeIDBDatabase>()
 
   const factory = {
-    open(_name: string, _version: number): FakeIDBRequest<FakeIDBDatabase> {
+    open(name: string, _version: number): FakeIDBRequest<FakeIDBDatabase> {
       const req = new FakeIDBRequest<FakeIDBDatabase>()
       queueMicrotask(() => {
-        const isNew = !db
-        if (isNew) db = new FakeIDBDatabase()
-        req.result = db as FakeIDBDatabase
+        let database = dbs.get(name)
+        const isNew = !database
+        if (isNew) {
+          database = new FakeIDBDatabase()
+          dbs.set(name, database)
+        }
+        req.result = database as FakeIDBDatabase
         if (isNew) req.onupgradeneeded?.()
         req.onsuccess?.()
       })
@@ -119,7 +138,7 @@ export function installFakeIndexedDB(): { reset: () => void } {
 
   return {
     reset: () => {
-      db = null
+      dbs = new Map()
     },
   }
 }

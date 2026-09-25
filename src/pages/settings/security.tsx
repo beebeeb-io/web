@@ -533,11 +533,16 @@ function TotpSection() {
 /* ── Add Device Panel ────────────────────────────── */
 //
 // Task 1528 (Guus ruling, 2026-09-25): "remove scan QR for now (not sure if
-// it works)". The add-device-via-QR panel (this used to be `AddDevicePanel`,
-// generating a QR + 6-digit code for a new device to scan) is hidden
-// entirely — not deleted. The underlying src/lib/qr-crypto.ts module
-// (encryptForQr/generateCode) and the scanning half in device-provision.tsx
-// are both left in place, just unreferenced from any UI entry point.
+// it works)". The add-device-via-QR panel (formerly `AddDevicePanel`,
+// generating a QR + 6-digit code for a new device to scan) is removed from
+// this UI. Corrected 2026-09-25 (web #73 continuation, item 9): this
+// comment previously claimed the QR-scanning half was "left in place, just
+// unreferenced" in device-provision.tsx — that's wrong; it was actually
+// DELETED from that file by the same 1528 change (jsQR, decryptFromQr, and
+// all camera/scan state — see device-provision.tsx's own header comment
+// and the PR #73 diff). Only src/lib/qr-crypto.ts's three exports
+// (encryptForQr/decryptFromQr/generateCode) remain, as dead code with zero
+// call sites anywhere in src/ as of this date.
 
 /* ── Devices & sessions ──────────────────────────── */
 

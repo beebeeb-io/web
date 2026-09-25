@@ -7,6 +7,7 @@ import { Icon } from '@beebeeb/shared'
 import { ApiError } from '@beebeeb/shared'
 import { TwoFactorPrompt } from '../components/two-factor-prompt'
 import { DeviceProvision } from '../components/device-provision'
+import type { ProvisionAuthMethod } from '../lib/device-provision-logic'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
 import { devAutoAuth } from '../lib/dev-auth'
@@ -74,6 +75,13 @@ export function Login() {
 
   // Device provisioning state — shown when OPAQUE auth succeeds but no vault exists on this device
   const [needsProvision, setNeedsProvision] = useState(false)
+  // Task 1529 continuation (web #73, crypto-security-reviewer P1): which of
+  // this screen's flows actually proved identity before landing on
+  // DeviceProvision — set explicitly at every site that flips
+  // needsProvision, never inferred from `password`'s truthiness (a failed
+  // OPAQUE attempt can leave `password` holding a stale, unproven value —
+  // see shouldWrapWithPassword's doc comment in device-provision-logic.ts).
+  const [provisionAuthMethod, setProvisionAuthMethod] = useState<ProvisionAuthMethod>('opaque')
 
   // OPAQUE KSF migration prompt (task 0548) — the server returned
   // `opaque_ksf_outdated`, meaning this account's password file was written
@@ -150,7 +158,9 @@ export function Login() {
         if (ksfVersion === 0) void autoUpgradeToV1(password, getMasterKey())
         navigateAfterLogin()
       } else {
-        // No vault on this device — needs mnemonic provisioning
+        // No vault on this device — needs mnemonic provisioning. OPAQUE
+        // just proved `password` correct, above.
+        setProvisionAuthMethod('opaque')
         setNeedsProvision(true)
         setSubmitting(false)
       }
@@ -201,6 +211,9 @@ export function Login() {
         // only, never derived from the password.
         if (pendingKsfVersion === 0) void autoUpgradeToV1(password, getMasterKey())
       } else {
+        // handleSubmit's OPAQUE handshake already proved `password` correct
+        // before 2FA was ever requested — this is still the opaque path.
+        setProvisionAuthMethod('opaque')
         setNeedsProvision(true)
         setPartialToken(null)
         return
@@ -248,8 +261,10 @@ export function Login() {
         if (ksfVersion === 0) void autoUpgradeToV1(passkeyFallbackPassword, getMasterKey())
         navigateAfterLogin()
       } else {
-        // No local vault — hand off to device provisioning (recovery phrase / QR)
+        // No local vault — hand off to device provisioning (recovery phrase).
+        // OPAQUE just proved `passkeyFallbackPassword` correct, above.
         setPassword(passkeyFallbackPassword)
+        setProvisionAuthMethod('opaque')
         setPasskeyNeedsPassword(false)
         setNeedsProvision(true)
         setPasskeyFallbackSubmitting(false)
@@ -369,6 +384,12 @@ export function Login() {
         if (vaultExists) {
           setPasskeyNeedsPassword(true)
         } else {
+          // Pure passkey auth, no vault, no PRF/escrow unlock — `password`
+          // was never populated on this path. Explicit 'passkey', not
+          // inferred: even if a stale unproven value were sitting in
+          // `password` from an earlier failed attempt, this flag alone
+          // decides — see shouldWrapWithPassword's doc comment.
+          setProvisionAuthMethod('passkey')
           setNeedsProvision(true)
         }
       }
@@ -517,6 +538,7 @@ export function Login() {
     return (
       <DeviceProvision
         password={password}
+        authMethod={provisionAuthMethod}
         email={email}
         onProvisioned={navigateAfterLogin}
       />
@@ -646,7 +668,18 @@ export function Login() {
                 <button
                   type="button"
                   className="w-full flex items-center justify-center gap-2.5 px-lg py-2.5 text-sm font-medium text-ink border border-line-2 rounded-lg bg-paper hover:bg-paper-2 active:bg-paper-3 transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-amber-deep focus-visible:ring-offset-2"
-                  onClick={() => { setPasskeyMode(true); setError('') }}
+                  onClick={() => {
+                    setPasskeyMode(true)
+                    setError('')
+                    // Task 1529 continuation (web #73, item 3): a failed
+                    // password attempt leaves this state holding the WRONG
+                    // password (handleSubmit's catch never clears it).
+                    // provisionAuthMethod is the actual guard against
+                    // wrapping the vault under it, but clear it here too —
+                    // defense in depth, and it should be empty on this path
+                    // regardless.
+                    setPassword('')
+                  }}
                 >
                   <span className="flex items-center justify-center w-6 h-6 rounded-md bg-amber-bg">
                     <Icon name="key" size={13} className="text-amber-deep" />

@@ -20,7 +20,8 @@ import {
   toBase64,
 } from './crypto'
 import { registerLogoutCallback } from './auth-context'
-import { wrapAndStore, unwrap, hasVault, clearVault, clearEmptyPasswordVault, wrapAndStoreWithPasskey, unwrapWithPasskey } from './vault'
+import { wrapAndStore, unwrap, hasVault, clearVault, wrapAndStoreWithPasskey, unwrapWithPasskey } from './vault'
+import { remediateEmptyPasswordVault } from './vault-remediation'
 import {
   initSessionVault,
   cacheVaultKey,
@@ -28,10 +29,10 @@ import {
   clearVaultKey,
 } from './session-vault-cache'
 import {
-  persistSession,
   restoreSession,
   clearSession,
 } from './session-persist'
+import { cacheKeyPersistent, cacheKeySessionOnly } from './key-cache'
 import { setRecoveryCheckIfAbsent } from './api'
 import type { DriveFile } from './api'
 import { isRequestUpload, createRequestKeyResolver, type RequestKeyResolver } from './file-request-crypto'
@@ -93,14 +94,11 @@ export function KeyProvider({ children }: { children: ReactNode }) {
 
   // Wrap the master key with the tab's non-extractable session key and persist
   // to IndexedDB. Failures are swallowed — caching is an enhancement; the live
-  // masterKeyRef is the source of truth within the tab.
+  // masterKeyRef is the source of truth within the tab. Delegates to
+  // key-cache.ts (unit-testable — see its doc comments) rather than calling
+  // cacheVaultKey/persistSession directly.
   const cacheKey = useCallback(async (key: Uint8Array) => {
-    try {
-      await cacheVaultKey(key)
-    } catch { /* best effort */ }
-    try {
-      await persistSession(key)
-    } catch { /* best effort */ }
+    await cacheKeyPersistent(key)
   }, [])
 
   const restoreCachedKey = useCallback(async (): Promise<Uint8Array | null> => {
@@ -152,14 +150,24 @@ export function KeyProvider({ children }: { children: ReactNode }) {
         if (cancelled) return
         // Task 1529 remediation: a pre-fix device may carry a password
         // vault wrapped under an empty-string secret (passkey-login
-        // provisioning bug). Detect + clear it before anything reads
-        // isUnlocked/vaultExists — best-effort, never blocks boot. Only the
-        // 'master' entry is touched; a co-existing PRF-wrapped passkey
-        // vault survives, so re-check hasVault() afterward rather than
-        // assuming false.
+        // provisioning bug). Detect + clear it — AND the cached copies of
+        // that same key (Codex P1, web #73 continuation item 2: the
+        // pre-fix setMasterKey call that created the vault also cached the
+        // key via cacheKey, so clearing only the vault entry left
+        // restoreCachedKey below able to unlock from the surviving
+        // session-persist copy) — before anything reads isUnlocked/
+        // vaultExists, and strictly before restoreCachedKey. Best-effort,
+        // never blocks boot. Only the 'master' entry is touched; a
+        // co-existing PRF-wrapped passkey vault survives, so re-check
+        // hasVault() afterward rather than assuming false.
+        //
+        // The expensive PBKDF2 probe this runs is checked-flag-gated
+        // (vault.ts) to at most once per vault entry, so this no longer
+        // costs anything on repeat boots for a legitimate password vault
+        // (item 7).
         if (exists) {
           try {
-            const cleared = await clearEmptyPasswordVault()
+            const cleared = await remediateEmptyPasswordVault()
             if (cancelled) return
             if (cleared) exists = await hasVault()
           } catch { /* best effort remediation; never block boot */ }
@@ -229,9 +237,20 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     cacheKey(masterKey)
   }, [cacheKey])
 
+  // Task 1529 continuation (web #73, P2): masterKeyRef is set ONLY after
+  // wrapAndStore succeeds — if it threw first (e.g. the empty/whitespace
+  // secret guard), the live in-memory key must not silently become "the
+  // key that failed to persist" while the rest of the app already thinks
+  // isUnlocked. On throw, zero the caller's key material (it's not going
+  // anywhere) and rethrow so the caller's own catch/finally still runs.
   const setMasterKey = useCallback(async (key: Uint8Array, password: string) => {
+    try {
+      await wrapAndStore(key, password)
+    } catch (err) {
+      zeroize(key)
+      throw err
+    }
     masterKeyRef.current = key
-    await wrapAndStore(key, password)
     setVaultExists(true)
     setIsUnlocked(true)
     cacheKey(key)
@@ -240,16 +259,18 @@ export function KeyProvider({ children }: { children: ReactNode }) {
 
   // Set the master key directly without password wrapping.
   // Used by passkey vault unlock where the key comes from server escrow,
-  // not from a password-derived local vault. The key is cached in the
-  // session vault so it survives soft-navigations within the tab, but
-  // no persistent IndexedDB vault is created (the passkey is the
-  // persistent unlock mechanism for this device).
+  // not from a password-derived local vault, AND by the passkey session-only
+  // path (task 1529). The key is cached in the tab session vault so it
+  // survives soft-navigations within the tab, but — unlike every other
+  // setter here — via cacheKeySessionOnly, NOT cacheKey: no persistent
+  // IndexedDB/localStorage copy is written (Guus's ruling, 2026-09-25:
+  // "keep the keys in memory for this session only... NOTHING stored").
   const setMasterKeyDirect = useCallback((key: Uint8Array) => {
     masterKeyRef.current = key
     setIsUnlocked(true)
-    cacheKey(key)
+    void cacheKeySessionOnly(key)
     backfillRecoveryCheck(key)
-  }, [cacheKey, backfillRecoveryCheck])
+  }, [backfillRecoveryCheck])
 
   const setMasterKeyFromPasskey = useCallback(async (key: Uint8Array, wrapKey: Uint8Array) => {
     masterKeyRef.current = key
