@@ -62,6 +62,7 @@ import {
   formatCentsAsEur,
 } from '../lib/plan-pricing'
 import { PlanComparisonTable } from '../components/plan-comparison'
+import { isTrialing, trialCycleSwitchNote, trialCycleSwitchToast } from '../lib/cycle-switch-copy'
 import { InvoiceList } from '../components/billing/InvoiceList'
 import { TransactionList } from '../components/billing/TransactionList'
 import { PLAN_META, PLAN_RANK } from '../lib/plan-constants'
@@ -1171,12 +1172,18 @@ function openUpgrade(plan: string) {
     try {
       const result = await switchBillingCycle(cycle)
       setCycleSwitchConfirm(null)
+      // Flow-4 finding 4: during a trial the server only re-pins the cycle the
+      // trial will convert on — nothing is charged, so the paid-subscriber
+      // "next billing period" copy would be wrong.
+      const trialEnd = sub?.trial_ends_at ?? sub?.current_period_end ?? null
       showToast({
         icon: 'check',
         title: cycle === 'yearly' ? 'Switched to annual billing' : 'Switched to monthly billing',
-        description: result.annual_billing_start
-          ? `Your annual billing starts on ${formatDate(result.annual_billing_start)}.`
-          : 'The change takes effect at the start of your next billing period.',
+        description: isTrialing(sub?.status)
+          ? trialCycleSwitchToast(cycle, formatDate(trialEnd))
+          : result.annual_billing_start
+            ? `Your annual billing starts on ${formatDate(result.annual_billing_start)}.`
+            : 'The change takes effect at the start of your next billing period.',
       })
       refreshPlanDetails()
       await loadData()
@@ -2113,11 +2120,17 @@ function openUpgrade(plan: string) {
                       That is EUR {(currentPriceYearly / 12).toFixed(2)}/mo instead of EUR {currentPriceMonthly.toFixed(2)}/mo.
                     </div>
                   </div>
-                  <p className="text-xs text-ink-3">
-                    Annual billing starts on{' '}
-                    <strong className="font-mono">{formatDate(sub?.current_period_end ?? null)}</strong>.
-                    Your current monthly period stays active until then — no double charge.
-                  </p>
+                  {isTrialing(sub?.status) ? (
+                    <p className="text-xs text-ink-3" data-testid="cycle-switch-trial-note">
+                      {trialCycleSwitchNote('yearly', formatDate(sub?.trial_ends_at ?? sub?.current_period_end ?? null))}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-ink-3">
+                      Annual billing starts on{' '}
+                      <strong className="font-mono">{formatDate(sub?.current_period_end ?? null)}</strong>.
+                      Your current monthly period stays active until then — no double charge.
+                    </p>
+                  )}
                   {(sub?.extra_storage_tb ?? 0) > 0 && (
                     <p className="text-xs text-ink-3">
                       Your storage add-on ({sub!.extra_storage_tb} TB) will also switch to annual billing on the same date.
@@ -2683,11 +2696,17 @@ function openUpgrade(plan: string) {
                       Annual cost: EUR {(currentPriceMonthly * 12).toFixed(2)}/yr instead of EUR {currentPriceYearly.toFixed(2)}/yr.
                     </div>
                   </div>
-                  <p className="text-xs text-ink-3">
-                    The change takes effect at the start of your next billing period.
-                    Your current annual period remains active until{' '}
-                    <strong className="font-mono">{formatDate(sub.current_period_end ?? null)}</strong>.
-                  </p>
+                  {isTrialing(sub.status) ? (
+                    <p className="text-xs text-ink-3" data-testid="cycle-switch-trial-note">
+                      {trialCycleSwitchNote('monthly', formatDate(sub.trial_ends_at ?? sub.current_period_end ?? null))}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-ink-3">
+                      The change takes effect at the start of your next billing period.
+                      Your current annual period remains active until{' '}
+                      <strong className="font-mono">{formatDate(sub.current_period_end ?? null)}</strong>.
+                    </p>
+                  )}
                   <div className="flex gap-2">
                     <BBButton
                       size="sm"
