@@ -34,7 +34,16 @@ const BASE64_ALPHABET = /^[A-Za-z0-9+/_-]+={0,2}$/
  *   - a bare key (nothing else — no URL, no `key=` marker)
  *   - a `#key=…` fragment or `?key=…` query string (with or without the
  *     leading `#`/`?`)
+ *   - a `key=…` paste with NO leading `#`/`?`/`&` at all — e.g. someone
+ *     copied only the trailing part of a share link
  *   - a whole pasted share URL containing one of the above
+ *
+ * The marker only counts at the very START of the (trimmed) input, or when
+ * immediately preceded by `#`/`?`/`&`. This is deliberate: it lets a bare
+ * "key=…" paste (Codex P2 follow-up, task 1531) be recognised, while still
+ * refusing to misread a literal bare key that merely CONTAINS the substring
+ * "key=" somewhere in its middle (never a marker there) as if it introduced
+ * a value — that would silently drop everything before it.
  *
  * Returns null when no key can be found (empty input, or a URL with no
  * `key=` marker at all — never guess by scanning URL path segments).
@@ -43,7 +52,7 @@ export function extractShareKeyToken(input: string): string | null {
   const trimmed = input.trim()
   if (!trimmed) return null
 
-  const marker = trimmed.match(/[#?&]key=/)
+  const marker = trimmed.match(/(?:^|[#?&])key=/)
   let candidate: string
   if (marker && marker.index !== undefined) {
     const start = marker.index + marker[0].length

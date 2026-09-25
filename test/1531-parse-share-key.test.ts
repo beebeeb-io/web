@@ -164,3 +164,30 @@ describe('extractShareKeyToken() — token location', () => {
     expect(extractShareKeyToken('   ')).toBeNull()
   })
 })
+
+describe('extractShareKeyToken() — "key=" marker with NO leading "#"/"?"/"&" (Codex P2)', () => {
+  // A paste of just "key=<value>" (no fragment/query punctuation in front,
+  // e.g. someone copied only the trailing part of a share link) was not
+  // recognised by the old marker regex /[#?&]key=/, which requires one of
+  // '#', '?', '&' immediately before "key=". The whole string — including
+  // the literal "key=" prefix — was then treated as the bare key and failed
+  // to decode. Fixed marker: /(?:^|[#?&])key=/.
+
+  test('a bare "key=<base64url>" paste with no leading marker punctuation decodes correctly', () => {
+    expect(extractShareKeyToken(`key=${KEY_URL_UNPADDED}`)).toBe(KEY_URL_UNPADDED)
+    expectKeyBytes(parseShareKey(`key=${KEY_URL_UNPADDED}`))
+  })
+
+  test('the same paste with surrounding whitespace decodes correctly', () => {
+    expect(extractShareKeyToken(`  key=${KEY_URL_UNPADDED}  `)).toBe(KEY_URL_UNPADDED)
+    expectKeyBytes(parseShareKey(`  key=${KEY_URL_UNPADDED}  `))
+  })
+
+  test('a bare key that merely CONTAINS "key=" mid-string (not at the start, not after "#"/"?"/"&") is never misread as a marker', () => {
+    // "key=" appears at index 3 here, preceded by 'C' — not the start of the
+    // string and not preceded by '#'/'?'/'&', so it must NOT be treated as a
+    // marker; the whole string is the literal (bare) key/candidate.
+    const literal = 'ABCkey=XYZ'
+    expect(extractShareKeyToken(literal)).toBe(literal)
+  })
+})
