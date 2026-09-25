@@ -175,14 +175,36 @@ export function WelcomeTour({
                       size="sm"
                       variant="amber"
                       onClick={() => {
+                        // Task 1527: a step action must NEVER close the
+                        // checklist for good (that used to call onClose(),
+                        // which persists seen:true — the same click that
+                        // starts a step also permanently dismissed it).
+                        // Only the footer's "Skip for now" / "Close" does
+                        // that. Clicking a step here at most hides the
+                        // board locally (via onCompleteStep, task 1527) so
+                        // the user can act on the destination page — it
+                        // reappears on the next drive visit until the step
+                        // is genuinely done or the user skips.
                         if (step.id === 'upload' && onUpload) {
+                          // The upload step is marked done only once a file
+                          // is actually selected/queued (drive.tsx hooks
+                          // into queueResolvedUploads), not on this click —
+                          // clicking "Upload a file" and cancelling the
+                          // picker must not check the box. The board stays
+                          // open through the whole flow.
                           onUpload()
-                          onCompleteStep?.(step.id)
-                          onClose()
-                        } else if (step.href) {
-                          onCompleteStep?.(step.id)
+                          return
+                        }
+                        if (step.href) {
+                          // The 2FA step's "done" state is derived from the
+                          // account's real totp_enabled flag (drive.tsx),
+                          // not from clicking through to the setup page —
+                          // clicking "Set up 2FA" doesn't mean 2FA is
+                          // actually enabled yet.
+                          if (step.id !== 'security') {
+                            onCompleteStep?.(step.id)
+                          }
                           navigate(step.href)
-                          onClose()
                         }
                       }}
                       className="gap-1.5"

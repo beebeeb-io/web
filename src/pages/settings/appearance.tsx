@@ -1,11 +1,14 @@
-import { type ReactNode, useState, useEffect } from 'react'
+import { type ReactNode, useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { SettingsShell, SettingsHeader, SettingsRow } from '../../components/settings-shell'
 import { Icon } from '@beebeeb/shared'
 import { BBChip } from '@beebeeb/shared'
+import { BBButton } from '@beebeeb/shared'
 import { useTheme } from '../../lib/theme-context'
 import { useDisplay } from '../../lib/display-context'
 import { getPreference, setPreference } from '../../lib/api'
+import { useToast } from '../../components/toast'
 import type { ThemeMode } from '../../lib/theme-context'
 import type { FontSize, SidebarDensity } from '../../lib/display-context'
 import { getTimezoneGroups } from '../../lib/timezones'
@@ -234,11 +237,14 @@ export function SettingsAppearance() {
   const { mode, setMode, resolved } = useTheme()
   const { fontSize, sidebarDensity, setFontSize, setSidebarDensity } = useDisplay()
   const { i18n } = useTranslation()
+  const navigate = useNavigate()
+  const { showToast } = useToast()
 
   const defaultTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone
   const [region, setRegion] = useState('Europe · 24h · metric · EUR')
   const [timezone, setTimezone] = useState(defaultTimezone)
   const [firstDay, setFirstDay] = useState<'Sun' | 'Mon'>('Mon')
+  const [reopeningTour, setReopeningTour] = useState(false)
 
   useEffect(() => {
     getPreference<LocalePreference>('locale').then((pref) => {
@@ -253,6 +259,39 @@ export function SettingsAppearance() {
     const next = { region, timezone, firstDay, ...patch }
     setPreference('locale', next).catch(() => {})
   }
+
+  // Task 1527 — the welcome checklist's footer says "Find this in Settings
+  // anytime" but nothing reopened it. Re-fetch the existing progress first
+  // so reopening doesn't wipe out steps the user already completed; only
+  // `seen` flips back to false.
+  const handleShowWelcomeChecklist = useCallback(async () => {
+    setReopeningTour(true)
+    try {
+      // Do NOT swallow a failed read into `null` here (Codex review, PR
+      // #74) — that made a transient GET failure look like "no preference
+      // exists yet" and the write below then overwrote real completed
+      // progress with []. Letting it throw aborts the write entirely.
+      const existing = await getPreference<{ seen?: boolean; completed?: string[] }>('welcome_tour')
+      await setPreference('welcome_tour', {
+        seen: false,
+        completed: existing?.completed ?? [],
+      })
+    } catch {
+      // Best-effort — the drive's own mount effect re-reads this
+      // preference, so a failure here just means it stays at whatever it
+      // already was; navigating there is still useful. Surface it so the
+      // user isn't left wondering why the board didn't reopen.
+      showToast({
+        icon: 'x',
+        title: 'Could not reopen the checklist',
+        description: 'Check your connection and try again.',
+        danger: true,
+      })
+    } finally {
+      setReopeningTour(false)
+      navigate('/')
+    }
+  }, [navigate, showToast])
 
   return (
     <SettingsShell activeSection="appearance">
@@ -407,6 +446,20 @@ export function SettingsAppearance() {
             </button>
           ))}
         </div>
+      </SettingsRow>
+
+      {/* ─ Welcome checklist ─────────────────────── */}
+      <SettingsRow
+        label="Welcome checklist"
+        hint="Reopen the getting-started steps — upload, two-factor auth, sharing, and devices."
+      >
+        <BBButton
+          size="sm"
+          onClick={handleShowWelcomeChecklist}
+          disabled={reopeningTour}
+        >
+          {reopeningTour ? 'Opening…' : 'Show welcome checklist'}
+        </BBButton>
       </SettingsRow>
 
       {/* ─ About ─────────────────────────────────── */}

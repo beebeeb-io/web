@@ -7,6 +7,7 @@ import { BBInput } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useToast } from '../../components/toast'
 import { useKeys } from '../../lib/key-context'
+import { useAuth } from '../../lib/auth-context'
 import { ChangePasswordDialog } from '../../components/change-password-dialog'
 import { StepUpAuth } from '../../components/step-up-auth'
 import {
@@ -328,6 +329,7 @@ type TotpStep = 'idle' | 'setup' | 'verify' | 'backup'
 
 function TotpSection() {
   const { showToast } = useToast()
+  const { refreshUser } = useAuth()
   const [enabled, setEnabled] = useState(false)
   const [step, setStep] = useState<TotpStep>('idle')
   const [qrDataUrl, setQrDataUrl] = useState('')
@@ -379,10 +381,15 @@ function TotpSection() {
     try {
       await enable2fa(code)
       setStep('backup')
+      // Refresh AuthProvider's `user` so anything deriving live state from
+      // `user.totp_enabled` (e.g. the drive's welcome checklist, task 1527)
+      // sees this immediately instead of the stale value from login/boot
+      // until a full page reload (Codex review, PR #74).
+      refreshUser().catch(() => {})
     } catch {
       setError('Invalid code. Try again.')
     }
-  }, [code])
+  }, [code, refreshUser])
 
   const handleBackupDone = useCallback(() => {
     setEnabled(true)
@@ -400,10 +407,12 @@ function TotpSection() {
       setDisabling(false)
       setDisableCode('')
       showToast({ icon: 'check', title: 'Two-factor authentication disabled' })
+      // See handleVerify above — same stale-`user` fix (Codex review, PR #74).
+      refreshUser().catch(() => {})
     } catch {
       setError('Invalid code. Try again.')
     }
-  }, [disableCode, showToast])
+  }, [disableCode, showToast, refreshUser])
 
   if (step === 'setup') {
     return (
