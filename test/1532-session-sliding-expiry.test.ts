@@ -395,3 +395,87 @@ describe('task 1532 continuation (web #77): storage event reconciles the OTHER t
     expect(await rawEntry()).toBeUndefined()
   })
 })
+
+// ─── Continuation: "Every refresh" (ttl = 0) vs. never-set (absent) ──────
+//
+// Pre-existing bug found by the previous lane while gating web PR #77:
+// setVaultTTL(0) used `localStorage.removeItem(LS_TTL_KEY)` to represent
+// "Every refresh" — but getVaultTTL() treats an ABSENT key as "no
+// preference recorded" and falls back to DEFAULT_TTL_MS (30 min). Picking
+// "Every refresh" was therefore indistinguishable from having never chosen
+// anything: the very next persistSession() call read effectiveTtlMs() ===
+// DEFAULT_TTL_MS (not 0) and went ahead and persisted a 30-minute sliding
+// session anyway — the opposite of what the user asked for. The fix stores
+// an explicit "0" so absence still means "default" but an explicit 0 means
+// "never persist", and makes persistSession() (and setVaultTTL(0) itself)
+// clear any blob/token already sitting from before the setting changed.
+describe('task 1532 continuation (eng-1532c): "Every refresh" (ttl=0) is distinguishable from never-set (absent => default)', () => {
+  test('getVaultTTL() returns exactly 0 after setVaultTTL(0) — does NOT fall back to the 30-min default', () => {
+    setVaultTTL(0)
+    expect(getVaultTTL()).toBe(0)
+    expect(getVaultTTL()).not.toBe(30 * 60 * 1000)
+  })
+
+  test('control: getVaultTTL() with the key never written at all still returns the 30-min default (absence must still mean default, not 0)', () => {
+    // Sanity: this file's beforeEach already clears localStorage, so no key
+    // has ever been written at this point.
+    expect(localStorage.getItem('bb_vault_ttl')).toBeNull()
+    expect(getVaultTTL()).toBe(30 * 60 * 1000)
+  })
+
+  test('persistSession() is a true no-op when ttl=0: calling it after setVaultTTL(0) never creates bb_spt or an IDB entry', async () => {
+    setVaultTTL(0)
+    const key = randomKey()
+    await persistSession(key)
+
+    expect(localStorage.getItem('bb_spt')).toBeNull()
+    expect(await rawEntry()).toBeUndefined()
+    expect(await restoreSession()).toBeNull()
+  })
+
+  test('persistSession() clears an ALREADY-persisted blob/token left over from before the setting was changed to "Every refresh"', async () => {
+    setVaultTTL(60 * 60 * 1000) // 1 hour — a session gets persisted
+    const key = randomKey()
+    await persistSession(key)
+    expect(localStorage.getItem('bb_spt')).not.toBeNull()
+    expect(await rawEntry()).not.toBeUndefined()
+
+    setVaultTTL(0) // user switches to "Every refresh"
+    // Next unlock reaches persistSession() again — it must drop the old
+    // leftover blob/token, not merely skip writing a new one.
+    await persistSession(key)
+
+    expect(localStorage.getItem('bb_spt')).toBeNull()
+    expect(await rawEntry()).toBeUndefined()
+  })
+
+  test('setVaultTTL(0) itself clears an already-persisted session IMMEDIATELY — does not wait for the next persistSession() call', async () => {
+    setVaultTTL(60 * 60 * 1000)
+    const key = randomKey()
+    await persistSession(key)
+    expect(localStorage.getItem('bb_spt')).not.toBeNull()
+
+    setVaultTTL(0) // no persistSession() call after this
+
+    expect(localStorage.getItem('bb_spt')).toBeNull()
+    expect(await rawEntry()).toBeUndefined()
+  })
+
+  test('the Settings select\'s initial value (VaultTimeoutSection reads getVaultTTL() once at mount) shows "Every refresh" after it was chosen, not "30 minutes"', () => {
+    // security.tsx: `const [ttl, setTtl] = useState(() => getVaultTTL())`
+    // and `<select value={ttl}>` — so whatever getVaultTTL() returns on a
+    // fresh mount (e.g. after a reload) IS the value the select shows.
+    setVaultTTL(0)
+    const valueShownOnMount = getVaultTTL()
+    expect(TTL_OPTIONS.find(o => o.value === valueShownOnMount)?.label).toBe('Every refresh')
+  })
+
+  test('migration: a pre-fix "Every refresh" pick (key removed, indistinguishable from never-set) reads back as the 30-min default, not 0 — and this is a known, accepted gap, not silently wrong', () => {
+    // Simulates a user who picked "Every refresh" under the OLD (buggy)
+    // setVaultTTL(), which removed the key instead of writing "0". There is
+    // no way to recover their original intent from an absent key, so the
+    // documented behavior is: fall back to default, same as never-set.
+    localStorage.removeItem('bb_vault_ttl')
+    expect(getVaultTTL()).toBe(30 * 60 * 1000)
+  })
+})
