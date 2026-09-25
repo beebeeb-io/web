@@ -57,6 +57,11 @@ import { userFriendlyError } from '../lib/user-friendly-error'
 import type { FileActivityEntry } from '../components/file-details-panel'
 import { timeAgo } from '../components/file-list'
 import { getRemainingBytes } from '../components/quota-warning'
+import { requiredQuotaBytes, UploadQuotaLedger, type QuotaCheckItem } from '../lib/upload-quota'
+import {
+  buildNameToFileMap as buildNameToFileMapPure,
+  siblingLowercaseNames,
+} from '../lib/name-collision'
 import {
   UpgradeNudgeModal,
   StorageFullBanner,
@@ -145,6 +150,11 @@ export function Drive() {
   // Cache the File object per upload-id so we can re-invoke the encrypted
   // upload pipeline when the user clicks Retry on a failed item.
   const uploadFilesRef = useRef<Map<string, File>>(new Map())
+  // Bytes reserved by uploads queued but not yet reflected in `storageUsage`
+  // (task 1544 finding 2a) -- see UploadQuotaLedger's doc comment. A plain
+  // ref (not state): reserving/releasing must never itself trigger a
+  // re-render.
+  const quotaLedgerRef = useRef(new UploadQuotaLedger())
   const [syncedAgo, setSyncedAgo] = useState(0)
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null)
   const [shareFileId, setShareFileId] = useState<string | null>(null)
@@ -941,14 +951,12 @@ export function Drive() {
   const { browse: browseResume, HiddenInput: HiddenResumeInput } = useBrowseFiles(handleResumeFile)
 
   // Build a map of lowercase decrypted name → DriveFile for conflict detection.
+  // Delegates to the shared, unit-tested helper (task 1544 finding 3): a
+  // decrypted name shared by more than one file is AMBIGUOUS and is left
+  // out of the map, rather than silently resolving to whichever file
+  // iterated last.
   function buildNameToFileMap(): Map<string, DriveFile> {
-    const map = new Map<string, DriveFile>()
-    for (const file of files) {
-      if (file.is_folder) continue
-      const name = externalDecryptedNames[file.id]
-      if (name) map.set(name.toLowerCase(), file)
-    }
-    return map
+    return buildNameToFileMapPure(files, (file) => externalDecryptedNames[file.id])
   }
 
   function shouldAutoVersionUpload(existingFile: DriveFile, incomingFile: File): boolean {
@@ -972,6 +980,44 @@ export function Drive() {
   ) {
     if (resolved.length === 0) return
 
+    // ─── Quota check (task 1544 findings 1 + 2) ───────────
+    // Runs HERE — after conflict/auto-version resolution — so a
+    // version-replace (auto-version, or explicit "Replace" from the
+    // conflict dialog) is credited the existing file's size, mirroring the
+    // server's replace-credit logic (uploads.rs:495-513). A "Keep both"
+    // upload gets no credit — it creates a new file, same as the server.
+    //
+    // Checked against the ledger, not the raw exceedsQuota — storageUsage
+    // is React state that only updates after a fetch/refresh completes, so
+    // a SECOND call to this function (e.g. the dedup-warning banner's
+    // "Upload anyway", which queues the confirmed file directly and routes
+    // the rest through handleFilesSelected moments later) would otherwise
+    // check against the exact same stale snapshot as the first call and
+    // both could pass independently while together exceeding quota
+    // (finding 2a). requiredQuotaBytes/the ledger's reserve() also clamp
+    // each item's replace-credit to itself, never letting a shrinking
+    // replacement fund a sibling upload in the same batch (finding 2b) —
+    // doEncryptedUpload below runs once per item, independently.
+    const remaining = getRemainingBytes(storageUsage?.used_bytes, storageUsage?.plan_limit_bytes)
+    const quotaItems: QuotaCheckItem[] = resolved.map((r) => ({
+      sizeBytes: r.file.size,
+      replacedSizeBytes: r.replaceFileId
+        ? files.find((f) => f.id === r.replaceFileId)?.size_bytes
+        : undefined,
+    }))
+    if (quotaLedgerRef.current.wouldExceed(quotaItems, remaining)) {
+      const needed = requiredQuotaBytes(quotaItems)
+      const effectiveRemaining = Math.max(0, (remaining ?? 0) - quotaLedgerRef.current.reservedBytes)
+      showToast({
+        icon: 'shield',
+        title: 'Not enough storage',
+        description: `This upload needs ${formatBytes(needed)} but you only have ${formatBytes(effectiveRemaining)} remaining.`,
+        href: '/billing',
+        danger: true,
+      })
+      return
+    }
+
     // Task 1527: the welcome checklist's "upload" step is done once a file
     // is genuinely enqueued here — not when the picker merely opens (the
     // previous bug marked it done on click, even if the user cancelled).
@@ -991,6 +1037,11 @@ export function Drive() {
 
     resolved.forEach((r, i) => {
       const uploadId = newUploads[i].id
+      // Reserve this item's (clamped) quota cost against the ledger NOW,
+      // before doEncryptedUpload's async work even starts — release() is
+      // called by its success/failure paths below once this specific
+      // upload settles (task 1544 finding 2a).
+      quotaLedgerRef.current.reserve(uploadId, quotaItems[i])
       // For "Keep both", create a renamed File object so encryptedUpload
       // encrypts the new name (not the original).
       const fileToUpload =
@@ -1003,21 +1054,10 @@ export function Drive() {
   }
 
   async function handleFilesSelected(selectedFiles: File[]) {
-    // ─── Quota check ──────────────────────────────
-    const remaining = getRemainingBytes(storageUsage?.used_bytes, storageUsage?.plan_limit_bytes)
-    if (remaining !== null) {
-      const totalSize = selectedFiles.reduce((sum, f) => sum + f.size, 0)
-      if (totalSize > remaining) {
-        showToast({
-          icon: 'shield',
-          title: 'Not enough storage',
-          description: `This upload needs ${formatBytes(totalSize)} but you only have ${formatBytes(remaining)} remaining.`,
-          href: '/billing',
-          danger: true,
-        })
-        return
-      }
-    }
+    // Quota is checked in queueResolvedUploads, AFTER conflict/auto-version
+    // resolution — see task 1544 finding 1. Checking here (before we know
+    // which files will replace an existing one) rejects same-size version
+    // uploads at 0 remaining quota that the server would allow.
 
     // ─── Smart duplicate detection (session-based, pre-encryption) ────────
     // Hash each file with SHA-256 and check against files already uploaded
@@ -1027,11 +1067,17 @@ export function Drive() {
     const toCheck = [...selectedFiles]
     const cleared: File[] = []
     for (const f of toCheck) {
-      let hash: string
+      let hash: string | null
       try {
         hash = await hashFile(f)
       } catch {
         // Hash failed (memory, permissions) — pass through without a check
+        cleared.push(f)
+        continue
+      }
+      if (hash === null) {
+        // File exceeds DEDUP_HASH_MAX_BYTES — skip the dedup check rather
+        // than buffer the whole file into memory (task 1544 finding 4).
         cleared.push(f)
         continue
       }
@@ -1158,6 +1204,8 @@ export function Drive() {
       })
       setUploads((prev) => prev.filter((u) => u.id !== uploadId))
       uploadFilesRef.current.delete(uploadId)
+      // Never started — nothing to hold reserved (task 1544 finding 2a).
+      quotaLedgerRef.current.release(uploadId)
       return
     }
 
@@ -1212,13 +1260,23 @@ export function Drive() {
       setUploads((prev) => prev.filter((u) => u.id !== uploadId))
       uploadAbortRef.current.delete(uploadId)
       uploadFilesRef.current.delete(uploadId)
+      // Settled successfully — the refreshDriveUsage()/fetchFiles() calls
+      // below will make storageUsage reflect this for real; drop the
+      // reservation that stood in for it until now (task 1544 finding 2a).
+      quotaLedgerRef.current.release(uploadId)
       // Remove from paused list if this was a resume
       setPausedUploads((prev) => prev.filter((u) => u.fileId !== fileId))
       showToast({ icon: 'check', title: 'Uploaded', description: file.name })
       // Notify sidebar badge that a file was uploaded
       window.dispatchEvent(new CustomEvent('beebeeb:file-uploaded'))
-      // Record hash for duplicate detection in this session (fire-and-forget)
-      hashFile(file).then((hash) => recordUpload(hash, file.name)).catch(() => {})
+      // Record hash for duplicate detection in this session (fire-and-forget).
+      // hashFile returns null for files over DEDUP_HASH_MAX_BYTES — nothing
+      // to record in that case (task 1544 finding 4).
+      hashFile(file)
+        .then((hash) => {
+          if (hash !== null) recordUpload(hash, file.name)
+        })
+        .catch(() => {})
       // Refresh storage usage so quota warning updates
       refreshDriveUsage()
       // Advance onboarding state (first_upload_done might now be true)
@@ -1235,6 +1293,11 @@ export function Drive() {
       fetchFiles()
     } catch (err) {
       uploadAbortRef.current.delete(uploadId)
+      // Failed or cancelled — nothing changed server-side, so this
+      // reservation must not linger and permanently overcount a future
+      // queueResolvedUploads call (task 1544 finding 2a). Covers both
+      // branches below.
+      quotaLedgerRef.current.release(uploadId)
       if (err instanceof DOMException && err.name === 'AbortError') {
         // Cancelled by user — silently remove from list, drop the cached File
         setUploads((prev) => prev.filter((u) => u.id !== uploadId))
@@ -1303,6 +1366,12 @@ export function Drive() {
     if (folderFiles.length === 0) return
 
     // ─── Quota check ──────────────────────────────
+    // Unlike handleFilesSelected, a folder upload never resolves to a
+    // version-replace: every folder and file below gets a fresh UUID (see
+    // the creation loop below), so there is no existing file to credit
+    // back — a raw totalSize > remaining comparison is correct here (task
+    // 1544 finding 1 only applies to handleFilesSelected's conflict/
+    // auto-version path).
     const remaining = getRemainingBytes(storageUsage?.used_bytes, storageUsage?.plan_limit_bytes)
     if (remaining !== null) {
       const totalSize = folderFiles.reduce((sum, ff) => sum + ff.file.size, 0)
@@ -2173,6 +2242,12 @@ export function Drive() {
 
   const moveFile = files.find((f) => f.id === moveFileId) ?? null
   const renameFile = files.find((f) => f.id === renameFileId) ?? null
+  // Sibling names the rename dialog must block (task 1544 finding 3) — an
+  // unguarded rename into an existing name is what created the duplicate-
+  // name ambiguity buildNameToFileMap() above has to defend against.
+  const renameSiblingNames = renameFileId
+    ? siblingLowercaseNames(files, renameFileId, (f) => externalDecryptedNames[f.id])
+    : new Set<string>()
 
   // The file currently shown in the share dialog
   const shareFile = files.find((f) => f.id === shareFileId) ?? null
@@ -2781,6 +2856,7 @@ export function Drive() {
         onClose={() => setRenameFileId(null)}
         currentName={renameFile ? displayName(renameFile) : ''}
         onRename={handleRenameConfirm}
+        existingNames={renameSiblingNames}
       />
 
       {versionFileId && (() => {
