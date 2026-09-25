@@ -72,6 +72,22 @@ export function setVaultTTL(ms: number): void {
       localStorage.setItem(LS_TTL_KEY, String(clamped))
     }
   } catch { /* localStorage unavailable */ }
+
+  // Task 1532 continuation (Codex P2, web PR #77): the eager-deletion timer
+  // captures its duration at persist/restore/touch time. Without this, only
+  // shortening the setting (e.g. 60 -> 15 min) left that stale, longer-
+  // duration timer armed — an idle session would outlive the NEW window
+  // until either the old timer eventually fired or the user generated more
+  // activity (touchSession already re-arms against the current TTL, but
+  // nothing re-arms on its own while idle). Re-validate the active session
+  // against the new TTL immediately: delete it if it is already past the
+  // new window, otherwise re-arm the timer at the new remaining duration.
+  // checkAndClearIfExpired() re-reads the TTL itself, so it naturally picks
+  // up the value just written above. Skipped for clamped === 0 ("Every
+  // refresh") — that path has never touched an existing timer/entry, and
+  // effectiveTtlMs() falling back to DEFAULT_TTL_MS when unset (a separate,
+  // pre-existing quirk) makes "0" unreachable there regardless.
+  if (clamped > 0) void checkAndClearIfExpired()
 }
 
 // Options above 60 minutes (incl. the old 30-day option) are gone — task
@@ -222,6 +238,16 @@ export function initSessionExpiryWatcher(): void {
   if (typeof document === 'undefined') return
   document.addEventListener('visibilitychange', () => { void checkAndClearIfExpired() })
   window.addEventListener('pagehide', () => { void checkAndClearIfExpired() })
+  // Task 1532 continuation (Codex P2, web PR #77), other-tabs case:
+  // setVaultTTL() in ANOTHER tab only re-arms THAT tab's in-process timer
+  // (module-level `expiryTimer`, not shared across tabs). `storage` fires
+  // here — never in the tab that made the write — whenever bb_vault_ttl
+  // changes elsewhere; re-run the same recheck so this tab's timer doesn't
+  // keep running at a TTL the user just shortened (or lengthened) in a
+  // different tab.
+  window.addEventListener('storage', (e: StorageEvent) => {
+    if (e.key === LS_TTL_KEY) void checkAndClearIfExpired()
+  })
   void checkAndClearIfExpired()
 }
 

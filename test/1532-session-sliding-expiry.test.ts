@@ -252,3 +252,146 @@ describe('task 1532: clearSession control (proves the assertions above can detec
     expect(await rawEntry()).toBeUndefined()
   })
 })
+
+// ─── Continuation: web PR #77, Codex P2 on session-persist.ts:257 ────
+//
+// setVaultTTL() only wrote localStorage — it never touched the ALREADY-
+// ARMED expiry timer (captured at persist/restore/touch time) or the
+// persisted entry itself. Shortening the setting (e.g. 60 -> 15 min) left
+// the stale, longer-duration timer running: an idle session outlived the
+// new window until either that old timer eventually fired (using whatever
+// TTL was current AT THAT POINT — correct value, wrong wait) or the user
+// generated fresh activity via touchSession(). An idle tab got neither.
+//
+// `await flush()` below lets the fire-and-forget recheck setVaultTTL() now
+// kicks off (`void checkAndClearIfExpired()`) actually run: openDB/dbGet/
+// dbDelete in the fake IndexedDB resolve over queueMicrotask hops, and a
+// zero-delay setTimeout is ordered after all pending microtasks.
+function flush(): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, 0))
+}
+
+describe('task 1532 continuation (web #77, Codex P2): setVaultTTL no longer leaves a stale timer armed at the OLD ttl', () => {
+  test('setVaultTTL(15 min) while 20 min already idle deletes the session IMMEDIATELY — does not wait for the stale 60-min timer', async () => {
+    setVaultTTL(60 * 60 * 1000) // 60 min
+    const key = randomKey()
+    await persistSession(key)
+
+    await patchLastActivityAt(20 * 60 * 1000) // 20 min idle already
+    setVaultTTL(15 * 60 * 1000) // shorten to 15 min — 20 min already exceeds it
+    await flush()
+
+    expect(localStorage.getItem('bb_spt')).toBeNull()
+    expect(await rawEntry()).toBeUndefined()
+  })
+
+  test('setVaultTTL(15 min) with NO activity elapsed does not delete right away — only once the new (shorter) window actually elapses', async () => {
+    setVaultTTL(60 * 60 * 1000)
+    const key = randomKey()
+    await persistSession(key)
+
+    setVaultTTL(15 * 60 * 1000) // shortened, but 0 min idle so far
+    await flush()
+
+    // Still alive immediately after shortening — the recheck must not be a
+    // blanket "shortened => delete", only "already past the new window".
+    expect(localStorage.getItem('bb_spt')).not.toBeNull()
+    expect(await rawEntry()).not.toBeUndefined()
+  })
+
+  test('the re-armed timer fires at the NEW (shorter) duration, not the stale OLD one — real wall-clock ms-scale window, no activity, no restoreSession() call', async () => {
+    setVaultTTL(1000) // stand-in "long" window (proportionally: 60 min)
+    const key = randomKey()
+    await persistSession(key)
+
+    setVaultTTL(150) // stand-in "shortened to 15 min" — 0 idle so far
+    await flush() // let the immediate recheck run: not yet past 150ms, must re-arm
+
+    expect(localStorage.getItem('bb_spt')).not.toBeNull() // sanity: not deleted by the recheck itself
+
+    // Wait past the NEW 150ms window but well under the STALE 1000ms one.
+    // Pre-fix: the original persistSession() timer (armed for 1000ms) is
+    // still the only one running -> still present here -> RED.
+    // Post-fix: setVaultTTL() re-armed at ~150ms remaining -> fired -> gone.
+    await new Promise(resolve => setTimeout(resolve, 320))
+
+    expect(localStorage.getItem('bb_spt')).toBeNull()
+    expect(await rawEntry()).toBeUndefined()
+  })
+
+  test('control: touchSession() already re-arms against the CURRENT ttl on every call (no regression introduced here)', async () => {
+    setVaultTTL(60 * 60 * 1000)
+    const key = randomKey()
+    await persistSession(key)
+
+    await patchLastActivityAt(10 * 60 * 1000) // 10 min idle
+    await touchSession() // activity now -> anchor resets, re-arms at current (60 min) ttl
+
+    setVaultTTL(30 * 60 * 1000) // shorten to 30 min; 0 idle since the touch
+    await flush()
+    expect(await rawEntry()).not.toBeUndefined() // not past 30 min yet (0 elapsed)
+
+    // 29 min since the touch — inside the NEW 30-min window but would be
+    // outside a stale 60-min one. touchSession() reads ttl fresh every
+    // call, so this only extends the anchor if it is checking against the
+    // CURRENT (30 min) value.
+    await patchLastActivityAt(29 * 60 * 1000)
+    await touchSession()
+    expect(await restoreSession()).toEqual(key) // proves the anchor really moved to "now"
+  })
+})
+
+// ─── Continuation: other tabs (storage event) ─────────────────────────
+//
+// setVaultTTL()'s recheck above only re-arms the timer IN THE TAB THAT
+// CALLED IT. A second, already-unlocked tab has its own module-level timer,
+// armed at whatever ttl was current when IT last persisted/restored/
+// touched — changing the setting in tab A does not reach tab B's timer
+// directly. The browser's `storage` event fires in tab B (never in tab A,
+// the one that wrote) whenever localStorage changes; initSessionExpiryWatcher
+// now listens for it and reruns the same recheck.
+//
+// bun test has neither `window` nor `document` (confirmed empty globals,
+// same as the missing `indexedDB` this file already stands in for) — DOM
+// dispatch of a real StorageEvent needs a browser, which is what
+// e2e/scripts/web-e2e.sh is for. This stands in the same minimal way the
+// rest of the file stands in for indexedDB/localStorage: a fake
+// `window`/`document` exposing just the `addEventListener` surface
+// session-persist.ts calls, so the registered 'storage' callback can be
+// invoked directly and its effect on the persisted entry asserted for real.
+describe('task 1532 continuation (web #77): storage event reconciles the OTHER tab\'s stale timer', () => {
+  test('another tab shortening bb_vault_ttl fires "storage" here -> this tab\'s stale timer is re-armed/expired against the NEW value', async () => {
+    const listeners = new Map<string, (e: { key: string | null }) => void>()
+    ;(globalThis as { document?: unknown }).document = {
+      addEventListener: (_type: string, _cb: () => void) => {},
+    }
+    ;(globalThis as { window?: unknown }).window = {
+      addEventListener: (type: string, cb: (e: { key: string | null }) => void) => {
+        listeners.set(type, cb)
+      },
+    }
+
+    const { initSessionExpiryWatcher } = await import('../src/lib/session-persist')
+    initSessionExpiryWatcher()
+    const storageListener = listeners.get('storage')
+    expect(storageListener).toBeDefined()
+
+    setVaultTTL(60 * 60 * 1000) // this (simulated) tab's own setting: 60 min
+    const key = randomKey()
+    await persistSession(key) // arms THIS tab's timer at 60 min
+
+    await patchLastActivityAt(20 * 60 * 1000) // 20 min idle
+
+    // Simulate "another tab" shortening the setting: it writes localStorage
+    // directly (what setVaultTTL() does in that other tab) WITHOUT calling
+    // this tab's setVaultTTL() — only the storage event crosses over.
+    localStorage.setItem('bb_vault_ttl', String(15 * 60 * 1000))
+    storageListener!({ key: 'bb_vault_ttl' })
+    await flush()
+
+    // 20 min idle > the new 15-min value -> the storage-event recheck must
+    // delete it, same as the same-tab setVaultTTL() path above.
+    expect(localStorage.getItem('bb_spt')).toBeNull()
+    expect(await rawEntry()).toBeUndefined()
+  })
+})
