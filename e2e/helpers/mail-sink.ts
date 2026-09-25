@@ -54,9 +54,18 @@ function emailBlocks(log: string): string[] {
  * The 8-digit code from the MOST RECENT `VerificationEmail` sent to `email`
  * (task 1525's `/signup/email-start` new-account branch,
  * `email_templates.rs::VerificationEmail::text()` — "Enter this code to
- * verify your Beebeeb account: <code>"). "Most recent" matters for the
- * resend case: a second `/email-start` call invalidates the first code, so
- * an earlier block's code would be stale.
+ * verify your Beebeeb account: <code>").
+ *
+ * Stale note (round 1/2, no longer true): this doc used to say "a second
+ * /email-start call invalidates the first code" — round 3 (server #95,
+ * `3c5f706`) changed that: a resend now ADDS a new live code (up to
+ * `MAX_LIVE_CODES_PER_EMAIL` = 3 simultaneously live) rather than replacing
+ * it, so an earlier code stays valid too. "Most recent" here just means
+ * this function always returns the LATEST one sent — a caller that needs a
+ * SPECIFIC earlier code (e.g. to prove it still verifies after a resend)
+ * should capture it directly from an earlier `waitForSignupCode()` call, or
+ * use `waitForNewSignupCode()` below to get a code distinct from one already
+ * held.
  */
 export function extractSignupCode(log: string, email: string): string | null {
   const blocks = emailBlocks(log)
@@ -67,6 +76,39 @@ export function extractSignupCode(log: string, email: string): string | null {
     if (m) return m[1]
   }
   return null
+}
+
+/**
+ * Every distinct 8-digit signup code sent to `email` so far, oldest first.
+ * Task 1525 round 3: up to `MAX_LIVE_CODES_PER_EMAIL` (3) can be
+ * simultaneously live, so a resend-heavy flow can have more than one.
+ */
+export function extractAllSignupCodes(log: string, email: string): string[] {
+  const blocks = emailBlocks(log)
+  const codes: string[] = []
+  for (const block of blocks) {
+    if (!block.includes(`To: ${email}\n`)) continue
+    const m = block.match(/Enter this code to verify your Beebeeb account: (\d{8})/)
+    if (m && !codes.includes(m[1])) codes.push(m[1])
+  }
+  return codes
+}
+
+/**
+ * Poll until a signup code DIFFERENT from `excluding` shows up for `email` —
+ * the resend case (task 1525 round 3: a resend ADDS a new code rather than
+ * replacing the old one, so two distinct codes can be live at once and both
+ * verify).
+ */
+export async function waitForNewSignupCode(
+  email: string,
+  excluding: string,
+  opts: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<string> {
+  return pollLog((log) => extractAllSignupCodes(log, email).find((c) => c !== excluding) ?? null, {
+    timeoutMs: opts.timeoutMs ?? 10_000,
+    intervalMs: opts.intervalMs ?? 250,
+  })
 }
 
 export interface SignupExistsEmail {

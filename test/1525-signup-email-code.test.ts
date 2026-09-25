@@ -4,7 +4,10 @@ import {
   codeDigitsForDisplay,
   isLegacyFallbackError,
   initialOnboardingStep,
+  resendCopyForAttempt,
+  signupTicketInvalidCopy,
   EMAIL_CODE_LENGTH,
+  MAX_LIVE_CODES_PER_EMAIL,
 } from '../src/lib/signup-email-code'
 import { ApiError, signupEmailStart, signupEmailVerify, opaqueRegisterStart, opaqueRegisterFinish } from '../src/lib/api'
 
@@ -61,6 +64,60 @@ describe('codeDigitsForDisplay() — the visual digit-box render', () => {
 
   test('empty code -> all blank slots', () => {
     expect(codeDigitsForDisplay('')).toEqual([' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '])
+  })
+})
+
+describe('resendCopyForAttempt() — honest resend copy (round-3 server: server #95, resend ADDS a code, cap 3 live)', () => {
+  test('MAX_LIVE_CODES_PER_EMAIL matches the server round-3 cap of 3', () => {
+    expect(MAX_LIVE_CODES_PER_EMAIL).toBe(3)
+  })
+
+  test('resend attempt 1 (2nd live code overall) claims a genuine send', () => {
+    const { message, likelySent } = resendCopyForAttempt(1)
+    expect(likelySent).toBe(true)
+    expect(message).toBe('We sent a new code. Any code from the last 15 minutes works.')
+  })
+
+  test('resend attempt 2 (3rd live code overall — exactly at the cap) still claims a genuine send', () => {
+    const { likelySent } = resendCopyForAttempt(2)
+    expect(likelySent).toBe(true)
+  })
+
+  test('resend attempt 3 (would be a 4th live code — past the cap) must NOT claim "resent"', () => {
+    const { message, likelySent } = resendCopyForAttempt(3)
+    expect(likelySent).toBe(false)
+    expect(message.toLowerCase()).not.toContain('we sent a new code')
+    expect(message).toContain('maximum number of codes')
+  })
+
+  test('resend attempt 4+ keeps the honest cap message (does not flip back to claiming a send)', () => {
+    expect(resendCopyForAttempt(4).likelySent).toBe(false)
+    expect(resendCopyForAttempt(10).likelySent).toBe(false)
+  })
+
+  test('respects a custom maxLiveCodes', () => {
+    expect(resendCopyForAttempt(1, 2).likelySent).toBe(true) // 2nd of 2 — still under
+    expect(resendCopyForAttempt(2, 2).likelySent).toBe(false) // would be 3rd of a 2-cap
+  })
+})
+
+describe('signupTicketInvalidCopy() — register-start vs register-finish ambiguity (Codex review, PR #79)', () => {
+  test('register-start: unambiguous, no sign-in offer (register-start never consumes the ticket)', () => {
+    const { codeStepError, offerSignIn } = signupTicketInvalidCopy('register-start')
+    expect(offerSignIn).toBe(false)
+    expect(codeStepError).toBe('That verification expired. Please request a new code.')
+  })
+
+  test('register-finish: ambiguous (may have already succeeded) — offers sign-in', () => {
+    const { codeStepError, offerSignIn } = signupTicketInvalidCopy('register-finish')
+    expect(offerSignIn).toBe(true)
+    expect(codeStepError.toLowerCase()).toContain('sign in')
+  })
+
+  test('the two sources never produce identical copy — the whole point is to distinguish them', () => {
+    expect(signupTicketInvalidCopy('register-start').codeStepError).not.toBe(
+      signupTicketInvalidCopy('register-finish').codeStepError,
+    )
   })
 })
 

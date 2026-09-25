@@ -12,7 +12,7 @@ import {
   opaqueRegisterStart,
   opaqueRegisterFinish,
 } from '../lib/api'
-import { initialOnboardingStep } from '../lib/signup-email-code'
+import { initialOnboardingStep, signupTicketInvalidCopy } from '../lib/signup-email-code'
 import { REFERRAL_SOURCE_KEY, REFERRAL_SHARER_KEY, REFERRAL_CODE_KEY } from './signup'
 import { generateRecoveryKitPDF } from '../lib/recovery-kit-pdf'
 import { useAuth } from '../lib/auth-context'
@@ -170,6 +170,12 @@ export function Onboarding() {
   // (expired mid-flow, wrong email, already consumed) — shown once the user
   // is bounced back to the code step.
   const [codeStepError, setCodeStepError] = useState('')
+  // Task 1525 Codex review fix: true only when the invalid-ticket error came
+  // from register-FINISH specifically — the ambiguous case where the
+  // account may already have been created (see signupTicketInvalidCopy()'s
+  // doc comment). register-START never consumes the ticket, so an invalid
+  // ticket there is unambiguous and this stays false.
+  const [mayAlreadyHaveAccount, setMayAlreadyHaveAccount] = useState(false)
   const [phrase, setPhrase] = useState('')
   const [masterKeyBytes, setMasterKeyBytes] = useState<Uint8Array | null>(null)
   const [saved, setSaved] = useState(false)
@@ -220,11 +226,20 @@ export function Onboarding() {
   const handleCodeVerified = useCallback((newTicket: string) => {
     setTicket(newTicket)
     setCodeStepError('')
+    setMayAlreadyHaveAccount(false)
     setStep('display')
   }, [])
 
   const handleWrongEmail = useCallback(() => {
     navigate('/signup', { replace: true, state: { email } })
+  }, [navigate, email])
+
+  // Task 1525 Codex review fix: the "Already finished setting up this
+  // account? Sign in instead" path offered only when mayAlreadyHaveAccount
+  // is set (a register-finish signup_ticket_invalid — see above). Same
+  // `?email=` prefill query param login.tsx already reads.
+  const handleSignInInstead = useCallback(() => {
+    navigate(`/login?email=${encodeURIComponent(email)}`, { replace: true })
   }, [navigate, email])
 
   const handlePasswordSubmit = useCallback(async () => {
@@ -246,6 +261,17 @@ export function Onboarding() {
 
     setStep('processing')
     setError('')
+
+    // Task 1525 Codex review fix (see signupTicketInvalidCopy()'s doc
+    // comment): register-START only VALIDATES the ticket (never consumes
+    // it), so a signup_ticket_invalid there is unambiguous. register-FINISH
+    // consumes it atomically with the account INSERT — if ITS response is
+    // lost and the shared request() client's single network-failure retry
+    // resubmits with the now-dead ticket, the same error code comes back
+    // even though the account was actually created. Set right before the
+    // finish call (never reset after) so the catch block below can tell
+    // which of the two calls actually threw.
+    let ticketInvalidCouldMeanFinishSucceeded = false
 
     try {
       // 1. OPAQUE registration (2-round-trip)
@@ -270,6 +296,7 @@ export function Onboarding() {
       const referralSource = localStorage.getItem(REFERRAL_SOURCE_KEY) ?? undefined
       const referralSharerId = localStorage.getItem(REFERRAL_SHARER_KEY) ?? undefined
       const referralCode = localStorage.getItem(REFERRAL_CODE_KEY) ?? undefined
+      ticketInvalidCouldMeanFinishSucceeded = true
       await opaqueRegisterFinish(
         email,
         toBase64(regUpload),
@@ -355,12 +382,23 @@ export function Onboarding() {
       // the code step (still on /onboarding) to request a fresh one; the
       // stale ticket and any generated phrase are discarded so a fresh
       // ticket generates a fresh phrase (never register with the OLD one).
+      //
+      // Codex review (PR #79): a register-FINISH invalid-ticket is
+      // AMBIGUOUS — see signupTicketInvalidCopy()'s doc comment — so that
+      // case additionally offers a "sign in instead" path rather than only
+      // "request a new code" (which is a dead end if the account already
+      // exists: /email-start for an existing email sends a sign-in link,
+      // never a code).
       if (err instanceof ApiError && err.status === 403 && err.code === 'signup_ticket_invalid') {
+        const { codeStepError, offerSignIn } = signupTicketInvalidCopy(
+          ticketInvalidCouldMeanFinishSucceeded ? 'register-finish' : 'register-start',
+        )
         setTicket(null)
         setPhrase('')
         setMasterKeyBytes(null)
         generated.current = false
-        setCodeStepError('That verification expired. Please request a new code.')
+        setCodeStepError(codeStepError)
+        setMayAlreadyHaveAccount(offerSignIn)
         setStep('code')
         return
       }
@@ -415,6 +453,8 @@ export function Onboarding() {
                   onVerified={handleCodeVerified}
                   onWrongEmail={handleWrongEmail}
                   externalError={codeStepError}
+                  offerSignInFallback={mayAlreadyHaveAccount}
+                  onSignInInstead={handleSignInInstead}
                 />
               )}
 

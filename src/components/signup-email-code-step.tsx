@@ -1,8 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { BBButton } from '@beebeeb/shared'
 import { signupEmailStart, signupEmailVerify } from '../lib/api'
-import { EMAIL_CODE_LENGTH, sanitizeCode, codeDigitsForDisplay } from '../lib/signup-email-code'
+import {
+  EMAIL_CODE_LENGTH,
+  sanitizeCode,
+  codeDigitsForDisplay,
+  resendCopyForAttempt,
+} from '../lib/signup-email-code'
 import { userFriendlyError } from '../lib/user-friendly-error'
+
+// Codex review (PR #79, signup-email-code-step.tsx:135): the browser applies
+// `maxLength` to the RAW input value before `handleChange`'s sanitizer ever
+// runs, so a formatted paste like "1234-5678" (9 raw chars) or a chunk of
+// surrounding email prose got truncated to the first 8 raw characters —
+// often only 6-7 actual digits — before sanitizeCode() had a chance to pull
+// the real code out. Generous raw cap; sanitizeCode() still truncates the
+// SANITIZED digits to EMAIL_CODE_LENGTH.
+const RAW_INPUT_MAX_LENGTH = 64
 
 interface SignupEmailCodeStepProps {
   email: string
@@ -17,6 +31,19 @@ interface SignupEmailCodeStepProps {
    * they're back here, same pattern as TwoFactorPrompt's `error` prop.
    */
   externalError?: string
+  /**
+   * Task 1525 Codex review fix (onboarding.tsx:364): set when the initial
+   * error came from a register-FINISH `signup_ticket_invalid` specifically —
+   * ambiguous, because the account may already have been created (response
+   * lost, ticket consumed) and this code screen can then never be completed
+   * (`/email-start` for an existing email sends a sign-in link, not a code).
+   * When true, offers `onSignInInstead` as an explicit alternate path instead
+   * of only "request a new code". See `signupTicketInvalidCopy()`'s doc
+   * comment in `lib/signup-email-code.ts` for the full reasoning.
+   */
+  offerSignInFallback?: boolean
+  /** Navigate to sign-in (with the email prefilled) — only rendered when `offerSignInFallback` is true. */
+  onSignInInstead?: () => void
 }
 
 /**
@@ -36,6 +63,8 @@ export function SignupEmailCodeStep({
   onVerified,
   onWrongEmail,
   externalError,
+  offerSignInFallback,
+  onSignInInstead,
 }: SignupEmailCodeStepProps) {
   const [code, setCode] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -44,6 +73,10 @@ export function SignupEmailCodeStep({
   const [resendNotice, setResendNotice] = useState('')
   const hiddenRef = useRef<HTMLInputElement>(null)
   const submittedRef = useRef(false)
+  // Local best-effort count of resend clicks THIS mount has made — see
+  // resendCopyForAttempt()'s doc comment for why this can't be server-
+  // confirmed (the cap-reached response is byte-identical to a real send).
+  const resendAttemptsRef = useRef(0)
 
   useEffect(() => {
     hiddenRef.current?.focus()
@@ -92,7 +125,9 @@ export function SignupEmailCodeStep({
     setError('')
     try {
       await signupEmailStart(email)
-      setResendNotice('Code resent — check your inbox.')
+      resendAttemptsRef.current += 1
+      const { message } = resendCopyForAttempt(resendAttemptsRef.current)
+      setResendNotice(message)
       setCode('')
       submittedRef.current = false
       hiddenRef.current?.focus()
@@ -118,6 +153,25 @@ export function SignupEmailCodeStep({
         up, we've sent it a verification code. Enter the {EMAIL_CODE_LENGTH} digits below to continue.
       </p>
 
+      {offerSignInFallback && onSignInInstead && (
+        <div
+          className="mb-4 rounded-md border border-line-2 bg-paper-2 px-3.5 py-3"
+          data-testid="signup-code-signin-fallback"
+        >
+          <p className="text-xs text-ink-3 leading-relaxed">
+            Already finished setting up this account?{' '}
+            <button
+              type="button"
+              className="text-amber-deep font-medium hover:underline cursor-pointer"
+              onClick={onSignInInstead}
+              data-testid="signup-code-signin-instead"
+            >
+              Sign in instead
+            </button>
+          </p>
+        </div>
+      )}
+
       <div className="relative">
         <input
           ref={hiddenRef}
@@ -132,7 +186,7 @@ export function SignupEmailCodeStep({
           onKeyDown={(e) => {
             if (e.key === 'Enter' && code.length === EMAIL_CODE_LENGTH) void doVerify(code)
           }}
-          maxLength={EMAIL_CODE_LENGTH}
+          maxLength={RAW_INPUT_MAX_LENGTH}
           disabled={submitting}
           className="absolute inset-0 w-full h-full opacity-0 z-10 cursor-text"
           aria-label="Verification code"

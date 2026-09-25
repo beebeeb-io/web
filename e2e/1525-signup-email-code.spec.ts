@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { fillSignupForm, signupAndUnlock, uniqueEmail } from './helpers/signup'
-import { waitForSignupCode, waitForSignupExistsEmail } from './helpers/mail-sink'
+import { waitForSignupCode, waitForSignupExistsEmail, waitForNewSignupCode } from './helpers/mail-sink'
 
 /**
  * E2E for task 1525 — verify the email with a code BEFORE the account is
@@ -165,19 +165,36 @@ test.describe('Signup email verification code (task 1525)', () => {
     await expect(page.getByLabel(/email/i)).toHaveValue(email)
   })
 
-  test('resend issues a fresh code that verifies correctly', async ({ page }) => {
+  test('resend adds a second code without invalidating the first — both verify (server round 3)', async ({
+    page,
+  }) => {
     const email = uniqueEmail('1525-resend')
     await fillSignupForm(page, { email })
     await expect(page.getByTestId('signup-code-email')).toHaveText(email)
-    // Wait for the FIRST code to actually land in the sink before resending,
-    // so the resend is provably a SECOND send, not a race with the first.
-    await waitForSignupCode(email)
+
+    // Capture the FIRST code explicitly — this is the one we'll prove still
+    // works AFTER the resend, not just "a code that verifies".
+    const firstCode = await waitForSignupCode(email)
+    expect(firstCode).toMatch(/^\d{8}$/)
 
     await page.getByRole('button', { name: /resend code/i }).click()
-    await expect(page.getByText(/code resent/i)).toBeVisible({ timeout: 5_000 })
+    // Honest copy (task 1525 Codex-review follow-up): the button no longer
+    // claims a bare "Code resent" — it says what actually happened and that
+    // any recent code still works, which is also true of the OLD code below.
+    await expect(page.getByText(/we sent a new code/i)).toBeVisible({ timeout: 5_000 })
 
-    const code = await waitForSignupCode(email)
-    await page.getByTestId('signup-code-input').fill(code)
+    // A genuinely DIFFERENT second code must appear — round 3's whole point
+    // is that resend ADDS a code rather than replacing (or no-op'ing on) the
+    // live one.
+    const secondCode = await waitForNewSignupCode(email, firstCode)
+    expect(secondCode).toMatch(/^\d{8}$/)
+    expect(secondCode).not.toBe(firstCode)
+
+    // The FIRST code — issued before the resend — must STILL verify. This is
+    // the core round-3 behavior change under test: a resend must never
+    // silently invalidate the code the user might already be looking at in
+    // their inbox.
+    await page.getByTestId('signup-code-input').fill(firstCode)
 
     await expect(page.locator('span.font-mono.text-sm.font-medium')).toHaveCount(12, { timeout: 15_000 })
   })

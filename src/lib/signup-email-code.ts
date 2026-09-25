@@ -31,6 +31,97 @@ export function codeDigitsForDisplay(code: string, length: number = EMAIL_CODE_L
 }
 
 /**
+ * Mirrors the server's `MAX_LIVE_CODES_PER_EMAIL` (round 3,
+ * `signup_email_challenge.rs`) — at most this many codes may be
+ * simultaneously live for one email. A 4th `/email-start` while 3 are live
+ * still 202s but sends nothing new.
+ */
+export const MAX_LIVE_CODES_PER_EMAIL = 3
+
+/**
+ * Best-effort copy for the Nth resend click (1-indexed) since this step
+ * mounted. Task 1525 round 3 (server): each `/email-start` while a code is
+ * already live ADDS a new one instead of no-op'ing, up to
+ * `MAX_LIVE_CODES_PER_EMAIL` simultaneously live; past the cap it is STILL a
+ * 202 with no new mail sent — and by the same anti-enumeration design that
+ * keeps the new-vs-existing-email responses byte-identical, the server gives
+ * the client NO signal to tell "sent" and "no-op'd at the cap" apart (see
+ * `beebeeb-api/src/routes/auth.rs::signup_email_start`'s doc comment: both
+ * branches share one response-building function on purpose).
+ *
+ * So this is a LOCAL best-effort count, not a server-confirmed fact: it
+ * assumes the /signup page's own initial email-start counts as the 1st live
+ * code, so this step can honestly claim a genuine "sent" for its first
+ * `MAX_LIVE_CODES_PER_EMAIL - 1` resend clicks. Past that we can no longer
+ * honestly claim a new code went out — so we say that instead of repeating a
+ * possibly-false "resent" claim (the bug this closes: the previous copy said
+ * "Code resent" unconditionally, which is a LIE once the cap is reached).
+ */
+export function resendCopyForAttempt(
+  resendAttempt: number,
+  maxLiveCodes: number = MAX_LIVE_CODES_PER_EMAIL,
+): { message: string; likelySent: boolean } {
+  if (resendAttempt <= maxLiveCodes - 1) {
+    return {
+      message: 'We sent a new code. Any code from the last 15 minutes works.',
+      likelySent: true,
+    }
+  }
+  return {
+    message:
+      "You've already requested the maximum number of codes for now — any code from the last 15 minutes still works.",
+    likelySent: false,
+  }
+}
+
+/**
+ * Task 1525 Codex review (PR #79, `onboarding.tsx:364`) — a
+ * `signup_ticket_invalid` from register-FINISH is ambiguous in a way one
+ * from register-START is not:
+ *
+ *  - register-START only VALIDATES the ticket (never consumes it), so an
+ *    invalid ticket there is unambiguous: it really is stale/wrong, no
+ *    account was created.
+ *  - register-FINISH consumes the ticket atomically WITH the account INSERT,
+ *    in the same transaction (server grounding, task 1525 continuation
+ *    round). If its response is lost in transit, the shared `request()`
+ *    client's single retry-on-network-failure resubmits the SAME POST with
+ *    the now-consumed ticket, which the server correctly refuses — even
+ *    though the account was actually created by the first, successful
+ *    attempt.
+ *
+ * We can't disambiguate "genuinely never consumed, just expired" from
+ * "consumed by a successful attempt whose response was lost" purely
+ * client-side (the server returns one undifferentiated
+ * `signup_ticket_invalid` for every cause). Silently treating a
+ * finish-time failure as "pre-registration expiry" and bouncing to the code
+ * step is ALSO a dead end in the ambiguous case: `/email-start` for an email
+ * that now has an account sends the "you already have an account" notice,
+ * never a code (task 1525's own anti-enumeration design) — so a user who
+ * really did finish would be stuck on a code screen that can never be
+ * completed. Route them to sign-in as an option instead of asserting either
+ * story with false confidence.
+ */
+export type SignupTicketInvalidSource = 'register-start' | 'register-finish'
+
+export function signupTicketInvalidCopy(source: SignupTicketInvalidSource): {
+  codeStepError: string
+  offerSignIn: boolean
+} {
+  if (source === 'register-finish') {
+    return {
+      codeStepError:
+        "We couldn't confirm that finished. If you already completed this signup, sign in instead — or request a new code to try again.",
+      offerSignIn: true,
+    }
+  }
+  return {
+    codeStepError: 'That verification expired. Please request a new code.',
+    offerSignIn: false,
+  }
+}
+
+/**
  * Whether `err` means "this server predates task 1525 and has no
  * `/signup/email-start` route at all" — the capability-detection signal
  * `signup.tsx` uses to fall back to the pre-1525 flow (generate the phrase
