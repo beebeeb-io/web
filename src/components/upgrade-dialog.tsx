@@ -9,6 +9,7 @@ import { userFriendlyError } from '../lib/user-friendly-error'
 import { useDriveData } from '../lib/drive-data-context'
 import { handleBillingResetTestMode } from '../lib/billing-reset'
 import { BillingInfoStep } from './billing/BillingInfoStep'
+import { dueTodayVatCaption } from '../lib/checkout-summary-copy'
 
 type BillingCycle = 'monthly' | 'yearly'
 type Step = 'cycle' | 'billing-info'
@@ -245,8 +246,7 @@ export function UpgradeDialog({
               </span>
             </div>
             <div className="text-[11px] opacity-60">
-              EUR {cycle === 'yearly' ? yearlyTotal.toFixed(2) : monthlyTotal.toFixed(2)}{' '}
-              / {cycle === 'yearly' ? 'year' : 'month'} excl. VAT · cancel anytime
+              {dueTodayVatCaption(cycle, cycle === 'yearly' ? yearlyTotal : monthlyTotal)}
             </div>
           </div>
 

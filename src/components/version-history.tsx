@@ -9,6 +9,7 @@ import { useFocusTrap } from '../hooks/use-focus-trap'
 import { useDriveData } from '../lib/drive-data-context'
 import { decryptVersionToBlob } from '../lib/encrypted-download'
 import { UpgradeNudge } from './upgrade-nudge'
+import { shouldShowVersionHistoryUpsell } from '../lib/version-history-copy'
 import {
   listVersions,
   restoreVersion,
@@ -55,11 +56,7 @@ export function VersionHistory({
   const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
   const navigate = useNavigate()
   const { planDetails } = useDriveData()
-  // Free plan is the only tier that doesn't get retained version history.
-  // Treat "no subscription record yet" as free too — the nudge is harmless
-  // for new accounts and matches what the user sees in the billing page.
-  const planSlug = planDetails.subscription?.plan ?? 'free'
-  const isFree = planSlug === 'free'
+  const planSlug = planDetails.subscription?.plan
 
   const fetchVersions = useCallback(async () => {
     if (!fileId) return
@@ -174,7 +171,7 @@ export function VersionHistory({
         </div>
 
         <div className="flex-1 overflow-y-auto">
-          {isFree && (
+          {shouldShowVersionHistoryUpsell(planSlug) && (
             <div className="px-xl pt-md">
               <UpgradeNudge
                 surface="version-history"

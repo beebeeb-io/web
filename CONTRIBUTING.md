@@ -17,12 +17,24 @@ bun install
 bun dev
 ```
 
-The dev server starts at `http://localhost:5173`. You'll need the API server running on `localhost:3001` for full functionality.
+The dev server starts at `http://localhost:5173`.
+
+### The API server is not open source
+
+The beebeeb API server is not a public repository, so a clone of this repo cannot run the
+full stack. You can install, type-check, run the unit tests, build, and work on the screens
+that render without an account (sign-in, sign-up). Signed-in flows need an API server on
+`localhost:3001`; the hosted API at `api.beebeeb.io` does not accept browser requests from a
+local dev server. Maintainers run the full-stack Playwright specs against an internal API
+server before merging. If your change touches a signed-in flow, say so in the pull request and
+we will test it with you.
 
 ## Tech stack
 
 - React 19, Vite 6, Tailwind CSS 4, TypeScript
-- WASM crypto loaded via `@beebeeb/shared`
+- WASM crypto from the committed workspace package `packages/beebeeb-wasm` (the Rust
+  [core](https://github.com/beebeeb-io/core) compiled to WebAssembly)
+- Shared UI and the API client from the workspace package `packages/shared` (`@beebeeb/shared`)
 
 ## Code quality checks
 
@@ -30,15 +42,15 @@ Run these before submitting a pull request:
 
 ```sh
 bunx tsc --noEmit
+bun test
 bun run build
 ```
 
 ## Browser and Playwright checks
 
-Use Playwright for user-visible UI changes. Start the API server on
-`localhost:3001`, start the web client with `bun dev`, then run the relevant
-Playwright spec or capture browser evidence for the changed flow before opening
-a pull request.
+For user-visible UI changes, include a screenshot of the changed screen in the
+pull request. The Playwright specs under `e2e/` need a running API server, so
+maintainers run them before merging rather than in a plain clone.
 
 ## Pull request process
 
