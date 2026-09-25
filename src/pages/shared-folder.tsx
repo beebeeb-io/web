@@ -16,7 +16,7 @@ import {
   type ShareInvite,
 } from '../lib/api'
 import { useKeys } from '../lib/key-context'
-import { decryptFilename, parseEncryptedBlob, zeroize } from '../lib/crypto'
+import { decryptFileMetadata, zeroize } from '../lib/crypto'
 import { decryptChildFileKey } from '../lib/folder-share-crypto'
 import { resolveRecipientFolderKey } from '../lib/recipient-folder-key'
 import { encryptedDownload } from '../lib/encrypted-download'
@@ -33,6 +33,7 @@ export function SharedFolder() {
   const [loading, setLoading] = useState(true)
   const [files, setFiles] = useState<DriveFile[]>([])
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({})
+  const [decryptedMimes, setDecryptedMimes] = useState<Record<string, string>>({})
   const [folderKeyCache, setFolderKeyCache] = useState<Uint8Array | null>(null)
   // True when no stored key blob opens this folder for us (legacy invites
   // approved with the wrong key): say so instead of listing 'Encrypted file'.
@@ -93,13 +94,18 @@ export function SharedFolder() {
 
       if (fk) {
         const names: Record<string, string> = {}
+        const mimes: Record<string, string> = {}
         for (const file of fileList) {
           try {
             const encKey = keysMap[file.id]
             if (encKey && file.name_encrypted) {
               const fileKey = await decryptChildFileKey(fk, encKey)
-              const { nonce, ciphertext: ct } = parseEncryptedBlob(file.name_encrypted)
-              names[file.id] = await decryptFilename(fileKey, nonce, ct)
+              // name_encrypted carries the JSON metadata envelope
+              // ({name, mime_type}); decryptFileMetadata unwraps it like the
+              // owner's drive does. decryptFilename would show the raw JSON.
+              const meta = await decryptFileMetadata(fileKey, file.name_encrypted)
+              names[file.id] = meta.name
+              if (meta.mimeType) mimes[file.id] = meta.mimeType
               zeroize(fileKey)
             } else {
               names[file.id] = 'Encrypted file'
@@ -109,6 +115,7 @@ export function SharedFolder() {
           }
         }
         setDecryptedNames(names)
+        setDecryptedMimes(mimes)
       }
     } catch (e) {
       showToast({ icon: 'x', title: 'Failed to load', description: e instanceof Error ? e.message : 'Could not load shared folder.', danger: true })
@@ -150,7 +157,7 @@ export function SharedFolder() {
         file.id,
         fileKey,
         file.name_encrypted ?? '',
-        file.mime_type ?? 'application/octet-stream',
+        decryptedMimes[file.id] ?? file.mime_type ?? 'application/octet-stream',
         file.chunk_count ?? 1,
         file.size_bytes ?? 0,
       )
@@ -258,7 +265,7 @@ export function SharedFolder() {
                   {decryptedNames[file.id] ?? 'Encrypted file'}
                 </span>
                 <span className="text-[11px] text-ink-3 self-center font-mono truncate">
-                  {file.is_folder ? 'Folder' : (file.mime_type ?? '--')}
+                  {file.is_folder ? 'Folder' : (decryptedMimes[file.id] ?? file.mime_type ?? '--')}
                 </span>
                 <span className="font-mono text-[11px] text-ink-3 self-center">
                   {file.is_folder ? '--' : formatBytes(file.size_bytes)}

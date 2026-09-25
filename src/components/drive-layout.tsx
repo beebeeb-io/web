@@ -19,7 +19,7 @@ import { useDriveData } from '../lib/drive-data-context'
 import { StorageUsageBar } from './storage-usage-bar'
 import { decryptChildFileKey } from '../lib/folder-share-crypto'
 import { resolveRecipientFolderKey } from '../lib/recipient-folder-key'
-import { decryptFilename, parseEncryptedBlob, decryptFileMetadata } from '../lib/crypto'
+import { decryptFileMetadata } from '../lib/crypto'
 import { useSync } from '../lib/sync-context'
 import { useSearchIndex, type NodeNameResolver } from '../hooks/use-search-index'
 import { QuotaWarning } from './quota-warning'
@@ -470,8 +470,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
           const folderEntry = keys.find(k => k.file_id === invite.file_id)
           if (folderEntry) {
             const fileKey = await decryptChildFileKey(folderKey, folderEntry.encrypted_file_key)
-            const { nonce, ciphertext } = parseEncryptedBlob(invite.file_name_encrypted)
-            const name = await decryptFilename(fileKey, nonce, ciphertext)
+            const { name } = await decryptFileMetadata(fileKey, invite.file_name_encrypted)
             return { ...invite, decryptedName: name }
           }
           return { ...invite, decryptedName: 'Shared folder' }

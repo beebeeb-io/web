@@ -87,8 +87,8 @@ test('folder invite to an existing account: recipient decrypts names and downloa
 
     await openRowMenu(owner.page, folderName)
     await owner.page.getByRole('menuitem', { name: /^Share/ }).first().click()
-    const dlg = owner.page.getByRole('dialog').last()
-    await dlg.getByRole('button', { name: /invite/i }).first().click()
+    const dlg = owner.page.getByRole('dialog', { name: /send securely/i })
+    await dlg.getByRole('button', { name: 'Invite', exact: true }).click()
     await dlg.getByPlaceholder(/colleague@example.com/).fill(recipient.email)
     await dlg.getByRole('button', { name: /send invite/i }).click()
     await expect(owner.page.getByText(/Invite sent/i).first()).toBeVisible({ timeout: 30_000 })
@@ -116,8 +116,16 @@ test('folder invite to an existing account: recipient decrypts names and downloa
     await expect(main.getByText('Encrypted file')).toHaveCount(0)
     await expect(rcpt.page.getByTestId('shared-folder-key-missing')).toHaveCount(0)
 
-    // Sidebar entry (drive-layout) decrypts the folder name too.
-    await expect(rcpt.page.getByRole('link', { name: folderName }).first()).toBeVisible({ timeout: 30_000 })
+    // The row shows the plain name, not the raw JSON metadata envelope.
+    await expect(main.getByText('{"name"')).toHaveCount(0)
+    await expect(main.getByText(childName, { exact: true })).toBeVisible()
+
+    // Sidebar entry (drive-layout) for the approved folder share is present.
+    // Its label is the generic 'Shared folder': the recipient holds no key
+    // for the ROOT folder's own name (folder_keys covers descendants only).
+    await expect(
+      rcpt.page.locator(`a[href="/shared-folder/${invite!.file_id}?invite=${invite!.id}"]`).first(),
+    ).toBeVisible({ timeout: 30_000 })
 
     // Download the child and compare bytes.
     const row = main.locator('.group').filter({ hasText: childName }).first()
