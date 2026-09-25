@@ -20,6 +20,7 @@ import { useDriveData } from '../lib/drive-data-context'
 import { handleBillingResetTestMode } from '../lib/billing-reset'
 import { setPendingCheckout, makePreState } from '../lib/pending-checkout'
 import { PRICING_PAGE_PLANS, MARKETED_PLAN_SLUGS, type PricingPlanDef } from '../lib/plan-constants'
+import { ensureWasm, isWasmReady, planMonthlyCostCents } from '../lib/plan-pricing'
 
 type BillingCycle = 'monthly' | 'yearly'
 
@@ -155,6 +156,7 @@ function PlanCard({
 
   return (
     <div
+      data-testid={`plan-card-${plan.id}`}
       className={`flex flex-col gap-3.5 p-[22px] rounded-lg border relative overflow-visible transition-shadow duration-200 ${
         plan.comingSoon
           ? 'border-line bg-paper opacity-60'
@@ -186,7 +188,7 @@ function PlanCard({
             <span className="font-mono text-[11px] text-ink-3">{plan.seat}</span>
           )}
         </div>
-        <div className="text-[11px] text-ink-3 mt-1">{plan.note}</div>
+        <div data-testid="plan-note" className="text-[11px] text-ink-3 mt-1">{plan.note}</div>
         {cycle === 'yearly' && saved > 0 && (
           <div className="mt-1.5">
             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm bg-amber-bg text-amber-deep text-[10px] font-semibold font-mono">
@@ -212,7 +214,7 @@ function PlanCard({
         <Icon name="cloud" size={13} className="text-amber-deep" />
         <span className="font-mono text-xs font-medium">{plan.storage}</span>
         {plan.perTb && (
-          <span className="ml-auto font-mono text-[10px] text-ink-4">{plan.perTb}</span>
+          <span data-testid="plan-per-tb" className="ml-auto font-mono text-[10px] text-ink-4">{plan.perTb}</span>
         )}
       </div>
 
@@ -228,7 +230,7 @@ function PlanCard({
                   : 'text-green mt-[3px] shrink-0'
               }
             />
-            <span className={f.strong ? 'font-medium' : ''}>{f.label}</span>
+            <span data-testid="plan-feature" className={f.strong ? 'font-medium' : ''}>{f.label}</span>
           </div>
         ))}
       </div>
@@ -306,6 +308,23 @@ export function Pricing() {
     getPlans().then(setApiPlans).catch(() => {})
   }, [])
 
+  // Task 1550 — `/pricing` is NOT behind <WasmGuard> (unlike every
+  // authenticated route), so a logged-out visitor's WASM module may still be
+  // compiling when `apiPlans` resolves. `ensureWasm()` was already kicked off
+  // at plan-pricing.ts's module load; this just re-renders once it settles so
+  // the `plans` useMemo below can recompute with the real add-on rate instead
+  // of leaving the (safe, already-correct) static fallback frozen forever.
+  const [wasmVersion, setWasmVersion] = useState(0)
+  useEffect(() => {
+    let cancelled = false
+    ensureWasm().then(() => {
+      if (!cancelled) setWasmVersion((v) => v + 1)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   // Task 1469: the plan-purchase button below redirects straight to a hosted
   // checkout for a logged-in user — it needs the current `Subscription` for
   // `makePreState` (startPlanCheckout above), the same pre-checkout snapshot
@@ -329,23 +348,47 @@ export function Pricing() {
       if (!ap || fp.comingSoon || ap.coming_soon || ap.purchasable === false) return fp
       const monthlyEq = ap.price_yearly_eur > 0 ? ap.price_yearly_eur / 12 : 0
       const tbCount = Math.round(ap.storage_bytes / 1_000_000_000_000)
-      const perTbMonthly = tbCount > 0
-        ? ap.price_eur / tbCount
-        : 0
+
+      // Task 1550: the storage-addon rate is NOT (base plan price ÷ base TB
+      // count) — that's the base plan's own unit economics, not what an
+      // EXTRA TB costs. It must be the real marginal add-on rate, so it
+      // never contradicts the (already-correct) feature bullet three lines
+      // below. Derive it the same way billing.tsx derives its checkout-page
+      // addonPerTbCents fallback: the diff between core's WASM quota engine
+      // (beebeeb-types::quota — the single source of truth for what Mollie
+      // actually bills) at extraTB=1 vs extraTB=0. `/api/v1/billing/plans`
+      // itself carries no per-TB add-on field today (server catalogue gap —
+      // see task 1550's Notes for the recommended companion server task), so
+      // this is the closest available non-page-local source: the same
+      // pricing engine checkout falls back to, not a second literal.
+      // Until WASM is ready (this route isn't behind <WasmGuard>), leave
+      // note/perTb untouched — the static plan-constants.ts default is
+      // already the correct €14.99/TB, a safer fallback than a wrong number.
+      let note = fp.note
+      let perTb = fp.perTb
+      if (tbCount > 0 && isWasmReady()) {
+        const addonCents = planMonthlyCostCents(fp.id, 1) - planMonthlyCostCents(fp.id, 0)
+        if (addonCents > 0) {
+          const perTbMonthly = addonCents / 100
+          const perTbStr = perTbMonthly % 1 === 0 ? perTbMonthly.toFixed(0) : perTbMonthly.toFixed(2)
+          note = `${ap.storage_label} · €${perTbStr}/TB`
+          perTb = `€${perTbStr}/TB`
+        }
+      }
+
       return {
         ...fp,
         priceMonthly: ap.price_eur,
         priceYearly: Math.round(monthlyEq * 100) / 100,
         storage: ap.storage_label,
-        note: tbCount > 0
-          ? `${ap.storage_label} · €${perTbMonthly % 1 === 0 ? perTbMonthly.toFixed(0) : perTbMonthly.toFixed(2)}/TB`
-          : fp.note,
-        perTb: tbCount > 0
-          ? `€${perTbMonthly % 1 === 0 ? perTbMonthly.toFixed(0) : perTbMonthly.toFixed(2)}/TB`
-          : fp.perTb,
+        note,
+        perTb,
       }
     })
-  }, [apiPlans])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- wasmVersion is a
+    // recompute trigger only (isWasmReady()/planMonthlyCostCents read live
+    // module state, not React state).
+  }, [apiPlans, wasmVersion])
 
   // ── Promo code (task 11, spec §4) ─────────────────────────────────────────
   // The "Have a promo code?" disclosure lives near the cycle toggle (one input

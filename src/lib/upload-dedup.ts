@@ -48,11 +48,30 @@ function persistToSession() {
 }
 
 /**
- * Compute the SHA-256 hash of a File and return it as a lowercase hex string.
- * Reads the entire file into memory — called before encryption, so it's the
- * smallest-possible representation of the file at this point in the pipeline.
+ * Files larger than this are skipped by the dedup hash entirely (task 1544
+ * finding 4). Browsers have no incremental/streaming `SubtleCrypto.digest`
+ * — hashing requires the whole file in one ArrayBuffer — which directly
+ * contradicts the streaming upload's bounded-memory guarantee (see
+ * repos/web/CLAUDE.md "Uploads (streaming encryption)": "Memory stays
+ * bounded to one slice + one frame") for exactly the large-file case the
+ * product markets as supported (Pro: up to 500 GB/file, uploads.rs
+ * max_file_bytes). Below this threshold the memory spike is small and the
+ * dedup UX is preserved for the overwhelming majority of uploads (photos,
+ * documents, typical videos); above it, the upload proceeds without a
+ * dedup check rather than risking a multi-GB buffer allocation.
  */
-export async function hashFile(file: File): Promise<string> {
+export const DEDUP_HASH_MAX_BYTES = 256 * 1024 * 1024 // 256 MiB
+
+/**
+ * Compute the SHA-256 hash of a File and return it as a lowercase hex
+ * string, or `null` if the file exceeds `DEDUP_HASH_MAX_BYTES` (dedup is
+ * skipped for it — see that constant's doc comment). Reads the entire file
+ * into memory when it does hash — called before encryption, so it's the
+ * smallest-possible representation of the file at this point in the
+ * pipeline, but only safe to do below the size threshold.
+ */
+export async function hashFile(file: File): Promise<string | null> {
+  if (file.size > DEDUP_HASH_MAX_BYTES) return null
   const buffer = await file.arrayBuffer()
   const hashBuffer = await crypto.subtle.digest('SHA-256', buffer)
   const bytes = new Uint8Array(hashBuffer)

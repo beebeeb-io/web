@@ -1005,6 +1005,19 @@ export async function initUpload(metadata: {
     const v2 = await request<UploadInitV2Response>('/api/v1/uploads/init', {
       method: 'POST',
       body: JSON.stringify({
+        // file_id: REQUIRED for a replace/version upload — its absence here
+        // was a real bug (found via 1542's version-history e2e: re-uploading
+        // an existing name always minted a brand-new file server-side instead
+        // of reusing the existing one, so "auto-version" and the conflict
+        // dialog's "Replace" both silently created an orphaned duplicate
+        // rather than a v2). The server's InitUploadV2Request already has a
+        // `file_id: Option<Uuid>` field (uploads.rs) and honors it —
+        // `file_id = body.file_id.or(existing_file_id).unwrap_or_else(Uuid::new_v4)`
+        // — this endpoint just never sent the field the caller already
+        // supplies (see this function's own `metadata.file_id` param, unused
+        // until now). Omitted (undefined) for a genuinely new upload, which
+        // correctly falls through to a fresh server-generated id.
+        file_id: metadata.file_id,
         file_name: metadata.name_encrypted,
         file_size_bytes: metadata.size_bytes,
         parent_id: metadata.parent_id,
@@ -2639,10 +2652,25 @@ export async function listTokens(): Promise<PersonalAccessToken[]> {
   }
 }
 
-/** Create a new personal access token. */
-export async function createToken(params: CreateTokenParams): Promise<CreateTokenResponse> {
+/**
+ * Create a new personal access token.
+ *
+ * Task 1536 (server PR #98): `POST /api/v1/tokens` now requires a fresh
+ * `X-Confirm-Token` for SESSION-authenticated callers — this app always
+ * authenticates via session (never a bare PAT), so a caller must obtain one
+ * via the existing step-up flow (`confirmAction`/`confirmPasskey` above, or
+ * the `<StepUpAuth>` component) and pass it here. `confirmToken` stays
+ * optional: omitting it sends no header at all, which the CURRENT (pre-#98)
+ * server simply ignores — harmless, not a silent bypass of anything #98 has
+ * not shipped yet.
+ */
+export async function createToken(
+  params: CreateTokenParams,
+  confirmToken?: string,
+): Promise<CreateTokenResponse> {
   return request<CreateTokenResponse>('/api/v1/tokens', {
     method: 'POST',
+    headers: confirmToken ? { 'X-Confirm-Token': confirmToken } : undefined,
     body: JSON.stringify(params),
   })
 }
@@ -3674,7 +3702,12 @@ export async function listAnnouncements(): Promise<{ announcements: Announcement
 // ─── Public profile ────────────────────────────────────────────────────────
 
 export interface PublicProfileShare {
-  token: string
+  // Task 1545, finding 2: the server deliberately never sends this — a
+  // share token is a secret that grants unauthenticated download access
+  // (see repos/server profile.rs's PublicShare struct comment) — so it must
+  // be treated as absent, not assumed present. Kept only so a future,
+  // deliberate server change to include it needs no client type change.
+  token?: string
   file_size: number | null
   created_at: string
   expires_at: string | null

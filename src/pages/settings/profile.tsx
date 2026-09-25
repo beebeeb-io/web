@@ -9,14 +9,11 @@ import { useAuth } from '../../lib/auth-context'
 import { useToast } from '../../components/toast'
 import {
   getPreference, setPreference,
-  deleteAccountPermanently,
   emailChangeStart, emailChangeFinish,
   getTrackingPreference, setTrackingPreference,
   getMyProfile, updatePublicProfile,
-  clearToken, ApiError,
 } from '../../lib/api'
 import { ConfirmPasswordModal } from '../../components/confirm-password-modal'
-import { StepUpAuth } from '../../components/step-up-auth'
 import {
   opaqueRegistrationStart, opaqueRegistrationFinish,
   computeRecoveryCheck, deriveX25519Public, toBase64, fromBase64,
@@ -43,11 +40,6 @@ export function SettingsProfile() {
   const [newEmailForChange, setNewEmailForChange] = useState('')
   const [emailChangeError, setEmailChangeError] = useState<string | null>(null)
   const [emailChangeProcessing, setEmailChangeProcessing] = useState(false)
-
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
-  const [deleteConfirmEmail, setDeleteConfirmEmail] = useState('')
-  const [deleting, setDeleting] = useState(false)
-  const [pwPromptOpen, setPwPromptOpen] = useState(false)
 
   const [trackingOptedIn, setTrackingOptedIn] = useState(false)
   const [trackingLoading, setTrackingLoading] = useState(true)
@@ -192,42 +184,8 @@ export function SettingsProfile() {
       .finally(() => setTrackingSaving(false))
   }, [showToast])
 
-  const handleDeleteAccount = useCallback(() => {
-    setPwPromptOpen(true)
-  }, [])
-
-  const performDeleteAccount = useCallback(
-    async (token: string) => {
-      setPwPromptOpen(false)
-      setDeleting(true)
-      try {
-        await deleteAccountPermanently('DELETE', token)
-        clearToken()
-        navigate('/login')
-      } catch (e) {
-        const description =
-          e instanceof ApiError && e.status === 403 ? 'Re-authentication expired. Try again.' : undefined
-        showToast({
-          icon: 'x',
-          title: 'Deletion failed. Try again.',
-          description,
-          danger: true,
-        })
-        setDeleting(false)
-      }
-    },
-    [navigate, showToast],
-  )
-
   return (
     <SettingsShell activeSection="profile">
-      <StepUpAuth
-        open={pwPromptOpen}
-        description="Enter your password to permanently delete your account. This cannot be undone."
-        submitLabel="Delete account"
-        onConfirmed={performDeleteAccount}
-        onClose={() => setPwPromptOpen(false)}
-      />
 
       <ConfirmPasswordModal
         open={emailChangePwOpen}
@@ -352,7 +310,7 @@ export function SettingsProfile() {
 
       <SettingsRow
         label="Recovery contact"
-        hint="Optional. Notified (not given access) if your account is inactive for 180 days."
+        hint="Optional. Recorded for your reference only — Beebeeb does not yet act on this."
       >
         <BBInput
           value={recoveryContact}
@@ -483,42 +441,19 @@ export function SettingsProfile() {
 
         <SettingsRow
           label="Delete account"
-          hint="Permanently destroys your encryption keys. All files become unreadable. This cannot be undone."
+          hint="Permanently destroys your encryption keys and all data. This cannot be undone — we do not have your encryption keys and cannot recover anything."
           danger
         >
-          {showDeleteConfirm ? (
-            <div className="flex flex-col gap-2 max-w-[360px]">
-              <div className="text-[12.5px] text-ink-2">
-                This permanently destroys your encryption keys. All files become unreadable. This cannot be undone.
-              </div>
-              <BBInput
-                value={deleteConfirmEmail}
-                onChange={(e) => setDeleteConfirmEmail(e.target.value)}
-                placeholder={`Type ${email} to confirm`}
-              />
-              <div className="flex gap-2">
-                <BBButton
-                  size="sm"
-                  variant="danger"
-                  onClick={handleDeleteAccount}
-                  disabled={deleting || deleteConfirmEmail !== email}
-                >
-                  {deleting ? 'Deleting...' : 'Delete my account'}
-                </BBButton>
-                <BBButton
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => { setShowDeleteConfirm(false); setDeleteConfirmEmail('') }}
-                >
-                  Cancel
-                </BBButton>
-              </div>
-            </div>
-          ) : (
-            <BBButton size="sm" variant="danger" onClick={() => setShowDeleteConfirm(true)}>
-              Delete account
-            </BBButton>
-          )}
+          {/* Task 1543 finding 3: this row used to run its OWN inline
+              confirmation flow (type your email, then a hardcoded 'DELETE'
+              was sent regardless of what was typed) — a second, divergent
+              implementation of the same irreversible action next to the
+              canonical /settings/delete-account page (linked from Settings >
+              Privacy), which correctly gates on the literal word DELETE and
+              discloses the real 30-day shred window. One flow, one place. */}
+          <BBButton size="sm" variant="danger" onClick={() => navigate('/settings/delete-account')}>
+            Delete account
+          </BBButton>
         </SettingsRow>
       </div>
     </SettingsShell>
