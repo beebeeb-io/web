@@ -479,3 +479,99 @@ describe('task 1532 continuation (eng-1532c): "Every refresh" (ttl=0) is disting
     expect(getVaultTTL()).toBe(30 * 60 * 1000)
   })
 })
+
+// ─── Continuation: web PR #78, Codex P1 on session-persist.ts:273 ────────
+//
+// persistSession() read a nonzero ttl, then did real async work
+// (deriveKey/encrypt, IndexedDB) before committing the wrapped key + token.
+// A setVaultTTL(0) landing DURING that await window used to be clobbered:
+// persistSession() had already decided "ttl != 0, go ahead" and just wrote
+// the entry/token after "Every refresh" cleared them — and the timer it
+// then armed relied on checkAndClearIfExpired()'s OWN `if (ttl===0) return`
+// no-op to ever clean it up, so the resurrected session sat there
+// indefinitely. Fixed two ways: (1) persistSession() captures a monotonic
+// generation counter before its async work and re-checks it (+ the live
+// TTL) immediately before each write, aborting + cleaning up on a mismatch;
+// (2) checkAndClearIfExpired() now actively clears at TTL 0 instead of
+// no-oping, so even a commit that slipped through some other way doesn't
+// sit forever.
+describe('task 1532 continuation (web #78, Codex P1): persistSession() vs. a setVaultTTL(0) landing mid-flight', () => {
+  test('a persistSession() that started while TTL was nonzero must not commit after setVaultTTL(0) lands during its await — no bb_spt, no IDB entry', async () => {
+    setVaultTTL(30 * 60 * 1000)
+    const key = randomKey()
+
+    // Hold persistSession() inside its own first await (deriveKey() ->
+    // crypto.subtle.importKey) so we can land setVaultTTL(0) IN THE MIDDLE
+    // of its async work — after it already committed to "ttl != 0, persist"
+    // but before it has written anything.
+    const realImportKey = crypto.subtle.importKey.bind(crypto.subtle)
+    let releaseHold: () => void = () => {}
+    const held = new Promise<void>(resolve => { releaseHold = resolve })
+    type ImportKeyFn = typeof crypto.subtle.importKey
+    ;(crypto.subtle as unknown as { importKey: ImportKeyFn }).importKey =
+      ((...args: Parameters<ImportKeyFn>) => held.then(() => realImportKey(...args))) as ImportKeyFn
+
+    try {
+      const persistPromise = persistSession(key) // suspends inside deriveKey(), holding
+
+      setVaultTTL(0) // "Every refresh" lands mid-flight
+      releaseHold() // let the held crypto call — and the rest of persistSession() — proceed
+
+      await persistPromise
+    } finally {
+      ;(crypto.subtle as unknown as { importKey: ImportKeyFn }).importKey = realImportKey
+    }
+
+    expect(localStorage.getItem('bb_spt')).toBeNull()
+    expect(await rawEntry()).toBeUndefined()
+  })
+
+  test('control: the SAME held-crypto shape with no setVaultTTL(0) during the hold still persists normally (the hold itself is not what blocks the commit)', async () => {
+    setVaultTTL(30 * 60 * 1000)
+    const key = randomKey()
+
+    const realImportKey = crypto.subtle.importKey.bind(crypto.subtle)
+    let releaseHold: () => void = () => {}
+    const held = new Promise<void>(resolve => { releaseHold = resolve })
+    type ImportKeyFn = typeof crypto.subtle.importKey
+    ;(crypto.subtle as unknown as { importKey: ImportKeyFn }).importKey =
+      ((...args: Parameters<ImportKeyFn>) => held.then(() => realImportKey(...args))) as ImportKeyFn
+
+    try {
+      const persistPromise = persistSession(key)
+      releaseHold() // no setVaultTTL(0) in between this time
+      await persistPromise
+    } finally {
+      ;(crypto.subtle as unknown as { importKey: ImportKeyFn }).importKey = realImportKey
+    }
+
+    expect(localStorage.getItem('bb_spt')).not.toBeNull()
+    expect(await rawEntry()).not.toBeUndefined()
+    expect(await restoreSession()).toEqual(key)
+  })
+})
+
+describe('task 1532 continuation (web #78, Codex P1): checkAndClearIfExpired() actively clears at TTL 0, not a no-op', () => {
+  test('a blob still sitting once the setting reads TTL 0 is deleted by the (already-armed) expiry watcher on its own — not left to sit forever', async () => {
+    setVaultTTL(80) // 80ms nonzero window — persistSession() arms its own expiry timer
+    const key = randomKey()
+    await persistSession(key)
+    expect(localStorage.getItem('bb_spt')).not.toBeNull()
+    expect(await rawEntry()).not.toBeUndefined()
+
+    // Move the setting to "Every refresh" WITHOUT going through
+    // setVaultTTL() — that function's own `clamped === 0` branch calls
+    // clearSession() directly and would short-circuit the very path under
+    // test. This stands in for how an entry could still exist at TTL 0 in
+    // the first place: a stale persistSession() commit that slipped through
+    // (the race covered above), a pre-1532 leftover, or a future bug —
+    // checkAndClearIfExpired() must not assume "TTL is 0" already implies
+    // "there's nothing here".
+    localStorage.setItem('bb_vault_ttl', '0')
+
+    await new Promise(resolve => setTimeout(resolve, 300)) // let the armed timer fire
+
+    expect(localStorage.getItem('bb_spt')).toBeNull()
+    expect(await rawEntry()).toBeUndefined()
+  })
+})
