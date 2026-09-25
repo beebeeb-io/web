@@ -79,6 +79,7 @@ import {
   reconcileSignalOutcome,
 } from '../lib/checkout-reconcile'
 import { resolveHasUsedTrial, isTrialEligible } from '../lib/trial-eligibility'
+import { billingPeriodLine } from '../lib/billing-period-line'
 
 /* ── Plan metadata (imported from plan-constants.ts) ──── */
 
@@ -713,6 +714,7 @@ export function Billing() {
     sub?.status === 'cancelling' ? (sub.plan ?? 'free') :
     (sub?.plan ?? 'free')
   const meta = planMeta[effectivePlan] ?? planMeta.free
+  const periodLine = billingPeriodLine(sub ? { ...sub, plan: effectivePlan } : null)
   // Task 1517 — authoritative trial-eligibility signal. `sub?.has_used_trial`
   // is the server truth (set the moment ANY trial was ever started, whether
   // it lapsed, converted, or is still running); `trialUsed` is the optimistic
@@ -1933,16 +1935,16 @@ function openUpgrade(plan: string) {
                 </div>
               </div>
 
-              {/* Footer strip: next charge / renews */}
-              {sub?.current_period_end &&
-                effectivePlan !== 'free' &&
-                sub.status !== 'cancelling' &&
-                sub.status !== 'paused' && (
+              {/* Footer strip: renews / trial ends / access until.
+                  Flow-money #5: a trial does not renew and a cancelling plan
+                  lapses — billingPeriodLine picks the honest label (same
+                  rules as mobile billing-status.ts and the CLI). */}
+              {periodLine && (
                   <div className="flex items-center gap-3 px-5 py-3 border-t border-line bg-paper-2 text-xs">
                     <Icon name="clock" size={13} className="text-ink-3 shrink-0" />
                     <span className="flex-1 text-ink-2">
-                      Renews <strong className="font-mono text-ink">{formatDate(sub.current_period_end)}</strong>
-                      {paymentMethod?.brand && (
+                      {periodLine.label} <strong className="font-mono text-ink">{formatDate(periodLine.dateIso)}</strong>
+                      {periodLine.label === 'Renews' && paymentMethod?.brand && (
                         <> via <span className="text-ink">{paymentMethod.brand}</span></>
                       )}
                     </span>
@@ -2214,12 +2216,13 @@ function openUpgrade(plan: string) {
               )}
             </div>
 
-            {/* Next billing / cancels on */}
-            {sub?.current_period_end && effectivePlan !== 'free' && sub.status !== 'cancelling' && sub.status !== 'paused' && (
+            {/* Next billing / trial ends (flow-money #5). Cancelling is
+                excluded here: the cancelling panel below owns that date. */}
+            {periodLine && periodLine.label !== 'Access until' && (
               <div className="flex items-center gap-3 p-3 bg-paper-2 border border-line rounded-lg text-xs">
                 <Icon name="clock" size={13} className="text-ink-3 shrink-0" />
                 <span className="flex-1">
-                  Renews <strong>{formatDate(sub.current_period_end)}</strong>
+                  {periodLine.label} <strong>{formatDate(periodLine.dateIso)}</strong>
                 </span>
               </div>
             )}
