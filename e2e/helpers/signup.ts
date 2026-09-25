@@ -57,6 +57,11 @@ export async function retrySignupWithPilotKey(page: Page, pilotKey: string): Pro
   await expect(page).toHaveURL(/\/signup/, { timeout: 15_000 })
   await expect(page.getByTestId('pilot-key-input')).toBeVisible({ timeout: 5_000 })
   await page.getByTestId('pilot-key-input').fill(pilotKey)
+  // The bounce-back is a fresh /signup mount: the "cannot recover" acknowledgement
+  // starts unchecked again (the email + key survive via router state), so a real
+  // user re-ticks it before Continue is enabled — do the same here.
+  const ack = page.getByRole('checkbox', { name: /Beebeeb cannot recover/i })
+  if (!(await ack.isChecked())) await ack.click()
   await page.getByRole('button', { name: /^continue$/i }).click()
 }
 
