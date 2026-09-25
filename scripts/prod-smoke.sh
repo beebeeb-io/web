@@ -26,9 +26,13 @@
 # This is what makes the task's literal cleanup-proof command work:
 #   docker exec beebeebio-postgres-1 psql -U beebeeb -d beebeeb \
 #     -Atc "select count(*) from users where email like 'smoke+%'"
-# BB_RATE_LIMIT_DISABLED=1 and the pilot-key gate are set explicitly on this
-# instance — never assumed from whatever the shared :3001 API happens to be
-# running with. Also builds `repos/cli` (origin/main by default, or
+# BB_RATE_LIMIT_DISABLED=1 is set explicitly on this instance — never assumed
+# from whatever the shared :3001 API happens to be running with. The
+# pilot-key gate (BB_REQUIRE_PILOT_KEY) defaults to OFF here too, matching
+# prod's actual state since the phase-2 launch (2026-09-25) — set
+# BB_REQUIRE_PILOT_KEY=1 explicitly to exercise the gate-on bounce-back path
+# instead (see e2e/prod-smoke/prod-smoke.spec.ts step 1).
+# Also builds `repos/cli` (origin/main by default, or
 # E2E_CLI_REV) from a DISPOSABLE `git worktree add --detach` copy — never the
 # primary repos/cli checkout itself (task 1502: building inside the primary
 # silently rewrote its Cargo.lock via the local `.cargo/config.toml` core
@@ -474,7 +478,12 @@ export SMTP_HOST=localhost SMTP_PORT=1025 SMTP_TLS_MODE=none SMTP_USER= SMTP_PAS
 # identical-secrets boot here never CRITICAL-logs a fingerprint mismatch.
 export SECRET_FINGERPRINTS_PATH="$SERVER_DIR/data/.secret-fingerprints"
 export BB_RATE_LIMIT_DISABLED=1
-export BB_REQUIRE_PILOT_KEY=1
+# Default to the PROD state (gate OFF) rather than forcing it on — prod has
+# run BB_REQUIRE_PILOT_KEY=0 on both nodes since the phase-2 launch
+# (2026-09-25). An explicit `BB_REQUIRE_PILOT_KEY=1` in the calling
+# environment overrides this default to exercise the gate-on bounce-back
+# path instead (prod-smoke.spec.ts step 1 handles both states).
+export BB_REQUIRE_PILOT_KEY="${BB_REQUIRE_PILOT_KEY:-0}"
 export BB_PILOT_SIGNUP_KEY="${BB_PILOT_SIGNUP_KEY:-test-pilot-key}"
 # Kept in lockstep with the server-side key (mirrors e2e/scripts/web-e2e.sh) —
 # e2e/helpers/signup.ts's PILOT_KEY constant reads BB_TEST_PILOT_KEY, which
