@@ -1,4 +1,5 @@
 import { collectPaged } from './paginate'
+import { buildUploadInitV2Body, type UploadInitMetadata } from './upload-init-body'
 import {
   opaqueLoginStart as wasmOpaqueLoginStart,
   opaqueLoginFinish as wasmOpaqueLoginFinish,
@@ -988,29 +989,11 @@ export type UploadInitResponse =
   | (UploadInitV1Response & { protocol: 'v1' })
   | (UploadInitV2Response & { protocol: 'v2' })
 
-export async function initUpload(metadata: {
-  file_id?: string
-  name_encrypted: string
-  size_bytes: number
-  chunk_count: number
-  parent_id?: string | null
-  /** True when the file is an image or video. Set by the client at upload time
-   *  because MIME types are encrypted — the server cannot infer media type. */
-  is_media?: boolean
-  /** True when this upload is the Keep Both result of a same-name conflict. */
-  conflict_created?: boolean
-}): Promise<UploadInitResponse> {
+export async function initUpload(metadata: UploadInitMetadata): Promise<UploadInitResponse> {
   try {
     const v2 = await request<UploadInitV2Response>('/api/v1/uploads/init', {
       method: 'POST',
-      body: JSON.stringify({
-        file_name: metadata.name_encrypted,
-        file_size_bytes: metadata.size_bytes,
-        parent_id: metadata.parent_id,
-        profile: 'web',
-        is_media: metadata.is_media ?? false,
-        conflict_created: metadata.conflict_created ?? false,
-      }),
+      body: JSON.stringify(buildUploadInitV2Body(metadata)),
     })
     return { ...v2, protocol: 'v2' }
   } catch (err) {
