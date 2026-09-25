@@ -51,12 +51,49 @@ jobs:
   # dev Cargo profile optimizes only the Argon2id crates, so the debug build's
   # crypto is release-fast (the dev auto-login derives a 256 MiB Argon2id key on
   # every page load) without slowing the rest of the debug compile.
+  #
+  # beebeeb-io/server is PRIVATE. An anonymous `git clone` of it failed on every
+  # run ("could not read Username"), and continue-on-error hid that. The server
+  # is now checked out with a READ-ONLY deploy key on beebeeb-io/server, held in
+  # this repo as the Actions secret SERVER_DEPLOY_KEY. `e2e-gate` decides first:
+  #   - fork PRs / Dependabot never receive Actions secrets → skip, with a notice
+  #   - this repo without the secret → FAIL loudly (misconfiguration, not a skip)
+  #   - otherwise → run the E2E job.
+  e2e-gate:
+    name: E2E gate (server checkout credentials)
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - name: Decide whether the full-stack E2E job can run
+        id: decide
+        env:
+          HAS_KEY: ${{ secrets.SERVER_DEPLOY_KEY != '' }}
+          IS_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          if [ "$IS_FORK" = "true" ] || [ "$ACTOR" = "dependabot[bot]" ]; then
+            echo "::notice title=E2E skipped::Fork and Dependabot PRs do not receive the SERVER_DEPLOY_KEY secret needed to check out the private server, so the full-stack E2E job is skipped. A maintainer re-runs it on a branch in this repo."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$HAS_KEY" != "true" ]; then
+            echo "::error title=E2E cannot run::Actions secret SERVER_DEPLOY_KEY is not set. It must hold the private half of a READ-ONLY deploy key on beebeeb-io/server. Without it the browser regression gate runs zero tests."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "run=true" >> "$GITHUB_OUTPUT"
+
   e2e:
     name: E2E (Playwright, full stack)
+    needs: e2e-gate
+    if: needs.e2e-gate.outputs.run == 'true'
     runs-on: ubuntu-latest
-    # informational until e2e test-backend stability under auth load is hardened
-    # (task 0869) — promote to required gate after. Still runs + uploads the
-    # report artifact on failure, so it gives signal without blocking merges.
+    # informational until the job has been green on main 3 runs in a row (and
+    # e2e test-backend stability under auth load is hardened, task 0869) —
+    # then drop continue-on-error and make it a required check. Still uploads
+    # the report artifact on failure, so it gives signal without blocking merges.
     continue-on-error: true
     permissions:
       contents: read
@@ -90,11 +127,26 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 
-      - name: Checkout server (provides the debug API binary)
-        run: git clone --depth 1 https://github.com/beebeeb-io/server.git server
+      - name: Checkout server (private; read-only deploy key)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: beebeeb-io/server
+          ssh-key: ${{ secrets.SERVER_DEPLOY_KEY }}
+          path: server
+          persist-credentials: false
 
-      - name: Checkout core (server Cargo path dependency — ../core)
-        run: git clone --depth 1 https://github.com/beebeeb-io/core.git core
+      # core is public. Pin it to the SHA the server declares in CORE_REV (the
+      # same pin server CI and prod builds use), not whatever core main is today.
+      - name: Checkout core at server's CORE_REV (Cargo path dependency — ../core)
+        run: |
+          CORE_REV="$(tr -d '[:space:]' < server/CORE_REV)"
+          test "${#CORE_REV}" -eq 40 || { echo "server/CORE_REV must be a full 40-char SHA" >&2; exit 1; }
+          git init --quiet core
+          git -C core remote add origin https://github.com/beebeeb-io/core.git
+          git -C core fetch --quiet --depth 1 origin "$CORE_REV"
+          git -C core checkout --quiet FETCH_HEAD
+          test "$(git -C core rev-parse HEAD)" = "$CORE_REV"
+          echo "core pinned at $CORE_REV"
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # pinned action; toolchain set below
         with:
