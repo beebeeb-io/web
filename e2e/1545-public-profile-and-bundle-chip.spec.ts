@@ -25,7 +25,10 @@ test('a public profile with an active share never links to /s/undefined', async 
   // ── Owner: fresh isolated account (never reuses the shared harness fixture
   //    account's username, which other concurrent specs may also touch) ──
   await page.goto('/?nodev=1')
-  const { email } = await signupAndUnlock(page, { email: uniqueEmail('1545-profile') })
+  const { email } = await signupAndUnlock(page, {
+    email: uniqueEmail('1545-profile'),
+    password: '1545ProfileShare!',
+  })
   const username = `bee${Date.now().toString(36)}`.slice(0, 20)
 
   const filename = `1545-profile-share-${Date.now()}.txt`
@@ -77,7 +80,7 @@ test('a bundle share shows a "bundle · N files" chip in Shared → By me', asyn
   test.setTimeout(120_000)
 
   await page.goto('/?nodev=1')
-  await signupAndUnlock(page, { email: uniqueEmail('1545-bundle') })
+  await signupAndUnlock(page, { email: uniqueEmail('1545-bundle'), password: '1545BundleChip!' })
 
   const stamp = Date.now()
   const names = [`1545-bundle-a-${stamp}.txt`, `1545-bundle-b-${stamp}.txt`]
