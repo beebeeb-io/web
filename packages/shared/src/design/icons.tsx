@@ -47,6 +47,8 @@ export type IconName =
   | 'scan'
   | 'pin'
   | 'flag'
+  | 'edit'
+  | 'columns'
 
 interface IconProps extends SVGProps<SVGSVGElement> {
   name: IconName
@@ -140,6 +142,10 @@ const paths: Record<IconName, string> = {
   // Flag: Lucide-style pennant on a pole — used by the admin "Feature flags"
   // nav item and the pool integrity-issue indicator.
   flag: 'M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1zM4 22v-7',
+  // Edit: Lucide-style pencil — for the text-editor "Edit" affordance (task 1563)
+  edit: 'M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z M15 5l4 4',
+  // Columns: two vertical panes — for the editor's markdown split view (task 1563)
+  columns: 'M4 4h16v16H4z M12 4v16',
 }
 
 export function Icon({ name, size = 24, ...rest }: IconProps) {
