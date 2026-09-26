@@ -24,6 +24,22 @@ interface PreviewChromeProps {
   /** Text/markdown/code editor entry point (task 1563). Only passed when the
    *  file is editable and not already in edit mode — see file-preview.tsx. */
   onEdit?: () => void
+  /** True while the task-1563 editor is active. Switches the top bar into a
+   *  single condensed row — breadcrumb/name + unsaved dot on the left, the
+   *  editor's own controls (portaled in via `onToolbarSlotReady`) on the
+   *  right — instead of stacking a second header underneath (PR #103
+   *  review: "double header" — the filename used to appear in both this bar
+   *  AND the editor's own header row). `onClose` still fires the same
+   *  callback the caller wired in; it always closes the whole preview, in
+   *  either mode — the editor's own "Done" (in its portaled toolbar) is the
+   *  separate "exit edit mode, stay open" action. */
+  editing?: boolean
+  /** Unsaved-changes indicator, shown next to the filename while `editing`. */
+  dirty?: boolean
+  /** Ref callback for the DOM node the editor's own toolbar (Split preview /
+   *  Wrap / Save) portals its buttons into — see file-editor.tsx. Only
+   *  rendered while `editing`. */
+  onToolbarSlotReady?: (el: HTMLDivElement | null) => void
 }
 
 export function PreviewChrome({
@@ -43,6 +59,9 @@ export function PreviewChrome({
   onZoomOut,
   onRotate,
   onEdit,
+  editing = false,
+  dirty = false,
+  onToolbarSlotReady,
 }: PreviewChromeProps) {
   const kindIcon = kind.startsWith('image') ? 'file' : 'file' as const
 
@@ -70,16 +89,26 @@ export function PreviewChrome({
             <span className="min-w-0 truncate text-[13px] font-medium text-ink">
               {filename}
             </span>
-            {/* Amber encryption dot — visible on all sizes */}
-            {decrypted && (
-              <span
-                className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-amber-deep"
-                title="Decrypted locally — key never left this device"
-              />
+            {editing ? (
+              dirty && (
+                <span
+                  className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-amber-deep align-middle"
+                  title="Unsaved changes"
+                  data-testid="editor-dirty-dot"
+                />
+              )
+            ) : (
+              decrypted && (
+                <span
+                  className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-amber-deep"
+                  title="Decrypted locally — key never left this device"
+                />
+              )
             )}
           </div>
-          {/* Trust line — only on desktop where there's room */}
-          {decrypted && (
+          {/* Trust line — only on desktop where there's room, and not while
+              editing (no room in the condensed single-row editor header). */}
+          {decrypted && !editing && (
             <div
               key={filename}
               className="decrypt-fade-in hidden font-mono text-[10.5px] text-ink-3 mt-0.5 ml-[27px] items-center gap-1.5 sm:flex"
@@ -89,94 +118,107 @@ export function PreviewChrome({
           )}
         </div>
 
-        {/* Desktop action buttons — hidden on mobile (shown in bottom bar instead) */}
-        <div className="hidden items-center gap-1.5 sm:flex">
-          <span className="font-mono text-[11px] text-ink-3 mr-1">{size}</span>
-          {onZoomOut && (
-            <button
-              type="button"
-              onClick={onZoomOut}
-              className="flex h-7 w-7 items-center justify-center rounded-md bg-paper-2 text-ink-2 transition-colors hover:bg-paper-3"
-              aria-label="Zoom out"
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/>
-              </svg>
-            </button>
-          )}
-          {onZoomIn && (
-            <button
-              type="button"
-              onClick={onZoomIn}
-              className="flex h-7 w-7 items-center justify-center rounded-md bg-paper-2 text-ink-2 transition-colors hover:bg-paper-3"
-              aria-label="Zoom in"
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>
-              </svg>
-            </button>
-          )}
-          {onRotate && (
-            <button
-              type="button"
-              onClick={onRotate}
-              className="flex h-7 w-7 items-center justify-center rounded-md bg-paper-2 text-ink-2 transition-colors hover:bg-paper-3"
-              aria-label="Rotate clockwise"
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38"/>
-              </svg>
-            </button>
-          )}
-          {onEdit && (
-            <button
-              type="button"
-              onClick={onEdit}
-              aria-label="Edit"
-              aria-keyshortcuts="Meta+E"
-              data-testid="preview-edit-button"
-              className="flex h-7 items-center gap-1.5 rounded-md bg-amber px-2.5 text-[12px] font-medium text-[oklch(0.22_0.01_70)] transition-colors hover:brightness-95"
-            >
-              <Icon name="edit" size={12} />
-              Edit
-              <span className="font-mono text-[10px] opacity-70">⌘E</span>
-            </button>
-          )}
-          {onShare && (
-            <button
-              type="button"
-              onClick={onShare}
-              className="flex h-7 w-7 items-center justify-center rounded-md bg-paper-2 text-ink-2 transition-colors hover:bg-paper-3"
-              aria-label="Share"
-            >
-              <Icon name="share" size={13} />
-            </button>
-          )}
-          {onDownload && (
-            <button
-              type="button"
-              onClick={onDownload}
-              className="flex h-7 w-7 items-center justify-center rounded-md bg-paper-2 text-ink-2 transition-colors hover:bg-paper-3"
-              aria-label="Download"
-            >
-              <Icon name="download" size={13} />
-            </button>
-          )}
-          {onStar && (
-            <button
-              type="button"
-              onClick={onStar}
-              className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
-                isStarred
-                  ? 'bg-amber-bg text-amber-deep hover:bg-amber-bg/80'
-                  : 'bg-paper-2 text-ink-2 hover:bg-paper-3'
-              }`}
-              aria-label={isStarred ? 'Unstar' : 'Star'}
-            >
-              <Icon name="star" size={13} />
-            </button>
-          )}
-        </div>
+        {/* Editing: a single condensed row — the editor's own toolbar
+            (Split preview / Wrap / Save) portals into this slot instead of
+            a second header underneath. */}
+        {editing && (
+          <div
+            ref={onToolbarSlotReady}
+            className="flex shrink-0 items-center gap-1.5"
+            data-testid="editor-toolbar-slot"
+          />
+        )}
+
+        {/* Desktop action buttons — hidden on mobile (shown in bottom bar instead), and hidden entirely while editing (the editor's own toolbar takes over, above). */}
+        {!editing && (
+          <div className="hidden items-center gap-1.5 sm:flex">
+            <span className="font-mono text-[11px] text-ink-3 mr-1">{size}</span>
+            {onZoomOut && (
+              <button
+                type="button"
+                onClick={onZoomOut}
+                className="flex h-7 w-7 items-center justify-center rounded-md bg-paper-2 text-ink-2 transition-colors hover:bg-paper-3"
+                aria-label="Zoom out"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/>
+                </svg>
+              </button>
+            )}
+            {onZoomIn && (
+              <button
+                type="button"
+                onClick={onZoomIn}
+                className="flex h-7 w-7 items-center justify-center rounded-md bg-paper-2 text-ink-2 transition-colors hover:bg-paper-3"
+                aria-label="Zoom in"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>
+                </svg>
+              </button>
+            )}
+            {onRotate && (
+              <button
+                type="button"
+                onClick={onRotate}
+                className="flex h-7 w-7 items-center justify-center rounded-md bg-paper-2 text-ink-2 transition-colors hover:bg-paper-3"
+                aria-label="Rotate clockwise"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38"/>
+                </svg>
+              </button>
+            )}
+            {onEdit && (
+              <button
+                type="button"
+                onClick={onEdit}
+                aria-label="Edit"
+                aria-keyshortcuts="Meta+E"
+                data-testid="preview-edit-button"
+                className="flex h-7 items-center gap-1.5 rounded-md bg-amber px-2.5 text-[12px] font-medium text-[oklch(0.22_0.01_70)] transition-colors hover:brightness-95"
+              >
+                <Icon name="edit" size={12} />
+                Edit
+                <span className="font-mono text-[10px] opacity-70">⌘E</span>
+              </button>
+            )}
+            {onShare && (
+              <button
+                type="button"
+                onClick={onShare}
+                className="flex h-7 w-7 items-center justify-center rounded-md bg-paper-2 text-ink-2 transition-colors hover:bg-paper-3"
+                aria-label="Share"
+              >
+                <Icon name="share" size={13} />
+              </button>
+            )}
+            {onDownload && (
+              <button
+                type="button"
+                onClick={onDownload}
+                className="flex h-7 w-7 items-center justify-center rounded-md bg-paper-2 text-ink-2 transition-colors hover:bg-paper-3"
+                aria-label="Download"
+              >
+                <Icon name="download" size={13} />
+              </button>
+            )}
+            {onStar && (
+              <button
+                type="button"
+                onClick={onStar}
+                className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
+                  isStarred
+                    ? 'bg-amber-bg text-amber-deep hover:bg-amber-bg/80'
+                    : 'bg-paper-2 text-ink-2 hover:bg-paper-3'
+                }`}
+                aria-label={isStarred ? 'Unstar' : 'Star'}
+              >
+                <Icon name="star" size={13} />
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {belowTopBar}
@@ -196,8 +238,11 @@ export function PreviewChrome({
         )}
       </div>
 
-      {/* Mobile action bar — shown only on small screens, below the image */}
-      {(onDownload || onShare || onStar || onEdit) && (
+      {/* Mobile action bar — shown only on small screens, below the image.
+          Hidden while editing: the editor doesn't have a mobile-specific
+          toolbar yet, and showing stale read-mode actions (Edit/Share/
+          Download/Star) here would be confusing mid-edit. */}
+      {!editing && (onDownload || onShare || onStar || onEdit) && (
         <div className="flex shrink-0 items-center justify-around border-t border-line bg-paper px-4 py-2.5 sm:hidden">
           {onEdit && (
             <button

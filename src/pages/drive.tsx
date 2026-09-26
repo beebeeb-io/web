@@ -2962,17 +2962,28 @@ export function Drive() {
         />
       )}
 
-      {/* Keyboard shortcuts help button — bottom-right FAB */}
-      <button
-        type="button"
-        aria-label="Keyboard shortcuts"
-        title="Keyboard shortcuts (?)"
-        onClick={() => setShowShortcuts((v) => !v)}
-        className="hidden sm:flex fixed right-5 z-40 items-center justify-center w-8 h-8 rounded-full bg-paper border border-line-2 shadow-2 text-ink-3 hover:text-ink hover:border-line hover:shadow-3 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
-        style={{ bottom: 'max(1.25rem, env(safe-area-inset-bottom, 1.25rem))' }}
-      >
-        <span className="text-sm font-mono font-semibold leading-none select-none">?</span>
-      </button>
+      {/* Keyboard shortcuts help button — bottom-right FAB.
+          Hidden while a file preview is open: it's `position: fixed`
+          (viewport-relative, z-40) so it floats ABOVE the preview overlay
+          (z-30) regardless of DOM nesting — inside the task-1563 editor,
+          whose status bar spans the full width with no right rail to push
+          it clear, this opaque circle visually painted over the status
+          bar's rightmost text ("saved as version N · HH:MM" truncated to
+          "versi…", task 1563 PR #103 review). The preview is already a
+          full-screen surface with its own back control, so the global
+          shortcuts FAB has nothing useful to float over here anyway. */}
+      {!previewFile && (
+        <button
+          type="button"
+          aria-label="Keyboard shortcuts"
+          title="Keyboard shortcuts (?)"
+          onClick={() => setShowShortcuts((v) => !v)}
+          className="hidden sm:flex fixed right-5 z-40 items-center justify-center w-8 h-8 rounded-full bg-paper border border-line-2 shadow-2 text-ink-3 hover:text-ink hover:border-line hover:shadow-3 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+          style={{ bottom: 'max(1.25rem, env(safe-area-inset-bottom, 1.25rem))' }}
+        >
+          <span className="text-sm font-mono font-semibold leading-none select-none">?</span>
+        </button>
+      )}
 
       {/* Shortcuts cheatsheet — also opens on '?' key via GlobalShortcuts in app.tsx */}
       <ShortcutsCheatsheet open={showShortcuts} onClose={() => setShowShortcuts(false)} />

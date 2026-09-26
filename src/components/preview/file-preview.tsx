@@ -21,7 +21,7 @@ import { Icon } from '@beebeeb/shared'
 import { useKeys } from '../../lib/key-context'
 import { decryptFileMetadata } from '../../lib/crypto'
 import { checkEditability, editabilityNotice, type EditabilityResult } from '../../lib/text-editability'
-import { FileEditor } from '../editor/file-editor'
+import { FileEditor, type FileEditorHandle } from '../editor/file-editor'
 import { UnsavedChangesDialog } from '../editor/unsaved-changes-dialog'
 
 interface FilePreviewProps {
@@ -374,6 +374,17 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
       setDirty(false)
       setEditability(null)
       setDecodedText(null)
+      // Reset the save-conflict baseline to the NEW file's own version
+      // immediately (PR #103 review thread) — the version-list-fetch effect
+      // below only corrects it when the destination file has > 1 version
+      // (it early-returns to `setVersions(null)` for a version-1 file
+      // without touching this number), so navigating from a v5 file to a
+      // v1 file left `currentVersionNumber` stuck at 5. A save opened on
+      // that v1 file then compared a racing v2 against baseline 5 — no
+      // conflict shown, silent overwrite. Reproduced live: see
+      // e2e/1563-text-editor.spec.ts "prev/next resets the save-conflict
+      // baseline".
+      setCurrentVersionNumber(file.version_number ?? 1)
       prevFileIdRef.current = file.id
     }
   }, [file.id])
@@ -384,6 +395,14 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   const [editability, setEditability] = useState<EditabilityResult | null>(null)
   const [decodedText, setDecodedText] = useState<string | null>(null)
   const [unsavedGuard, setUnsavedGuard] = useState<'close' | 'exit-edit' | null>(null)
+  const editorRef = useRef<FileEditorHandle>(null)
+  // The DOM node PreviewChrome's merged top bar renders while editing — the
+  // editor's own Split preview / Wrap / Save controls portal into it (PR
+  // #103 review: "double header" — see preview-chrome.tsx `onToolbarSlotReady`
+  // and file-editor.tsx's `toolbarSlotEl`/`createPortal`). State (not a bare
+  // ref) because the portal target needs a re-render once the ref callback
+  // actually fires with the mounted node.
+  const [toolbarSlot, setToolbarSlot] = useState<HTMLDivElement | null>(null)
 
   // Version state — only populated for files with > 1 version.
   const [versions, setVersions] = useState<FileVersion[] | null>(null)
@@ -664,6 +683,14 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
 
   function handleGuardDiscard() {
     const action = unsavedGuard
+    // Cancel whatever save/conflict-resolution upload FileEditor might have
+    // in flight BEFORE it unmounts (both branches below unmount it — 'close'
+    // tears down the whole preview, 'exit-edit' flips back to read mode).
+    // Without this, "Discard changes" only cleared React state; a save
+    // already in progress kept running in the background and could still
+    // land as a new version moments after the dialog said it would be
+    // discarded (PR #103 review thread).
+    editorRef.current?.abortSave()
     setUnsavedGuard(null)
     setDirty(false)
     if (action === 'close') {
@@ -833,14 +860,24 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
       filename={name}
       kind={effectiveMime ?? ''}
       size={sizeStr}
+      // The top bar's back control always closes the WHOLE preview, in
+      // either mode — unchanged from before the header merge. "Exit edit
+      // mode but stay on this file" is still its own separate control (the
+      // editor's own "Done", now portaled into this same row instead of a
+      // second row underneath it — PR #103 review: "double header" was
+      // about the DUPLICATE FILENAME/ROW, not about collapsing these two
+      // distinct actions into one).
       onClose={requestClose}
       decrypted={!!blob}
-      onDownload={blob ? handleDownload : undefined}
+      onDownload={!editing && blob ? handleDownload : undefined}
       isStarred={file.is_starred}
       onZoomIn={isImage && blob ? handleZoomIn : undefined}
       onZoomOut={isImage && blob ? handleZoomOut : undefined}
       onRotate={isImage && blob ? handleRotate : undefined}
       onEdit={canEdit && !editing ? () => setEditing(true) : undefined}
+      editing={editing}
+      dirty={dirty}
+      onToolbarSlotReady={setToolbarSlot}
       belowTopBar={
         !editing && versions && versions.length > 1 ? (
           <VersionScrubber
@@ -912,6 +949,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
       {editing && blob && decodedText !== null && (
         <div className="absolute inset-0 p-3" data-testid="editor-container">
           <FileEditor
+            ref={editorRef}
             file={file}
             decryptedName={name}
             initialText={decodedText}
@@ -922,6 +960,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
             onDirtyChange={setDirty}
             onSaved={handleEditorSaved}
             onSiblingCreated={handleEditorSiblingCreated}
+            toolbarSlotEl={toolbarSlot}
             onRequestExitEdit={requestExitEdit}
           />
         </div>

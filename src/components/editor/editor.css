@@ -30,6 +30,18 @@
   --ed-comment: #9a9285;
   --ed-property: #4a443b;
   --ed-punctuation: #7c7466;
+  /* Bracket-pair colourisation cycle — `.mock` --b1/--b2/--b3 */
+  --ed-bracket-1: #7446d1;
+  --ed-bracket-2: #0e806e;
+  --ed-bracket-3: #2e5cc0;
+  /* Inline-code / fenced-code background pill — `.mc` background */
+  --ed-inline-code-bg: color-mix(in oklab, var(--color-ink) 6%, transparent);
+  /* Indentation guide line — subtle, barely-there per design's `.guide` */
+  --ed-indent-guide: color-mix(in oklab, var(--color-ink) 9%, transparent);
+  --ed-indent-guide-active: color-mix(in oklab, var(--color-ink) 22%, transparent);
+  /* Minimap */
+  --ed-minimap-bg: var(--color-paper-2);
+  --ed-minimap-viewport: color-mix(in oklab, var(--color-ink) 7%, transparent);
 }
 
 .dark .bb-editor {
@@ -42,6 +54,9 @@
   --ed-comment: #6e6a62;
   --ed-property: #dcd2c2;
   --ed-punctuation: #a9a397;
+  --ed-bracket-1: #b89dff;
+  --ed-bracket-2: #6fd1be;
+  --ed-bracket-3: #93b6ff;
 }
 
 .bb-editor {
@@ -61,6 +76,22 @@
 
 .bb-editor .cm-editor.cm-focused {
   outline: none;
+}
+
+/* CodeMirror's OWN base theme (@codemirror/view) sets `font-family:
+   monospace` directly on `.cm-scroller` (its `.baseThemeID .cm-scroller`
+   rule, 2 class selectors). A directly-declared property on an element
+   always wins over one merely INHERITED from an ancestor — so `.cm-editor`'s
+   font-family above (set on the ANCESTOR) never reached the actual text,
+   which rendered in the browser's generic fallback monospace (looks like
+   Courier), not JetBrains Mono, regardless of stylesheet insertion order
+   (task 1563 PR #103 review, evidence screenshots 02/05). Re-declaring it
+   here, one selector level deeper (3 classes — always beats the base
+   theme's 2-class selector on specificity, no !important / order race
+   needed), on both `.cm-scroller` AND `.cm-content` fixes it for good. */
+.bb-editor .cm-editor .cm-scroller,
+.bb-editor .cm-editor .cm-content {
+  font-family: var(--font-mono, 'JetBrains Mono', ui-monospace, monospace);
 }
 
 .bb-editor .cm-scroller {
@@ -183,3 +214,18 @@
 .bb-editor .tok-link { color: var(--color-amber-deep); text-decoration: underline; }
 .bb-editor .tok-emphasis { font-style: italic; }
 .bb-editor .tok-strong { font-weight: 700; }
+
+/* Bracket-pair colourisation (bracket-colors.ts) — a matched pair always
+   shares one of 3 cycling colours by nesting depth. */
+.bb-editor .cm-bracket-1 { color: var(--ed-bracket-1); }
+.bb-editor .cm-bracket-2 { color: var(--ed-bracket-2); }
+.bb-editor .cm-bracket-3 { color: var(--ed-bracket-3); }
+
+/* Minimap (@replit/codemirror-minimap, lazy-loaded) */
+.bb-editor .cm-minimap-gutter {
+  background: var(--ed-minimap-bg);
+  border-left: 1px solid var(--ed-line);
+}
+.bb-editor .cm-minimap-overlay-container {
+  background: var(--ed-minimap-viewport);
+}

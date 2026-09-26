@@ -65,3 +65,61 @@ export function diffLines(a: string, b: string): DiffLine[] | null {
 export function hasChanges(diff: DiffLine[]): boolean {
   return diff.some((l) => l.type !== 'same')
 }
+
+export type SideCellType = 'same' | 'del' | 'add' | 'empty'
+
+export interface SideCell {
+  type: SideCellType
+  text: string
+  /** 1-based line number on THIS side, or undefined for an 'empty' filler
+   *  cell (a row that exists only to align the OTHER side's add/del line). */
+  lineNo?: number
+}
+
+export interface SideBySideRow {
+  left: SideCell
+  right: SideCell
+}
+
+/**
+ * Converts a unified diff (line-diff's own `diffLines` output: a flat
+ * same/add/del sequence) into a SIDE-BY-SIDE row layout — left = the
+ * earlier/"theirs" text, right = the later/"ours" text — matching the
+ * conflict dialog's design (design/editor-1563.html screen 04: two columns,
+ * each with its own line numbers and add/remove markers, task 1563 PR #103
+ * review — the shipped dialog was unified, not side-by-side).
+ *
+ * A 'same' line becomes one row with matching content on both sides. A
+ * 'del' line (only in the LEFT/earlier text) becomes a row with content on
+ * the left and an 'empty' filler on the right, so the two columns stay
+ * vertically aligned row-for-row — the same convention GitHub/GitLab's split
+ * diff view uses for a plain line-level diff (no move detection).
+ */
+export function toSideBySideRows(diff: DiffLine[]): SideBySideRow[] {
+  const rows: SideBySideRow[] = []
+  let leftLine = 0
+  let rightLine = 0
+  for (const line of diff) {
+    if (line.type === 'same') {
+      leftLine++
+      rightLine++
+      rows.push({
+        left: { type: 'same', text: line.text, lineNo: leftLine },
+        right: { type: 'same', text: line.text, lineNo: rightLine },
+      })
+    } else if (line.type === 'del') {
+      leftLine++
+      rows.push({
+        left: { type: 'del', text: line.text, lineNo: leftLine },
+        right: { type: 'empty', text: '' },
+      })
+    } else {
+      rightLine++
+      rows.push({
+        left: { type: 'empty', text: '' },
+        right: { type: 'add', text: line.text, lineNo: rightLine },
+      })
+    }
+  }
+  return rows
+}

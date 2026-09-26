@@ -6,11 +6,15 @@
  * React render — recreating it would drop undo history and cursor position
  * on every keystroke's parent re-render.
  *
- * Wired in: line numbers, fold gutter, bracket matching + auto-closing,
+ * Wired in: line numbers, fold gutter, bracket matching + auto-closing +
+ * colourisation (bracket-colors.ts), indentation guides
+ * (@replit/codemirror-indentation-markers), selection-match highlighting,
  * search/replace panel (⌘F / ⌘⌥F), undo/redo, auto-indent, soft-wrap
  * (toggle), the app's ⌘S save binding (preventDefault so the browser's own
  * "Save page" dialog never fires), and the brand theme (codemirror-theme.ts).
- * The language extension loads lazily per file type (editor-langs.ts).
+ * The language extension AND the minimap both load lazily (editor-langs.ts,
+ * minimap-extension.ts) — everything else here is small enough to ship in
+ * the main editor chunk.
  */
 
 import { useEffect, useImperativeHandle, useRef, forwardRef } from 'react'
@@ -34,9 +38,12 @@ import {
   indentUnit,
 } from '@codemirror/language'
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
-import { search, searchKeymap } from '@codemirror/search'
+import { search, searchKeymap, highlightSelectionMatches } from '@codemirror/search'
+import { indentationMarkers } from '@replit/codemirror-indentation-markers'
 import { bbEditorExtensions } from './codemirror-theme'
 import { loadLanguageExtension } from './editor-langs'
+import { loadMinimapExtension } from './minimap-extension'
+import { bracketColorization } from './bracket-colors'
 import './editor.css'
 
 export interface CursorPosition {
@@ -75,6 +82,7 @@ export const CodeMirrorEditor = forwardRef<CodeMirrorEditorHandle, CodeMirrorEdi
     const languageCompartment = useRef(new Compartment())
     const wrapCompartment = useRef(new Compartment())
     const readOnlyCompartment = useRef(new Compartment())
+    const minimapCompartment = useRef(new Compartment())
     // Latest-callback refs so the keymap/updateListener (bound once at
     // EditorView creation) always call the current closure, not a stale one
     // captured at mount time.
@@ -127,12 +135,29 @@ export const CodeMirrorEditor = forwardRef<CodeMirrorEditorHandle, CodeMirrorEdi
         rectangularSelection(),
         bracketMatching(),
         closeBrackets(),
+        bracketColorization,
         indentOnInput(),
         indentUnit.of('  '),
+        // Both light/dark fields point at the SAME `--ed-indent-guide*` custom
+        // property (editor.css) rather than using this package's own
+        // light/dark switch (which keys off CodeMirror's `EditorView.darkTheme`
+        // extension — not set here, since theming already runs entirely on the
+        // app's own CSS variables toggled by `.dark` on <html>).
+        indentationMarkers({
+          highlightActiveBlock: true,
+          colors: {
+            light: 'var(--ed-indent-guide)',
+            dark: 'var(--ed-indent-guide)',
+            activeLight: 'var(--ed-indent-guide-active)',
+            activeDark: 'var(--ed-indent-guide-active)',
+          },
+        }),
+        highlightSelectionMatches(),
         search({ top: true }),
         wrapCompartment.current.of(wrap ? EditorView.lineWrapping : []),
         languageCompartment.current.of([]),
         readOnlyCompartment.current.of(EditorState.readOnly.of(readOnly)),
+        minimapCompartment.current.of([]),
         keymap.of([
           ...closeBracketsKeymap,
           ...defaultKeymap,
@@ -168,6 +193,22 @@ export const CodeMirrorEditor = forwardRef<CodeMirrorEditorHandle, CodeMirrorEdi
       // mount are applied via the effects below through Compartments, not by
       // recreating the view (which would wipe undo history).
       // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
+
+    // Lazily load + apply the minimap once (task 1563 design screen 02) —
+    // not per-language, so this doesn't belong in the language-reconfigure
+    // effect below, and not part of the main bundle (minimap-extension.ts).
+    useEffect(() => {
+      let cancelled = false
+      loadMinimapExtension().then((ext) => {
+        if (cancelled) return
+        const view = viewRef.current
+        if (!view) return
+        view.dispatch({ effects: minimapCompartment.current.reconfigure(ext) })
+      })
+      return () => {
+        cancelled = true
+      }
     }, [])
 
     // Load + apply the language extension whenever `language` changes.

@@ -8,10 +8,39 @@
  * drive) — Keep both / Save as a new version / Show differences.
  */
 
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { Icon, BBButton } from '@beebeeb/shared'
-import { diffLines, MAX_DIFF_LINES, type DiffLine } from '../../lib/line-diff'
+import {
+  diffLines,
+  toSideBySideRows,
+  MAX_DIFF_LINES,
+  type DiffLine,
+  type SideCell,
+} from '../../lib/line-diff'
 import type { ConflictAction } from '../../lib/editor-conflict'
+
+/** One side of a side-by-side diff row: a line-numbered gutter + the text,
+ *  tinted green (add) / red (del), or a blank filler when the OTHER side has
+ *  a line this side doesn't. */
+function SideCellView({ cell, border }: { cell: SideCell; border: 'left' | 'right' }) {
+  const bg =
+    cell.type === 'add'
+      ? 'color-mix(in oklab, var(--color-green) 12%, transparent)'
+      : cell.type === 'del'
+        ? 'color-mix(in oklab, var(--color-red) 10%, transparent)'
+        : undefined
+  return (
+    <div
+      className={`grid grid-cols-[2.5em_1fr] ${border === 'left' ? 'border-r border-line' : ''}`}
+      style={{ backgroundColor: bg }}
+    >
+      <span className="select-none px-2 text-right text-ink-4">{cell.lineNo ?? ''}</span>
+      <span className="whitespace-pre-wrap break-all px-2 text-ink-2">
+        {cell.type === 'empty' ? '​' : cell.text || '​'}
+      </span>
+    </div>
+  )
+}
 
 interface ConflictDialogProps {
   /** The version number that raced this edit session's save. */
@@ -22,6 +51,12 @@ interface ConflictDialogProps {
   latestText: string | null
   /** This session's current (unsaved) editor text. */
   localText: string
+  /** True while a chosen resolution ('keep-both' / 'save-as-new-version') is
+   *  uploading. Disables every action button so a slow upload can't be
+   *  double-submitted (PR #103 review thread) — the real guard is
+   *  file-editor.tsx's own `saving` check in handleConflictAction; this is
+   *  the visible, immediate half of it. */
+  saving?: boolean
   onAction: (action: ConflictAction) => void
   onCancel: () => void
 }
@@ -31,6 +66,7 @@ export function ConflictDialog({
   openedVersionNumber,
   latestText,
   localText,
+  saving = false,
   onAction,
   onCancel,
 }: ConflictDialogProps) {
@@ -42,6 +78,7 @@ export function ConflictDialog({
 
   const diff: DiffLine[] | null = latestText !== null ? diffLines(latestText, localText) : null
   const changedLines = diff?.filter((l) => l.type !== 'same') ?? []
+  const sideBySideRows = diff !== null ? toSideBySideRows(diff) : []
 
   function handleShowDifferences() {
     setDifferencesShown(true)
@@ -57,7 +94,7 @@ export function ConflictDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="conflict-dialog-title"
-        className="flex w-full max-w-[640px] max-h-[80%] flex-col overflow-hidden rounded-lg border border-line bg-paper shadow-3"
+        className="flex w-full max-w-[880px] max-h-[80%] flex-col overflow-hidden rounded-lg border border-line bg-paper shadow-3"
         data-testid="editor-conflict-dialog"
       >
         <div className="flex items-start gap-3 border-b border-line p-4">
@@ -77,9 +114,11 @@ export function ConflictDialog({
 
         {differencesShown && (
           <>
-            <div className="flex items-center justify-between border-b border-line bg-paper-2 px-4 py-1.5 text-[11px] font-medium text-ink-3">
-              <span>Version {latestVersionNumber} · saved elsewhere</span>
-              <span>Your edit · this browser · not saved</span>
+            <div className="grid grid-cols-2 border-b border-line bg-paper-2 text-[11px] font-medium text-ink-3">
+              <span className="border-r border-line px-4 py-1.5">
+                Version {latestVersionNumber} · saved elsewhere
+              </span>
+              <span className="px-4 py-1.5">Your edit · this browser · not saved</span>
             </div>
 
             <div
@@ -102,30 +141,21 @@ export function ConflictDialog({
                   No line differences — the content is identical.
                 </div>
               ) : (
-                <table className="w-full border-collapse">
-                  <tbody>
-                    {diff.map((l, i) => (
-                      <tr
-                        key={i}
-                        style={{
-                          backgroundColor:
-                            l.type === 'add'
-                              ? 'color-mix(in oklab, var(--color-green) 12%, transparent)'
-                              : l.type === 'del'
-                                ? 'color-mix(in oklab, var(--color-red) 10%, transparent)'
-                                : undefined,
-                        }}
-                      >
-                        <td className="w-4 select-none px-2 text-ink-4">
-                          {l.type === 'add' ? '+' : l.type === 'del' ? '−' : ' '}
-                        </td>
-                        <td className="whitespace-pre-wrap break-all px-2 text-ink-2">
-                          {l.text || '​'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                // Side-by-side (design/editor-1563.html screen 04): left =
+                // the newer version saved elsewhere, right = this edit
+                // session's own unsaved text, each with its OWN line
+                // numbers — not a single unified +/- column (PR #103
+                // review). A row whose other side has no corresponding
+                // line (an add or a del) renders an empty filler cell there
+                // so both columns stay aligned row-for-row.
+                <div className="grid grid-cols-2" data-testid="editor-conflict-diff-split">
+                  {sideBySideRows.map((row, i) => (
+                    <Fragment key={i}>
+                      <SideCellView cell={row.left} border="left" />
+                      <SideCellView cell={row.right} border="right" />
+                    </Fragment>
+                  ))}
+                </div>
               )}
             </div>
           </>
@@ -147,18 +177,29 @@ export function ConflictDialog({
             Encrypted on this device before saving
           </span>
           <div className="ml-auto flex flex-wrap items-center gap-2">
+            {saving && (
+              <span
+                className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-line border-t-amber"
+                aria-hidden="true"
+              />
+            )}
             {!differencesShown && (
-              <BBButton size="sm" variant="ghost" onClick={handleShowDifferences}>
+              <BBButton size="sm" variant="ghost" onClick={handleShowDifferences} disabled={saving}>
                 Show differences
               </BBButton>
             )}
-            <BBButton size="sm" variant="ghost" onClick={onCancel}>
+            <BBButton size="sm" variant="ghost" onClick={onCancel} disabled={saving}>
               Cancel
             </BBButton>
-            <BBButton size="sm" onClick={() => onAction('keep-both')}>
+            <BBButton size="sm" onClick={() => onAction('keep-both')} disabled={saving}>
               Keep both
             </BBButton>
-            <BBButton size="sm" variant="amber" onClick={() => onAction('save-as-new-version')}>
+            <BBButton
+              size="sm"
+              variant="amber"
+              onClick={() => onAction('save-as-new-version')}
+              disabled={saving}
+            >
               Save as version {latestVersionNumber + 1}
             </BBButton>
           </div>
