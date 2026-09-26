@@ -48,9 +48,12 @@ test('trialing user switches to annual: no error toast, plan card shows Yearly',
   await expect(banner).toHaveCount(0)
   await page.screenshot({ path: 'test-results/flow4-trial-switch-annual.png', fullPage: true })
 
-  // And it sticks across a full reload (server row, not optimistic UI).
+  // And it sticks across a full reload (server row, not optimistic UI). The
+  // plan card renders the yearly price straight from GET /subscription, so
+  // assert that, not just the chip.
   await page.reload()
   await waitForCryptoReady(page)
-  await page.getByRole('button', { name: /Change plan|Choose a plan/i }).first().click()
-  await expect(page.getByText('Yearly', { exact: true }).first()).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByText(/EUR 109\.90 \/ year/).first()).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByText('Yearly', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('Save on your plan')).toHaveCount(0)
 })
