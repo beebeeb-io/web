@@ -26,6 +26,7 @@ import { FilePreview } from '../components/preview/file-preview'
 import { useFilePreview } from '../hooks/use-file-preview'
 import { useOnboarding } from '../lib/onboarding-context'
 import { getPreference, setPreference } from '../lib/api'
+import { applyKnownLargeThumbFlags, recordLargeThumbFlags } from '../lib/sync-thumb-flags'
 import { useDriveData } from '../lib/drive-data-context'
 import { useToast } from '../components/toast'
 import { useWsEvent } from '../lib/ws-context'
@@ -188,6 +189,14 @@ export function Drive() {
   // step completed in the brief window before that fetch resolves doesn't
   // wrongly persist `seen: true`.
   const tourSeenRef = useRef(false)
+  // Whether the mount effect's GET of `welcome_tour` has come back. Until it
+  // has, tourSeenRef/tourCompleted are DEFAULTS, not the user's real state:
+  // writing them would persist `seen:false` (reopening a dismissed board) and
+  // drop every earlier completed step. Completions that land in that window
+  // are parked in pendingTourStepsRef and merged into the real preference
+  // once it arrives (e2e classification of thumbnail-variant, 2026-09-25).
+  const tourPrefLoadedRef = useRef(false)
+  const pendingTourStepsRef = useRef<Set<string>>(new Set())
 
   // Mark a welcome-checklist step done from a REAL completion signal (files
   // actually queued, a step's own confirmed action) — never from a step
@@ -209,7 +218,11 @@ export function Drive() {
   // updater, and written once — StrictMode double-invokes updater
   // functions, which previously fired setPreference twice per call.
   const markTourStepDone = useCallback((id: string, opts?: { hideBoard?: boolean }) => {
-    if (!tourCompleted.has(id)) {
+    if (!tourPrefLoadedRef.current) {
+      // Real preference not read yet — never persist defaults over it.
+      pendingTourStepsRef.current.add(id)
+      setTourCompleted((prev) => (prev.has(id) ? prev : new Set(prev).add(id)))
+    } else if (!tourCompleted.has(id)) {
       const next = new Set(tourCompleted)
       next.add(id)
       setTourCompleted(next)
@@ -347,6 +360,16 @@ export function Drive() {
   const syncReadyRef = useRef(sync.ready)
   useEffect(() => { syncReadyRef.current = sync.ready }, [sync.ready])
 
+  // Sync nodes (snapshot) carry no has_large_thumbnail; GET /files does. Keep
+  // every value we have seen so a sync-sourced refresh cannot silently demote
+  // the preview to the medium thumbnail (see lib/sync-thumb-flags.ts).
+  const knownLargeThumbRef = useRef(new Map<string, boolean>())
+  const withKnownLargeThumbs = useCallback((next: DriveFile[]): DriveFile[] => {
+    const out = applyKnownLargeThumbFlags(next, knownLargeThumbRef.current)
+    recordLargeThumbFlags(knownLargeThumbRef.current, out)
+    return out
+  }, [])
+
   // Stable mapper — deps never change after mount.
   const syncNodeToDriveFile = useCallback((n: SyncNode): DriveFile => ({
     id: n.id,
@@ -371,10 +394,11 @@ export function Drive() {
   const refreshFromSync = useCallback(() => {
     if (!isUnlocked || !syncReadyRef.current) return
     const trashed = location.pathname === '/trash'
-    const nodes = sync
+    const syncNodes = sync
       .children(currentParentId ?? null)
       .filter((n) => Boolean(n.is_trashed) === trashed)
       .map(syncNodeToDriveFile)
+    const nodes = withKnownLargeThumbs(syncNodes)
     setFiles(nodes)
     setDriveOffline(false)
     if (!trashed) {
@@ -387,7 +411,7 @@ export function Drive() {
       void cacheFileList(currentParentId ?? null, nodes, names)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentParentId, location.pathname, isUnlocked, syncNodeToDriveFile, setDriveOffline])
+  }, [currentParentId, location.pathname, isUnlocked, syncNodeToDriveFile, withKnownLargeThumbs, setDriveOffline])
 
   // fetchFiles — triggered on folder navigation (currentParentId change).
   // When the sync engine is ready and the view is not trash, show the
@@ -400,10 +424,11 @@ export function Drive() {
 
     if (syncReadyRef.current && !trashed) {
       // Show sync snapshot immediately — drop the spinner right away.
-      const nodes = sync
+      const syncNodes = sync
         .children(currentParentId ?? null)
         .filter((n) => !n.is_trashed)
         .map(syncNodeToDriveFile)
+      const nodes = withKnownLargeThumbs(syncNodes)
       setFiles(nodes)
       setDriveOffline(false)
       setLoading(false)
@@ -414,7 +439,7 @@ export function Drive() {
     }
 
     try {
-      const data = await listAllFiles(currentParentId ?? undefined, { trashed })
+      const data = withKnownLargeThumbs(await listAllFiles(currentParentId ?? undefined, { trashed }))
       setFiles(data)
       setDriveOffline(false)
       setLoadError(null)
@@ -447,7 +472,7 @@ export function Drive() {
       // Treat stale entries as missing — task spec says > 7d entries become a
       // "couldn't load files" error rather than misleadingly old data.
       if (cached && !cached.stale) {
-        setFiles(cached.files)
+        setFiles(withKnownLargeThumbs(cached.files))
         setDriveOffline(true)
         setLoadError(null)
         if (Object.keys(cached.decryptedNames).length) {
@@ -469,7 +494,7 @@ export function Drive() {
   // loop: listing sync.ready as a dep would recreate fetchFiles on every sync
   // state transition and re-trigger this effect, hammering the API.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentParentId, location.pathname, isUnlocked, syncNodeToDriveFile, setDriveOffline])
+  }, [currentParentId, location.pathname, isUnlocked, syncNodeToDriveFile, withKnownLargeThumbs, setDriveOffline])
 
   useEffect(() => {
     fetchFiles()
@@ -709,12 +734,26 @@ export function Drive() {
   useEffect(() => {
     getPreference<{ seen?: boolean; completed?: string[] }>('welcome_tour')
       .then((pref) => {
-        if (pref?.completed?.length) setTourCompleted(new Set(pref.completed))
         // Mirror the real persisted value so markTourStepDone writes it
         // back unchanged instead of clobbering it (task 1527 fix-round).
         tourSeenRef.current = !!pref?.seen
+        const merged = new Set(pref?.completed ?? [])
+        const pending = pendingTourStepsRef.current
+        const hasNew = [...pending].some((id) => !merged.has(id))
+        pending.forEach((id) => merged.add(id))
+        pending.clear()
+        tourPrefLoadedRef.current = true
+        setTourCompleted(merged)
+        if (hasNew) {
+          setPreference('welcome_tour', {
+            seen: tourSeenRef.current,
+            completed: [...merged],
+          }).catch(() => {})
+        }
         if (!pref?.seen) setTourOpen(true)
       })
+      // On a failed read we never learn the real state, so we never write
+      // it either: pending completions stay local to this mount.
       .catch(() => {})
   }, [])
 
