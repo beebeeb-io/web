@@ -20,6 +20,9 @@ import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useKeys } from '../../lib/key-context'
 import { decryptFileMetadata } from '../../lib/crypto'
+import { checkEditability, editabilityNotice, type EditabilityResult } from '../../lib/text-editability'
+import { FileEditor } from '../editor/file-editor'
+import { UnsavedChangesDialog } from '../editor/unsaved-changes-dialog'
 
 interface FilePreviewProps {
   file: DriveFile
@@ -311,6 +314,36 @@ function pickRenderer(
   return null
 }
 
+/**
+ * Decides whether a file is a candidate for the task-1563 editor at all
+ * (markdown, a recognized code language, or plain text) and what
+ * CodeMirror language id / markdown-ness applies. This runs BEFORE the
+ * byte-level editability gate (checkEditability) — a candidate can still
+ * end up read-only if it's over 2 MB, binary, or not valid UTF-8.
+ */
+interface EditableKind {
+  isMarkdown: boolean
+  language: string | undefined
+}
+
+function resolveEditableKind(
+  mimeType: string | null | undefined,
+  filename: string,
+): EditableKind | null {
+  const ext = getExtension(filename)
+  if (mimeType === 'text/markdown' || ext === 'md' || ext === 'mdx') {
+    return { isMarkdown: true, language: 'markdown' }
+  }
+  const lang = (mimeType ? CODE_MIME_TYPES[mimeType] : undefined) ?? EXT_LANGUAGE[ext]
+  if (lang) {
+    return { isMarkdown: false, language: lang }
+  }
+  if ((mimeType ? TEXT_MIME_TYPES.has(mimeType) : false) || TEXT_EXTENSIONS.has(ext)) {
+    return { isMarkdown: false, language: undefined }
+  }
+  return null
+}
+
 export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, onVersionRestored, onPrev, onNext, hasPrev, hasNext }: FilePreviewProps) {
   const { getFileKeyForFile, isUnlocked } = useKeys()
   const [blob, setBlob] = useState<Blob | null>(null)
@@ -333,12 +366,45 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     if (prevFileIdRef.current !== file.id) {
       setZoom(1)
       setRotation(0)
+      // Navigating to a different file (prev/next) always leaves edit mode —
+      // there is no cross-file unsaved draft to guard here since a plain
+      // navigation only happens when nothing was dirty (the close/nav guard
+      // below blocks it otherwise).
+      setEditing(false)
+      setDirty(false)
+      setEditability(null)
+      setDecodedText(null)
       prevFileIdRef.current = file.id
     }
   }, [file.id])
 
+  // ── Text/markdown/code editor (task 1563) ────────────────────────────────
+  const [editing, setEditing] = useState(false)
+  const [dirty, setDirty] = useState(false)
+  const [editability, setEditability] = useState<EditabilityResult | null>(null)
+  const [decodedText, setDecodedText] = useState<string | null>(null)
+  const [unsavedGuard, setUnsavedGuard] = useState<'close' | 'exit-edit' | null>(null)
+
   // Version state — only populated for files with > 1 version.
   const [versions, setVersions] = useState<FileVersion[] | null>(null)
+  // Mirrors `versions` for the content-loading effect below (task 1563 bug
+  // fix). That effect reads `versions` ONLY in its historical-version
+  // branch (selectedVersionId !== null) — it used to also list `versions`
+  // in its dependency array, so ANY setVersions() call (e.g. after a
+  // task-1563 save refreshes the version list) re-ran the WHOLE effect even
+  // while viewing the live version, re-fetching + re-decrypting the file
+  // from the network using the now-STALE `file.size_bytes` prop (the parent
+  // hasn't re-rendered with fresh metadata yet) against the server's
+  // ALREADY-UPDATED ciphertext — a GCM tag mismatch ("decryption failed:
+  // ciphertext is invalid or key is wrong"), reproduced live via the
+  // task-1563 e2e save test. Reading the historical branch's lookup through
+  // a ref (kept current, but NOT a dependency) fixes the live-view case
+  // without changing behavior for the historical-version branch, which
+  // still sees the latest array.
+  const versionsRef = useRef<FileVersion[] | null>(null)
+  useEffect(() => {
+    versionsRef.current = versions
+  }, [versions])
   const [currentVersionNumber, setCurrentVersionNumber] = useState<number>(file.version_number ?? 1)
   // null = viewing the live current version; otherwise a historical version id.
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null)
@@ -472,7 +538,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
           )
           plaintext = res.plaintext
         } else {
-          const v = versions?.find((x) => x.id === selectedVersionId)
+          const v = versionsRef.current?.find((x) => x.id === selectedVersionId)
           if (!v) throw new Error('Version not found')
           setVersionLoading(true)
           plaintext = await decryptVersionToBlob(
@@ -526,7 +592,8 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     return () => {
       cancelled = true
     }
-  }, [file.id, file.name_encrypted, file.mime_type, file.chunk_count, file.size_bytes, isUnlocked, getFileKeyForFile, file, selectedVersionId, versions, effectiveMime, name])
+    // `versions` is intentionally NOT a dependency — see versionsRef above.
+  }, [file.id, file.name_encrypted, file.mime_type, file.chunk_count, file.size_bytes, isUnlocked, getFileKeyForFile, file, selectedVersionId, effectiveMime, name])
 
   const handleRestore = useCallback(async () => {
     if (selectedVersionId === null) return
@@ -543,6 +610,101 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
       setError('Restore failed. The version may have been deleted.')
     }
   }, [file.id, selectedVersionId, onVersionRestored])
+
+  // ── Text/markdown/code editor (task 1563) ─────────────────────────────────
+  // Editing is only offered for the LIVE version — editing a historical
+  // version directly isn't supported (restore it first, then edit).
+  const editKind = selectedVersionId === null ? resolveEditableKind(effectiveMime, name) : null
+
+  useEffect(() => {
+    let cancelled = false
+    if (!blob || !blobIsOriginal || !editKind) {
+      setEditability(null)
+      setDecodedText(null)
+      return
+    }
+    blob
+      .arrayBuffer()
+      .then((buf) => {
+        if (cancelled) return
+        const bytes = new Uint8Array(buf)
+        const result = checkEditability(bytes)
+        setEditability(result)
+        setDecodedText(result.editable ? new TextDecoder('utf-8').decode(bytes) : null)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setEditability(null)
+          setDecodedText(null)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blob, blobIsOriginal, editKind?.isMarkdown, editKind?.language])
+
+  const canEdit = !!editKind && editability?.editable === true
+
+  const requestExitEdit = useCallback(() => {
+    if (dirty) {
+      setUnsavedGuard('exit-edit')
+    } else {
+      setEditing(false)
+    }
+  }, [dirty])
+
+  const requestClose = useCallback(() => {
+    if (editing && dirty) {
+      setUnsavedGuard('close')
+    } else {
+      onClose()
+    }
+  }, [editing, dirty, onClose])
+
+  function handleGuardDiscard() {
+    const action = unsavedGuard
+    setUnsavedGuard(null)
+    setDirty(false)
+    if (action === 'close') {
+      setEditing(false)
+      onClose()
+    } else if (action === 'exit-edit') {
+      setEditing(false)
+    }
+  }
+
+  function handleGuardCancel() {
+    setUnsavedGuard(null)
+  }
+
+  /** A same-file save (new version) — refresh the read-mode blob + version
+   *  list in place so switching back to Read shows the saved content
+   *  without a reload, and Drive's own listing picks up the new version. */
+  function handleEditorSaved(updatedFile: DriveFile, savedText: string) {
+    setBlob(new Blob([savedText], { type: effectiveMime ?? 'text/plain' }))
+    setBlobIsOriginal(true)
+    setRenderKey((k) => k + 1)
+    setCurrentVersionNumber(updatedFile.version_number ?? currentVersionNumber + 1)
+    listVersions(file.id)
+      .then((res) => {
+        setVersions(res.versions)
+        setCurrentVersionNumber(res.current_version)
+      })
+      .catch(() => {})
+    onVersionRestored?.()
+  }
+
+  /** Keep Both created a sibling file — this file's own content is
+   *  untouched, so there's nothing to refresh here beyond Drive's listing.
+   *  Exits edit mode directly (not through requestExitEdit's dirty guard):
+   *  the edit that would have been "lost" was just saved successfully as
+   *  the sibling, so there's nothing left to confirm discarding. */
+  function handleEditorSiblingCreated(_newFile: DriveFile) {
+    setDirty(false)
+    setEditing(false)
+    onVersionRestored?.()
+  }
 
   const sizeStr = formatSize(file.size_bytes)
   const kindLabel = getKindLabel(effectiveMime, name)
@@ -623,11 +785,24 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     }
   }
 
-  // Keyboard navigation for prev/next (arrow keys)
+  // Keyboard navigation for prev/next (arrow keys) + ⌘E to enter the editor.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       // Don't intercept when typing in an input
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      // While editing, CodeMirror's own contenteditable surface owns the
+      // keyboard entirely — arrow keys move the cursor, not the file
+      // gallery, and Escape must NOT silently close a dirty editor (it
+      // used to reach the raw onClose() here, which had no unsaved-changes
+      // guard at all).
+      if (editing) return
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'e') {
+        if (canEdit) {
+          e.preventDefault()
+          setEditing(true)
+        }
+        return
+      }
       if (e.key === 'ArrowLeft' && onPrev && hasPrev) {
         e.preventDefault()
         onPrev()
@@ -635,27 +810,39 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
         e.preventDefault()
         onNext()
       } else if (e.key === 'Escape') {
-        onClose()
+        requestClose()
       }
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [onPrev, onNext, hasPrev, hasNext, onClose])
+  }, [onPrev, onNext, hasPrev, hasNext, requestClose, editing, canEdit])
+
+  // Read-only editor notice (design screen 06): shown whenever the file is
+  // an editor candidate (markdown/code/plain-text) but fails the byte-level
+  // editability gate — too large, binary, or not valid UTF-8. For
+  // 'too-large' the normal renderer still shows underneath (TextPreview's
+  // own 500-line cap already makes it a reasonable read-only peek); for
+  // 'binary'/'invalid-utf8' the renderer is suppressed entirely rather than
+  // showing garbled decoded bytes.
+  const showReadOnlyNotice = !!editKind && editability !== null && !editability.editable
+  const suppressRendererForNotice =
+    showReadOnlyNotice && editability!.reason !== 'too-large'
 
   return (
     <PreviewChrome
       filename={name}
       kind={effectiveMime ?? ''}
       size={sizeStr}
-      onClose={onClose}
+      onClose={requestClose}
       decrypted={!!blob}
       onDownload={blob ? handleDownload : undefined}
       isStarred={file.is_starred}
       onZoomIn={isImage && blob ? handleZoomIn : undefined}
       onZoomOut={isImage && blob ? handleZoomOut : undefined}
       onRotate={isImage && blob ? handleRotate : undefined}
+      onEdit={canEdit && !editing ? () => setEditing(true) : undefined}
       belowTopBar={
-        versions && versions.length > 1 ? (
+        !editing && versions && versions.length > 1 ? (
           <VersionScrubber
             versions={versions}
             currentVersionNumber={currentVersionNumber}
@@ -667,21 +854,23 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
         ) : undefined
       }
       rightRail={
-        <InfoRail
-          filename={name}
-          kind={kindLabel}
-          size={sizeStr}
-          items={[
-            ['Modified', new Date(file.updated_at).toLocaleDateString()],
-          ]}
-          cipher={CONTENT_CIPHER_LABEL}
-          chunkCount={
-            selectedVersionId === null
-              ? file.chunk_count
-              : versions?.find((v) => v.id === selectedVersionId)?.chunk_count
-          }
-          tagsVerified={!!blob && blobIsOriginal && !error}
-        />
+        editing ? undefined : (
+          <InfoRail
+            filename={name}
+            kind={kindLabel}
+            size={sizeStr}
+            items={[
+              ['Modified', new Date(file.updated_at).toLocaleDateString()],
+            ]}
+            cipher={CONTENT_CIPHER_LABEL}
+            chunkCount={
+              selectedVersionId === null
+                ? file.chunk_count
+                : versions?.find((v) => v.id === selectedVersionId)?.chunk_count
+            }
+            tagsVerified={!!blob && blobIsOriginal && !error}
+          />
+        )
       }
     >
       {/* Loading state */}
@@ -697,7 +886,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
         <div className="flex flex-col items-center gap-3 text-center">
           <Icon name="shield" size={32} className="text-red" />
           <p className="text-sm font-medium text-ink">{error}</p>
-          <BBButton variant="default" size="sm" onClick={onClose}>
+          <BBButton variant="default" size="sm" onClick={requestClose}>
             Close
           </BBButton>
         </div>
@@ -717,12 +906,56 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
         </div>
       )}
 
+      {/* Editor (task 1563) — replaces the read-mode renderer entirely
+          while active. Fills the canvas area itself (PreviewChrome's canvas
+          centers its children, which the editor doesn't want). */}
+      {editing && blob && decodedText !== null && (
+        <div className="absolute inset-0 p-3" data-testid="editor-container">
+          <FileEditor
+            file={file}
+            decryptedName={name}
+            initialText={decodedText}
+            mimeType={effectiveMime}
+            isMarkdown={editKind?.isMarkdown ?? false}
+            language={editKind?.language}
+            openedVersionNumber={currentVersionNumber}
+            onDirtyChange={setDirty}
+            onSaved={handleEditorSaved}
+            onSiblingCreated={handleEditorSiblingCreated}
+            onRequestExitEdit={requestExitEdit}
+          />
+        </div>
+      )}
+
+      {/* Read-only editor notice (design screen 06) — shown for a
+          markdown/code/text file that fails the editability gate. */}
+      {!editing && showReadOnlyNotice && editability && (
+        <div
+          className="flex w-full max-w-[520px] flex-col items-center gap-3 rounded-md border border-line bg-paper p-6 text-center shadow-1"
+          data-testid="editor-readonly-notice"
+        >
+          <Icon name={editability.reason === 'binary' ? 'file' : 'shield'} size={26} className="text-ink-3" />
+          <p className="text-sm font-semibold text-ink">{editabilityNotice(editability.reason).title}</p>
+          <p className="text-[12.5px] leading-relaxed text-ink-3">
+            {editabilityNotice(editability.reason).body}
+          </p>
+          <BBButton variant="amber" size="sm" onClick={handleDownload}>
+            <Icon name="download" size={13} className="mr-1.5" />
+            Download
+          </BBButton>
+        </div>
+      )}
+
       {/* Actual preview — keyed on renderKey so each blob swap (initial
           load, version switch) triggers a fresh fade-in animation. */}
-      {renderer && (
+      {!editing && renderer && !suppressRendererForNotice && (
         <div key={renderKey} className="decrypt-fade-in flex h-full w-full items-center justify-center">
           {renderer}
         </div>
+      )}
+
+      {unsavedGuard && (
+        <UnsavedChangesDialog onDiscard={handleGuardDiscard} onCancel={handleGuardCancel} />
       )}
     </PreviewChrome>
   )

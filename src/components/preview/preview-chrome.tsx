@@ -21,6 +21,9 @@ interface PreviewChromeProps {
   onZoomIn?: () => void
   onZoomOut?: () => void
   onRotate?: () => void
+  /** Text/markdown/code editor entry point (task 1563). Only passed when the
+   *  file is editable and not already in edit mode — see file-preview.tsx. */
+  onEdit?: () => void
 }
 
 export function PreviewChrome({
@@ -39,6 +42,7 @@ export function PreviewChrome({
   onZoomIn,
   onZoomOut,
   onRotate,
+  onEdit,
 }: PreviewChromeProps) {
   const kindIcon = kind.startsWith('image') ? 'file' : 'file' as const
 
@@ -50,6 +54,8 @@ export function PreviewChrome({
         <button
           type="button"
           onClick={onClose}
+          aria-label="Close preview"
+          data-testid="preview-close-button"
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-paper-2 text-ink transition-colors hover:bg-paper-3"
         >
           <Icon name="chevron-right" size={13} className="rotate-180" />
@@ -122,6 +128,20 @@ export function PreviewChrome({
               </svg>
             </button>
           )}
+          {onEdit && (
+            <button
+              type="button"
+              onClick={onEdit}
+              aria-label="Edit"
+              aria-keyshortcuts="Meta+E"
+              data-testid="preview-edit-button"
+              className="flex h-7 items-center gap-1.5 rounded-md bg-amber px-2.5 text-[12px] font-medium text-[oklch(0.22_0.01_70)] transition-colors hover:brightness-95"
+            >
+              <Icon name="edit" size={12} />
+              Edit
+              <span className="font-mono text-[10px] opacity-70">⌘E</span>
+            </button>
+          )}
           {onShare && (
             <button
               type="button"
@@ -177,8 +197,19 @@ export function PreviewChrome({
       </div>
 
       {/* Mobile action bar — shown only on small screens, below the image */}
-      {(onDownload || onShare || onStar) && (
+      {(onDownload || onShare || onStar || onEdit) && (
         <div className="flex shrink-0 items-center justify-around border-t border-line bg-paper px-4 py-2.5 sm:hidden">
+          {onEdit && (
+            <button
+              type="button"
+              onClick={onEdit}
+              className="flex flex-col items-center gap-1 text-amber-deep active:text-ink"
+              aria-label="Edit"
+            >
+              <Icon name="edit" size={20} />
+              <span className="text-[10px]">Edit</span>
+            </button>
+          )}
           {onShare && (
             <button
               type="button"
