@@ -1,4 +1,5 @@
 import { collectPaged } from './paginate'
+import { buildUploadInitV2Body, type UploadInitMetadata } from './upload-init-body'
 import {
   opaqueLoginStart as wasmOpaqueLoginStart,
   opaqueLoginFinish as wasmOpaqueLoginFinish,
@@ -989,42 +990,11 @@ export type UploadInitResponse =
   | (UploadInitV1Response & { protocol: 'v1' })
   | (UploadInitV2Response & { protocol: 'v2' })
 
-export async function initUpload(metadata: {
-  file_id?: string
-  name_encrypted: string
-  size_bytes: number
-  chunk_count: number
-  parent_id?: string | null
-  /** True when the file is an image or video. Set by the client at upload time
-   *  because MIME types are encrypted — the server cannot infer media type. */
-  is_media?: boolean
-  /** True when this upload is the Keep Both result of a same-name conflict. */
-  conflict_created?: boolean
-}): Promise<UploadInitResponse> {
+export async function initUpload(metadata: UploadInitMetadata): Promise<UploadInitResponse> {
   try {
     const v2 = await request<UploadInitV2Response>('/api/v1/uploads/init', {
       method: 'POST',
-      body: JSON.stringify({
-        // file_id: REQUIRED for a replace/version upload — its absence here
-        // was a real bug (found via 1542's version-history e2e: re-uploading
-        // an existing name always minted a brand-new file server-side instead
-        // of reusing the existing one, so "auto-version" and the conflict
-        // dialog's "Replace" both silently created an orphaned duplicate
-        // rather than a v2). The server's InitUploadV2Request already has a
-        // `file_id: Option<Uuid>` field (uploads.rs) and honors it —
-        // `file_id = body.file_id.or(existing_file_id).unwrap_or_else(Uuid::new_v4)`
-        // — this endpoint just never sent the field the caller already
-        // supplies (see this function's own `metadata.file_id` param, unused
-        // until now). Omitted (undefined) for a genuinely new upload, which
-        // correctly falls through to a fresh server-generated id.
-        file_id: metadata.file_id,
-        file_name: metadata.name_encrypted,
-        file_size_bytes: metadata.size_bytes,
-        parent_id: metadata.parent_id,
-        profile: 'web',
-        is_media: metadata.is_media ?? false,
-        conflict_created: metadata.conflict_created ?? false,
-      }),
+      body: JSON.stringify(buildUploadInitV2Body(metadata)),
     })
     return { ...v2, protocol: 'v2' }
   } catch (err) {
