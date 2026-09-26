@@ -5,6 +5,7 @@ import { Icon } from '@beebeeb/shared'
 import { recoverFromPhrase, computeRecoveryCheck, toBase64, zeroize } from '../lib/crypto'
 import { recoveredKeyMatchesAccount } from '../lib/recovery-validation'
 import { useKeys } from '../lib/key-context'
+import { useAuth } from '../lib/auth-context'
 import { verifyRecoveryCheck } from '../lib/api'
 import { WORD_COUNT, distributeWords, shouldWrapWithPassword, type ProvisionAuthMethod } from '../lib/device-provision-logic'
 
@@ -41,6 +42,12 @@ interface DeviceProvisionProps {
 
 export function DeviceProvision({ password, authMethod, onProvisioned }: DeviceProvisionProps) {
   const { setMasterKey, setMasterKeyDirect } = useKeys()
+  // This screen only renders after OPAQUE or passkey auth already succeeded
+  // server-side (the session cookie is set before login.tsx ever routes
+  // here), so `user` is reliably the account whose recovery phrase is being
+  // validated just below — task 1531/1534 (P0) binds the recovered key to
+  // it explicitly rather than trusting whatever key was already resident.
+  const { user } = useAuth()
 
   const [words, setWords] = useState<string[]>(() => Array.from({ length: WORD_COUNT }, () => ''))
   const [error, setError] = useState('')
@@ -143,10 +150,11 @@ export function DeviceProvision({ password, authMethod, onProvisioned }: DeviceP
       // NOT from `password`'s mere truthiness — see its doc comment
       // (device-provision-logic.ts) for the stale-password lockout this
       // prevents (continuation item 3).
+      if (!user) throw new Error('No authenticated user — cannot bind the recovered key')
       if (shouldWrapWithPassword(authMethod, password)) {
-        await setMasterKey(masterKey, password)
+        await setMasterKey(masterKey, password, user.user_id)
       } else {
-        setMasterKeyDirect(masterKey)
+        setMasterKeyDirect(masterKey, user.user_id)
       }
       masterKey = null // ownership transferred — do not zero below
       onProvisioned()

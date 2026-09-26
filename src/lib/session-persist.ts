@@ -58,6 +58,10 @@ interface PersistEntry {
   nonce: Uint8Array
   /** Diagnostic only — expiry is keyed off `lastActivityAt`, not this. */
   createdAt: number
+  /** Task 1531/1534 (P0): the account this persisted key was stamped for —
+   *  see session-vault-cache.ts's identical field for the full rationale.
+   *  Not a secret (not covered by the AEAD); a plain ownership tag. */
+  userId?: string
   /** The sliding-window anchor: bumped by touchSession() on activity. */
   lastActivityAt: number
 }
@@ -305,7 +309,11 @@ export function initSessionExpiryWatcher(): void {
 
 // ─── Public API ───────────────────────────────────────
 
-export async function persistSession(masterKey: Uint8Array): Promise<void> {
+// Task 1531/1534 (P0) + task 1532: every persisted entry is both
+// account-bound (`userId`, threaded from the same auth response that
+// proved identity — never inferred) and TTL-governed by the sliding
+// inactivity window below. Neither guarantee is optional for the other.
+export async function persistSession(masterKey: Uint8Array, userId: string): Promise<void> {
   const ttl = effectiveTtlMs()
   if (ttl === 0) {
     // "Every refresh": never persist — and drop anything already sitting
@@ -349,7 +357,7 @@ export async function persistSession(masterKey: Uint8Array): Promise<void> {
   const now = Date.now()
   const db = await openDB()
   try {
-    await dbPut(db, { id: ENTRY_ID, wrapped, nonce, createdAt: now, lastActivityAt: now })
+    await dbPut(db, { id: ENTRY_ID, wrapped, nonce, createdAt: now, lastActivityAt: now, userId })
   } finally {
     db.close()
   }
@@ -370,7 +378,15 @@ export async function persistSession(masterKey: Uint8Array): Promise<void> {
   armExpiryTimer(ttl)
 }
 
-export async function restoreSession(): Promise<Uint8Array | null> {
+/** Returns the restored key alongside the account id (task 1531/1534) it
+ *  was persisted for. Returns null when no entry exists, TTL has lapsed
+ *  (sliding inactivity window, task 1532), decryption fails, or — task
+ *  1531/1534 P0 continuation, web PR #85 — the entry PREDATES account
+ *  binding (`userId` missing): an untagged entry can only be a stale
+ *  pre-1531/1534 write, so it is deleted on sight rather than handed to the
+ *  caller to load-then-maybe-lock (same rationale as
+ *  session-vault-cache.ts's `getVaultKey`). */
+export async function restoreSession(): Promise<{ key: Uint8Array; userId: string } | null> {
   const ttl = effectiveTtlMs()
   if (ttl === 0) return null
 
@@ -402,6 +418,12 @@ export async function restoreSession(): Promise<Uint8Array | null> {
     return null
   }
 
+  const userId = entry.userId
+  if (userId === undefined) {
+    await clearSession()
+    return null
+  }
+
   try {
     const key = await deriveKey(token)
     const pt = await crypto.subtle.decrypt(
@@ -410,7 +432,7 @@ export async function restoreSession(): Promise<Uint8Array | null> {
       entry.wrapped,
     )
     armExpiryTimer(ttl - elapsed)
-    return new Uint8Array(pt)
+    return { key: new Uint8Array(pt), userId }
   } catch {
     await clearSession()
     return null

@@ -20,6 +20,17 @@ interface VaultEntry {
   keyCheck: Uint8Array
   email?: string
   /**
+   * Task 1531/1534 (P0): the account this entry was wrapped for. Checked
+   * AFTER a successful password-decrypt + keyCheck, so it catches the case
+   * AES-GCM alone cannot: the SAME password reused across two different
+   * beebeeb accounts (plausible — humans reuse passwords) would otherwise
+   * let `unwrap(rightPasswordWrongAccount)` successfully decrypt the WRONG
+   * account's key. An entry written before this field existed reads back
+   * as `undefined`, which never matches any real account id — fail closed,
+   * not auto-trusted.
+   */
+  userId?: string
+  /**
    * Task 1529 continuation (web #73, Codex P2): set true on every entry
    * `wrapAndStore` writes (which, as of the 1529 fix, is ALWAYS a real
    * non-empty/non-whitespace secret — see the guard below). Lets
@@ -144,6 +155,7 @@ async function computeKeyCheck(masterKey: Uint8Array): Promise<Uint8Array> {
 export async function wrapAndStore(
   masterKey: Uint8Array,
   password: string,
+  userId: string,
 ): Promise<void> {
   // Task 1529 (P0): wrapAndStore('') derives an AES key from PBKDF2 of an
   // empty string — anyone with read access to this browser's IndexedDB
@@ -181,6 +193,7 @@ export async function wrapAndStore(
       salt,
       nonce,
       keyCheck,
+      userId,
       // This entry was just written by the fixed wrapAndStore above, which
       // guarantees `password` is real — never re-probe it as a possible
       // empty-password legacy vault.
@@ -192,10 +205,45 @@ export async function wrapAndStore(
 }
 
 /**
- * Load the wrapped key from IndexedDB, derive the wrapping key from the password,
- * and decrypt. Returns the master key, or null if the password is wrong or no vault exists.
+ * Result of a successful local unwrap (password/keyCheck, or passkey PRF/
+ * escrow AEAD, both already real local proofs). `untagged` is the signal the
+ * caller MUST act on before trusting this key any further (task 1531/1534
+ * P0 continuation, web PR #85, crypto-security-reviewer):
+ *
+ *  - `untagged: false` — the entry was already stamped for `expectedUserId`
+ *    (by a previous `tagVaultEntry`/`wrapAndStore` call). Safe to use
+ *    immediately.
+ *  - `untagged: true` — the entry PREDATES account binding (written before
+ *    task 1531/1534 shipped). The local proof (password+keyCheck, or PRF/
+ *    escrow AEAD) only shows this key unwraps SOME account's vault — NOT
+ *    specifically `expectedUserId`'s. Two different beebeeb accounts on the
+ *    same device, sharing a password, would otherwise let account B's local
+ *    login silently adopt account A's still-untagged key. The caller MUST
+ *    run a SERVER-SIDE proof (verifyRecoveryCheck against the authenticated
+ *    session) before trusting/caching/backfilling with this key, and call
+ *    `tagVaultEntry`/`tagPasskeyVaultEntry` ONLY once that proof passes —
+ *    vault.ts itself never self-heals an untagged entry any more (it used
+ *    to; that silent trust-on-password-alone was the vulnerability).
  */
-export async function unwrap(password: string): Promise<Uint8Array | null> {
+export interface VaultUnwrapResult {
+  key: Uint8Array
+  untagged: boolean
+}
+
+/**
+ * Load the wrapped key from IndexedDB, derive the wrapping key from the
+ * password, and decrypt. Returns the master key (wrapped in a
+ * {@link VaultUnwrapResult}), or null if the password is wrong, no vault
+ * exists, or (task 1531/1534, P0) the entry was wrapped for a DIFFERENT,
+ * ALREADY-TAGGED account than `expectedUserId` — this last check matters
+ * because AES-GCM alone only proves "this password unwrapped SOME key"; if
+ * the same human reuses one password across two different beebeeb accounts,
+ * a right-password-wrong-account unwrap would otherwise silently succeed.
+ * An entry written before the userId field existed comes back with
+ * `untagged: true` — see {@link VaultUnwrapResult}'s doc comment for what
+ * the caller must do with it. This function never writes to the entry.
+ */
+export async function unwrap(password: string, expectedUserId: string): Promise<VaultUnwrapResult | null> {
   const db = await openDB()
   let entry: VaultEntry | undefined
   try {
@@ -235,7 +283,37 @@ export async function unwrap(password: string): Promise<Uint8Array | null> {
     }
   }
 
-  return masterKey
+  if (entry.userId === undefined) {
+    // Pre-fix entry, never tagged. Local proof only — the caller must run
+    // the server-side check before trusting this (see the doc comment
+    // above). Deliberately does NOT self-heal/re-stamp here any more.
+    return { key: masterKey, untagged: true }
+  }
+  if (entry.userId !== expectedUserId) {
+    masterKey.fill(0)
+    return null
+  }
+
+  return { key: masterKey, untagged: false }
+}
+
+/**
+ * Stamp the 'master' password-vault entry with a NOW-VERIFIED account id
+ * (task 1531/1534 P0 continuation). Call this ONLY after a server-side proof
+ * (`verifyRecoveryCheck`) has confirmed the unwrapped key belongs to
+ * `userId` — never on password/keyCheck success alone; see `unwrap`'s
+ * `untagged` result. No-op if the entry has disappeared in the meantime
+ * (e.g. a concurrent logout cleared the vault).
+ */
+export async function tagVaultEntry(userId: string): Promise<void> {
+  const db = await openDB()
+  try {
+    const entry = await dbGet(db, 'master')
+    if (!entry) return
+    await dbPut(db, { ...entry, userId })
+  } finally {
+    db.close()
+  }
 }
 
 /** Check if IndexedDB has a wrapped key (password or passkey). */
@@ -301,9 +379,15 @@ export async function clearEmptyPasswordVault(): Promise<boolean> {
   if (!entry) return false
   if (entry.checked) return false
 
-  const key = await unwrap('')
-  if (key) {
-    key.fill(0)
+  // This probe only cares whether the EMPTY string unwraps the entry at
+  // all (task 1529) — not which account it claims to belong to, and the
+  // entry is deleted immediately below on a hit regardless. The userId
+  // argument is inert here: unwrap() only consults it for an entry that
+  // already carries a REAL (non-undefined) tag, and an empty-password
+  // legacy vault always predates that field.
+  const result = await unwrap('', '')
+  if (result) {
+    result.key.fill(0)
     const deleteDb = await openDB()
     try {
       await dbDelete(deleteDb, 'master')
@@ -335,7 +419,7 @@ async function importAesKey(raw: Uint8Array, usage: 'encrypt' | 'decrypt'): Prom
   return crypto.subtle.importKey('raw', raw.buffer as ArrayBuffer, { name: 'AES-GCM' }, false, [usage])
 }
 
-export async function wrapAndStoreWithPasskey(masterKey: Uint8Array, wrapKey: Uint8Array): Promise<void> {
+export async function wrapAndStoreWithPasskey(masterKey: Uint8Array, wrapKey: Uint8Array, userId: string): Promise<void> {
   const nonce = crypto.getRandomValues(new Uint8Array(NONCE_BYTES))
   const cryptoKey = await importAesKey(wrapKey, 'encrypt')
   const wrappedKey = await crypto.subtle.encrypt(
@@ -346,13 +430,20 @@ export async function wrapAndStoreWithPasskey(masterKey: Uint8Array, wrapKey: Ui
   const keyCheck = await computeKeyCheck(masterKey)
   const db = await openDB()
   try {
-    await dbPut(db, { id: PASSKEY_VAULT_ID, wrappedKey, salt: new Uint8Array(0), nonce, keyCheck })
+    await dbPut(db, { id: PASSKEY_VAULT_ID, wrappedKey, salt: new Uint8Array(0), nonce, keyCheck, userId })
   } finally {
     db.close()
   }
 }
 
-export async function unwrapWithPasskey(wrapKey: Uint8Array): Promise<Uint8Array | null> {
+/** `expectedUserId` — task 1531/1534 (P0), same rationale as `unwrap`'s: an
+ *  entry tagged for a DIFFERENT account is rejected; an untagged (pre-fix)
+ *  entry comes back as `{ key, untagged: true }` — the PRF/escrow wrap key
+ *  already proves the LOCAL unwrap, but not specifically `expectedUserId`.
+ *  The caller must run the same server-side proof `unwrap`'s doc comment
+ *  describes before trusting it, then call `tagPasskeyVaultEntry` — this
+ *  function no longer self-heals/re-stamps on its own. */
+export async function unwrapWithPasskey(wrapKey: Uint8Array, expectedUserId: string): Promise<VaultUnwrapResult | null> {
   const db = await openDB()
   let entry: VaultEntry | undefined
   try {
@@ -380,5 +471,30 @@ export async function unwrapWithPasskey(wrapKey: Uint8Array): Promise<Uint8Array
   for (let i = 0; i < check.length; i++) {
     if (check[i] !== entry.keyCheck[i]) { masterKey.fill(0); return null }
   }
-  return masterKey
+
+  if (entry.userId === undefined) {
+    return { key: masterKey, untagged: true }
+  }
+  if (entry.userId !== expectedUserId) {
+    masterKey.fill(0)
+    return null
+  }
+
+  return { key: masterKey, untagged: false }
+}
+
+/**
+ * Stamp the passkey ('master-passkey') vault entry with a NOW-VERIFIED
+ * account id — the passkey-vault sibling of `tagVaultEntry`. Same rule: call
+ * ONLY after a server-side proof has confirmed the key belongs to `userId`.
+ */
+export async function tagPasskeyVaultEntry(userId: string): Promise<void> {
+  const db = await openDB()
+  try {
+    const entry = await dbGet(db, PASSKEY_VAULT_ID)
+    if (!entry) return
+    await dbPut(db, { ...entry, userId })
+  } finally {
+    db.close()
+  }
 }

@@ -48,7 +48,7 @@ function evaluateStrength(pw: string): PasswordStrength {
 }
 
 export function ChangePasswordDialog({ open, onClose, onSuccess }: ChangePasswordDialogProps) {
-  const { getMasterKey, setMasterKey } = useKeys()
+  const { getMasterKey, setMasterKey, getResidentUserId } = useKeys()
   const [currentPw, setCurrentPw] = useState('')
   const [newPw, setNewPw] = useState('')
   const [confirmPw, setConfirmPw] = useState('')
@@ -150,8 +150,23 @@ export function ChangePasswordDialog({ open, onClose, onSuccess }: ChangePasswor
       //     the stale vault so the next sign-in re-provisions under the new
       //     password, and tell the user exactly what to do instead of leaving a
       //     vague error + a silent broken state.
+      //
+      //     Task 1531/1534 (P0 continuation, web PR #85, crypto-security-
+      //     reviewer P2): bind the re-wrap to `getResidentUserId()` — the
+      //     ALREADY-RESIDENT key's own proven tag — not a separately-read
+      //     `useAuth().user.user_id` snapshot. This whole handler spans
+      //     several real network round trips (breach check, two OPAQUE
+      //     step-ups, the password-change finish) between `getMasterKey()`
+      //     above and this re-wrap; a `user` snapshot captured at render time
+      //     could have drifted from the resident key's actual owner across
+      //     that window (e.g. another tab logging in as a different account
+      //     — see key-context.tsx's cross-tab login handler). The resident
+      //     tag cannot drift out from under itself: it IS what getMasterKey()
+      //     just verified this same key against.
       try {
-        await setMasterKey(masterKey, newPw)
+        const residentUserId = getResidentUserId()
+        if (!residentUserId) throw new Error('No authenticated user — cannot re-wrap the vault')
+        await setMasterKey(masterKey, newPw, residentUserId)
       } catch {
         await clearVault().catch(() => {})
         setError(
@@ -173,7 +188,7 @@ export function ChangePasswordDialog({ open, onClose, onSuccess }: ChangePasswor
     } finally {
       setLoading(false)
     }
-  }, [canSubmit, currentPw, newPw, getMasterKey, setMasterKey, onClose, onSuccess])
+  }, [canSubmit, currentPw, newPw, getMasterKey, setMasterKey, getResidentUserId, onClose, onSuccess])
 
   if (!open) return null
 
