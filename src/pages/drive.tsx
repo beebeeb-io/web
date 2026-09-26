@@ -26,6 +26,7 @@ import { FilePreview } from '../components/preview/file-preview'
 import { useFilePreview } from '../hooks/use-file-preview'
 import { useOnboarding } from '../lib/onboarding-context'
 import { getPreference, setPreference } from '../lib/api'
+import { applyKnownLargeThumbFlags, recordLargeThumbFlags } from '../lib/sync-thumb-flags'
 import { useDriveData } from '../lib/drive-data-context'
 import { useToast } from '../components/toast'
 import { useWsEvent } from '../lib/ws-context'
@@ -359,6 +360,16 @@ export function Drive() {
   const syncReadyRef = useRef(sync.ready)
   useEffect(() => { syncReadyRef.current = sync.ready }, [sync.ready])
 
+  // Sync nodes (snapshot) carry no has_large_thumbnail; GET /files does. Keep
+  // every value we have seen so a sync-sourced refresh cannot silently demote
+  // the preview to the medium thumbnail (see lib/sync-thumb-flags.ts).
+  const knownLargeThumbRef = useRef(new Map<string, boolean>())
+  const withKnownLargeThumbs = useCallback((next: DriveFile[]): DriveFile[] => {
+    const out = applyKnownLargeThumbFlags(next, knownLargeThumbRef.current)
+    recordLargeThumbFlags(knownLargeThumbRef.current, out)
+    return out
+  }, [])
+
   // Stable mapper — deps never change after mount.
   const syncNodeToDriveFile = useCallback((n: SyncNode): DriveFile => ({
     id: n.id,
@@ -383,10 +394,11 @@ export function Drive() {
   const refreshFromSync = useCallback(() => {
     if (!isUnlocked || !syncReadyRef.current) return
     const trashed = location.pathname === '/trash'
-    const nodes = sync
+    const syncNodes = sync
       .children(currentParentId ?? null)
       .filter((n) => Boolean(n.is_trashed) === trashed)
       .map(syncNodeToDriveFile)
+    const nodes = withKnownLargeThumbs(syncNodes)
     setFiles(nodes)
     setDriveOffline(false)
     if (!trashed) {
@@ -399,7 +411,7 @@ export function Drive() {
       void cacheFileList(currentParentId ?? null, nodes, names)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentParentId, location.pathname, isUnlocked, syncNodeToDriveFile, setDriveOffline])
+  }, [currentParentId, location.pathname, isUnlocked, syncNodeToDriveFile, withKnownLargeThumbs, setDriveOffline])
 
   // fetchFiles — triggered on folder navigation (currentParentId change).
   // When the sync engine is ready and the view is not trash, show the
@@ -412,10 +424,11 @@ export function Drive() {
 
     if (syncReadyRef.current && !trashed) {
       // Show sync snapshot immediately — drop the spinner right away.
-      const nodes = sync
+      const syncNodes = sync
         .children(currentParentId ?? null)
         .filter((n) => !n.is_trashed)
         .map(syncNodeToDriveFile)
+      const nodes = withKnownLargeThumbs(syncNodes)
       setFiles(nodes)
       setDriveOffline(false)
       setLoading(false)
@@ -426,7 +439,7 @@ export function Drive() {
     }
 
     try {
-      const data = await listAllFiles(currentParentId ?? undefined, { trashed })
+      const data = withKnownLargeThumbs(await listAllFiles(currentParentId ?? undefined, { trashed }))
       setFiles(data)
       setDriveOffline(false)
       setLoadError(null)
@@ -459,7 +472,7 @@ export function Drive() {
       // Treat stale entries as missing — task spec says > 7d entries become a
       // "couldn't load files" error rather than misleadingly old data.
       if (cached && !cached.stale) {
-        setFiles(cached.files)
+        setFiles(withKnownLargeThumbs(cached.files))
         setDriveOffline(true)
         setLoadError(null)
         if (Object.keys(cached.decryptedNames).length) {
@@ -481,7 +494,7 @@ export function Drive() {
   // loop: listing sync.ready as a dep would recreate fetchFiles on every sync
   // state transition and re-trigger this effect, hammering the API.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentParentId, location.pathname, isUnlocked, syncNodeToDriveFile, setDriveOffline])
+  }, [currentParentId, location.pathname, isUnlocked, syncNodeToDriveFile, withKnownLargeThumbs, setDriveOffline])
 
   useEffect(() => {
     fetchFiles()

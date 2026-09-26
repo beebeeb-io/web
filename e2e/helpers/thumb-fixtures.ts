@@ -69,7 +69,7 @@ export function writePdf(name: string): string {
   return file
 }
 
-function escapeRe(s: string) {
+export function escapeRe(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
