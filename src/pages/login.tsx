@@ -1,4 +1,4 @@
-import { type FormEvent, useState, useCallback } from 'react'
+import { type FormEvent, useState, useCallback, useRef } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { AuthShell } from '../components/auth-shell'
 import { BBButton } from '@beebeeb/shared'
@@ -19,6 +19,7 @@ import { sanitizeRedirect } from '../lib/safe-redirect'
 import { consumePendingExport, DATA_EXPORT_ROUTE } from '../lib/export-intent'
 import { accountDeletedMessage } from '../lib/user-friendly-error'
 import { consumeAccountDeletedNotice } from '../lib/account-deleted-notice'
+import { classifyTwoFactorFailure } from '../lib/two-factor-login'
 
 export function Login() {
   const navigate = useNavigate()
@@ -38,6 +39,11 @@ export function Login() {
 
   // 2FA state
   const [partialToken, setPartialToken] = useState<string | null>(null)
+  // When the partial token was issued and how many codes were sent against it.
+  // The server answers every 2FA rejection with the same 401 (no enumeration),
+  // so these are the only way to tell "timed out" / "too many" from "wrong code".
+  const twoFactorIssuedAt = useRef(0)
+  const twoFactorAttempts = useRef(0)
   // Stash the account's KSF version across the 2FA round-trip. handleSubmit
   // returns early (before unlock) when 2FA is required, so the v0 auto-upgrade
   // can't fire there — handle2faVerify reads this after it unlocks the vault.
@@ -127,6 +133,8 @@ export function Login() {
         // Carry ksfVersion to handle2faVerify so a v0 account still auto-upgrades
         // after it clears 2FA (the unlock + dispatch happen there, not here).
         setPendingKsfVersion(ksfVersion)
+        twoFactorIssuedAt.current = Date.now()
+        twoFactorAttempts.current = 0
         setPartialToken(loginResult.partial_token)
         setSubmitting(false)
         return
@@ -192,8 +200,36 @@ export function Login() {
 
   async function handle2faVerify(code: string) {
     if (!partialToken) return
+    twoFactorAttempts.current += 1
     try {
       await verify2fa(partialToken, code)
+    } catch (err) {
+      // TwoFactorPrompt renders what we THROW (and clears the field); the
+      // page-level `error` is not rendered on the 2FA step, so setting it
+      // here alone would swallow the failure — which is exactly the bug this
+      // replaced (a wrong code left the digits on screen with no message).
+      const deletedMsg = accountDeletedMessage(err)
+      if (deletedMsg) {
+        setPartialToken(null)
+        setError(deletedMsg)
+        return
+      }
+      const failure = classifyTwoFactorFailure(err, {
+        issuedAt: twoFactorIssuedAt.current,
+        attempts: twoFactorAttempts.current,
+      })
+      if (failure.kind === 'restart') {
+        // The challenge is spent — back to the password step, where `error`
+        // IS rendered. The password is cleared on purpose: the message asks
+        // for it again, and the old one only lived in memory for this step.
+        setPartialToken(null)
+        setPassword('')
+        setError(failure.message)
+        return
+      }
+      throw new Error(failure.message)
+    }
+    try {
       // Same reason as handleSubmit: server has set the fresh bb_session
       // cookie, drop any stale localStorage bearer that would shadow it.
       clearToken()
@@ -220,7 +256,11 @@ export function Login() {
       }
       navigateAfterLogin()
     } catch {
-      setError('Incorrect code or session expired. Please try again.')
+      // The code WAS accepted; what failed is the local unlock afterwards.
+      // Back to the password step (where `error` is rendered) rather than
+      // blaming the code.
+      setPartialToken(null)
+      setError('Could not unlock vault. Try logging in again.')
     }
   }
 

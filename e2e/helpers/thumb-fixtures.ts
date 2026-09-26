@@ -106,8 +106,20 @@ export async function uploadAndWait(page: Page, filePath: string): Promise<strin
         )
         .catch(() => null)
     : Promise.resolve(null)
+  // The drive row renders optimistically right after uploads/init — BEFORE the
+  // chunk PUTs and POST /uploads/{id}/complete. For a non-image nothing else
+  // below waits for the upload to finish, so the reload further down aborted
+  // the in-flight /complete and left the file pending: every later
+  // GET /files/{id}/download answered 409 Conflict (seen in the
+  // preview-crypto-rail trace: complete status -1, download 409). Wait for the
+  // server to accept /complete before touching the page.
+  const uploadCompleted = page.waitForResponse(
+    (r) => r.request().method() === 'POST' && /\/api\/v1\/uploads\/[^/]+\/complete$/.test(r.url()) && r.ok(),
+    { timeout: 30_000 },
+  )
   await page.locator('input[type="file"]').first().setInputFiles(filePath)
   await page.getByRole('row', { name: new RegExp(escapeRe(base)) }).first().waitFor({ timeout: 30_000 })
+  await uploadCompleted
   await largeThumbStored
   // Reload to a STEADY-STATE drive before opening a preview. Immediately after
   // upload the sync stream pushes a create op that re-renders the drive list and

@@ -36,6 +36,15 @@ PG_USER=beebeeb
 PG_PASS=beebeeb_dev
 DB_NAME="${E2E_DB_NAME:-beebeeb_web_e2e_3003}"
 BLOB_DIR="$(mktemp -d /tmp/bb-web-e2e-blobs-XXXXXX)"
+# Per-RUN log paths. These used to be the fixed /tmp/bb-web-e2e-{api,vite}.log,
+# shared by every concurrent shard/lane on this machine — so the "see
+# /tmp/bb-web-e2e-api.log" hint on a boot failure pointed at ANOTHER run's log.
+# Keyed on the API port (unique per concurrent run by construction: two runs on
+# one port cannot both bind) and kept OUTSIDE $BLOB_DIR so they survive teardown
+# for post-mortem reading. Override with E2E_LOG_DIR.
+LOG_DIR="${E2E_LOG_DIR:-/tmp}"
+API_LOG="$LOG_DIR/bb-web-e2e-api-$API_PORT.log"
+VITE_LOG="$LOG_DIR/bb-web-e2e-vite-$VITE_PORT.log"
 WORKERS="${E2E_WORKERS:-1}"
 REPEAT="${E2E_REPEAT:-1}"
 
@@ -192,6 +201,13 @@ SQL
   # specifically exercise pilot-key-registration.spec.ts's gate-ON recovery
   # path:
   #   BB_REQUIRE_PILOT_KEY=1 ./e2e/scripts/web-e2e.sh e2e/pilot-key-registration.spec.ts
+  # WEBAUTHN_RP_ORIGIN / WEBAUTHN_RP_ID: the server's build_webauthn()
+  # (routes/passkeys.rs) defaults the relying-party origin to
+  # http://localhost:5173. On any other E2E_VITE_PORT every passkey ceremony
+  # failed register-finish with webauthn-rs InvalidRPOrigin ("The clients
+  # relying party origin does not match our servers information"), so the
+  # passkey specs (1493, 1528) were red on every non-default port. The origin
+  # must follow the Vite port exactly like CORS_ORIGINS / APP_URL do.
   DATABASE_URL="$DATABASE_URL" BB_PORT="$API_PORT" \
     CORS_ORIGINS="http://localhost:$VITE_PORT" \
     BLOB_STORE=local BLOB_STORE_PATH="$BLOB_DIR" \
@@ -202,9 +218,10 @@ SQL
     BEEBEEB_PWNED_CORPUS_PATH="$PWNED_CORPUS_DB" \
     BB_RATE_LIMIT_DISABLED=1 \
     APP_URL="http://localhost:$VITE_PORT" API_URL="http://localhost:$API_PORT" \
+    WEBAUTHN_RP_ID=localhost WEBAUTHN_RP_ORIGIN="http://localhost:$VITE_PORT" \
     BB_REQUIRE_PILOT_KEY="$BB_REQUIRE_PILOT_KEY" \
     BB_PILOT_SIGNUP_KEY="$BB_PILOT_SIGNUP_KEY" \
-    setsid "$API_BIN" >/tmp/bb-web-e2e-api.log 2>&1 &
+    setsid "$API_BIN" >"$API_LOG" 2>&1 &
   API_PID=$!
   # -m10 (not -m3): the FIRST auto-login also creates the dev user (Argon2id
   # password hash) + derives the master key; allow headroom on a cold CI runner.
@@ -212,7 +229,7 @@ SQL
   for i in $(seq 1 60); do
     curl -fsS -m10 -o /dev/null -X POST "http://localhost:$API_PORT/dev/auto-login" \
       -H 'Content-Type: application/json' -d '{"email":"dev@beebeeb.dev"}' && return 0
-    kill -0 "$API_PID" 2>/dev/null || { echo "API died on boot; see /tmp/bb-web-e2e-api.log"; tail -20 /tmp/bb-web-e2e-api.log; return 1; }
+    kill -0 "$API_PID" 2>/dev/null || { echo "API died on boot; see $API_LOG"; tail -20 "$API_LOG"; return 1; }
     sleep 1
   done
   echo "API never became healthy on :$API_PORT"; return 1
@@ -261,7 +278,7 @@ log "API healthy on :$API_PORT"
 # hits :3003 for signup/auth AND the dev auto-login.
 printf 'VITE_API_URL=http://localhost:%s\n' "$API_PORT" > "$WEB_DIR/.env.test.local"
 log "starting vite --mode test → API :$API_PORT"
-setsid bash -c "cd '$WEB_DIR' && NODE_ENV=test VITE_API_URL='http://localhost:$API_PORT' exec bunx vite --mode test --port $VITE_PORT --strictPort" >/tmp/bb-web-e2e-vite.log 2>&1 &
+setsid bash -c "cd '$WEB_DIR' && NODE_ENV=test VITE_API_URL='http://localhost:$API_PORT' exec bunx vite --mode test --port $VITE_PORT --strictPort" >"$VITE_LOG" 2>&1 &
 VITE_PID=$!
 for i in $(seq 1 60); do
   curl -fsS -m3 -o /dev/null "http://localhost:$VITE_PORT" && break
@@ -343,8 +360,8 @@ for spec in "${SPECS[@]}"; do
     rm -rf playwright/.auth 2>/dev/null || true   # re-auth against the fresh account
     log "playwright $spec ${spec_config:+(own config: $spec_config) }(run $run/$REPEAT, workers=$WORKERS)"
     if ! backend_alive; then
-      echo "BACKEND DOWN before $spec — the :$API_PORT API is not responding (see /tmp/bb-web-e2e-api.log). This is infra, not a test failure."
-      tail -20 /tmp/bb-web-e2e-api.log
+      echo "BACKEND DOWN before $spec — the :$API_PORT API is not responding (see $API_LOG). This is infra, not a test failure."
+      tail -20 "$API_LOG"
       rc=2; break 2
     fi
     if ! bunx playwright test "$spec" $spec_config --workers="$WORKERS" --reporter=line; then

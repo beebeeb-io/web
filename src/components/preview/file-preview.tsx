@@ -3,7 +3,7 @@ import { listVersions, restoreVersion, type DriveFile, type FileVersion } from '
 import { decryptToBlob, decryptVersionToBlob } from '../../lib/encrypted-download'
 import { fetchAndDecryptLargeThumbnail, fetchAndDecryptThumbnail } from '../../lib/thumbnail'
 import { PreviewChrome } from './preview-chrome'
-import { InfoRail } from './info-rail'
+import { InfoRail, CONTENT_CIPHER_LABEL } from './info-rail'
 import { VersionScrubber } from './version-scrubber'
 import { ImagePreview } from './image-preview'
 import { PdfPreview } from './pdf-preview'
@@ -674,6 +674,13 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
           items={[
             ['Modified', new Date(file.updated_at).toLocaleDateString()],
           ]}
+          cipher={CONTENT_CIPHER_LABEL}
+          chunkCount={
+            selectedVersionId === null
+              ? file.chunk_count
+              : versions?.find((v) => v.id === selectedVersionId)?.chunk_count
+          }
+          tagsVerified={!!blob && blobIsOriginal && !error}
         />
       }
     >

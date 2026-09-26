@@ -2010,7 +2010,11 @@ export function Drive() {
         if (!file.is_folder) setVersionFileId(file.id)
         break
       case 'download':
-        handleFileDownload(file)
+        // Folders have no blob of their own: package the subtree as a ZIP via
+        // the same path as selection + bulk Download (handleFileDownload()
+        // returns early for folders, so calling it here did nothing).
+        if (file.is_folder) handleBulkDownload([file.id])
+        else handleFileDownload(file)
         break
       case 'trash': {
         // The root "Backups" folder holds device backups (task 0838) — gate it
@@ -2695,7 +2699,11 @@ export function Drive() {
         onClose={() => setSelectedFileId(null)}
         file={selectedFile ? buildDetailsMeta(selectedFile) : null}
         activity={fileActivity}
-        onDownload={() => selectedFile && handleFileDownload(selectedFile)}
+        onDownload={() => {
+          if (!selectedFile) return
+          if (selectedFile.is_folder) handleBulkDownload([selectedFile.id])
+          else handleFileDownload(selectedFile)
+        }}
         onShare={() => {
           if (selectedFile) {
             setShareFileId(selectedFile.id)
