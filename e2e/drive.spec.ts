@@ -95,11 +95,19 @@ test.describe('Drive E2E', () => {
 
   test('billing page loads plans', async ({ page }) => {
     test.setTimeout(90_000)
-    // /billing redirects to /settings/billing; go straight there. The SettingsHeader
-    // title "Plan & billing" renders immediately (even in the page's Loading… state),
-    // so it's a stable anchor while plan data fetches (the dev account's plan
-    // endpoints 404, but the header is unconditional) (task 0763).
-    await gotoSettings(page, '/settings/billing', page.getByRole('heading', { name: /plan & billing/i }))
+    // /billing redirects to /settings/billing; go straight there (no ?view=change),
+    // which settles on the "summary" view. STALE SPEC (found while running the full
+    // suite, task 1559): this used to wait on the SettingsHeader title
+    // "Plan & billing", which task 1449 already documented as wrong for this exact
+    // navigation in trial-0905.spec.ts (GATE 2) — "Plan & billing" is the title only
+    // for the loading/error states and the "change" view
+    // (src/pages/billing.tsx ~1386/1402/1522); the summary view's header is
+    // "Billing" (src/pages/billing.tsx ~1517: `title="Billing"`, task 0942's
+    // summary/change split). This test's own anchor was never updated to match, so
+    // it deterministically timed out (RED, 3/3 attempts, confirmed both under host
+    // load and in isolation on a quiet host — error-context.md showed
+    // `heading "Billing" [level=2]` in the DOM, never "Plan & billing").
+    await gotoSettings(page, '/settings/billing', page.getByRole('heading', { name: /^billing$/i }))
   })
 })
 
