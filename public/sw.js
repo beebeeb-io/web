@@ -1,4 +1,14 @@
 // Beebeeb service worker — offline fallback + streaming download proxy
+//
+// Office bundle caching (task 1567, web delivery groundwork): the decision
+// logic (which paths, which cache name, what's safe to delete) lives in the
+// dependency-free public/office-cache-logic.js so it can be unit-tested
+// under `bun test` (see test/1567-office-cache-logic.test.ts) — this file
+// only wires that logic to the real `caches`/`fetch` APIs. `importScripts`
+// is valid here because this is a CLASSIC (non-module) service worker
+// script — see the plain `register('/sw.js')` call in src/main.tsx.
+importScripts('/office-cache-logic.js')
+
 const CACHE = 'beebeeb-v2'
 const OFFLINE_URL = '/offline.html'
 
@@ -19,11 +29,45 @@ self.addEventListener('install', e => {
   self.skipWaiting()
 })
 
+// Determines the office cache to keep on this activation, by asking the
+// server for the CURRENT manifest — never assumed, never hard-coded. If the
+// office bundle isn't deployed yet (404) or is unreachable, this resolves to
+// null, which is correct: an office feature that isn't live yet has no
+// "current" version, so every leftover beebeeb-office-* cache is stale and
+// safe to garbage-collect (inert-by-default, per this task's brief).
+async function currentOfficeCacheName() {
+  try {
+    const res = await fetch(BBOfficeCacheLogic.OFFICE_MANIFEST_PATH, { cache: 'no-store' })
+    if (!res.ok) return null
+    const version = BBOfficeCacheLogic.parseManifestVersion(await res.text())
+    return BBOfficeCacheLogic.officeCacheName(version)
+  } catch {
+    return null
+  }
+}
+
 self.addEventListener('activate', e => {
   e.waitUntil((async () => {
-    // Drop old caches
+    const keepOfficeCache = await currentOfficeCacheName()
+
+    // Drop old caches — EXCLUDING the office-prefixed ones, which get their
+    // own scoped, version-aware cleanup below instead of this blanket sweep.
+    // (Pre-existing behavior, unchanged here: this blanket sweep still drops
+    // every OTHER non-CACHE cache on each activation, e.g. the page-owned
+    // thumbnail cache `beebeeb-thumbnails-v2` opened directly from
+    // src/lib/thumbnail.ts — that repopulates on demand and is out of scope
+    // for this task.)
     const names = await caches.keys()
-    await Promise.all(names.filter(n => n !== CACHE).map(n => caches.delete(n)))
+    await Promise.all(
+      names
+        .filter(n => n !== CACHE && n.indexOf(BBOfficeCacheLogic.OFFICE_CACHE_PREFIX) !== 0)
+        .map(n => caches.delete(n)),
+    )
+
+    // Scoped cleanup: delete every office cache except the current version.
+    const staleOfficeCaches = BBOfficeCacheLogic.officeCacheNamesToDelete(names, keepOfficeCache)
+    await Promise.all(staleOfficeCaches.map(n => caches.delete(n)))
+
     await self.clients.claim()
   })())
 })
@@ -83,8 +127,35 @@ function encodeContentDispositionFilename(name) {
   return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`
 }
 
+// Cache-first for the immutable, content-hashed office bundle files ONLY.
+// Never touches API responses or user documents — isOfficeAssetPath()
+// explicitly excludes manifest.json (the small mutable pointer, always
+// network) and everything not under /office/<version>/..., and
+// isCacheableOfficeResponse() refuses to store anything that isn't a
+// successful, same-origin GET (docs/EGRESS.md: zero egress).
+async function handleOfficeAssetFetch(request, pathname) {
+  const version = BBOfficeCacheLogic.officeVersionFromPath(pathname)
+  if (!version) return fetch(request) // isOfficeAssetPath already guarantees this won't happen; stay safe if it ever does.
+
+  const cache = await caches.open(BBOfficeCacheLogic.officeCacheName(version))
+  const cached = await cache.match(request)
+  if (cached) return cached
+
+  const response = await fetch(request)
+  if (BBOfficeCacheLogic.isCacheableOfficeResponse(request, response)) {
+    // Cache::put consumes the body — clone before returning the original.
+    cache.put(request, response.clone()).catch(() => {})
+  }
+  return response
+}
+
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url)
+
+  if (BBOfficeCacheLogic.isOfficeAssetPath(url.pathname)) {
+    e.respondWith(handleOfficeAssetFetch(e.request, url.pathname))
+    return
+  }
 
   // Streaming download interception.
   if (url.pathname.startsWith('/sw-download/')) {

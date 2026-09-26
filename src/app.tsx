@@ -65,6 +65,13 @@ const ImpersonateRedeem = lazyNamed(
   'ImpersonateRedeem',
 )
 const JoinPage       = lazyNamed(() => import('./pages/join'),            'JoinPage')
+// Dev-only harness for the office loading skeleton (task 1567) — never
+// imported, let alone routed to, in a production build (see the
+// `import.meta.env.DEV`-gated Route below). Vite constant-folds that check
+// and Rollup tree-shakes both the import and the chunk out of `bun run build`.
+const DevOfficePreview = import.meta.env.DEV
+  ? lazyNamed(() => import('./pages/dev-office-preview'), 'DevOfficePreview')
+  : null
 const NotFound       = lazyNamed(() => import('./pages/errors/not-found'),   'NotFound')
 const Logout         = lazyNamed(() => import('./pages/logout'),             'Logout')
 const ServerError    = lazyNamed(() => import('./pages/errors/server-error'), 'ServerError')
@@ -603,6 +610,8 @@ export function App() {
           <Route path="/r/:token" element={<UploadRequestPage />} />
           <Route path="/logout" element={<Logout />} />
           <Route path="/500" element={<ServerError />} />
+          {/* Dev-only: task 1567 office loading-skeleton harness. Not present in prod. */}
+          {DevOfficePreview && <Route path="/dev/office-preview" element={<DevOfficePreview />} />}
           <Route path="*" element={<NotFound />} />
         </Routes>
         </Suspense>
