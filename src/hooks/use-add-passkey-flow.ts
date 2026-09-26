@@ -14,6 +14,7 @@ import {
   encryptVaultBlob,
 } from '../lib/passkey-vault'
 import { toBase64 } from '../lib/crypto'
+import { passkeyErrorMessage } from '../lib/passkey-errors'
 
 interface UseAddPasskeyFlowOptions {
   isUnlocked: boolean
@@ -124,7 +125,10 @@ export function useAddPasskeyFlow({
 
           onAdded(info)
         } catch (err) {
-          onError(err instanceof Error ? err.message : 'Failed to add passkey')
+          // Never toast webauthn-rs / DOMException wording raw (e.g. "The
+          // clients relying party origin does not match our servers
+          // information") — see lib/passkey-errors.ts.
+          onError(passkeyErrorMessage(err))
         } finally {
           setAdding(false)
         }
