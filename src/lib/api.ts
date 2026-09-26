@@ -1004,6 +1004,19 @@ export async function initUpload(metadata: {
     const v2 = await request<UploadInitV2Response>('/api/v1/uploads/init', {
       method: 'POST',
       body: JSON.stringify({
+        // file_id: REQUIRED for a replace/version upload — its absence here
+        // was a real bug (found via 1542's version-history e2e: re-uploading
+        // an existing name always minted a brand-new file server-side instead
+        // of reusing the existing one, so "auto-version" and the conflict
+        // dialog's "Replace" both silently created an orphaned duplicate
+        // rather than a v2). The server's InitUploadV2Request already has a
+        // `file_id: Option<Uuid>` field (uploads.rs) and honors it —
+        // `file_id = body.file_id.or(existing_file_id).unwrap_or_else(Uuid::new_v4)`
+        // — this endpoint just never sent the field the caller already
+        // supplies (see this function's own `metadata.file_id` param, unused
+        // until now). Omitted (undefined) for a genuinely new upload, which
+        // correctly falls through to a fresh server-generated id.
+        file_id: metadata.file_id,
         file_name: metadata.name_encrypted,
         file_size_bytes: metadata.size_bytes,
         parent_id: metadata.parent_id,
