@@ -100,3 +100,21 @@ export function postSignupDestination(intent: PlanIntent | null): string {
   const q = new URLSearchParams({ view: 'change', plan: intent.plan, cycle: intent.cycle })
   return `/billing?${q.toString()}`
 }
+
+/**
+ * GuestRoute's fallback destination once an account is authenticated + unlocked
+ * on a guest page (flow-4 money flow, same race as task 1437).
+ *
+ * Onboarding's last step calls `refreshUser()` — which re-renders the
+ * GuestRoute wrapping /onboarding with `user && isUnlocked` true — and then
+ * navigates to `postSignupDestination(intent)`. Whichever of the two navigations
+ * lands last wins; with a hard-coded "/" in GuestRoute the stale render bounced
+ * the new account from the plan chooser back onto the drive (observed on the
+ * real stack: /billing?view=change&plan=basic&cycle=yearly → "/"). Making
+ * GuestRoute compute the SAME destination for /onboarding removes the race as a
+ * user-visible symptom. The intent is NOT cleared by onboarding for that reason;
+ * billing consumes it once the URL carries it.
+ */
+export function guestRouteFallback(pathname: string, intent: PlanIntent | null): string {
+  return pathname === '/onboarding' ? postSignupDestination(intent) : '/'
+}

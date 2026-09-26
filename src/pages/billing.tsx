@@ -79,7 +79,7 @@ import {
   reconcileSignalOutcome,
 } from '../lib/checkout-reconcile'
 import { resolveHasUsedTrial, isTrialEligible } from '../lib/trial-eligibility'
-import { parsePlanIntent } from '../lib/plan-intent'
+import { parsePlanIntent, clearPlanIntent } from '../lib/plan-intent'
 
 /* ── Plan metadata (imported from plan-constants.ts) ──── */
 
@@ -727,6 +727,13 @@ export function Billing() {
   // (src/lib/plan-intent.ts). Only offered to a Free account — a trialing or
   // paid account already made its choice.
   const planIntent = parsePlanIntent(searchParams.get('plan'), searchParams.get('cycle'))
+  // The URL now carries the intent, so the stored copy (kept through
+  // onboarding for GuestRoute, see plan-intent.ts) is consumed here — a later
+  // signup in this browser must not inherit it.
+  const hasPlanParam = searchParams.has('plan')
+  useEffect(() => {
+    if (hasPlanParam) clearPlanIntent()
+  }, [hasPlanParam])
   const showPlanIntent =
     planIntent !== null &&
     !loading &&

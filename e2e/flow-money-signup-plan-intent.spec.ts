@@ -24,6 +24,8 @@
 import { test, expect } from '@playwright/test'
 import { reachPasswordStep, createAccount, uniqueEmail } from './helpers/signup'
 
+const API_URL = process.env.E2E_API_URL ?? 'http://localhost:3001'
+
 test.use({ storageState: { cookies: [], origins: [] } })
 test.setTimeout(240_000)
 
@@ -59,12 +61,14 @@ test('site CTA /signup?plan=basic&cycle=yearly ends on a Basic yearly trial, one
     billing_cycle: 'yearly',
   })
 
-  const subResp = page.waitForResponse(
-    (r) => r.url().includes('/api/v1/billing/subscription') && r.request().method() === 'GET',
-  )
-  await page.goto('/billing')
-  const sub = await (await subResp).json()
+  // Server truth via the page's own session cookie (page.request shares the
+  // context cookie jar). A waitForResponse armed before page.goto caught the
+  // OLD page's refetch, whose body Chromium discards on navigation.
+  const subRes = await page.request.get(`${API_URL}/api/v1/billing/subscription`)
+  expect(subRes.ok(), `GET /billing/subscription: ${subRes.status()}`).toBe(true)
+  const sub = await subRes.json()
   expect(sub).toMatchObject({ plan: 'basic', status: 'trialing', billing_cycle: 'yearly' })
+  await page.goto('/billing')
   expect(sub.trial_ends_at).toBeTruthy()
 
   // GATE 3 — intent consumed: no plan-intent card on a later billing visit.

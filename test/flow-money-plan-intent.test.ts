@@ -5,6 +5,7 @@ import {
   readPlanIntent,
   clearPlanIntent,
   postSignupDestination,
+  guestRouteFallback,
   PLAN_INTENT_KEY,
   PLAN_INTENT_TTL_MS,
 } from '../src/lib/plan-intent'
@@ -87,5 +88,21 @@ describe('postSignupDestination', () => {
     expect(postSignupDestination({ plan: 'basic', cycle: 'yearly' })).toBe(
       '/billing?view=change&plan=basic&cycle=yearly',
     )
+  })
+})
+
+describe('guestRouteFallback — GuestRoute agrees with onboarding (race, task 1437 pattern)', () => {
+  test('/onboarding with an intent → the same plan chooser onboarding navigates to', () => {
+    const intent = { plan: 'basic', cycle: 'yearly' as const }
+    expect(guestRouteFallback('/onboarding', intent)).toBe(postSignupDestination(intent))
+    expect(guestRouteFallback('/onboarding', intent)).toBe('/billing?view=change&plan=basic&cycle=yearly')
+  })
+  test('/onboarding without an intent → drive', () => {
+    expect(guestRouteFallback('/onboarding', null)).toBe('/')
+  })
+  test('other guest pages never use the intent', () => {
+    const intent = { plan: 'pro', cycle: 'monthly' as const }
+    expect(guestRouteFallback('/login', intent)).toBe('/')
+    expect(guestRouteFallback('/signup', intent)).toBe('/')
   })
 })
