@@ -6,6 +6,7 @@ import { BBCheckbox } from '@beebeeb/shared'
 import { BBInput } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { shouldShowPilotKeyField, buildOnboardingState, pilotKeyBlocksSubmit } from '../lib/signup-pilot-gate'
+import { parsePlanIntent, savePlanIntent } from '../lib/plan-intent'
 
 // Referral keys — read here, forwarded to onboarding, cleared after signup
 export const REFERRAL_SOURCE_KEY = 'bb_ref_source'
@@ -48,6 +49,12 @@ export function Signup() {
     if (ref) localStorage.setItem(REFERRAL_SOURCE_KEY, ref)
     if (sharer) localStorage.setItem(REFERRAL_SHARER_KEY, sharer)
     if (code) localStorage.setItem(REFERRAL_CODE_KEY, code)
+    // The plan + cycle picked on the marketing site (?plan=basic&cycle=yearly).
+    // Persisted for the same reason as the referral keys; onboarding reads it
+    // once the account exists and opens the plan chooser on that plan
+    // (src/lib/plan-intent.ts). Invalid/non-trialable plans are ignored.
+    const intent = parsePlanIntent(searchParams.get('plan'), searchParams.get('cycle'))
+    if (intent) savePlanIntent(intent)
   }, [searchParams])
 
   function handleSubmit(e: FormEvent) {

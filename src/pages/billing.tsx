@@ -79,6 +79,7 @@ import {
   reconcileSignalOutcome,
 } from '../lib/checkout-reconcile'
 import { resolveHasUsedTrial, isTrialEligible } from '../lib/trial-eligibility'
+import { parsePlanIntent, clearPlanIntent } from '../lib/plan-intent'
 
 /* ── Plan metadata (imported from plan-constants.ts) ──── */
 
@@ -721,6 +722,32 @@ export function Billing() {
   // already used their trial — even in a PAST session, before this page ever
   // loaded — never sees "Start trial" and instead goes straight to checkout.
   const hasUsedTrial = resolveHasUsedTrial(sub?.has_used_trial, trialUsed)
+  // Plan picked on the marketing site before signup, carried here by
+  // onboarding as /billing?view=change&plan=<slug>&cycle=<cycle>
+  // (src/lib/plan-intent.ts). Only offered to a Free account — a trialing or
+  // paid account already made its choice.
+  const planIntent = parsePlanIntent(searchParams.get('plan'), searchParams.get('cycle'))
+  // The URL now carries the intent, so the stored copy (kept through
+  // onboarding for GuestRoute, see plan-intent.ts) is consumed here — a later
+  // signup in this browser must not inherit it.
+  const hasPlanParam = searchParams.has('plan')
+  useEffect(() => {
+    if (hasPlanParam) clearPlanIntent()
+  }, [hasPlanParam])
+  const showPlanIntent =
+    planIntent !== null &&
+    !loading &&
+    effectivePlan === 'free' &&
+    sub?.status !== 'trialing' &&
+    Boolean(planMeta[planIntent.plan])
+  const planIntentTrialEligible =
+    planIntent !== null &&
+    isTrialEligible({
+      effectivePlan,
+      subStatus: sub?.status,
+      hasUsedTrial,
+      targetComingSoon: planMeta[planIntent.plan]?.comingSoon,
+    })
   const apiPlan = plans?.find(p => p.id === effectivePlan)
   const currentPriceMonthly = apiPlan?.price_eur ?? meta.priceMonthly
   const currentPriceYearly = apiPlan?.price_yearly_eur ?? meta.priceYearly
@@ -1277,10 +1304,23 @@ function openUpgrade(plan: string) {
    * `trial_already_used` is honest signal that this account already had a trial —
    * we hide the trial CTA and fall back to the normal paid checkout.
    */
-  async function handleStartTrial(plan: string) {
+  async function handleStartTrial(plan: string, billingCycle: 'monthly' | 'yearly' = 'monthly') {
     setTrialStarting(plan)
     try {
-      await startTrial({ plan, billing_cycle: 'monthly' })
+      await startTrial({ plan, billing_cycle: billingCycle })
+      // A plan intent carried in from signup (?plan=&cycle=) is consumed once
+      // the trial exists — drop it from the URL so the card never re-offers it.
+      if (searchParams.has('plan') || searchParams.has('cycle')) {
+        setSearchParams(
+          (prev) => {
+            const p = new URLSearchParams(prev)
+            p.delete('plan')
+            p.delete('cycle')
+            return p
+          },
+          { replace: true },
+        )
+      }
       showToast({
         icon: 'check',
         title: 'Your free trial has started',
@@ -2076,6 +2116,53 @@ function openUpgrade(plan: string) {
           <Icon name="chevron-right" size={13} className="rotate-180" />
           Back to billing
         </button>
+
+        {/* ── Plan picked before signup (flow-4 money flow) ── */}
+        {showPlanIntent && planIntent && (
+          <div
+            data-testid="plan-intent-card"
+            className="border border-amber/30 bg-amber-bg/30 rounded-xl p-5"
+          >
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep mb-1">
+              The plan you picked
+            </div>
+            <div className="flex items-baseline gap-3 mb-2">
+              <span className="text-[22px] font-bold tracking-tight leading-none">
+                {planMeta[planIntent.plan].label}
+              </span>
+              <BBChip variant={planIntent.cycle === 'yearly' ? 'amber' : undefined}>
+                {planIntent.cycle === 'yearly' ? 'Billed yearly' : 'Billed monthly'}
+              </BBChip>
+            </div>
+            {planIntentTrialEligible ? (
+              <p className="text-sm text-ink-2 mb-4">
+                Try it free for 14 days. No card required. When it ends you decide whether to
+                subscribe; your files stay encrypted either way.
+              </p>
+            ) : (
+              <p className="text-sm text-ink-2 mb-4">
+                This account has already used its free trial, so {planMeta[planIntent.plan].label}{' '}
+                starts with checkout.
+              </p>
+            )}
+            {planIntentTrialEligible ? (
+              <BBButton
+                variant="amber"
+                size="md"
+                onClick={() => void handleStartTrial(planIntent.plan, planIntent.cycle)}
+                disabled={trialStarting !== null}
+              >
+                {trialStarting === planIntent.plan
+                  ? 'Starting trial...'
+                  : `Start 14-day ${planMeta[planIntent.plan].label} trial`}
+              </BBButton>
+            ) : (
+              <BBButton variant="amber" size="md" onClick={() => openUpgrade(planIntent.plan)}>
+                Continue to checkout
+              </BBButton>
+            )}
+          </div>
+        )}
 
         {/* ── Plan summary ──────────────────────────── */}
         <div className="grid gap-4">

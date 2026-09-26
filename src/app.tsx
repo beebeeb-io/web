@@ -5,6 +5,7 @@ import { reportError } from '@beebeeb/shared'
 import { AuthProvider, useAuth } from './lib/auth-context'
 import { KeyProvider, useKeys } from './lib/key-context'
 import { sanitizeRedirect } from './lib/safe-redirect'
+import { readPlanIntent, guestRouteFallback } from './lib/plan-intent'
 import { WsProvider } from './lib/ws-context'
 import { SyncProvider } from './lib/sync-context'
 import { OnboardingProvider } from './lib/onboarding-context'
@@ -167,6 +168,7 @@ function GuestRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
   const { isUnlocked } = useKeys()
   const [searchParams] = useSearchParams()
+  const location = useLocation()
 
   if (loading) return null
   // Only redirect to app if user is fully authenticated AND vault is unlocked.
@@ -192,7 +194,11 @@ function GuestRoute({ children }: { children: ReactNode }) {
     // eliminating the race as a user-visible symptom rather than trying to
     // win a timing contest against React's scheduling.
     const fromQuery = sanitizeRedirect(searchParams.get('next'))
-    return <Navigate to={fromQuery ?? '/'} replace />
+    // Same race for a brand-new account leaving /onboarding: its final
+    // refreshUser() re-renders this guard before onboarding's own navigate()
+    // to the plan chooser (plan picked on the site, src/lib/plan-intent.ts).
+    // Compute the same destination so neither navigation can undo the other.
+    return <Navigate to={fromQuery ?? guestRouteFallback(location.pathname, readPlanIntent())} replace />
   }
   return <>{children}</>
 }
