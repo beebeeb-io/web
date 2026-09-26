@@ -30,6 +30,7 @@ const API_URL = import.meta.env.VITE_API_URL || 'https://api.beebeeb.io'
 
 interface DevAutoLoginResponse {
   session_token: string
+  user_id: string
   master_key_bytes_base64: string
   email: string
   role: string
@@ -113,7 +114,7 @@ export async function devAutoAuth(): Promise<boolean> {
     //    stash it in IndexedDB. KeyProvider's getVaultKey() will unwrap it
     //    on startup and call setIsUnlocked(true).
     await initSessionVault()
-    await cacheVaultKey(masterKeyBytes)
+    await cacheVaultKey(masterKeyBytes, data.user_id)
 
     // 3.5 (dev-only test-infra). A password-less /dev/auto-login account never
     //     runs the OPAQUE/onboarding path that uploads its x25519 public key, so

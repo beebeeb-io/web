@@ -26,11 +26,23 @@ type SessionExpiredHandler = () => void
  */
 type AccountDeletedHandler = (body: Record<string, unknown>) => void
 type ConnectionStatusHandler = (status: 'ok' | 'flaky') => void
+/**
+ * Task 1531 (web #85 round 2) / server task 1554: fired on a 409
+ * `account_mismatch` — the server rejected a mutating request because the
+ * `X-Beebeeb-Expected-User` header (the resident key's bound account) did
+ * not match the session's actual authenticated user. This can only happen
+ * from genuine cross-account key confusion (the exact bug task 1531 closes)
+ * or a stale header from a just-switched account — either way the safe
+ * response is the same: drop the resident key and route to login so the
+ * REAL current account's key gets (re-)established cleanly.
+ */
+type AccountMismatchHandler = () => void
 
 let notifyError: ErrorNotifier | null = null
 let onSessionExpired: SessionExpiredHandler | null = null
 let onAccountDeleted: AccountDeletedHandler | null = null
 let onConnectionStatus: ConnectionStatusHandler | null = null
+let onAccountMismatch: AccountMismatchHandler | null = null
 
 export function registerErrorNotifier(fn: ErrorNotifier): void {
   notifyError = fn
@@ -48,6 +60,10 @@ export function registerConnectionStatusHandler(fn: ConnectionStatusHandler): vo
   onConnectionStatus = fn
 }
 
+export function registerAccountMismatchHandler(fn: AccountMismatchHandler): void {
+  onAccountMismatch = fn
+}
+
 // Read-side accessors used by `request()`. Not part of the public surface.
 export function fireErrorNotifier(message: string): void {
   notifyError?.(message)
@@ -63,6 +79,10 @@ export function fireAccountDeleted(body: Record<string, unknown>): void {
 
 export function fireConnectionStatus(status: 'ok' | 'flaky'): void {
   onConnectionStatus?.(status)
+}
+
+export function fireAccountMismatch(): void {
+  onAccountMismatch?.()
 }
 
 // ── Session-presence tracking (task 0741) ──────────────────────────────────

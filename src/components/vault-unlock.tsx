@@ -23,7 +23,7 @@ import {
 
 export function VaultUnlock() {
   const { unlockVault, unlockVaultWithPasskey, vaultExists, setMasterKeyFromPasskey } = useKeys()
-  const { logout, refreshUser } = useAuth()
+  const { user, logout, refreshUser } = useAuth()
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -39,8 +39,22 @@ export function VaultUnlock() {
     setSubmitting(true)
 
     try {
-      const ok = await unlockVault(password)
-      if (!ok) {
+      // ProtectedRoute only renders VaultUnlock once `user` is already
+      // truthy (it gates on `user && !isUnlocked`) — reliable here.
+      if (!user) {
+        setError('Session expired. Please sign in again.')
+        return
+      }
+      const outcome = await unlockVault(password, user.user_id)
+      if (outcome === 'needs_provisioning') {
+        // P0 continuation (task 1531/1534, web PR #85): password was RIGHT,
+        // but this device's saved vault entry could not be proven
+        // server-side to belong to this account — never silently trust it
+        // (see key-context.tsx's unlockVault doc comment). VaultUnlock has
+        // no in-place provisioning flow of its own; route the user through
+        // logout → login, which does (login.tsx's needsProvision screen).
+        setError('This device’s saved vault doesn’t match your account. Log out and sign in again to set it up.')
+      } else if (outcome !== 'unlocked') {
         setError('Wrong password. Try again.')
       }
     } catch {
@@ -99,8 +113,19 @@ export function VaultUnlock() {
 
       // Step 4: Complete server-side authentication
       const credentialData = credentialToAuthenticationJSON(credential)
-      await finishPasskeyLogin(credentialData, startRes.auth_state, startRes.user_id)
+      const finishResult = await finishPasskeyLogin(credentialData, startRes.auth_state, startRes.user_id)
       await refreshUser()
+
+      // Task 1531/1534 (P0 continuation, web PR #85, crypto-security-
+      // reviewer P2): bind to `finishResult.user_id` — the response that
+      // actually verified the WebAuthn assertion — not `startRes.user_id`,
+      // which only echoes the email the form was given, before any
+      // signature was checked. Same rationale as login.tsx's identical fix.
+      if (!finishResult.user_id) {
+        setError('Could not confirm account identity. Try again.')
+        return
+      }
+      const authedUserId = finishResult.user_id
 
       // Step 5: Retrieve and decrypt vault key
       const credentialId = credential.id
@@ -113,8 +138,7 @@ export function VaultUnlock() {
         return
       }
 
-      // Try local passkey vault first
-      const localOk = await unlockVaultWithPasskey(wrapKey)
+      const localOk = await unlockVaultWithPasskey(wrapKey, authedUserId)
       if (localOk) return
 
       // Fall back to server escrow
@@ -130,7 +154,7 @@ export function VaultUnlock() {
         return
       }
 
-      await setMasterKeyFromPasskey(masterKey, wrapKey)
+      await setMasterKeyFromPasskey(masterKey, wrapKey, authedUserId)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Passkey unlock failed.')
     } finally {

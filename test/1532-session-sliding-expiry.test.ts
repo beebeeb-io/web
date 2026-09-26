@@ -54,6 +54,13 @@ function randomKey(): Uint8Array {
   return crypto.getRandomValues(new Uint8Array(32))
 }
 
+// Task 1531/1534 (P0, web PR #85) merged account binding into the same
+// persist/restore path this file exercises: persistSession()/
+// cacheKeySessionOnly() now require the authenticated account's id, and
+// restoreSession() hands back `{ key, userId }` rather than a bare key —
+// same stand-in id convention as test/1529-vault-empty-password.test.ts.
+const TEST_USER_ID = 'test-user-1532'
+
 /**
  * Directly patches the raw `beebeeb_session_persist` entry's
  * `lastActivityAt` field — the same technique the rest of this repo uses to
@@ -118,7 +125,7 @@ describe('task 1532: sliding expiry — activity extends the window', () => {
   test('activity at ~50 minutes idle keeps the session alive well past where a fixed 60-min-since-login TTL would have expired it', async () => {
     setVaultTTL(60 * 60 * 1000) // 1 hour — the ruling's window
     const key = randomKey()
-    await persistSession(key)
+    await persistSession(key, TEST_USER_ID)
 
     // Simulate 50 minutes of inactivity since login/last activity.
     await patchLastActivityAt(50 * 60 * 1000)
@@ -131,13 +138,13 @@ describe('task 1532: sliding expiry — activity extends the window', () => {
     // window it is still valid because the touch reset the anchor.
     await patchLastActivityAt(59 * 60 * 1000)
     const restored = await restoreSession()
-    expect(restored).toEqual(key)
+    expect(restored).toEqual({ key, userId: TEST_USER_ID })
   })
 
   test('idle 61 minutes (no activity) → the session is gone: restoreSession returns null, bb_spt + the IDB entry are both cleared', async () => {
     setVaultTTL(60 * 60 * 1000)
     const key = randomKey()
-    await persistSession(key)
+    await persistSession(key, TEST_USER_ID)
 
     await patchLastActivityAt(61 * 60 * 1000)
     const restored = await restoreSession()
@@ -150,15 +157,15 @@ describe('task 1532: sliding expiry — activity extends the window', () => {
   test('a control: 59 minutes idle (still inside the window, no activity needed) restores fine', async () => {
     setVaultTTL(60 * 60 * 1000)
     const key = randomKey()
-    await persistSession(key)
+    await persistSession(key, TEST_USER_ID)
     await patchLastActivityAt(59 * 60 * 1000)
-    expect(await restoreSession()).toEqual(key)
+    expect(await restoreSession()).toEqual({ key, userId: TEST_USER_ID })
   })
 
   test('touchSession never resurrects an entry that has already crossed the window', async () => {
     setVaultTTL(60 * 60 * 1000)
     const key = randomKey()
-    await persistSession(key)
+    await persistSession(key, TEST_USER_ID)
     await patchLastActivityAt(90 * 60 * 1000) // way past 60 min, no activity since
 
     await touchSession() // must be a no-op — not a resurrection
@@ -184,12 +191,12 @@ describe('task 1532: a stored TTL above 60 minutes is clamped to 60, not discard
     const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
     localStorage.setItem('bb_vault_ttl', String(THIRTY_DAYS_MS))
     const key = randomKey()
-    await persistSession(key)
+    await persistSession(key, TEST_USER_ID)
 
     await patchLastActivityAt(59 * 60 * 1000)
-    expect(await restoreSession()).toEqual(key)
+    expect(await restoreSession()).toEqual({ key, userId: TEST_USER_ID })
 
-    await persistSession(key) // fresh entry
+    await persistSession(key, TEST_USER_ID) // fresh entry
     await patchLastActivityAt(61 * 60 * 1000)
     expect(await restoreSession()).toBeNull()
   })
@@ -205,7 +212,7 @@ describe('task 1532: eager deletion — the blob + token are cleared without wai
   test('a real (short) window: once it elapses, the eager-deletion timer clears bb_spt + the IDB entry on its own, with no restoreSession() call at all', async () => {
     setVaultTTL(80) // 80ms — a real, valid, tiny window (no dev override needed)
     const key = randomKey()
-    await persistSession(key)
+    await persistSession(key, TEST_USER_ID)
 
     expect(localStorage.getItem('bb_spt')).not.toBeNull()
     expect(await rawEntry()).not.toBeUndefined()
@@ -224,7 +231,7 @@ describe('task 1532: the passkey session-only path still persists nothing', () =
     setVaultTTL(60 * 60 * 1000)
     const key = randomKey()
     await initSessionVault()
-    await cacheKeySessionOnly(key)
+    await cacheKeySessionOnly(key, TEST_USER_ID)
 
     // The activity listener in key-context.tsx calls touchSession() on any
     // interaction while isUnlocked — regardless of which path unlocked it.
@@ -243,7 +250,7 @@ describe('task 1532: clearSession control (proves the assertions above can detec
   test('persistSession followed by clearSession leaves nothing behind — sanity check for the "gone" assertions', async () => {
     setVaultTTL(60 * 60 * 1000)
     const key = randomKey()
-    await persistSession(key)
+    await persistSession(key, TEST_USER_ID)
     expect(localStorage.getItem('bb_spt')).not.toBeNull()
 
     await clearSession()
@@ -275,7 +282,7 @@ describe('task 1532 continuation (web #77, Codex P2): setVaultTTL no longer leav
   test('setVaultTTL(15 min) while 20 min already idle deletes the session IMMEDIATELY — does not wait for the stale 60-min timer', async () => {
     setVaultTTL(60 * 60 * 1000) // 60 min
     const key = randomKey()
-    await persistSession(key)
+    await persistSession(key, TEST_USER_ID)
 
     await patchLastActivityAt(20 * 60 * 1000) // 20 min idle already
     setVaultTTL(15 * 60 * 1000) // shorten to 15 min — 20 min already exceeds it
@@ -288,7 +295,7 @@ describe('task 1532 continuation (web #77, Codex P2): setVaultTTL no longer leav
   test('setVaultTTL(15 min) with NO activity elapsed does not delete right away — only once the new (shorter) window actually elapses', async () => {
     setVaultTTL(60 * 60 * 1000)
     const key = randomKey()
-    await persistSession(key)
+    await persistSession(key, TEST_USER_ID)
 
     setVaultTTL(15 * 60 * 1000) // shortened, but 0 min idle so far
     await flush()
@@ -302,7 +309,7 @@ describe('task 1532 continuation (web #77, Codex P2): setVaultTTL no longer leav
   test('the re-armed timer fires at the NEW (shorter) duration, not the stale OLD one — real wall-clock ms-scale window, no activity, no restoreSession() call', async () => {
     setVaultTTL(1000) // stand-in "long" window (proportionally: 60 min)
     const key = randomKey()
-    await persistSession(key)
+    await persistSession(key, TEST_USER_ID)
 
     setVaultTTL(150) // stand-in "shortened to 15 min" — 0 idle so far
     await flush() // let the immediate recheck run: not yet past 150ms, must re-arm
@@ -322,7 +329,7 @@ describe('task 1532 continuation (web #77, Codex P2): setVaultTTL no longer leav
   test('control: touchSession() already re-arms against the CURRENT ttl on every call (no regression introduced here)', async () => {
     setVaultTTL(60 * 60 * 1000)
     const key = randomKey()
-    await persistSession(key)
+    await persistSession(key, TEST_USER_ID)
 
     await patchLastActivityAt(10 * 60 * 1000) // 10 min idle
     await touchSession() // activity now -> anchor resets, re-arms at current (60 min) ttl
@@ -337,7 +344,7 @@ describe('task 1532 continuation (web #77, Codex P2): setVaultTTL no longer leav
     // CURRENT (30 min) value.
     await patchLastActivityAt(29 * 60 * 1000)
     await touchSession()
-    expect(await restoreSession()).toEqual(key) // proves the anchor really moved to "now"
+    expect(await restoreSession()).toEqual({ key, userId: TEST_USER_ID }) // proves the anchor really moved to "now"
   })
 })
 
@@ -378,7 +385,7 @@ describe('task 1532 continuation (web #77): storage event reconciles the OTHER t
 
     setVaultTTL(60 * 60 * 1000) // this (simulated) tab's own setting: 60 min
     const key = randomKey()
-    await persistSession(key) // arms THIS tab's timer at 60 min
+    await persistSession(key, TEST_USER_ID) // arms THIS tab's timer at 60 min
 
     await patchLastActivityAt(20 * 60 * 1000) // 20 min idle
 
@@ -426,7 +433,7 @@ describe('task 1532 continuation (eng-1532c): "Every refresh" (ttl=0) is disting
   test('persistSession() is a true no-op when ttl=0: calling it after setVaultTTL(0) never creates bb_spt or an IDB entry', async () => {
     setVaultTTL(0)
     const key = randomKey()
-    await persistSession(key)
+    await persistSession(key, TEST_USER_ID)
 
     expect(localStorage.getItem('bb_spt')).toBeNull()
     expect(await rawEntry()).toBeUndefined()
@@ -436,14 +443,14 @@ describe('task 1532 continuation (eng-1532c): "Every refresh" (ttl=0) is disting
   test('persistSession() clears an ALREADY-persisted blob/token left over from before the setting was changed to "Every refresh"', async () => {
     setVaultTTL(60 * 60 * 1000) // 1 hour — a session gets persisted
     const key = randomKey()
-    await persistSession(key)
+    await persistSession(key, TEST_USER_ID)
     expect(localStorage.getItem('bb_spt')).not.toBeNull()
     expect(await rawEntry()).not.toBeUndefined()
 
     setVaultTTL(0) // user switches to "Every refresh"
     // Next unlock reaches persistSession() again — it must drop the old
     // leftover blob/token, not merely skip writing a new one.
-    await persistSession(key)
+    await persistSession(key, TEST_USER_ID)
 
     expect(localStorage.getItem('bb_spt')).toBeNull()
     expect(await rawEntry()).toBeUndefined()
@@ -452,7 +459,7 @@ describe('task 1532 continuation (eng-1532c): "Every refresh" (ttl=0) is disting
   test('setVaultTTL(0) itself clears an already-persisted session IMMEDIATELY — does not wait for the next persistSession() call', async () => {
     setVaultTTL(60 * 60 * 1000)
     const key = randomKey()
-    await persistSession(key)
+    await persistSession(key, TEST_USER_ID)
     expect(localStorage.getItem('bb_spt')).not.toBeNull()
 
     setVaultTTL(0) // no persistSession() call after this
@@ -512,7 +519,7 @@ describe('task 1532 continuation (web #78, Codex P1): persistSession() vs. a set
       ((...args: Parameters<ImportKeyFn>) => held.then(() => realImportKey(...args))) as ImportKeyFn
 
     try {
-      const persistPromise = persistSession(key) // suspends inside deriveKey(), holding
+      const persistPromise = persistSession(key, TEST_USER_ID) // suspends inside deriveKey(), holding
 
       setVaultTTL(0) // "Every refresh" lands mid-flight
       releaseHold() // let the held crypto call — and the rest of persistSession() — proceed
@@ -538,7 +545,7 @@ describe('task 1532 continuation (web #78, Codex P1): persistSession() vs. a set
       ((...args: Parameters<ImportKeyFn>) => held.then(() => realImportKey(...args))) as ImportKeyFn
 
     try {
-      const persistPromise = persistSession(key)
+      const persistPromise = persistSession(key, TEST_USER_ID)
       releaseHold() // no setVaultTTL(0) in between this time
       await persistPromise
     } finally {
@@ -547,7 +554,7 @@ describe('task 1532 continuation (web #78, Codex P1): persistSession() vs. a set
 
     expect(localStorage.getItem('bb_spt')).not.toBeNull()
     expect(await rawEntry()).not.toBeUndefined()
-    expect(await restoreSession()).toEqual(key)
+    expect(await restoreSession()).toEqual({ key, userId: TEST_USER_ID })
   })
 })
 
@@ -555,7 +562,7 @@ describe('task 1532 continuation (web #78, Codex P1): checkAndClearIfExpired() a
   test('a blob still sitting once the setting reads TTL 0 is deleted by the (already-armed) expiry watcher on its own — not left to sit forever', async () => {
     setVaultTTL(80) // 80ms nonzero window — persistSession() arms its own expiry timer
     const key = randomKey()
-    await persistSession(key)
+    await persistSession(key, TEST_USER_ID)
     expect(localStorage.getItem('bb_spt')).not.toBeNull()
     expect(await rawEntry()).not.toBeUndefined()
 

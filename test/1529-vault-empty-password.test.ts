@@ -61,6 +61,12 @@ function randomKey(): Uint8Array {
   return crypto.getRandomValues(new Uint8Array(32))
 }
 
+// Task 1531/1534 (P0, cross-account master-key confusion): every wrap/cache
+// call now takes the account id it was proven for. A single fixed id is
+// enough for these tests — they're about the empty-password/session-only
+// behavior, not account binding (see 1531-account-binding.test.ts for that).
+const TEST_USER_ID = 'test-user-1529'
+
 // ─── Simulating a pre-fix device ────────────────────────────────────────
 //
 // wrapAndStore('') now throws (that's the fix under test), so there is no
@@ -159,15 +165,15 @@ const writeLegacyEmptyPasswordVault = (masterKey: Uint8Array): Promise<void> =>
 describe('task 1529: wrapAndStore refuses an empty secret', () => {
   test('wrapAndStore(key, "") throws and persists nothing', async () => {
     const key = randomKey()
-    await expect(wrapAndStore(key, '')).rejects.toThrow()
+    await expect(wrapAndStore(key, '', TEST_USER_ID)).rejects.toThrow()
     expect(await hasVault()).toBe(false)
   })
 
   test('wrapAndStore(key, realPassword) still works (control — the guard is specific to empty secrets)', async () => {
     const key = randomKey()
-    await wrapAndStore(key, 'a-real-password-123')
+    await wrapAndStore(key, 'a-real-password-123', TEST_USER_ID)
     expect(await hasVault()).toBe(true)
-    expect(await unwrap('a-real-password-123')).toEqual(key)
+    expect(await unwrap('a-real-password-123', TEST_USER_ID)).toEqual({ key, untagged: false })
   })
 
   // Continuation (web #73, Codex P2): a whitespace-only secret PBKDF2-derives
@@ -176,19 +182,19 @@ describe('task 1529: wrapAndStore refuses an empty secret', () => {
   // same way.
   test('wrapAndStore(key, "   ") — spaces only — throws and persists nothing', async () => {
     const key = randomKey()
-    await expect(wrapAndStore(key, '   ')).rejects.toThrow()
+    await expect(wrapAndStore(key, '   ', TEST_USER_ID)).rejects.toThrow()
     expect(await hasVault()).toBe(false)
   })
 
   test('wrapAndStore(key, "\\t\\n") — tabs/newlines only — throws and persists nothing', async () => {
     const key = randomKey()
-    await expect(wrapAndStore(key, '\t\n')).rejects.toThrow()
+    await expect(wrapAndStore(key, '\t\n', TEST_USER_ID)).rejects.toThrow()
     expect(await hasVault()).toBe(false)
   })
 
   test('a real password with surrounding whitespace still works (control — trim() only rejects an ALL-whitespace secret)', async () => {
     const key = randomKey()
-    await wrapAndStore(key, '  a-real-password-123  ')
+    await wrapAndStore(key, '  a-real-password-123  ', TEST_USER_ID)
     expect(await hasVault()).toBe(true)
   })
 })
@@ -203,18 +209,18 @@ describe('task 1529: clearEmptyPasswordVault remediation', () => {
 
     expect(cleared).toBe(true)
     expect(await hasVault()).toBe(false)
-    expect(await unwrap('')).toBeNull()
+    expect(await unwrap('', TEST_USER_ID)).toBeNull()
   })
 
   test('does NOT clear a real-password vault (no false positive)', async () => {
     const key = randomKey()
-    await wrapAndStore(key, 'a-real-password-123')
+    await wrapAndStore(key, 'a-real-password-123', TEST_USER_ID)
 
     const cleared = await clearEmptyPasswordVault()
 
     expect(cleared).toBe(false)
     expect(await hasVault()).toBe(true)
-    expect(await unwrap('a-real-password-123')).toEqual(key)
+    expect(await unwrap('a-real-password-123', TEST_USER_ID)).toEqual({ key, untagged: false })
   })
 
   test('returns false when there is no vault at all', async () => {
@@ -231,7 +237,7 @@ describe('task 1529: clearEmptyPasswordVault remediation', () => {
 describe('task 1529 continuation (web #73): the PBKDF2 probe runs at most once per vault entry', () => {
   test('a vault written by the current wrapAndStore is never probed at all (checked: true from the write)', async () => {
     const key = randomKey()
-    await wrapAndStore(key, 'a-real-password-123')
+    await wrapAndStore(key, 'a-real-password-123', TEST_USER_ID)
 
     const deriveKeySpy = spyOn(crypto.subtle, 'deriveKey')
     try {
@@ -284,22 +290,22 @@ describe('task 1529 continuation (web #73, Codex P1): the passkey session-only p
   test('cacheKeySessionOnly caches the tab session key but writes no bb_spt / beebeeb_session_persist entry', async () => {
     const key = randomKey()
     await initSessionVault()
-    await cacheKeySessionOnly(key)
+    await cacheKeySessionOnly(key, TEST_USER_ID)
 
     expect(localStorage.getItem('bb_spt')).toBeNull()
     expect(await restoreSession()).toBeNull()
     // Still cached for THIS tab (memory-bound — dies on refresh since
     // session-vault-cache.ts's wrapping key lives only in module memory).
-    expect(await getVaultKey()).toEqual(key)
+    expect(await getVaultKey()).toEqual({ key, userId: TEST_USER_ID })
   })
 
   test('cacheKeyPersistent (every OTHER unlock path) DOES write bb_spt + beebeeb_session_persist — control, proves these assertions can actually detect persistence', async () => {
     const key = randomKey()
     await initSessionVault()
-    await cacheKeyPersistent(key)
+    await cacheKeyPersistent(key, TEST_USER_ID)
 
     expect(localStorage.getItem('bb_spt')).not.toBeNull()
-    expect(await restoreSession()).toEqual(key)
+    expect(await restoreSession()).toEqual({ key, userId: TEST_USER_ID })
   })
 })
 
@@ -311,9 +317,9 @@ describe('task 1529 continuation (web #73, Codex P1): boot remediation also clea
     // funneled through the old cacheKey, which cached BOTH the tab session
     // AND the persistent session — exactly what cacheKeyPersistent does.
     await initSessionVault()
-    await cacheKeyPersistent(key)
+    await cacheKeyPersistent(key, TEST_USER_ID)
     expect(localStorage.getItem('bb_spt')).not.toBeNull()
-    expect(await getVaultKey()).toEqual(key)
+    expect(await getVaultKey()).toEqual({ key, userId: TEST_USER_ID })
 
     const cleared = await remediateEmptyPasswordVault()
 
@@ -326,15 +332,15 @@ describe('task 1529 continuation (web #73, Codex P1): boot remediation also clea
 
   test('remediateEmptyPasswordVault leaves the session caches untouched for a real-password vault (no false-positive logout)', async () => {
     const key = randomKey()
-    await wrapAndStore(key, 'a-real-password-123')
+    await wrapAndStore(key, 'a-real-password-123', TEST_USER_ID)
     await initSessionVault()
-    await cacheKeyPersistent(key)
+    await cacheKeyPersistent(key, TEST_USER_ID)
 
     const cleared = await remediateEmptyPasswordVault()
 
     expect(cleared).toBe(false)
     expect(localStorage.getItem('bb_spt')).not.toBeNull()
-    expect(await getVaultKey()).toEqual(key)
+    expect(await getVaultKey()).toEqual({ key, userId: TEST_USER_ID })
   })
 })
 
