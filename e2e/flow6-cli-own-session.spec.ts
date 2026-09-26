@@ -16,7 +16,9 @@ import { join } from 'node:path'
  *
  * This spec drives the REAL chain: a real `bb` binary (E2E_BB_BIN) with a
  * scratch HOME, the real /cli-auth page, and the real API. It asserts:
- *   1. after approval there are 2 sessions and the CLI token != browser cookie;
+ *   1. after approval the CLI token != the approving browser's cookie, and the
+ *      server resolves it to its own session row (device_kind `cli`,
+ *      "CLI (bb)") — exactly one such row exists;
  *   2. after `bb logout` the browser's GET /api/v1/auth/me is still 200;
  *   3. revoking the CLI's session in Settings → Security makes `bb ls` fail
  *      with a re-login hint, while the browser stays signed in.
@@ -43,6 +45,22 @@ async function browserSessionCookie(page: Page): Promise<string> {
   const c = (await page.context().cookies()).find((x) => x.name === 'bb_session')
   if (!c) throw new Error('no bb_session cookie in the browser context')
   return c.value
+}
+
+type AccountSession = { id: string; device_kind: string; device_name: string; is_current: boolean }
+
+/** GET /api/v1/account/sessions as the browser (cookie session). */
+async function accountSessions(page: Page): Promise<AccountSession[]> {
+  const res = await page.request.get(`${API_URL}/api/v1/account/sessions`)
+  expect(res.status()).toBe(200)
+  return ((await res.json()) as { sessions: AccountSession[] }).sessions
+}
+
+/** GET /api/v1/account/sessions with a bare Bearer token (no browser cookies). */
+async function accountSessionsAs(token: string): Promise<AccountSession[]> {
+  const res = await fetch(`${API_URL}/api/v1/account/sessions`, { headers: { Authorization: `Bearer ${token}` } })
+  expect(res.status, 'the CLI token must authenticate on its own').toBe(200)
+  return ((await res.json()) as { sessions: AccountSession[] }).sessions
 }
 
 function bbEnv(home: string): NodeJS.ProcessEnv {
@@ -111,30 +129,44 @@ test.describe('flow 6 fix 2: bb login mints the CLI its own, separately revocabl
 
   test('approval gives the CLI a distinct session; bb logout leaves the browser signed in', async ({ page }) => {
     await devLogin(page, `cli-own-session-${Date.now()}-${Math.floor(Math.random() * 1e6)}@beebeeb.dev`)
-    const cookie = await browserSessionCookie(page)
 
     await bbLoginViaBrowser(page, home)
 
+    // NB: every page load in the Vite dev build runs /dev/auto-login and mints
+    // a fresh browser session, so a raw session COUNT is meaningless here and a
+    // cookie read before /cli-auth is already stale. Compare against the
+    // browser session that approved (the cookie now in the jar) and ask the
+    // server which session each credential actually is.
+    const cookie = await browserSessionCookie(page)
     const cliToken = bbConfig(home).session_token
     expect(cliToken, 'bb config must hold a session token after login').toBeTruthy()
     expect(cliToken, 'the CLI must NOT hold a copy of the browser session cookie').not.toBe(cookie)
 
-    const sessions = await page.request.get(`${API_URL}/api/v1/auth/sessions`)
-    expect(sessions.status()).toBe(200)
-    const list = (await sessions.json()) as { sessions: unknown[] }
-    expect(list.sessions, 'browser + CLI must be two sessions').toHaveLength(2)
+    const browserView = await accountSessions(page)
+    const browserCurrent = browserView.find((s) => s.is_current)
+    expect(browserCurrent, 'the browser must see its own current session').toBeTruthy()
+    expect(
+      browserView.filter((s) => s.device_kind === 'cli').length,
+      'exactly one CLI session must exist after one bb login',
+    ).toBe(1)
 
-    // The CLI shows up as its own device in the account session list.
-    const acct = (await (await page.request.get(`${API_URL}/api/v1/account/sessions`)).json()) as {
-      sessions: { device_kind: string; is_current: boolean }[]
-    }
-    expect(acct.sessions.filter((s) => !s.is_current).map((s) => s.device_kind)).toEqual(['cli'])
+    // Seen from the CLI's own credential: its current session is the CLI row,
+    // not the browser's.
+    const cliView = await accountSessionsAs(cliToken!)
+    const cliCurrent = cliView.find((s) => s.is_current)
+    expect(cliCurrent?.device_kind, "the CLI's token must be a session of its own kind").toBe('cli')
+    expect(cliCurrent?.device_name).toBe('CLI (bb)')
+    expect(cliCurrent?.id, 'the CLI must not share the browser session row').not.toBe(browserCurrent!.id)
 
     const logout = runBb(home, ['logout'])
     expect(logout.rc, logout.out).toBe(0)
 
     const me = await page.request.get(`${API_URL}/api/v1/auth/me`)
     expect(me.status(), 'bb logout must not sign the browser out').toBe(200)
+    expect(
+      (await accountSessions(page)).filter((s) => s.device_kind === 'cli').length,
+      'bb logout must end the CLI session',
+    ).toBe(0)
   })
 
   test('revoking the CLI session in Settings signs out only the CLI', async ({ page }) => {
@@ -145,7 +177,10 @@ test.describe('flow 6 fix 2: bb login mints the CLI its own, separately revocabl
     expect(before.rc, `bb ls before revoke:\n${before.out}`).toBe(0)
 
     await page.goto(`${WEB_URL}/settings/security`)
-    const cliRow = page.locator('div.flex.items-center').filter({ hasText: 'CLI (bb)' }).last()
+    // The row container (bg-paper-2) that holds the "CLI (bb)" label and its Revoke button.
+    const cliRow = page
+      .getByText('CLI (bb)', { exact: true })
+      .locator('xpath=ancestor::div[contains(@class,"bg-paper-2")][1]')
     await expect(cliRow).toBeVisible({ timeout: 15_000 })
     await cliRow.getByRole('button', { name: 'Revoke' }).click()
     await page.getByRole('button', { name: 'Confirm revoke' }).click()
