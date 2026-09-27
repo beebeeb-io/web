@@ -141,12 +141,9 @@ cd "$WEB_DIR"
 # worktree add` worktree OUTSIDE the workspace entirely (task 1495's own
 # mandatory first step: ~/code/bb-worktrees/web-NNNN), so a fixed "../.."
 # offset from here would resolve outside beebeeb.io altogether.
-if GIT_COMMON_DIR="$(cd "$WEB_DIR" && git rev-parse --git-common-dir 2>/dev/null)"; then
-  PRIMARY_WEB_DIR="$(cd "$GIT_COMMON_DIR/.." && pwd)"
-  WORKSPACE="$(cd "$PRIMARY_WEB_DIR/../.." && pwd)"
-else
-  WORKSPACE="$(cd "$WEB_DIR/../.." && pwd)"
-fi
+# shellcheck source=scripts/lib/workspace-root.sh
+source "$WEB_DIR/scripts/lib/workspace-root.sh"
+WORKSPACE="$(bb_workspace_root "$WEB_DIR")"  # task 1581: cwd-independent
 SERVER_DIR="$WORKSPACE/repos/server"
 CLI_DIR="$WORKSPACE/repos/cli"
 API_BIN="${E2E_API_BIN:-$SERVER_DIR/target/debug/beebeeb-api}"

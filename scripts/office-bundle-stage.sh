@@ -64,12 +64,9 @@
 set -euo pipefail
 
 WEB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-if GIT_COMMON_DIR="$(cd "$WEB_DIR" && git rev-parse --git-common-dir 2>/dev/null)"; then
-  PRIMARY_WEB_DIR="$(cd "$GIT_COMMON_DIR/.." && pwd)"
-  WORKSPACE="$(cd "$PRIMARY_WEB_DIR/../.." && pwd)"
-else
-  WORKSPACE="$(cd "$WEB_DIR/../.." && pwd)"
-fi
+# shellcheck source=scripts/lib/workspace-root.sh
+source "$WEB_DIR/scripts/lib/workspace-root.sh"
+WORKSPACE="$(bb_workspace_root "$WEB_DIR")"  # task 1581: cwd-independent
 
 ENGINE_DIR="$WORKSPACE/repos/office/evidence/artifacts/emscripten"
 BRIDGE_DIR="$WORKSPACE/repos/office/bridge"
