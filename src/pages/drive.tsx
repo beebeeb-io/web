@@ -839,15 +839,21 @@ export function Drive() {
   useWsEvent(
     ['file.starred'],
     useCallback((event) => {
-      const data = event.data as { file_id?: string; is_starred?: boolean }
-      if (data.file_id != null && data.is_starred != null) {
+      // Server shape: `{ type: 'file.starred', data: { id, is_starred } }`
+      // (event_bus.rs SyncEvent::FileStarred). This read `data.file_id`, which
+      // the server never sends, so the handler was a silent no-op (task 1577).
+      const data = event.data as { id?: string; is_starred?: boolean }
+      if (typeof data.id === 'string' && typeof data.is_starred === 'boolean') {
+        const id = data.id
+        const isStarred = data.is_starred
+        sync.setNodeStarred(id, isStarred)
         setFiles((prev) =>
           prev.map((f) =>
-            f.id === data.file_id ? { ...f, is_starred: data.is_starred as boolean } : f,
+            f.id === id ? { ...f, is_starred: isStarred } : f,
           ),
         )
       }
-    }, []),
+    }, [sync.setNodeStarred]),
   )
 
   // Share link opened — show toast
@@ -1904,6 +1910,10 @@ export function Drive() {
   async function handleToggleStar(fileId: string) {
     try {
       const result = await toggleStar(fileId)
+      // Mirror into the sync tree too: the drive re-derives its rows from the
+      // tree on every tree change (refreshFromSync), so a star recorded only
+      // in `files` is reverted by the next re-derive (task 1577).
+      sync.setNodeStarred(fileId, result.is_starred)
       setFiles((prev) =>
         prev.map((f) =>
           f.id === fileId ? { ...f, is_starred: result.is_starred } : f,

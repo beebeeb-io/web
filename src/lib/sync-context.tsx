@@ -38,6 +38,11 @@ interface SyncContextValue {
   getNode: (id: string) => SyncNode | undefined
   /** All nodes — useful for search indexing. */
   allNodes: () => SyncNode[]
+  /**
+   * Mirror an authoritative star state (the `PATCH /files/:id/star` response)
+   * into the tree, so a later tree-driven re-derive keeps it (task 1577).
+   */
+  setNodeStarred: (id: string, isStarred: boolean) => void
   /** Submit a local op (optimistic apply + POST). */
   submitOp: (
     opType: string,
@@ -80,7 +85,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
         setReady(true)
         setLoading(false)
         setTreeVersion((n) => n + 1)
-      } else if (event.type === 'op') {
+      } else if (event.type === 'op' || event.type === 'tree') {
         setTreeVersion((n) => n + 1)
       } else if (event.type === 'error' && event.error) {
         setError(event.error)
@@ -124,6 +129,10 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     return clientRef.current?.getAllNodes() ?? []
   }, [])
 
+  const setNodeStarred = useCallback((id: string, isStarred: boolean): void => {
+    clientRef.current?.setNodeStarred(id, isStarred)
+  }, [])
+
   const submitOp = useCallback(
     async (
       opType: string,
@@ -147,9 +156,10 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       children: children_,
       getNode,
       allNodes,
+      setNodeStarred,
       submitOp,
     }),
-    [status, loading, error, ready, treeVersion, children_, getNode, allNodes, submitOp],
+    [status, loading, error, ready, treeVersion, children_, getNode, allNodes, setNodeStarred, submitOp],
   )
 
   return <SyncContext.Provider value={value}>{children}</SyncContext.Provider>

@@ -22,6 +22,7 @@ import {
   type DriveFile,
 } from '../lib/api'
 import { useWsEvent } from '../lib/ws-context'
+import { useSync } from '../lib/sync-context'
 import { useSelfHealRefetch } from '../hooks/use-self-heal-refetch'
 import { userFriendlyError } from '../lib/user-friendly-error'
 import { EmptyRecent } from '../components/empty-states/empty-recent'
@@ -32,6 +33,7 @@ const RECENT_LIMIT = 50
 export function Recent() {
   const { getFileKey, getFileKeyForFile, isUnlocked, cryptoReady } = useKeys()
   const { showToast } = useToast()
+  const { setNodeStarred } = useSync()
   const navigate = useNavigate()
   const { previewFile, openPreview, closePreview } = useFilePreview()
 
@@ -153,6 +155,7 @@ export function Recent() {
       case 'star':
         try {
           const result = await toggleStar(file.id)
+          setNodeStarred(file.id, result.is_starred) // keep the sync tree in step (task 1577)
           setFiles((prev) => prev.map((f) => f.id === file.id ? { ...f, is_starred: result.is_starred } : f))
         } catch (err) {
           showToast({ icon: 'star', title: 'Failed to update star', description: userFriendlyError(err), danger: true })

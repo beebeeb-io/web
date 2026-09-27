@@ -33,7 +33,8 @@ export interface PendingOp {
 }
 
 interface SyncEvent {
-  type: 'snapshot' | 'op' | 'status' | 'error'
+  /** `tree` = the tree changed outside the sequenced op log (e.g. a star). */
+  type: 'snapshot' | 'op' | 'tree' | 'status' | 'error'
   status?: ConnectionStatus
   error?: Error
   op?: SyncOp
@@ -261,12 +262,7 @@ export class SyncClient {
     }
 
     es.onmessage = (msg: MessageEvent<string>) => {
-      try {
-        const op = JSON.parse(msg.data) as SyncOp
-        this.applyRemoteOp(op)
-      } catch (err) {
-        console.error('[SyncClient] Failed to parse SSE message', err)
-      }
+      this.ingestStreamFrame(msg.data)
     }
 
     es.onerror = () => {
@@ -307,6 +303,58 @@ export class SyncClient {
       console.warn('[SyncClient] reconnect catch-up failed', err)
     }
     void this.openStream()
+  }
+
+  /**
+   * Handle one raw frame from `/sync/stream`.
+   *
+   * The server's SSE stream forwards EVERY message on the user's event bus —
+   * both sequenced sync ops (`{ seq_id, op_type, payload }`) and the realtime
+   * events the WebSocket also carries (`{ type: 'file.starred', data }`, …).
+   * Before task 1577 every frame was treated as a sync op: a realtime event
+   * fell through `applyOpToTree`'s default branch, overwrote `lastSeq` with
+   * `undefined`, and still emitted a tree change. The drive re-derived its
+   * rows from a tree that had never learned the star → the row reverted to
+   * "Star" whenever that frame landed after the PATCH response.
+   *
+   * Exposed (not private) so unit tests can feed frames without an
+   * EventSource.
+   */
+  ingestStreamFrame(raw: string): void {
+    let frame: StreamFrame
+    try {
+      frame = classifyStreamFrame(JSON.parse(raw))
+    } catch (err) {
+      console.error('[SyncClient] Failed to parse SSE message', err)
+      return
+    }
+    switch (frame.kind) {
+      case 'op':
+        this.applyRemoteOp(frame.op)
+        break
+      case 'starred':
+        this.setNodeStarred(frame.id, frame.isStarred)
+        break
+      case 'ignore':
+        // A realtime event with no tree-state effect: leave lastSeq and the
+        // tree alone, and do not bump listeners (a bump with an unchanged tree
+        // just makes every consumer re-derive for nothing).
+        break
+    }
+  }
+
+  /**
+   * Record a file's star state in the tree. Called for `file.starred` stream
+   * frames and by UI handlers with the authoritative `PATCH /files/:id/star`
+   * response, so a later tree-driven re-derive keeps the star instead of
+   * reverting it. Stars are not sequenced sync ops (no seq_id), so this never
+   * touches `lastSeq`. Emits a tree change only when the value actually moved.
+   */
+  setNodeStarred(id: string, isStarred: boolean): void {
+    const existing = this.tree.get(id)
+    if (!existing || Boolean(existing.is_starred) === isStarred) return
+    this.tree.set(id, { ...existing, is_starred: isStarred })
+    this.emit({ type: 'tree' })
   }
 
   /**
@@ -543,4 +591,34 @@ function payloadToNode(
     created_at: now,
     updated_at: now,
   }
+}
+
+/** A `/sync/stream` frame, classified. See `SyncClient.ingestStreamFrame`. */
+export type StreamFrame =
+  | { kind: 'op'; op: SyncOp }
+  | { kind: 'starred'; id: string; isStarred: boolean }
+  | { kind: 'ignore' }
+
+/**
+ * Classify a parsed `/sync/stream` frame. A sequenced sync op carries a
+ * numeric `seq_id` and a string `op_type`; anything else is a realtime
+ * event-bus message (`{ type, data }`, serialised by the server's
+ * `#[serde(tag = "type", content = "data")] enum SyncEvent`). Of those, only
+ * `file.starred` (`data: { id, is_starred }`) carries node state the tree
+ * must mirror — every other realtime event already has a matching sync op
+ * or no tree effect.
+ */
+export function classifyStreamFrame(frame: unknown): StreamFrame {
+  if (!frame || typeof frame !== 'object') return { kind: 'ignore' }
+  const f = frame as Record<string, unknown>
+  if (typeof f.seq_id === 'number' && Number.isFinite(f.seq_id) && typeof f.op_type === 'string') {
+    return { kind: 'op', op: f as unknown as SyncOp }
+  }
+  if (f.type === 'file.starred' && f.data && typeof f.data === 'object') {
+    const d = f.data as Record<string, unknown>
+    if (typeof d.id === 'string' && typeof d.is_starred === 'boolean') {
+      return { kind: 'starred', id: d.id, isStarred: d.is_starred }
+    }
+  }
+  return { kind: 'ignore' }
 }
