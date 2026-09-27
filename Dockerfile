@@ -39,6 +39,19 @@ RUN sed -i 's|"@beebeeb/shared": "workspace:\*"|"@beebeeb/shared": "/shared"|' p
 ARG VITE_API_URL=https://api.beebeeb.io
 ENV VITE_API_URL=$VITE_API_URL
 
+# Office editor feature flag (task 1567, src/lib/flags.ts's FEATURE_OFFICE_EDITOR)
+# — same "inlined at build time" story as VITE_API_URL above. Defaults to
+# unset/false: this Dockerfile had NO build-arg wiring for it at all before
+# this hosting change (found while trying to build a "flag on" image to
+# actually load the editor for this task's own Playwright proof) — meaning
+# no image built from it could ever have shipped the editor, regardless of
+# what was passed on the `docker buildx build` command line, since an
+# undeclared --build-arg is silently ignored and Vite only inlines an env var
+# that was actually exported via ENV before the build step. The lead flips
+# this to "true" at build time once the feature is ready for real users.
+ARG VITE_FEATURE_OFFICE_EDITOR=false
+ENV VITE_FEATURE_OFFICE_EDITOR=$VITE_FEATURE_OFFICE_EDITOR
+
 # Error-reporting DSN (task 1369) — same "inlined at build time" story as
 # VITE_API_URL above. No default: an empty/unset value keeps the shared
 # telemetry reporter (`@beebeeb/shared/telemetry`) a no-op (see
@@ -67,6 +80,21 @@ RUN bunx vite build && node gen-wasm-sri.mjs && \
 FROM nginx:1.27-alpine AS runner
 COPY repos/web/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /app/dist /usr/share/nginx/html
+
+# Office editor bundle (task 1567, hosting lane). Staged by
+# scripts/office-bundle-stage.sh from repos/office's own committed
+# MANIFEST.sha256 reproducibility record — never a third-party CDN, and
+# never this Dockerfile's job to fetch or build it. The directory always
+# exists (a tracked .gitkeep — see repos/web/.gitignore), so this COPY never
+# fails the image build when the bundle hasn't been staged: the office
+# editor is feature-flagged and inert without one (a missing manifest.json
+# just 404s; nginx.conf's own /office/manifest.json location and the app's
+# OfficeLoaderError already handle that honestly). The .gitkeep itself is
+# harmless left in the image (no /office/ location serves a bare directory
+# listing) but is removed for tidiness.
+COPY repos/web/office-bundle-staging /usr/share/nginx/html/office
+RUN rm -f /usr/share/nginx/html/office/.gitkeep
+
 EXPOSE 80
 
 # Healthcheck must hit 127.0.0.1 explicitly — `localhost` resolves to ::1 first

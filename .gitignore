@@ -95,3 +95,12 @@ app.json
 # assembles this directory from a local repos/office build for dev/e2e use.
 /public/office/
 
+# Office bundle PRODUCTION staging (task 1567 hosting) — the Brotli-
+# precompressed, versioned bundle scripts/office-bundle-stage.sh assembles
+# for the Docker image (see Dockerfile). Same "binaries never belong in git"
+# rule as /public/office/ above; the .gitkeep keeps the directory itself
+# tracked so the Dockerfile's COPY of it never fails a build where nobody
+# ran the staging script first.
+/office-bundle-staging/*
+!/office-bundle-staging/.gitkeep
+
