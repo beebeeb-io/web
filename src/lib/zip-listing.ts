@@ -8,7 +8,8 @@
  * this without scanning the whole archive (this is how Finder/Explorer/
  * `unzip -l` all list a zip's contents cheaply).
  *
- * Bounded reads, by design, matching this task's RAW/TIFF work:
+ * Bounded reads WITHIN THIS FILE, by design, matching this task's RAW/TIFF
+ * work:
  *  - only the last `EOCD_SEARCH_WINDOW_BYTES` bytes are read to locate the
  *    End Of Central Directory (EOCD) record (max possible: a 22-byte EOCD
  *    plus a 65535-byte comment — the format's own hard ceiling, not a
@@ -19,6 +20,25 @@
  *    than that (an honest partial listing, never an unbounded read);
  *  - the archive's actual entry DATA (the potentially gigabyte-scale
  *    compressed payload the CD points at) is never read at all.
+ *
+ * NOT bounded — a real gap, stated rather than silently left implied
+ * (Codex review, task 1574 gate, 2026-09-27): `readZipListing` receives an
+ * already-fully-downloaded-and-decrypted `Blob` — its caller
+ * (`file-preview.tsx`) has no thumbnail-first-style fast path for archives
+ * (there's nothing image-like to thumbnail), so opening ANY `.zip` preview,
+ * however large, downloads and decrypts the ENTIRE ciphertext into memory
+ * BEFORE this file's own bounded `blob.slice()` calls ever run. The
+ * "bounded reads" above are real and true of THIS reader once it has a
+ * blob in hand; they do not bound the overall preview flow's network or
+ * memory use for a multi-gigabyte archive. This is not new to this task —
+ * every OTHER unsupported/download-card preview type in this codebase
+ * (PPTX, legacy .doc/.xls, RAW with no embedded preview) has the identical
+ * characteristic: none of them have a lazy/range-based download path
+ * either. Fixing it for real would mean chunk/range-based partial
+ * decryption wired into the preview flow — new cross-cutting
+ * infrastructure, not a small addition to this file, and out of this
+ * task's scope; flagged for its own backlog task rather than fixed here
+ * or silently left for the doc comment above to overclaim past.
  *
  * Split pure/impure the same way as `raw-embedded-jpeg.ts` /
  * `raw-preview.worker.ts`: the byte-level EOCD/Central-Directory parsers
