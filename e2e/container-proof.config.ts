@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test'
 
 /**
  * Task 1567 ship prep (2026-09-27) — standalone Playwright config for the
- * container-level proof (`container-proof.spec.ts`), run against the REAL
+ * container-level proof (`container-proof.proof.ts` — not `.spec.ts`, so the default suite and web-e2e.sh never pick it up), run against the REAL
  * built `beebeeb-web` docker image, not the vite dev server and not the
  * shared `playwright.config.ts` project graph.
  *
@@ -18,13 +18,13 @@ import { defineConfig } from '@playwright/test'
  *
  * Run: E2E_WEB_URL=http://localhost:18099 bunx playwright test --config=e2e/container-proof.config.ts
  * (E2E_WEB_URL must serve the image AND proxy /api, /ws, /health to an
- * isolated API on the same origin — see container-proof.spec.ts's header.)
+ * isolated API on the same origin — see container-proof.proof.ts's header.)
  */
 const WEB_URL = process.env.E2E_WEB_URL ?? 'http://localhost:18099'
 
 export default defineConfig({
   testDir: '.',
-  testMatch: /container-proof\.spec\.ts$/,
+  testMatch: /container-proof\.proof\.ts$/,
   timeout: 600_000,
   retries: 0,
   workers: 1,
