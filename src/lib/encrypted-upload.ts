@@ -25,6 +25,7 @@ import {
   removeUploadState,
 } from './upload-resume'
 import { isLikelyAlbumArtOrIcon } from './photo-library'
+import { runWithSessionReinit } from './upload-session-reinit'
 
 /**
  * Legacy fallback — only used when WASM plan_chunks is unavailable.
@@ -131,7 +132,7 @@ export async function encryptedUpload(
     return serializeEncryptedBlob(encName.nonce, encName.ciphertext)
   }
 
-  async function startUpload(): Promise<void> {
+  async function startUpload(requestedFileId: string = fileId): Promise<void> {
     // `signal` MUST reach the actual `fetch()` call, not just `withNetworkRetry`
     // (task 1571 web PR #106, Codex P1) — otherwise a discard-during-save
     // aborts nothing server-side: `/api/v1/uploads/init` runs to completion
@@ -140,7 +141,7 @@ export async function encryptedUpload(
     // see `not_uploading` (nothing to abandon yet), and leave the file
     // wedged once init's late response arrives.
     const init = await withNetworkRetry(() => initUpload({
-      file_id: fileId,
+      file_id: requestedFileId,
       name_encrypted: nameEncrypted,
       size_bytes: file.size,
       chunk_count: fallbackChunkCount,
@@ -158,7 +159,7 @@ export async function encryptedUpload(
     chunkBytes = init.chunk_size_bytes
     region = init.region
 
-    if (init.file_id === fileId) return
+    if (init.file_id === requestedFileId) return
 
     if (!deriveFileKeyForId) {
       throw new Error('V2 upload init returned a server-generated file id, but no file-key resolver was provided.')
@@ -169,10 +170,11 @@ export async function encryptedUpload(
     await withNetworkRetry(() => updateFile(init.file_id, { name_encrypted: nameEncrypted }, signal), signal)
   }
 
+  let fingerprint: string
   if (resumeFileId) {
     // Caller explicitly wants to resume this file ID
     serverFileId = resumeFileId
-    const fingerprint = await computeFingerprint(file)
+    fingerprint = await computeFingerprint(file)
     const existing = await findByFingerprint(fingerprint)
     if (existing?.fileId === resumeFileId && existing.upload_session_id) {
       uploadSessionId = existing.upload_session_id
@@ -197,7 +199,7 @@ export async function encryptedUpload(
     }
   } else {
     // Check IndexedDB for a matching fingerprint
-    const fingerprint = await computeFingerprint(file)
+    fingerprint = await computeFingerprint(file)
     const existing = await findByFingerprint(fingerprint)
 
     if (
@@ -232,6 +234,10 @@ export async function encryptedUpload(
     }
 
     // Save state to IndexedDB for future resume
+    await persistResumeState()
+  }
+
+  async function persistResumeState(): Promise<void> {
     await saveUploadState({
       fingerprint,
       fileId: serverFileId,
@@ -248,102 +254,127 @@ export async function encryptedUpload(
     })
   }
 
-  // ── Upload chunks ─────────────────────────────────
+  // Transfers every chunk against the CURRENT session and completes it. Run
+  // again from chunk 0 (with a fresh encryptor) after a re-init.
+  async function transferAndComplete(): Promise<DriveFile> {
+    let completedChunks = skipChunks.size
 
-  let completedChunks = skipChunks.size
-
-  onProgress?.({
-    stage: 'Uploading',
-    progress: Math.round((completedChunks / totalChunks) * 95),
-    bytesUploaded: Math.min(completedChunks * chunkBytes, file.size),
-    uploadedChunks: completedChunks,
-    totalChunks,
-    chunkSizeBytes: chunkBytes,
-    region,
-  })
-
-  function reportProgress() {
-    completedChunks++
-    const bytesUploaded = Math.min(completedChunks * chunkBytes, file.size)
     onProgress?.({
       stage: 'Uploading',
       progress: Math.round((completedChunks / totalChunks) * 95),
-      bytesUploaded,
+      bytesUploaded: Math.min(completedChunks * chunkBytes, file.size),
       uploadedChunks: completedChunks,
       totalChunks,
       chunkSizeBytes: chunkBytes,
       region,
     })
-  }
 
-  // Report initial progress for skipped chunks
-  if (skipChunks.size > 0) {
-    const bytesUploaded = Math.min(skipChunks.size * chunkBytes, file.size)
-    onProgress?.({
-      stage: 'Uploading',
-      progress: Math.round((skipChunks.size / totalChunks) * 95),
-      bytesUploaded,
-      uploadedChunks: skipChunks.size,
-      totalChunks,
-      chunkSizeBytes: chunkBytes,
-      region,
-    })
-  }
-
-  // ── Streaming encryption via the shared core ChunkEncryptor ───────────────
-  // Create the worker-owned encryptor now that the server has fixed the chunk
-  // plan + final file id. The per-file key is derived ONCE inside core from
-  // masterKey + serverFileId — the SAME derivation that produced `activeFileKey`
-  // — so we pass masterKey here and keep `activeFileKey` only for the metadata,
-  // thumbnail, and folder-share paths below.
-  //
-  // If the v2 server overrode the chunk size, pin the encryptor to that exact
-  // size so its internal plan can't diverge from the slices we PUT. Otherwise
-  // use the web ladder, which is identical to the `planChunks()` proposal above
-  // (both call core's `plan_chunks`), so chunk_count stays consistent with init.
-  const serverOverrodeChunkSize = chunkBytes !== fallbackPlan.chunk_size_bytes
-  const enc = serverOverrodeChunkSize
-    ? await startEncryptedStreamWithChunkSize(masterKey, serverFileId, file.size, chunkBytes)
-    : await startEncryptedStream(masterKey, serverFileId, file.size, 'web')
-
-  try {
-    // Upload chunks sequentially so large web chunks never overlap in memory:
-    // only one plaintext slice + one ciphertext frame are alive per iteration.
-    //
-    // Push EVERY chunk in order so the encryptor's nonce/index/count stay in
-    // lockstep with finish()'s integrity guard — INCLUDING chunks the server
-    // already has on resume: we still push them to advance the stream, we just
-    // don't re-PUT them.
-    for (let i = 0; i < totalChunks; i++) {
-      if (signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError')
-
-      const start = i * chunkBytes
-      const end = Math.min(start + chunkBytes, file.size)
-      const buffer = await file.slice(start, end).arrayBuffer()
-      // pushChunk transfers the plaintext into the worker (zero-copy) and
-      // returns the full wire frame (nonce || ciphertext || tag) to PUT directly.
-      const frame = await enc.pushChunk(new Uint8Array(buffer))
-
-      if (skipChunks.has(i)) continue // already uploaded — pushed for alignment only
-
-      await withNetworkRetry(() => uploadChunk(serverFileId, i, frame, uploadSessionId, signal), signal)
-      reportProgress()
+    function reportProgress() {
+      completedChunks++
+      const bytesUploaded = Math.min(completedChunks * chunkBytes, file.size)
+      onProgress?.({
+        stage: 'Uploading',
+        progress: Math.round((completedChunks / totalChunks) * 95),
+        bytesUploaded,
+        uploadedChunks: completedChunks,
+        totalChunks,
+        chunkSizeBytes: chunkBytes,
+        region,
+      })
     }
 
-    if (signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError')
+    // Report initial progress for skipped chunks
+    if (skipChunks.size > 0) {
+      const bytesUploaded = Math.min(skipChunks.size * chunkBytes, file.size)
+      onProgress?.({
+        stage: 'Uploading',
+        progress: Math.round((skipChunks.size / totalChunks) * 95),
+        bytesUploaded,
+        uploadedChunks: skipChunks.size,
+        totalChunks,
+        chunkSizeBytes: chunkBytes,
+        region,
+      })
+    }
 
-    // Integrity guard: confirms all planned chunks were emitted and the
-    // ciphertext total matches before we tell the server the upload is done.
-    // A shrinking/corrupt source throws here and surfaces as an upload error.
-    await enc.finish()
-  } catch (err) {
-    // Free the worker-side encryptor for aborted/failed uploads. No-op after
-    // a successful finish() (the handle is already gone).
-    await enc.dispose()
-    throw err
+    // ── Streaming encryption via the shared core ChunkEncryptor ───────────────
+    // Create the worker-owned encryptor now that the server has fixed the chunk
+    // plan + final file id. The per-file key is derived ONCE inside core from
+    // masterKey + serverFileId — the SAME derivation that produced `activeFileKey`
+    // — so we pass masterKey here and keep `activeFileKey` only for the metadata,
+    // thumbnail, and folder-share paths below.
+    //
+    // If the v2 server overrode the chunk size, pin the encryptor to that exact
+    // size so its internal plan can't diverge from the slices we PUT. Otherwise
+    // use the web ladder, which is identical to the `planChunks()` proposal above
+    // (both call core's `plan_chunks`), so chunk_count stays consistent with init.
+    const serverOverrodeChunkSize = chunkBytes !== fallbackPlan.chunk_size_bytes
+    const enc = serverOverrodeChunkSize
+      ? await startEncryptedStreamWithChunkSize(masterKey, serverFileId, file.size, chunkBytes)
+      : await startEncryptedStream(masterKey, serverFileId, file.size, 'web')
+
+    try {
+      // Upload chunks sequentially so large web chunks never overlap in memory:
+      // only one plaintext slice + one ciphertext frame are alive per iteration.
+      //
+      // Push EVERY chunk in order so the encryptor's nonce/index/count stay in
+      // lockstep with finish()'s integrity guard — INCLUDING chunks the server
+      // already has on resume: we still push them to advance the stream, we just
+      // don't re-PUT them.
+      for (let i = 0; i < totalChunks; i++) {
+        if (signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError')
+
+        const start = i * chunkBytes
+        const end = Math.min(start + chunkBytes, file.size)
+        const buffer = await file.slice(start, end).arrayBuffer()
+        // pushChunk transfers the plaintext into the worker (zero-copy) and
+        // returns the full wire frame (nonce || ciphertext || tag) to PUT directly.
+        const frame = await enc.pushChunk(new Uint8Array(buffer))
+
+        if (skipChunks.has(i)) continue // already uploaded — pushed for alignment only
+
+        await withNetworkRetry(() => uploadChunk(serverFileId, i, frame, uploadSessionId, signal), signal)
+        reportProgress()
+      }
+
+      if (signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError')
+
+      // Integrity guard: confirms all planned chunks were emitted and the
+      // ciphertext total matches before we tell the server the upload is done.
+      // A shrinking/corrupt source throws here and surfaces as an upload error.
+      await enc.finish()
+    } catch (err) {
+      // Free the worker-side encryptor for aborted/failed uploads. No-op after
+      // a successful finish() (the handle is already gone).
+      await enc.dispose()
+      throw err
+    }
+
+    return completeUpload(serverFileId, uploadSessionId)
   }
 
-  const fileMeta = await completeUpload(serverFileId, uploadSessionId)
+  // ── Upload chunks + complete ──────────────────────
+  // Task 1589: a v2 session the server swept (lease expired while the tab was
+  // closed / the laptop slept) answers 404 (or 400 "not writable: expired").
+  // runWithSessionReinit then drops the dead resume entry, re-inits ONCE for
+  // the same file id and runs transferAndComplete again from chunk 0.
+  const fileMeta = await runWithSessionReinit({
+    attempt: transferAndComplete,
+    hasSession: () => uploadSessionId !== null,
+    dropResumeEntry: () => removeUploadState(serverFileId),
+    reinit: async () => {
+      const requested = serverFileId
+      uploadSessionId = null
+      objectVersionId = null
+      skipChunks = new Set()
+      chunkBytes = fallbackPlan.chunk_size_bytes
+      totalChunks = fallbackChunkCount
+      region = null
+      await startUpload(requested)
+      await persistResumeState()
+    },
+    signal,
+  })
 
   // Clean up IndexedDB state on success
   await removeUploadState(serverFileId)

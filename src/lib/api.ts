@@ -1026,17 +1026,17 @@ export async function uploadChunk(
   uploadSessionId?: string | null,
   signal?: AbortSignal,
 ): Promise<{ index: number; size: number; skipped?: boolean }> {
-  const v2Path = uploadSessionId ? `/api/v1/uploads/${uploadSessionId}/chunks/${index}` : null
-  if (v2Path) {
-    try {
-      return await uploadChunkRequest(v2Path, data, signal)
-    } catch (err) {
-      if (!(err instanceof ApiError) || err.status !== 404) {
-        throw err
-      }
-    }
+  // A v2 session's chunks go to the session route ONLY. There is deliberately
+  // no fallback to the legacy `/files/{id}/chunks` route on a v2 404 (task
+  // 1589): a 404 there means the server swept the session (its lease
+  // expired), and the legacy route would write against whatever upload state
+  // the file has NOW — possibly another device's upload after a takeover.
+  // The caller (encryptedUpload → runWithSessionReinit) re-inits instead.
+  if (uploadSessionId) {
+    return uploadChunkRequest(`/api/v1/uploads/${uploadSessionId}/chunks/${index}`, data, signal)
   }
 
+  // v1 protocol (the init itself answered from the legacy route).
   return uploadChunkRequest(`/api/v1/files/${fileId}/chunks/${index}`, data, signal)
 }
 
@@ -1105,17 +1105,12 @@ export async function completeUpload(
   fileId: string,
   uploadSessionId?: string | null,
 ): Promise<DriveFile> {
+  // No legacy fallback on a v2 404 (task 1589) — see uploadChunk() above.
   if (uploadSessionId) {
-    try {
-      return await request<DriveFile>(`/api/v1/uploads/${uploadSessionId}/complete`, {
-        method: 'POST',
-        body: JSON.stringify({}),
-      })
-    } catch (err) {
-      if (!(err instanceof ApiError) || err.status !== 404) {
-        throw err
-      }
-    }
+    return request<DriveFile>(`/api/v1/uploads/${uploadSessionId}/complete`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    })
   }
 
   return request<DriveFile>(`/api/v1/files/${fileId}/upload/complete`, {
