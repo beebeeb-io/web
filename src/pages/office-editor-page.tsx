@@ -37,6 +37,7 @@ import { decryptFileMetadata } from '../lib/crypto'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { useKeys } from '../lib/key-context'
 import { resolveOfficeFileKind } from '../lib/office/office-file-kind'
+import { checkOfficeBytes } from '../lib/office/office-magic'
 import { OfficeEditor } from '../components/office/office-editor'
 import { ShareDialog } from '../components/share-dialog'
 
@@ -102,13 +103,24 @@ export function OfficeEditorPage() {
           // the document itself.
           fetchAndDecryptThumbnail(file.id, fileKey).catch(() => null),
         ])
-        const buf = await plaintext.arrayBuffer()
+        const bytes = new Uint8Array(await plaintext.arrayBuffer())
         if (cancelled) return
+        // Task 1584: the engine only ever gets bytes that really are the
+        // claimed document type. A mismatch (ciphertext that slipped past a
+        // decryption/assembly bug, a damaged upload, a renamed file) fails
+        // loudly here with a message that says what is wrong, instead of
+        // being handed to LibreOffice to make sense of.
+        const check = checkOfficeBytes(bytes, officeKind.ext)
+        if (!check.ok) {
+          console.error(`[office] refused to open: expected ${check.expected ?? 'zip/ole'} container, found ${check.found ?? 'none'}`)
+          setState({ stage: 'error', message: check.message })
+          return
+        }
         setState({
           stage: 'ready',
           file,
           decryptedName: name,
-          bytes: new Uint8Array(buf),
+          bytes,
           officeApp: officeKind.app,
           thumbnailUrl,
           openedVersionNumber,

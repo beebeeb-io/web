@@ -7,6 +7,11 @@
 // only wires that logic to the real `caches`/`fetch` APIs. `importScripts`
 // is valid here because this is a CLASSIC (non-module) service worker
 // script — see the plain `register('/sw.js')` call in src/main.tsx.
+// Task 1584: office-cache-logic.js now carries a cache GENERATION in every
+// office cache name, so this worker's activate step drops office caches that
+// an earlier generation may have filled with double-encoded (br + gzip)
+// responses. This comment also changes sw.js's own bytes, so browsers that
+// only byte-compare the top-level script still install the update.
 importScripts('/office-cache-logic.js')
 
 const CACHE = 'beebeeb-v2'

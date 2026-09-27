@@ -47,8 +47,8 @@ describe('officeVersionFromPath', () => {
 })
 
 describe('officeCacheName', () => {
-  test('is prefixed and versioned', () => {
-    expect(logic.officeCacheName('a1b2c3')).toBe('beebeeb-office-a1b2c3')
+  test('is prefixed, generation-scoped (task 1584) and versioned', () => {
+    expect(logic.officeCacheName('a1b2c3')).toBe('beebeeb-office-g2-a1b2c3')
   })
 
   test('throws on an empty/missing version rather than caching under a bogus name', () => {
