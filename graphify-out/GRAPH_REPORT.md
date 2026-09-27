@@ -1,7 +1,7 @@
 # Graph Report - web-1582  (2026-09-27)
 
 ## Corpus Check
-- 619 files · ~622,721 words
+- 619 files · ~623,111 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
@@ -134,14 +134,14 @@
 ## Surprising Connections (you probably didn't know these)
 - `depsForAccount()` --calls--> `compute_recovery_check()`  [INFERRED]
   test/recovery-validation.test.ts → packages/beebeeb-wasm/beebeeb_wasm.js
-- `handleAuthorize()` --calls--> `resolveSessionToken()`  [INFERRED]
-  src/pages/cli-auth.tsx → packages/shared/src/api/request.ts
-- `ensureWasm()` --calls--> `init()`  [INFERRED]
-  src/lib/plan-pricing.ts → public/office/phase4-2026-09-27/soffice.js
-- `write_ts_module()` --calls--> `open()`  [INFERRED]
-  scripts/generate-blank-office-files.py → public/office/phase4-2026-09-27/soffice.js
-- `runWorkerLoop()` --calls--> `updateStatus()`  [INFERRED]
-  src/pages/settings/import.tsx → public/office/phase4-2026-09-27/soffice.js
+- `resolveSessionToken()` --calls--> `handleAuthorize()`  [INFERRED]
+  packages/shared/src/api/request.ts → src/pages/cli-auth.tsx
+- `init()` --calls--> `ensureWasm()`  [INFERRED]
+  public/office/phase4-2026-09-27/soffice.js → src/lib/plan-pricing.ts
+- `open()` --calls--> `write_ts_module()`  [INFERRED]
+  public/office/phase4-2026-09-27/soffice.js → scripts/generate-blank-office-files.py
+- `updateStatus()` --calls--> `runWorkerLoop()`  [INFERRED]
+  public/office/phase4-2026-09-27/soffice.js → src/pages/settings/import.tsx
 
 ## Communities
 
