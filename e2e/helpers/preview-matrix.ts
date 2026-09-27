@@ -205,6 +205,40 @@ export async function classifyOutcome(page: Page): Promise<{ outcome: Outcome; d
 }
 
 /**
+ * Double-click `rowName`'s row and wait for EITHER the preview overlay to
+ * mount OR the toast (`role="alert"`) file-list.tsx's own onDoubleClick
+ * fires when `isPreviewable()` says no BEFORE ever opening one ("This file
+ * type can't be previewed ... Use Open to download it", src/components/
+ * file-list.tsx). Found live running the full matrix: legacy .doc/.ppt and
+ * .zip correctly fail `isPreviewable` by design (pickRenderer has no
+ * renderer for any of them either) — for those, NO overlay EVER appears,
+ * and the shared thumb-fixtures.ts `openPreview` (which unconditionally
+ * waits 15s for the overlay) throws, aborting the whole spec run with no
+ * per-fixture resilience. The toast is an equally HONEST "can't preview
+ * this" signal — just delivered without an overlay — so it resolves to the
+ * same 'cant-preview' outcome bucket, not a FAIL.
+ */
+export async function openPreviewOrToast(
+  page: Page,
+  rowName: string,
+  timeoutMs = 15_000,
+): Promise<{ opened: boolean; toastText?: string }> {
+  await page.getByRole('row', { name: new RegExp(rowName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) }).first().dblclick()
+  const overlay = previewOverlay(page).first()
+  const toast = page.getByRole('alert').filter({ hasText: /can't be previewed/i })
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    if (await overlay.isVisible().catch(() => false)) return { opened: true }
+    if (await toast.first().isVisible().catch(() => false)) {
+      const toastText = (await toast.first().textContent().catch(() => null)) ?? 'can\'t be previewed'
+      return { opened: false, toastText }
+    }
+    await page.waitForTimeout(200)
+  }
+  return { opened: false }
+}
+
+/**
  * Poll classifyOutcome() until it settles on something other than
  * 'no-overlay' (the overlay opening) — but do NOT resolve on 'spinner': a
  * spinner that is still there after the full budget IS the FAIL we're
