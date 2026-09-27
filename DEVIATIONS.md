@@ -67,6 +67,14 @@ review, not decided silently:
   `shadow-2` token instead of docking, so the engine canvas is never resized,
   and it closes after a heading is picked. The mockup is desktop-only. At
   640 px and wider, nothing changes.
+- **Status bar at phone width (< 640 px).** It stays on one line. The
+  segments that describe the document (page or slide, word count, Calc's
+  stats) sit on the left and are ellipsized when space runs out. Encrypted,
+  the save state and Licenses never shrink. Some items are dropped only
+  below 640 px:
+  - the language;
+  - the clock after "saved as version N";
+  - Calc's Average and Count (Sum stays).
 - **Open-error state.** The fixed headline "We couldn't prepare the editor on
   this device." is replaced by a message per error kind, with the raw engine
   text on a mono line underneath (`src/lib/office/office-open-error.ts`). The

@@ -66,33 +66,46 @@ export function OfficeStatusBar({
     )
   }
 
-  const statusRight = conflict
-    ? 'not saved · conflict'
-    : dirty
-      ? 'unsaved changes'
-      : lastSavedAt
-        ? `saved as version ${versionNumber} · ${formatClock(lastSavedAt)}`
-        : `version ${versionNumber}`
+  // The clock is dropped below `sm` (task 1585, Codex P2 on PR #123): the
+  // version number is the part that matters; the time is on the version list.
+  const statusRight = conflict ? (
+    'not saved · conflict'
+  ) : dirty ? (
+    'unsaved changes'
+  ) : lastSavedAt ? (
+    <>
+      saved as version {versionNumber}
+      <span className="hidden sm:inline"> · {formatClock(lastSavedAt)}</span>
+    </>
+  ) : (
+    `version ${versionNumber}`
+  )
 
   return (
     <div
-      // whitespace-nowrap + a tighter gap below `sm` (task 1585): at phone
-      // width the segments wrapped onto two lines inside the 30 px bar.
+      // Task 1585 (+ Codex P2 on PR #123): at phone width the bar must stay
+      // one line and inside the viewport in every state. The right cluster
+      // (encryption state, save state, Licenses) never shrinks; the left,
+      // document-describing cluster takes what is left and clips, each
+      // segment ellipsized, instead of pushing the right one off-screen.
       className="flex h-[30px] shrink-0 items-center gap-3 whitespace-nowrap border-t border-line bg-paper-2 px-4 font-mono text-[11px] text-ink-3 sm:gap-4"
       data-testid="office-status-bar"
     >
-      {pageLabel && <span>{pageLabel}</span>}
-      {wordCount !== null && <span>{wordCount.toLocaleString()} words</span>}
-      {/* The least important segment; dropped at phone width (task 1585). */}
-      {language && <span className="hidden sm:inline">{language}</span>}
-      {extra}
-      <span className="flex-1" />
-      <span className="flex items-center gap-1.5 text-amber-deep">
+      <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden sm:gap-4" data-testid="office-status-left">
+        {pageLabel && <span className="min-w-0 truncate">{pageLabel}</span>}
+        {wordCount !== null && <span className="min-w-0 truncate">{wordCount.toLocaleString()} words</span>}
+        {/* The least important segment; dropped at phone width. */}
+        {language && <span className="hidden sm:inline">{language}</span>}
+        {extra}
+      </div>
+      <span className="flex shrink-0 items-center gap-1.5 text-amber-deep">
         <Icon name="lock" size={11} />
         Encrypted
       </span>
-      <span data-testid="office-status-saved">{statusRight}</span>
-      {about}
+      <span className="shrink-0" data-testid="office-status-saved">
+        {statusRight}
+      </span>
+      {about && <span className="flex shrink-0">{about}</span>}
     </div>
   )
 }

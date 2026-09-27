@@ -22,9 +22,16 @@ export function CalcStatusExtra({ stats }: CalcStatusExtraProps) {
   const fmt = stats.hadCurrency ? formatCalcCurrency : formatCalcNumber
   return (
     <>
-      <span data-testid="calc-status-sum">Sum {fmt(stats.sum)}</span>
-      <span data-testid="calc-status-average">Average {fmt(stats.average)}</span>
-      <span data-testid="calc-status-count">Count {stats.count}</span>
+      <span className="min-w-0 truncate" data-testid="calc-status-sum">
+        Sum {fmt(stats.sum)}
+      </span>
+      {/* Task 1585: at phone width only Sum fits next to the save state. */}
+      <span className="hidden sm:inline" data-testid="calc-status-average">
+        Average {fmt(stats.average)}
+      </span>
+      <span className="hidden sm:inline" data-testid="calc-status-count">
+        Count {stats.count}
+      </span>
     </>
   )
 }

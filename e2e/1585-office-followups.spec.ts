@@ -21,7 +21,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { strToU8, zipSync } from 'fflate'
-import { writeRichDocxFixture, RICH_DOCX_HEADINGS } from './helpers/office-fixtures'
+import { writePptxFixture, writeRichDocxFixture, RICH_DOCX_HEADINGS } from './helpers/office-fixtures'
 import { uploadAndWait, openPreview, previewOverlay } from './helpers/thumb-fixtures'
 import { OFFICE_BOOT_BUDGET_MS, autoDismissDevBanner, waitOfficeSettled } from './helpers/office-ready'
 
@@ -69,6 +69,35 @@ async function openOfficeTab(page: Page, context: BrowserContext, base: string):
   return tab
 }
 
+/**
+ * The status bar is one line and inside the viewport, and its right cluster
+ * (encryption state, save state, Licenses) is fully visible. Codex P2 on PR
+ * #123: Calc's stats, Impress's slide label and the post-save clock could
+ * push those off-screen at phone width.
+ */
+async function expectStatusBarFits(tab: Page, width: number): Promise<void> {
+  const bar = tab.getByTestId('office-status-bar')
+  const fit = await bar.evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }))
+  expect(fit.scroll, 'status bar does not overflow').toBeLessThanOrEqual(fit.client)
+  for (const id of ['office-status-saved', 'office-about-button']) {
+    const box = await tab.getByTestId(id).boundingBox()
+    expect(box, id).not.toBeNull()
+    expect(box!.height, `${id} is a single line`).toBeLessThan(20)
+    expect(box!.x, `${id} starts on screen`).toBeGreaterThanOrEqual(0)
+    expect(box!.x + box!.width, `${id} ends on screen`).toBeLessThanOrEqual(width)
+  }
+}
+
+/** Opens the same /office/<id> route fresh in a phone-width page (the initial state a phone user gets). */
+async function openOnPhone(context: BrowserContext, officeUrl: string): Promise<Page> {
+  const tab = await context.newPage()
+  await tab.setViewportSize(PHONE)
+  await autoDismissDevBanner(tab)
+  await tab.goto(officeUrl)
+  await waitOfficeSettled(tab)
+  return tab
+}
+
 /** A .docx that IS a zip (so the 1584 magic-byte guard lets it through) but holds no Word document at all. */
 function writeNotADocumentDocx(name: string): string {
   const file = path.join(os.tmpdir(), name)
@@ -109,13 +138,7 @@ test('(item 3) phone portrait: the outline starts collapsed and opens over the c
   const officeUrl = desktopTab.url()
   await desktopTab.close()
 
-  // A fresh load of the same /office/<id> route at phone width: the INITIAL
-  // state is what a phone user gets.
-  const tab = await context.newPage()
-  await tab.setViewportSize(PHONE)
-  await tab.goto(officeUrl)
-  await dismissDevBanner(tab)
-  await waitOfficeSettled(tab)
+  const tab = await openOnPhone(context, officeUrl)
 
   const rail = tab.getByTestId('office-outline-rail')
   const pane = tab.getByTestId('office-outline-pane')
@@ -129,15 +152,7 @@ test('(item 3) phone portrait: the outline starts collapsed and opens over the c
   expect(frameCollapsed!.width).toBeGreaterThanOrEqual(PHONE.width * 0.9)
   fs.mkdirSync(EVIDENCE_DIR, { recursive: true })
   await tab.screenshot({ path: path.join(EVIDENCE_DIR, 'item3-phone-collapsed.png') })
-  // The status bar stays one line and inside the viewport at phone width.
-  const bar = tab.getByTestId('office-status-bar')
-  const barFit = await bar.evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }))
-  expect(barFit.scroll, 'status bar does not overflow').toBeLessThanOrEqual(barFit.client)
-  for (const id of ['office-status-saved', 'office-about-button']) {
-    const box = await tab.getByTestId(id).boundingBox()
-    expect(box!.height, `${id} is a single line`).toBeLessThan(20)
-    expect(box!.x + box!.width).toBeLessThanOrEqual(PHONE.width)
-  }
+  await expectStatusBarFits(tab, PHONE.width)
 
   // Open: an overlay, and the canvas is NOT resized underneath it.
   await tab.getByTestId('office-outline-show').click()
@@ -163,6 +178,36 @@ test('(item 3) phone portrait: the outline starts collapsed and opens over the c
   await tab.setViewportSize(PHONE)
   await expect(pane).toHaveCount(0)
   await expect(rail).toBeVisible()
+
+  // After a save the save state is "saved as version 2 · <time>" — the
+  // longest it gets. Still one line, still on screen at phone width.
+  const engine = tab.frames().find((f) => f.url().includes('bb-office-host.html'))
+  expect(engine, 'engine frame').toBeTruthy()
+  await tab.frameLocator('[data-testid="office-engine-frame"]').locator('#qtcanvas').click()
+  await engine!.evaluate(async () => {
+    await (window as unknown as { bbOffice: { dispatch(cmd: string): Promise<unknown> } }).bbOffice.dispatch('.uno:SelectAll')
+  })
+  await tab.keyboard.type(' phone edit', { delay: 30 })
+  await expect(tab.getByTestId('office-unsaved-dot')).toBeVisible({ timeout: 30_000 })
+  await tab.getByTestId('office-save').click()
+  await expect(tab.getByTestId('office-status-saved')).toHaveText(/^saved as version 2/, { timeout: 60_000 })
+  await expectStatusBarFits(tab, PHONE.width)
+  await tab.screenshot({ path: path.join(EVIDENCE_DIR, 'item3-phone-after-save.png') })
+  await tab.close()
+})
+
+test('(item 3) phone portrait, Impress: the slide label and the save state share one line', async ({ page, context }) => {
+  const base = await uploadFixture(page, writePptxFixture(`1585-phone-${process.pid}.pptx`))
+  const desktopTab = await openOfficeTab(page, context, base)
+  const officeUrl = desktopTab.url()
+  await desktopTab.close()
+
+  const tab = await openOnPhone(context, officeUrl)
+  const bar = tab.getByTestId('office-status-bar')
+  await expect(bar).toContainText(/Slide \d+ of \d+/, { timeout: 30_000 })
+  await expectStatusBarFits(tab, PHONE.width)
+  fs.mkdirSync(EVIDENCE_DIR, { recursive: true })
+  await tab.screenshot({ path: path.join(EVIDENCE_DIR, 'item3-phone-impress.png') })
   await tab.close()
 })
 
