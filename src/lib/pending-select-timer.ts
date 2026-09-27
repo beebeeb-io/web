@@ -63,6 +63,31 @@ export function clearPendingSelectTimer(ref: PendingSelectTimerRef): void {
   }
 }
 
+/**
+ * Capture-phase entry point for EVERY click / context-menu gesture that
+ * lands anywhere inside a row, wired as the row's `onClickCapture` (and
+ * called first thing in its `onContextMenu`).
+ *
+ * Why capture: the row's nested controls — the selection checkbox, the
+ * inline-rename input, the star toggle, the share badge(s), the
+ * encryption-details lock button, the row-actions "more" button and any
+ * caller-supplied `renderActions` control — all call `stopPropagation()` in
+ * their bubble-phase onClick, so a click on one of them never reaches the
+ * row's own bubble-phase onClick (`handleRowClick`). Before this hook, a
+ * non-previewable click that armed the timer followed within 300ms by a
+ * click on any of those controls left the timer armed, and it then opened
+ * the stale file's details panel over the user's newer action (Codex P2 on
+ * web #114). Capture runs on the row BEFORE any descendant's handler, so it
+ * covers every current and future nested control without each one having to
+ * remember to clear the timer.
+ *
+ * The legitimate case is unaffected: for a plain click on the row body the
+ * capture clears, then the bubble-phase `handleRowClick` re-arms.
+ */
+export function handleRowInteractionCapture(ref: PendingSelectTimerRef): void {
+  clearPendingSelectTimer(ref)
+}
+
 export interface RowClickInput {
   /** Shift+click extending the last selection range. */
   isShiftRange: boolean

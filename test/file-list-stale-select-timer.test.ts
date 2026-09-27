@@ -4,6 +4,7 @@ import {
   clearPendingSelectTimer,
   handleRowClick,
   handleRowDoubleClick,
+  handleRowInteractionCapture,
   type RowClickActions,
   type RowDoubleClickActions,
 } from '../src/lib/pending-select-timer'
@@ -246,5 +247,45 @@ describe('clearPendingSelectTimer() — the keyboard-activation / unmount entry 
     const ref = createPendingSelectTimerRef()
     expect(() => clearPendingSelectTimer(ref)).not.toThrow()
     expect(ref.current).toBeNull()
+  })
+})
+
+/**
+ * Codex P2 on web #114: the row's nested controls (checkbox, star, share
+ * badges, lock button, row-actions button, rename input, renderActions)
+ * stopPropagation, so handleRowClick never runs for them. file-list.tsx now
+ * calls handleRowInteractionCapture from the row's onClickCapture (and its
+ * onContextMenu), which fires before any nested handler.
+ *
+ * RED proof (2026-09-27): handleRowInteractionCapture's body mutated to a
+ * no-op (`void ref`). Result: 13 pass / 1 fail — the first test below failed
+ * at `expect(ref.current).toBeNull()` with "Received: Timeout (#18)", i.e.
+ * the stale timer was still armed after the nested-control click. The
+ * second (legitimate-arm) test stayed green, as it should. Restored → 14/0.
+ */
+describe('handleRowInteractionCapture() — nested-control clicks that never reach handleRowClick', () => {
+  test('non-previewable click then a nested-control click (checkbox/star/menu) within the window: the stale onSelectFile never fires', async () => {
+    const ref = createPendingSelectTimerRef()
+    const calls: string[] = []
+    handleRowClick(ref, { isShiftRange: false, isModKey: false, isFolder: false, isPreviewable: false }, makeActions(calls), DELAY_MS)
+    expect(ref.current).not.toBeNull()
+
+    // The nested control's own handler stopPropagation()s, so ONLY the
+    // row's capture-phase hook runs — handleRowClick is never called.
+    handleRowInteractionCapture(ref)
+
+    expect(ref.current).toBeNull()
+    await wait(WAIT_MS)
+    expect(calls).toEqual([])
+  })
+
+  test('capture then the row\'s own bubble-phase click (plain click on the row body) still arms and fires once', async () => {
+    const ref = createPendingSelectTimerRef()
+    const calls: string[] = []
+    handleRowInteractionCapture(ref)
+    handleRowClick(ref, { isShiftRange: false, isModKey: false, isFolder: false, isPreviewable: false }, makeActions(calls), DELAY_MS)
+    expect(ref.current).not.toBeNull()
+    await wait(WAIT_MS)
+    expect(calls).toEqual(['selectFile'])
   })
 })

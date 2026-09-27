@@ -16,6 +16,7 @@ import { isPreviewable } from '../lib/preview'
 import {
   clearPendingSelectTimer,
   handleRowClick as resolveRowClick,
+  handleRowInteractionCapture,
   handleRowDoubleClick as resolveRowDoubleClick,
 } from '../lib/pending-select-timer'
 import { modKey } from '../hooks/use-keyboard-shortcuts'
@@ -1021,6 +1022,12 @@ export function FileList({
           isTrashing ? 'trash-slide-out' : '',
           isRecentUpload ? 'upload-glow' : '',
         ].filter(Boolean).join(' ')}
+        // Capture phase: runs before ANY nested control's onClick (checkbox,
+        // star, share badges, lock, row actions, rename input — all of which
+        // stopPropagation and so never reach handleRowClick below), clearing a
+        // debounced select-timer armed by an earlier non-previewable click.
+        // See handleRowInteractionCapture in pending-select-timer.ts.
+        onClickCapture={() => handleRowInteractionCapture(pendingSelectTimerRef)}
         onClick={(e) => handleRowClick(file, e)}
         onDoubleClick={(e) => {
           e.stopPropagation()
@@ -1044,6 +1051,9 @@ export function FileList({
         }}
         onContextMenu={(e) => {
           e.preventDefault()
+          // A right-click is a new action too — don't let a stale debounced
+          // select pop a details panel over the context menu it opens.
+          handleRowInteractionCapture(pendingSelectTimerRef)
           setCtxMenu({
             open: true,
             x: e.clientX,

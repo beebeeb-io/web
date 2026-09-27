@@ -160,4 +160,46 @@ test.describe('file-list stale select-timer regression', () => {
       'the .doc file\'s details panel must not pop open over the image preview',
     ).toHaveCount(0)
   })
+  test('case 3 — non-previewable click then within 300ms a click on ANOTHER row\'s selection checkbox (a nested control that stopPropagation()s): no stale details panel', async ({ page }) => {
+    // Codex P2 on web #114: the checkbox / star / share badge / lock /
+    // row-actions controls all stopPropagation, so the row's bubble-phase
+    // onClick (and its unconditional timer clear) never runs for them. Fixed
+    // with a row-level onClickCapture — see handleRowInteractionCapture in
+    // src/lib/pending-select-timer.ts.
+    //
+    // RED proof (2026-09-27, live isolated harness): with
+    // handleRowInteractionCapture's body mutated to a no-op, this case
+    // case 3 failed (cases 1-2 stayed green, 3 passed / 1 failed) at the
+    // final assertion: "Error: the .doc file's details panel must not pop
+    // open after ticking a different row's checkbox ... toHaveCount ...
+    // Expected: 0 Received: 1". Restored → 4 passed.
+    test.setTimeout(60_000)
+    await page.goto('/?nodev=1')
+    await signupAndUnlock(page, { password: 'StaleTimerCheckbox-correct-horse-1' })
+    await dismissFirstRunOverlays(page)
+
+    const docPath = path.join(FIXTURES_ROOT, 'office', 'sample.doc')
+    const imgPath = path.join(FIXTURES_ROOT, 'images', 'sample.jpg')
+    const docBase = await uploadAndWait(page, docPath)
+    const imgBase = await uploadAndWait(page, imgPath)
+
+    const docRow = page.getByRole('row', { name: new RegExp(escapeRe(docBase)) }).first()
+    const imgRow = page.getByRole('row', { name: new RegExp(escapeRe(imgBase)) }).first()
+    const imgCheckbox = imgRow.getByRole('checkbox')
+
+    // Click #1: the non-previewable .doc — arms the 300ms debounced select.
+    await docRow.click()
+    // Within the window: tick the OTHER row's selection checkbox.
+    await imgCheckbox.click()
+
+    // The checkbox action itself must still work — the image row is selected.
+    await expect(imgRow).toHaveAttribute('aria-selected', 'true', { timeout: 5_000 })
+
+    // Give the stale timer (300ms) plenty of margin to fire if it's still armed.
+    await page.waitForTimeout(800)
+    await expect(
+      detailsPanelCloseButton(page),
+      'the .doc file\'s details panel must not pop open after ticking a different row\'s checkbox',
+    ).toHaveCount(0)
+  })
 })
