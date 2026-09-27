@@ -54,6 +54,10 @@ export interface OfficeBridge {
    *  own comment. Never present this call's return value as "switched" to
    *  a user. */
   setTheme(theme: 'light' | 'dark' | 'auto'): Promise<{ theme: string; appliedLive: false }>
+  /** Fix pass item 1 (task 1567): the color LO paints AROUND the document —
+   *  distinct from setTheme() above and, unlike it, applies live in this
+   *  engine build. rgb is 0xRRGGBB. */
+  setWorkspaceColor(rgb: number): Promise<{ applied: boolean; rgb?: number; reason?: string }>
 }
 
 /** The iframe's own global, once the bridge script has finished loading. */

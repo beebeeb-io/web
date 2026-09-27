@@ -5,6 +5,13 @@
  * defs) so the ribbon is pixel-consistent with what Guus signed off on.
  * Monochrome, `currentColor`-only, per brand rules — no icon library added
  * for a dozen glyphs.
+ *
+ * CRITIQUE.md finding #11 (task 1567, low): the base stroke weight here was
+ * 1.5 vs `@beebeeb/shared`'s icon set's 1.6, a sub-pixel drift risk when
+ * mixed in the same ribbon row. Fixed to 1.6 to match. A few icons
+ * deliberately use a lighter 1.2-1.4 for visual balance at their specific
+ * shape (e.g. the dense grid/table glyphs) — untouched, that's normal
+ * per-icon weight tuning, not the reported drift.
  */
 
 interface IconProps {
@@ -25,7 +32,7 @@ export function IconUndo(props: IconProps) {
     <path
       fill="none"
       stroke="currentColor"
-      strokeWidth={1.5}
+      strokeWidth={1.6}
       strokeLinecap="round"
       strokeLinejoin="round"
       d="M5.5 4 2.5 7l3 3M2.8 7h6.7a3.5 3.5 0 0 1 0 7H7"
@@ -39,7 +46,7 @@ export function IconRedo(props: IconProps) {
     <path
       fill="none"
       stroke="currentColor"
-      strokeWidth={1.5}
+      strokeWidth={1.6}
       strokeLinecap="round"
       strokeLinejoin="round"
       d="M10.5 4l3 3-3 3M13.2 7H6.5a3.5 3.5 0 0 0 0 7H9"
@@ -49,16 +56,16 @@ export function IconRedo(props: IconProps) {
 }
 
 export function IconAlignLeft(props: IconProps) {
-  return svg(<path d="M2 4h12M2 8h8M2 12h10" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" />, props)
+  return svg(<path d="M2 4h12M2 8h8M2 12h10" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" />, props)
 }
 export function IconAlignCenter(props: IconProps) {
-  return svg(<path d="M2 4h12M4 8h8M3 12h10" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" />, props)
+  return svg(<path d="M2 4h12M4 8h8M3 12h10" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" />, props)
 }
 export function IconAlignRight(props: IconProps) {
-  return svg(<path d="M2 4h12M6 8h8M4 12h10" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" />, props)
+  return svg(<path d="M2 4h12M6 8h8M4 12h10" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" />, props)
 }
 export function IconAlignJustify(props: IconProps) {
-  return svg(<path d="M2 4h12M2 8h12M2 12h9" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" />, props)
+  return svg(<path d="M2 4h12M2 8h12M2 12h9" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" />, props)
 }
 
 export function IconListBullet(props: IconProps) {

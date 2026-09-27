@@ -57,6 +57,25 @@ import { useImpressChrome } from '../../hooks/use-impress-chrome'
 // loop below (handleReady) tracks them like every other command.
 const CHAR_FORMAT_COMMANDS = ['.uno:CharFontName', '.uno:FontHeight', '.uno:Color', '.uno:CharBackColor']
 
+// Fix pass item 1 (task 1567): the color LO itself paints AROUND the
+// document (bridge.setWorkspaceColor, applies live — see that method's own
+// doc comment for why it's unlike setTheme()). Values are design/
+// office-editor.html's OWN `--bg` / `--canvas-dark` tokens verbatim (the
+// accepted mockup, not a re-derivation from this app's OKLCH theme tokens —
+// CLAUDE.md's own "design wins" rule: a mismatch here is a design decision
+// to flag, not a color to freehand). Impress stays dark in BOTH app themes,
+// matching Word/Keynote's own convention and this codebase's existing
+// `bg-canvas-dark` class already used for the SAME reason one level up (the
+// outer container CSS, still applied regardless — this is the engine's OWN
+// internal canvas paint, a separate layer).
+const WORKSPACE_COLOR_BG = { light: 0xf7f3ea, dark: 0x0e0e0d } as const
+const WORKSPACE_COLOR_CANVAS_DARK = { light: 0x242320, dark: 0x070706 } as const
+
+function resolveWorkspaceColorRgb(officeApp: OfficeApp, appTheme: 'light' | 'dark'): number {
+  const table = officeApp === 'impress' ? WORKSPACE_COLOR_CANVAS_DARK : WORKSPACE_COLOR_BG
+  return table[appTheme]
+}
+
 /** Renders a BCP-47 locale code (e.g. "en-US", from getDocStats()'s CharLocale
  *  read) as a human label ("American English") via the built-in
  *  `Intl.DisplayNames` — zero dependency, real i18n data, not a hand-rolled
@@ -209,6 +228,20 @@ export function OfficeEditor({
         setOpenError(err instanceof Error ? err.message : 'Failed to open this document')
         return
       }
+      // Fix pass item 1 (task 1567): AFTER open(), not before/at boot —
+      // found empirically that Application::SetSettings()'s own
+      // DataChangedEvent broadcast (the mechanism that makes this apply
+      // live, unlike setTheme()) only reaches windows that already exist.
+      // Calling this before a document/window exists silently no-ops
+      // visually even though the bridge call itself resolves `applied:
+      // true` (office-engine-host.tsx's own comment has the two-way probe
+      // that found this). Never blocks opening a document over a cosmetic
+      // color.
+      try {
+        await bridge.setWorkspaceColor(resolveWorkspaceColorRgb(officeApp, appTheme === 'dark' ? 'dark' : 'light'))
+      } catch {
+        // best-effort
+      }
       setDocReady(true)
 
       const commandsToTrack = officeApp === 'writer' ? STATE_COMMANDS : officeApp === 'calc' ? CALC_STATE_COMMANDS : STATE_COMMANDS.slice(0, 4)
@@ -242,11 +275,12 @@ export function OfficeEditor({
       refreshOutline()
       refreshDocStats()
     },
-    [initialBytes, decryptedName, officeApp, reportDirty, refreshOutline, refreshDocStats],
+    [initialBytes, decryptedName, officeApp, appTheme, reportDirty, refreshOutline, refreshDocStats],
   )
 
+  const resolvedAppTheme = appTheme === 'dark' ? 'dark' : 'light'
   const { status, error: engineError, iframeSrc, iframeRef, handleIframeLoad } = useOfficeEngine({
-    initialTheme: appTheme === 'dark' ? 'dark' : 'light',
+    initialTheme: resolvedAppTheme,
     onReady: handleReady,
     onError: setOpenError,
   })

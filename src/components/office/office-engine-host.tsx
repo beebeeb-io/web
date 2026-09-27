@@ -133,6 +133,18 @@ export function useOfficeEngine(opts: OfficeEngineHostProps) {
           // Non-fatal — the engine's own dialogs simply keep their default
           // appearance; the document canvas itself is unaffected either way.
         }
+        // bridge.setWorkspaceColor() (task 1567 fix pass item 1) is
+        // deliberately NOT called here — it is applied by the CALLER, after
+        // open()/newDocument() succeeds (see office-editor.tsx's
+        // handleReady). Found empirically: Application::SetSettings()'s own
+        // DataChangedEvent broadcast (vcl/source/app/svapp.cxx) only reaches
+        // windows that EXIST at call time. Calling it at this point, before
+        // any document/window exists (only the Start Center's own frame is
+        // up), silently no-ops visually even though the call itself reports
+        // `applied: true` — confirmed with a red (0xff0000) probe two ways:
+        // called before newDocument() → no visible change; called after →
+        // the whole canvas repaints red immediately, no extra invalidate
+        // needed.
         if (localSignal.cancelled) return
         setStatus('ready')
         onReady?.(bridge)
