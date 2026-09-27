@@ -154,7 +154,7 @@ export async function sweepBlockingOverlaysFast(page: Page): Promise<void> {
  * attached and `uploadAndWait`'s own `.waitFor()` timed out at exactly the
  * default 30s. This is what previously misclassified the whole `code/`
  * category onward as a preview outcome of `'no-overlay'` in
- * `1565-preview-matrix.spec.ts` — the file's actual preview was never even
+ * `1565-preview-matrix.matrix.ts` — the file's actual preview was never even
  * attempted; the row it needed to double-click did not exist yet.
  *
  * Fix: scroll the list's own scroll container top→bottom in

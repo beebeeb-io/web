@@ -29,7 +29,8 @@
     "test": "bun test",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install chromium",
-    "test:e2e:isolated": "./e2e/scripts/web-e2e.sh"
+    "test:e2e:isolated": "./e2e/scripts/web-e2e.sh",
+    "test:e2e:preview-matrix": "E2E_API_PORT=${E2E_API_PORT:-37951} E2E_VITE_PORT=${E2E_VITE_PORT:-37952} E2E_DB_NAME=${E2E_DB_NAME:-beebeeb_web_e2e_1565} ./e2e/scripts/web-e2e.sh e2e/1565-preview-matrix.matrix.ts"
   },
   "author": "Initlabs B.V.",
   "license": "AGPL-3.0-or-later",

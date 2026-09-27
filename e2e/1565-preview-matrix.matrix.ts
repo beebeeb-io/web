@@ -1,6 +1,18 @@
 /**
  * 1565 — preview matrix: every common file type opens correctly on web.
  *
+ * NOT part of the default E2E gate (PR #107 review, Codex P1): named
+ * `*.matrix.ts` on purpose so `e2e/scripts/web-e2e.sh`'s default
+ * `SPECS=(e2e/*.spec.ts)` glob — the same glob a bare CI run expands — never
+ * picks it up. This is a 59-upload, exploratory, not-fully-verified matrix
+ * with a 40-minute timeout and 4 external raw.pixls.us downloads; it does not
+ * belong in every PR's gate. Run it explicitly via
+ * `bun run test:e2e:preview-matrix` (see package.json) or the full command
+ * below. Playwright's own `authenticated` project testMatch in
+ * playwright.config.ts is extended with this exact filename so an explicit
+ * invocation still resolves to a project (global.setup + the `authenticated`
+ * project's dependency chain) — see that file's comment.
+ *
  * Uploads every fixture under e2e/fixtures/preview-matrix/ through the real
  * signup → upload → preview flow against the REAL stack (server + Postgres,
  * no route mocking — run via e2e/scripts/web-e2e.sh), opens each one's
@@ -40,12 +52,14 @@
  * Run (own port triple, never the shared :3003/:5173/beebeeb_web_e2e_3003):
  *   E2E_API_PORT=37951 E2E_VITE_PORT=37952 E2E_DB_NAME=beebeeb_web_e2e_1565 \
  *     E2E_API_BIN=<path to a debug beebeeb-api built from server origin/main> \
- *     bash e2e/scripts/web-e2e.sh e2e/1565-preview-matrix.spec.ts
+ *     bash e2e/scripts/web-e2e.sh e2e/1565-preview-matrix.matrix.ts
+ * …or the equivalent `bun run test:e2e:preview-matrix` (same env vars,
+ * package.json script) — see that script for the exact invocation.
  *
  * Before running: e2e/fixtures/preview-matrix/raw/fetch-raw.sh must have
  * populated the 4 RAW samples too large to commit (cr2/cr3/arw/raf) — this
- * spec runs it itself, first thing, so a bare `bash e2e/scripts/web-e2e.sh`
- * invocation is sufficient.
+ * spec runs it itself, first thing, so a bare `bash e2e/scripts/web-e2e.sh
+ * e2e/1565-preview-matrix.matrix.ts` invocation is sufficient.
  */
 import { test, expect, type Page, type Locator } from '@playwright/test'
 import fs from 'fs'

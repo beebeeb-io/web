@@ -56,6 +56,9 @@ desktop.ini
 # Logs
 *.log
 npm-debug.log*
+# preview-matrix fixture — a real .log sample the matrix uploads, not a
+# generated log file (task 1565 / PR #107 review)
+!e2e/fixtures/preview-matrix/text/sample.log
 
 # Test & coverage
 coverage/

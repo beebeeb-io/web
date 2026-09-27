@@ -1,6 +1,6 @@
 /**
  * 1565 — regression guard for five real preview bugs found while building
- * the full preview-matrix spec (e2e/1565-preview-matrix.spec.ts), fixed in
+ * the full preview-matrix spec (e2e/1565-preview-matrix.matrix.ts), fixed in
  * the same task:
  *
  *   1. `.cs` (C#) was entirely missing from file-preview.tsx's EXT_LANGUAGE
@@ -170,6 +170,7 @@ test.describe('1565 — C# and bare-Dockerfile must render, not fall back', () =
     test.setTimeout(60_000)
     await page.goto('/?nodev=1')
     await signupAndUnlock(page, { password: 'DockerfileRegression-correct-horse-1' })
+    await dismissFirstRunOverlays(page)
 
     const filePath = path.join(FIXTURES_ROOT, 'code', 'Dockerfile')
     const base = await uploadAndWait(page, filePath)
