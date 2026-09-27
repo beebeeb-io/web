@@ -66,6 +66,21 @@ export default defineConfig(({ mode }) => {
     build: {
       target: 'esnext',
     },
+    optimizeDeps: {
+      // `utif2` (task 1574's TIFF decoder) is imported ONLY from inside
+      // `tiff-decode.worker.ts`, never from any main-thread module. Vite's
+      // dev-server dependency crawler follows the `new Worker(new URL(...))`
+      // pattern for worker ENTRY files, but discovered this specific CJS dep
+      // late (a real, live-verified hiccup: the first TIFF preview in a dev
+      // session triggered "new dependencies optimized: utif2" mid-request,
+      // forcing a disruptive full-page reload while the preview overlay was
+      // open). Listing it here makes Vite pre-bundle it at server start —
+      // same as every other worker-only dep already gets "for free" by also
+      // being reachable from a main-thread import (e.g. `comlink`, imported
+      // directly by `crypto.ts`). Production builds (Rollup) never had this
+      // issue — this is a dev-server-only fix.
+      include: ['utif2'],
+    },
     server: {
       port: 5173,
       fs: { allow: ['.', '/wasm-pkg', '../core'] },

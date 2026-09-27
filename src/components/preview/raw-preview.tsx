@@ -1,4 +1,7 @@
 import { useEffect, useState } from 'react'
+import { extractRawPreview } from '../../lib/raw-preview-worker-client'
+import type { RawExifInfo } from '../../lib/raw-embedded-jpeg'
+import { ImagePreview } from './image-preview'
 import { UnsupportedPreview } from './unsupported-preview'
 
 interface RawPreviewProps {
@@ -12,10 +15,27 @@ interface RawPreviewProps {
   onNext?: () => void
   hasPrev?: boolean
   hasNext?: boolean
+  /** Reports the extracted EXIF summary (camera/lens/exposure) once
+   *  resolved, or `null` on failure/no-EXIF — lets FilePreview's Info rail
+   *  show camera details for RAW files, same idea as mobile's Info sheet
+   *  (task 1569). Called at most once per `blob`. */
+  onInfo?: (info: RawExifInfo | null) => void
 }
 
-export function RawPreview({ blob, filename, zoom = 1, rotation = 0, onZoomChange }: RawPreviewProps) {
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+export function RawPreview({
+  blob,
+  filename,
+  zoom = 1,
+  rotation = 0,
+  onZoomChange,
+  onClose,
+  onPrev,
+  onNext,
+  hasPrev,
+  hasNext,
+  onInfo,
+}: RawPreviewProps) {
+  const [previewBlob, setPreviewBlob] = useState<Blob | null>(null)
   const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)
 
@@ -23,38 +43,37 @@ export function RawPreview({ blob, filename, zoom = 1, rotation = 0, onZoomChang
     let cancelled = false
     setLoading(true)
     setFailed(false)
+    setPreviewBlob(null)
 
-    async function extractPreview() {
+    async function extract() {
       try {
-        const exifr = await import('exifr')
-        const buffer = new Uint8Array(await blob.arrayBuffer())
-        const thumb = await exifr.thumbnail(buffer)
+        const result = await extractRawPreview(blob)
         if (cancelled) return
-        if (thumb && thumb.byteLength > 0) {
-          const bytes = new Uint8Array(thumb.buffer as ArrayBuffer, thumb.byteOffset, thumb.byteLength)
-          const thumbBlob = new Blob([bytes], { type: 'image/jpeg' })
-          setPreviewUrl(URL.createObjectURL(thumbBlob))
+        onInfo?.(result.exif)
+        if (result.previewBlob) {
+          setPreviewBlob(result.previewBlob)
         } else {
           setFailed(true)
         }
       } catch {
-        if (!cancelled) setFailed(true)
+        if (!cancelled) {
+          onInfo?.(null)
+          setFailed(true)
+        }
       } finally {
         if (!cancelled) setLoading(false)
       }
     }
 
-    extractPreview()
+    extract()
     return () => {
       cancelled = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onInfo is a
+    // per-render callback prop; re-running extraction on its identity
+    // changing would re-extract on every parent render, not just on a new
+    // file.
   }, [blob])
-
-  useEffect(() => {
-    return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl)
-    }
-  }, [previewUrl])
 
   if (loading) {
     return (
@@ -65,32 +84,32 @@ export function RawPreview({ blob, filename, zoom = 1, rotation = 0, onZoomChang
     )
   }
 
-  if (failed || !previewUrl) {
+  if (failed || !previewBlob) {
     return <UnsupportedPreview blob={blob} filename={filename} />
   }
 
-  const containerStyle: React.CSSProperties = {
-    transform: `scale(${zoom}) rotate(${rotation}deg)`,
-    transformOrigin: 'center center',
-    transition: 'transform 0.15s ease-out',
-  }
-
+  // Delegate actual rendering (zoom/rotation/prev-next/swipe gestures) to
+  // ImagePreview — same pattern as HeicPreview's post-decode handoff, so RAW
+  // gets the identical, already-battle-tested image chrome instead of a
+  // second hand-maintained copy of it. The "embedded preview" caption rides
+  // alongside it as a sibling overlay (ImagePreview itself stays generic —
+  // HeicPreview's successful decode gets no such caption because a HEIC
+  // conversion IS full quality; RAW's extracted JPEG is not).
   return (
-    <div className="relative flex items-center justify-center w-full h-full overflow-hidden">
-      <img
-        src={previewUrl}
-        alt={filename}
-        className="max-w-full max-h-full object-contain select-none"
-        style={containerStyle}
-        draggable={false}
-        onWheel={(e) => {
-          if (!onZoomChange) return
-          e.preventDefault()
-          const delta = e.deltaY > 0 ? -0.1 : 0.1
-          onZoomChange(Math.max(0.5, Math.min(4, zoom + delta)))
-        }}
+    <div className="relative flex h-full w-full items-center justify-center overflow-hidden">
+      <ImagePreview
+        blob={previewBlob}
+        filename={filename}
+        zoom={zoom}
+        rotation={rotation}
+        onZoomChange={onZoomChange ?? (() => {})}
+        onClose={onClose}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={hasPrev}
+        hasNext={hasNext}
       />
-      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-ink/60 text-[11px] text-white font-mono">
+      <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-ink/60 px-3 py-1.5 text-[11px] font-mono text-white">
         Embedded preview — download for full quality
       </div>
     </div>
