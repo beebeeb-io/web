@@ -29,10 +29,16 @@ import type { OfficeApp } from '../../lib/office/office-file-kind'
 import { officeAppLabel } from '../../lib/office/office-file-kind'
 import { hasVersionConflict, insertBeforeExtension, resolveOfficeConflictAction, type OfficeConflictAction } from '../../lib/office/office-conflict'
 import { WRITER_HOME_COMMANDS, WRITER_PALETTE_ENTRIES, type PaletteEntry, type RibbonCommandDef, type UnoStateMap } from '../../lib/office/ribbon-commands'
+import { CALC_STATE_COMMANDS, CALC_PALETTE_ENTRIES, type CalcCommandDef } from '../../lib/office/calc-commands'
+import { useCalcSelectionStats } from '../../lib/office/use-calc-selection-stats'
 import type { OfficeBridge, OutlineHeading } from '../../lib/office/bb-office-bridge'
 import { useOfficeEngine, OfficeEngineFrame } from './office-engine-host'
 import { OfficeHeader } from './office-header'
 import { Ribbon } from './ribbon'
+import { CalcRibbon } from './calc-ribbon'
+import { CalcFormulaBar } from './calc-formula-bar'
+import { CalcSheetTabs } from './calc-sheet-tabs'
+import { CalcStatusExtra } from './calc-status-extra'
 import { OutlinePane } from './outline-pane'
 import { FloatingSelectionToolbar } from './floating-selection-toolbar'
 import { ZoomControl } from './zoom-control'
@@ -147,7 +153,7 @@ export function OfficeEditor({
       }
       setDocReady(true)
 
-      const commandsToTrack = officeApp === 'writer' ? STATE_COMMANDS : STATE_COMMANDS.slice(0, 4)
+      const commandsToTrack = officeApp === 'writer' ? STATE_COMMANDS : officeApp === 'calc' ? CALC_STATE_COMMANDS : STATE_COMMANDS.slice(0, 4)
       for (const command of commandsToTrack) {
         try {
           const unsub = await bridge.onState(command, (s) => {
@@ -263,7 +269,11 @@ export function OfficeEditor({
   }, [docReady, iframeRef])
 
   const runCommand = useCallback(
-    (def: RibbonCommandDef) => {
+    // Accepts either app's own command-def shape (RibbonCommandDef for
+    // Writer/Impress, CalcCommandDef for Calc) -- both are pure {command,
+    // args, group, id} tables, structurally compatible here since this
+    // function only ever reads those four fields.
+    (def: RibbonCommandDef | CalcCommandDef) => {
       bridgeRef.current
         ?.dispatch(def.command, def.args)
         .then(() => {
@@ -273,6 +283,12 @@ export function OfficeEditor({
     },
     [refreshOutline],
   )
+
+  const calcSelectionStats = useCalcSelectionStats({
+    bridge: bridgeRef.current,
+    iframeWindow: docReady ? iframeRef.current?.contentWindow : null,
+    enabled: officeApp === 'calc' && docReady,
+  })
 
   const runPaletteEntry = useCallback(
     (entry: PaletteEntry) => {
@@ -417,15 +433,31 @@ export function OfficeEditor({
         onOpenPalette={() => setPaletteOpen(true)}
         onSave={handleSave}
       />
-      <Ribbon
-        app={officeApp}
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-        states={states}
-        onCommand={runCommand}
-        onInsertLink={handleInsertLink}
-        onInsertImage={handleInsertImage}
-      />
+      {officeApp === 'calc' ? (
+        <CalcRibbon activeTab={activeTab} onTabChange={setActiveTab} states={states} onCommand={runCommand} />
+      ) : (
+        <Ribbon
+          app={officeApp}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          states={states}
+          onCommand={runCommand}
+          onInsertLink={handleInsertLink}
+          onInsertImage={handleInsertImage}
+        />
+      )}
+      {officeApp === 'calc' && docReady && (
+        <CalcFormulaBar
+          bridge={bridgeRef.current}
+          onNavigated={() => {
+            try {
+              iframeRef.current?.contentWindow?.document.getElementById('qtcanvas')?.focus()
+            } catch {
+              // Cross-origin or not-yet-ready -- never fatal for navigation itself.
+            }
+          }}
+        />
+      )}
       {saveError && (
         <div className="shrink-0 border-b border-red-border bg-red-bg px-3 py-1.5 text-[11.5px] text-red" data-testid="office-save-error">
           {saveError}
@@ -459,12 +491,27 @@ export function OfficeEditor({
             onLink={handleInsertLink}
           />
           {docReady && <ZoomControl percent={zoom} onChange={(p) => { setZoom(p); bridgeRef.current?.setZoom(p).catch(() => {}) }} />}
-          <CommandPalette open={paletteOpen} entries={officeApp === 'writer' ? WRITER_PALETTE_ENTRIES : GENERIC_PALETTE} onClose={() => setPaletteOpen(false)} onRun={runPaletteEntry} />
+          <CommandPalette
+            open={paletteOpen}
+            entries={officeApp === 'writer' ? WRITER_PALETTE_ENTRIES : officeApp === 'calc' ? CALC_PALETTE_ENTRIES : GENERIC_PALETTE}
+            onClose={() => setPaletteOpen(false)}
+            onRun={runPaletteEntry}
+          />
           {conflict && <OfficeConflictDialog latestVersionNumber={conflict.latestVersionNumber} openedVersionNumber={versionNumber} saving={saving} onAction={handleConflictAction} onCancel={() => setConflict(null)} />}
           {confirmExit && <UnsavedChangesDialog onDiscard={() => { inFlightUploadRef.current?.abort(); setConfirmExit(false); reportDirty(false); onExit() }} onCancel={() => setConfirmExit(false)} />}
         </div>
       </div>
-      <OfficeStatusBar pageLabel={null} wordCount={wordCount} language={undefined} dirty={dirty} conflict={!!conflict} versionNumber={versionNumber} lastSavedAt={lastSavedAt} />
+      {officeApp === 'calc' && <CalcSheetTabs bridge={bridgeRef.current} docReady={docReady} />}
+      <OfficeStatusBar
+        pageLabel={null}
+        wordCount={wordCount}
+        language={undefined}
+        dirty={dirty}
+        conflict={!!conflict}
+        versionNumber={versionNumber}
+        lastSavedAt={lastSavedAt}
+        extra={officeApp === 'calc' ? <CalcStatusExtra stats={calcSelectionStats} /> : undefined}
+      />
       <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageChosen} data-testid="office-image-input" />
     </div>
   )

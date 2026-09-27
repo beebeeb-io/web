@@ -211,7 +211,14 @@ export function OfficeEngineFrame({
         // this iframe never needs to navigate/pop up itself), no allow-forms,
         // no allow-top-navigation.
         sandbox="allow-scripts allow-same-origin"
-        allow="cross-origin-isolated"
+        // clipboard-read/write (task 1567, Calc lane): `.uno:Copy`'s system
+        // clipboard write executes in THIS frame's own realm, and without an
+        // explicit Permissions-Policy grant here a same-origin sandboxed
+        // iframe's clipboard calls are denied (found by actually running the
+        // Calc e2e against the real engine: Sum/Average/Count never appeared
+        // until this was added). No egress/security concern — the clipboard
+        // is a local OS resource, not a network path (docs/EGRESS.md).
+        allow="cross-origin-isolated; clipboard-read; clipboard-write"
         className="absolute left-0 right-0 border-0 bg-white"
         style={{ top: -TITLE_BAR_CROP_PX, height: `calc(100% + ${TITLE_BAR_CROP_PX}px)` }}
       />

@@ -16,6 +16,11 @@ export interface OfficeStatusBarProps {
   conflict: boolean
   versionNumber: number
   lastSavedAt: Date | null
+  /** App-specific status segments (task 1567, Calc lane: Sum/Average/Count of
+   *  the selection) rendered in the same slot as pageLabel/wordCount/
+   *  language, before the flex spacer. Undefined/null renders nothing --
+   *  zero visual change for apps that don't pass it. */
+  extra?: React.ReactNode
 }
 
 function formatClock(d: Date): string {
@@ -30,6 +35,7 @@ export function OfficeStatusBar({
   conflict,
   versionNumber,
   lastSavedAt,
+  extra,
 }: OfficeStatusBarProps) {
   const statusRight = conflict
     ? 'not saved · conflict'
@@ -47,6 +53,7 @@ export function OfficeStatusBar({
       {pageLabel && <span>{pageLabel}</span>}
       {wordCount !== null && <span>{wordCount.toLocaleString()} words</span>}
       {language && <span>{language}</span>}
+      {extra}
       <span className="flex-1" />
       <span className="flex items-center gap-1.5 text-amber-deep">
         <Icon name="lock" size={11} />
