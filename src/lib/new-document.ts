@@ -154,6 +154,13 @@ export function visibleNewDocumentTypes(officeAvailable: boolean): NewDocumentTy
   return NEW_DOCUMENT_TYPES.filter((t) => officeAvailable || t.editor !== 'office')
 }
 
+/** Locale-independent case fold for name comparisons (`toLocaleLowerCase`
+ *  under a Turkish locale maps "I" to dotless "ı" and would let "TITLE.docx"
+ *  and "title.docx" coexist). Used by every clash check (PR #117 review). */
+export function foldName(name: string): string {
+  return name.toLowerCase()
+}
+
 function splitExt(name: string): { base: string; ext: string } {
   const dot = name.lastIndexOf('.')
   if (dot <= 0 || dot === name.length - 1) return { base: name, ext: '' }
@@ -168,12 +175,12 @@ function splitExt(name: string): { base: string; ext: string } {
  */
 export function uniqueFileName(desired: string, existingNames: Iterable<string>): string {
   const taken = new Set<string>()
-  for (const n of existingNames) taken.add(n.toLocaleLowerCase())
-  if (!taken.has(desired.toLocaleLowerCase())) return desired
+  for (const n of existingNames) taken.add(foldName(n))
+  if (!taken.has(foldName(desired))) return desired
   const { base, ext } = splitExt(desired)
   for (let i = 2; ; i++) {
     const candidate = `${base} ${i}${ext}`
-    if (!taken.has(candidate.toLocaleLowerCase())) return candidate
+    if (!taken.has(foldName(candidate))) return candidate
   }
 }
 
@@ -213,10 +220,10 @@ export function checkNewDocumentName(
   if (!trimmed) return { ok: false, reason: 'Give the file a name.' }
   if (/[/\\]/.test(trimmed)) return { ok: false, reason: 'A name cannot contain / or \\.' }
   const suffix = `.${type.ext}`
-  const name = trimmed.toLocaleLowerCase().endsWith(suffix) ? trimmed : `${trimmed}${suffix}`
-  if (name.toLocaleLowerCase() === suffix) return { ok: false, reason: 'Give the file a name.' }
+  const name = foldName(trimmed).endsWith(suffix) ? trimmed : `${trimmed}${suffix}`
+  if (foldName(name) === suffix) return { ok: false, reason: 'Give the file a name.' }
   for (const n of existingNames) {
-    if (n.toLocaleLowerCase() === name.toLocaleLowerCase()) {
+    if (foldName(n) === foldName(name)) {
       return { ok: false, reason: `“${name}” already exists in this folder.` }
     }
   }

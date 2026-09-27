@@ -59,6 +59,20 @@ describe('uniqueFileName', () => {
     expect(uniqueFileName('Untitled.md', ['UNTITLED.MD'])).toBe('Untitled 2.md')
   })
 
+  test('case folding does not depend on the locale (Turkish dotted/dotless I)', () => {
+    const orig = String.prototype.toLocaleLowerCase
+    // Simulate a tr-TR default locale: "I" folds to dotless "ı".
+    String.prototype.toLocaleLowerCase = function (this: string) {
+      return orig.call(this.replace(/I/g, 'ı'))
+    }
+    try {
+      expect(uniqueFileName('title.docx', ['TITLE.docx'])).toBe('title 2.docx')
+      expect(checkNewDocumentName('title', getNewDocumentType('docx'), ['TITLE.docx']).ok).toBe(false)
+    } finally {
+      String.prototype.toLocaleLowerCase = orig
+    }
+  })
+
   test('no extension', () => {
     expect(uniqueFileName('Notes', ['Notes'])).toBe('Notes 2')
   })

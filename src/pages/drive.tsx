@@ -18,7 +18,7 @@ import { UploadCards } from '../components/upload-progress-card'
 import { NewFolderDialog } from '../components/new-folder-dialog'
 import { NewMenu } from '../components/new-menu'
 import { NewDocumentDialog } from '../components/new-document-dialog'
-import { getNewDocumentType, NewDocumentNameClashError, type NewDocumentType } from '../lib/new-document'
+import { foldName, getNewDocumentType, NewDocumentNameClashError, type NewDocumentType } from '../lib/new-document'
 import { blankDocumentBytes } from '../lib/office/blank-documents'
 import { FEATURE_OFFICE_EDITOR } from '../lib/flags'
 import { isOfficeLabsEnabled } from '../lib/office/office-labs'
@@ -1756,7 +1756,7 @@ export function Drive() {
         // device (PR #117 review). The server cannot catch this itself: it
         // only ever sees encrypted names.
         const siblings = await listAllFiles(currentParentId ?? undefined)
-        const wanted = name.toLocaleLowerCase()
+        const wanted = foldName(name)
         for (const f of siblings) {
           let sibling: string | null = null
           try {
@@ -1764,7 +1764,7 @@ export function Drive() {
           } catch {
             sibling = null // undecryptable: cannot clash with a name we can see
           }
-          if (sibling && sibling.toLocaleLowerCase() === wanted) {
+          if (sibling && foldName(sibling) === wanted) {
             throw new NewDocumentNameClashError(name)
           }
         }
