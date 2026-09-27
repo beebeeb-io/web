@@ -118,7 +118,8 @@ function installMocks(page: Page, opts: MockOpts) {
       const b64 = Buffer.from(bytes).toString('base64')
         .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
       return json(route, {
-        session_token: 'dev-mock-session', master_key_bytes_base64: b64,
+        session_token: 'dev-mock-session', user_id: AUTH_USER.user_id,
+        master_key_bytes_base64: b64,
         email: 'dev@beebeeb.dev', role: 'user',
       })
     }

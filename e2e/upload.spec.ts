@@ -39,6 +39,24 @@ test.describe('Upload E2E', () => {
     const fileBytes = Buffer.from('Hello from the Beebeeb upload E2E test.\n', 'utf-8')
     const nameEncrypted = makeNameEncrypted(filename)
 
+    // task 1537 (server, 2026-09-25, `verified_size_bytes`): the server no
+    // longer trusts the client-declared `size_bytes` — it recovers the real
+    // plaintext size from the ACTUAL chunk bytes received, minus a flat
+    // `CHUNK_AEAD_OVERHEAD_BYTES` (28 = 12-byte nonce + 16-byte GCM tag) per
+    // chunk, closing a quota-bypass where a client under-declared size_bytes
+    // while uploading real bytes. This spec never encrypts its content (it's
+    // opaque to the server either way), but the chunk it sends over the wire
+    // must have the SAME LENGTH a real ciphertext chunk would — plaintext +
+    // 28 bytes — or the server's honest accounting reads it as 28 bytes
+    // shorter than the plaintext. Simulate the AEAD envelope shape
+    // (nonce || ciphertext || tag) with dummy bytes; the server never
+    // inspects chunk content, only its length.
+    const chunkBytes = Buffer.concat([
+      Buffer.alloc(12), // fake 12-byte nonce
+      fileBytes, // "ciphertext" (opaque to the server; content is irrelevant)
+      Buffer.alloc(16), // fake 16-byte GCM tag
+    ])
+
     // 1. Signup creates the account and returns a session token. The
     //    pilot-key gate (BB_REQUIRE_PILOT_KEY, on by default on the isolated
     //    harness) is enforced on THIS endpoint too (pilot_gate.rs) — not just
@@ -75,7 +93,7 @@ test.describe('Upload E2E', () => {
       headers: { Authorization: `Bearer ${token}` },
       multipart: {
         metadata: { name: 'metadata.json', mimeType: 'application/json', buffer: Buffer.from(metadata) },
-        chunk_0: { name: filename, mimeType: 'text/plain', buffer: fileBytes },
+        chunk_0: { name: filename, mimeType: 'text/plain', buffer: chunkBytes },
       },
     })
     expect(upload.ok(), `upload failed: ${upload.status()} ${await upload.text()}`).toBeTruthy()
