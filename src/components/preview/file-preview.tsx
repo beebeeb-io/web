@@ -289,6 +289,7 @@ function pickRenderer(
     return (
       <ImagePreview
         blob={blob}
+        filename={filename}
         zoom={imageControls?.zoom ?? 1}
         rotation={imageControls?.rotation ?? 0}
         onZoomChange={imageControls?.onZoomChange ?? (() => {})}

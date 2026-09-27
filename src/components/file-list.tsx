@@ -493,6 +493,32 @@ export function FileList({
   // ─── Selection ─────────────────────────────────────
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set<string>())
   const lastClickedIdRef = useRef<string | null>(null)
+  // Task 1565 preview matrix: root-caused live (a real .doc upload's dblclick
+  // never opened anything — not the preview, not even the "can't be
+  // previewed" toast). A double-click delivers two native 'click' events
+  // before the browser's own 'dblclick' — for a NON-previewable file, click
+  // #1's onClick below calls onSelectFile synchronously, which mounts
+  // FileDetailsPanel's full-viewport `fixed inset-0 z-40` click-to-close
+  // backdrop. If that mount lands (React commit + paint) in the gap before
+  // click #2 arrives — confirmed live via a capture-phase event-log repro:
+  // click #1 hit the row's own metadata text node, click #2 hit
+  // `absolute inset-0 bg-ink/10` (the backdrop) instead — the SECOND click
+  // never reaches the row at all, so the browser never fires 'dblclick' on
+  // it (both clicks must target the same element), and neither
+  // onDoubleClick's toast nor a preview ever appears. This is timing-
+  // dependent (worse under CPU load, which is exactly when it was caught),
+  // so a real user double-clicking a legacy .doc/.ppt/.xls/.zip/binary file
+  // could silently see nothing happen. Fix: debounce the SELECT side effect
+  // (which is what mounts the backdrop) by the standard OS double-click
+  // window, and cancel it if a dblclick follows — the previewable-file path
+  // below is untouched because a single click there already opens the
+  // preview immediately, so no backdrop-timing race exists for it.
+  const pendingSelectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    return () => {
+      if (pendingSelectTimerRef.current) clearTimeout(pendingSelectTimerRef.current)
+    }
+  }, [])
 
   const [inlineRenameId, setInlineRenameId] = useState<string | null>(null)
   const [inlineRenameValue, setInlineRenameValue] = useState('')
@@ -759,7 +785,15 @@ export function FileList({
     } else if (isPreviewable(file.mime_type, decryptedNames[file.id])) {
       onFileAction?.('preview', file)
     } else {
-      onSelectFile?.(file)
+      // Debounced (see pendingSelectTimerRef's doc comment above): a bare
+      // synchronous onSelectFile here mounts FileDetailsPanel's full-viewport
+      // click-to-close backdrop before this click's own dblclick companion
+      // (if any) can land on the row, silently eating the double-click.
+      if (pendingSelectTimerRef.current) clearTimeout(pendingSelectTimerRef.current)
+      pendingSelectTimerRef.current = setTimeout(() => {
+        pendingSelectTimerRef.current = null
+        onSelectFile?.(file)
+      }, 300)
     }
   }
 
@@ -964,6 +998,13 @@ export function FileList({
         onClick={(e) => handleRowClick(file, e)}
         onDoubleClick={(e) => {
           e.stopPropagation()
+          // A real dblclick DID land on this row (both native clicks reached
+          // it) — cancel the debounced onSelectFile from the first click so
+          // the details panel doesn't ALSO pop open right after this fires.
+          if (pendingSelectTimerRef.current) {
+            clearTimeout(pendingSelectTimerRef.current)
+            pendingSelectTimerRef.current = null
+          }
           if (file.is_folder) {
             onNavigateFolder?.(file)
             return

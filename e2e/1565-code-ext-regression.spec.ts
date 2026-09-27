@@ -1,5 +1,5 @@
 /**
- * 1565 — regression guard for three real preview bugs found while building
+ * 1565 — regression guard for five real preview bugs found while building
  * the full preview-matrix spec (e2e/1565-preview-matrix.spec.ts), fixed in
  * the same task:
  *
@@ -26,8 +26,31 @@
  *      a timing race. pickRenderer/EXT_LANGUAGE already mapped BOTH `tsx`
  *      and `jsx` to a real language for CodeRenderer; only the gate list
  *      had drifted, same class of bug as #1 and #2 above.
+ *   4. A double-click on a NON-previewable file (e.g. legacy .doc) could
+ *      silently do nothing at all — not even the "can't be previewed" toast.
+ *      file-list.tsx's handleRowClick fired onSelectFile SYNCHRONOUSLY on
+ *      the double-click's first native 'click', mounting
+ *      FileDetailsPanel's full-viewport click-to-close backdrop
+ *      (`fixed inset-0 z-40` / `absolute inset-0 bg-ink/10`) before the
+ *      SECOND click could land on the row — confirmed via a capture-phase
+ *      click/dblclick event-log repro: click #1 hit the row's own metadata
+ *      text, click #2 hit the backdrop instead. Both native clicks of a
+ *      double-click must target the SAME element for the browser to fire
+ *      'dblclick', so onDoubleClick (and its toast) never ran. Load-
+ *      sensitive — worse under CPU contention, which is exactly when the
+ *      full 59-fixture matrix first caught it as `office/sample.doc ->
+ *      no-overlay`. Fixed by debouncing the onSelectFile side effect
+ *      (300ms, cancelled if a dblclick follows) so the backdrop never
+ *      mounts inside a genuine double-click's own click gap.
+ *   5. An undecodable image (.tiff — Chromium has no native TIFF codec) left
+ *      ImagePreview's plain `<img>` permanently broken with no `onError`
+ *      handler at all — the matrix's own outcome classifier reads that as
+ *      an unresolving 'spinner', a hard FAIL under the task's own cardinal
+ *      rule. HeicPreview/RawPreview already had their own fallback to
+ *      UnsupportedPreview on decode failure; ImagePreview (every OTHER
+ *      image type's renderer) had none. Fixed with an onError handler.
  *
- * Deliberately small and fast (3 fixtures, not the full 59) so it can run on
+ * Deliberately small and fast (5 fixtures, not the full 59) so it can run on
  * every PR, not just this task's own verification pass. The full matrix
  * spec is the exploratory/coverage tool; this is the permanent guard against
  * these specific regressions recurring.
@@ -44,6 +67,18 @@
  *     `dismissFirstRunOverlays`+`openPreview` pattern was not itself the
  *     cause).
  *   - restored the fix -> green again.
+ *   - (bug #4, separate dedicated repro spec, deleted after use) reverted
+ *     the 300ms debounce in file-list.tsx's handleRowClick back to a bare
+ *     synchronous `onSelectFile?.(file)` -> a capture-phase click-event-log
+ *     repro showed click #2 of the dblclick landing on
+ *     `absolute inset-0 bg-ink/10` (the details-panel backdrop) instead of
+ *     the row, toastCount stayed 0 for the full 5s poll -> restored the
+ *     debounce -> toastCount=1 at t+0ms, `openPreviewOrToast` returns the
+ *     toast text immediately.
+ *   - (bug #5) removed the `onError` handler from ImagePreview's `<img>` ->
+ *     sample.tiff's outcome stayed 'spinner' ("img present but not decoded")
+ *     for the full waitForOutcome budget, assertion failed expecting
+ *     'cant-preview' -> restored the handler -> 'cant-preview' immediately.
  *
  * Run: E2E_API_PORT=… E2E_VITE_PORT=… bash e2e/scripts/web-e2e.sh e2e/1565-code-ext-regression.spec.ts
  */
@@ -169,5 +204,69 @@ test.describe('1565 — C# and bare-Dockerfile must render, not fall back', () =
     // just SELECT the row (file-list.tsx's handleRowClick `onSelectFile`
     // branch), never open anything and never toast either.
     expect(outcome, `sample.tsx: got '${outcome}' (${detail})`).toBe('render')
+  })
+
+  test('double-clicking a non-previewable file (legacy .doc) shows the toast — the details-panel backdrop must not eat the second click', async ({ page }) => {
+    test.setTimeout(60_000)
+    await page.goto('/?nodev=1')
+    await signupAndUnlock(page, { password: 'DocDblclickRegression-correct-horse-1' })
+    await dismissFirstRunOverlays(page)
+
+    // Root-caused live via a capture-phase click/dblclick event-log repro
+    // (task file has the full transcript): a double-click on a NON-
+    // previewable row delivers two native 'click' events before the
+    // browser's own 'dblclick'. Click #1's onClick (handleRowClick) used to
+    // call onSelectFile SYNCHRONOUSLY, which mounts FileDetailsPanel's
+    // full-viewport `fixed inset-0 z-40` click-to-close backdrop
+    // (`absolute inset-0 bg-ink/10`). When that mount landed in the gap
+    // before click #2 arrived, click #2 hit the backdrop instead of the row
+    // — confirmed by the repro's own event log: click #1 targeted the row's
+    // metadata text node, click #2 targeted `absolute inset-0 bg-ink/10`.
+    // Because both clicks of a native double-click must hit the SAME
+    // element for the browser to fire 'dblclick', the row's onDoubleClick
+    // (and its toast) never ran — not a timeout, not a wrong card, NOTHING
+    // happened. Confirmed load-sensitive (worse under CPU contention, which
+    // is exactly when the full 59-fixture matrix first caught it) — a real
+    // user double-clicking a legacy .doc/.ppt/.xls/.zip/binary file on a
+    // slower device could see silence instead of the honest toast.
+    const filePath = path.join(FIXTURES_ROOT, 'office', 'sample.doc')
+    const base = await uploadAndWait(page, filePath)
+    const opened = await openPreviewOrToast(page, base)
+
+    // Before the fix: opened.opened === false AND opened.toastText === undefined
+    // (neither the overlay nor the toast ever appeared — 'no-overlay', the
+    // exact FAIL the full matrix spec recorded for this fixture).
+    expect(opened.opened, `sample.doc: an overlay unexpectedly opened for a legacy .doc`).toBe(false)
+    expect(
+      opened.toastText,
+      `sample.doc: no "can't be previewed" toast appeared — the double-click was silently swallowed`,
+    ).toMatch(/can't be previewed/i)
+  })
+
+  test('an undecodable image (.tiff — no native Chromium codec) shows the honest fallback card, never a permanent spinner', async ({ page }) => {
+    test.setTimeout(60_000)
+    await page.goto('/?nodev=1')
+    await signupAndUnlock(page, { password: 'TiffDecodeRegression-correct-horse-1' })
+    await dismissFirstRunOverlays(page)
+
+    // Root-caused via the full 59-fixture matrix run: Chromium has no native
+    // TIFF decoder, so the plain <img> in ImagePreview fired 'error' — which
+    // nothing listened for. The task's own outcome classifier
+    // (classifyOutcome) reads a present-but-undecoded <img> as 'spinner'
+    // (indistinguishable from "still loading" from a single snapshot), and
+    // because the image NEVER decodes, that 'spinner' never resolves —
+    // exactly the task's own cardinal rule: "a blank area or a spinner that
+    // never ends is always a FAIL". HeicPreview and RawPreview already had
+    // their own self-contained fallback to UnsupportedPreview on decode
+    // failure; ImagePreview (the plain browser-native <img> path used by
+    // every OTHER image type) had none. Fixed with an onError handler.
+    const filePath = path.join(FIXTURES_ROOT, 'images', 'sample.tiff')
+    const base = await uploadAndWait(page, filePath)
+    await openPreview(page, base)
+    const { outcome, detail } = await waitForOutcome(page)
+
+    // Before the fix this was 'spinner' ("img present but not decoded
+    // (broken or still loading)") for the full wait budget, never resolving.
+    expect(outcome, `sample.tiff: got '${outcome}' (${detail})`).toBe('cant-preview')
   })
 })
