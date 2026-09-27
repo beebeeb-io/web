@@ -1799,6 +1799,10 @@ export function Drive() {
         window.dispatchEvent(new CustomEvent('beebeeb:file-uploaded'))
         void fetchFiles()
         void refreshDriveUsage()
+        // A created file is a real first file: advance onboarding and the
+        // welcome checklist's "upload" step like any upload (PR #117 review).
+        markTourStepDone('upload')
+        void refreshOnboarding()
 
         if (type.editor === 'office') {
           const url = `/office/${encodeURIComponent(created.id)}`
