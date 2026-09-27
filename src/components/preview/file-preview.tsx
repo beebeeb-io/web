@@ -567,7 +567,27 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     if (!isUnlocked) return
 
     const imageExt = getExtension(name)
-    const isImageFile = effectiveMime?.startsWith('image/') || IMAGE_EXTENSIONS_SET.has(imageExt) || HEIC_IMAGE_EXTS.has(imageExt)
+    // TIFF is excluded from the thumbnail-first fast path (Codex review,
+    // task 1574 gate, 2026-09-27): a current-version TIFF CAN already have a
+    // server-side WebP thumbnail — the CLI (repos/cli/src/thumbnail.rs) and
+    // desktop/mobile clients decode TIFF via native/rust image libraries the
+    // browser doesn't have and generate one on upload, same as any other
+    // image. Before this task, IMAGE_EXTENSIONS_SET routed a `.tiff` blob to
+    // the generic <img>-based ImagePreview regardless of whether `blob` held
+    // the WebP thumbnail or the real TIFF bytes — a plain <img> decodes
+    // WebP natively, so a thumbnail substitution was harmless there. This
+    // task's own TiffPreview instead decodes the blob AS TIFF via utif2; fed
+    // a WebP thumbnail from another client, that decode fails outright.
+    // Bypassing thumbnail-first for TIFF guarantees `blob` is always the
+    // real original (`blobIsOriginal` true) by the time pickRenderer routes
+    // to TiffPreview — the safe half of the two options the review raised
+    // (render-the-thumbnail-directly was rejected: it would silently show a
+    // WebP for a `.tiff` file whose thumbnail predates a since-changed
+    // original, or skip the RAW-Info-rail-style honesty this task's own RAW
+    // work insists on elsewhere).
+    const isTiffFile = TIFF_MIMES.has(effectiveMime ?? '') || TIFF_EXTS.has(imageExt)
+    const isImageFile =
+      !isTiffFile && (effectiveMime?.startsWith('image/') || IMAGE_EXTENSIONS_SET.has(imageExt) || HEIC_IMAGE_EXTS.has(imageExt))
 
     async function loadAndDecrypt() {
       try {
