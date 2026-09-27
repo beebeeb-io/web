@@ -53,3 +53,25 @@ export function writeDocxFixture(name: string, paragraphs: string[] = ['Fixture 
   fs.writeFileSync(file, zipped)
   return file
 }
+
+/**
+ * .pptx fixture for the Impress lane e2e suite (task 1567). A hand-built
+ * minimal OOXML PresentationML package, one .docx generator's boilerplate
+ * for pptx, is a much deeper part list (presentation.xml + its own rels,
+ * slide master, slide layout, theme, presProps/viewProps/tableStyles —
+ * LibreOffice's pptx importer was confirmed, by directly inspecting a real
+ * fixture that already opens/edits/saves cleanly in this task's own phase-3
+ * round-trip evidence, to tolerate the slide/layout/master parts having NO
+ * `_rels` file at all when they declare no relationships of their own).
+ * Rather than re-derive and risk a subtly-malformed hand rebuild, this
+ * copies that ALREADY-PROVEN-GOOD package's bytes (checked into THIS repo
+ * at `e2e/fixtures/office/sample.pptx`, not read from the sibling `office`
+ * repo — no cross-repo runtime coupling) to a temp path, matching
+ * `writeDocxFixture`'s own signature/behaviour (returns a fs path).
+ */
+export function writePptxFixture(name: string): string {
+  const template = path.join(__dirname, '..', 'fixtures', 'office', 'sample.pptx')
+  const file = path.join(os.tmpdir(), name)
+  fs.copyFileSync(template, file)
+  return file
+}

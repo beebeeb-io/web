@@ -46,6 +46,9 @@ import { OfficeStatusBar } from './office-status-bar'
 import { CommandPalette } from './command-palette'
 import { OfficeConflictDialog } from './office-conflict-dialog'
 import { UnsavedChangesDialog } from '../editor/unsaved-changes-dialog'
+import { ImpressFilmstrip } from './impress-filmstrip'
+import { ImpressPresentOverlay } from './impress-present-overlay'
+import { useImpressChrome } from '../../hooks/use-impress-chrome'
 
 const STATE_COMMANDS = WRITER_HOME_COMMANDS.filter((d) =>
   ['bold', 'italic', 'underline', 'strikethrough', 'align-left', 'align-center', 'align-right', 'align-justify', 'bullet-list', 'numbered-list'].includes(d.id),
@@ -116,6 +119,7 @@ export function OfficeEditor({
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [imageInsertError, setImageInsertError] = useState<string | null>(null)
   const [conflict, setConflict] = useState<ConflictState | null>(null)
   const [confirmExit, setConfirmExit] = useState(false)
   const [versionNumber, setVersionNumber] = useState(openedVersionNumber)
@@ -189,6 +193,13 @@ export function OfficeEditor({
     onError: setOpenError,
   })
 
+  // Impress lane (task 1567): slide count/position, the ribbon's extra
+  // .uno:CenterPara state, and present/exit — a fully separate subscription
+  // set from this component's own STATE_COMMANDS loop above (see
+  // use-impress-chrome.ts's header for why), so no-op for Writer/Calc.
+  const getBridge = useCallback(() => bridgeRef.current, [])
+  const impress = useImpressChrome(officeApp === 'impress' && docReady, getBridge)
+
   // Cleanup all engine subscriptions on unmount.
   useEffect(() => {
     return () => {
@@ -246,6 +257,16 @@ export function OfficeEditor({
   // inside the engine iframe's own document (same-origin, so we can attach
   // to both).
   const handleSaveRef = useRef<() => void>(() => {})
+  // Impress lane (task 1567): a real Escape keypress reliably exits our own
+  // full-screen chrome takeover regardless of whether the engine's own
+  // .uno:Escape dispatch does anything (it does not, outside of an
+  // actually-focused running slideshow — see ImpressPresentOverlay's header).
+  // Read via a ref, not a dependency, so this effect's own deps below (kept
+  // unchanged) don't need to know about presenting/exitPresent.
+  const impressPresentingRef = useRef(false)
+  const impressExitRef = useRef<() => void>(() => {})
+  impressPresentingRef.current = impress.presenting
+  impressExitRef.current = impress.exitPresent
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const meta = e.metaKey || e.ctrlKey
@@ -256,7 +277,11 @@ export function OfficeEditor({
         e.preventDefault()
         handleSaveRef.current()
       } else if (e.key === 'Escape') {
-        setSelectionPos(null)
+        if (impressPresentingRef.current) {
+          impressExitRef.current()
+        } else {
+          setSelectionPos(null)
+        }
       }
     }
     window.addEventListener('keydown', onKey)
@@ -313,13 +338,32 @@ export function OfficeEditor({
     imageInputRef.current?.click()
   }, [])
 
-  const handleImageChosen = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0]
-    e.target.value = ''
-    if (!f) return
-    const bytes = new Uint8Array(await f.arrayBuffer())
-    await bridgeRef.current?.insertImage(bytes, f.type || 'image/png').catch(() => {})
-  }, [])
+  const handleImageChosen = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const f = e.target.files?.[0]
+      e.target.value = ''
+      if (!f) return
+      setImageInsertError(null)
+      const bytes = new Uint8Array(await f.arrayBuffer())
+      try {
+        await bridgeRef.current?.insertImage(bytes, f.type || 'image/png')
+      } catch (err) {
+        // Impress lane (task 1567): bbOffice.insertImage() unconditionally
+        // throws for a non-Writer document today (see impress-commands.ts's
+        // header for the confirmed root cause) — surfaced honestly rather
+        // than silently swallowed, since the previous unconditional
+        // `.catch(() => {})` here made a real engine limitation invisible.
+        setImageInsertError(
+          officeApp === 'writer'
+            ? err instanceof Error
+              ? err.message
+              : 'Failed to insert image'
+            : `Image insert isn't available for ${officeAppLabel(officeApp)} documents yet.`,
+        )
+      }
+    },
+    [officeApp],
+  )
 
   async function performUpload(targetFileId: string | undefined, conflictCreated: boolean, signal: AbortSignal, savedBytes: Uint8Array, nameOverride?: string): Promise<DriveFile> {
     const uploadFileId = targetFileId ?? crypto.randomUUID()
@@ -424,27 +468,43 @@ export function OfficeEditor({
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-paper" data-testid="office-editor">
-      <OfficeHeader
-        breadcrumb={breadcrumb}
-        filename={decryptedName}
-        dirty={dirty}
-        saving={saving}
-        onBack={requestExit}
-        onOpenPalette={() => setPaletteOpen(true)}
-        onSave={handleSave}
-      />
-      {officeApp === 'calc' ? (
-        <CalcRibbon activeTab={activeTab} onTabChange={setActiveTab} states={states} onCommand={runCommand} />
-      ) : (
-        <Ribbon
-          app={officeApp}
-          activeTab={activeTab}
-          onTabChange={setActiveTab}
-          states={states}
-          onCommand={runCommand}
-          onInsertLink={handleInsertLink}
-          onInsertImage={handleInsertImage}
+      {!impress.presenting && (
+        <OfficeHeader
+          breadcrumb={breadcrumb}
+          filename={decryptedName}
+          dirty={dirty}
+          saving={saving}
+          onBack={requestExit}
+          onOpenPalette={() => setPaletteOpen(true)}
+          onSave={handleSave}
         />
+      )}
+      {!impress.presenting && (
+        officeApp === 'calc' ? (
+          <CalcRibbon activeTab={activeTab} onTabChange={setActiveTab} states={states} onCommand={runCommand} />
+        ) : (
+          <Ribbon
+            app={officeApp}
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            states={states}
+            onCommand={runCommand}
+            onInsertLink={handleInsertLink}
+            onInsertImage={handleInsertImage}
+            impress={
+              officeApp === 'impress'
+                ? {
+                    states: impress.states,
+                    busy: impress.busy,
+                    slideCount: impress.slideStatus?.count ?? 0,
+                    onSlideOp: impress.runSlideOp,
+                    onApplyLayout: impress.applyLayout,
+                    onPresent: impress.startPresent,
+                  }
+                : undefined
+            }
+          />
+        )
       )}
       {officeApp === 'calc' && docReady && (
         <CalcFormulaBar
@@ -463,9 +523,30 @@ export function OfficeEditor({
           {saveError}
         </div>
       )}
+      {imageInsertError && (
+        <div className="shrink-0 border-b border-red-border bg-red-bg px-3 py-1.5 text-[11.5px] text-red" data-testid="office-insert-error">
+          {imageInsertError}
+        </div>
+      )}
       <div className="flex min-h-0 flex-1">
         {officeApp === 'writer' && docReady && <OutlinePane headings={outline} onSelect={(i) => bridgeRef.current?.goToHeading(i).catch(() => {})} />}
-        <div className="relative min-h-0 flex-1 bg-paper-3">
+        {officeApp === 'impress' && docReady && !impress.presenting && (
+          <ImpressFilmstrip
+            status={impress.slideStatus}
+            busy={impress.busy}
+            onSelect={impress.goToSlide}
+            onInsert={() => impress.runSlideOp('insert')}
+            onDuplicate={() => impress.runSlideOp('duplicate')}
+            onDelete={() => impress.runSlideOp('delete')}
+            onMoveUp={() => impress.runSlideOp('moveUp')}
+            onMoveDown={() => impress.runSlideOp('moveDown')}
+          />
+        )}
+        {/* Impress lane (task 1567): the canvas stays dark in BOTH app
+            themes (design/office-editor.html's own explicit decision, same
+            convention as Word/Keynote) — every other app keeps the shared
+            theme-following bg-paper-3. */}
+        <div className={`relative min-h-0 flex-1 ${officeApp === 'impress' ? 'bg-canvas-dark' : 'bg-paper-3'}`}>
           {openError || engineError ? (
             <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-center">
               <p className="text-[13px] text-ink-2">We couldn&apos;t prepare the editor on this device.</p>
@@ -490,7 +571,7 @@ export function OfficeEditor({
             onUnderline={() => bridgeRef.current?.dispatch('.uno:Underline').catch(() => {})}
             onLink={handleInsertLink}
           />
-          {docReady && <ZoomControl percent={zoom} onChange={(p) => { setZoom(p); bridgeRef.current?.setZoom(p).catch(() => {}) }} />}
+          {docReady && !impress.presenting && <ZoomControl percent={zoom} onChange={(p) => { setZoom(p); bridgeRef.current?.setZoom(p).catch(() => {}) }} />}
           <CommandPalette
             open={paletteOpen}
             entries={officeApp === 'writer' ? WRITER_PALETTE_ENTRIES : officeApp === 'calc' ? CALC_PALETTE_ENTRIES : GENERIC_PALETTE}
@@ -499,19 +580,22 @@ export function OfficeEditor({
           />
           {conflict && <OfficeConflictDialog latestVersionNumber={conflict.latestVersionNumber} openedVersionNumber={versionNumber} saving={saving} onAction={handleConflictAction} onCancel={() => setConflict(null)} />}
           {confirmExit && <UnsavedChangesDialog onDiscard={() => { inFlightUploadRef.current?.abort(); setConfirmExit(false); reportDirty(false); onExit() }} onCancel={() => setConfirmExit(false)} />}
+          {impress.presenting && <ImpressPresentOverlay onExit={impress.exitPresent} />}
         </div>
       </div>
       {officeApp === 'calc' && <CalcSheetTabs bridge={bridgeRef.current} docReady={docReady} />}
-      <OfficeStatusBar
-        pageLabel={null}
-        wordCount={wordCount}
-        language={undefined}
-        dirty={dirty}
-        conflict={!!conflict}
-        versionNumber={versionNumber}
-        lastSavedAt={lastSavedAt}
-        extra={officeApp === 'calc' ? <CalcStatusExtra stats={calcSelectionStats} /> : undefined}
-      />
+      {!impress.presenting && (
+        <OfficeStatusBar
+          pageLabel={officeApp === 'impress' && impress.slideStatus ? `Slide ${impress.slideStatus.index} of ${impress.slideStatus.count}` : null}
+          wordCount={wordCount}
+          language={undefined}
+          dirty={dirty}
+          conflict={!!conflict}
+          versionNumber={versionNumber}
+          lastSavedAt={lastSavedAt}
+          extra={officeApp === 'calc' ? <CalcStatusExtra stats={calcSelectionStats} /> : undefined}
+        />
+      )}
       <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageChosen} data-testid="office-image-input" />
     </div>
   )

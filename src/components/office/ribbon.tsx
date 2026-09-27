@@ -17,6 +17,8 @@ import {
   type RibbonCommandDef,
   type UnoStateMap,
 } from '../../lib/office/ribbon-commands'
+import type { LayoutDef, SlideOp } from '../../lib/office/impress-commands'
+import { ImpressRibbonContent, IMPRESS_TABS, type ImpressTab } from './impress-ribbon'
 import {
   IconAlignCenter,
   IconAlignJustify,
@@ -66,13 +68,27 @@ export interface RibbonProps {
   onCommand: (def: RibbonCommandDef) => void
   onInsertLink: () => void
   onInsertImage: () => void
+  /** Impress-only extras (task 1567 Impress lane) — undefined for Writer/
+   *  Calc, whose ribbon content never reads this prop. Bundled rather than
+   *  spread so this lane's additions are one optional prop, not a change to
+   *  every existing call site's positional/required props. */
+  impress?: {
+    states: UnoStateMap
+    busy: boolean
+    slideCount: number
+    onSlideOp: (op: SlideOp) => void
+    onApplyLayout: (layout: LayoutDef) => void
+    onPresent: () => void
+  }
 }
 
 const WRITER_TABS = ['Home', 'Insert', 'Layout', 'Review']
-/** Generic ribbon for Calc/Impress until their own lanes ship a real one
- *  (task brief: "routed to the same editor, even if their ribbons come
- *  later") — Bold/Italic/Underline + Undo/Redo cover the common case so
- *  opening an .xlsx/.pptx here is never a dead end. */
+/** Generic ribbon for Calc until its own lane ships a real one (task brief:
+ *  "routed to the same editor, even if their ribbons come later") —
+ *  Bold/Italic/Underline + Undo/Redo cover the common case so opening an
+ *  .xlsx here is never a dead end. Impress has its own real tab set
+ *  (IMPRESS_TABS, imported above) — see the `app === 'impress'` branch
+ *  below. */
 const GENERIC_TABS = ['Home']
 
 function RibbonButton({
@@ -109,8 +125,8 @@ function Divider() {
   return <div className="h-[22px] w-px shrink-0 bg-line" />
 }
 
-export function Ribbon({ app, activeTab, onTabChange, states, onCommand, onInsertLink, onInsertImage }: RibbonProps) {
-  const tabs = app === 'writer' ? WRITER_TABS : GENERIC_TABS
+export function Ribbon({ app, activeTab, onTabChange, states, onCommand, onInsertLink, onInsertImage, impress }: RibbonProps) {
+  const tabs = app === 'writer' ? WRITER_TABS : app === 'impress' ? IMPRESS_TABS : GENERIC_TABS
   const showHomeControls = activeTab === 'Home'
 
   return (
@@ -135,7 +151,7 @@ export function Ribbon({ app, activeTab, onTabChange, states, onCommand, onInser
         ))}
       </div>
       <Divider />
-      {showHomeControls && (
+      {app !== 'impress' && showHomeControls && (
         <div className="flex min-w-0 flex-1 items-center gap-2.5 overflow-x-auto">
           <div className="flex shrink-0 items-center gap-0.5">
             <RibbonButton def={WRITER_HOME_COMMANDS[0]} states={states} onCommand={onCommand} />
@@ -212,7 +228,20 @@ export function Ribbon({ app, activeTab, onTabChange, states, onCommand, onInser
           )}
         </div>
       )}
-      {!showHomeControls && <div className="flex-1" />}
+      {app === 'impress' && (
+        <ImpressRibbonContent
+          activeTab={activeTab as ImpressTab}
+          states={{ ...states, ...(impress?.states ?? {}) }}
+          busy={impress?.busy ?? false}
+          slideCount={impress?.slideCount ?? 0}
+          onCommand={onCommand}
+          onSlideOp={(op) => impress?.onSlideOp(op)}
+          onApplyLayout={(layout) => impress?.onApplyLayout(layout)}
+          onInsertImage={onInsertImage}
+          onPresent={() => impress?.onPresent()}
+        />
+      )}
+      {app !== 'impress' && !showHomeControls && <div className="flex-1" />}
     </div>
   )
 }
