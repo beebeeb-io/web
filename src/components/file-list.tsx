@@ -13,6 +13,12 @@ import { decryptManyNames, parseEncryptedBlob, encryptFilename, serializeEncrypt
 import { onDecrypted } from '../lib/decrypt-events'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { isPreviewable } from '../lib/preview'
+import {
+  clearPendingSelectTimer,
+  handleRowClick as resolveRowClick,
+  handleRowInteractionCapture,
+  handleRowDoubleClick as resolveRowDoubleClick,
+} from '../lib/pending-select-timer'
 import { modKey } from '../hooks/use-keyboard-shortcuts'
 import { formatBytes } from '../lib/format'
 import { setPreference, updateFile } from '../lib/api'
@@ -513,11 +519,20 @@ export function FileList({
   // window, and cancel it if a dblclick follows — the previewable-file path
   // below is untouched because a single click there already opens the
   // preview immediately, so no backdrop-timing race exists for it.
+  //
+  // Follow-up bug (found live after #107 shipped the debounce above): the
+  // original fix only cleared this timer from the SAME row's own
+  // onDoubleClick. A single click on a folder or a previewable file, a
+  // shift/mod-key click, or keyboard activation of a DIFFERENT row within
+  // the 300ms window left the stale timer armed — it fired afterward and
+  // opened the FIRST file's details panel over whatever the user had since
+  // navigated to or opened. Fixed by moving all the click/dblclick decision
+  // logic (and the ONE unconditional clear every entry point now performs
+  // first) into src/lib/pending-select-timer.ts — see that module's header
+  // comment for the full case list and the onKeyDown clear below.
   const pendingSelectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
-    return () => {
-      if (pendingSelectTimerRef.current) clearTimeout(pendingSelectTimerRef.current)
-    }
+    return () => clearPendingSelectTimer(pendingSelectTimerRef)
   }, [])
 
   const [inlineRenameId, setInlineRenameId] = useState<string | null>(null)
@@ -762,39 +777,51 @@ export function FileList({
   const someSelected = selectedIds.size > 0 && selectedIds.size < sortedFiles.length
 
   // ─── Row click handler ─────────────────────────────
+  // Branching + the pending-select-timer clear/schedule decision live in
+  // src/lib/pending-select-timer.ts (unit-tested there, framework-free) —
+  // this wrapper only resolves the shift-range candidacy (which needs
+  // sortedFiles/selectedIds) and wires each outcome to its real side effect.
   function handleRowClick(file: DriveFile, e: React.MouseEvent) {
+    let isShiftRange = false
+    let rangeIds: string[] = []
+    let rangeStart = 0
+    let rangeEnd = 0
     if (e.shiftKey && lastClickedIdRef.current) {
       const ids = sortedFiles.map((f) => f.id)
       const lastIdx = ids.indexOf(lastClickedIdRef.current)
       const curIdx = ids.indexOf(file.id)
       if (lastIdx !== -1 && curIdx !== -1) {
-        const start = Math.min(lastIdx, curIdx)
-        const end = Math.max(lastIdx, curIdx)
-        const next = new Set(selectedIds)
-        for (const id of ids.slice(start, end + 1)) next.add(id)
-        updateSelection(next)
-        return
+        isShiftRange = true
+        rangeIds = ids
+        rangeStart = Math.min(lastIdx, curIdx)
+        rangeEnd = Math.max(lastIdx, curIdx)
       }
     }
-    if (e[modKey]) {
-      toggleSelection(file.id)
-      return
-    }
-    if (file.is_folder) {
-      onNavigateFolder?.(file)
-    } else if (isPreviewable(file.mime_type, decryptedNames[file.id])) {
-      onFileAction?.('preview', file)
-    } else {
-      // Debounced (see pendingSelectTimerRef's doc comment above): a bare
-      // synchronous onSelectFile here mounts FileDetailsPanel's full-viewport
-      // click-to-close backdrop before this click's own dblclick companion
-      // (if any) can land on the row, silently eating the double-click.
-      if (pendingSelectTimerRef.current) clearTimeout(pendingSelectTimerRef.current)
-      pendingSelectTimerRef.current = setTimeout(() => {
-        pendingSelectTimerRef.current = null
-        onSelectFile?.(file)
-      }, 300)
-    }
+
+    resolveRowClick(
+      pendingSelectTimerRef,
+      {
+        isShiftRange,
+        isModKey: !!e[modKey],
+        isFolder: file.is_folder,
+        isPreviewable: isPreviewable(file.mime_type, decryptedNames[file.id]),
+      },
+      {
+        rangeSelect: () => {
+          const next = new Set(selectedIds)
+          for (const id of rangeIds.slice(rangeStart, rangeEnd + 1)) next.add(id)
+          updateSelection(next)
+        },
+        toggleSelect: () => toggleSelection(file.id),
+        navigateFolder: () => onNavigateFolder?.(file),
+        preview: () => onFileAction?.('preview', file),
+        // Debounced (see pendingSelectTimerRef's doc comment above): a bare
+        // synchronous onSelectFile here mounts FileDetailsPanel's full-viewport
+        // click-to-close backdrop before this click's own dblclick companion
+        // (if any) can land on the row, silently eating the double-click.
+        selectFile: () => onSelectFile?.(file),
+      },
+    )
   }
 
   function handleCheckboxClick(fileId: string, e: React.MouseEvent) {
@@ -995,32 +1022,38 @@ export function FileList({
           isTrashing ? 'trash-slide-out' : '',
           isRecentUpload ? 'upload-glow' : '',
         ].filter(Boolean).join(' ')}
+        // Capture phase: runs before ANY nested control's onClick (checkbox,
+        // star, share badges, lock, row actions, rename input — all of which
+        // stopPropagation and so never reach handleRowClick below), clearing a
+        // debounced select-timer armed by an earlier non-previewable click.
+        // See handleRowInteractionCapture in pending-select-timer.ts.
+        onClickCapture={() => handleRowInteractionCapture(pendingSelectTimerRef)}
         onClick={(e) => handleRowClick(file, e)}
         onDoubleClick={(e) => {
           e.stopPropagation()
           // A real dblclick DID land on this row (both native clicks reached
-          // it) — cancel the debounced onSelectFile from the first click so
-          // the details panel doesn't ALSO pop open right after this fires.
-          if (pendingSelectTimerRef.current) {
-            clearTimeout(pendingSelectTimerRef.current)
-            pendingSelectTimerRef.current = null
-          }
-          if (file.is_folder) {
-            onNavigateFolder?.(file)
-            return
-          }
-          if (isPreviewable(file.mime_type, decryptedNames[file.id])) {
-            onFileAction?.('preview', file)
-            return
-          }
-          showToast({
-            icon: 'file',
-            title: "This file type can't be previewed",
-            description: 'Use Open to download it.',
-          })
+          // it) — cancel the debounced onSelectFile from the first click (of
+          // THIS row or any other) so the details panel doesn't ALSO pop
+          // open right after this fires. See pending-select-timer.ts.
+          resolveRowDoubleClick(
+            pendingSelectTimerRef,
+            { isFolder: file.is_folder, isPreviewable: isPreviewable(file.mime_type, decryptedNames[file.id]) },
+            {
+              navigateFolder: () => onNavigateFolder?.(file),
+              preview: () => onFileAction?.('preview', file),
+              cannotPreviewToast: () => showToast({
+                icon: 'file',
+                title: "This file type can't be previewed",
+                description: 'Use Open to download it.',
+              }),
+            },
+          )
         }}
         onContextMenu={(e) => {
           e.preventDefault()
+          // A right-click is a new action too — don't let a stale debounced
+          // select pop a details panel over the context menu it opens.
+          handleRowInteractionCapture(pendingSelectTimerRef)
           setCtxMenu({
             open: true,
             x: e.clientX,
@@ -1034,6 +1067,10 @@ export function FileList({
           })
         }}
         onKeyDown={(e) => {
+          // Keyboard activation of ANY row must not let a stale debounced
+          // select-timer from an earlier mouse click (on this row or a
+          // different one) fire afterward — see pending-select-timer.ts.
+          clearPendingSelectTimer(pendingSelectTimerRef)
           // Enter: open folder or preview file
           if (e.key === 'Enter') {
             e.preventDefault()
