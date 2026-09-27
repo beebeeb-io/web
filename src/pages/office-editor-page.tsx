@@ -34,9 +34,11 @@ import { useParams } from 'react-router-dom'
 import { getFile, listVersions, type DriveFile } from '../lib/api'
 import { decryptToBlob } from '../lib/encrypted-download'
 import { decryptFileMetadata } from '../lib/crypto'
+import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { useKeys } from '../lib/key-context'
 import { resolveOfficeFileKind } from '../lib/office/office-file-kind'
 import { OfficeEditor } from '../components/office/office-editor'
+import { ShareDialog } from '../components/share-dialog'
 
 type LoadState =
   | { stage: 'loading' }
@@ -48,6 +50,10 @@ type LoadState =
       bytes: Uint8Array
       officeApp: 'writer' | 'calc' | 'impress'
       openedVersionNumber: number
+      /** CRITIQUE.md finding #5: null while none exists yet (e.g. never
+       *  thumbnailed) or the fetch failed — OfficeEditor's own loading state
+       *  degrades to a plain card rather than treating that as fatal. */
+      thumbnailUrl: string | null
     }
 
 export function OfficeEditorPage() {
@@ -55,6 +61,15 @@ export function OfficeEditorPage() {
   const { getFileKeyForFile, isUnlocked } = useKeys()
   const [state, setState] = useState<LoadState>({ stage: 'loading' })
   const [closedHint, setClosedHint] = useState(false)
+  // CRITIQUE.md finding #3: Share was never wired into this route at all
+  // (`<OfficeHeader>` never received an `onShare`). Reuses the SAME
+  // `ShareDialog` every other Share entry point in the app uses
+  // (file-details-panel.tsx, preview-chrome.tsx via drive.tsx) — it is a
+  // self-contained modal needing only fileId/fileName/fileSize, no
+  // Drive-page-specific state, so it works unmodified in this separate
+  // top-level tab (see this file's header comment for why the route is a
+  // separate tab in the first place).
+  const [shareOpen, setShareOpen] = useState(false)
 
   useEffect(() => {
     if (!fileId) {
@@ -73,9 +88,13 @@ export function OfficeEditorPage() {
           if (!cancelled) setState({ stage: 'error', message: `"${name}" is not an office document this editor can open.` })
           return
         }
-        const [{ current_version: openedVersionNumber }, { plaintext }] = await Promise.all([
+        const [{ current_version: openedVersionNumber }, { plaintext }, thumbnailUrl] = await Promise.all([
           listVersions(file.id).catch(() => ({ current_version: file.version_number ?? 1 })),
           decryptToBlob(file.id, fileKey, file.name_encrypted, mimeType ?? undefined, file.chunk_count, file.size_bytes),
+          // CRITIQUE.md finding #5: best-effort — a brand-new/never-
+          // thumbnailed file has none, and that must never block opening
+          // the document itself.
+          fetchAndDecryptThumbnail(file.id, fileKey).catch(() => null),
         ])
         const buf = await plaintext.arrayBuffer()
         if (cancelled) return
@@ -85,6 +104,7 @@ export function OfficeEditorPage() {
           decryptedName: name,
           bytes: new Uint8Array(buf),
           officeApp: officeKind.app,
+          thumbnailUrl,
           openedVersionNumber,
         })
       } catch (err) {
@@ -135,17 +155,29 @@ export function OfficeEditorPage() {
   }
 
   return (
-    <OfficeEditor
-      file={state.file}
-      decryptedName={state.decryptedName}
-      initialBytes={state.bytes}
-      officeApp={state.officeApp}
-      openedVersionNumber={state.openedVersionNumber}
-      breadcrumb={['Vault']}
-      onDirtyChange={() => {}}
-      onSaved={() => {}}
-      onSiblingCreated={() => {}}
-      onExit={handleExit}
-    />
+    <>
+      <OfficeEditor
+        file={state.file}
+        decryptedName={state.decryptedName}
+        initialBytes={state.bytes}
+        officeApp={state.officeApp}
+        openedVersionNumber={state.openedVersionNumber}
+        breadcrumb={['Vault']}
+        onDirtyChange={() => {}}
+        onSaved={() => {}}
+        onSiblingCreated={() => {}}
+        onExit={handleExit}
+        onShare={() => setShareOpen(true)}
+        thumbnailUrl={state.thumbnailUrl}
+      />
+      <ShareDialog
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+        fileId={state.file.id}
+        fileName={state.decryptedName}
+        fileSize={state.file.size_bytes}
+        onShareCreated={() => setShareOpen(false)}
+      />
+    </>
   )
 }

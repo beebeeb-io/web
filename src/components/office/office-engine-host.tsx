@@ -220,7 +220,23 @@ export function OfficeEngineFrame({
         // is a local OS resource, not a network path (docs/EGRESS.md).
         allow="cross-origin-isolated; clipboard-read; clipboard-write"
         className="absolute left-0 right-0 border-0 bg-white"
-        style={{ top: -TITLE_BAR_CROP_PX, height: `calc(100% + ${TITLE_BAR_CROP_PX}px)` }}
+        // CRITIQUE.md findings #1/#2 (task 1567, 2026-09-27) — SECOND root
+        // cause, found by actually instrumenting the real running app (not
+        // assumed from the earlier bridge-side fix alone): `<iframe>` is a
+        // REPLACED element, and `position:absolute; left:0; right:0` with no
+        // explicit `width` does NOT stretch a replaced element to fill its
+        // containing block the way it does for a plain `<div>` — browsers
+        // fall back to the iframe's own intrinsic default width, 300px
+        // (confirmed empirically: a real e2e diagnostic measured this
+        // iframe's own `getBoundingClientRect()` at exactly 300×N inside a
+        // 1064px-wide canvas area). This is the SAME symptom bb-office-api.js's
+        // canvas-backing-store fix targets, but at one level up: that fix
+        // makes the CANVAS match ITS OWN document's box; this fix makes that
+        // whole document's box (the iframe) actually fill this container in
+        // the first place. `height` was already explicit for the crop hack
+        // above — `width` needed the same treatment, not left to `left`/
+        // `right` alone.
+        style={{ top: -TITLE_BAR_CROP_PX, height: `calc(100% + ${TITLE_BAR_CROP_PX}px)`, width: '100%' }}
       />
     </div>
   )

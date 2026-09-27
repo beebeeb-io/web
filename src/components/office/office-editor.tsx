@@ -31,7 +31,7 @@ import { hasVersionConflict, insertBeforeExtension, resolveOfficeConflictAction,
 import { WRITER_HOME_COMMANDS, WRITER_PALETTE_ENTRIES, type PaletteEntry, type RibbonCommandDef, type UnoStateMap } from '../../lib/office/ribbon-commands'
 import { CALC_STATE_COMMANDS, CALC_PALETTE_ENTRIES, type CalcCommandDef } from '../../lib/office/calc-commands'
 import { useCalcSelectionStats } from '../../lib/office/use-calc-selection-stats'
-import type { OfficeBridge, OutlineHeading } from '../../lib/office/bb-office-bridge'
+import type { OfficeBridge, OutlineHeading, DocStats } from '../../lib/office/bb-office-bridge'
 import { useOfficeEngine, OfficeEngineFrame } from './office-engine-host'
 import { OfficeHeader } from './office-header'
 import { Ribbon } from './ribbon'
@@ -41,6 +41,7 @@ import { CalcSheetTabs } from './calc-sheet-tabs'
 import { CalcStatusExtra } from './calc-status-extra'
 import { OutlinePane } from './outline-pane'
 import { FloatingSelectionToolbar } from './floating-selection-toolbar'
+import type { CharFormattingState } from './char-formatting-controls'
 import { ZoomControl } from './zoom-control'
 import { OfficeStatusBar } from './office-status-bar'
 import { CommandPalette } from './command-palette'
@@ -50,9 +51,31 @@ import { ImpressFilmstrip } from './impress-filmstrip'
 import { ImpressPresentOverlay } from './impress-present-overlay'
 import { useImpressChrome } from '../../hooks/use-impress-chrome'
 
+// CRITIQUE.md finding #4 (task 1567): these four aren't ribbon buttons with a
+// fixed command/args pair (the user picks the value), so they're not entries
+// in WRITER_HOME_COMMANDS — appended directly so the SAME onState subscribe
+// loop below (handleReady) tracks them like every other command.
+const CHAR_FORMAT_COMMANDS = ['.uno:CharFontName', '.uno:FontHeight', '.uno:Color', '.uno:CharBackColor']
+
+/** Renders a BCP-47 locale code (e.g. "en-US", from getDocStats()'s CharLocale
+ *  read) as a human label ("American English") via the built-in
+ *  `Intl.DisplayNames` — zero dependency, real i18n data, not a hand-rolled
+ *  lookup table. Falls back to the raw code if the runtime can't resolve it
+ *  (never throws into the render). */
+function formatLanguageLabel(code: string): string {
+  try {
+    const dn = new Intl.DisplayNames(['en'], { type: 'language' })
+    return dn.of(code) ?? code
+  } catch {
+    return code
+  }
+}
+
 const STATE_COMMANDS = WRITER_HOME_COMMANDS.filter((d) =>
   ['bold', 'italic', 'underline', 'strikethrough', 'align-left', 'align-center', 'align-right', 'align-justify', 'bullet-list', 'numbered-list'].includes(d.id),
-).map((d) => d.command)
+)
+  .map((d) => d.command)
+  .concat(CHAR_FORMAT_COMMANDS)
 
 const GENERIC_PALETTE: PaletteEntry[] = WRITER_HOME_COMMANDS.filter((d) => ['bold', 'italic', 'underline', 'undo', 'redo'].includes(d.id)).map((d) => ({
   id: d.id,
@@ -90,6 +113,19 @@ export interface OfficeEditorProps {
   onSaved: (updatedFile: DriveFile, savedBytes: Uint8Array) => void
   onSiblingCreated: (newFile: DriveFile) => void
   onExit: () => void
+  /** CRITIQUE.md finding #3 (task 1567): optional so a caller with no share
+   *  flow wired yet (e.g. a future embed) still gets a header, just without
+   *  the button — `OfficeHeader` itself only renders Share when this is set
+   *  (`{onShare && (...)}`), matching the rest of this app's own share entry
+   *  points (file-details-panel.tsx, preview-chrome.tsx). */
+  onShare?: () => void
+  /** CRITIQUE.md finding #5 (task 1567): the decrypted preview thumbnail
+   *  (same pipeline `preview.tsx` uses — `fetchAndDecryptThumbnail`), shown
+   *  as the floating "document" while the engine boots, matching the
+   *  approved "firstload" mockup screen. Optional/nullable: a brand-new
+   *  document has none, and the loading state degrades to a plain card
+   *  rather than failing. */
+  thumbnailUrl?: string | null
 }
 
 export function OfficeEditor({
@@ -103,6 +139,8 @@ export function OfficeEditor({
   onSaved,
   onSiblingCreated,
   onExit,
+  onShare,
+  thumbnailUrl = null,
 }: OfficeEditorProps) {
   const { getFileKey, getMasterKey } = useKeys()
   const { resolved: appTheme } = useTheme()
@@ -146,6 +184,22 @@ export function OfficeEditor({
       .catch(() => {})
   }, [officeApp])
 
+  // CRITIQUE.md finding #8 (task 1567): word count/language, refreshed at the
+  // same points as the outline (open, style-apply, palette run) PLUS every
+  // modified-change event (below) so the count tracks live typing the way
+  // Word's/Docs' own status bars do — Writer only, matching getDocStats()'s
+  // own all-null convention for Calc/Impress (docStats stays at its initial
+  // all-null value there, which OfficeStatusBar already renders as an
+  // honestly-omitted field).
+  const [docStats, setDocStats] = useState<DocStats>({ words: null, characters: null, language: null })
+  const refreshDocStats = useCallback(() => {
+    if (officeApp !== 'writer') return
+    bridgeRef.current
+      ?.getDocStats()
+      .then(setDocStats)
+      .catch(() => {})
+  }, [officeApp])
+
   const handleReady = useCallback(
     async (bridge: OfficeBridge) => {
       bridgeRef.current = bridge
@@ -171,7 +225,10 @@ export function OfficeEditor({
         }
       }
       try {
-        const unsubMod = await bridge.onModifiedChange((modified) => reportDirty(modified))
+        const unsubMod = await bridge.onModifiedChange((modified) => {
+          reportDirty(modified)
+          refreshDocStats()
+        })
         unsubscribersRef.current.push(unsubMod)
       } catch {
         // best-effort
@@ -183,8 +240,9 @@ export function OfficeEditor({
         // best-effort
       }
       refreshOutline()
+      refreshDocStats()
     },
-    [initialBytes, decryptedName, officeApp, reportDirty, refreshOutline],
+    [initialBytes, decryptedName, officeApp, reportDirty, refreshOutline, refreshDocStats],
   )
 
   const { status, error: engineError, iframeSrc, iframeRef, handleIframeLoad } = useOfficeEngine({
@@ -268,7 +326,21 @@ export function OfficeEditor({
   impressPresentingRef.current = impress.presenting
   impressExitRef.current = impress.exitPresent
   useEffect(() => {
-    function onKey(e: KeyboardEvent) {
+    // CRITIQUE.md finding #10 (task 1567): ⌘B/⌘I/⌘Z(/⌘⇧Z) had no chrome-level
+    // handler at all -- only ⌘K/⌘S did -- so they only ever worked if focus
+    // happened to be inside the LibreOffice-WASM canvas itself (the engine's
+    // own Qt input layer mapping the OS accelerator natively). Fixed by
+    // handling them here too, but ONLY on the `chromeOnly` path (the
+    // `window`-level listener, i.e. focus is somewhere in OUR chrome --
+    // ribbon, header, outline pane -- not the canvas): dispatching
+    // `.uno:Bold` etc from THIS handler AS WELL when focus is already inside
+    // the canvas risks a double-toggle race against Qt's own native
+    // handling of the identical accelerator, which this pass has no way to
+    // verify is idempotent. Restricting to the chrome-only path closes
+    // exactly the gap the critique named (no keyboard fallback once focus
+    // leaves the canvas) without touching the in-canvas behavior that
+    // already works.
+    function onKey(e: KeyboardEvent, chromeOnly: boolean) {
       const meta = e.metaKey || e.ctrlKey
       if (meta && e.key.toLowerCase() === 'k') {
         e.preventDefault()
@@ -276,6 +348,15 @@ export function OfficeEditor({
       } else if (meta && e.key.toLowerCase() === 's') {
         e.preventDefault()
         handleSaveRef.current()
+      } else if (chromeOnly && meta && !e.altKey && e.key.toLowerCase() === 'b') {
+        e.preventDefault()
+        bridgeRef.current?.dispatch('.uno:Bold').catch(() => {})
+      } else if (chromeOnly && meta && !e.altKey && e.key.toLowerCase() === 'i') {
+        e.preventDefault()
+        bridgeRef.current?.dispatch('.uno:Italic').catch(() => {})
+      } else if (chromeOnly && meta && !e.altKey && e.key.toLowerCase() === 'z') {
+        e.preventDefault()
+        bridgeRef.current?.dispatch(e.shiftKey ? '.uno:Redo' : '.uno:Undo').catch(() => {})
       } else if (e.key === 'Escape') {
         if (impressPresentingRef.current) {
           impressExitRef.current()
@@ -284,12 +365,14 @@ export function OfficeEditor({
         }
       }
     }
-    window.addEventListener('keydown', onKey)
+    const onWindowKey = (e: KeyboardEvent) => onKey(e, true)
+    const onIframeKey = (e: KeyboardEvent) => onKey(e, false)
+    window.addEventListener('keydown', onWindowKey)
     const iframeDoc = iframeRef.current?.contentWindow?.document
-    iframeDoc?.addEventListener('keydown', onKey)
+    iframeDoc?.addEventListener('keydown', onIframeKey)
     return () => {
-      window.removeEventListener('keydown', onKey)
-      iframeDoc?.removeEventListener('keydown', onKey)
+      window.removeEventListener('keydown', onWindowKey)
+      iframeDoc?.removeEventListener('keydown', onIframeKey)
     }
   }, [docReady, iframeRef])
 
@@ -308,6 +391,37 @@ export function OfficeEditor({
     },
     [refreshOutline],
   )
+
+  // CRITIQUE.md finding #4 (task 1567): font family/size/color/highlight —
+  // dynamic-value dispatches (the user picks the value), so unlike
+  // WRITER_HOME_COMMANDS' fixed-arg buttons these build their PropertyValue
+  // args at call time. Argument names/types verified empirically against the
+  // real engine (2026-09-27, see char-formatting-controls.tsx's header
+  // comment) — not guessed.
+  const handleFontName = useCallback((name: string) => {
+    bridgeRef.current?.dispatch('.uno:CharFontName', [{ name: 'CharFontName.FamilyName', value: name }]).catch(() => {})
+  }, [])
+  const handleFontHeight = useCallback((points: number) => {
+    bridgeRef.current?.dispatch('.uno:FontHeight', [{ name: 'FontHeight.Height', value: points }]).catch(() => {})
+  }, [])
+  const handleTextColor = useCallback((unoColor: number) => {
+    bridgeRef.current?.dispatch('.uno:Color', [{ name: 'Color', value: unoColor }]).catch(() => {})
+  }, [])
+  const handleHighlightColor = useCallback((unoColor: number) => {
+    bridgeRef.current?.dispatch('.uno:CharBackColor', [{ name: 'CharBackColor', value: unoColor }]).catch(() => {})
+  }, [])
+
+  // Derived, render-ready shape for CharFormattingControls — reads the SAME
+  // `states` map onState() already populates for Bold/Italic/etc (see
+  // CHAR_FORMAT_COMMANDS above), so no separate polling/fetch path exists to
+  // go stale. FontDescriptor's `.Name` / FontHeight's `.Height` are the
+  // FeatureStateEvent shapes confirmed by the same empirical probe.
+  const charFormatState: CharFormattingState = {
+    fontName: (states['.uno:CharFontName']?.state as { Name?: string } | undefined)?.Name ?? '',
+    fontHeight: (states['.uno:FontHeight']?.state as { Height?: number } | undefined)?.Height ?? null,
+    textColor: typeof states['.uno:Color']?.state === 'number' ? (states['.uno:Color']!.state as number) : -1,
+    highlightColor: typeof states['.uno:CharBackColor']?.state === 'number' ? (states['.uno:CharBackColor']!.state as number) : -1,
+  }
 
   const calcSelectionStats = useCalcSelectionStats({
     bridge: bridgeRef.current,
@@ -464,7 +578,11 @@ export function OfficeEditor({
     }
   }, [dirty, onExit])
 
-  const wordCount = null // Not exposed by the bridge (no .uno:WordCountDialog readout without a dialog) — status bar omits it honestly rather than showing a fake number.
+  // CRITIQUE.md finding #8: was hardcoded null with a comment saying the
+  // bridge couldn't expose it — bbOffice.getDocStats() (added for this fix)
+  // now does, for Writer; docStats stays all-null for Calc/Impress, so this
+  // still renders exactly the same honest omission there.
+  const wordCount = docStats.words
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-paper" data-testid="office-editor">
@@ -476,9 +594,20 @@ export function OfficeEditor({
           saving={saving}
           onBack={requestExit}
           onOpenPalette={() => setPaletteOpen(true)}
+          onShare={onShare}
           onSave={handleSave}
         />
       )}
+      {/* CRITIQUE.md finding #5: the ribbon was already rendered
+          unconditionally before this fix (never actually hidden behind the
+          separate, dead `OfficeLoadingSkeleton` component the critique
+          checked — see this task's dated notes) — what it lacked was any
+          VISUAL sign that it isn't interactive yet. `pointer-events-none`
+          matches that: nothing here dispatches successfully before
+          `docReady` anyway (bridgeRef.current is set once `open()`
+          resolves), so this also closes a real, if minor, "looks clickable,
+          does nothing" gap. */}
+      <div className={docReady ? undefined : 'pointer-events-none opacity-40 saturate-50'}>
       {!impress.presenting && (
         officeApp === 'calc' ? (
           <CalcRibbon activeTab={activeTab} onTabChange={setActiveTab} states={states} onCommand={runCommand} />
@@ -491,6 +620,17 @@ export function OfficeEditor({
             onCommand={runCommand}
             onInsertLink={handleInsertLink}
             onInsertImage={handleInsertImage}
+            charFormatting={
+              officeApp === 'writer'
+                ? {
+                    state: charFormatState,
+                    onFontName: handleFontName,
+                    onFontHeight: handleFontHeight,
+                    onTextColor: handleTextColor,
+                    onHighlightColor: handleHighlightColor,
+                  }
+                : undefined
+            }
             impress={
               officeApp === 'impress'
                 ? {
@@ -506,6 +646,7 @@ export function OfficeEditor({
           />
         )
       )}
+      </div>
       {officeApp === 'calc' && docReady && (
         <CalcFormulaBar
           bridge={bridgeRef.current}
@@ -529,7 +670,9 @@ export function OfficeEditor({
         </div>
       )}
       <div className="flex min-h-0 flex-1">
-        {officeApp === 'writer' && docReady && <OutlinePane headings={outline} onSelect={(i) => bridgeRef.current?.goToHeading(i).catch(() => {})} />}
+        {officeApp === 'writer' && !openError && !engineError && (
+          <OutlinePane headings={outline} onSelect={(i) => bridgeRef.current?.goToHeading(i).catch(() => {})} loading={!docReady} />
+        )}
         {officeApp === 'impress' && docReady && !impress.presenting && (
           <ImpressFilmstrip
             status={impress.slideStatus}
@@ -555,9 +698,31 @@ export function OfficeEditor({
           ) : (
             <>
               {status !== 'ready' && !docReady && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-paper-2">
-                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-amber" />
-                  <span className="text-[13px] text-ink-2">Preparing the editor on this device…</span>
+                // CRITIQUE.md finding #5: replaces the old opaque spinner
+                // card (which hid the whole canvas behind flat bg-paper-2)
+                // with the approved "firstload" mockup's own treatment — the
+                // real decrypted thumbnail shown as a floating, slightly
+                // muted page on the SAME tinted canvas the live document
+                // will occupy (PLAN.md's "floats on a tinted canvas with a
+                // soft shadow"), so there's no jarring swap in background
+                // once the real engine paints in. Falls back to a plain
+                // card only when no thumbnail exists (e.g. a brand-new
+                // document has none yet). "Preparing…" copy moved to the
+                // status bar below (loadingLabel) per the mockup, which
+                // puts it there, not overlapping the document.
+                <div className="absolute inset-0 flex items-center justify-center overflow-hidden p-8" data-testid="office-loading-thumbnail">
+                  {thumbnailUrl ? (
+                    <img
+                      src={thumbnailUrl}
+                      alt=""
+                      className="max-h-full max-w-full rounded-sm border border-line object-contain shadow-2"
+                      style={{ filter: 'saturate(0.85) brightness(0.98)' }}
+                    />
+                  ) : (
+                    <div className="flex h-[70%] w-[54%] max-w-[520px] flex-col items-center justify-center gap-3 rounded-sm border border-line bg-paper shadow-2">
+                      <div className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-amber" />
+                    </div>
+                  )}
                 </div>
               )}
               <OfficeEngineFrame iframeSrc={iframeSrc} iframeRef={iframeRef} onLoad={handleIframeLoad} />
@@ -570,6 +735,8 @@ export function OfficeEditor({
             onItalic={() => bridgeRef.current?.dispatch('.uno:Italic').catch(() => {})}
             onUnderline={() => bridgeRef.current?.dispatch('.uno:Underline').catch(() => {})}
             onLink={handleInsertLink}
+            textColor={charFormatState.textColor}
+            onTextColor={handleTextColor}
           />
           {docReady && !impress.presenting && <ZoomControl percent={zoom} onChange={(p) => { setZoom(p); bridgeRef.current?.setZoom(p).catch(() => {}) }} />}
           <CommandPalette
@@ -588,12 +755,13 @@ export function OfficeEditor({
         <OfficeStatusBar
           pageLabel={officeApp === 'impress' && impress.slideStatus ? `Slide ${impress.slideStatus.index} of ${impress.slideStatus.count}` : null}
           wordCount={wordCount}
-          language={undefined}
+          language={docStats.language ? formatLanguageLabel(docStats.language) : undefined}
           dirty={dirty}
           conflict={!!conflict}
           versionNumber={versionNumber}
           lastSavedAt={lastSavedAt}
           extra={officeApp === 'calc' ? <CalcStatusExtra stats={calcSelectionStats} /> : undefined}
+          loadingLabel={!docReady && !openError && !engineError ? 'Preparing the editor on this device…' : null}
         />
       )}
       <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageChosen} data-testid="office-image-input" />

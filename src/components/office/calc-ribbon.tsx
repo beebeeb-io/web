@@ -26,17 +26,26 @@ import { IconFillSwatch, IconFilter, IconSort } from './calc-icons'
 
 const CALC_TABS = ['Home', 'Insert', 'Data', 'Formulas']
 
+// CRITIQUE.md finding #9 (task 1567): 'autosum' was referenced by byId()
+// below but had NO entry in either glyph map below it or in SVG_ICON --
+// CalcRibbonButton's render falls through to `null` when neither map has the
+// id, so the button existed (clickable, correctly enabled/disabled) but drew
+// nothing inside it. Sigma as a plain text glyph, matching this file's own
+// existing precedent for a small set of characters (B/I/U/.00) rather than a
+// new SVG asset.
 const GLYPH_ICON: Record<string, string> = {
   bold: 'B',
   italic: 'I',
   underline: 'U',
   'inc-decimals': '.00',
+  autosum: 'Σ',
 }
 const GLYPH_STYLE: Record<string, React.CSSProperties> = {
   bold: { fontWeight: 700 },
   italic: { fontStyle: 'italic' },
   underline: { textDecoration: 'underline' },
   'inc-decimals': { fontSize: '11px', fontFamily: 'var(--font-mono)' },
+  autosum: { fontSize: '15px', fontWeight: 600 },
 }
 const SVG_ICON: Record<string, (p: { size?: number; className?: string }) => React.ReactElement> = {
   undo: IconUndo,

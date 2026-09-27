@@ -22,6 +22,15 @@ export interface OutlineHeading {
   text: string
 }
 
+/** CRITIQUE.md finding #8 (task 1567): live word count + cursor-locale
+ *  language for the status bar. Writer only — all-null for a non-Writer
+ *  active document, matching `getOutline()`'s own convention. */
+export interface DocStats {
+  words: number | null
+  characters: number | null
+  language: string | null
+}
+
 export type OfficeDocKind = 'writer' | 'calc' | 'impress'
 
 export interface OfficeBridge {
@@ -34,6 +43,7 @@ export interface OfficeBridge {
   onModifiedChange(cb: (modified: boolean) => void): Promise<() => void>
   onSelectionChange(cb: (sel: { text: string }) => void): Promise<() => void>
   getOutline(): Promise<OutlineHeading[]>
+  getDocStats(): Promise<DocStats>
   goToHeading(index: number): Promise<OutlineHeading>
   setZoom(percent: number): Promise<{ zoom: number }>
   newDocument(docKind: OfficeDocKind, templateBytes?: Uint8Array): Promise<{ docKind: OfficeDocKind }>

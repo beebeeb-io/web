@@ -8,7 +8,10 @@
  * this component is purely positional/presentational).
  */
 
+import { useRef } from 'react'
 import { Icon } from '@beebeeb/shared'
+import { IconTextColor } from './office-icons'
+import { unoColorToHex, hexToUnoColor } from './char-formatting-controls'
 
 export interface FloatingSelectionToolbarProps {
   /** Position in the HOST page's coordinate space (already translated from
@@ -19,9 +22,27 @@ export interface FloatingSelectionToolbarProps {
   onItalic: () => void
   onUnderline: () => void
   onLink: () => void
+  /** CRITIQUE.md finding #7 (task 1567): the mockup's floating toolbar is
+   *  B/I/U/color/link — five icons; the color icon was missing because #4's
+   *  color dispatch didn't exist yet. `textColor` is the raw UNO CharColor
+   *  (-1 = automatic) so this stays a pure/presentational component like the
+   *  rest of this file, matching `onTextColor`'s own {@link ColorPickers}
+   *  sibling in char-formatting-controls.tsx. */
+  textColor?: number
+  onTextColor?: (unoColor: number) => void
 }
 
-export function FloatingSelectionToolbar({ position, states, onBold, onItalic, onUnderline, onLink }: FloatingSelectionToolbarProps) {
+export function FloatingSelectionToolbar({
+  position,
+  states,
+  onBold,
+  onItalic,
+  onUnderline,
+  onLink,
+  textColor = -1,
+  onTextColor,
+}: FloatingSelectionToolbarProps) {
+  const colorInputRef = useRef<HTMLInputElement>(null)
   if (!position) return null
   return (
     <div
@@ -56,6 +77,29 @@ export function FloatingSelectionToolbar({ position, states, onBold, onItalic, o
       >
         U
       </button>
+      {onTextColor && (
+        <div className="relative grid h-7 w-7 place-items-center rounded-md hover:bg-paper-3">
+          <button
+            type="button"
+            aria-label="Text color"
+            title="Text color"
+            onClick={() => colorInputRef.current?.click()}
+            className="grid h-full w-full place-items-center"
+          >
+            <IconTextColor size={14} barColor={unoColorToHex(textColor, '#1a1a1a')} />
+          </button>
+          <input
+            ref={colorInputRef}
+            type="color"
+            aria-hidden="true"
+            tabIndex={-1}
+            data-testid="selection-toolbar-text-color-input"
+            value={unoColorToHex(textColor, '#1a1a1a')}
+            onChange={(e) => onTextColor(hexToUnoColor(e.target.value))}
+            className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+          />
+        </div>
+      )}
       <div className="mx-0.5 h-[18px] w-px bg-line" />
       <button type="button" aria-label="Insert link" onClick={onLink} className="grid h-7 w-7 place-items-center rounded-md hover:bg-paper-3">
         <Icon name="link" size={14} />

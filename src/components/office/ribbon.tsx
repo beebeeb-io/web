@@ -19,6 +19,7 @@ import {
 } from '../../lib/office/ribbon-commands'
 import type { LayoutDef, SlideOp } from '../../lib/office/impress-commands'
 import { ImpressRibbonContent, IMPRESS_TABS, type ImpressTab } from './impress-ribbon'
+import { FontPickers, ColorPickers, type CharFormattingState } from './char-formatting-controls'
 import {
   IconAlignCenter,
   IconAlignJustify,
@@ -68,6 +69,17 @@ export interface RibbonProps {
   onCommand: (def: RibbonCommandDef) => void
   onInsertLink: () => void
   onInsertImage: () => void
+  /** CRITIQUE.md finding #4 (task 1567): Writer-only, matching the mockup's
+   *  own "font + size, B/I/U/S, text colour, highlight" Home-tab order.
+   *  Undefined for Calc/Impress, whose ribbons don't render these controls
+   *  (Calc/Impress own char-formatting UI is a separate, unscoped follow-up). */
+  charFormatting?: {
+    state: CharFormattingState
+    onFontName: (name: string) => void
+    onFontHeight: (points: number) => void
+    onTextColor: (unoColor: number) => void
+    onHighlightColor: (unoColor: number) => void
+  }
   /** Impress-only extras (task 1567 Impress lane) — undefined for Writer/
    *  Calc, whose ribbon content never reads this prop. Bundled rather than
    *  spread so this lane's additions are one optional prop, not a change to
@@ -125,7 +137,7 @@ function Divider() {
   return <div className="h-[22px] w-px shrink-0 bg-line" />
 }
 
-export function Ribbon({ app, activeTab, onTabChange, states, onCommand, onInsertLink, onInsertImage, impress }: RibbonProps) {
+export function Ribbon({ app, activeTab, onTabChange, states, onCommand, onInsertLink, onInsertImage, impress, charFormatting }: RibbonProps) {
   const tabs = app === 'writer' ? WRITER_TABS : app === 'impress' ? IMPRESS_TABS : GENERIC_TABS
   const showHomeControls = activeTab === 'Home'
 
@@ -164,6 +176,17 @@ export function Ribbon({ app, activeTab, onTabChange, states, onCommand, onInser
                 <span>Normal text</span>
                 <IconChevronDown size={11} className="text-ink-3" />
               </div>
+              {charFormatting && (
+                <>
+                  <Divider />
+                  <FontPickers
+                    fontName={charFormatting.state.fontName}
+                    fontHeight={charFormatting.state.fontHeight}
+                    onFontName={charFormatting.onFontName}
+                    onFontHeight={charFormatting.onFontHeight}
+                  />
+                </>
+              )}
             </>
           )}
           <Divider />
@@ -176,6 +199,17 @@ export function Ribbon({ app, activeTab, onTabChange, states, onCommand, onInser
           </div>
           {app === 'writer' && (
             <>
+              {charFormatting && (
+                <>
+                  <Divider />
+                  <ColorPickers
+                    textColor={charFormatting.state.textColor}
+                    highlightColor={charFormatting.state.highlightColor}
+                    onTextColor={charFormatting.onTextColor}
+                    onHighlightColor={charFormatting.onHighlightColor}
+                  />
+                </>
+              )}
               <Divider />
               <div className="flex shrink-0 items-center gap-0.5">
                 {WRITER_HOME_COMMANDS.filter((d) => d.id === 'bullet-list' || d.id === 'numbered-list').map((def) => (

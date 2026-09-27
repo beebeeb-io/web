@@ -21,6 +21,12 @@ export interface OfficeStatusBarProps {
    *  language, before the flex spacer. Undefined/null renders nothing --
    *  zero visual change for apps that don't pass it. */
   extra?: React.ReactNode
+  /** CRITIQUE.md finding #5 (task 1567): while the engine is still booting,
+   *  the approved "firstload" mockup screen's status bar shows an amber dot
+   *  + "Preparing the editor on this device…" in place of the normal page/
+   *  word-count cluster, and "read-only for now" instead of the save state.
+   *  Set/unset only — never combined with the normal fields. */
+  loadingLabel?: string | null
 }
 
 function formatClock(d: Date): string {
@@ -36,7 +42,26 @@ export function OfficeStatusBar({
   versionNumber,
   lastSavedAt,
   extra,
+  loadingLabel,
 }: OfficeStatusBarProps) {
+  if (loadingLabel) {
+    return (
+      <div
+        className="flex h-[30px] shrink-0 items-center gap-2 border-t border-line bg-paper-2 px-4 font-mono text-[11px] text-ink-3"
+        data-testid="office-status-bar"
+      >
+        <span className="h-[6px] w-[6px] shrink-0 rounded-full bg-amber" />
+        <span>{loadingLabel}</span>
+        <span className="flex-1" />
+        <span className="flex items-center gap-1.5 text-amber-deep">
+          <Icon name="lock" size={11} />
+          Encrypted
+        </span>
+        <span>read-only for now</span>
+      </div>
+    )
+  }
+
   const statusRight = conflict
     ? 'not saved · conflict'
     : dirty

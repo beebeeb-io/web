@@ -147,3 +147,45 @@ export function IconTable(props: IconProps) {
     props,
   )
 }
+
+/** CRITIQUE.md findings #4/#7 (task 1567): a bare "A" glyph with a colored
+ *  bar underneath reflecting the currently-applied `.uno:Color` — same
+ *  iconography Word/Docs use for their font-color button. `barColor`
+ *  defaults to the brand accent only as a placeholder before any real state
+ *  has loaded; the ribbon/toolbar always pass the live value. */
+export function IconTextColor({ barColor = 'currentColor', ...props }: IconProps & { barColor?: string }) {
+  return svg(
+    <>
+      <path
+        d="M5.2 10.5 8 3.6l2.8 6.9M6 8.4h4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.4}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <rect x="2.5" y="12.3" width="11" height="2" rx="0.6" fill={barColor} />
+    </>,
+    props,
+  )
+}
+
+/** CRITIQUE.md findings #4/#7: a highlighter/marker glyph with a colored bar
+ *  reflecting the currently-applied `.uno:CharBackColor`. */
+export function IconHighlighter({ barColor = 'currentColor', ...props }: IconProps & { barColor?: string }) {
+  return svg(
+    <>
+      <path
+        d="M9.8 2.6 13 5.8 7.7 11.1 4 11.5l.4-3.7z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.3}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M4.4 8.2 7.4 11.2" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" />
+      <rect x="2.5" y="12.3" width="11" height="2" rx="0.6" fill={barColor} />
+    </>,
+    props,
+  )
+}
