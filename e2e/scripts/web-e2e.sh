@@ -18,6 +18,10 @@
 # 1406) — SERVER_DIR always resolves to the one real repos/server via git's
 # common dir. Uses host `psql` if present, else falls back to `docker exec`
 # into the Postgres container (task 1406; override with E2E_PG_CONTAINER).
+# e2e/1534-cli-upload-share-decrypt.spec.ts additionally needs a built `bb`
+# binary — resolved from repos/cli the same way (sibling checkout) and
+# built on demand if missing (task 1534 review round 2); override with
+# E2E_BB_BIN. No other spec needs it and none are blocked if it's absent.
 # The pilot-access-key gate is OFF by default (task 1520) — matching prod,
 # which launched phase 2 with BB_REQUIRE_PILOT_KEY=0 on both nodes. Override
 # BB_REQUIRE_PILOT_KEY=1 (BB_PILOT_SIGNUP_KEY=test-pilot-key) before invoking
@@ -75,6 +79,20 @@ SERVER_DIR="$WORKSPACE/repos/server"
 # timeout) and trivially fast in release. The CI gate builds + points here at
 # `target/release/beebeeb-api`.
 API_BIN="${E2E_API_BIN:-$SERVER_DIR/target/debug/beebeeb-api}"
+# CLI binary (task 1534 review round 2, Codex P1): same sibling-checkout
+# resolution as SERVER_DIR above (works from a linked worktree via git's
+# common dir). Only e2e/1534-cli-upload-share-decrypt.spec.ts needs this —
+# it drives a REAL `bb` binary against this harness's own isolated backend
+# to prove a CLI upload decrypts identically to a web one. Resolved and
+# exported unconditionally (like API_BIN) so a plain `E2E_BB_BIN=...`
+# override still wins, but every OTHER spec keeps running even when
+# repos/cli isn't checked out or built — that one spec enforces its OWN
+# hard requirement (fails, does not silently skip, unless
+# E2E_1534_ALLOW_SKIP=1 — see its own file) rather than this harness
+# blocking every unrelated spec on a binary only one of them needs.
+CLI_DIR="$WORKSPACE/repos/cli"
+BB_BIN="${E2E_BB_BIN:-$CLI_DIR/target/debug/bb}"
+export E2E_BB_BIN="$BB_BIN"
 DATABASE_URL="postgres://$PG_USER:$PG_PASS@$PG_HOST:$PG_PORT/$DB_NAME"
 # Local dev Postgres password (public, same as .env.dev.example / docker-compose).
 # Unquoted on purpose so the secret-scanner doesn't flag the dev credential.
@@ -165,6 +183,21 @@ log "bun install --frozen-lockfile"
 (cd "$WEB_DIR" && bun install --frozen-lockfile) || { echo "bun install failed — check lockfile"; exit 1; }
 
 [ -x "$API_BIN" ] || { echo "debug binary missing: $API_BIN — build with: (cd $SERVER_DIR && cargo build -p beebeeb-api)"; exit 1; }
+
+# Best-effort `bb` build (task 1534 review round 2) — NON-fatal: unlike the
+# API binary above, no spec but 1534-cli-upload-share-decrypt.spec.ts needs
+# this, so a missing/failed cli build must never block the rest of the
+# suite. If repos/cli is checked out as a sibling and the debug binary
+# isn't already there, build it now so a plain `./e2e/scripts/web-e2e.sh
+# e2e/1534-cli-upload-share-decrypt.spec.ts` works without the caller
+# having to build+point E2E_BB_BIN by hand first. E2E_BB_BIN (set above)
+# already wins over this when the caller passed one explicitly.
+if [ ! -x "$BB_BIN" ] && [ -d "$CLI_DIR" ]; then
+  CLI_BUILD_LOG="$LOG_DIR/bb-web-e2e-cli-build.log"
+  log "bb binary missing at $BB_BIN — building (cd $CLI_DIR && cargo build -p beebeeb-cli)…"
+  ( cd "$CLI_DIR" && cargo build -p beebeeb-cli ) >"$CLI_BUILD_LOG" 2>&1 \
+    || log "cli build failed (see $CLI_BUILD_LOG) — e2e/1534-cli-upload-share-decrypt.spec.ts will fail unless E2E_1534_ALLOW_SKIP=1 is set"
+fi
 
 # ── Backend lifecycle (fresh DB + blobs PER iteration, so repeats don't
 #    accumulate state and degrade — the durable reliability fix) ─────────────

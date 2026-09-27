@@ -51,6 +51,18 @@ jobs:
   # dev Cargo profile optimizes only the Argon2id crates, so the debug build's
   # crypto is release-fast (the dev auto-login derives a 256 MiB Argon2id key on
   # every page load) without slowing the rest of the debug compile.
+  #
+  # Task 1534 review round 2 (Codex P1): also clones + builds `beebeeb-io/cli`
+  # as a THIRD sibling so e2e/1534-cli-upload-share-decrypt.spec.ts — the only
+  # real-stack proof that a non-web client's key derivation matches web's — gets
+  # a real `bb` binary instead of silently skipping (it now hard-fails without
+  # one; see that spec's own doc comment). Unlike server, `cli` depends on
+  # `core` via a pinned GIT dependency (not a local path dep — see its
+  # Cargo.toml), so no separate `core` sibling checkout is needed for cli's
+  # sake; `cargo build` fetches it straight from GitHub over HTTPS. Both
+  # `cli` and `core` are PUBLIC repos (unlike `server`), so this needs no
+  # extra checkout credential — the private-repo credential gap noted
+  # elsewhere for `server`/`core` access does not apply here.
   e2e:
     name: E2E (Playwright, full stack)
     runs-on: ubuntu-latest
@@ -82,6 +94,9 @@ jobs:
       # Point the harness at the API binary built below (sibling checkout, inside
       # the workspace so Swatinem/rust-cache can cache its target dir).
       E2E_API_BIN: ${{ github.workspace }}/server/target/debug/beebeeb-api
+      # Same, for the `bb` binary e2e/1534-cli-upload-share-decrypt.spec.ts needs
+      # (task 1534 review round 2) — built below from the `cli` sibling checkout.
+      E2E_BB_BIN: ${{ github.workspace }}/cli/target/debug/bb
       CARGO_TERM_COLOR: always
 
     steps:
@@ -96,13 +111,18 @@ jobs:
       - name: Checkout core (server Cargo path dependency — ../core)
         run: git clone --depth 1 https://github.com/beebeeb-io/core.git core
 
+      - name: Checkout cli (provides the debug bb binary for task 1534's spec)
+        run: git clone --depth 1 https://github.com/beebeeb-io/cli.git cli
+
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # pinned action; toolchain set below
         with:
           toolchain: "1.96.0"
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          workspaces: server
+          workspaces: |
+            server
+            cli
 
       - name: Install system deps (mold linker, psql client, lsof)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq mold postgresql-client lsof
@@ -113,6 +133,13 @@ jobs:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
         run: cargo build -p beebeeb-api
+
+      - name: Build cli (debug bb binary — task 1534's real-stack e2e spec)
+        working-directory: cli
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
+        run: cargo build -p beebeeb-cli
 
       - name: Install web dependencies
         run: bun install --frozen-lockfile
