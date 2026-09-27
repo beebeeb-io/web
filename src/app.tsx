@@ -9,8 +9,8 @@ import { readPlanIntent, guestRouteFallback } from './lib/plan-intent'
 import { WsProvider } from './lib/ws-context'
 import { SyncProvider } from './lib/sync-context'
 import { OnboardingProvider } from './lib/onboarding-context'
-import { FEATURE_TEAMS, FEATURE_OFFICE_EDITOR } from './lib/flags'
-import { isOfficeLabsEnabled } from './lib/office/office-labs'
+import { FEATURE_TEAMS } from './lib/flags'
+import { isOfficeLabsEnabled, OFFICE_ROUTE_MARKER } from './lib/office/office-labs'
 import { ToastProvider, useToast } from './components/toast'
 import { ErrorBoundary } from './components/error-boundary'
 import { WasmGuard } from './components/wasm-guard'
@@ -443,14 +443,12 @@ export function App() {
           <Route
             path="/office/:fileId"
             element={
-              // Ship prep (task 1567, 2026-09-27): FEATURE_OFFICE_EDITOR
-              // (build-time) gates whether this route/chunk exists in the
-              // build AT ALL; isOfficeLabsEnabled() (runtime, office-labs.ts)
-              // gates whether THIS visitor sees it in an already-deployed
-              // build carrying the flag on. Both must be true — see
-              // office-labs.ts's own header for why there are two.
-              FEATURE_OFFICE_EDITOR && isOfficeLabsEnabled() ? (
-                <ProtectedRoute>
+              // Task 1567: the build flag (FEATURE_OFFICE_EDITOR, via
+              // isOfficeLabsEnabled() — a pure alias since Guus dropped the
+              // Labs opt-in, see office-labs.ts) is the only gate. The key
+              // is the prod image gate's bundle marker (OFFICE_ROUTE_MARKER).
+              isOfficeLabsEnabled() ? (
+                <ProtectedRoute key={OFFICE_ROUTE_MARKER}>
                   <OfficeEditorPage />
                 </ProtectedRoute>
               ) : (
