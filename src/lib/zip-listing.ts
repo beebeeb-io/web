@@ -209,6 +209,29 @@ export async function readZipListing(blob: Blob): Promise<ZipListing | null> {
     .arrayBuffer()
   const parsed = parseCentralDirectoryEntries(new Uint8Array(cdBuf), MAX_LISTED_ENTRIES)
 
+  // Per-ENTRY ZIP64 (Codex review, task 1574 gate, 2026-09-27) — distinct
+  // from the whole-archive ZIP64 signal `findEocdInTail` already rejects
+  // above. An archive can need ZIP64 for only ONE oversized member (≥4GiB)
+  // while its EOCD-level entry count/CD size/CD offset all still fit 32
+  // bits and pass that check cleanly. For such a member, THIS entry's own
+  // Central Directory header stores the 0xFFFFFFFF sentinel in
+  // compressedSize/uncompressedSize and puts the real 64-bit size in a
+  // ZIP64 extended-information extra field this reader doesn't parse (see
+  // this file's top comment: ZIP64 is deliberately not implemented at all,
+  // not implemented for the common case and skipped for this one).
+  // Without this check, `parseCentralDirectoryEntries` returns the sentinel
+  // itself as a size — which decodes to exactly 4294967295 bytes (~4.0GB)
+  // and would be shown as that entry's real size, a wrong number presented
+  // as a fact. Rejecting the whole listing here (same "honest unsupported
+  // card, never half-parsed" fallback as the EOCD-level check) is
+  // consistent with this file's own design choice not to build a partial
+  // ZIP64 reader.
+  const ZIP64_SIZE_SENTINEL = 0xffffffff
+  const hasZip64EntrySentinel = parsed.some(
+    (e) => e.compressedSize === ZIP64_SIZE_SENTINEL || e.uncompressedSize === ZIP64_SIZE_SENTINEL,
+  )
+  if (hasZip64EntrySentinel) return null
+
   const byteCapHit = eocd.centralDirectorySize > MAX_CENTRAL_DIRECTORY_BYTES
   const displayCapHit = eocd.totalEntries > parsed.length
   return {

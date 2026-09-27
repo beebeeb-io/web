@@ -286,4 +286,29 @@ describe('readZipListing (Blob-based, bounded reads)', () => {
     expect(MAX_CENTRAL_DIRECTORY_BYTES).toBeGreaterThan(0)
     expect(Number.isFinite(MAX_CENTRAL_DIRECTORY_BYTES)).toBe(true)
   })
+
+  // Codex review (task 1574 gate, 2026-09-27): a per-ENTRY ZIP64 sentinel —
+  // distinct from the whole-archive ZIP64 signal findEocdInTail already
+  // rejects (covered above by no dedicated readZipListing test, only the
+  // findEocdInTail-level tests). An archive whose EOCD-level counts/CD
+  // size/CD offset all fit 32 bits (so the earlier check passes) can still
+  // have ONE oversized (≥4GiB) member whose own Central Directory header
+  // stores 0xFFFFFFFF in compressedSize/uncompressedSize. Before the fix,
+  // readZipListing returned that sentinel itself as if it were the real
+  // size (4294967295 bytes, ~4.0GB) instead of the honest unsupported
+  // fallback.
+  test('returns null (ZIP64 per-entry sentinel, unsupported) when an entry\'s uncompressedSize is the 0xFFFFFFFF sentinel', async () => {
+    const zip = buildZip([
+      { name: 'huge.bin', compressedSize: 123, uncompressedSize: 0xffffffff },
+      { name: 'normal.txt', compressedSize: 10, uncompressedSize: 20 },
+    ])
+    const blob = new Blob([zip])
+    expect(await readZipListing(blob)).toBeNull()
+  })
+
+  test('returns null (ZIP64 per-entry sentinel, unsupported) when an entry\'s compressedSize is the 0xFFFFFFFF sentinel', async () => {
+    const zip = buildZip([{ name: 'huge.bin', compressedSize: 0xffffffff, uncompressedSize: 5_000_000_000 & 0xffffffff }])
+    const blob = new Blob([zip])
+    expect(await readZipListing(blob)).toBeNull()
+  })
 })

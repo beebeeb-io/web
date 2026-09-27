@@ -24,11 +24,23 @@ import UTIF from 'utif2'
 const MAX_TIFF_INPUT_BYTES = 64 * 1024 * 1024
 
 /**
- * Bounded decode-buffer size — RGBA8 is 4 bytes/pixel, so 64 megapixels caps
- * the decoded buffer at 256MB. A TIFF declaring more pixels than this is
- * refused before `decodeImage` ever allocates that buffer.
+ * Bounded decode-buffer size. RGBA8 is 4 bytes/pixel, so this caps any ONE
+ * pixel buffer at 4 × MAX_TIFF_PIXELS bytes — but the real peak is higher
+ * than that single number suggests (Codex review, task 1574 gate,
+ * 2026-09-27): utif2's own internal decoded buffer (`ifd.data`, populated by
+ * `decodeImage`), the `UTIF.toRGBA8` output (`rgba` below), and the
+ * OffscreenCanvas's own backing store can all be alive at the same time —
+ * up to 3 same-sized buffers, not 1 (a 4th, the `Uint8ClampedArray` copy
+ * `ImageData` needs, is eliminated below via a zero-copy view wherever
+ * safe, rather than budgeted for). At the ORIGINAL 64,000,000-pixel cap
+ * that was 3 × 256MB ≈ 768MB of peak aggregate — enough to crash the tab on
+ * a memory-constrained device instead of hitting the intended honest
+ * fallback. Lowered to keep that same 3-buffer peak under ~300MB: 24
+ * megapixels (e.g. 6000×4000, already larger than any full-frame consumer
+ * camera TIFF export and far above every fixture this task tests against)
+ * × 4 bytes × 3 buffers ≈ 288MB.
  */
-const MAX_TIFF_PIXELS = 64_000_000
+const MAX_TIFF_PIXELS = 24_000_000
 
 export interface TiffDecodeResult {
   blob: Blob | null
@@ -104,13 +116,20 @@ async function decodeTiffToPng(blob: Blob): Promise<TiffDecodeResult> {
   const ctx = canvas.getContext('2d')
   if (!ctx) return { blob: null, error: 'OffscreenCanvas 2d context unavailable' }
 
-  // A fresh, plain-`ArrayBuffer`-backed copy — not a view over `rgba`'s own
-  // buffer — so this satisfies `ImageData`'s stricter `ArrayBuffer` (never
-  // `SharedArrayBuffer`) typing regardless of what utif2's own internal
-  // buffer type is, and so `ImageData` never aliases memory utif2 might
-  // still touch.
-  const clamped = new Uint8ClampedArray(rgba.length)
-  clamped.set(rgba)
+  // `ImageData` needs a plain-`ArrayBuffer`-backed `Uint8ClampedArray` (never
+  // `SharedArrayBuffer`). The common case — `rgba` already IS a whole,
+  // non-shared `ArrayBuffer` with no offset — can wrap that SAME buffer as a
+  // zero-copy view instead of allocating and filling a full duplicate (up to
+  // 96MB at this worker's own pixel cap, one of the 3 concurrent
+  // same-sized buffers the MAX_TIFF_PIXELS comment above budgets for).
+  // `rgba` is never read again after this point, so aliasing it is safe —
+  // nothing else in this function still touches its bytes through the
+  // original view. Falls back to a defensive copy only if utif2 ever hands
+  // back something with an offset or a SharedArrayBuffer backing.
+  const clamped =
+    rgba.buffer instanceof ArrayBuffer && rgba.byteOffset === 0 && rgba.byteLength === rgba.buffer.byteLength
+      ? new Uint8ClampedArray(rgba.buffer)
+      : new Uint8ClampedArray(rgba)
   const imageData = new ImageData(clamped, width, height)
   ctx.putImageData(imageData, 0, 0)
   const pngBlob = await canvas.convertToBlob({ type: 'image/png' })
