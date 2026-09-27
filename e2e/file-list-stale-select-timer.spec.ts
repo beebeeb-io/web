@@ -90,9 +90,11 @@ function detailsPanelCloseButton(page: Page): Locator {
   return page.locator('div.fixed.inset-0.z-40.flex.justify-end').getByRole('button', { name: 'Close' })
 }
 
-/** Create a folder via the toolbar's "New folder" dialog and wait for its row. */
+/** Create a folder via the toolbar's "+ New" → Folder dialog and wait for its row. */
 async function createFolder(page: Page, name: string): Promise<void> {
-  await page.getByRole('button', { name: 'New folder' }).first().click()
+  // Task 1582: "New folder" moved into the toolbar's "+ New" menu (Folder).
+  await page.getByTestId('new-menu-trigger').click()
+  await page.getByTestId('new-menu-folder').click()
   await page.getByRole('dialog', { name: 'New folder' }).getByPlaceholder('e.g. Contracts').fill(name)
   await page.getByRole('dialog', { name: 'New folder' }).getByRole('button', { name: 'Create' }).click()
   await page.getByRole('row', { name: new RegExp(`${escapeRe(name)}, folder`) }).first().waitFor({ timeout: 15_000 })

@@ -16,6 +16,12 @@ import { UploadZone, useBrowseFiles, useBrowseFolders, type FolderFile } from '.
 import type { UploadItem } from '../components/upload-progress'
 import { UploadCards } from '../components/upload-progress-card'
 import { NewFolderDialog } from '../components/new-folder-dialog'
+import { NewMenu } from '../components/new-menu'
+import { NewDocumentDialog } from '../components/new-document-dialog'
+import { getNewDocumentType, type NewDocumentType } from '../lib/new-document'
+import { blankDocumentBytes } from '../lib/office/blank-documents'
+import { FEATURE_OFFICE_EDITOR } from '../lib/flags'
+import { isOfficeLabsEnabled } from '../lib/office/office-labs'
 import { DeleteBackupsDialog } from '../components/delete-backups-dialog'
 import { VersionHistory } from '../components/version-history'
 import { DuplicateFileDialog, getUniqueName, type ConflictItem } from '../components/duplicate-file-dialog'
@@ -146,6 +152,13 @@ export function Drive() {
     { id: null, name: 'All files' },
   ])
   const [folderDialogOpen, setFolderDialogOpen] = useState(false)
+  // "+ New" document (task 1582): the type whose name prompt is open, and the
+  // id of a just-created text file whose preview should open in edit mode.
+  const [newDocType, setNewDocType] = useState<NewDocumentType | null>(null)
+  const [previewEditFileId, setPreviewEditFileId] = useState<string | null>(null)
+  // Office types need the editor to be reachable: build flag AND Labs opt-in
+  // (office-labs.ts) — the same gate as the preview's Edit button.
+  const officeAvailable = FEATURE_OFFICE_EDITOR && isOfficeLabsEnabled()
   const [uploads, setUploads] = useState<UploadItem[]>([])
   const uploadAbortRef = useRef<Map<string, AbortController>>(new Map())
   // Cache the File object per upload-id so we can re-invoke the encrypted
@@ -894,11 +907,27 @@ export function Drive() {
   useEffect(() => {
     const handleUploadTrigger = () => browse()
     const handleNewFolderTrigger = () => openNewFolderDialog()
+    // Command palette → "New document" etc. (task 1582). Office types are
+    // re-checked against the gate here too — never trust the event's sender.
+    const handleNewDocumentTrigger = (e: Event) => {
+      const id = (e as CustomEvent<{ type?: NewDocumentType['id'] }>).detail?.type
+      if (!id) return
+      let t: NewDocumentType
+      try {
+        t = getNewDocumentType(id)
+      } catch {
+        return
+      }
+      if (t.editor === 'office' && !(FEATURE_OFFICE_EDITOR && isOfficeLabsEnabled())) return
+      setNewDocType(t)
+    }
     window.addEventListener('beebeeb:upload-trigger', handleUploadTrigger)
     window.addEventListener('beebeeb:new-folder-trigger', handleNewFolderTrigger)
+    window.addEventListener('beebeeb:new-document-trigger', handleNewDocumentTrigger)
     return () => {
       window.removeEventListener('beebeeb:upload-trigger', handleUploadTrigger)
       window.removeEventListener('beebeeb:new-folder-trigger', handleNewFolderTrigger)
+      window.removeEventListener('beebeeb:new-document-trigger', handleNewDocumentTrigger)
     }
   }, [browse, openNewFolderDialog])
 
@@ -1667,6 +1696,99 @@ export function Drive() {
     }
   }
 
+  // ─── "+ New" document (task 1582) ────────────────────────────────────────
+  //
+  // Creates a real, valid, empty file of the chosen type in the current
+  // folder through the SAME encrypted upload path as any other upload
+  // (encryptedUpload: name + mime encrypted as metadata, content encrypted
+  // chunk by chunk on this device). There is no plaintext fallback: with the
+  // vault locked, creation is refused.
+  //
+  // Called synchronously from the name prompt's submit event. For Office
+  // types the editor tab is opened HERE, before the first await, while the
+  // browser still counts it as a user gesture — opening it after the upload
+  // resolves would be eaten by the popup blocker. The tab shows a short
+  // "encrypting" line until the file exists, then navigates to the editor.
+  function handleCreateDocument(type: NewDocumentType, name: string): Promise<void> {
+    if (!isUnlocked || !cryptoReady) {
+      return Promise.reject(new Error('Your vault is locked. Log in again to unlock encryption, then try again.'))
+    }
+    if (type.editor === 'office' && !(FEATURE_OFFICE_EDITOR && isOfficeLabsEnabled())) {
+      return Promise.reject(new Error('The Office editor is not enabled on this device.'))
+    }
+    const fileId = crypto.randomUUID()
+    let tab: Window | null = null
+    if (type.editor === 'office') {
+      tab = window.open('', `bb-office-${fileId}`)
+      if (tab) {
+        try {
+          tab.document.title = `Creating ${name}`
+          tab.document.body.style.cssText =
+            'margin:0;display:flex;align-items:center;justify-content:center;height:100vh;font:14px Inter,system-ui,sans-serif;color:#6b6760;background:#fbfaf7'
+          tab.document.body.textContent = `Encrypting ${name} on this device…`
+        } catch {
+          // Cosmetic only.
+        }
+      }
+    }
+    return (async () => {
+      try {
+        const bytes = await blankDocumentBytes(type)
+        const file = new File([bytes as BlobPart], name, { type: type.mimeType })
+        const fileKey = await getFileKey(fileId)
+        const created = await encryptedUpload(
+          file,
+          fileId,
+          fileKey,
+          getMasterKey(),
+          currentParentId,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          getFileKey,
+        )
+        const pathPrefix = breadcrumbs.slice(1).map((b) => b.name).join('/')
+        const now = new Date().toISOString()
+        indexFile(created.id, {
+          name,
+          path: pathPrefix ? `/${pathPrefix}` : '/',
+          type: type.mimeType,
+          size: bytes.length,
+          parent: currentParentId ?? null,
+          starred: false,
+          created: now,
+          modified: now,
+          tags: [],
+        })
+        window.dispatchEvent(new CustomEvent('beebeeb:file-uploaded'))
+        void fetchFiles()
+        void refreshDriveUsage()
+
+        if (type.editor === 'office') {
+          const url = `/office/${encodeURIComponent(created.id)}`
+          if (tab && !tab.closed) {
+            tab.location.replace(url)
+          } else if (!window.open(url, `bb-office-${created.id}`)) {
+            showToast({
+              icon: 'check',
+              title: `Created ${name}`,
+              description: 'Your browser blocked the editor tab. Open the file from Drive to edit it.',
+            })
+            return
+          }
+        } else {
+          setPreviewEditFileId(created.id)
+          openPreview(created)
+        }
+        showToast({ icon: 'check', title: 'Created', description: name })
+      } catch (err) {
+        if (tab && !tab.closed) tab.close()
+        throw new Error(userFriendlyError(err))
+      }
+    })()
+  }
+
   // ─── Smart folder suggestion: create folder + move files ─────────────────
 
   async function handleAcceptFolderSuggestion() {
@@ -2371,9 +2493,13 @@ export function Drive() {
 
           {/* New + Upload */}
           <div className="flex items-center gap-1.5 shrink-0">
-            <BBButton size="sm" variant="amber" onClick={() => setFolderDialogOpen(true)} className="gap-1.5" disabled={isFrozen} title={isFrozen ? 'Account is frozen' : undefined}>
-              <Icon name="plus" size={13} /> New folder
-            </BBButton>
+            <NewMenu
+              officeAvailable={officeAvailable}
+              onNewFolder={openNewFolderDialog}
+              onNewDocument={setNewDocType}
+              disabled={isFrozen}
+              disabledReason="Account is frozen"
+            />
             <BBButton size="sm" onClick={browse} className="gap-1.5" aria-label="Upload files" disabled={isFrozen} title={isFrozen ? 'Account is frozen' : undefined} data-tour="upload">
               <Icon name="upload" size={13} /> <span className="hidden sm:inline" aria-hidden="true">Upload</span>
             </BBButton>
@@ -2651,13 +2777,37 @@ export function Drive() {
                     <BBButton size="md" variant="amber" onClick={browse} className="gap-1.5">
                       <Icon name="upload" size={13} /> Upload files
                     </BBButton>
-                    <BBButton size="md" variant="ghost" onClick={() => setFolderDialogOpen(true)} className="gap-1.5">
-                      <Icon name="folder" size={13} /> New folder
-                    </BBButton>
+                    <NewMenu
+                      officeAvailable={officeAvailable}
+                      onNewFolder={openNewFolderDialog}
+                      onNewDocument={setNewDocType}
+                      disabled={isFrozen}
+                      disabledReason="Account is frozen"
+                      variant="ghost"
+                      size="md"
+                      align="center"
+                      testIdPrefix="empty-new-menu"
+                    />
                   </div>
                 </div>
               ) : (
-                <EmptyDrive onUpload={browse} onCreateFolder={openNewFolderDialog} />
+                <EmptyDrive
+                  onUpload={browse}
+                  onCreateFolder={openNewFolderDialog}
+                  newMenu={
+                    <NewMenu
+                      officeAvailable={officeAvailable}
+                      onNewFolder={openNewFolderDialog}
+                      onNewDocument={setNewDocType}
+                      disabled={isFrozen}
+                      disabledReason="Account is frozen"
+                      variant="ghost"
+                      size="lg"
+                      align="center"
+                      testIdPrefix="empty-new-menu"
+                    />
+                  }
+                />
               )
             }
             onNavigateFolder={handleFolderOpen}
@@ -2712,6 +2862,12 @@ export function Drive() {
         open={folderDialogOpen}
         onClose={() => setFolderDialogOpen(false)}
         onCreate={handleCreateFolder}
+      />
+      <NewDocumentDialog
+        type={newDocType}
+        existingNames={files.map((f) => externalDecryptedNames[f.id]).filter((n): n is string => !!n)}
+        onClose={() => setNewDocType(null)}
+        onCreate={handleCreateDocument}
       />
 
       {/* Extra guard before trashing the device-backup root (task 0838) */}
@@ -2809,7 +2965,11 @@ export function Drive() {
           <FilePreview
             file={previewFile}
             decryptedName={externalDecryptedNames[previewFile.id] ?? undefined}
-            onClose={closePreview}
+            onClose={() => {
+              setPreviewEditFileId(null)
+              closePreview()
+            }}
+            startInEditMode={previewEditFileId === previewFile.id}
             hasPrev={hasPrev}
             hasNext={hasNext}
             onPrev={hasPrev ? () => openPreview(files[previewIdx - 1]) : undefined}

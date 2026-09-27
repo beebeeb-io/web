@@ -41,6 +41,9 @@ interface FilePreviewProps {
   onNext?: () => void
   hasPrev?: boolean
   hasNext?: boolean
+  /** Open straight into the text editor once the file is known editable —
+   *  set for a file just created from Drive's "+ New" menu (task 1582). */
+  startInEditMode?: boolean
 }
 
 function formatSize(bytes: number): string {
@@ -440,7 +443,7 @@ function resolveEditableKind(
   return null
 }
 
-export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, onVersionRestored, onPrev, onNext, hasPrev, hasNext }: FilePreviewProps) {
+export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, onVersionRestored, onPrev, onNext, hasPrev, hasNext, startInEditMode }: FilePreviewProps) {
   const { getFileKeyForFile, isUnlocked } = useKeys()
   const [blob, setBlob] = useState<Blob | null>(null)
   /** True when `blob` holds the full original (non-image / fallback / version
@@ -797,6 +800,17 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   }, [blob, blobIsOriginal, editKind?.isMarkdown, editKind?.language])
 
   const canEdit = !!editKind && editability?.editable === true
+
+  // "+ New" → Text file / Markdown (task 1582): enter edit mode by itself,
+  // once, as soon as the (empty) file has been decrypted and checked. Keyed
+  // on the file id so prev/next never inherits it.
+  const autoEditedFileIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!startInEditMode || !canEdit || editing) return
+    if (autoEditedFileIdRef.current === file.id) return
+    autoEditedFileIdRef.current = file.id
+    setEditing(true)
+  }, [startInEditMode, canEdit, editing, file.id])
 
   const requestExitEdit = useCallback(() => {
     if (dirty) {
