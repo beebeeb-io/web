@@ -190,6 +190,47 @@ test('every preview-matrix fixture renders, shows an honest fallback, or is flag
   // instrumentation that tells the two apart from the OUTSIDE (a run with
   // zero log lines for 15 minutes is otherwise indistinguishable from a
   // genuine hang; see this task's dated Notes for the incident this fixed).
+  // Task 1574 — zero new network egress. The RAW/TIFF/ZIP work added in that
+  // task runs a bundled npm decoder (utif2) and two new Web Workers; none of
+  // it should ever make a network request (RAW/ZIP only ever read bytes
+  // already in memory; utif2 is pure JS with no external asset fetch). This
+  // captures EVERY request for the whole run (not just the new fixtures) and
+  // asserts none targets a host other than `localhost` (this harness's own
+  // Vite + API origins) — a regression here would mean a new dependency or
+  // worker silently started phoning home.
+  // Hosts this run KNOWINGLY still contacts — both pre-existing, both
+  // unrelated to task 1574's RAW/TIFF/ZIP work, neither a new egress path:
+  //  - example.invalid: literal content inside text/sample.html (an
+  //    IANA-reserved, permanently non-resolving domain), used to verify the
+  //    HTML preview's iframe never actually reaches embedded remote
+  //    content. The REQUEST is the point of that fixture; it's expected to
+  //    fire and expected to fail to resolve.
+  //  - status.beebeeb.io: the app's own real incident-status banner
+  //    (`incident-banner.tsx` / `lib/api.ts`'s STATUS_URL), which this
+  //    harness doesn't override to a local URL the way it does VITE_API_URL
+  //    (see `VITE_STATUS_URL` in api.ts — task 1567's own egress spec sets
+  //    it for exactly this reason). Run this spec with
+  //    `VITE_STATUS_URL=http://localhost:<vite-port>/_no-status` to remove
+  //    this from the list entirely; it's allowlisted here too so the
+  //    assertion still holds for a run that doesn't set it.
+  const KNOWN_UNRELATED_HOSTS = new Set(['example.invalid', 'status.beebeeb.io'])
+  const offHostRequests: string[] = []
+  page.on('request', (req) => {
+    try {
+      const url = new URL(req.url())
+      if (
+        (url.protocol === 'http:' || url.protocol === 'https:' || url.protocol === 'ws:' || url.protocol === 'wss:') &&
+        url.hostname !== 'localhost' &&
+        !KNOWN_UNRELATED_HOSTS.has(url.hostname)
+      ) {
+        offHostRequests.push(req.url())
+      }
+    } catch {
+      // Not a URL Playwright/the browser considers a real network request
+      // (e.g. a synthetic scheme) — nothing to assert here.
+    }
+  })
+
   console.log(`[1565] ${new Date().toISOString()} starting signup+unlock...`)
   await page.goto('/?nodev=1')
   await signupAndUnlock(page, { password: 'PreviewMatrix-correct-horse-1565' })
@@ -307,6 +348,14 @@ test('every preview-matrix fixture renders, shows an honest fallback, or is flag
     hardFails,
     `Hard FAILs (blank/spinner/no-overlay never resolves) — see ${EVIDENCE_DIR}/RESULTS.md:\n${JSON.stringify(hardFails, null, 2)}`,
   ).toHaveLength(0)
+
+  // Task 1574 — zero new network egress, asserted for the whole run (see
+  // the `page.on('request', ...)` listener registered above, before the
+  // very first navigation). Checked BEFORE the final pass-count assertion
+  // below so a matrix failure never short-circuits this check — egress
+  // matters exactly as much on a failing run as a passing one.
+  console.log(`[1574] off-host requests: ${offHostRequests.length}`)
+  expect(offHostRequests, `off-host network requests (must be 0):\n${offHostRequests.join('\n')}`).toHaveLength(0)
 
   expect(passCount, `${passCount} of ${results.length} types PASS — see ${EVIDENCE_DIR}/RESULTS.md`).toBe(
     results.length,

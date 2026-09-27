@@ -86,29 +86,30 @@ export const FIXTURES: FixtureCase[] = [
   { rel: 'images/sample.webp', category: 'image', ext: 'webp', expected: 'render', notes: 'ImagePreview' },
   { rel: 'images/sample.bmp', category: 'image', ext: 'bmp', expected: 'render', notes: 'ImagePreview' },
   {
-    rel: 'images/sample.tiff', category: 'image', ext: 'tiff', expected: 'cant-preview',
-    notes: 'ImagePreview — Chromium has no native TIFF codec, confirmed live (twice) via a full matrix run: the <img> fires \'error\', ImagePreview\'s onError fallback (fixed this task — see file-preview.tsx sibling commit) shows the honest UnsupportedPreview card. Originally predicted \'render\' before this was tested; corrected per this file\'s own "a wrong prediction is a spec bug" rule.',
+    rel: 'images/sample.tiff', category: 'image', ext: 'tiff', expected: 'render',
+    notes: 'Task 1574: TiffPreview decodes off the main thread (Web Worker, utif2) to a PNG blob, then delegates to ImagePreview — Chromium itself still has no native TIFF codec (task 1565 finding, why the old plain <img> path failed), so this is a real decode, not a workaround of that finding.',
   },
   { rel: 'images/sample.svg', category: 'image', ext: 'svg', expected: 'render', notes: 'ImagePreview (native <img>, no WebView — unlike mobile task 1564)' },
   { rel: 'images/sample.heic', category: 'image', ext: 'heic', expected: 'render', notes: 'HeicPreview (WASM decode) or honest fallback if decode fails' },
   { rel: 'images/sample.heif', category: 'image', ext: 'heif', expected: 'render', notes: 'HeicPreview (WASM decode) or honest fallback if decode fails' },
 
   // ── RAW ─────────────────────────────────────────────────────────────────
-  // Confirmed live (twice, two independent full matrix runs, identical
-  // both times): exifr.thumbnail() genuinely finds no extractable embedded
-  // JPEG in these specific raw.pixls.us sample files, so RawPreview's own
-  // (already-correct, already-honest — see raw-preview.tsx: try/catch,
-  // 'failed' state, UnsupportedPreview fallback, no infinite spinner)
-  // extraction path lands on the download card by design, not by bug.
-  // Originally predicted 'render' before any of this was tested against
-  // real files; corrected per this file's own "a wrong prediction is a
-  // spec bug" rule — RawPreview needed no code change for these 4.
-  { rel: 'raw/sample.dng', category: 'raw', ext: 'dng', expected: 'cant-preview', notes: 'RawPreview: exifr found no embedded JPEG in this sample — honest download card (confirmed live, twice)' },
-  { rel: 'raw/sample.nef', category: 'raw', ext: 'nef', expected: 'cant-preview', notes: 'RawPreview: exifr found no embedded JPEG in this sample — honest download card (confirmed live, twice)' },
-  { rel: 'raw/sample.cr2', category: 'raw', ext: 'cr2', expected: 'render', notes: 'RawPreview: embedded-JPEG extraction (exifr) succeeds for this sample (confirmed live, twice)' },
-  { rel: 'raw/sample.cr3', category: 'raw', ext: 'cr3', expected: 'cant-preview', notes: 'RawPreview: exifr found no embedded JPEG in this sample — honest download card (confirmed live, twice)' },
-  { rel: 'raw/sample.arw', category: 'raw', ext: 'arw', expected: 'render', notes: 'RawPreview: embedded-JPEG extraction (exifr) succeeds for this sample (confirmed live, twice)' },
-  { rel: 'raw/sample.raf', category: 'raw', ext: 'raf', expected: 'cant-preview', notes: 'RawPreview: exifr found no embedded JPEG in this sample — honest download card (confirmed live, twice)' },
+  // Task 1574: RawPreview no longer uses exifr.thumbnail() at all (it found
+  // a usable preview for only 2 of these 6 real fixtures — CR2/ARW).
+  // Ported mobile's task-1569 approach instead (a Web Worker scans the raw
+  // bytes for the largest embedded SOI…EOI JPEG span, bounded to the first
+  // 32MB): verified directly against these exact 6 fixtures before writing
+  // these expectations — every one has a real, correctly-oriented,
+  // correctly-dimensioned embedded preview findable this way (confirmed via
+  // macOS `sips` against the extracted bytes; dimensions matched mobile's
+  // own fixture dimensions exactly for DNG/CR3/ARW/NEF/RAF, same
+  // raw.pixls.us source files). All 6 now render.
+  { rel: 'raw/sample.dng', category: 'raw', ext: 'dng', expected: 'render', notes: 'RawPreview: embedded-JPEG byte scan (task 1574) finds a real 3960×2640 preview' },
+  { rel: 'raw/sample.nef', category: 'raw', ext: 'nef', expected: 'render', notes: 'RawPreview: embedded-JPEG byte scan (task 1574) finds a real 570×375 preview' },
+  { rel: 'raw/sample.cr2', category: 'raw', ext: 'cr2', expected: 'render', notes: 'RawPreview: embedded-JPEG byte scan (task 1574) finds a real 1936×1288 preview (already rendered before this task, via exifr)' },
+  { rel: 'raw/sample.cr3', category: 'raw', ext: 'cr3', expected: 'render', notes: 'RawPreview: embedded-JPEG byte scan (task 1574) finds a real 3408×2272 preview — exifr could not (CR3\'s ISO-BMFF container isn\'t a format it recognizes as a top-level file at all)' },
+  { rel: 'raw/sample.arw', category: 'raw', ext: 'arw', expected: 'render', notes: 'RawPreview: embedded-JPEG byte scan (task 1574) finds a real 1616×1080 preview (already rendered before this task, via exifr)' },
+  { rel: 'raw/sample.raf', category: 'raw', ext: 'raf', expected: 'render', notes: 'RawPreview: embedded-JPEG byte scan (task 1574) finds a real 1280×960 preview — exifr could not (RAF\'s proprietary layout isn\'t a format it recognizes as a top-level file at all)' },
 
   // ── PDF ─────────────────────────────────────────────────────────────────
   { rel: 'pdf/sample.pdf', category: 'pdf', ext: 'pdf', expected: 'render', notes: 'PdfPreview (native PDFium iframe)' },
@@ -121,7 +122,7 @@ export const FIXTURES: FixtureCase[] = [
   { rel: 'media/sample.wav', category: 'media', ext: 'wav', expected: 'render', notes: 'AudioPreview' },
 
   // ── Archive / binary ────────────────────────────────────────────────────
-  { rel: 'archive/sample.zip', category: 'archive', ext: 'zip', expected: 'cant-preview', notes: 'no ZipPreview in web pickRenderer at all — honest fallback (real gap vs mobile\'s ZipRenderer, flagged not fixed — see report)' },
+  { rel: 'archive/sample.zip', category: 'archive', ext: 'zip', expected: 'render', notes: 'Task 1574: ZipListingPreview reads a file listing (names/sizes/folders) from the archive\'s own Central Directory — no extraction, no decompression' },
   { rel: 'binary/sample.bin', category: 'binary', ext: 'bin', expected: 'cant-preview', notes: 'honest fallback by design' },
 ]
 
@@ -209,7 +210,7 @@ export async function classifyOutcome(page: Page): Promise<{ outcome: Outcome; d
     }
 
     // Still loading — every renderer's own spinner copy.
-    if (/Decrypting\.\.\.|Rendering document|Rendering spreadsheet|Extracting preview|Loading highlighter|Decoding .* for playback/.test(text)) {
+    if (/Decrypting\.\.\.|Rendering document|Rendering spreadsheet|Extracting preview|Loading highlighter|Decoding .* for playback|Decoding TIFF|Reading archive/.test(text)) {
       return { outcome: 'spinner' as const, detail: text.slice(0, 160) }
     }
 

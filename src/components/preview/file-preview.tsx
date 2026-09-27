@@ -15,7 +15,10 @@ import { DocxPreview } from './docx-preview'
 import { XlsxPreview } from './xlsx-preview'
 import { UnsupportedPreview } from './unsupported-preview'
 import { RawPreview } from './raw-preview'
+import type { RawExifInfo } from '../../lib/raw-embedded-jpeg'
 import { HeicPreview } from './heic-preview'
+import { TiffPreview } from './tiff-preview'
+import { ZipListingPreview } from './zip-listing-preview'
 import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useKeys } from '../../lib/key-context'
@@ -201,12 +204,33 @@ const RAW_IMAGE_MIMES = new Set([
   'image/x-fuji-raf',
 ])
 
-// PPTX — no reliable in-browser renderer exists.
+// PPTX — no reliable in-browser renderer exists. Task 1574 evaluated reusing
+// the LibreOffice-WASM office editor (task 1567) for a read-only preview
+// here; as of this task, 1567 is an unmerged, still-in-spike-phase effort
+// (its own Notes: "Phase 1 spike done… STOP the native-macOS-host attempt
+// here" — no working WASM build yet, let alone a mergeable editor). A small
+// pure-JS PPTX slide renderer was also considered and rejected: PPTX slide
+// XML (themes, layouts, placeholders, shape/text positioning) has no small
+// maintained renderer that produces a faithful thumbnail — every option
+// found was either a generator (pptxgenjs/officegen, write-only) or would
+// have meant hand-building a slide layout engine, exactly the "throwaway
+// renderer" this task's own brief says not to build. Legacy .doc/.xls/.ppt
+// are binary OLE2 formats with no pure-JS reader in this repo's dependency
+// tree at all. All four stay on the honest download card.
 const PPTX_MIMES = new Set([
   'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   'application/vnd.ms-powerpoint',
 ])
 const PPTX_EXTS = new Set(['pptx', 'ppt', 'odp', 'key'])
+
+// TIFF — Chromium has no native TIFF codec (task 1565 finding). Decoded in
+// a Web Worker via utif2, see tiff-preview.tsx.
+const TIFF_MIMES = new Set(['image/tiff'])
+const TIFF_EXTS = new Set(['tiff', 'tif'])
+
+// ZIP — a honest file LISTING (names/sizes/folders) from the Central
+// Directory, never extraction. See zip-listing-preview.tsx.
+const ZIP_EXTS = new Set(['zip'])
 
 interface ImageControlProps {
   zoom: number
@@ -217,6 +241,9 @@ interface ImageControlProps {
   onNext?: () => void
   hasPrev?: boolean
   hasNext?: boolean
+  /** RAW only (task 1574) — reports the extracted EXIF summary so the Info
+   *  rail can show camera/lens/exposure, mirroring mobile's Info sheet. */
+  onRawInfo?: (info: RawExifInfo | null) => void
 }
 
 const MIN_ZOOM = 0.5
@@ -228,6 +255,11 @@ function pickRenderer(
   blob: Blob,
   filename: string,
   imageControls?: ImageControlProps,
+  /** True once `blob` is confirmed to be the full downloaded original —
+   *  false while it's still a server-generated thumbnail (task 1574 gate,
+   *  Codex review round 2, 2026-09-27; see the TIFF branch below and the
+   *  doc comment at this function's TIFF check for why this matters). */
+  blobIsOriginal = true,
 ): React.ReactNode {
   const ext = getExtension(filename)
 
@@ -244,9 +276,15 @@ function pickRenderer(
   ) {
     return <XlsxPreview blob={blob} filename={filename} />
   }
-  // Presentation formats — show download card
-  if (PPTX_MIMES.has(mimeType ?? '') || PPTX_EXTS.has(ext)) {
+  // Presentation formats + legacy .doc/.xls — show download card (see the
+  // PPTX_EXTS/PPTX_MIMES doc comment above for why, task 1574).
+  if (PPTX_MIMES.has(mimeType ?? '') || PPTX_EXTS.has(ext) || ext === 'doc' || ext === 'xls') {
     return <UnsupportedPreview blob={blob} filename={filename} />
+  }
+
+  // ZIP — a listing, not extraction (task 1574).
+  if (ZIP_EXTS.has(ext)) {
+    return <ZipListingPreview blob={blob} filename={filename} />
   }
 
   // Camera RAW — extract embedded JPEG preview, fall back to download card
@@ -263,6 +301,7 @@ function pickRenderer(
         onNext={imageControls?.onNext}
         hasPrev={imageControls?.hasPrev}
         hasNext={imageControls?.hasNext}
+        onInfo={imageControls?.onRawInfo}
       />
     )
   }
@@ -271,6 +310,47 @@ function pickRenderer(
   if (HEIC_IMAGE_MIMES.has(mimeType ?? '') || HEIC_IMAGE_EXTS.has(ext)) {
     return (
       <HeicPreview
+        blob={blob}
+        filename={filename}
+        zoom={imageControls?.zoom ?? 1}
+        rotation={imageControls?.rotation ?? 0}
+        onZoomChange={imageControls?.onZoomChange ?? (() => {})}
+        onClose={imageControls?.onClose}
+        onPrev={imageControls?.onPrev}
+        onNext={imageControls?.onNext}
+        hasPrev={imageControls?.hasPrev}
+        hasNext={imageControls?.hasNext}
+      />
+    )
+  }
+
+  // TIFF — decoded off the main thread via utif2 (task 1574), see
+  // TIFF_MIMES/TIFF_EXTS doc comment above. Checked before the generic
+  // image branch below, which otherwise fed TIFF bytes straight to a plain
+  // `<img>` that Chromium can never decode (task 1565 finding).
+  //
+  // Gated on `blobIsOriginal` (Codex review round 2, task 1574 gate,
+  // 2026-09-27): a current-version TIFF CAN already have a server-side WebP
+  // thumbnail (CLI/desktop/mobile decode TIFF via native/rust image
+  // libraries the browser doesn't have and generate one on upload, same as
+  // any other image — see repos/cli/src/thumbnail.rs). While `blob` is
+  // still that thumbnail (`blobIsOriginal` false — the fast thumbnail-first
+  // path below hasn't been superseded by the full download yet), routing
+  // here would feed WebP bytes to utif2, which rejects them outright. Round
+  // 1 of this review "fixed" that by excluding TIFF from thumbnail-first
+  // entirely — which traded one bug for a worse one Codex caught in round
+  // 2: a TIFF WITH a thumbnail now had to fully download+decrypt the
+  // ORIGINAL (however large) before ever getting a chance to render
+  // anything, even though a perfectly good thumbnail was sitting right
+  // there. This is the actual fix: thumbnail-first stays ENABLED for TIFF
+  // (see the `isImageFile` check above), and a still-thumbnail blob falls
+  // through to the generic image branch below instead (a plain `<img>`
+  // decodes WebP natively, exactly like every other image type) —
+  // TiffPreview's real utif2 decode only ever runs once `blobIsOriginal` is
+  // true, i.e. against the confirmed real original.
+  if (blobIsOriginal && (TIFF_MIMES.has(mimeType ?? '') || TIFF_EXTS.has(ext))) {
+    return (
+      <TiffPreview
         blob={blob}
         filename={filename}
         zoom={imageControls?.zoom ?? 1}
@@ -375,11 +455,16 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   // Image zoom + rotation state — reset on each new file
   const [zoom, setZoom] = useState(1)
   const [rotation, setRotation] = useState(0)
+  // RAW EXIF summary (camera/lens/exposure), task 1574 — reported by
+  // RawPreview once its worker-based extraction resolves; null for every
+  // non-RAW file and reset on each new file below.
+  const [rawExifInfo, setRawExifInfo] = useState<RawExifInfo | null>(null)
   const prevFileIdRef = useRef<string | null>(null)
   useEffect(() => {
     if (prevFileIdRef.current !== file.id) {
       setZoom(1)
       setRotation(0)
+      setRawExifInfo(null)
       // Navigating to a different file (prev/next) always leaves edit mode —
       // there is no cross-file unsaved draft to guard here since a plain
       // navigation only happens when nothing was dirty (the close/nav guard
@@ -507,7 +592,21 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     if (!isUnlocked) return
 
     const imageExt = getExtension(name)
-    const isImageFile = effectiveMime?.startsWith('image/') || IMAGE_EXTENSIONS_SET.has(imageExt) || HEIC_IMAGE_EXTS.has(imageExt)
+    // TIFF stays IN the thumbnail-first fast-path eligibility (task 1574
+    // gate, Codex review round 2, 2026-09-27 — this was briefly excluded in
+    // round 1's fix, which traded the round-1 bug for a worse one: ANY TIFF
+    // with a thumbnail then had to fully download+decrypt the original,
+    // however large, before ever rendering anything, defeating the whole
+    // point of thumbnail-first for exactly the files it matters most for
+    // — large studio/professional TIFFs, the ones most likely to come from
+    // a CLI/desktop/mobile client that generates thumbnails). The actual
+    // fix for round 1's bug (a WebP thumbnail reaching utif2, which rejects
+    // non-TIFF bytes) lives in `pickRenderer`'s TIFF branch instead: it only
+    // routes to `TiffPreview` once `blobIsOriginal` is true, so a
+    // still-thumbnail blob renders via the generic image branch (a plain
+    // `<img>` decodes WebP natively) until the real original has loaded.
+    const isImageFile =
+      effectiveMime?.startsWith('image/') || IMAGE_EXTENSIONS_SET.has(imageExt) || HEIC_IMAGE_EXTS.has(imageExt)
 
     async function loadAndDecrypt() {
       try {
@@ -752,7 +851,19 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
 
   // Zoom helpers
   const imageExt = getExtension(name)
-  const isImage = effectiveMime?.startsWith('image/') || IMAGE_EXTENSIONS_SET.has(imageExt) || HEIC_IMAGE_EXTS.has(imageExt)
+  // RAW is included here (task 1574) now that RawPreview delegates its
+  // actual rendering to ImagePreview once extraction succeeds — before this
+  // task, `isImage` excluded RAW entirely, so the top-bar zoom/rotate
+  // buttons were never wired for it and RawPreview's own wheel-zoom handler
+  // received a permanent no-op `onZoomChange` (imageControls was always
+  // `undefined`) — zoom silently did nothing. TIFF was already covered via
+  // IMAGE_EXTENSIONS_SET.
+  const isImage =
+    effectiveMime?.startsWith('image/') ||
+    IMAGE_EXTENSIONS_SET.has(imageExt) ||
+    HEIC_IMAGE_EXTS.has(imageExt) ||
+    RAW_IMAGE_EXTS.has(imageExt) ||
+    RAW_IMAGE_MIMES.has(effectiveMime ?? '')
   function handleZoomIn() {
     setZoom((z) => Math.min(MAX_ZOOM, +(z + ZOOM_STEP).toFixed(2)))
   }
@@ -764,10 +875,10 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   }
 
   const imageControls: ImageControlProps | undefined = isImage
-    ? { zoom, rotation, onZoomChange: setZoom, onClose, onPrev, onNext, hasPrev, hasNext }
+    ? { zoom, rotation, onZoomChange: setZoom, onClose, onPrev, onNext, hasPrev, hasNext, onRawInfo: setRawExifInfo }
     : undefined
 
-  const renderer = blob ? pickRenderer(effectiveMime, blob, name, imageControls) : null
+  const renderer = blob ? pickRenderer(effectiveMime, blob, name, imageControls, blobIsOriginal) : null
   const canPreview = renderer !== null
 
   function saveBlob(data: Blob) {
@@ -869,6 +980,31 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   const suppressRendererForNotice =
     showReadOnlyNotice && editability!.reason !== 'too-large'
 
+  // RAW camera details (task 1574) — camera/lens/exposure rows appended to
+  // the Info rail whenever RawPreview successfully extracted them, mirroring
+  // mobile's Info sheet (task 1569). Absent for every non-RAW file, and for
+  // a RAW file with no EXIF this reader could resolve (e.g. CR3's embedded
+  // preview, which carries none — an honest gap, not a bug).
+  const rawInfoRows: [string, string][] = rawExifInfo
+    ? [
+        ...(rawExifInfo.cameraModel ? ([['Camera', rawExifInfo.cameraModel]] as [string, string][]) : []),
+        ...(rawExifInfo.lensModel ? ([['Lens', rawExifInfo.lensModel]] as [string, string][]) : []),
+        // `rawExifInfo.iso` is `mapExifToRawInfo`'s own self-labeled string
+        // ("ISO 200") — its tested contract (test/1574-raw-embedded-jpeg.test.ts),
+        // left as-is there. This row's own "ISO" label column would repeat
+        // it verbatim ("ISO  ISO 200", Codex review round 2, task 1574
+        // gate, 2026-09-27) — every sibling row's value is bare (Shutter:
+        // "1/125s", not "Shutter 1/125s"), so strip the redundant prefix
+        // here, at the one place that adds the label, not in the mapper.
+        ...(rawExifInfo.iso
+          ? ([['ISO', rawExifInfo.iso.replace(/^ISO\s*/i, '')]] as [string, string][])
+          : []),
+        ...(rawExifInfo.shutterSpeed ? ([['Shutter', rawExifInfo.shutterSpeed]] as [string, string][]) : []),
+        ...(rawExifInfo.aperture ? ([['Aperture', rawExifInfo.aperture]] as [string, string][]) : []),
+        ...(rawExifInfo.focalLength ? ([['Focal length', rawExifInfo.focalLength]] as [string, string][]) : []),
+      ]
+    : []
+
   return (
     <PreviewChrome
       filename={name}
@@ -912,6 +1048,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
             size={sizeStr}
             items={[
               ['Modified', new Date(file.updated_at).toLocaleDateString()],
+              ...rawInfoRows,
             ]}
             cipher={CONTENT_CIPHER_LABEL}
             chunkCount={

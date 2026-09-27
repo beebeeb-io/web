@@ -46,6 +46,9 @@ const PREVIEWABLE_EXTENSIONS = new Set([
   'pdf', 'docx', 'xlsx',
   // Presentations (download-only preview card)
   'pptx', 'ppt', 'odp', 'key',
+  // Archives — task 1574: a honest file listing (names/sizes/folders) read
+  // from the ZIP Central Directory, not extraction. See zip-listing.ts.
+  'zip',
 ])
 
 export function isPreviewable(mimeType: string | null | undefined, fileName?: string | null): boolean {

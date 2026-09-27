@@ -261,13 +261,31 @@ test.describe('1565 — C# and bare-Dockerfile must render, not fall back', () =
     // their own self-contained fallback to UnsupportedPreview on decode
     // failure; ImagePreview (the plain browser-native <img> path used by
     // every OTHER image type) had none. Fixed with an onError handler.
+    //
+    // Superseded by task 1574 (found while gating PR #112's rebase onto
+    // main, 2026-09-27): TIFF no longer takes the plain-<img> ImagePreview
+    // path at all. TiffPreview now decodes it off the main thread (a Web
+    // Worker running utif2) to a PNG blob and hands THAT to ImagePreview, so
+    // the "Chromium has no native codec" fact above is still true but no
+    // longer reaches the onError handler this test was written to guard —
+    // there's a real decode in front of it now. The onError fallback itself
+    // is untouched (still there for a TIFF the worker itself can't decode,
+    // e.g. a corrupt file) and still covered by the 'cant-preview' fixture
+    // fallback path exercised elsewhere in the matrix. Confirmed live: this
+    // exact fixture renders at 320×240, not a spinner, not a hang — the
+    // *never a permanent spinner* half of this test's name is what still
+    // holds; asserting 'render' instead of 'cant-preview' is a fixture
+    // update to a now-better outcome, not a weakened check.
     const filePath = path.join(FIXTURES_ROOT, 'images', 'sample.tiff')
     const base = await uploadAndWait(page, filePath)
     await openPreview(page, base)
     const { outcome, detail } = await waitForOutcome(page)
 
-    // Before the fix this was 'spinner' ("img present but not decoded
-    // (broken or still loading)") for the full wait budget, never resolving.
-    expect(outcome, `sample.tiff: got '${outcome}' (${detail})`).toBe('cant-preview')
+    // Before the ORIGINAL fix this was 'spinner' ("img present but not
+    // decoded (broken or still loading)") for the full wait budget, never
+    // resolving. Before task 1574's TIFF Worker decoder, the honest
+    // 'cant-preview' fallback (this test's prior expectation) was correct.
+    // As of 1574, a real decode succeeds — 'render' is correct.
+    expect(outcome, `sample.tiff: got '${outcome}' (${detail})`).toBe('render')
   })
 })
