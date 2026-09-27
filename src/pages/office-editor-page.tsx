@@ -61,6 +61,12 @@ export function OfficeEditorPage() {
   const { getFileKeyForFile, isUnlocked } = useKeys()
   const [state, setState] = useState<LoadState>({ stage: 'loading' })
   const [closedHint, setClosedHint] = useState(false)
+  // Ship-prep Codex review (PR #113, P1): this route's own top-level
+  // `beforeunload` guard — the ONLY line standing between an unsaved edit
+  // and the user closing/reloading this tab (there is no Drive-page dirty
+  // guard to fall back on here, unlike file-preview.tsx's embedded editor).
+  // `onDirtyChange` below used to be a no-op, so this never fired.
+  const [dirty, setDirty] = useState(false)
   // CRITIQUE.md finding #3: Share was never wired into this route at all
   // (`<OfficeHeader>` never received an `onShare`). Reuses the SAME
   // `ShareDialog` every other Share entry point in the app uses
@@ -117,6 +123,41 @@ export function OfficeEditorPage() {
     }
   }, [fileId, isUnlocked, getFileKeyForFile])
 
+  // Ship-prep Codex review (PR #113, P1): closing or reloading this tab
+  // while an edit is unsaved used to lose it silently — OfficeEditor's own
+  // in-app "Discard changes?" dialog only guards the in-app Back button
+  // (requestExit), never a real tab close/reload, and this page's own
+  // `onDirtyChange` prop was a no-op so this effect never had anything to
+  // react to. Standard beforeunload guard, scoped to `dirty` so it's a
+  // no-op the rest of the time (never prompts on a clean document).
+  useEffect(() => {
+    if (!dirty) return
+    function onBeforeUnload(e: BeforeUnloadEvent) {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [dirty])
+
+  // Ship-prep Codex review (PR #113, P1): "Keep Both" conflict resolution
+  // creates a SIBLING file (OfficeEditor's own handleConflictAction calls
+  // this with the new DriveFile once the upload lands) — without
+  // retargeting this page's own session state, `state.file`/`versionNumber`
+  // stayed bound to the ORIGINAL file, so a subsequent Save inside this
+  // SAME tab would write the sibling's content back onto the original as a
+  // new version, silently defeating the whole point of Keep Both. Retarget
+  // by updating `state` in place (no re-fetch/re-decrypt/engine-reboot
+  // needed — the engine's own in-memory document is already the sibling's
+  // correct content, it just didn't know its own new identity yet).
+  function handleSiblingCreated(newFile: DriveFile, plaintextName: string) {
+    setState((prev) =>
+      prev.stage === 'ready'
+        ? { ...prev, file: newFile, decryptedName: plaintextName, openedVersionNumber: newFile.version_number ?? 1 }
+        : prev,
+    )
+  }
+
   function handleExit() {
     window.close()
     // window.close() is a no-op on a tab the script didn't open itself (e.g.
@@ -163,9 +204,16 @@ export function OfficeEditorPage() {
         officeApp={state.officeApp}
         openedVersionNumber={state.openedVersionNumber}
         breadcrumb={['Vault']}
-        onDirtyChange={() => {}}
+        onDirtyChange={setDirty}
+        // Deliberately still a no-op, checked not overlooked (ship-prep
+        // Codex review, PR #113): a same-file save's new version_number is
+        // already tracked in OfficeEditor's OWN internal state (its
+        // `versionNumber`, updated via setVersionNumber right where this
+        // fires) — that internal state, not this page's `openedVersionNumber`
+        // prop (only ever read once, to SEED it at mount), is what every
+        // later conflict check in this same session actually reads.
         onSaved={() => {}}
-        onSiblingCreated={() => {}}
+        onSiblingCreated={handleSiblingCreated}
         onExit={handleExit}
         onShare={() => setShareOpen(true)}
         thumbnailUrl={state.thumbnailUrl}

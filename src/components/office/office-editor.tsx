@@ -21,7 +21,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DriveFile } from '../../lib/api'
-import { listVersions } from '../../lib/api'
+import { abandonUpload, listVersions } from '../../lib/api'
+import { discardInFlightUpload } from '../../lib/upload-discard'
 import { encryptedUpload } from '../../lib/encrypted-upload'
 import { useKeys } from '../../lib/key-context'
 import { useTheme } from '../../lib/theme-context'
@@ -131,7 +132,12 @@ export interface OfficeEditorProps {
   breadcrumb: string[]
   onDirtyChange: (dirty: boolean) => void
   onSaved: (updatedFile: DriveFile, savedBytes: Uint8Array) => void
-  onSiblingCreated: (newFile: DriveFile) => void
+  /** `plaintextName` is the sibling's own decrypted name (Keep Both always
+   *  appends office-conflict.ts's ' (edited on web)' suffix) — passed
+   *  alongside the raw DriveFile so a standalone-route caller (no Drive
+   *  listing of its own to re-derive it from) can retarget its session to
+   *  the sibling without a redundant decrypt. */
+  onSiblingCreated: (newFile: DriveFile, plaintextName: string) => void
   onExit: () => void
   /** CRITIQUE.md finding #3 (task 1567): optional so a caller with no share
    *  flow wired yet (e.g. a future embed) still gets a header, just without
@@ -186,6 +192,16 @@ export function OfficeEditor({
   const bridgeRef = useRef<OfficeBridge | null>(null)
   const unsubscribersRef = useRef<Array<() => void>>([])
   const inFlightUploadRef = useRef<AbortController | null>(null)
+  // Ship-prep Codex review (PR #113, P1): "Discard" during an in-flight save
+  // must tell the server to abandon the upload (task 1571's own fix for the
+  // text editor, PR #106) — calling `abandonUpload` while the save's own
+  // promise might still be mid-`initUpload` can see `is_uploading = false`,
+  // no-op, and then have the late init response wedge the file right after.
+  // These two refs mirror file-editor.tsx's OWN identical pair exactly (same
+  // fix, same race) — set together with `inFlightUploadRef` above, before
+  // the same first `await`, cleared together in the same `finally` blocks.
+  const inFlightFileIdRef = useRef<string | null>(null)
+  const inFlightUploadPromiseRef = useRef<Promise<unknown> | null>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
   const canvasAreaRef = useRef<HTMLDivElement>(null)
 
@@ -520,8 +536,7 @@ export function OfficeEditor({
     [officeApp],
   )
 
-  async function performUpload(targetFileId: string | undefined, conflictCreated: boolean, signal: AbortSignal, savedBytes: Uint8Array, nameOverride?: string): Promise<DriveFile> {
-    const uploadFileId = targetFileId ?? crypto.randomUUID()
+  async function performUpload(uploadFileId: string, conflictCreated: boolean, signal: AbortSignal, savedBytes: Uint8Array, nameOverride?: string): Promise<DriveFile> {
     const fileKey = await getFileKey(uploadFileId)
     const name = nameOverride ?? decryptedName
     const ext = name.slice(name.lastIndexOf('.') + 1).toLowerCase()
@@ -535,29 +550,41 @@ export function OfficeEditor({
     if (saving || !dirty || !bridgeRef.current) return
     setSaving(true)
     setSaveError(null)
+    // Registered BEFORE the first await (the write-ahead listVersions()
+    // call) — not just before the actual upload — so a "Discard changes"
+    // landing at ANY point during this save has a real controller/promise
+    // to abort/await (same convention as file-editor.tsx's own handleSave).
     const controller = new AbortController()
     inFlightUploadRef.current = controller
-    try {
-      const { current_version: serverVersion } = await listVersions(file.id)
-      if (controller.signal.aborted) return
-      if (hasVersionConflict({ openedVersion: versionNumber, serverVersion })) {
-        setConflict({ latestVersionNumber: serverVersion })
-        return
+    inFlightFileIdRef.current = file.id
+    const runSave = (async () => {
+      try {
+        const { current_version: serverVersion } = await listVersions(file.id)
+        if (controller.signal.aborted) return
+        if (hasVersionConflict({ openedVersion: versionNumber, serverVersion })) {
+          setConflict({ latestVersionNumber: serverVersion })
+          return
+        }
+        const savedBytes = await bridgeRef.current!.save()
+        const updated = await performUpload(file.id, false, controller.signal, savedBytes)
+        reportDirty(false)
+        setVersionNumber(updated.version_number ?? versionNumber + 1)
+        setLastSavedAt(new Date())
+        onSaved(updated, savedBytes)
+      } catch (err) {
+        if (!(err instanceof DOMException && err.name === 'AbortError')) {
+          setSaveError(err instanceof Error ? err.message : 'Save failed. Try again.')
+        }
+      } finally {
+        setSaving(false)
+        if (inFlightUploadRef.current === controller) {
+          inFlightUploadRef.current = null
+          inFlightFileIdRef.current = null
+        }
       }
-      const savedBytes = await bridgeRef.current.save()
-      const updated = await performUpload(file.id, false, controller.signal, savedBytes)
-      reportDirty(false)
-      setVersionNumber(updated.version_number ?? versionNumber + 1)
-      setLastSavedAt(new Date())
-      onSaved(updated, savedBytes)
-    } catch (err) {
-      if (!(err instanceof DOMException && err.name === 'AbortError')) {
-        setSaveError(err instanceof Error ? err.message : 'Save failed. Try again.')
-      }
-    } finally {
-      setSaving(false)
-      if (inFlightUploadRef.current === controller) inFlightUploadRef.current = null
-    }
+    })()
+    inFlightUploadPromiseRef.current = runSave
+    await runSave
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saving, dirty, file, versionNumber, reportDirty, onSaved])
 
@@ -583,29 +610,43 @@ export function OfficeEditor({
       if (saving) return
       setSaving(true)
       setSaveError(null)
+      // Keep Both's `resolution.fileId` is undefined (a brand-new sibling) —
+      // resolve the real target id HERE, before the first await, so it's
+      // the same id `discardInFlightUpload` can call `abandonUpload` on if
+      // "Discard" lands while this is still in flight (same fix/race as
+      // handleSave above).
+      const uploadFileId = resolution.fileId ?? crypto.randomUUID()
       const controller = new AbortController()
       inFlightUploadRef.current = controller
-      try {
-        const savedBytes = await bridgeRef.current.save()
-        const nameOverride = resolution.nameSuffix ? insertBeforeExtension(decryptedName, resolution.nameSuffix) : undefined
-        const updated = await performUpload(resolution.fileId, resolution.conflictCreated, controller.signal, savedBytes, nameOverride)
-        reportDirty(false)
-        setConflict(null)
-        if (updated.id === file.id) {
-          setVersionNumber(updated.version_number ?? conflict.latestVersionNumber + 1)
-          setLastSavedAt(new Date())
-          onSaved(updated, savedBytes)
-        } else {
-          onSiblingCreated(updated)
+      inFlightFileIdRef.current = uploadFileId
+      const runSave = (async () => {
+        try {
+          const savedBytes = await bridgeRef.current!.save()
+          const nameOverride = resolution.nameSuffix ? insertBeforeExtension(decryptedName, resolution.nameSuffix) : undefined
+          const updated = await performUpload(uploadFileId, resolution.conflictCreated, controller.signal, savedBytes, nameOverride)
+          reportDirty(false)
+          setConflict(null)
+          if (updated.id === file.id) {
+            setVersionNumber(updated.version_number ?? conflict.latestVersionNumber + 1)
+            setLastSavedAt(new Date())
+            onSaved(updated, savedBytes)
+          } else {
+            onSiblingCreated(updated, nameOverride ?? decryptedName)
+          }
+        } catch (err) {
+          if (!(err instanceof DOMException && err.name === 'AbortError')) {
+            setSaveError(err instanceof Error ? err.message : 'Save failed. Try again.')
+          }
+        } finally {
+          setSaving(false)
+          if (inFlightUploadRef.current === controller) {
+            inFlightUploadRef.current = null
+            inFlightFileIdRef.current = null
+          }
         }
-      } catch (err) {
-        if (!(err instanceof DOMException && err.name === 'AbortError')) {
-          setSaveError(err instanceof Error ? err.message : 'Save failed. Try again.')
-        }
-      } finally {
-        setSaving(false)
-        if (inFlightUploadRef.current === controller) inFlightUploadRef.current = null
-      }
+      })()
+      inFlightUploadPromiseRef.current = runSave
+      await runSave
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [conflict, saving, file, decryptedName, onSaved, onSiblingCreated, onExit, reportDirty],
@@ -787,7 +828,25 @@ export function OfficeEditor({
             onRun={runPaletteEntry}
           />
           {conflict && <OfficeConflictDialog latestVersionNumber={conflict.latestVersionNumber} openedVersionNumber={versionNumber} saving={saving} onAction={handleConflictAction} onCancel={() => setConflict(null)} />}
-          {confirmExit && <UnsavedChangesDialog onDiscard={() => { inFlightUploadRef.current?.abort(); setConfirmExit(false); reportDirty(false); onExit() }} onCancel={() => setConfirmExit(false)} />}
+          {confirmExit && (
+            <UnsavedChangesDialog
+              onDiscard={() => {
+                // Fire-and-forget from the dialog's own perspective (it
+                // doesn't wait on this) — discardInFlightUpload internally
+                // waits for any in-flight save to settle before telling the
+                // server to abandon it (task 1571 fix, PR #106 Codex P1 —
+                // see the refs' own comment above for the race this closes;
+                // calling abandonUpload the instant abort() fires can race
+                // a still-in-flight initUpload and no-op, leaving the file
+                // wedged `is_uploading=true` once that late response lands).
+                void discardInFlightUpload(inFlightUploadRef.current, inFlightFileIdRef.current, inFlightUploadPromiseRef.current, abandonUpload)
+                setConfirmExit(false)
+                reportDirty(false)
+                onExit()
+              }}
+              onCancel={() => setConfirmExit(false)}
+            />
+          )}
           {impress.presenting && <ImpressPresentOverlay onExit={impress.exitPresent} />}
         </div>
       </div>
