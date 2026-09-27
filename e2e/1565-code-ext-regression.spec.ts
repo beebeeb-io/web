@@ -1,7 +1,7 @@
 /**
- * 1565 — regression guard for two real preview bugs found while building the
- * full preview-matrix spec (e2e/1565-preview-matrix.spec.ts), fixed in the
- * same task:
+ * 1565 — regression guard for three real preview bugs found while building
+ * the full preview-matrix spec (e2e/1565-preview-matrix.spec.ts), fixed in
+ * the same task:
  *
  *   1. `.cs` (C#) was entirely missing from file-preview.tsx's EXT_LANGUAGE
  *      map — a real .cs file fell through pickRenderer to the generic
@@ -10,17 +10,40 @@
  *   2. A bare `Dockerfile` (no dot at all) made getExtension() return '',
  *      which never reached the `dockerfile: 'docker'` entry that already
  *      existed in EXT_LANGUAGE — same downgrade.
+ *   3. `.tsx` (and `.jsx`) were missing from src/lib/preview.ts's
+ *      PREVIEWABLE_EXTENSIONS — the double-click/single-click GATE in
+ *      file-list.tsx (`isPreviewable()`) runs BEFORE pickRenderer ever gets
+ *      a chance, so a real .tsx upload (browser-reported mime empty or
+ *      octet-stream — unlike `.ts`, which Chromium/macOS often resolves to
+ *      the registered `video/mp2t` MPEG-transport-stream mime, incidentally
+ *      passing the gate's mime check) never opened the preview OR showed
+ *      the "can't be previewed" toast: a single click's isPreviewable()
+ *      check returned false and file-list.tsx's handleRowClick silently
+ *      just selected the row instead (`onSelectFile`, not `onFileAction`).
+ *      Confirmed live via the full 59-fixture matrix run + a targeted repro
+ *      that dumped the row's bounding box and retried a fresh dblclick —
+ *      both attempts left `overlayCount=0` and `toastCount=0`, ruling out
+ *      a timing race. pickRenderer/EXT_LANGUAGE already mapped BOTH `tsx`
+ *      and `jsx` to a real language for CodeRenderer; only the gate list
+ *      had drifted, same class of bug as #1 and #2 above.
  *
- * Deliberately small and fast (2 fixtures, not the full 59) so it can run on
+ * Deliberately small and fast (3 fixtures, not the full 59) so it can run on
  * every PR, not just this task's own verification pass. The full matrix
  * spec is the exploratory/coverage tool; this is the permanent guard against
- * these two specific regressions recurring.
+ * these specific regressions recurring.
  *
- * Proven RED before GREEN this session (task file has both pastes):
+ * Proven RED before GREEN this session (task file has all three pastes):
  *   - reverted `cs: 'csharp'` from EXT_LANGUAGE + the getExtension bare-
  *     filename fallback -> both assertions failed with "Preview not
  *     available for this file type" instead of rendered content.
  *   - restored both fixes -> green again.
+ *   - reverted `'tsx', 'jsx'` from PREVIEWABLE_EXTENSIONS -> the tsx
+ *     assertion failed with outcome 'no-overlay' (never even reached a
+ *     card — see the module-level comment above on why single-click alone
+ *     already opens previewable files and why this file's own
+ *     `dismissFirstRunOverlays`+`openPreview` pattern was not itself the
+ *     cause).
+ *   - restored the fix -> green again.
  *
  * Run: E2E_API_PORT=… E2E_VITE_PORT=… bash e2e/scripts/web-e2e.sh e2e/1565-code-ext-regression.spec.ts
  */
@@ -28,7 +51,7 @@ import { test, expect, type Page, type Locator } from '@playwright/test'
 import path from 'path'
 import { signupAndUnlock } from './helpers/signup'
 import { uploadAndWait, openPreview, previewOverlay } from './helpers/thumb-fixtures'
-import { FIXTURES_ROOT, waitForOutcome } from './helpers/preview-matrix'
+import { FIXTURES_ROOT, waitForOutcome, openPreviewOrToast } from './helpers/preview-matrix'
 
 test.use({ storageState: { cookies: [], origins: [] } })
 
@@ -121,5 +144,30 @@ test.describe('1565 — C# and bare-Dockerfile must render, not fall back', () =
     expect(outcome, `Dockerfile: got '${outcome}' (${detail})`).toBe('render')
     // Belt and suspenders: confirm we did NOT land on the generic fallback card.
     await expect(previewOverlay(page)).not.toContainText('Preview not available for this file type')
+  })
+
+  test('sample.tsx opens and renders — the isPreviewable gate does not silently swallow it', async ({ page }) => {
+    test.setTimeout(60_000)
+    await page.goto('/?nodev=1')
+    await signupAndUnlock(page, { password: 'TsxRegression-correct-horse-1' })
+    await dismissFirstRunOverlays(page)
+
+    const filePath = path.join(FIXTURES_ROOT, 'code', 'sample.tsx')
+    const base = await uploadAndWait(page, filePath)
+    // openPreviewOrToast (not the plain openPreview() used above) because
+    // BEFORE the fix this file neither opened an overlay NOR showed a toast
+    // — a bare dblclick().waitFor(overlay visible) would just throw a timeout,
+    // which still proves red but for the wrong-looking reason. This mirrors
+    // exactly how the full 59-fixture matrix spec classifies every row.
+    const opened = await openPreviewOrToast(page, base)
+    const { outcome, detail } = opened.opened
+      ? await waitForOutcome(page)
+      : { outcome: opened.toastText ? ('cant-preview' as const) : ('no-overlay' as const), detail: opened.toastText ?? 'no overlay, no toast' }
+
+    // Before the fix this was 'no-overlay' — not even the honest fallback
+    // card, because isPreviewable() returning false makes a plain click
+    // just SELECT the row (file-list.tsx's handleRowClick `onSelectFile`
+    // branch), never open anything and never toast either.
+    expect(outcome, `sample.tsx: got '${outcome}' (${detail})`).toBe('render')
   })
 })

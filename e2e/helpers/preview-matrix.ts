@@ -1,5 +1,6 @@
 import { type Page, type Locator } from '@playwright/test'
 import path from 'path'
+import { scrollUntilRowAttached } from './thumb-fixtures'
 
 export const FIXTURES_ROOT = path.join(__dirname, '..', 'fixtures', 'preview-matrix')
 
@@ -223,6 +224,14 @@ export async function openPreviewOrToast(
   rowName: string,
   timeoutMs = 15_000,
 ): Promise<{ opened: boolean; toastText?: string }> {
+  // See scrollUntilRowAttached's doc comment (thumb-fixtures.ts) — this was
+  // the actual root cause of every fixture from the `code/` category onward
+  // reporting a false 'no-overlay' in this matrix: the drive list is
+  // virtualized (@tanstack/react-virtual) and a row appended past the
+  // current visible+overscan window genuinely is not in the DOM yet, so the
+  // un-scrolled dblclick below just times out waiting for an element that
+  // was never going to appear on its own.
+  await scrollUntilRowAttached(page, rowName)
   await page.getByRole('row', { name: new RegExp(rowName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) }).first().dblclick()
   const overlay = previewOverlay(page).first()
   const toast = page.getByRole('alert').filter({ hasText: /can't be previewed/i })
