@@ -14,8 +14,10 @@
  * VITE_FEATURE_OFFICE_EDITOR=true.
  *
  * Proves:
- *   1. Labs not opted in → `/office/:fileId` never renders the editor.
- *   2. Real UI signup → Labs opt-in → upload .docx → Edit → type → Save as
+ *   1. Signed out → `/office/:fileId` never renders the editor (the build
+ *      flag is the only feature gate since the Labs opt-in was dropped;
+ *      auth still guards the route).
+ *   2. Real UI signup → upload .docx → Edit → type → Save as
  *      v2 → reopen in a fresh tab → the saved document.xml contains the edit.
  *   3. Same for .xlsx (cell A2 → 99, checked in xl/worksheets/sheet1.xml).
  *   Across 2 and 3: engine boot time (Edit click → canvas + outline/formula
@@ -121,7 +123,7 @@ test('container: /office/<fileId> itself is served with COOP + COEP (cross-origi
   expect(await r.text()).toContain('<div id="root"')
 })
 
-test('container: office route never renders the editor when Labs is not opted in (build flag true)', async ({ page }) => {
+test('container: office route never renders the editor for a signed-out visitor (build flag true)', async ({ page }) => {
   await page.goto('/office/00000000-0000-0000-0000-000000000000')
   await expect(page).not.toHaveURL(/\/office\//, { timeout: 15_000 })
   await expect(page.getByTestId('office-editor')).toHaveCount(0)
@@ -134,7 +136,6 @@ test('container: real signup → .docx and .xlsx open, edit, save as v2, reopen 
   const results: Record<string, unknown> = { webOrigin: WEB_ORIGIN, startedAt: new Date().toISOString() }
 
   await signupAndUnlock(page, { email: uniqueEmail('container-proof'), password: 'ContainerProof1567!' })
-  await page.evaluate(() => localStorage.setItem('bb-office-labs', 'true'))
   results.version = await (await page.request.get(`${WEB_URL}/version.json`)).json()
 
   // ── .docx ──
