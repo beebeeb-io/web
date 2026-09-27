@@ -38,15 +38,13 @@ const PHONE = { width: 390, height: 844 }
 const DESKTOP = { width: 1280, height: 800 }
 
 async function dismissDevBanner(page: Page): Promise<void> {
-  // Task 1585: dismissed whenever it shows up later, too (see autoDismissDevBanner).
+  // Task 1585: a locator handler dismisses the banner before any later
+  // action, whenever it appears (see autoDismissDevBanner). Deliberately NO
+  // explicit wait-and-click as well: clicking the handler's own locator
+  // triggers the handler inside that click's actionability check, and the
+  // two deadlocked for the whole test timeout (seen once in the 1585 gate:
+  // "locator.click: Test timeout of 300000ms exceeded" on the dismiss button).
   await autoDismissDevBanner(page)
-  const dismiss = page.getByRole('button', { name: 'Dismiss dev banner' })
-  try {
-    await dismiss.waitFor({ state: 'visible', timeout: 5_000 })
-    await dismiss.click()
-  } catch {
-    // Never appeared this session.
-  }
 }
 
 async function uploadFixture(page: Page, file: string): Promise<string> {

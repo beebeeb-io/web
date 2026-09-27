@@ -35,15 +35,13 @@ test.skip(!OFFICE_FLAG_ON, 'VITE_FEATURE_OFFICE_EDITOR!=true — this suite exer
 test.setTimeout(2 * OFFICE_BOOT_BUDGET_MS + 240_000)
 
 async function dismissDevBanner(page: Page): Promise<void> {
-  // Task 1585: dismissed whenever it shows up later, too (see autoDismissDevBanner).
+  // Task 1585: a locator handler dismisses the banner before any later
+  // action, whenever it appears (see autoDismissDevBanner). Deliberately NO
+  // explicit wait-and-click as well: clicking the handler's own locator
+  // triggers the handler inside that click's actionability check, and the
+  // two deadlocked for the whole test timeout (seen once in the 1585 gate:
+  // "locator.click: Test timeout of 300000ms exceeded" on the dismiss button).
   await autoDismissDevBanner(page)
-  const dismiss = page.getByRole('button', { name: 'Dismiss dev banner' })
-  try {
-    await dismiss.waitFor({ state: 'visible', timeout: 5_000 })
-    await dismiss.click()
-  } catch {
-    // Never appeared this session.
-  }
 }
 
 /** Drive → preview → Edit → the office editor's own tab, engine booted and document open. */
