@@ -40,6 +40,7 @@ import fs from 'fs'
 import path from 'path'
 import { writeDocxFixture } from './helpers/office-fixtures'
 import { uploadAndWait, openPreview, previewOverlay } from './helpers/thumb-fixtures'
+import { OFFICE_SETTLE_BUDGET_MS, waitOfficeSettled } from './helpers/office-ready'
 
 const OFFICE_ASSETS_PRESENT = fs.existsSync('public/office/manifest.json')
 const OFFICE_FLAG_ON = process.env.VITE_FEATURE_OFFICE_EDITOR === 'true'
@@ -53,7 +54,8 @@ test.skip(
   'VITE_FEATURE_OFFICE_EDITOR!=true — this suite exercises the real feature-flagged engine, not the default-off production build',
 )
 
-test.setTimeout(180_000)
+// Task 1585: 1 engine boot(s) at the ready helper's budget, plus the test's own work.
+test.setTimeout(OFFICE_SETTLE_BUDGET_MS + 120_000)
 
 async function dismissDevBanner(page: Page): Promise<void> {
   const dismiss = page.getByRole('button', { name: 'Dismiss dev banner' })
@@ -120,7 +122,9 @@ test('full session — open, type, every ribbon tab, ⌘K, insert image, insert+
 
   await officeTab.getByTestId('office-editor').waitFor({ state: 'visible', timeout: 15_000 })
   await officeTab.getByTestId('office-ribbon').waitFor({ state: 'visible', timeout: 15_000 })
-  await officeTab.getByTestId('office-outline-pane').waitFor({ state: 'visible', timeout: 120_000 })
+  // Task 1585: the editor's real ready signal at the app's own budget.
+  await waitOfficeSettled(officeTab)
+  await officeTab.getByTestId('office-outline-pane').waitFor({ state: 'visible', timeout: 15_000 })
 
   const engineFrame = officeTab.frameLocator('[data-testid="office-engine-frame"]')
   const canvas = engineFrame.locator('#qtcanvas')

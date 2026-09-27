@@ -16,13 +16,15 @@ import { test, type Page } from '@playwright/test'
 import fs from 'fs'
 import { writePptxFixture } from './helpers/office-fixtures'
 import { uploadAndWait, openPreview, previewOverlay } from './helpers/thumb-fixtures'
+import { OFFICE_SETTLE_BUDGET_MS, waitOfficeSettled } from './helpers/office-ready'
 
 const OFFICE_ASSETS_PRESENT = fs.existsSync('public/office/manifest.json')
 const OFFICE_FLAG_ON = process.env.VITE_FEATURE_OFFICE_EDITOR === 'true'
 test.skip(!OFFICE_ASSETS_PRESENT, 'public/office/manifest.json missing — run scripts/office-dev-assets.sh first')
 test.skip(!OFFICE_FLAG_ON, 'VITE_FEATURE_OFFICE_EDITOR!=true')
 
-test.setTimeout(180_000)
+// Task 1585: 1 engine boot(s) at the ready helper's budget, plus the test's own work.
+test.setTimeout(OFFICE_SETTLE_BUDGET_MS + 120_000)
 
 async function dismissDevBanner(page: Page): Promise<void> {
   const dismiss = page.getByRole('button', { name: 'Dismiss dev banner' })
@@ -53,7 +55,11 @@ async function shootImpressEditor(page: Page, context: import('@playwright/test'
   await officeTab.waitForLoadState('domcontentloaded')
   await dismissDevBanner(officeTab)
 
-  await officeTab.getByTestId('impress-filmstrip').waitFor({ state: 'visible', timeout: 120_000 })
+  // Task 1585: the editor's real ready signal at the app's own budget.
+
+  await waitOfficeSettled(officeTab)
+
+  await officeTab.getByTestId('impress-filmstrip').waitFor({ state: 'visible', timeout: 15_000 })
   const engineFrame = officeTab.frameLocator('[data-testid="office-engine-frame"]')
   await engineFrame.locator('#qtcanvas').waitFor({ state: 'visible', timeout: 30_000 })
   await officeTab.getByTestId('office-ribbon').getByTestId('impress-ribbon-new-slide').click()

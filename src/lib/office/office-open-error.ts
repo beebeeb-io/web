@@ -84,3 +84,20 @@ export function toOfficeOpenError(err: unknown): OfficeOpenError {
   if (INVALID_DOCUMENT.test(detail)) return new OfficeOpenError('invalid-document', detail)
   return new OfficeOpenError('engine-failed', detail)
 }
+
+/**
+ * For the /office route's decrypt steps (the name metadata, then the content):
+ * a transport failure is passed through unchanged, so the user sees the real
+ * download error. Transport failures are the server's ApiError, fetch's
+ * TypeError when the network is gone, and an abort. Anything else thrown by
+ * those steps is the decryption itself failing, and becomes 'decrypt-failed'
+ * instead of whatever the crypto layer's message happens to be.
+ * ApiError is matched by name, not instanceof, to keep this module free of
+ * the API client.
+ */
+export function asDecryptFailure(err: unknown): unknown {
+  if (err instanceof OfficeOpenError || err instanceof TypeError) return err
+  if (err instanceof Error && err.name === 'ApiError') return err
+  if (err instanceof DOMException && err.name === 'AbortError') return err
+  return new OfficeOpenError('decrypt-failed', errorText(err))
+}

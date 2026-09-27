@@ -9,7 +9,8 @@
  */
 import { describe, test, expect } from 'bun:test'
 import vm from 'node:vm'
-import { OFFICE_OPEN_ERROR_MESSAGES, OfficeOpenError, errorText, toOfficeOpenError } from '../src/lib/office/office-open-error'
+import { OFFICE_OPEN_ERROR_MESSAGES, OfficeOpenError, asDecryptFailure, errorText, toOfficeOpenError } from '../src/lib/office/office-open-error'
+import { ApiError } from '../src/lib/api'
 
 /** An Error constructed in a separate realm, like one rejected from the engine iframe. */
 function foreignError(message: string): unknown {
@@ -78,5 +79,26 @@ describe('toOfficeOpenError', () => {
     const original = new OfficeOpenError('decrypt-failed', 'aead::Error')
     expect(toOfficeOpenError(original)).toBe(original)
     expect(original.message).toBe(OFFICE_OPEN_ERROR_MESSAGES['decrypt-failed'])
+  })
+})
+
+describe('asDecryptFailure (the /office route: name metadata + content)', () => {
+  test('a crypto failure becomes decrypt-failed with the raw text as detail', () => {
+    const e = asDecryptFailure(new Error('aead::Error')) as OfficeOpenError
+    expect(e).toBeInstanceOf(OfficeOpenError)
+    expect(e.kind).toBe('decrypt-failed')
+    expect(e.message).toBe(OFFICE_OPEN_ERROR_MESSAGES['decrypt-failed'])
+    expect(e.detail).toBe('aead::Error')
+    // A worker may post a bare string.
+    expect((asDecryptFailure('OperationError') as OfficeOpenError).kind).toBe('decrypt-failed')
+  })
+
+  test('transport failures pass through unchanged: ApiError, network TypeError, abort', () => {
+    const api = new ApiError('Not Found', 404)
+    expect(asDecryptFailure(api)).toBe(api)
+    const net = new TypeError('Failed to fetch')
+    expect(asDecryptFailure(net)).toBe(net)
+    const abort = new DOMException('aborted', 'AbortError')
+    expect(asDecryptFailure(abort)).toBe(abort)
   })
 })

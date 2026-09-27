@@ -31,28 +31,16 @@
 
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { ApiError, getFile, listVersions, type DriveFile } from '../lib/api'
+import { getFile, listVersions, type DriveFile } from '../lib/api'
 import { decryptToBlob } from '../lib/encrypted-download'
 import { decryptFileMetadata } from '../lib/crypto'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { useKeys } from '../lib/key-context'
 import { resolveOfficeFileKind } from '../lib/office/office-file-kind'
 import { checkOfficeBytes, extensionOf } from '../lib/office/office-magic'
-import { OfficeOpenError, errorText } from '../lib/office/office-open-error'
+import { OfficeOpenError, asDecryptFailure, errorText } from '../lib/office/office-open-error'
 import { OfficeEditor } from '../components/office/office-editor'
 import { ShareDialog } from '../components/share-dialog'
-
-/**
- * Task 1585 item 2: a failure inside decryptToBlob is either the download
- * (an ApiError from the server, or fetch's own TypeError when the network is
- * gone) — reported as-is — or the decryption itself, which gets its own
- * honest kind instead of whatever the crypto layer's message happens to be.
- */
-function asDecryptFailure(err: unknown): unknown {
-  if (err instanceof ApiError || err instanceof TypeError || err instanceof OfficeOpenError) return err
-  if (err instanceof DOMException && err.name === 'AbortError') return err
-  return new OfficeOpenError('decrypt-failed', errorText(err))
-}
 
 type LoadState =
   | { stage: 'loading' }
@@ -102,7 +90,11 @@ export function OfficeEditorPage() {
       try {
         const file = await getFile(fileId!)
         const fileKey = await getFileKeyForFile(file)
-        const { name, mimeType } = await decryptFileMetadata(fileKey, file.name_encrypted)
+        // Codex P2 on PR #123: a corrupt name blob or a wrong file key fails
+        // HERE, before the content download; it is the same honest kind.
+        const { name, mimeType } = await decryptFileMetadata(fileKey, file.name_encrypted).catch((err: unknown) => {
+          throw asDecryptFailure(err)
+        })
         const officeKind = resolveOfficeFileKind(mimeType ?? file.mime_type, name)
         if (!officeKind) {
           if (!cancelled) setState({ stage: 'error', message: `"${name}" is not an office document this editor can open.` })

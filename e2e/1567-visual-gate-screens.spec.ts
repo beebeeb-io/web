@@ -18,13 +18,15 @@ import fs from 'fs'
 import { writeDocxFixture, writePptxFixture } from './helpers/office-fixtures'
 import { writeXlsxFixture } from './helpers/office-fixtures-calc'
 import { uploadAndWait, openPreview, previewOverlay } from './helpers/thumb-fixtures'
+import { OFFICE_SETTLE_BUDGET_MS, waitOfficeSettled } from './helpers/office-ready'
 
 const OFFICE_ASSETS_PRESENT = fs.existsSync('public/office/manifest.json')
 const OFFICE_FLAG_ON = process.env.VITE_FEATURE_OFFICE_EDITOR === 'true'
 test.skip(!OFFICE_ASSETS_PRESENT, 'public/office/manifest.json missing — run scripts/office-dev-assets.sh first')
 test.skip(!OFFICE_FLAG_ON, 'VITE_FEATURE_OFFICE_EDITOR!=true')
 
-test.setTimeout(180_000)
+// Task 1585: 1 engine boot(s) at the ready helper's budget, plus the test's own work.
+test.setTimeout(OFFICE_SETTLE_BUDGET_MS + 120_000)
 
 // Task 1585: the default was one lane's own Mac scratchpad path, which does
 // not exist (EACCES) on any other machine; repo-relative now.
@@ -70,7 +72,9 @@ async function shootWriter(page: Page, context: BrowserContext, theme: 'light' |
     'Second paragraph for the outline pane / word count.',
   ])
   const officeTab = await openOfficeTab(page, context, theme, fixturePath)
-  await officeTab.getByTestId('office-outline-pane').waitFor({ state: 'visible', timeout: 120_000 })
+  // Task 1585: the editor's real ready signal at the app's own budget.
+  await waitOfficeSettled(officeTab)
+  await officeTab.getByTestId('office-outline-pane').waitFor({ state: 'visible', timeout: 15_000 })
   const engineFrame = officeTab.frameLocator('[data-testid="office-engine-frame"]')
   await engineFrame.locator('#qtcanvas').waitFor({ state: 'visible', timeout: 30_000 })
   await officeTab.waitForTimeout(1000)
@@ -81,7 +85,9 @@ async function shootWriter(page: Page, context: BrowserContext, theme: 'light' |
 async function shootCalc(page: Page, context: BrowserContext, theme: 'light' | 'dark') {
   const fixturePath = writeXlsxFixture(`office-visual-calc-${theme}-${process.pid}.xlsx`, [10, 20, 30])
   const officeTab = await openOfficeTab(page, context, theme, fixturePath)
-  await officeTab.getByTestId('calc-formula-bar').waitFor({ state: 'visible', timeout: 120_000 })
+  // Task 1585: the editor's real ready signal at the app's own budget.
+  await waitOfficeSettled(officeTab)
+  await officeTab.getByTestId('calc-formula-bar').waitFor({ state: 'visible', timeout: 15_000 })
   await officeTab.getByTestId('calc-sheet-tabs').waitFor({ state: 'visible', timeout: 15_000 })
   const engineFrame = officeTab.frameLocator('[data-testid="office-engine-frame"]')
   await engineFrame.locator('#qtcanvas').waitFor({ state: 'visible', timeout: 30_000 })
@@ -93,7 +99,9 @@ async function shootCalc(page: Page, context: BrowserContext, theme: 'light' | '
 async function shootImpress(page: Page, context: BrowserContext, theme: 'light' | 'dark') {
   const fixturePath = writePptxFixture(`office-visual-impress-${theme}-${process.pid}.pptx`)
   const officeTab = await openOfficeTab(page, context, theme, fixturePath)
-  await officeTab.getByTestId('impress-filmstrip').waitFor({ state: 'visible', timeout: 120_000 })
+  // Task 1585: the editor's real ready signal at the app's own budget.
+  await waitOfficeSettled(officeTab)
+  await officeTab.getByTestId('impress-filmstrip').waitFor({ state: 'visible', timeout: 15_000 })
   const engineFrame = officeTab.frameLocator('[data-testid="office-engine-frame"]')
   await engineFrame.locator('#qtcanvas').waitFor({ state: 'visible', timeout: 30_000 })
   await officeTab.waitForTimeout(1000)
