@@ -26,6 +26,7 @@ import Markdown from 'react-markdown'
 import { Icon, BBButton } from '@beebeeb/shared'
 import type { DriveFile } from '../../lib/api'
 import { abandonUpload, getFile, listVersions } from '../../lib/api'
+import { discardInFlightUpload } from '../../lib/upload-discard'
 import { decryptToBlob } from '../../lib/encrypted-download'
 import { encryptedUpload } from '../../lib/encrypted-upload'
 import { useKeys } from '../../lib/key-context'
@@ -160,22 +161,27 @@ export const FileEditor = forwardRef<FileEditorHandle, FileEditorProps>(function
   // (before the same first `await`), cleared together in the same
   // `finally` blocks.
   const inFlightFileIdRef = useRef<string | null>(null)
+  // The Promise for whichever save (handleSave's write-ahead check +
+  // performUpload, or handleConflictAction's performUpload) is CURRENTLY
+  // running, set together with the two refs above before that async work's
+  // first `await`. `abortInFlightSave` awaits this before calling
+  // `abandonUpload` — see `discardInFlightUpload`'s doc comment (task 1571
+  // web PR #106, Codex P1) for the race this closes: calling abandon
+  // WHILE `initUpload` might still be in flight can see `is_uploading =
+  // false`, no-op, and then have the late init response wedge the file
+  // right after.
+  const inFlightUploadPromiseRef = useRef<Promise<unknown> | null>(null)
 
   const abortInFlightSave = useCallback(() => {
-    inFlightUploadRef.current?.abort()
-    const fileId = inFlightFileIdRef.current
-    if (fileId) {
-      // Fire-and-forget: the dialog that triggered this discard doesn't wait
-      // on it, and it's always safe — a race where the upload actually
-      // completed just before the abort lands on a `not_uploading` no-op
-      // server-side (see `abandonUpload`'s doc comment), never touching the
-      // now-current version.
-      abandonUpload(fileId).catch(() => {
-        // Best-effort only. A failure here just means the 7-day TTL sweep
-        // (server task 1571) reclaims the wedged upload later instead of
-        // this call doing it immediately — never a data-loss risk.
-      })
-    }
+    // Fire-and-forget from the caller's side (the discard dialog doesn't
+    // wait on this) — but internally this now waits for the in-flight save
+    // to fully settle before telling the server to abandon it.
+    void discardInFlightUpload(
+      inFlightUploadRef.current,
+      inFlightFileIdRef.current,
+      inFlightUploadPromiseRef.current,
+      abandonUpload,
+    )
   }, [])
 
   useImperativeHandle(ref, () => ({ abortSave: abortInFlightSave }), [abortInFlightSave])
@@ -246,68 +252,76 @@ export const FileEditor = forwardRef<FileEditorHandle, FileEditorProps>(function
     const controller = new AbortController()
     inFlightUploadRef.current = controller
     inFlightFileIdRef.current = file.id
-    try {
-      // Write-ahead conflict check (design: "checks the latest version
-      // before it saves") — never upload blind.
-      //
-      // Uses listVersions(), NOT getFile(): GET /api/v1/files/:id (server
-      // beebeeb-api/src/routes/files.rs get_file()) never selects/returns
-      // version_number at all, so `getFile(id).version_number` is always
-      // undefined and every conflict check silently no-ops (reproduced live
-      // via the task-1563 concurrent-edit e2e test — a second save landed
-      // as a plain new version, no dialog). GET .../versions
-      // (beebeeb-api/src/routes/versions.rs:114) reads `files.version_number`
-      // directly and is what the rest of this file already uses for the
-      // version scrubber, so this fix adds no new server surface.
-      const { current_version: serverVersion } = await listVersions(file.id)
-      if (controller.signal.aborted) return // discarded while the pre-check was in flight
-      if (hasVersionConflict({ openedVersion: versionNumber, serverVersion })) {
-        setConflict({ latestVersionNumber: serverVersion, latestText: null })
-        // Decrypt the racing (current LIVE) content for the diff view. This
-        // is NOT a historical version lookup — serverVersion IS the file's
-        // current version by definition here, so its bytes come from the
-        // normal download path (decryptToBlob), using getFile() ONLY for
-        // its accurate chunk_count/size_bytes (the version_number field is
-        // the one that's missing from that response — see the comment
-        // above; size_bytes/chunk_count are both present and correct).
-        try {
-          const latest = await getFile(file.id)
-          const fileKey = await getFileKey(file.id)
-          const { plaintext } = await decryptToBlob(
-            file.id,
-            fileKey,
-            file.name_encrypted,
-            mimeType ?? undefined,
-            latest.chunk_count,
-            latest.size_bytes,
-          )
-          const text = await plaintext.text()
-          setConflict({ latestVersionNumber: serverVersion, latestText: text })
-        } catch {
-          // Diff content failed to load — the dialog still offers all three
-          // actions, just without a preview of the other side.
+    // The whole operation below, captured as ITS OWN promise before the
+    // first await, so `abortInFlightSave` can wait for it to fully settle
+    // before calling `abandonUpload` (task 1571 web PR #106, Codex P1) —
+    // see `inFlightUploadPromiseRef`'s doc comment.
+    const runSave = (async () => {
+      try {
+        // Write-ahead conflict check (design: "checks the latest version
+        // before it saves") — never upload blind.
+        //
+        // Uses listVersions(), NOT getFile(): GET /api/v1/files/:id (server
+        // beebeeb-api/src/routes/files.rs get_file()) never selects/returns
+        // version_number at all, so `getFile(id).version_number` is always
+        // undefined and every conflict check silently no-ops (reproduced live
+        // via the task-1563 concurrent-edit e2e test — a second save landed
+        // as a plain new version, no dialog). GET .../versions
+        // (beebeeb-api/src/routes/versions.rs:114) reads `files.version_number`
+        // directly and is what the rest of this file already uses for the
+        // version scrubber, so this fix adds no new server surface.
+        const { current_version: serverVersion } = await listVersions(file.id)
+        if (controller.signal.aborted) return // discarded while the pre-check was in flight
+        if (hasVersionConflict({ openedVersion: versionNumber, serverVersion })) {
+          setConflict({ latestVersionNumber: serverVersion, latestText: null })
+          // Decrypt the racing (current LIVE) content for the diff view. This
+          // is NOT a historical version lookup — serverVersion IS the file's
+          // current version by definition here, so its bytes come from the
+          // normal download path (decryptToBlob), using getFile() ONLY for
+          // its accurate chunk_count/size_bytes (the version_number field is
+          // the one that's missing from that response — see the comment
+          // above; size_bytes/chunk_count are both present and correct).
+          try {
+            const latest = await getFile(file.id)
+            const fileKey = await getFileKey(file.id)
+            const { plaintext } = await decryptToBlob(
+              file.id,
+              fileKey,
+              file.name_encrypted,
+              mimeType ?? undefined,
+              latest.chunk_count,
+              latest.size_bytes,
+            )
+            const text = await plaintext.text()
+            setConflict({ latestVersionNumber: serverVersion, latestText: text })
+          } catch {
+            // Diff content failed to load — the dialog still offers all three
+            // actions, just without a preview of the other side.
+          }
+          return
         }
-        return
-      }
 
-      const updated = await performUpload(file.id, false, controller.signal)
-      lastSavedTextRef.current = doc
-      setDirty(false)
-      onDirtyChange(false)
-      setVersionNumber(updated.version_number ?? versionNumber + 1)
-      setLastSavedAt(new Date())
-      onSaved(updated, doc)
-    } catch (err) {
-      if (!isAbortError(err)) {
-        setSaveError(err instanceof Error ? err.message : 'Save failed. Try again.')
+        const updated = await performUpload(file.id, false, controller.signal)
+        lastSavedTextRef.current = doc
+        setDirty(false)
+        onDirtyChange(false)
+        setVersionNumber(updated.version_number ?? versionNumber + 1)
+        setLastSavedAt(new Date())
+        onSaved(updated, doc)
+      } catch (err) {
+        if (!isAbortError(err)) {
+          setSaveError(err instanceof Error ? err.message : 'Save failed. Try again.')
+        }
+      } finally {
+        setSaving(false)
+        if (inFlightUploadRef.current === controller) {
+          inFlightUploadRef.current = null
+          inFlightFileIdRef.current = null
+        }
       }
-    } finally {
-      setSaving(false)
-      if (inFlightUploadRef.current === controller) {
-        inFlightUploadRef.current = null
-        inFlightFileIdRef.current = null
-      }
-    }
+    })()
+    inFlightUploadPromiseRef.current = runSave
+    await runSave
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saving, dirty, file, versionNumber, doc, mimeType, onDirtyChange, onSaved])
 
@@ -342,46 +356,52 @@ export const FileEditor = forwardRef<FileEditorHandle, FileEditorProps>(function
       // once the server's 7-day TTL sweep (task 1571) reaches it — just not
       // as immediately as the reused-file_id case below.
       inFlightFileIdRef.current = resolution.fileId ?? null
-      try {
-        const nameOverride = resolution.nameSuffix
-          ? insertBeforeExtension(decryptedName, resolution.nameSuffix)
-          : undefined
-        const updated = await performUpload(
-          resolution.fileId,
-          resolution.conflictCreated,
-          controller.signal,
-          nameOverride,
-        )
-        lastSavedTextRef.current = doc
-        setDirty(false)
-        onDirtyChange(false)
-        setConflict(null)
+      // Captured as its own promise for the same reason as handleSave's
+      // `runSave` — see `inFlightUploadPromiseRef`'s doc comment.
+      const runResolution = (async () => {
+        try {
+          const nameOverride = resolution.nameSuffix
+            ? insertBeforeExtension(decryptedName, resolution.nameSuffix)
+            : undefined
+          const updated = await performUpload(
+            resolution.fileId,
+            resolution.conflictCreated,
+            controller.signal,
+            nameOverride,
+          )
+          lastSavedTextRef.current = doc
+          setDirty(false)
+          onDirtyChange(false)
+          setConflict(null)
 
-        if (updated.id === file.id) {
-          setVersionNumber(updated.version_number ?? conflict.latestVersionNumber + 1)
-          setLastSavedAt(new Date())
-          onSaved(updated, doc)
-        } else {
-          // Keep Both created a sibling file. This session's original file
-          // is untouched — hand the new file to the caller, which forces
-          // the exit back to read mode itself directly (dirty was just
-          // cleared above in this same batch, so a PARENT guard callback
-          // closed over the pre-update `dirty` from its last render would
-          // still see the stale `true` and wrongly pop the discard-changes
-          // dialog on a save that already succeeded).
-          onSiblingCreated(updated)
+          if (updated.id === file.id) {
+            setVersionNumber(updated.version_number ?? conflict.latestVersionNumber + 1)
+            setLastSavedAt(new Date())
+            onSaved(updated, doc)
+          } else {
+            // Keep Both created a sibling file. This session's original file
+            // is untouched — hand the new file to the caller, which forces
+            // the exit back to read mode itself directly (dirty was just
+            // cleared above in this same batch, so a PARENT guard callback
+            // closed over the pre-update `dirty` from its last render would
+            // still see the stale `true` and wrongly pop the discard-changes
+            // dialog on a save that already succeeded).
+            onSiblingCreated(updated)
+          }
+        } catch (err) {
+          if (!isAbortError(err)) {
+            setSaveError(err instanceof Error ? err.message : 'Save failed. Try again.')
+          }
+        } finally {
+          setSaving(false)
+          if (inFlightUploadRef.current === controller) {
+            inFlightUploadRef.current = null
+            inFlightFileIdRef.current = null
+          }
         }
-      } catch (err) {
-        if (!isAbortError(err)) {
-          setSaveError(err instanceof Error ? err.message : 'Save failed. Try again.')
-        }
-      } finally {
-        setSaving(false)
-        if (inFlightUploadRef.current === controller) {
-          inFlightUploadRef.current = null
-          inFlightFileIdRef.current = null
-        }
-      }
+      })()
+      inFlightUploadPromiseRef.current = runResolution
+      await runResolution
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [conflict, saving, file, doc, decryptedName, onDirtyChange, onSaved, onSiblingCreated],

@@ -132,6 +132,13 @@ export async function encryptedUpload(
   }
 
   async function startUpload(): Promise<void> {
+    // `signal` MUST reach the actual `fetch()` call, not just `withNetworkRetry`
+    // (task 1571 web PR #106, Codex P1) — otherwise a discard-during-save
+    // aborts nothing server-side: `/api/v1/uploads/init` runs to completion
+    // and sets `files.is_uploading = TRUE` regardless, and a fire-and-forget
+    // `abandonUpload` issued at the moment of abort can land BEFORE that,
+    // see `not_uploading` (nothing to abandon yet), and leave the file
+    // wedged once init's late response arrives.
     const init = await withNetworkRetry(() => initUpload({
       file_id: fileId,
       name_encrypted: nameEncrypted,
@@ -140,7 +147,7 @@ export async function encryptedUpload(
       parent_id: parentId ?? null,
       is_media: isMedia,
       conflict_created: options.conflictCreated ?? false,
-    }), signal)
+    }, signal), signal)
 
     serverFileId = init.file_id
     totalChunks = init.chunk_count
@@ -159,7 +166,7 @@ export async function encryptedUpload(
 
     activeFileKey = await deriveFileKeyForId(init.file_id)
     nameEncrypted = await encryptMetadata(activeFileKey)
-    await withNetworkRetry(() => updateFile(init.file_id, { name_encrypted: nameEncrypted }), signal)
+    await withNetworkRetry(() => updateFile(init.file_id, { name_encrypted: nameEncrypted }, signal), signal)
   }
 
   if (resumeFileId) {
@@ -319,7 +326,7 @@ export async function encryptedUpload(
 
       if (skipChunks.has(i)) continue // already uploaded — pushed for alignment only
 
-      await withNetworkRetry(() => uploadChunk(serverFileId, i, frame, uploadSessionId), signal)
+      await withNetworkRetry(() => uploadChunk(serverFileId, i, frame, uploadSessionId, signal), signal)
       reportProgress()
     }
 

@@ -994,11 +994,15 @@ export type UploadInitResponse =
   | (UploadInitV1Response & { protocol: 'v1' })
   | (UploadInitV2Response & { protocol: 'v2' })
 
-export async function initUpload(metadata: UploadInitMetadata): Promise<UploadInitResponse> {
+export async function initUpload(
+  metadata: UploadInitMetadata,
+  signal?: AbortSignal,
+): Promise<UploadInitResponse> {
   try {
     const v2 = await request<UploadInitV2Response>('/api/v1/uploads/init', {
       method: 'POST',
       body: JSON.stringify(buildUploadInitV2Body(metadata)),
+      signal,
     })
     return { ...v2, protocol: 'v2' }
   } catch (err) {
@@ -1010,6 +1014,7 @@ export async function initUpload(metadata: UploadInitMetadata): Promise<UploadIn
   const v1 = await request<UploadInitV1Response>('/api/v1/files/upload/init', {
     method: 'POST',
     body: JSON.stringify(metadata),
+    signal,
   })
   return { ...v1, protocol: 'v1' }
 }
@@ -1019,11 +1024,12 @@ export async function uploadChunk(
   index: number,
   data: Uint8Array,
   uploadSessionId?: string | null,
+  signal?: AbortSignal,
 ): Promise<{ index: number; size: number; skipped?: boolean }> {
   const v2Path = uploadSessionId ? `/api/v1/uploads/${uploadSessionId}/chunks/${index}` : null
   if (v2Path) {
     try {
-      return await uploadChunkRequest(v2Path, data)
+      return await uploadChunkRequest(v2Path, data, signal)
     } catch (err) {
       if (!(err instanceof ApiError) || err.status !== 404) {
         throw err
@@ -1031,12 +1037,13 @@ export async function uploadChunk(
     }
   }
 
-  return uploadChunkRequest(`/api/v1/files/${fileId}/chunks/${index}`, data)
+  return uploadChunkRequest(`/api/v1/files/${fileId}/chunks/${index}`, data, signal)
 }
 
 async function uploadChunkRequest(
   path: string,
   data: Uint8Array,
+  signal?: AbortSignal,
 ): Promise<{ index: number; size: number; skipped?: boolean }> {
   const token = getToken()
   const headers: Record<string, string> = {
@@ -1061,8 +1068,14 @@ async function uploadChunkRequest(
       body: new Uint8Array(data) as BodyInit,
       // task 0447 — chunk uploads are authenticated; ship the cookie.
       credentials: 'include',
+      signal,
     })
-  } catch (_err) {
+  } catch (err) {
+    // A caller-provided AbortSignal firing mid-PUT is a deliberate cancel
+    // (task 1571 web PR #106) — let the real AbortError propagate as-is so
+    // callers' `err.name === 'AbortError'` checks still work, instead of
+    // masking it as a generic network failure below.
+    if (signal?.aborted) throw err
     // The error notifier now lives in @beebeeb/shared and is fired by the
     // shared `request()` helper for normal endpoints. Chunk uploads use raw
     // `fetch()` because they stream binary, so just throw — the caller
@@ -1155,10 +1168,12 @@ export async function downloadFile(id: string): Promise<Blob> {
 export async function updateFile(
   fileId: string,
   updates: { parent_id?: string | null; name_encrypted?: string; note_encrypted?: string | null },
+  signal?: AbortSignal,
 ): Promise<DriveFile> {
   return request<DriveFile>(`/api/v1/files/${fileId}`, {
     method: 'PATCH',
     body: JSON.stringify(updates),
+    signal,
   })
 }
 

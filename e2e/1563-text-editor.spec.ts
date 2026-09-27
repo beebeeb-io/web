@@ -765,6 +765,134 @@ test.describe('Task 1563 — text editor', () => {
     await expect(overlay).not.toContainText(discardedDraft.trim())
   })
 
+  // Codex P1 on web PR #106 (task 1571 follow-up): `encryptedUpload` passed
+  // the save's AbortSignal to `withNetworkRetry` but never to `initUpload`
+  // itself, so aborting the client's controller did nothing to the actual
+  // `/api/v1/uploads/init` fetch — and the old `abortInFlightSave` fired
+  // `abandonUpload` immediately (fire-and-forget) instead of waiting for
+  // that fetch to settle. Sequence this closes: discard fires while init is
+  // still pending → abandon sees `is_uploading = false` (nothing to
+  // abandon, no-op) → init's response THEN lands and sets
+  // `is_uploading = true` — wedging the file exactly like task 1571 was
+  // meant to fix, just one step earlier in the request chain than that
+  // task's own "genuinely mid-flight CHUNK PUT" test above covers.
+  //
+  // This test delays `/api/v1/uploads/init`'s response by a fixed window
+  // (same `setTimeout` + `route.continue()` pattern as the "discarding
+  // changes cancels an in-flight save" test's `**/versions` delay above —
+  // NOT an indefinite hold released manually: this file's own prior test
+  // already found that a CDP-paused request does not observe the page's
+  // AbortController the way a genuinely in-flight one does, so a manual
+  // "release after discard" step doesn't reliably model "init resolving
+  // after the discard" — a bounded delay that always keeps running
+  // regardless of the page's own abort does) and fires Discard while that
+  // response is still outstanding — literally "init resolving after the
+  // discard" once the delay elapses. The abandon watcher is armed BEFORE
+  // Discard is clicked (not after), since with the fix the abort settles
+  // the save's own promise, and therefore fires `abandonUpload`, right
+  // away — proving the SEQUENCING (settle-then-abandon), not a specific
+  // wall-clock gap. What this test actually falsifies is the end state:
+  // the abandon call lands, the previous version survives untouched, and a
+  // real subsequent save on the same file lands as version 2 — never stuck
+  // behind a phantom in-flight upload from the raced init.
+  test('discarding while /api/v1/uploads/init is still pending does not wedge the file when init resolves after the discard (web PR #106, Codex P1)', async ({
+    page,
+  }) => {
+    test.setTimeout(60_000)
+    const name = `1571-init-race-${process.pid}.md`
+    const original = 'Original content that must survive the init race.\n'
+    const discardedDraft = 'This draft races /uploads/init and must NEVER be saved.\n'
+    const realSecondSave = 'This is the real second save, made after the init race.\n'
+    const path = writeText(name, original)
+
+    await gotoAndSettle(page)
+    const base = await uploadAndWait(page, path)
+    await dismissDevBanner(page)
+    await openPreview(page, base)
+    let overlay = previewOverlay(page)
+    let editor = await enterEdit(page)
+    await expect(editor.getByTestId('editor-status-saved')).toContainText('version 1')
+
+    // Delay init's response by 3s, then let it through for real — the
+    // request keeps running server-side on its own schedule regardless of
+    // what the page does with its own AbortController meanwhile.
+    await page.route('**/api/v1/uploads/init', async (route) => {
+      await new Promise((r) => setTimeout(r, 3_000))
+      await route.continue().catch(() => {})
+    })
+    const initSeen = page.waitForRequest(
+      (r) => r.method() === 'POST' && new URL(r.url()).pathname === '/api/v1/uploads/init',
+      { timeout: 15_000 },
+    )
+    // Armed BEFORE Discard: the fix calls abandon as soon as this save's
+    // own promise settles, which (once the AbortSignal is wired all the
+    // way into `fetch`, this PR's actual fix) can happen essentially as
+    // soon as the client aborts — well before init's artificial 3s delay
+    // elapses. A watcher armed only after that delay would miss it
+    // entirely (the exact failure mode this test's first draft hit).
+    const abandonCall = page.waitForResponse(
+      (r) => r.request().method() === 'POST' && /\/upload\/abandon$/.test(new URL(r.url()).pathname),
+      { timeout: 15_000 },
+    )
+
+    await replaceDoc(page, editor, discardedDraft)
+    await expect(overlay.getByTestId('editor-dirty-dot')).toBeVisible()
+    await page.keyboard.press('ControlOrMeta+S')
+    await initSeen // init has been dispatched; its response is still 3s out
+
+    await overlay.getByTestId('preview-close-button').click()
+    const guard = page.getByTestId('unsaved-changes-dialog')
+    await expect(guard).toBeVisible({ timeout: 5_000 })
+    await guard.getByTestId('unsaved-discard').click()
+    await expect(overlay).toBeHidden({ timeout: 5_000 })
+
+    const abandonResp = await abandonCall
+    expect(abandonResp.status(), 'the abandon call must succeed').toBe(200)
+    // Let init's own 3s delay actually elapse and complete server-side
+    // (whatever it does at this point — the point of this test is that it
+    // no longer matters) before moving on, so it isn't still outstanding
+    // when the reopen below issues its own requests.
+    await page.waitForTimeout(3_500)
+    await page.unrouteAll({ behavior: 'ignoreErrors' })
+
+    // Reopen: not wedged — shows the untouched previous version, never the
+    // discarded draft.
+    await openPreview(page, base)
+    overlay = previewOverlay(page)
+    await expect(overlay.getByText(original.trim())).toBeVisible({ timeout: 10_000 })
+    await expect(overlay).not.toContainText(discardedDraft.trim())
+    editor = await enterEdit(page)
+    await expect(editor.getByTestId('editor-status-saved')).toContainText('version 1')
+
+    // The actual regression: a real save on this SAME file must succeed
+    // now, not hang/409 behind a phantom `is_uploading = true` left by the
+    // raced init.
+    await replaceDoc(page, editor, realSecondSave)
+    await page.keyboard.press('ControlOrMeta+S')
+    await expect(editor.getByTestId('editor-status-saved')).toContainText('saved as version 2', {
+      timeout: 20_000,
+    })
+    await shot(page, '1571-init-race-then-resave')
+
+    // Server-truth check, same pattern as the mid-flight-chunk test above.
+    const fileId = new URL(abandonResp.url()).pathname.match(/\/files\/([^/]+)\/upload\/abandon$/)![1]
+    const versionsResp = await page.request.get(`${API_URL}/api/v1/files/${fileId}/versions`)
+    expect(versionsResp.ok(), 'versions lookup must succeed').toBe(true)
+    const versionsBody = await versionsResp.json()
+    expect(
+      versionsBody.current_version,
+      'the real second save must be version 2 server-side — the raced init must not have consumed a version slot',
+    ).toBe(2)
+
+    await page.reload()
+    await page.waitForFunction(() => document.body.dataset.cryptoReady === 'true', { timeout: 15_000 })
+    await dismissDevBanner(page)
+    await openPreview(page, base)
+    overlay = previewOverlay(page)
+    await expect(overlay.getByText(realSecondSave.trim())).toBeVisible({ timeout: 15_000 })
+    await expect(overlay).not.toContainText(discardedDraft.trim())
+  })
+
   test('conflict dialog: action buttons disable immediately while a resolution upload is in flight', async ({ page, browser }) => {
     test.setTimeout(90_000)
     const name = `1563-conflict-guard-${process.pid}.md`
