@@ -255,6 +255,11 @@ function pickRenderer(
   blob: Blob,
   filename: string,
   imageControls?: ImageControlProps,
+  /** True once `blob` is confirmed to be the full downloaded original —
+   *  false while it's still a server-generated thumbnail (task 1574 gate,
+   *  Codex review round 2, 2026-09-27; see the TIFF branch below and the
+   *  doc comment at this function's TIFF check for why this matters). */
+  blobIsOriginal = true,
 ): React.ReactNode {
   const ext = getExtension(filename)
 
@@ -323,7 +328,27 @@ function pickRenderer(
   // TIFF_MIMES/TIFF_EXTS doc comment above. Checked before the generic
   // image branch below, which otherwise fed TIFF bytes straight to a plain
   // `<img>` that Chromium can never decode (task 1565 finding).
-  if (TIFF_MIMES.has(mimeType ?? '') || TIFF_EXTS.has(ext)) {
+  //
+  // Gated on `blobIsOriginal` (Codex review round 2, task 1574 gate,
+  // 2026-09-27): a current-version TIFF CAN already have a server-side WebP
+  // thumbnail (CLI/desktop/mobile decode TIFF via native/rust image
+  // libraries the browser doesn't have and generate one on upload, same as
+  // any other image — see repos/cli/src/thumbnail.rs). While `blob` is
+  // still that thumbnail (`blobIsOriginal` false — the fast thumbnail-first
+  // path below hasn't been superseded by the full download yet), routing
+  // here would feed WebP bytes to utif2, which rejects them outright. Round
+  // 1 of this review "fixed" that by excluding TIFF from thumbnail-first
+  // entirely — which traded one bug for a worse one Codex caught in round
+  // 2: a TIFF WITH a thumbnail now had to fully download+decrypt the
+  // ORIGINAL (however large) before ever getting a chance to render
+  // anything, even though a perfectly good thumbnail was sitting right
+  // there. This is the actual fix: thumbnail-first stays ENABLED for TIFF
+  // (see the `isImageFile` check above), and a still-thumbnail blob falls
+  // through to the generic image branch below instead (a plain `<img>`
+  // decodes WebP natively, exactly like every other image type) —
+  // TiffPreview's real utif2 decode only ever runs once `blobIsOriginal` is
+  // true, i.e. against the confirmed real original.
+  if (blobIsOriginal && (TIFF_MIMES.has(mimeType ?? '') || TIFF_EXTS.has(ext))) {
     return (
       <TiffPreview
         blob={blob}
@@ -567,27 +592,21 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     if (!isUnlocked) return
 
     const imageExt = getExtension(name)
-    // TIFF is excluded from the thumbnail-first fast path (Codex review,
-    // task 1574 gate, 2026-09-27): a current-version TIFF CAN already have a
-    // server-side WebP thumbnail — the CLI (repos/cli/src/thumbnail.rs) and
-    // desktop/mobile clients decode TIFF via native/rust image libraries the
-    // browser doesn't have and generate one on upload, same as any other
-    // image. Before this task, IMAGE_EXTENSIONS_SET routed a `.tiff` blob to
-    // the generic <img>-based ImagePreview regardless of whether `blob` held
-    // the WebP thumbnail or the real TIFF bytes — a plain <img> decodes
-    // WebP natively, so a thumbnail substitution was harmless there. This
-    // task's own TiffPreview instead decodes the blob AS TIFF via utif2; fed
-    // a WebP thumbnail from another client, that decode fails outright.
-    // Bypassing thumbnail-first for TIFF guarantees `blob` is always the
-    // real original (`blobIsOriginal` true) by the time pickRenderer routes
-    // to TiffPreview — the safe half of the two options the review raised
-    // (render-the-thumbnail-directly was rejected: it would silently show a
-    // WebP for a `.tiff` file whose thumbnail predates a since-changed
-    // original, or skip the RAW-Info-rail-style honesty this task's own RAW
-    // work insists on elsewhere).
-    const isTiffFile = TIFF_MIMES.has(effectiveMime ?? '') || TIFF_EXTS.has(imageExt)
+    // TIFF stays IN the thumbnail-first fast-path eligibility (task 1574
+    // gate, Codex review round 2, 2026-09-27 — this was briefly excluded in
+    // round 1's fix, which traded the round-1 bug for a worse one: ANY TIFF
+    // with a thumbnail then had to fully download+decrypt the original,
+    // however large, before ever rendering anything, defeating the whole
+    // point of thumbnail-first for exactly the files it matters most for
+    // — large studio/professional TIFFs, the ones most likely to come from
+    // a CLI/desktop/mobile client that generates thumbnails). The actual
+    // fix for round 1's bug (a WebP thumbnail reaching utif2, which rejects
+    // non-TIFF bytes) lives in `pickRenderer`'s TIFF branch instead: it only
+    // routes to `TiffPreview` once `blobIsOriginal` is true, so a
+    // still-thumbnail blob renders via the generic image branch (a plain
+    // `<img>` decodes WebP natively) until the real original has loaded.
     const isImageFile =
-      !isTiffFile && (effectiveMime?.startsWith('image/') || IMAGE_EXTENSIONS_SET.has(imageExt) || HEIC_IMAGE_EXTS.has(imageExt))
+      effectiveMime?.startsWith('image/') || IMAGE_EXTENSIONS_SET.has(imageExt) || HEIC_IMAGE_EXTS.has(imageExt)
 
     async function loadAndDecrypt() {
       try {
@@ -859,7 +878,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     ? { zoom, rotation, onZoomChange: setZoom, onClose, onPrev, onNext, hasPrev, hasNext, onRawInfo: setRawExifInfo }
     : undefined
 
-  const renderer = blob ? pickRenderer(effectiveMime, blob, name, imageControls) : null
+  const renderer = blob ? pickRenderer(effectiveMime, blob, name, imageControls, blobIsOriginal) : null
   const canPreview = renderer !== null
 
   function saveBlob(data: Blob) {
@@ -970,7 +989,16 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     ? [
         ...(rawExifInfo.cameraModel ? ([['Camera', rawExifInfo.cameraModel]] as [string, string][]) : []),
         ...(rawExifInfo.lensModel ? ([['Lens', rawExifInfo.lensModel]] as [string, string][]) : []),
-        ...(rawExifInfo.iso ? ([['ISO', rawExifInfo.iso]] as [string, string][]) : []),
+        // `rawExifInfo.iso` is `mapExifToRawInfo`'s own self-labeled string
+        // ("ISO 200") — its tested contract (test/1574-raw-embedded-jpeg.test.ts),
+        // left as-is there. This row's own "ISO" label column would repeat
+        // it verbatim ("ISO  ISO 200", Codex review round 2, task 1574
+        // gate, 2026-09-27) — every sibling row's value is bare (Shutter:
+        // "1/125s", not "Shutter 1/125s"), so strip the redundant prefix
+        // here, at the one place that adds the label, not in the mapper.
+        ...(rawExifInfo.iso
+          ? ([['ISO', rawExifInfo.iso.replace(/^ISO\s*/i, '')]] as [string, string][])
+          : []),
         ...(rawExifInfo.shutterSpeed ? ([['Shutter', rawExifInfo.shutterSpeed]] as [string, string][]) : []),
         ...(rawExifInfo.aperture ? ([['Aperture', rawExifInfo.aperture]] as [string, string][]) : []),
         ...(rawExifInfo.focalLength ? ([['Focal length', rawExifInfo.focalLength]] as [string, string][]) : []),
