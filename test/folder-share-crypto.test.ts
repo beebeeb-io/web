@@ -1,11 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import { installMocks, setListPage } from './helpers/upload-share-mocks'
 
-// Shared mock setup (task 0753): both this suite and encrypted-upload-v2-contract
-// register the SAME superset ./api + ./crypto mocks via installMocks(), so bun's
-// global mock.module doesn't collide. This suite drives listFilesPage through
-// setListPage; ./crypto is stubbed (collectAllChildren never calls it).
-installMocks()
+// Shared mock setup (tasks 0753, 1590): see helpers/upload-share-mocks.ts. Each
+// mock is the real module plus the listed overrides and is restored when this
+// file finishes. This suite drives listFilesPage through setListPage.
+await installMocks()
 
 type Child = { id: string; is_folder: boolean }
 const full = (n: number, prefix = 'f'): Child[] =>
