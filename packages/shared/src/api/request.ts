@@ -137,11 +137,25 @@ export async function request<T>(
     let res: Response
     try {
       res = await fetch(`${apiUrl}${path}`, init)
-    } catch (_first) {
+    } catch (firstErr) {
+      // A caller-provided AbortSignal firing mid-request is a deliberate
+      // cancellation, not a transient network blip — surface it immediately
+      // as the same AbortError `fetch` itself throws, with no artificial
+      // 800ms retry delay and no second fetch attempt (task 1571 web PR
+      // #106, Codex P1: initUpload previously never wired its signal into
+      // this call at all, so an aborted save's init request ran to
+      // completion server-side regardless of the abort). Callers rely on
+      // `err instanceof DOMException && err.name === 'AbortError'` to tell
+      // a deliberate cancel apart from a genuine save failure — wrapping it
+      // in `ApiError(_, 0)` like an ordinary network failure would defeat
+      // that check and also risk a retry re-issuing the same request after
+      // the caller has already moved on.
+      if (options.signal?.aborted) throw firstErr
       await delay(RETRY_DELAY_MS)
       try {
         res = await fetch(`${apiUrl}${path}`, init)
-      } catch (_second) {
+      } catch (secondErr) {
+        if (options.signal?.aborted) throw secondErr
         consecutiveFailures += 1
         if (consecutiveFailures >= CONNECTION_FAILURE_THRESHOLD) {
           reportConnection('flaky')
