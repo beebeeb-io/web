@@ -64,6 +64,9 @@ const LANG_LOADERS: Record<string, LangImport> = {
   kotlin: () => import('@shikijs/langs/kotlin'),
   scala: () => import('@shikijs/langs/scala'),
 
+  // .NET
+  csharp: () => import('@shikijs/langs/csharp'),
+
   // High-level
   python: () => import('@shikijs/langs/python'),
   ruby: () => import('@shikijs/langs/ruby'),
@@ -172,7 +175,7 @@ function tokenStyle(t: ShikiToken): React.CSSProperties {
 const LANG_LABEL: Record<string, string> = {
   typescript: 'TypeScript', javascript: 'JavaScript', tsx: 'TSX', jsx: 'JSX',
   rust: 'Rust', go: 'Go', python: 'Python', ruby: 'Ruby', java: 'Java',
-  kotlin: 'Kotlin', swift: 'Swift', cpp: 'C++', c: 'C', php: 'PHP',
+  kotlin: 'Kotlin', swift: 'Swift', cpp: 'C++', c: 'C', php: 'PHP', csharp: 'C#',
   bash: 'Shell', shell: 'Shell', powershell: 'PowerShell',
   html: 'HTML', css: 'CSS', scss: 'SCSS', json: 'JSON', yaml: 'YAML',
   toml: 'TOML', xml: 'XML', sql: 'SQL', markdown: 'Markdown',

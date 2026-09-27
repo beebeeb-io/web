@@ -70,6 +70,11 @@ const EXT_LANGUAGE: Record<string, string> = {
   swift: 'swift', dart: 'dart', r: 'r', ex: 'elixir', exs: 'elixir',
   erl: 'erlang', hs: 'haskell', ml: 'ocaml', zig: 'zig', nim: 'nim',
   v: 'v', vue: 'vue', svelte: 'svelte', astro: 'astro',
+  // .NET — cs was missing entirely (task 1565 preview matrix finding): a
+  // C# file fell through every branch in pickRenderer (not text/*, not in
+  // TEXT_EXTENSIONS either) straight to the generic "Preview not available"
+  // card, unlike every other ~20 code languages this map covers.
+  cs: 'csharp',
 }
 
 /** Image/video extension sets used when mime_type is null (ZK-uploaded files) */
@@ -124,7 +129,15 @@ const CODE_MIME_TYPES: Record<string, string> = {
 
 function getExtension(filename: string): string {
   const dot = filename.lastIndexOf('.')
-  if (dot === -1) return ''
+  // Bare filenames with no dot at all (Dockerfile, Makefile, ...) previously
+  // returned '' here, which matches nothing in any extension set/map below —
+  // task 1565's preview matrix caught this: a real `Dockerfile` fixture fell
+  // through pickRenderer entirely (EXT_LANGUAGE already had a `dockerfile:
+  // 'docker'` entry that could never be reached) straight to the generic
+  // "Preview not available" card. Falling back to the whole lowercased
+  // filename lets bare-filename entries already present in EXT_LANGUAGE /
+  // TEXT_EXTENSIONS (dockerfile, makefile, gitignore, ...) actually match.
+  if (dot === -1) return filename.toLowerCase()
   return filename.slice(dot + 1).toLowerCase()
 }
 
