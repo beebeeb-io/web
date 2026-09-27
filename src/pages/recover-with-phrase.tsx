@@ -24,6 +24,7 @@ import {
   recoverOpaqueRegister,
   recoverWithPhraseFinalize,
   ApiError,
+  clearToken,
 } from '../lib/api'
 import {
   recoverFromPhrase,
@@ -177,6 +178,13 @@ export function RecoverWithPhrase() {
         toBase64(newRecoveryCheck),
         toBase64(newX25519Pub),
       )
+
+      // Task 1553 — recover-with-phrase-finalize already set the fresh
+      // bb_session cookie server-side (recoverWithPhraseFinalize's internal
+      // setToken() call wrote the same value to localStorage). Drop it here,
+      // same as every other auth-completing flow, so it can't outlive the
+      // cookie and silently re-authenticate this account later.
+      clearToken()
 
       // 6. Re-wrap master key under the new password and store in vault.
       // finalizeResult.user_id (task 1531/1534, P0) is the account recovery

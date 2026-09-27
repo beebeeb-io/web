@@ -445,6 +445,13 @@ export function Login() {
         }
         const authedUserId = result.user_id
         setToken(result.session_token)
+        // Task 1553 — same reason as handleSubmit/handle2faVerify above:
+        // server already set the fresh bb_session cookie in the
+        // passkey-login-finish response, so drop the localStorage bearer
+        // finishPasskeyLogin just wrote before it can shadow the cookie or
+        // silently re-authenticate this account later via
+        // POST /auth/upgrade-session after the cookie is gone.
+        clearToken()
         await refreshUser()
 
         // Task 1531/1534 (P0, cross-account master-key confusion). This used
