@@ -22,7 +22,7 @@ import fs from 'fs'
 import { unzipSync } from 'fflate'
 import { writeDocxFixture } from './helpers/office-fixtures'
 import { uploadAndWait, openPreview, previewOverlay, escapeRe } from './helpers/thumb-fixtures'
-import { OFFICE_BOOT_BUDGET_MS, waitOfficeSettled } from './helpers/office-ready'
+import { OFFICE_SETTLE_BUDGET_MS, waitOfficeSettled } from './helpers/office-ready'
 
 const OFFICE_ASSETS_PRESENT = fs.existsSync('public/office/manifest.json')
 const OFFICE_FLAG_ON = process.env.VITE_FEATURE_OFFICE_EDITOR === 'true'
@@ -37,7 +37,7 @@ test.skip(
 )
 
 // Two engine boots (task 1585: at the app's own boot budget each) plus the save.
-test.setTimeout(2 * OFFICE_BOOT_BUDGET_MS + 120_000)
+test.setTimeout(2 * OFFICE_SETTLE_BUDGET_MS + 120_000)
 
 async function dismissDevBanner(page: Page): Promise<void> {
   const dismiss = page.getByRole('button', { name: 'Dismiss dev banner' })

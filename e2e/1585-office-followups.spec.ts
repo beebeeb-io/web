@@ -23,7 +23,7 @@ import path from 'path'
 import { strToU8, zipSync } from 'fflate'
 import { writePptxFixture, writeRichDocxFixture, RICH_DOCX_HEADINGS } from './helpers/office-fixtures'
 import { uploadAndWait, openPreview, previewOverlay } from './helpers/thumb-fixtures'
-import { OFFICE_BOOT_BUDGET_MS, autoDismissDevBanner, waitOfficeSettled } from './helpers/office-ready'
+import { OFFICE_SETTLE_BUDGET_MS, autoDismissDevBanner, waitOfficeSettled } from './helpers/office-ready'
 
 const OFFICE_ASSETS_PRESENT = fs.existsSync('public/office/manifest.json')
 const OFFICE_FLAG_ON = process.env.VITE_FEATURE_OFFICE_EDITOR === 'true'
@@ -32,7 +32,7 @@ const EVIDENCE_DIR = process.env.E2E_EVIDENCE_DIR ?? 'test-results/1585'
 test.skip(!OFFICE_ASSETS_PRESENT, 'public/office/manifest.json missing — run scripts/office-dev-assets.sh first')
 test.skip(!OFFICE_FLAG_ON, 'VITE_FEATURE_OFFICE_EDITOR!=true — this suite exercises the real feature-flagged engine')
 
-test.setTimeout(OFFICE_BOOT_BUDGET_MS + 120_000)
+test.setTimeout(OFFICE_SETTLE_BUDGET_MS + 120_000)
 
 const PHONE = { width: 390, height: 844 }
 const DESKTOP = { width: 1280, height: 800 }
@@ -114,7 +114,7 @@ test('(item 2) a document the engine cannot read gets a specific, honest error w
   })
 
   const error = tab.getByTestId('office-open-error')
-  await expect(error).toBeVisible({ timeout: OFFICE_BOOT_BUDGET_MS })
+  await expect(error).toBeVisible({ timeout: OFFICE_SETTLE_BUDGET_MS })
   const kind = await error.getAttribute('data-kind')
   const message = (await tab.getByTestId('office-open-error-message').textContent()) ?? ''
   const detail = (await tab.getByTestId('office-open-error-detail').textContent().catch(() => '')) ?? ''
@@ -208,6 +208,30 @@ test('(item 3) phone portrait, Impress: the slide label and the save state share
   await expectStatusBarFits(tab, PHONE.width)
   fs.mkdirSync(EVIDENCE_DIR, { recursive: true })
   await tab.screenshot({ path: path.join(EVIDENCE_DIR, 'item3-phone-impress.png') })
+  await tab.close()
+})
+
+test('(ready helper) a page-level failure fails the wait at once, with its message', async ({ page, context }) => {
+  // Codex P2 on PR #123: a download/decrypt/metadata failure renders
+  // office-editor-page-error (before OfficeEditor mounts), which the helper
+  // must treat like office-open-error instead of waiting out its budget.
+  await page.goto('/')
+  const tab = await context.newPage()
+  await autoDismissDevBanner(tab)
+  await tab.goto(`/office/${crypto.randomUUID()}`)
+  const started = Date.now()
+  let caught: unknown = null
+  try {
+    // A budget well under the real one: a helper that ignored the page-level
+    // error would burn all of it and fail with a generic locator timeout.
+    await waitOfficeSettled(tab, 60_000)
+  } catch (err) {
+    caught = err
+  }
+  const elapsed = Date.now() - started
+  console.log(`[1585 ready helper] elapsed=${elapsed}ms error=${String(caught).slice(0, 200)}`)
+  expect(String(caught)).toContain('office editor failed to open')
+  expect(elapsed).toBeLessThan(30_000)
   await tab.close()
 })
 

@@ -20,7 +20,7 @@ import { test, expect, type BrowserContext, type Page } from '@playwright/test'
 import fs from 'fs'
 import { writeDocxFixture } from './helpers/office-fixtures'
 import { uploadAndWait, openPreview, previewOverlay } from './helpers/thumb-fixtures'
-import { OFFICE_BOOT_BUDGET_MS, autoDismissDevBanner, waitOfficeSettled } from './helpers/office-ready'
+import { OFFICE_SETTLE_BUDGET_MS, autoDismissDevBanner, waitOfficeSettled } from './helpers/office-ready'
 
 const OFFICE_ASSETS_PRESENT = fs.existsSync('public/office/manifest.json')
 const OFFICE_FLAG_ON = process.env.VITE_FEATURE_OFFICE_EDITOR === 'true'
@@ -32,7 +32,7 @@ test.skip(!OFFICE_FLAG_ON, 'VITE_FEATURE_OFFICE_EDITOR!=true — this suite exer
 // Task 1585: (c) boots the engine twice and saves three times. The budget
 // covers two full boots at the app's own boot budget plus the saves, so the
 // test's own clock is never shorter than the product's.
-test.setTimeout(2 * OFFICE_BOOT_BUDGET_MS + 240_000)
+test.setTimeout(2 * OFFICE_SETTLE_BUDGET_MS + 240_000)
 
 async function dismissDevBanner(page: Page): Promise<void> {
   // Task 1585: a locator handler dismisses the banner before any later
