@@ -18,6 +18,7 @@ jobs:
       - run: bun install
       - run: bunx tsc --noEmit
       - run: bun test # unit tests (test/, scoped via bunfig.toml) — 0740b: was never in CI
+      - run: bun run test:order # 1590: reversed + shuffled (seed in the log) + each file alone, and no raw mock.module
       - run: bun run build
 
   claims-guard:

@@ -27,6 +27,7 @@
     "build": "tsc --noEmit && vite build && node gen-wasm-sri.mjs",
     "preview": "vite preview",
     "test": "bun test",
+    "test:order": "bash scripts/test-order-guard.sh",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install chromium",
     "test:e2e:isolated": "./e2e/scripts/web-e2e.sh",
