@@ -17,8 +17,15 @@
  * session, including the nested engine iframe.
  *
  * Run with the private-port harness (task brief):
- *   VITE_FEATURE_OFFICE_EDITOR=true E2E_API_PORT=37851 E2E_VITE_PORT=37852 \
- *     E2E_DB_NAME=beebeeb_web_e2e_impress ./e2e/scripts/web-e2e.sh e2e/1567-office-impress.spec.ts
+ *   VITE_FEATURE_OFFICE_EDITOR=true VITE_STATUS_URL=http://localhost:37851 \
+ *     E2E_API_PORT=37851 E2E_VITE_PORT=37852 E2E_DB_NAME=beebeeb_web_e2e_impress \
+ *     ./e2e/scripts/web-e2e.sh e2e/1567-office-impress.spec.ts
+ *
+ * `VITE_STATUS_URL` is required, not optional (integration lane, task 1567):
+ * without it the pre-existing `IncidentBanner` (src/app.tsx) fetches the
+ * real `status.beebeeb.io` on mount and the zero-egress assertion below has
+ * no special case for it — see e2e/1567-office-editor.spec.ts's own header
+ * for the original writeup of this pre-existing, app-wide behavior.
  */
 import { test, expect, type Page } from '@playwright/test'
 import fs from 'fs'

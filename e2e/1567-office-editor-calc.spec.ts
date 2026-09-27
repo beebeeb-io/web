@@ -6,8 +6,19 @@
  * e2e/1567-office-editor.spec.ts's (Writer lane) real-engine rigor and
  * private-port convention, for Calc's own chrome:
  *
- *   VITE_FEATURE_OFFICE_EDITOR=true E2E_API_PORT=37841 E2E_VITE_PORT=37842 \
- *     E2E_DB_NAME=beebeeb_web_e2e_calc ./e2e/scripts/web-e2e.sh e2e/1567-office-editor-calc.spec.ts
+ *   VITE_FEATURE_OFFICE_EDITOR=true VITE_STATUS_URL=http://localhost:37841 \
+ *     E2E_API_PORT=37841 E2E_VITE_PORT=37842 E2E_DB_NAME=beebeeb_web_e2e_calc \
+ *     ./e2e/scripts/web-e2e.sh e2e/1567-office-editor-calc.spec.ts
+ *
+ * `VITE_STATUS_URL` matters here (integration lane, task 1567, found by
+ * actually running this without it): the app's pre-existing `IncidentBanner`
+ * (src/app.tsx) fetches `status.beebeeb.io` on every mount, including this
+ * spec's own office tab, and the zero-egress assertion below has no special
+ * case for it — same pre-existing app-wide behavior the Writer lane's own
+ * e2e file already documents, not something Calc introduced. Omitting the
+ * override does not reliably fail (the fetch can lose the race with the
+ * assertion), so a clean run here is not proof the assertion is airtight —
+ * always pass it.
  *
  * Covers: upload a real .xlsx (A1:A3 = 10/20/30) → preview → Edit (own
  * top-level tab) → OUR ref box navigates via a real `.uno:GoToCell` dispatch
