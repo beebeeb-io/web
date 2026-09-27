@@ -60,17 +60,14 @@ WEB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # entirely — convention `repos/web-NNNN` or `~/code/bb-worktrees/web-NNNN`
 # per the workspace CLAUDE.md — so a worktree 2 levels up lands outside
 # beebeeb.io altogether and SERVER_DIR below silently resolved to a
-# nonexistent path). `git rev-parse --git-common-dir` always returns the
+# nonexistent path). git's common dir (scripts/lib/workspace-root.sh) always returns the
 # PRIMARY checkout's .git, even when this script runs from a linked worktree,
 # so this locates the one real repos/server (and its built debug binary)
 # regardless of where THIS checkout lives on disk. Falls back to the old
 # relative computation if run outside a git worktree/repo entirely.
-if GIT_COMMON_DIR="$(cd "$WEB_DIR" && git rev-parse --git-common-dir 2>/dev/null)"; then
-  PRIMARY_WEB_DIR="$(cd "$GIT_COMMON_DIR/.." && pwd)"
-  WORKSPACE="$(cd "$PRIMARY_WEB_DIR/../.." && pwd)"
-else
-  WORKSPACE="$(cd "$WEB_DIR/../.." && pwd)"
-fi
+# shellcheck source=scripts/lib/workspace-root.sh
+source "$WEB_DIR/scripts/lib/workspace-root.sh"
+WORKSPACE="$(bb_workspace_root "$WEB_DIR")"  # task 1581: cwd-independent
 SERVER_DIR="$WORKSPACE/repos/server"
 # API binary: defaults to the debug build, but E2E_API_BIN can point elsewhere —
 # notably at a RELEASE build. The dev auto-login derives a 256 MiB Argon2id

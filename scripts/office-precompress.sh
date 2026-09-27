@@ -34,6 +34,8 @@
 #
 # Usage:
 #   ./scripts/office-precompress.sh --input <dir> [--output <dir>] [--version <hash>]
+#   ./scripts/office-precompress.sh --input <dir> --print-version
+#       (print the content-addressed version and exit; writes nothing)
 #
 # Requires: brotli, shasum (or sha256sum), python3 (for the JSON manifest).
 
@@ -42,12 +44,14 @@ set -euo pipefail
 INPUT_DIR=""
 OUTPUT_DIR=""
 VERSION=""
+PRINT_VERSION=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --input) INPUT_DIR="$2"; shift 2 ;;
     --output) OUTPUT_DIR="$2"; shift 2 ;;
     --version) VERSION="$2"; shift 2 ;;
+    --print-version) PRINT_VERSION=1; shift ;;
     -h|--help)
       grep '^#' "$0" | sed 's/^# \{0,1\}//'
       exit 0
@@ -68,11 +72,6 @@ if [[ ! -d "$INPUT_DIR" ]]; then
   exit 1
 fi
 
-if ! command -v brotli >/dev/null 2>&1; then
-  echo "office-precompress.sh: 'brotli' CLI not found (brew install brotli)" >&2
-  exit 1
-fi
-
 SHASUM_CMD=""
 if command -v shasum >/dev/null 2>&1; then
   SHASUM_CMD="shasum -a 256"
@@ -83,22 +82,44 @@ else
   exit 1
 fi
 
+# Content-addressed bundle version (task 1581): sha256 over the sorted
+# "<sha256>  ./<relative path>" lines of every file, first 16 hex chars.
+bundle_version() {
+  (
+    cd "$1" &&
+      find . -type f -print0 | LC_ALL=C sort -z | xargs -0 $SHASUM_CMD
+  ) | $SHASUM_CMD | cut -c1-16
+}
+
+if [[ -z "$VERSION" ]]; then
+  # Derive a stable version from the sha256 of every input file's relative path +
+  # content hash — content-addressed, so an unchanged artifact set reproduces
+  # the same version directory across runs (needed for the office cache's
+  # "same content, same URL, cache forever" contract in public/sw.js).
+  #
+  # Task 1581: hash RELATIVE paths + content only. The previous form hashed
+  # `shasum "$f"` lines, which embed the absolute path — and the input is a
+  # fresh `mktemp -d` on every staging, so identical bytes produced a new
+  # version per build (0aa0675ef9f2a8b4 vs 292096dbdd12ceef) and every deploy
+  # made opted-in users re-download the whole engine. `cd` first so shasum
+  # prints `./<rel>`; LC_ALL=C so the sort order is locale-independent.
+  VERSION="$(bundle_version "$INPUT_DIR")"
+fi
+
+if [[ "$PRINT_VERSION" -eq 1 ]]; then
+  echo "$VERSION"
+  exit 0
+fi
+
+if ! command -v brotli >/dev/null 2>&1; then
+  echo "office-precompress.sh: 'brotli' CLI not found (brew install brotli)" >&2
+  exit 1
+fi
+
 if [[ -z "$OUTPUT_DIR" ]]; then
   OUTPUT_DIR="$(mktemp -d -t bb-office-precompress)"
 fi
 mkdir -p "$OUTPUT_DIR"
-
-if [[ -z "$VERSION" ]]; then
-  # Derive a stable version from the sha256 of every input file's name+size+hash
-  # concatenated — content-addressed, so an unchanged artifact set reproduces
-  # the same version directory across runs (needed for the office cache's
-  # "same content, same URL, cache forever" contract in public/sw.js).
-  VERSION="$(
-    find "$INPUT_DIR" -type f | sort | while read -r f; do
-      $SHASUM_CMD "$f"
-    done | $SHASUM_CMD | cut -c1-16
-  )"
-fi
 
 echo "office-precompress.sh: input=$INPUT_DIR output=$OUTPUT_DIR version=$VERSION"
 echo
@@ -164,7 +185,7 @@ assets.append({
 with open(manifest_path, "w") as f:
     json.dump(assets, f)
 PY
-done < <(find "$INPUT_DIR" -type f -print0 | sort -z)
+done < <(find "$INPUT_DIR" -type f -print0 | LC_ALL=C sort -z)
 
 echo
 TOTAL_RATIO=$(awk -v o="$TOTAL_ORIG" -v b="$TOTAL_BR" 'BEGIN { if (o > 0) printf "%.1f%%", (1 - b/o) * 100; else print "n/a" }')
