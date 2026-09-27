@@ -70,6 +70,19 @@ export function sniffOfficeContainer(bytes: Uint8Array): OfficeContainer | null 
   return null
 }
 
+/**
+ * The file's REAL extension (lowercase, no dot), or '' when it has none.
+ * Use this, not resolveOfficeFileKind().ext, as checkOfficeBytes' input:
+ * for a file matched only by its MIME type that helper synthesizes the
+ * modern save extension (a legacy OLE .doc with no extension comes back as
+ * "docx"), which would wrongly demand a zip (Codex review, PR #119).
+ */
+export function extensionOf(filename: string): string {
+  const dot = filename.lastIndexOf('.')
+  if (dot <= 0 || dot === filename.length - 1) return ''
+  return filename.slice(dot + 1).toLowerCase()
+}
+
 export type OfficeBytesCheck =
   | { ok: true; container: OfficeContainer | null }
   | { ok: false; message: string; found: OfficeContainer | null; expected: OfficeContainer | null; firstBytesHex: string }

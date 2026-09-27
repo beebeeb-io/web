@@ -37,7 +37,7 @@ import { decryptFileMetadata } from '../lib/crypto'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { useKeys } from '../lib/key-context'
 import { resolveOfficeFileKind } from '../lib/office/office-file-kind'
-import { checkOfficeBytes } from '../lib/office/office-magic'
+import { checkOfficeBytes, extensionOf } from '../lib/office/office-magic'
 import { OfficeEditor } from '../components/office/office-editor'
 import { ShareDialog } from '../components/share-dialog'
 
@@ -110,7 +110,9 @@ export function OfficeEditorPage() {
         // decryption/assembly bug, a damaged upload, a renamed file) fails
         // loudly here with a message that says what is wrong, instead of
         // being handed to LibreOffice to make sense of.
-        const check = checkOfficeBytes(bytes, officeKind.ext)
+        // The name's REAL extension, not officeKind.ext: for a MIME-only match
+        // that one is a synthesized save extension (see extensionOf).
+        const check = checkOfficeBytes(bytes, extensionOf(name))
         if (!check.ok) {
           console.error(`[office] refused to open: expected ${check.expected ?? 'zip/ole'} container, found ${check.found ?? 'none'}`)
           setState({ stage: 'error', message: check.message })

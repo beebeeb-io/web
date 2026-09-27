@@ -11,7 +11,7 @@
 import { describe, test, expect } from 'bun:test'
 import { readFileSync } from 'fs'
 import path from 'path'
-import { checkOfficeBytes, sniffOfficeContainer } from '../src/lib/office/office-magic'
+import { checkOfficeBytes, extensionOf, sniffOfficeContainer } from '../src/lib/office/office-magic'
 import { inspectHostDocument, DAMAGED_HOST_MESSAGE } from '../src/components/office/office-engine-host'
 
 const ZIP = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00])
@@ -88,6 +88,24 @@ describe('checkOfficeBytes', () => {
     const r = checkOfficeBytes(CIPHERTEXT, 'bin')
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.message).toBe('This file could not be decrypted or is not a valid office document.')
+  })
+})
+
+describe('extensionOf (Codex review, PR #119)', () => {
+  test('returns the real extension, lowercased, or empty when there is none', () => {
+    expect(extensionOf('Report.DOCX')).toBe('docx')
+    expect(extensionOf('archive.tar.xls')).toBe('xls')
+    expect(extensionOf('Report')).toBe('')
+    expect(extensionOf('.hidden')).toBe('')
+    expect(extensionOf('trailing.')).toBe('')
+  })
+
+  test('a legacy OLE file matched only by MIME (no extension) is accepted, a zip too, junk is not', () => {
+    // resolveOfficeFileKind('application/msword', 'Report') says ext "docx";
+    // the guard must look at the real (empty) extension instead.
+    expect(checkOfficeBytes(OLE, extensionOf('Report')).ok).toBe(true)
+    expect(checkOfficeBytes(ZIP, extensionOf('Report')).ok).toBe(true)
+    expect(checkOfficeBytes(CIPHERTEXT, extensionOf('Report')).ok).toBe(false)
   })
 })
 
