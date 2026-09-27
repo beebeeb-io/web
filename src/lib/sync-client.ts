@@ -33,7 +33,8 @@ export interface PendingOp {
 }
 
 interface SyncEvent {
-  type: 'snapshot' | 'op' | 'status' | 'error'
+  /** `tree` = the tree changed outside the sequenced op log (e.g. a star). */
+  type: 'snapshot' | 'op' | 'tree' | 'status' | 'error'
   status?: ConnectionStatus
   error?: Error
   op?: SyncOp
@@ -111,6 +112,18 @@ export class SyncClient {
   private listeners = new Set<Listener>()
   private started = false
   private destroyed = false
+  /**
+   * Star ordering state (task 1577, PR #115 review). `file.starred` is a
+   * realtime event, not a sequenced op, so it has no seq_id to order by.
+   * - `starFrameAt`: server `timestamp` (ms) of the newest `file.starred`
+   *   frame applied per file — an older frame for the same file is dropped.
+   * - `starEchoes`: local-clock times of this client's own star PATCHes whose
+   *   `file.starred` echo has not come back over the stream yet. While more
+   *   than one is outstanding, an arriving frame predates a newer local write
+   *   the tree already reflects, so it must not overwrite it.
+   */
+  private starFrameAt = new Map<string, number>()
+  private starEchoes = new Map<string, number[]>()
 
   getStatus(): ConnectionStatus {
     return this.status
@@ -252,6 +265,9 @@ export class SyncClient {
     }
 
     const url = `${getApiUrl()}/api/v1/sync/stream?token=${encodeURIComponent(token)}`
+    // Echoes published while no stream was open are gone for good; waiting
+    // for them would swallow the next genuine frame for that file.
+    this.starEchoes.clear()
     const es = new EventSource(url)
     this.eventSource = es
 
@@ -261,12 +277,7 @@ export class SyncClient {
     }
 
     es.onmessage = (msg: MessageEvent<string>) => {
-      try {
-        const op = JSON.parse(msg.data) as SyncOp
-        this.applyRemoteOp(op)
-      } catch (err) {
-        console.error('[SyncClient] Failed to parse SSE message', err)
-      }
+      this.ingestStreamFrame(msg.data)
     }
 
     es.onerror = () => {
@@ -307,6 +318,104 @@ export class SyncClient {
       console.warn('[SyncClient] reconnect catch-up failed', err)
     }
     void this.openStream()
+  }
+
+  /**
+   * Handle one raw frame from `/sync/stream`.
+   *
+   * The server's SSE stream forwards EVERY message on the user's event bus —
+   * both sequenced sync ops (`{ seq_id, op_type, payload }`) and the realtime
+   * events the WebSocket also carries (`{ type: 'file.starred', data }`, …).
+   * Before task 1577 every frame was treated as a sync op: a realtime event
+   * fell through `applyOpToTree`'s default branch, overwrote `lastSeq` with
+   * `undefined`, and still emitted a tree change. The drive re-derived its
+   * rows from a tree that had never learned the star → the row reverted to
+   * "Star" whenever that frame landed after the PATCH response.
+   *
+   * Exposed (not private) so unit tests can feed frames without an
+   * EventSource.
+   */
+  ingestStreamFrame(raw: string): void {
+    let frame: StreamFrame
+    try {
+      frame = classifyStreamFrame(JSON.parse(raw))
+    } catch (err) {
+      console.error('[SyncClient] Failed to parse SSE message', err)
+      return
+    }
+    switch (frame.kind) {
+      case 'op':
+        this.applyRemoteOp(frame.op)
+        break
+      case 'starred':
+        this.applyStarredFrame(frame.id, frame.isStarred, frame.at)
+        break
+      case 'ignore':
+        // A realtime event with no tree-state effect: leave lastSeq and the
+        // tree alone, and do not bump listeners (a bump with an unchanged tree
+        // just makes every consumer re-derive for nothing).
+        break
+    }
+  }
+
+  /**
+   * Record this client's own star write — the authoritative
+   * `PATCH /files/:id/star` response — in the tree, so a later tree-driven
+   * re-derive keeps it instead of reverting it. The server publishes exactly
+   * one `file.starred` frame per PATCH; that echo is counted as outstanding
+   * so a frame from an OLDER write (star → unstar, the star's frame delayed
+   * past the unstar's response) cannot restore the superseded value.
+   * Stars are not sequenced sync ops, so this never touches `lastSeq`.
+   */
+  setNodeStarred(id: string, isStarred: boolean): void {
+    const now = Date.now()
+    const echoes = this.liveStarEchoes(id, now)
+    echoes.push(now)
+    this.starEchoes.set(id, echoes)
+    this.writeStarred(id, isStarred)
+  }
+
+  /**
+   * Apply a `file.starred` frame from `/sync/stream`. The SSE stream is the
+   * ONLY realtime source allowed to write star state into the tree (the drive
+   * WebSocket handler no longer does): one ordered connection, so two
+   * deliveries of the same event can never be reordered against each other.
+   * On top of that ordering:
+   * 1. a frame whose server timestamp is older than the newest applied for
+   *    this file is dropped (publishes from different API nodes reach the
+   *    stream via the bridge and are not guaranteed to be in commit order);
+   * 2. every frame consumes one outstanding local echo — the oldest — and is
+   *    applied only when no newer local write is still waiting for its echo.
+   * Every PATCH yields exactly one frame, so once the echoes drain the tree
+   * holds the value of the last frame the server published: eventually
+   * correct even when another device toggles concurrently.
+   */
+  private applyStarredFrame(id: string, isStarred: boolean, at: number | undefined): void {
+    const echoes = this.liveStarEchoes(id, Date.now())
+    if (echoes.length > 0) echoes.shift()
+    if (echoes.length > 0) this.starEchoes.set(id, echoes)
+    else this.starEchoes.delete(id)
+
+    if (at !== undefined) {
+      const newest = this.starFrameAt.get(id)
+      if (newest !== undefined && at < newest) return
+      this.starFrameAt.set(id, at)
+    }
+    if (echoes.length > 0) return
+    this.writeStarred(id, isStarred)
+  }
+
+  /** Outstanding local echoes for `id`, minus any too old to still arrive. */
+  private liveStarEchoes(id: string, now: number): number[] {
+    return (this.starEchoes.get(id) ?? []).filter((t) => now - t < STAR_ECHO_TTL_MS)
+  }
+
+  /** Write a star value into the tree; emits a tree change only on a move. */
+  private writeStarred(id: string, isStarred: boolean): void {
+    const existing = this.tree.get(id)
+    if (!existing || Boolean(existing.is_starred) === isStarred) return
+    this.tree.set(id, { ...existing, is_starred: isStarred })
+    this.emit({ type: 'tree' })
   }
 
   /**
@@ -543,4 +652,47 @@ function payloadToNode(
     created_at: now,
     updated_at: now,
   }
+}
+
+/**
+ * How long a local star write waits for its `file.starred` echo before it
+ * stops holding back other frames for that file. The echo is published before
+ * the PATCH response is sent, so it normally lands within milliseconds; the
+ * TTL only bounds the damage of an echo lost to a dropped stream.
+ */
+const STAR_ECHO_TTL_MS = 15_000
+
+/** A `/sync/stream` frame, classified. See `SyncClient.ingestStreamFrame`. */
+export type StreamFrame =
+  | { kind: 'op'; op: SyncOp }
+  | { kind: 'starred'; id: string; isStarred: boolean; at?: number }
+  | { kind: 'ignore' }
+
+/**
+ * Classify a parsed `/sync/stream` frame. A sequenced sync op carries a
+ * numeric `seq_id` and a string `op_type`; anything else is a realtime
+ * event-bus message (`{ type, data }`, serialised by the server's
+ * `#[serde(tag = "type", content = "data")] enum SyncEvent`). Of those, only
+ * `file.starred` (`data: { id, is_starred }`) carries node state the tree
+ * must mirror — every other realtime event already has a matching sync op
+ * or no tree effect.
+ */
+export function classifyStreamFrame(frame: unknown): StreamFrame {
+  if (!frame || typeof frame !== 'object') return { kind: 'ignore' }
+  const f = frame as Record<string, unknown>
+  if (typeof f.seq_id === 'number' && Number.isFinite(f.seq_id) && typeof f.op_type === 'string') {
+    return { kind: 'op', op: f as unknown as SyncOp }
+  }
+  if (f.type === 'file.starred' && f.data && typeof f.data === 'object') {
+    const d = f.data as Record<string, unknown>
+    if (typeof d.id === 'string' && typeof d.is_starred === 'boolean') {
+      // `timestamp` is the server's publish time (event_bus.rs
+      // TimestampedEvent, RFC 3339). Absent/unparseable → no time ordering.
+      const at = typeof f.timestamp === 'string' ? Date.parse(f.timestamp) : NaN
+      return Number.isFinite(at)
+        ? { kind: 'starred', id: d.id, isStarred: d.is_starred, at }
+        : { kind: 'starred', id: d.id, isStarred: d.is_starred }
+    }
+  }
+  return { kind: 'ignore' }
 }

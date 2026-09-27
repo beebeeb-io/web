@@ -21,6 +21,7 @@ import {
   type DriveFile,
 } from '../lib/api'
 import { useWsEvent } from '../lib/ws-context'
+import { useSync } from '../lib/sync-context'
 import { useSelfHealRefetch } from '../hooks/use-self-heal-refetch'
 import { userFriendlyError } from '../lib/user-friendly-error'
 import { EmptyStarred } from '../components/empty-states/empty-starred'
@@ -28,6 +29,7 @@ import { EmptyStarred } from '../components/empty-states/empty-starred'
 export function Starred() {
   const { getFileKey, getFileKeyForFile, isUnlocked, cryptoReady } = useKeys()
   const { showToast } = useToast()
+  const { setNodeStarred } = useSync()
   const navigate = useNavigate()
   const { previewFile, openPreview, closePreview } = useFilePreview()
 
@@ -73,6 +75,7 @@ export function Starred() {
   async function handleToggleStar(fileId: string) {
     try {
       const result = await toggleStar(fileId)
+      setNodeStarred(fileId, result.is_starred) // keep the sync tree in step (task 1577)
       if (!result.is_starred) {
         setFiles((prev) => prev.filter((f) => f.id !== fileId))
       } else {
