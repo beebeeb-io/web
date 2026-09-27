@@ -98,7 +98,10 @@ cp "$BRIDGE_DIR/bb-office-worker.js" "$VDIR/bridge/bb-office-worker.js"
 #     (build/make-third-party-notices.sh). Optional here so an older office
 #     tree still assembles for dev/e2e; office-bundle-stage.sh requires it.
 if [[ -f "$BRIDGE_DIR/THIRD_PARTY_NOTICES.txt" ]]; then
-  cp "$BRIDGE_DIR/THIRD_PARTY_NOTICES.txt" "$VDIR/THIRD_PARTY_NOTICES.txt"
+  # install -m 0644, not cp: nginx in the image runs as a non-root user, and a
+  # 0600 source (a checkout written under a tight umask) would COPY in as 0600
+  # and 403.
+  install -m 0644 "$BRIDGE_DIR/THIRD_PARTY_NOTICES.txt" "$VDIR/THIRD_PARTY_NOTICES.txt"
 else
   echo "office-dev-assets.sh: WARNING: $BRIDGE_DIR/THIRD_PARTY_NOTICES.txt not found; bundle has no license notices (prod staging refuses this)" >&2
 fi
