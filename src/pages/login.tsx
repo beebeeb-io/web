@@ -12,7 +12,7 @@ import type { ProvisionAuthMethod } from '../lib/device-provision-logic'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
 import { devAutoAuth } from '../lib/dev-auth'
-import { startPasskeyLogin, finishPasskeyLogin, setToken, clearToken, opaqueLoginStart as apiOpaqueLoginStart, opaqueLoginFinish as apiOpaqueLoginFinish, serverOptsToGetOptions, credentialToAuthenticationJSON, getVaultKeyEscrow } from '../lib/api'
+import { startPasskeyLogin, finishPasskeyLogin, setToken, clearLegacyBearer, opaqueLoginStart as apiOpaqueLoginStart, opaqueLoginFinish as apiOpaqueLoginFinish, serverOptsToGetOptions, credentialToAuthenticationJSON, getVaultKeyEscrow } from '../lib/api'
 import { opaqueLoginStart, opaqueLoginFinish, toBase64, fromBase64 } from '../lib/crypto'
 import { autoUpgradeToV1 } from '../lib/auto-upgrade'
 import { prfExtensionInputs, extractPrfOutput, getVaultWrapKey, decryptVaultBlob } from '../lib/passkey-vault'
@@ -146,7 +146,15 @@ export function Login() {
       // sent as a bearer header that shadows the fresh cookie (server
       // 401s on stale bearer → client treats as session-expired → user
       // gets logged out immediately after logging in).
-      clearToken()
+      //
+      // clearLegacyBearer(), NOT clearToken() (PR #109 review round 2,
+      // Codex P2): opaqueLoginFinish (above) just called its own internal
+      // setEmail(email) — the user is logging IN, not out. clearToken()
+      // also fires the registered onTokenCleared callback (src/lib/api.ts
+      // → clearEmail()), which would wipe that same bb_email it was just
+      // given, breaking a LATER VaultUnlock.handlePasskeyUnlock() call (it
+      // reads bb_email via getEmail()).
+      clearLegacyBearer()
 
       // OPAQUE auth succeeded — refresh user session
       await refreshUser()
@@ -258,7 +266,13 @@ export function Login() {
     try {
       // Same reason as handleSubmit: server has set the fresh bb_session
       // cookie, drop any stale localStorage bearer that would shadow it.
-      clearToken()
+      //
+      // clearLegacyBearer(), NOT clearToken() (PR #109 review round 2,
+      // Codex P2, same reasoning as handleSubmit above): 2FA verification
+      // just succeeded — the user is logging in, not out — so clearing
+      // bb_email here (clearToken()'s onTokenCleared side effect) would
+      // break a LATER VaultUnlock.handlePasskeyUnlock() call.
+      clearLegacyBearer()
 
       if (!verifyResult.user_id) {
         setError('Could not confirm account identity. Try logging in again.')
@@ -325,7 +339,12 @@ export function Login() {
       const fallbackLoginResult = await apiOpaqueLoginFinish(email, toBase64(loginFinish.message), serverResp.server_state)
       // Drop any stale localStorage bearer so the fresh bb_session cookie
       // is the only auth carried on subsequent requests.
-      clearToken()
+      //
+      // clearLegacyBearer(), NOT clearToken() (PR #109 review round 2,
+      // Codex P2, same reasoning as handleSubmit above): apiOpaqueLoginFinish
+      // just called its own internal setEmail(email) — this password
+      // fallback just authenticated the user, it did not log them out.
+      clearLegacyBearer()
       await refreshUser()
 
       // Try unlocking the local vault with this password
@@ -445,6 +464,22 @@ export function Login() {
         }
         const authedUserId = result.user_id
         setToken(result.session_token)
+        // Task 1553 — same reason as handleSubmit/handle2faVerify above:
+        // server already set the fresh bb_session cookie in the
+        // passkey-login-finish response, so drop the localStorage bearer
+        // finishPasskeyLogin just wrote before it can shadow the cookie or
+        // silently re-authenticate this account later via
+        // POST /auth/upgrade-session after the cookie is gone.
+        //
+        // clearLegacyBearer(), NOT clearToken() (PR #109 review round 2,
+        // Codex P2): this passkey login just authenticated the user — it
+        // is not a logout. clearToken() also fires the registered
+        // onTokenCleared callback (src/lib/api.ts → clearEmail()), which
+        // would wipe bb_email (set on a prior login/signup on this device)
+        // even though the user remains fully signed in, breaking a LATER
+        // VaultUnlock.handlePasskeyUnlock() call (it reads bb_email via
+        // getEmail()).
+        clearLegacyBearer()
         await refreshUser()
 
         // Task 1531/1534 (P0, cross-account master-key confusion). This used

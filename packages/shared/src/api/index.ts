@@ -23,6 +23,7 @@ export {
   getToken,
   setToken,
   clearToken,
+  clearLegacyBearer,
 } from './token'
 export {
   registerErrorNotifier,
