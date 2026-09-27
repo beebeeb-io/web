@@ -110,6 +110,14 @@ export interface UploadStatusResponse {
   is_uploading: boolean
 }
 
+/** Response from `POST /api/v1/files/:id/upload/abandon` (task 1571). */
+export interface UploadAbandonResponse {
+  id: string
+  status: 'reverted' | 'deleted' | 'not_uploading'
+  previous_version_number?: number
+  deleted: boolean
+}
+
 export interface SyncNode {
   id: string
   name_encrypted: string

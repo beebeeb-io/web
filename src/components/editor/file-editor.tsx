@@ -25,7 +25,7 @@ import { createPortal } from 'react-dom'
 import Markdown from 'react-markdown'
 import { Icon, BBButton } from '@beebeeb/shared'
 import type { DriveFile } from '../../lib/api'
-import { getFile, listVersions } from '../../lib/api'
+import { abandonUpload, getFile, listVersions } from '../../lib/api'
 import { decryptToBlob } from '../../lib/encrypted-download'
 import { encryptedUpload } from '../../lib/encrypted-upload'
 import { useKeys } from '../../lib/key-context'
@@ -151,9 +151,31 @@ export const FileEditor = forwardRef<FileEditorHandle, FileEditorProps>(function
   // AFTER the dialog said the edit would be discarded (PR #103 review
   // thread).
   const inFlightUploadRef = useRef<AbortController | null>(null)
+  // The server file_id that upload targets (task 1571) — `abort()` above
+  // only cancels the client's OWN fetch; it does nothing about a v2
+  // `initUpload` that already landed server-side and set
+  // `files.is_uploading = TRUE` before the abort fired. Without this, that
+  // file stays wedged and 409s every subsequent save (task 1563) until the
+  // 7-day TTL sweep reaches it. Set together with `inFlightUploadRef`
+  // (before the same first `await`), cleared together in the same
+  // `finally` blocks.
+  const inFlightFileIdRef = useRef<string | null>(null)
 
   const abortInFlightSave = useCallback(() => {
     inFlightUploadRef.current?.abort()
+    const fileId = inFlightFileIdRef.current
+    if (fileId) {
+      // Fire-and-forget: the dialog that triggered this discard doesn't wait
+      // on it, and it's always safe — a race where the upload actually
+      // completed just before the abort lands on a `not_uploading` no-op
+      // server-side (see `abandonUpload`'s doc comment), never touching the
+      // now-current version.
+      abandonUpload(fileId).catch(() => {
+        // Best-effort only. A failure here just means the 7-day TTL sweep
+        // (server task 1571) reclaims the wedged upload later instead of
+        // this call doing it immediately — never a data-loss risk.
+      })
+    }
   }, [])
 
   useImperativeHandle(ref, () => ({ abortSave: abortInFlightSave }), [abortInFlightSave])
@@ -223,6 +245,7 @@ export const FileEditor = forwardRef<FileEditorHandle, FileEditorProps>(function
     // abort. See performUpload's comment for the failure this closed.
     const controller = new AbortController()
     inFlightUploadRef.current = controller
+    inFlightFileIdRef.current = file.id
     try {
       // Write-ahead conflict check (design: "checks the latest version
       // before it saves") — never upload blind.
@@ -282,6 +305,7 @@ export const FileEditor = forwardRef<FileEditorHandle, FileEditorProps>(function
       setSaving(false)
       if (inFlightUploadRef.current === controller) {
         inFlightUploadRef.current = null
+        inFlightFileIdRef.current = null
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -309,6 +333,15 @@ export const FileEditor = forwardRef<FileEditorHandle, FileEditorProps>(function
       // comment.
       const controller = new AbortController()
       inFlightUploadRef.current = controller
+      // "Keep both" (resolution.fileId undefined) mints a brand-new random
+      // id INSIDE performUpload, which this caller never sees — a discard
+      // during THAT specific upload can't be abandoned by id here. It's not
+      // a correctness gap: a discarded "Keep both" upload has no previous
+      // version to protect (this module's whole reason to exist), so it
+      // still resolves exactly like an ordinary abandoned first-ever upload
+      // once the server's 7-day TTL sweep (task 1571) reaches it — just not
+      // as immediately as the reused-file_id case below.
+      inFlightFileIdRef.current = resolution.fileId ?? null
       try {
         const nameOverride = resolution.nameSuffix
           ? insertBeforeExtension(decryptedName, resolution.nameSuffix)
@@ -346,6 +379,7 @@ export const FileEditor = forwardRef<FileEditorHandle, FileEditorProps>(function
         setSaving(false)
         if (inFlightUploadRef.current === controller) {
           inFlightUploadRef.current = null
+          inFlightFileIdRef.current = null
         }
       }
     },

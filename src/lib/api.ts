@@ -91,6 +91,7 @@ import type {
   TrackingPreference,
   TransferProof,
   TransferStatus,
+  UploadAbandonResponse,
   UploadStatusResponse,
   UserRegionResponse,
   VersionSetting,
@@ -247,6 +248,7 @@ export type {
   TrackingPreference,
   TransferProof,
   TransferStatus,
+  UploadAbandonResponse,
   UploadStatusResponse,
   UserRegionResponse,
   VersionSetting,
@@ -1115,6 +1117,22 @@ export async function getUploadStatus(
   return request<UploadStatusResponse>(
     `/api/v1/files/${fileId}/upload/status`,
   )
+}
+
+/**
+ * Abandon an in-flight version upload for `fileId` (task 1571) — the
+ * server-side counterpart to a client-aborted save. Restores the file's
+ * previous, already-completed version as current (untouched); if the file
+ * had no previous version (its first-ever, still-incomplete upload), the
+ * row is removed instead. A no-op (never an error) when the file isn't
+ * currently mid-upload, so callers can fire this unconditionally after
+ * aborting a save without first checking server state.
+ */
+export async function abandonUpload(fileId: string): Promise<UploadAbandonResponse> {
+  return request<UploadAbandonResponse>(`/api/v1/files/${fileId}/upload/abandon`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  })
 }
 
 export async function getFile(id: string): Promise<DriveFile> {
