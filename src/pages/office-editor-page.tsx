@@ -31,19 +31,32 @@
 
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { getFile, listVersions, type DriveFile } from '../lib/api'
+import { ApiError, getFile, listVersions, type DriveFile } from '../lib/api'
 import { decryptToBlob } from '../lib/encrypted-download'
 import { decryptFileMetadata } from '../lib/crypto'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { useKeys } from '../lib/key-context'
 import { resolveOfficeFileKind } from '../lib/office/office-file-kind'
 import { checkOfficeBytes, extensionOf } from '../lib/office/office-magic'
+import { OfficeOpenError, errorText } from '../lib/office/office-open-error'
 import { OfficeEditor } from '../components/office/office-editor'
 import { ShareDialog } from '../components/share-dialog'
 
+/**
+ * Task 1585 item 2: a failure inside decryptToBlob is either the download
+ * (an ApiError from the server, or fetch's own TypeError when the network is
+ * gone) — reported as-is — or the decryption itself, which gets its own
+ * honest kind instead of whatever the crypto layer's message happens to be.
+ */
+function asDecryptFailure(err: unknown): unknown {
+  if (err instanceof ApiError || err instanceof TypeError || err instanceof OfficeOpenError) return err
+  if (err instanceof DOMException && err.name === 'AbortError') return err
+  return new OfficeOpenError('decrypt-failed', errorText(err))
+}
+
 type LoadState =
   | { stage: 'loading' }
-  | { stage: 'error'; message: string }
+  | { stage: 'error'; message: string; kind?: string; detail?: string }
   | {
       stage: 'ready'
       file: DriveFile
@@ -97,7 +110,9 @@ export function OfficeEditorPage() {
         }
         const [{ current_version: openedVersionNumber }, { plaintext }, thumbnailUrl] = await Promise.all([
           listVersions(file.id).catch(() => ({ current_version: file.version_number ?? 1 })),
-          decryptToBlob(file.id, fileKey, file.name_encrypted, mimeType ?? undefined, file.chunk_count, file.size_bytes),
+          decryptToBlob(file.id, fileKey, file.name_encrypted, mimeType ?? undefined, file.chunk_count, file.size_bytes).catch((err: unknown) => {
+            throw asDecryptFailure(err)
+          }),
           // CRITIQUE.md finding #5: best-effort — a brand-new/never-
           // thumbnailed file has none, and that must never block opening
           // the document itself.
@@ -128,7 +143,13 @@ export function OfficeEditorPage() {
           openedVersionNumber,
         })
       } catch (err) {
-        if (!cancelled) setState({ stage: 'error', message: err instanceof Error ? err.message : 'Failed to open this file.' })
+        if (cancelled) return
+        if (err instanceof OfficeOpenError) {
+          console.error(`[office] open failed (${err.kind}): ${err.detail}`)
+          setState({ stage: 'error', message: err.message, kind: err.kind, detail: err.detail })
+        } else {
+          setState({ stage: 'error', message: errorText(err) || 'Failed to open this file.' })
+        }
       }
     }
     load()
@@ -193,7 +214,10 @@ export function OfficeEditorPage() {
   if (state.stage === 'error') {
     return (
       <div className="flex h-screen w-full flex-col items-center justify-center gap-3 bg-paper text-center" data-testid="office-editor-page-error">
-        <p className="text-[14px] text-ink">{state.message}</p>
+        <p className="max-w-[480px] px-6 text-[14px] text-ink" data-kind={state.kind}>
+          {state.message}
+        </p>
+        {state.detail && <p className="max-w-[520px] break-words px-6 font-mono text-[11px] text-ink-4">{state.detail}</p>}
         <button type="button" onClick={() => window.close()} className="text-[13px] text-amber-deep underline">
           Close this tab
         </button>

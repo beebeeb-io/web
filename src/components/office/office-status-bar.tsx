@@ -27,6 +27,8 @@ export interface OfficeStatusBarProps {
    *  word-count cluster, and "read-only for now" instead of the save state.
    *  Set/unset only — never combined with the normal fields. */
   loadingLabel?: string | null
+  /** Task 1585: the Licenses/About control, last on the bar in every state. */
+  about?: React.ReactNode
 }
 
 function formatClock(d: Date): string {
@@ -43,21 +45,23 @@ export function OfficeStatusBar({
   lastSavedAt,
   extra,
   loadingLabel,
+  about,
 }: OfficeStatusBarProps) {
   if (loadingLabel) {
     return (
       <div
-        className="flex h-[30px] shrink-0 items-center gap-2 border-t border-line bg-paper-2 px-4 font-mono text-[11px] text-ink-3"
+        className="flex h-[30px] shrink-0 items-center gap-2 whitespace-nowrap border-t border-line bg-paper-2 px-4 font-mono text-[11px] text-ink-3"
         data-testid="office-status-bar"
       >
         <span className="h-[6px] w-[6px] shrink-0 rounded-full bg-amber" />
-        <span>{loadingLabel}</span>
+        <span className="min-w-0 truncate">{loadingLabel}</span>
         <span className="flex-1" />
         <span className="flex items-center gap-1.5 text-amber-deep">
           <Icon name="lock" size={11} />
           Encrypted
         </span>
-        <span>read-only for now</span>
+        <span className="hidden sm:inline">read-only for now</span>
+        {about}
       </div>
     )
   }
@@ -72,12 +76,15 @@ export function OfficeStatusBar({
 
   return (
     <div
-      className="flex h-[30px] shrink-0 items-center gap-4 border-t border-line bg-paper-2 px-4 font-mono text-[11px] text-ink-3"
+      // whitespace-nowrap + a tighter gap below `sm` (task 1585): at phone
+      // width the segments wrapped onto two lines inside the 30 px bar.
+      className="flex h-[30px] shrink-0 items-center gap-3 whitespace-nowrap border-t border-line bg-paper-2 px-4 font-mono text-[11px] text-ink-3 sm:gap-4"
       data-testid="office-status-bar"
     >
       {pageLabel && <span>{pageLabel}</span>}
       {wordCount !== null && <span>{wordCount.toLocaleString()} words</span>}
-      {language && <span>{language}</span>}
+      {/* The least important segment; dropped at phone width (task 1585). */}
+      {language && <span className="hidden sm:inline">{language}</span>}
       {extra}
       <span className="flex-1" />
       <span className="flex items-center gap-1.5 text-amber-deep">
@@ -85,6 +92,7 @@ export function OfficeStatusBar({
         Encrypted
       </span>
       <span data-testid="office-status-saved">{statusRight}</span>
+      {about}
     </div>
   )
 }

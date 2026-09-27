@@ -33,7 +33,8 @@ import { WRITER_HOME_COMMANDS, WRITER_PALETTE_ENTRIES, type PaletteEntry, type R
 import { CALC_STATE_COMMANDS, CALC_PALETTE_ENTRIES, type CalcCommandDef } from '../../lib/office/calc-commands'
 import { useCalcSelectionStats } from '../../lib/office/use-calc-selection-stats'
 import type { OfficeBridge, OutlineHeading, DocStats } from '../../lib/office/bb-office-bridge'
-import { useOfficeEngine, OfficeEngineFrame } from './office-engine-host'
+import { useOfficeEngine, OfficeEngineFrame, DAMAGED_HOST_MESSAGE } from './office-engine-host'
+import { OfficeOpenError, toOfficeOpenError } from '../../lib/office/office-open-error'
 import { OfficeHeader } from './office-header'
 import { Ribbon } from './ribbon'
 import { CalcRibbon } from './calc-ribbon'
@@ -45,6 +46,7 @@ import { FloatingSelectionToolbar } from './floating-selection-toolbar'
 import type { CharFormattingState } from './char-formatting-controls'
 import { ZoomControl } from './zoom-control'
 import { OfficeStatusBar } from './office-status-bar'
+import { OfficeAbout } from './office-about'
 import { CommandPalette } from './command-palette'
 import { OfficeConflictDialog } from './office-conflict-dialog'
 import { UnsavedChangesDialog } from '../editor/unsaved-changes-dialog'
@@ -177,7 +179,17 @@ export function OfficeEditor({
 
   const [activeTab, setActiveTab] = useState('Home')
   const [docReady, setDocReady] = useState(false)
-  const [openError, setOpenError] = useState<string | null>(null)
+  // Task 1585 item 4: true once handleReady has registered EVERY engine
+  // subscription (modified, the ribbon's onState set, selection). docReady
+  // flips earlier, mid-way through ~14 sequential round trips; input that
+  // lands in that window competes with them. Exposed as the root's
+  // `data-engine-settled` — a real ready signal for e2e (and anything else)
+  // to wait on instead of a proxy element or a timeout.
+  const [engineSettled, setEngineSettled] = useState(false)
+  // Task 1585 item 2: a host-realm OfficeOpenError with a real `kind`, never
+  // an iframe-realm Error (which `instanceof Error` cannot see — see
+  // lib/office/office-open-error.ts).
+  const [openError, setOpenError] = useState<OfficeOpenError | null>(null)
   const [states, setStates] = useState<UnoStateMap>({})
   const [dirty, setDirty] = useState(false)
   const [outline, setOutline] = useState<OutlineHeading[]>([])
@@ -247,7 +259,9 @@ export function OfficeEditor({
       try {
         await bridge.open(initialBytes, decryptedName)
       } catch (err) {
-        setOpenError(err instanceof Error ? err.message : 'Failed to open this document')
+        const openErr = toOfficeOpenError(err)
+        console.error(`[office] open failed (${openErr.kind}): ${openErr.detail}`)
+        setOpenError(openErr)
         return
       }
       // The dirty listener goes FIRST, straight after open(), ahead of the
@@ -306,16 +320,27 @@ export function OfficeEditor({
       }
       refreshOutline()
       refreshDocStats()
+      setEngineSettled(true)
     },
     [initialBytes, decryptedName, officeApp, appTheme, reportDirty, refreshOutline, refreshDocStats],
   )
 
   const resolvedAppTheme = appTheme === 'dark' ? 'dark' : 'light'
-  const { error: engineError, iframeSrc, iframeRef, handleIframeLoad } = useOfficeEngine({
+  const { error: engineError, iframeSrc, iframeRef, handleIframeLoad, noticesUrl } = useOfficeEngine({
     initialTheme: resolvedAppTheme,
     onReady: handleReady,
-    onError: setOpenError,
   })
+  // Everything the engine host reports (manifest fetch, damaged host page,
+  // boot timeout) happens BEFORE a document is involved, so it is shown as
+  // "the editor didn't load" — except the damaged-host case, whose own
+  // message already says exactly that, in more detail.
+  const shownError: { kind: string; message: string; detail: string } | null = openError
+    ? openError
+    : engineError
+      ? engineError === DAMAGED_HOST_MESSAGE
+        ? { kind: 'engine-damaged', message: engineError, detail: '' }
+        : new OfficeOpenError('engine-not-loaded', engineError)
+      : null
 
   // Impress lane (task 1567): slide count/position, the ribbon's extra
   // .uno:CenterPara state, and present/exit — a fully separate subscription
@@ -691,7 +716,12 @@ export function OfficeEditor({
   const wordCount = docStats.words
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-paper" data-testid="office-editor">
+    <div
+      className="fixed inset-0 z-50 flex flex-col bg-paper"
+      data-testid="office-editor"
+      data-doc-ready={docReady ? 'true' : 'false'}
+      data-engine-settled={engineSettled ? 'true' : 'false'}
+    >
       {!impress.presenting && (
         <OfficeHeader
           breadcrumb={breadcrumb}
@@ -775,8 +805,9 @@ export function OfficeEditor({
           {imageInsertError}
         </div>
       )}
-      <div className="flex min-h-0 flex-1">
-        {officeApp === 'writer' && !openError && !engineError && (
+      {/* `relative`: the phone-width outline floats over the canvas (task 1585). */}
+      <div className="relative flex min-h-0 flex-1">
+        {officeApp === 'writer' && !shownError && (
           <OutlinePane headings={outline} onSelect={(i) => bridgeRef.current?.goToHeading(i).catch(() => {})} loading={!docReady} />
         )}
         {officeApp === 'impress' && docReady && !impress.presenting && (
@@ -796,10 +827,20 @@ export function OfficeEditor({
             convention as Word/Keynote) — every other app keeps the shared
             theme-following bg-paper-3. */}
         <div ref={canvasAreaRef} className={`relative min-h-0 flex-1 ${officeApp === 'impress' ? 'bg-canvas-dark' : 'bg-paper-3'}`}>
-          {openError || engineError ? (
-            <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-center">
-              <p className="text-[13px] text-ink-2">We couldn&apos;t prepare the editor on this device.</p>
-              <p className="text-[11.5px] text-ink-4">{openError ?? engineError}</p>
+          {shownError ? (
+            <div
+              className="flex h-full w-full flex-col items-center justify-center gap-2 px-6 text-center"
+              data-testid="office-open-error"
+              data-kind={shownError.kind}
+            >
+              <p className="max-w-[440px] text-[13px] text-ink-2" data-testid="office-open-error-message">
+                {shownError.message}
+              </p>
+              {shownError.detail && (
+                <p className="max-w-[520px] break-words font-mono text-[11px] text-ink-4" data-testid="office-open-error-detail">
+                  {shownError.detail}
+                </p>
+              )}
             </div>
           ) : (
             <>
@@ -904,7 +945,8 @@ export function OfficeEditor({
           versionNumber={versionNumber}
           lastSavedAt={lastSavedAt}
           extra={officeApp === 'calc' ? <CalcStatusExtra stats={calcSelectionStats} /> : undefined}
-          loadingLabel={!docReady && !openError && !engineError ? 'Preparing the editor on this device…' : null}
+          loadingLabel={!docReady && !shownError ? 'Preparing the editor on this device…' : null}
+          about={<OfficeAbout noticesUrl={noticesUrl} />}
         />
       )}
       <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageChosen} data-testid="office-image-input" />

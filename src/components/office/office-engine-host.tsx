@@ -38,8 +38,9 @@ export interface OfficeEngineHostProps {
    *  live does not repaint an already-open document in this engine build,
    *  so this is a boot-time seed, not a reactive prop). */
   initialTheme: 'light' | 'dark'
-  /** Fires once `iframe.contentWindow.bbOffice` exists and the boot-time
-   *  theme seed has been applied. */
+  /** Fires once the engine is booted (`bbOffice` AND its `Module.uno_main`
+   *  port exist, see `engineReadyBridge`) and the boot-time theme seed has
+   *  been applied. */
   onReady?: (bridge: OfficeBridge) => void
   onError?: (message: string) => void
   /** Test-only: overrides the polling timeout (ms) so a red-path test doesn't
@@ -47,15 +48,49 @@ export interface OfficeEngineHostProps {
   bootTimeoutMs?: number
 }
 
-const DEFAULT_BOOT_TIMEOUT_MS = 90_000
+/**
+ * How long the engine may take to boot, from the host document's `load` to
+ * its UNO port existing. Task 1585 raised this from 90 s to 180 s together
+ * with the readiness change below: a slow device (a phone, or a machine at
+ * load 100+) legitimately needs longer than 90 s to instantiate the engine,
+ * and "Preparing the editor on this device…" is the honest state until it
+ * has, not an error.
+ */
+const DEFAULT_BOOT_TIMEOUT_MS = 180_000
+
+type EngineWindow = Window & { bbOffice?: OfficeBridge; Module?: { uno_main?: unknown } }
 
 /**
- * Polls `iframe.contentWindow.bbOffice` rather than relying on the iframe's
- * `onLoad` — `onLoad` fires once the HTML document parses, well before Qt's
- * own `QtLoader` has fetched/instantiated the ~55 MB engine and
- * `bb-office-api.js` has established its `Module.uno_main` port (that
- * script's own `waitForModule` does the identical poll one level down, for
- * the identical reason — see its header comment).
+ * True once the engine can actually take a call: `bbOffice` exists (the
+ * bridge script ran) AND the engine's `Module.uno_main` port exists (Qt's
+ * loader has fetched and instantiated the engine). Exported for the unit test.
+ *
+ * Task 1585 item 4: this used to wait for `bbOffice` alone. That global
+ * appears as soon as bb-office-api.js parses, long before the engine boots,
+ * so `open()` then sat inside the bridge's OWN `waitForModule(60000)`. That
+ * 60 s limit, not this host's budget, decided whether a slow boot failed (a
+ * load-average-100 e2e run saw exactly that shape: no outline within 120 s).
+ * Waiting for the port here means `open()` only ever runs against a booted
+ * engine, and one budget (this one) governs the whole boot.
+ */
+export function engineReadyBridge(win: Window): OfficeBridge | null {
+  try {
+    const w = win as EngineWindow
+    const bridge = w.bbOffice
+    if (!bridge) return null
+    return w.Module && w.Module.uno_main ? bridge : null
+  } catch {
+    // A navigated-away / cross-origin document: not ready (the caller's own
+    // timeout reports it).
+    return null
+  }
+}
+
+/**
+ * Polls for engine readiness rather than relying on the iframe's `onLoad` —
+ * `onLoad` fires once the HTML document parses, well before Qt's own
+ * `QtLoader` has fetched/instantiated the engine and exposed its
+ * `Module.uno_main` port (see `engineReadyBridge`).
  */
 function pollForBridge(
   win: Window,
@@ -66,7 +101,7 @@ function pollForBridge(
   return new Promise((resolve, reject) => {
     ;(function poll() {
       if (signal.cancelled) return
-      const bridge = (win as Window & { bbOffice?: OfficeBridge }).bbOffice
+      const bridge = engineReadyBridge(win)
       if (bridge) {
         resolve(bridge)
         return
@@ -102,11 +137,27 @@ export function inspectHostDocument(win: Window): string | null {
   return hasBridgeScript ? null : DAMAGED_HOST_MESSAGE
 }
 
+/**
+ * The engine bundle's license notices (task 1585 / 1567 open item): the MPL-2.0
+ * §3.2(a) Source Code Form notice plus the Qt LGPL, Emscripten and OFL texts.
+ * scripts/office-dev-assets.sh and the prod stager (office-bundle-stage.sh,
+ * which refuses to stage without it) both place it in the version directory.
+ */
+export function officeNoticesUrl(baseUrl: string, version: string): string {
+  return `${baseUrl}/${encodeURIComponent(version)}/THIRD_PARTY_NOTICES.txt`
+}
+
+/** Where the engine's complete source lives (named in the About panel). */
+export const OFFICE_SOURCE_URL = 'https://github.com/beebeeb-io/office'
+
 export function useOfficeEngine(opts: OfficeEngineHostProps) {
   const { baseUrl = '/office', initialTheme, onReady, onError, bootTimeoutMs = DEFAULT_BOOT_TIMEOUT_MS } = opts
   const [status, setStatus] = useState<OfficeEngineStatus>('loading-manifest')
   const [error, setError] = useState<string | null>(null)
   const [iframeSrc, setIframeSrc] = useState<string | null>(null)
+  // The engine bundle's content-hashed version directory (task 1585: the
+  // editor's About panel links that version's own THIRD_PARTY_NOTICES.txt).
+  const [version, setVersion] = useState<string | null>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const bridgeRef = useRef<OfficeBridge | null>(null)
   const cancelledRef = useRef({ cancelled: false })
@@ -120,6 +171,7 @@ export function useOfficeEngine(opts: OfficeEngineHostProps) {
       .then((manifest) => {
         if (cancelled) return
         setIframeSrc(`${baseUrl}/${manifest.version}/bb-office-host.html`)
+        setVersion(manifest.version)
         setStatus('booting')
       })
       .catch((err) => {
@@ -196,7 +248,8 @@ export function useOfficeEngine(opts: OfficeEngineHostProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bootTimeoutMs, initialTheme])
 
-  return { status, error, iframeSrc, iframeRef, handleIframeLoad, bridge: bridgeRef.current }
+  const noticesUrl = version ? officeNoticesUrl(baseUrl, version) : null
+  return { status, error, iframeSrc, iframeRef, handleIframeLoad, bridge: bridgeRef.current, version, noticesUrl }
 }
 
 export interface OfficeEngineHostViewProps extends OfficeEngineHostProps {

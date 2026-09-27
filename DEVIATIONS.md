@@ -49,3 +49,25 @@ this rule rather than leaving two divergent loading treatments unremarked).
 **Not pixel-identical to the mockup:** the skeleton bar widths/positions in
 `outline-pane.tsx` are a reasonable approximation of the mockup's own bars,
 not measured pixel-for-pixel from the reference screenshot.
+
+## Task 1585 — office editor follow-ups (2026-09-27)
+
+Three changes that `design/office-editor.html` does not show. Flagged here for
+review, not decided silently:
+
+- **"Licenses" in the status bar (after the save state).** It opens a small
+  About popover that names the source repo (`github.com/beebeeb-io/office`) and
+  links `/office/<version>/THIRD_PARTY_NOTICES.txt`. The mockup has no
+  about or licenses entry. This one is needed: MPL-2.0 §3.2(a) requires telling
+  recipients where the Source Code Form is. It went in the status bar, not the
+  header, because it is reference material and not a working tool. Where it
+  lives is a design call to confirm.
+- **Outline pane at phone-portrait width (< 640 px).** The pane starts collapsed
+  to its existing 32 px rail. When opened, it floats over the canvas with the
+  `shadow-2` token instead of docking, so the engine canvas is never resized,
+  and it closes after a heading is picked. The mockup is desktop-only. At
+  640 px and wider, nothing changes.
+- **Open-error state.** The fixed headline "We couldn't prepare the editor on
+  this device." is replaced by a message per error kind, with the raw engine
+  text on a mono line underneath (`src/lib/office/office-open-error.ts`). The
+  mockup has no error screen.

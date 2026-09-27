@@ -26,9 +26,9 @@ test.skip(!OFFICE_FLAG_ON, 'VITE_FEATURE_OFFICE_EDITOR!=true')
 
 test.setTimeout(180_000)
 
-const OUT_DIR =
-  process.env.VISUAL_GATE_OUT_DIR ||
-  '/private/tmp/claude-501/-Users-guuslangelaar-Development-Beebeeb-beebeeb-io/cc7eef98-55fc-4493-9ff2-638c99aac79f/scratchpad/office-evidence/visual'
+// Task 1585: the default was one lane's own Mac scratchpad path, which does
+// not exist (EACCES) on any other machine; repo-relative now.
+const OUT_DIR = process.env.VISUAL_GATE_OUT_DIR || 'test-results/1567-visual'
 fs.mkdirSync(OUT_DIR, { recursive: true })
 
 async function dismissDevBanner(page: Page): Promise<void> {
@@ -48,10 +48,6 @@ async function openOfficeTab(
   fixturePath: string,
 ): Promise<Page> {
   await page.addInitScript((t) => localStorage.setItem('beebeeb-theme', t), theme)
-  // Ship prep (task 1567, 2026-09-27): runtime Labs opt-in, see
-  // 1567-office-editor.spec.ts's own comment for why this is needed
-  // alongside VITE_FEATURE_OFFICE_EDITOR.
-  await page.addInitScript(() => localStorage.setItem('bb-office-labs', 'true'))
   await page.goto('/')
   await dismissDevBanner(page)
   const base = await uploadAndWait(page, fixturePath)
