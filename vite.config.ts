@@ -75,6 +75,32 @@ function devCspPlugin(apiUrl: string): Plugin {
  * measured `crossOriginIsolated === false` inside the iframe every time).
  * `/office/:fileId` is deliberately this route's own isolated top-level
  * document; every other app route stays uninstrumented, per PLAN.md.
+ *
+ * WORKER-NEEDS-ITS-OWN-COEP GOTCHA (found by actually running the e2e spec
+ * against the real engine, root-caused via a raw CDP `Network.loadingFailed`
+ * capture — `blockedReason: "coep-frame-resource-needs-coep-header"` — not
+ * theorized): making `/office/:fileId` cross-origin-isolated does not just
+ * affect the office engine's own assets — it governs how the app's own
+ * PRE-EXISTING crypto worker (`src/workers/crypto.worker.ts`, needed to
+ * decrypt the very file being opened) may be constructed from that page.
+ * Per the HTML spec, a dedicated Worker's global has its OWN embedder
+ * policy, inherited from ITS OWN response headers — a same-origin script
+ * and a plain `Cross-Origin-Resource-Policy` header are NOT enough; the
+ * worker script's response must ALSO carry `Cross-Origin-Embedder-Policy`
+ * itself, or a COEP:require-corp creator refuses to construct it at all.
+ * (An earlier attempt at this fix added only CORP — confirmed insufficient
+ * by re-running against the real engine and seeing the identical block.)
+ * The failure mode is a silent hang: `net::ERR_BLOCKED_BY_RESPONSE` on the
+ * worker script, WasmGuard never reports crypto ready, nothing below the
+ * dev banner ever renders — no console exception, no error boundary, just
+ * a 15s test timeout. Fix: every response OUTSIDE `/office/*` also gets
+ * `Cross-Origin-Embedder-Policy: require-corp` (harmless for anything that
+ * never becomes a Window/Worker global — COEP is only consulted for those)
+ * plus `Cross-Origin-Resource-Policy: cross-origin` (the permissive value —
+ * it only widens who may EMBED a response, so neither header weakens
+ * zero-egress, which is about outbound requests). nginx.conf's top-level
+ * header block carries the identical fix for prod, with the identical
+ * citation.
  */
 function officeIsolationHeadersPlugin(): Plugin {
   return {
@@ -86,6 +112,9 @@ function officeIsolationHeadersPlugin(): Plugin {
           res.setHeader('Cross-Origin-Opener-Policy', 'same-origin')
           res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp')
           res.setHeader('Cross-Origin-Resource-Policy', 'same-origin')
+        } else {
+          res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp')
+          res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin')
         }
         next()
       })

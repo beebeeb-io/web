@@ -95,6 +95,15 @@ test('upload .docx, edit in the real engine, Bold via our ribbon, save as new ve
   const officeTab = await popupPromise
   trackEgress(officeTab)
   await officeTab.waitForLoadState('domcontentloaded')
+  // officeTab is a FRESH top-level navigation (window.open to /office/<fileId>,
+  // not a client-side route change) — DevAuthGate's banner is local React
+  // state and remounts on every fresh page load (same gotcha the dismissDevBanner
+  // helper above documents for `page` after uploadAndWait's reload). Missing
+  // this dismiss here left the banner (fixed, z-[9999]) covering the office
+  // header's own Save button (found by actually running this spec: the click
+  // on office-save retried for the full 180s test timeout against "<div
+  // class=... z-[9999] ...> intercepts pointer events").
+  await dismissDevBanner(officeTab)
 
   // Office editor's own top-level route mounted.
   await officeTab.getByTestId('office-editor').waitFor({ state: 'visible', timeout: 15_000 })
@@ -106,13 +115,35 @@ test('upload .docx, edit in the real engine, Bold via our ribbon, save as new ve
   const engineFrame = officeTab.frameLocator('[data-testid="office-engine-frame"]')
   const canvas = engineFrame.locator('#qtcanvas')
   await canvas.waitFor({ state: 'visible', timeout: 30_000 })
+  const frameHandle1 = officeTab.frames().find((f) => f.url().includes('bb-office-host.html'))
+  expect(frameHandle1).toBeTruthy()
 
   // Real keyboard typing into the LO-WASM canvas (not a dispatch shortcut) —
   // click to focus, select-all to replace the fixture's own paragraph, type.
+  // Select-all goes through the REAL bbOffice.dispatch('.uno:SelectAll') and
+  // is AWAITED, rather than simulating Ctrl+A — found by actually running
+  // this spec repeatedly: a simulated Ctrl+A keypress returns to Playwright
+  // immediately (a native key event, not a bridge call it can await), so
+  // typing right after it raced the postMessage round trip to the pthread
+  // that owns UNO/VCL and silently dropped a variable number of LEADING
+  // characters (real runs saved " Beebeeb Office", "Lo Beebeeb Office",
+  // "Ello Beebeeb Office" — never a middle/trailing drop, always the start).
+  // A fixed settle delay after Ctrl+A reduced but did not eliminate this
+  // (200ms still flaked once); waiting for `office-selection-toolbar` to
+  // appear ALSO proved unreliable (Qt's own canvas input handling appears to
+  // stop the pointerup event from ever reaching the host document's
+  // listener, so the toolbar's POSITION half never arrives even though the
+  // selection itself did — a real, separate finding, noted for whoever next
+  // touches the floating-toolbar positioning). Awaiting the dispatch PROMISE
+  // itself is the one signal that is actually synchronous with the engine
+  // completing the select-all, because it is the exact same round trip
+  // typing would otherwise race.
   await canvas.click()
-  await officeTab.keyboard.press('ControlOrMeta+A')
+  await frameHandle1!.evaluate(async () => {
+    await (window as unknown as { bbOffice: { dispatch(cmd: string): Promise<unknown> } }).bbOffice.dispatch('.uno:SelectAll')
+  })
   const typedText = 'Hello Beebeeb Office'
-  await officeTab.keyboard.type(typedText, { delay: 20 })
+  await officeTab.keyboard.type(typedText, { delay: 30 })
   await officeTab.waitForTimeout(400) // let onModifiedChange/onSelectionChange settle
 
   // Bold via OUR ribbon button (not a raw dispatch call) — select what we
@@ -161,6 +192,7 @@ test('upload .docx, edit in the real engine, Bold via our ribbon, save as new ve
   await editButton2.click()
   const officeTab2 = await popup2Promise
   trackEgress(officeTab2)
+  await dismissDevBanner(officeTab2)
   await officeTab2.getByTestId('office-outline-pane').waitFor({ state: 'visible', timeout: 120_000 })
   const engineFrame2 = officeTab2.frameLocator('[data-testid="office-engine-frame"]')
   await engineFrame2.locator('#qtcanvas').waitFor({ state: 'visible', timeout: 30_000 })

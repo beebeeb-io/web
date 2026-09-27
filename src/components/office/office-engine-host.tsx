@@ -155,6 +155,28 @@ export interface OfficeEngineHostViewProps extends OfficeEngineHostProps {
 }
 
 /**
+ * Native Qt title-bar crop (lead decision 1 on the engine's open gap,
+ * task 1567 phase-4 note: "the native Qt window title bar cannot be
+ * hidden" — a frameless-window engine patch was tried, built, and reverted
+ * after it broke document-switching; the lead's own fallback is "crop it in
+ * our web shell... our chrome replaces LibreOffice's"). MEASURED, not
+ * guessed: a real screenshot of the rebuilt engine's title bar
+ * ("private:stream — LibreOfficeDev Writer", solid `rgb(48,140,198)`) was
+ * scanned pixel-by-pixel — the coloured bar plus its 4px white window-edge
+ * sliver above it spans the first ~22px of the iframe's own content, so
+ * 26px is cropped for a safety margin without eating into the document
+ * canvas below it. Mechanism: the iframe renders TALLER than its visible
+ * container (`height: calc(100% + Npx)`) and is shifted up by the same
+ * amount inside an `overflow: hidden` parent — the extra height at the
+ * BOTTOM reveals that much more real document canvas instead of wasting it,
+ * and `getBoundingClientRect()` on the (now-shifted) iframe element already
+ * reflects its true on-screen position, so office-editor.tsx's own
+ * pointerup → host-coordinate translation for the floating selection
+ * toolbar needs no separate adjustment for this offset.
+ */
+const TITLE_BAR_CROP_PX = 26
+
+/**
  * The presentational half: renders the iframe once a manifest-derived src is
  * known. `useOfficeEngine` (above) is exported separately so OfficeEditor can
  * own the hook's return value directly instead of prop-drilling through a
@@ -173,23 +195,26 @@ export function OfficeEngineFrame({
 }) {
   if (!iframeSrc) return null
   return (
-    <iframe
-      ref={iframeRef}
-      src={iframeSrc}
-      onLoad={onLoad}
-      title="Office document canvas"
-      data-testid="office-engine-frame"
-      // Same-origin by construction (the whole point — see this file's
-      // header) — allow-same-origin is required for this component to reach
-      // `contentWindow.bbOffice`. allow-scripts lets the engine's own JS
-      // (Qt/Emscripten bootstrap, bb-office-api.js) run at all. Nothing else
-      // is granted: no allow-popups (SystemShellExecute's product path is
-      // dispatched to the HOST page via a CustomEvent, per docs/EGRESS.md —
-      // this iframe never needs to navigate/pop up itself), no allow-forms,
-      // no allow-top-navigation.
-      sandbox="allow-scripts allow-same-origin"
-      allow="cross-origin-isolated"
-      className={className ?? 'h-full w-full border-0 bg-white'}
-    />
+    <div className={className ?? 'relative h-full w-full overflow-hidden'} data-testid="office-engine-frame-crop">
+      <iframe
+        ref={iframeRef}
+        src={iframeSrc}
+        onLoad={onLoad}
+        title="Office document canvas"
+        data-testid="office-engine-frame"
+        // Same-origin by construction (the whole point — see this file's
+        // header) — allow-same-origin is required for this component to reach
+        // `contentWindow.bbOffice`. allow-scripts lets the engine's own JS
+        // (Qt/Emscripten bootstrap, bb-office-api.js) run at all. Nothing else
+        // is granted: no allow-popups (SystemShellExecute's product path is
+        // dispatched to the HOST page via a CustomEvent, per docs/EGRESS.md —
+        // this iframe never needs to navigate/pop up itself), no allow-forms,
+        // no allow-top-navigation.
+        sandbox="allow-scripts allow-same-origin"
+        allow="cross-origin-isolated"
+        className="absolute left-0 right-0 border-0 bg-white"
+        style={{ top: -TITLE_BAR_CROP_PX, height: `calc(100% + ${TITLE_BAR_CROP_PX}px)` }}
+      />
+    </div>
   )
 }
