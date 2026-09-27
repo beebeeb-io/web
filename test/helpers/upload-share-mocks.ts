@@ -1,23 +1,18 @@
 /**
- * Shared bun mock.module setup for the two suites that mock `./api` + `./crypto`
- * (encrypted-upload-v2-contract + folder-share-crypto). bun's mock.module is
- * GLOBAL + module-cached: two files mocking the same module with DIFFERENT shapes
- * collide (last-registered wins, can't relink). The fix is to register ONE
- * identical superset mock from both files (via installMocks()), with shared
- * capture/control state — so whichever registration wins, both suites work.
+ * Shared mock setup for the two suites that mock `./api` + `./crypto`
+ * (encrypted-upload-v2-contract + folder-share-crypto).
+ *
+ * Task 1590: every mock goes through mockModuleScoped(), so each one is the
+ * REAL module with only the names below overridden (complete — no "Export
+ * named 'X' not found" in a later file) and is restored when the calling file
+ * finishes (scoped — the stubs never leak into files that did not ask for
+ * them). The earlier "one identical superset registered once" design (task
+ * 0753) left these stubs live for the rest of the process and was only green
+ * by the luck of the file order.
+ *
+ * Call `await installMocks()` at the top level of the test file.
  */
-import { mock } from 'bun:test'
-
-export class ApiError extends Error {
-  // task 1404 — account-deleted-copy.test.ts constructs `new ApiError(msg,
-  // status, code)` against the REAL module; when this mock wins bun's
-  // process-global mock.module race, its ApiError must carry the same
-  // 3-arg shape (including `code`) or that test's `err.code` checks silently
-  // see `undefined` instead of 'account_deleted'.
-  constructor(message: string, readonly status: number, readonly code?: string) {
-    super(message)
-  }
-}
+import { mockModuleScoped } from './scoped-module-mock'
 
 // ── Shared state ─────────────────────────────────────────────────────────────
 // Upload-contract captures (the contract suite asserts on these).
@@ -50,15 +45,12 @@ const stubStream = (masterKey: Uint8Array) => ({
   dispose: async () => {},
 })
 
-let installed = false
-export function installMocks(): void {
-  if (installed) return
-  installed = true
+export async function installMocks(): Promise<void> {
+  const here = import.meta.dir
 
-  // ./crypto — superset: the streaming primitive + capturing encryptFilename the
-  // upload contract needs, PLUS every name folder-share-crypto.ts imports (stubs;
-  // its tested path — collectAllChildren — never calls them).
-  mock.module('../../src/lib/crypto', () => ({
+  // ./crypto — the streaming primitive + a capturing encryptFilename for the
+  // upload contract. Every other export is the real one.
+  await mockModuleScoped('../../src/lib/crypto', here, {
     CHUNK_SIZE: 4,
     planChunks: async () => ({ chunk_size_bytes: 4, chunk_count: 1 }),
     startEncryptedStream: async (masterKey: Uint8Array) => stubStream(masterKey),
@@ -69,47 +61,17 @@ export function installMocks(): void {
     },
     serializeEncryptedBlob: (nonce: Uint8Array, ciphertext: Uint8Array) =>
       JSON.stringify({ nonce: Array.from(nonce), ciphertext: Array.from(ciphertext) }),
-    // folder-share-crypto.ts imports (unused in collectAllChildren):
-    encryptChunk: async () => new Uint8Array(),
-    decryptChunk: async () => new Uint8Array(),
-    deriveFileKey: async () => new Uint8Array(32),
-    deriveX25519Private: async () => new Uint8Array(32),
-    x25519SharedSecret: async () => new Uint8Array(32),
-    deriveShareKey: async () => new Uint8Array(32),
-    fromBase64: () => new Uint8Array(),
-    toBase64: (bytes?: Uint8Array) => (bytes ? Buffer.from(bytes).toString('base64') : ''),
-    zeroize: () => {},
-    // bun's mock.module is process-global; this stub must export EVERY name any
-    // co-running test imports from ./crypto. sessionIdToBytes is a pure parser
-    // (transfer-crypto.test.ts imports it), so mirror its real behaviour here
-    // rather than a no-op stub — keeps the superset faithful.
-    sessionIdToBytes: (sessionId: string): Uint8Array => {
-      const hex = sessionId.replace(/-/g, '')
-      const out = new Uint8Array(16)
-      for (let i = 0; i < 16; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
-      return out
-    },
-  }))
+  })
 
-  // net-retry passthrough — avoids loading net-retry.ts (its `import { ApiError }
-  // from './api'` re-export can't be linked against the ./api mock).
-  mock.module('../../src/lib/net-retry', () => ({
+  // net-retry passthrough — no retry back-off inside the contract tests.
+  await mockModuleScoped('../../src/lib/net-retry', here, {
     withNetworkRetry: <T>(fn: () => Promise<T>) => fn(),
-  }))
+  })
 
-  // ./api — superset: the capturing upload surface (contract) + listFilesPage /
-  // FILE_LIST_HARD_CAP (folder-share), PLUS every other name any co-running
-  // test imports from ./api — API_URL added for breach-check.ts (task 1367;
-  // its `import { API_URL } from './api'` otherwise resolves against this
-  // mock with a missing export whenever a test file that imports
-  // breach-check.ts happens to load in the same bun test process after this
-  // mock has registered — bun's mock.module is process-global, so the failure
-  // is load-order-dependent, not deterministic locally). listFilesPage
-  // delegates to the shared pager.
-  mock.module('../../src/lib/api', () => ({
-    ApiError,
-    API_URL: 'https://api.beebeeb.io',
-    FILE_LIST_HARD_CAP: 50_000,
+  // ./api — the capturing upload surface (contract) + listFilesPage driven by
+  // the shared pager (folder-share). ApiError, API_URL, FILE_LIST_HARD_CAP and
+  // everything else are the real exports.
+  await mockModuleScoped('../../src/lib/api', here, {
     listFilesPage: async (opts: { parentId?: string; cursor?: string }) => pageImpl(opts),
     initUpload: async (metadata: unknown) => {
       cap.initCalls.push(metadata)
@@ -134,14 +96,14 @@ export function installMocks(): void {
       cap.updatedFiles.push({ fileId, nameEncrypted: updates.name_encrypted ?? '' })
       return { id: fileId }
     },
-  }))
+  })
 
-  mock.module('../../src/lib/upload-resume', () => ({
+  await mockModuleScoped('../../src/lib/upload-resume', here, {
     computeFingerprint: async () => 'fingerprint',
     findByFingerprint: async () => null,
     saveUploadState: async (state: { fileId: string; upload_session_id?: string | null }) => {
       cap.savedStates.push(state)
     },
     removeUploadState: async (fileId: string) => { cap.removedStates.push(fileId) },
-  }))
+  })
 }

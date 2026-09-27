@@ -1,13 +1,17 @@
 import { describe, expect, test, beforeEach, beforeAll, afterAll, mock } from 'bun:test'
+import { mockModuleScoped } from './helpers/scoped-module-mock'
 
 // Mock the token module so request() doesn't touch localStorage.
-mock.module('../packages/shared/src/api/token', () => ({
+// Task 1590: scoped + complete (real exports spread under the overrides,
+// restored after this file) — a partial token mock broke every later file
+// that imports clearLegacyBearer, and was itself unrunnable alone.
+await mockModuleScoped('../packages/shared/src/api/token', import.meta.dir, {
   getToken: () => null,
   clearToken: () => {},
   setToken: () => {},
   setTokenStorageKey: () => {},
   registerOnTokenCleared: () => {},
-}))
+})
 
 // Queue of canned responses returned by successive fetch() calls, plus a
 // record of the actual retry-after headers each 429 carried.
