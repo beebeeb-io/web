@@ -214,7 +214,7 @@ export function checkNewDocumentName(
   if (/[/\\]/.test(trimmed)) return { ok: false, reason: 'A name cannot contain / or \\.' }
   const suffix = `.${type.ext}`
   const name = trimmed.toLocaleLowerCase().endsWith(suffix) ? trimmed : `${trimmed}${suffix}`
-  if (name === suffix) return { ok: false, reason: 'Give the file a name.' }
+  if (name.toLocaleLowerCase() === suffix) return { ok: false, reason: 'Give the file a name.' }
   for (const n of existingNames) {
     if (n.toLocaleLowerCase() === name.toLocaleLowerCase()) {
       return { ok: false, reason: `“${name}” already exists in this folder.` }

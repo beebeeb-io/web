@@ -96,6 +96,7 @@ describe('checkNewDocumentName', () => {
   test('empty, whitespace or bare extension is refused', () => {
     expect(checkNewDocumentName('   ', docx, []).ok).toBe(false)
     expect(checkNewDocumentName('.docx', docx, []).ok).toBe(false)
+    expect(checkNewDocumentName('.DOCX', docx, []).ok).toBe(false)
   })
 
   test('slashes are refused', () => {
