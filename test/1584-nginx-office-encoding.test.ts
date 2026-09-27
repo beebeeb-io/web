@@ -56,9 +56,9 @@ describe('nginx.conf: pre-compressed office assets are never gzipped again', () 
   const brBlocks = locationBlocks(conf).filter((b) => /add_header\s+Content-Encoding\s+\$office_br_encoding/.test(directives(b.body)))
 
   test('the check found the office asset locations (a filter matching nothing is a red)', () => {
-    // wasm, data, metadata, js, html, svg, ico
-    expect(brBlocks.length).toBe(7)
-    for (const ext of ['wasm', 'data', 'metadata', 'js', 'html', 'svg', 'ico']) {
+    // wasm, data, metadata, js, html, svg, ico, txt (task 1567: THIRD_PARTY_NOTICES.txt)
+    expect(brBlocks.length).toBe(8)
+    for (const ext of ['wasm', 'data', 'metadata', 'js', 'html', 'svg', 'ico', 'txt']) {
       expect(brBlocks.some((b) => b.header.includes(`\\.${ext}$`))).toBe(true)
     }
   })
