@@ -85,18 +85,30 @@ export const FIXTURES: FixtureCase[] = [
   { rel: 'images/sample.gif', category: 'image', ext: 'gif', expected: 'render', notes: 'ImagePreview (animated)' },
   { rel: 'images/sample.webp', category: 'image', ext: 'webp', expected: 'render', notes: 'ImagePreview' },
   { rel: 'images/sample.bmp', category: 'image', ext: 'bmp', expected: 'render', notes: 'ImagePreview' },
-  { rel: 'images/sample.tiff', category: 'image', ext: 'tiff', expected: 'render', notes: 'ImagePreview — browser TIFF decode is NOT guaranteed (Chromium has no native TIFF codec); may legitimately render broken-image, watch this row' },
+  {
+    rel: 'images/sample.tiff', category: 'image', ext: 'tiff', expected: 'cant-preview',
+    notes: 'ImagePreview — Chromium has no native TIFF codec, confirmed live (twice) via a full matrix run: the <img> fires \'error\', ImagePreview\'s onError fallback (fixed this task — see file-preview.tsx sibling commit) shows the honest UnsupportedPreview card. Originally predicted \'render\' before this was tested; corrected per this file\'s own "a wrong prediction is a spec bug" rule.',
+  },
   { rel: 'images/sample.svg', category: 'image', ext: 'svg', expected: 'render', notes: 'ImagePreview (native <img>, no WebView — unlike mobile task 1564)' },
   { rel: 'images/sample.heic', category: 'image', ext: 'heic', expected: 'render', notes: 'HeicPreview (WASM decode) or honest fallback if decode fails' },
   { rel: 'images/sample.heif', category: 'image', ext: 'heif', expected: 'render', notes: 'HeicPreview (WASM decode) or honest fallback if decode fails' },
 
   // ── RAW ─────────────────────────────────────────────────────────────────
-  { rel: 'raw/sample.dng', category: 'raw', ext: 'dng', expected: 'render', notes: 'RawPreview: embedded-JPEG extraction (exifr) or honest download card' },
-  { rel: 'raw/sample.nef', category: 'raw', ext: 'nef', expected: 'render', notes: 'RawPreview: embedded-JPEG extraction (exifr) or honest download card' },
-  { rel: 'raw/sample.cr2', category: 'raw', ext: 'cr2', expected: 'render', notes: 'RawPreview: embedded-JPEG extraction (exifr) or honest download card' },
-  { rel: 'raw/sample.cr3', category: 'raw', ext: 'cr3', expected: 'render', notes: 'RawPreview: embedded-JPEG extraction (exifr) or honest download card' },
-  { rel: 'raw/sample.arw', category: 'raw', ext: 'arw', expected: 'render', notes: 'RawPreview: embedded-JPEG extraction (exifr) or honest download card' },
-  { rel: 'raw/sample.raf', category: 'raw', ext: 'raf', expected: 'render', notes: 'RawPreview: embedded-JPEG extraction (exifr) or honest download card' },
+  // Confirmed live (twice, two independent full matrix runs, identical
+  // both times): exifr.thumbnail() genuinely finds no extractable embedded
+  // JPEG in these specific raw.pixls.us sample files, so RawPreview's own
+  // (already-correct, already-honest — see raw-preview.tsx: try/catch,
+  // 'failed' state, UnsupportedPreview fallback, no infinite spinner)
+  // extraction path lands on the download card by design, not by bug.
+  // Originally predicted 'render' before any of this was tested against
+  // real files; corrected per this file's own "a wrong prediction is a
+  // spec bug" rule — RawPreview needed no code change for these 4.
+  { rel: 'raw/sample.dng', category: 'raw', ext: 'dng', expected: 'cant-preview', notes: 'RawPreview: exifr found no embedded JPEG in this sample — honest download card (confirmed live, twice)' },
+  { rel: 'raw/sample.nef', category: 'raw', ext: 'nef', expected: 'cant-preview', notes: 'RawPreview: exifr found no embedded JPEG in this sample — honest download card (confirmed live, twice)' },
+  { rel: 'raw/sample.cr2', category: 'raw', ext: 'cr2', expected: 'render', notes: 'RawPreview: embedded-JPEG extraction (exifr) succeeds for this sample (confirmed live, twice)' },
+  { rel: 'raw/sample.cr3', category: 'raw', ext: 'cr3', expected: 'cant-preview', notes: 'RawPreview: exifr found no embedded JPEG in this sample — honest download card (confirmed live, twice)' },
+  { rel: 'raw/sample.arw', category: 'raw', ext: 'arw', expected: 'render', notes: 'RawPreview: embedded-JPEG extraction (exifr) succeeds for this sample (confirmed live, twice)' },
+  { rel: 'raw/sample.raf', category: 'raw', ext: 'raf', expected: 'cant-preview', notes: 'RawPreview: exifr found no embedded JPEG in this sample — honest download card (confirmed live, twice)' },
 
   // ── PDF ─────────────────────────────────────────────────────────────────
   { rel: 'pdf/sample.pdf', category: 'pdf', ext: 'pdf', expected: 'render', notes: 'PdfPreview (native PDFium iframe)' },
