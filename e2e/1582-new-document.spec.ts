@@ -40,6 +40,7 @@ import fs from 'fs'
 import path from 'path'
 import { unzipSync } from 'fflate'
 import { previewOverlay, escapeRe, openPreview } from './helpers/thumb-fixtures'
+import { OFFICE_SETTLE_BUDGET_MS, waitOfficeSettled } from './helpers/office-ready'
 
 const OFFICE_ASSETS_PRESENT = fs.existsSync('public/office/manifest.json')
 const OFFICE_FLAG_ON = process.env.VITE_FEATURE_OFFICE_EDITOR === 'true'
@@ -329,7 +330,8 @@ test.describe('Task 1582 — + New menu', () => {
 test.describe('Task 1582 — + New → Office (real engine)', () => {
   test.skip(!OFFICE_ASSETS_PRESENT, 'public/office/manifest.json missing — run scripts/office-dev-assets.sh first')
   test.skip(!OFFICE_FLAG_ON, 'VITE_FEATURE_OFFICE_EDITOR!=true')
-  test.setTimeout(240_000)
+  // Task 1585: 2 engine boot(s) at the ready helper's budget, plus the test's own work.
+  test.setTimeout(2 * OFFICE_SETTLE_BUDGET_MS + 120_000)
 
   test('New → Document: encrypted upload, Writer opens, type, save, reopen shows the text', async ({ page, context }) => {
     await gotoDrive(page)
@@ -341,7 +343,11 @@ test.describe('Task 1582 — + New → Office (real engine)', () => {
     expectCiphertext(bodies)
     await expect(page.getByRole('row', { name: new RegExp(escapeRe(`${name}.docx`)) }).first()).toBeVisible({ timeout: 15_000 })
 
-    await tab.getByTestId('office-outline-pane').waitFor({ state: 'visible', timeout: 150_000 })
+    // Task 1585: the editor's real ready signal at the app's own budget.
+
+    await waitOfficeSettled(tab)
+
+    await tab.getByTestId('office-outline-pane').waitFor({ state: 'visible', timeout: 15_000 })
     const canvas = tab.frameLocator('[data-testid="office-engine-frame"]').locator('#qtcanvas')
     await canvas.waitFor({ state: 'visible', timeout: 30_000 })
     await shot(tab, 'writer-new-blank')
@@ -358,7 +364,9 @@ test.describe('Task 1582 — + New → Office (real engine)', () => {
     await saveAndExpectVersion2(tab)
 
     const again = await reopen(context, tab)
-    await again.getByTestId('office-outline-pane').waitFor({ state: 'visible', timeout: 150_000 })
+    // Task 1585: the editor's real ready signal at the app's own budget.
+    await waitOfficeSettled(again)
+    await again.getByTestId('office-outline-pane').waitFor({ state: 'visible', timeout: 15_000 })
     await again.frameLocator('[data-testid="office-engine-frame"]').locator('#qtcanvas').waitFor({ state: 'visible', timeout: 30_000 })
     const files = unzipSync(await engineSave(again))
     expect(td.decode(files['word/document.xml'])).toContain(typed)
@@ -369,7 +377,9 @@ test.describe('Task 1582 — + New → Office (real engine)', () => {
     await gotoDrive(page)
     const name = `Budget ${process.pid}`
     const tab = await officeTabFrom(context, () => createViaMenu(page, 'xlsx', name))
-    await tab.getByTestId('calc-formula-bar').waitFor({ state: 'visible', timeout: 150_000 })
+    // Task 1585: the editor's real ready signal at the app's own budget.
+    await waitOfficeSettled(tab)
+    await tab.getByTestId('calc-formula-bar').waitFor({ state: 'visible', timeout: 15_000 })
     await tab.frameLocator('[data-testid="office-engine-frame"]').locator('#qtcanvas').waitFor({ state: 'visible', timeout: 30_000 })
     await shot(tab, 'calc-new-blank')
 
@@ -384,7 +394,9 @@ test.describe('Task 1582 — + New → Office (real engine)', () => {
     await saveAndExpectVersion2(tab)
 
     const again = await reopen(context, tab)
-    await again.getByTestId('calc-formula-bar').waitFor({ state: 'visible', timeout: 150_000 })
+    // Task 1585: the editor's real ready signal at the app's own budget.
+    await waitOfficeSettled(again)
+    await again.getByTestId('calc-formula-bar').waitFor({ state: 'visible', timeout: 15_000 })
     await again.frameLocator('[data-testid="office-engine-frame"]').locator('#qtcanvas').waitFor({ state: 'visible', timeout: 30_000 })
     const files = unzipSync(await engineSave(again))
     const sheet = td.decode(files['xl/worksheets/sheet1.xml'])
@@ -396,7 +408,9 @@ test.describe('Task 1582 — + New → Office (real engine)', () => {
     await gotoDrive(page)
     const name = `Pitch ${process.pid}`
     const tab = await officeTabFrom(context, () => createViaMenu(page, 'pptx', name))
-    await tab.getByTestId('impress-filmstrip').waitFor({ state: 'visible', timeout: 150_000 })
+    // Task 1585: the editor's real ready signal at the app's own budget.
+    await waitOfficeSettled(tab)
+    await tab.getByTestId('impress-filmstrip').waitFor({ state: 'visible', timeout: 15_000 })
     await tab.frameLocator('[data-testid="office-engine-frame"]').locator('#qtcanvas').waitFor({ state: 'visible', timeout: 30_000 })
     const statusBar = tab.getByTestId('office-status-bar')
     await expect(statusBar).toContainText('Slide 1 of 1', { timeout: 15_000 })
@@ -409,7 +423,9 @@ test.describe('Task 1582 — + New → Office (real engine)', () => {
     await saveAndExpectVersion2(tab)
 
     const again = await reopen(context, tab)
-    await again.getByTestId('impress-filmstrip').waitFor({ state: 'visible', timeout: 150_000 })
+    // Task 1585: the editor's real ready signal at the app's own budget.
+    await waitOfficeSettled(again)
+    await again.getByTestId('impress-filmstrip').waitFor({ state: 'visible', timeout: 15_000 })
     await expect(again.getByTestId('office-status-bar')).toContainText('of 2', { timeout: 20_000 })
     const files = unzipSync(await engineSave(again))
     const slides = Object.keys(files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))
