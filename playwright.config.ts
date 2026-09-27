@@ -82,7 +82,13 @@ export default defineConfig({
     // ── Step 2a: tests that require a logged-in user ──────────────────────────
     {
       name: 'authenticated',
-      testMatch: /\.spec\.ts$/,
+      // `1565-preview-matrix.matrix.ts` deliberately does NOT end in
+      // `.spec.ts` — see its own header comment (PR #107 review, Codex P1) —
+      // so it is invisible to e2e/scripts/web-e2e.sh's default
+      // `SPECS=(e2e/*.spec.ts)` glob. It still needs a project to run under
+      // when invoked explicitly (`bun run test:e2e:preview-matrix`), so it is
+      // named here alongside the normal `.spec.ts$` pattern.
+      testMatch: /\.spec\.ts$|1565-preview-matrix\.matrix\.ts$/,
       // checkout-redirect-0865.spec.ts, trial-0905.spec.ts, and
       // storage-addon-confirm-0943.spec.ts are all fully self-contained
       // (every API call mocked with page.route, no server needed) and each

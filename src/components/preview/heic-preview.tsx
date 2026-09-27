@@ -89,6 +89,7 @@ export function HeicPreview({
     return (
       <ImagePreview
         blob={convertedBlob}
+        filename={filename}
         zoom={zoom}
         rotation={rotation}
         onZoomChange={onZoomChange}

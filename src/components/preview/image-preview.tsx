@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTouchGestures } from '../../hooks/use-touch-gestures'
+import { UnsupportedPreview } from './unsupported-preview'
 
 interface ImagePreviewProps {
   blob: Blob
+  filename: string
   zoom: number
   rotation: number
   onZoomChange: (zoom: number) => void
@@ -19,6 +21,7 @@ const ZOOM_STEP = 0.15
 
 export function ImagePreview({
   blob,
+  filename,
   zoom,
   rotation,
   onZoomChange,
@@ -30,6 +33,20 @@ export function ImagePreview({
 }: ImagePreviewProps) {
   const [url, setUrl] = useState<string | null>(null)
   const [showIndicator, setShowIndicator] = useState(false)
+  // Task 1565 preview matrix: Chromium has no native TIFF codec (confirmed
+  // live — a real .tiff upload left a permanently broken <img> here forever,
+  // classified as an unresolving 'spinner' by the matrix's own outcome
+  // classifier, which the task's own cardinal rule treats as a hard FAIL: "a
+  // blank area or a spinner that never ends is always a FAIL"). This <img>
+  // is fed EVERY browser-native image type (png/jpg/gif/webp/bmp/svg/tiff/…)
+  // without knowing ahead of time whether THIS browser can actually decode
+  // the bytes — HEIC/HEIF and RAW are already routed to dedicated decoders
+  // (HeicPreview, RawPreview) that each fall back to the same honest
+  // UnsupportedPreview card on a decode failure; this <img> path had no such
+  // fallback at all. `naturalWidth === 0` after 'error' is unambiguous (unlike
+  // a still-loading image, which never fires 'error') — no risk of a
+  // false-positive fallback for a real image that is merely slow to decode.
+  const [decodeFailed, setDecodeFailed] = useState(false)
   const indicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -50,6 +67,7 @@ export function ImagePreview({
   useEffect(() => {
     const objectUrl = URL.createObjectURL(blob)
     setUrl(objectUrl)
+    setDecodeFailed(false)
     return () => URL.revokeObjectURL(objectUrl)
   }, [blob])
 
@@ -78,6 +96,15 @@ export function ImagePreview({
 
   if (!url) return null
 
+  // The browser fired 'error' decoding this blob (no native codec for the
+  // format, or genuinely corrupt bytes) — show the same honest download card
+  // HeicPreview/RawPreview fall back to on their own decode failures, rather
+  // than leaving a permanently broken <img> that this matrix's own outcome
+  // classifier (and a real user) would see as a spinner that never resolves.
+  if (decodeFailed) {
+    return <UnsupportedPreview blob={blob} filename={filename} />
+  }
+
   return (
     <div
       ref={containerRef}
@@ -102,6 +129,7 @@ export function ImagePreview({
       <img
         src={url}
         alt=""
+        onError={() => setDecodeFailed(true)}
         className="rounded-md object-contain select-none"
         style={{
           transform: `scale(${zoom}) rotate(${rotation}deg)`,
