@@ -37,6 +37,17 @@ import { anonymousContext } from './helpers/auth'
  * class of bug `bb repair` exists to migrate away from — see the task's own
  * notes) would surface here as "Encrypted file" / "Decryption failed",
  * exactly like the prod report.
+ *
+ * ── PR #108 review round 2 (2026-09-27, Codex P1) ──────────────────────
+ * A missing/unbuilt `bb` binary is a HARD FAILURE now, not a silent skip —
+ * see the `test.beforeAll` below. `e2e/scripts/web-e2e.sh` resolves and
+ * builds `bb` from the sibling `repos/cli` checkout automatically (same
+ * pattern as `repos/server` for the API binary) and exports `E2E_BB_BIN`,
+ * and `.github/workflows/ci.yml`'s `e2e` job clones + builds `repos/cli`
+ * the same way it already does for `repos/server`/`repos/core`. Running
+ * this spec via the harness (or CI) should never need a manual
+ * `E2E_BB_BIN=...`; set `E2E_1534_ALLOW_SKIP=1` only to explicitly accept
+ * the coverage gap for a single ad hoc run.
  */
 
 const WEB_URL = process.env.E2E_WEB_URL ?? 'http://localhost:5173'
@@ -89,8 +100,37 @@ async function bbLoginViaBrowser(page: Page, home: string): Promise<void> {
   }
 }
 
+// PR #108 review round 2 (Codex P1): this spec used to `test.skip()`
+// unconditionally whenever E2E_BB_BIN was unset or pointed nowhere — the
+// DEFAULT harness run (`e2e/scripts/web-e2e.sh` with no args, and CI's `e2e`
+// job before this same review pass wired the binary in) never set it, so
+// the suite reported this file as passed (Playwright counts a skip as a
+// non-failure) having executed ZERO assertions. This is the ONLY real-stack
+// proof that a non-web client's key derivation matches web's — a silent
+// skip here is exactly the false-green Codex flagged, and it stayed
+// invisible because nothing distinguished "ran and passed" from "never
+// ran" in the summary line. A missing/unbuilt binary is now a HARD FAILURE
+// unless E2E_1534_ALLOW_SKIP=1 is set explicitly, for one run, by a human
+// who has read this comment.
+const BB_MISSING = !BB_BIN || !existsSync(BB_BIN)
+const ALLOW_SKIP = process.env.E2E_1534_ALLOW_SKIP === '1'
+
 test.describe('task 1534: a CLI-uploaded file decrypts correctly when shared from web', () => {
-  test.skip(!BB_BIN || !existsSync(BB_BIN), 'Set E2E_BB_BIN to a built bb binary to run this spec.')
+  test.skip(
+    BB_MISSING && ALLOW_SKIP,
+    'E2E_1534_ALLOW_SKIP=1 set and no bb binary available — explicitly opting out of the CLI/web cross-decrypt gate.',
+  )
+
+  test.beforeAll(() => {
+    if (BB_MISSING && !ALLOW_SKIP) {
+      throw new Error(
+        `E2E_BB_BIN is not set to a built bb binary (got ${JSON.stringify(BB_BIN)}). ` +
+          'This spec is the only real-stack proof that a CLI-uploaded file decrypts identically from web; a silent skip reports the run green having verified nothing. ' +
+          'Build one: (cd repos/cli && cargo build -p beebeeb-cli) — e2e/scripts/web-e2e.sh now does this automatically and exports E2E_BB_BIN, so running through the harness (not `bunx playwright test` directly) is normally enough. ' +
+          'To explicitly accept the coverage gap for one run instead, set E2E_1534_ALLOW_SKIP=1.',
+      )
+    }
+  })
 
   let home = ''
   test.beforeEach(() => {
