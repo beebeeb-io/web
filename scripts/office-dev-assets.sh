@@ -10,6 +10,10 @@
 #   2. Copies the bridge scripts (bb-office-api.js, bb-office-worker.js) from
 #      repos/office/bridge/ — same origin as the engine, per the bridge's own
 #      "load me as a sibling <script>" contract.
+#      Also copies bridge/THIRD_PARTY_NOTICES.txt (the engine's license
+#      notices: MPL-2.0 source offer, Qt LGPL-3.0, Emscripten, OFL fonts) to
+#      <version>/THIRD_PARTY_NOTICES.txt when the office tree has it; the prod
+#      path (office-bundle-stage.sh) refuses to stage without it.
 #   3. Assembles `bb-office-host.html`: the engine's OWN qt_soffice.html body,
 #      with `bb-office-api.js` appended as a sibling <script> tag right before
 #      </body> — this repo's copy, never a mutation of the engine's own file.
@@ -87,6 +91,18 @@ cp "$BRIDGE_DIR/bb-office-api.js" "$VDIR/bb-office-api.js"
 mkdir -p "$VDIR/bridge"
 cp "$BRIDGE_DIR/bb-office-worker.js" "$VDIR/bridge/bb-office-worker.js"
 
+# 2b. Third-party notices (task 1567 public-repo audit, S2). The engine is an
+#     Executable Form of LibreOffice (MPL-2.0 §3.2(a): tell recipients where
+#     the source is) with Qt statically linked (LGPL-3.0 §4(a)/(b): notice +
+#     license texts). The file is generated and git-tracked in repos/office
+#     (build/make-third-party-notices.sh). Optional here so an older office
+#     tree still assembles for dev/e2e; office-bundle-stage.sh requires it.
+if [[ -f "$BRIDGE_DIR/THIRD_PARTY_NOTICES.txt" ]]; then
+  cp "$BRIDGE_DIR/THIRD_PARTY_NOTICES.txt" "$VDIR/THIRD_PARTY_NOTICES.txt"
+else
+  echo "office-dev-assets.sh: WARNING: $BRIDGE_DIR/THIRD_PARTY_NOTICES.txt not found; bundle has no license notices (prod staging refuses this)" >&2
+fi
+
 # 3. bb-office-host.html — the engine's own qt_soffice.html body, with
 #    bb-office-api.js appended as a sibling <script>, right before </body>.
 #    Never edits qt_soffice.html itself; this is OUR page, built from it.
@@ -118,6 +134,7 @@ content_types = {
     ".svg": "image/svg+xml",
     ".ico": "image/x-icon",
     ".metadata": "application/json",
+    ".txt": "text/plain",
 }
 
 assets = []

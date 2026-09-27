@@ -141,6 +141,7 @@ content_type_for() {
     *.svg) echo "image/svg+xml" ;;
     *.ico) echo "image/x-icon" ;;
     *.json|*.metadata) echo "application/json" ;;
+    *.txt) echo "text/plain" ;;
     *) echo "application/octet-stream" ;;
   esac
 }
