@@ -24,7 +24,8 @@ import {
   recoverOpaqueRegister,
   recoverWithPhraseFinalize,
   ApiError,
-  clearToken,
+  clearLegacyBearer,
+  setEmail as setStoredEmail,
 } from '../lib/api'
 import {
   recoverFromPhrase,
@@ -184,7 +185,28 @@ export function RecoverWithPhrase() {
       // setToken() call wrote the same value to localStorage). Drop it here,
       // same as every other auth-completing flow, so it can't outlive the
       // cookie and silently re-authenticate this account later.
-      clearToken()
+      //
+      // clearLegacyBearer(), NOT clearToken() (PR #109 review round 2,
+      // Codex P2): clearToken() also fires the registered onTokenCleared
+      // callback (src/lib/api.ts → clearEmail()), which would wipe bb_email
+      // even though this recovery just succeeded and the account is not
+      // logging out. clearLegacyBearer() drops only the redundant
+      // localStorage token.
+      //
+      // Separate finding from the same review pass: unlike
+      // opaqueRegisterFinish/opaqueLoginFinish, recoverWithPhraseFinalize()
+      // (unlike those two) only calls setToken() internally — it never
+      // calls setEmail(), so a phrase recovery on a device that never had
+      // bb_email set (the common case: this IS the "I lost my password and
+      // this device" flow) would leave bb_email unset even after the fix
+      // above, and VaultUnlock.handlePasskeyUnlock() would still fail with
+      // "Could not determine account email for passkey lookup" the next
+      // time the vault locks. `email` here is the exact address this
+      // recovery was started and proved against (recoverWithPhraseStart,
+      // step 1) — stamp it the same way every other auth-completing flow
+      // does.
+      setStoredEmail(email.trim().toLowerCase())
+      clearLegacyBearer()
 
       // 6. Re-wrap master key under the new password and store in vault.
       // finalizeResult.user_id (task 1531/1534, P0) is the account recovery

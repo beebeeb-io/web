@@ -8,7 +8,7 @@ import { Icon } from '@beebeeb/shared'
 import { MnemonicVerify } from '../components/mnemonic-verify'
 import {
   ApiError,
-  clearToken,
+  clearLegacyBearer,
   opaqueRegisterStart,
   opaqueRegisterFinish,
 } from '../lib/api'
@@ -239,7 +239,18 @@ export function Onboarding() {
       // succeeds: leaving it behind lets a stale bearer silently
       // re-authenticate this account via POST /auth/upgrade-session on a
       // later boot even after the httpOnly cookie itself is gone.
-      clearToken()
+      //
+      // clearLegacyBearer(), NOT clearToken() (PR #109 review round 2,
+      // Codex P2): the opaqueRegisterFinish() call above already ran its
+      // own internal setEmail(email) and just wrote bb_email — this
+      // account is NOT logging out, it is mid-signup. clearToken() also
+      // fires the registered
+      // onTokenCleared callback (src/lib/api.ts → clearEmail()), which
+      // would wipe that same bb_email it was just given, breaking a LATER
+      // VaultUnlock.handlePasskeyUnlock() call (it reads bb_email via
+      // getEmail()). clearLegacyBearer() drops only the redundant
+      // localStorage token, leaving the still-valid email in place.
+      clearLegacyBearer()
 
       // 4. Wrap master key with password, store in IndexedDB, set in memory.
       // registerResult.user_id (task 1531/1534, P0) is the freshly-created

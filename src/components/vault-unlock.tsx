@@ -13,7 +13,7 @@ import {
   serverOptsToGetOptions,
   credentialToAuthenticationJSON,
   getEmail,
-  clearToken,
+  clearLegacyBearer,
 } from '../lib/api'
 import {
   prfExtensionInputs,
@@ -120,7 +120,17 @@ export function VaultUnlock() {
       // wrote the same value to localStorage). Drop the localStorage copy
       // immediately, same as login.tsx's passkey/password paths, so it
       // can't outlive the cookie and silently re-authenticate later.
-      clearToken()
+      //
+      // clearLegacyBearer(), NOT clearToken() (PR #109 review round 2,
+      // Codex P2): `email` above (this same handler) was just read via
+      // getEmail() precisely because the NEXT time the vault locks and
+      // this handler runs again, bb_email needs to still be there.
+      // clearToken() also fires the registered onTokenCleared callback
+      // (src/lib/api.ts → clearEmail()), which would wipe bb_email even
+      // though the user is not logging out — this IS the step-up unlock,
+      // not a logout. clearLegacyBearer() drops only the redundant
+      // localStorage token.
+      clearLegacyBearer()
       await refreshUser()
 
       // Task 1531/1534 (P0 continuation, web PR #85, crypto-security-
