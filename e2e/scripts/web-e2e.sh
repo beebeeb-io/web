@@ -101,6 +101,54 @@ export BB_REQUIRE_PILOT_KEY BB_PILOT_SIGNUP_KEY
 # expected key so an opted-in gate-ON run satisfies both sides.
 export BB_TEST_PILOT_KEY="${BB_TEST_PILOT_KEY:-$BB_PILOT_SIGNUP_KEY}"
 
+# ── Never send real email (task 1555) ────────────────────────────────────────
+# beebeeb-api calls `dotenvy::dotenv()` at boot, which walks UP parent
+# directories looking for a `.env` file — and the workspace-root `.env` holds
+# real SMTP credentials. dotenvy only fills env vars that are NOT already
+# present in the process environment, so a debug API started from anywhere
+# under the workspace (this harness runs fine from a `git worktree add`
+# checkout OUTSIDE the workspace too, but nothing stops someone invoking it
+# from the PRIMARY repos/web checkout) would otherwise inherit the real
+# SMTP_HOST/PORT/USER/PASS/TLS_MODE and boot into `email service: smtp` —
+# meaning a Playwright signup/change-email spec would send a REAL email to
+# whatever address it happens to use as a test account.
+#
+# Fix, two layers (defense in depth, matching the dotenvy semantics above):
+#   1. EMAIL_PROVIDER is forced to "console" explicitly — from_env() reads
+#      this var FIRST and never even looks at SMTP_HOST when it's set.
+#   2. Every SMTP_*/EMAIL_* var `EmailService::from_env()` reads
+#      (beebeeb-api/src/email.rs) is set to an EXPLICIT EMPTY value, not
+#      unset — an unset var is exactly what dotenvy would fill in from the
+#      discovered .env; a var already PRESENT (even empty) is left alone.
+# Belt-and-suspenders: BB_ALLOW_REAL_EMAIL is forced to "0" too, so even a
+# future from_env() bug that resurrects the smtp branch is still refused by
+# the server's own debug-build guard (task 1555's server-side half).
+#
+# EMAIL_LOG_RUST_LOG appends a narrow `beebeeb_api::email=info` directive to
+# whatever RUST_LOG the caller already has (or nothing) — `from_env()`'s
+# `tracing::info!("email service: …")` line is otherwise invisible by
+# default: `EnvFilter::from_default_env()` with RUST_LOG unset filters out
+# INFO entirely (confirmed empirically: an unset-RUST_LOG boot produces ZERO
+# log output at all, not even sqlx's own notices). Without this, the
+# self-check below — and the "paste the log line" verification this task
+# requires — would fail on every run regardless of correctness. Scoped to
+# ONE module so it doesn't flood $API_LOG with unrelated INFO noise, and
+# additive so a caller's own RUST_LOG (e.g. debugging with RUST_LOG=debug)
+# is never clobbered.
+EMAIL_LOG_RUST_LOG="beebeeb_api::email=info"
+[ -n "${RUST_LOG:-}" ] && EMAIL_LOG_RUST_LOG="$RUST_LOG,$EMAIL_LOG_RUST_LOG"
+EMAIL_SAFETY_ENV=(
+  EMAIL_PROVIDER=console
+  EMAIL_FROM=
+  SMTP_HOST=
+  SMTP_PORT=
+  SMTP_USER=
+  SMTP_PASS=
+  SMTP_TLS_MODE=
+  BB_ALLOW_REAL_EMAIL=0
+  "RUST_LOG=$EMAIL_LOG_RUST_LOG"
+)
+
 # psql wrapper: prefer host `psql`, otherwise fall back to `docker exec` into
 # the dev Postgres container (task 1406 — this harness previously assumed
 # `psql` was on PATH, which it is not on this machine: only the Dockerized
@@ -221,18 +269,36 @@ SQL
     WEBAUTHN_RP_ID=localhost WEBAUTHN_RP_ORIGIN="http://localhost:$VITE_PORT" \
     BB_REQUIRE_PILOT_KEY="$BB_REQUIRE_PILOT_KEY" \
     BB_PILOT_SIGNUP_KEY="$BB_PILOT_SIGNUP_KEY" \
-    setsid "$API_BIN" >"$API_LOG" 2>&1 &
+    setsid env "${EMAIL_SAFETY_ENV[@]}" "$API_BIN" >"$API_LOG" 2>&1 &
   API_PID=$!
   # -m10 (not -m3): the FIRST auto-login also creates the dev user (Argon2id
   # password hash) + derives the master key; allow headroom on a cold CI runner.
   # A genuinely dead API is still caught immediately by the kill -0 check below.
+  local healthy=0
   for i in $(seq 1 60); do
-    curl -fsS -m10 -o /dev/null -X POST "http://localhost:$API_PORT/dev/auto-login" \
-      -H 'Content-Type: application/json' -d '{"email":"dev@beebeeb.dev"}' && return 0
+    if curl -fsS -m10 -o /dev/null -X POST "http://localhost:$API_PORT/dev/auto-login" \
+      -H 'Content-Type: application/json' -d '{"email":"dev@beebeeb.dev"}'; then
+      healthy=1; break
+    fi
     kill -0 "$API_PID" 2>/dev/null || { echo "API died on boot; see $API_LOG"; tail -20 "$API_LOG"; return 1; }
     sleep 1
   done
-  echo "API never became healthy on :$API_PORT"; return 1
+  [ "$healthy" -eq 1 ] || { echo "API never became healthy on :$API_PORT"; return 1; }
+
+  # Email safety self-check (task 1555): the boot log must show the console
+  # backend, never "email service: smtp" — this is what proves EMAIL_SAFETY_ENV
+  # (above) actually won against whatever the workspace-root .env's dotenvy
+  # walk-up would otherwise have supplied. A regression here must fail the
+  # harness LOUDLY, not let specs quietly run against a backend that can send
+  # real mail.
+  if grep -q "email service: console" "$API_LOG"; then
+    log "email safety check OK — \"email service: console\" confirmed in $API_LOG"
+  else
+    echo "EMAIL SAFETY CHECK FAILED: $API_LOG does not show \"email service: console\" — refusing to run specs against a backend that might send REAL email. Relevant log lines:"
+    grep -i "email service" "$API_LOG" || echo "(no \"email service\" line found in $API_LOG at all)"
+    return 1
+  fi
+  return 0
 }
 
 stop_backend() {
