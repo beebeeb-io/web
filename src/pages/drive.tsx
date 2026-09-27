@@ -18,7 +18,7 @@ import { UploadCards } from '../components/upload-progress-card'
 import { NewFolderDialog } from '../components/new-folder-dialog'
 import { NewMenu } from '../components/new-menu'
 import { NewDocumentDialog } from '../components/new-document-dialog'
-import { getNewDocumentType, type NewDocumentType } from '../lib/new-document'
+import { getNewDocumentType, NewDocumentNameClashError, type NewDocumentType } from '../lib/new-document'
 import { blankDocumentBytes } from '../lib/office/blank-documents'
 import { FEATURE_OFFICE_EDITOR } from '../lib/flags'
 import { isOfficeLabsEnabled } from '../lib/office/office-labs'
@@ -1750,6 +1750,24 @@ export function Drive() {
     }
     return (async () => {
       try {
+        // Authoritative clash check against a FRESH, complete listing of the
+        // folder (every page), each name decrypted now — not the on-screen
+        // cache, which can lag a sibling renamed or added from another
+        // device (PR #117 review). The server cannot catch this itself: it
+        // only ever sees encrypted names.
+        const siblings = await listAllFiles(currentParentId ?? undefined)
+        const wanted = name.toLocaleLowerCase()
+        for (const f of siblings) {
+          let sibling: string | null = null
+          try {
+            sibling = (await decryptFileMetadata(await getFileKeyForFile(f), f.name_encrypted)).name
+          } catch {
+            sibling = null // undecryptable: cannot clash with a name we can see
+          }
+          if (sibling && sibling.toLocaleLowerCase() === wanted) {
+            throw new NewDocumentNameClashError(name)
+          }
+        }
         const bytes = await blankDocumentBytes(type)
         const file = new File([bytes as BlobPart], name, { type: type.mimeType })
         const fileKey = await getFileKey(fileId)
@@ -1801,6 +1819,7 @@ export function Drive() {
         showToast({ icon: 'check', title: 'Created', description: name })
       } catch (err) {
         if (tab && !tab.closed) tab.close()
+        if (err instanceof NewDocumentNameClashError) throw err
         throw new Error(userFriendlyError(err))
       }
     })()

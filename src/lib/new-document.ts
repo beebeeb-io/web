@@ -182,6 +182,15 @@ export function defaultNewDocumentName(type: NewDocumentType, existingNames: Ite
   return uniqueFileName(`${type.defaultBase}.${type.ext}`, existingNames)
 }
 
+/** Thrown by Drive's create handler when the fresh listing already holds
+ *  the name; its message is user-facing and shown as-is in the prompt. */
+export class NewDocumentNameClashError extends Error {
+  constructor(name: string) {
+    super(`“${name}” already exists in this folder.`)
+    this.name = 'NewDocumentNameClashError'
+  }
+}
+
 export type NameCheck = { ok: true; name: string } | { ok: false; reason: string }
 
 /**
