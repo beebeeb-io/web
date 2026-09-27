@@ -12,6 +12,15 @@
 // served byte-for-byte from `public/`, same as sw.js itself.
 ;(function (root) {
   var OFFICE_CACHE_PREFIX = 'beebeeb-office-'
+  // Cache GENERATION, part of every office cache name (task 1584). Bumped
+  // when responses cached under an earlier generation may be damaged: until
+  // task 1584, nginx served every /office/<version>/ asset Brotli AND gzip
+  // encoded, and a WebKit client could store the undecodable body under the
+  // immutable, content-hashed URL — a "cache-first forever" poison that a
+  // server fix alone never clears when the bundle version stays the same.
+  // A new generation makes every older `beebeeb-office-*` cache stale, so the
+  // activate step's officeCacheNamesToDelete() removes it.
+  var OFFICE_CACHE_GENERATION = 'g2'
   var OFFICE_MANIFEST_PATH = '/office/manifest.json'
 
   /**
@@ -33,7 +42,7 @@
     if (!version || typeof version !== 'string') {
       throw new Error('officeCacheName requires a non-empty version string')
     }
-    return OFFICE_CACHE_PREFIX + version
+    return OFFICE_CACHE_PREFIX + OFFICE_CACHE_GENERATION + '-' + version
   }
 
   /**
@@ -90,11 +99,17 @@
     // implementation, but this is asserted explicitly since it is the
     // exact case zero-egress must never cache.
     if (response.type === 'opaque') return false
+    // Task 1584: a stacked Content-Encoding ("br, gzip") is the exact
+    // double-compression bug that showed the engine document as text on
+    // iPhone Safari. Never pin such a response in a cache-first store.
+    var enc = response.headers && typeof response.headers.get === 'function' ? response.headers.get('content-encoding') : null
+    if (enc && /[,\n]/.test(enc)) return false
     return true
   }
 
   var api = {
     OFFICE_CACHE_PREFIX: OFFICE_CACHE_PREFIX,
+    OFFICE_CACHE_GENERATION: OFFICE_CACHE_GENERATION,
     OFFICE_MANIFEST_PATH: OFFICE_MANIFEST_PATH,
     isOfficeAssetPath: isOfficeAssetPath,
     officeCacheName: officeCacheName,

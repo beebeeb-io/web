@@ -20,6 +20,8 @@
  *   2. Real UI signup → upload .docx → Edit → type → Save as
  *      v2 → reopen in a fresh tab → the saved document.xml contains the edit.
  *   3. Same for .xlsx (cell A2 → 99, checked in xl/worksheets/sheet1.xml).
+ *   4. (task 1584) Every office bundle asset is served with exactly one
+ *      content coding and decodes to its manifest hash.
  *   Across 2 and 3: engine boot time (Edit click → canvas + outline/formula
  *   bar ready) and every request to a host other than E2E_WEB_URL.
  *   Results go to E2E_PROOF_OUT (default test-results/container-proof).
@@ -121,6 +123,31 @@ test('container: /office/<fileId> itself is served with COOP + COEP (cross-origi
   expect(r.headers()['cross-origin-opener-policy']).toBe('same-origin')
   expect(r.headers()['cross-origin-embedder-policy']).toBe('require-corp')
   expect(await r.text()).toContain('<div id="root"')
+})
+
+test('container: every office bundle asset has ONE content coding and decodes to its manifest hash (task 1584)', async ({ request }) => {
+  // Task 1584: nginx used to gzip the pre-compressed .br files again, sending
+  // `Content-Encoding: br` AND `gzip`. Chromium decoded that; WebKit did not
+  // (iPhone Safari showed the engine document as text). Asks for Brotli the
+  // way Safari does over HTTPS, then checks every asset in the manifest.
+  const manifest = (await (await request.get('/office/manifest.json')).json()) as {
+    version: string
+    assets: Array<{ path: string; integrity: string }>
+  }
+  expect(manifest.assets.length).toBeGreaterThan(0)
+  const { createHash } = await import('crypto')
+  const checked: string[] = []
+  for (const asset of manifest.assets) {
+    const r = await request.get(`/office/${manifest.version}/${asset.path}`, { headers: { 'Accept-Encoding': 'gzip, deflate, br' } })
+    expect(r.status(), asset.path).toBe(200)
+    const encoding = r.headers()['content-encoding'] ?? ''
+    expect(encoding, `${asset.path} content-encoding`).toBe('br')
+    const [algo, b64] = asset.integrity.split('-')
+    const digest = createHash(algo).update(await r.body()).digest('base64')
+    expect(digest, `${asset.path} decoded body vs manifest integrity`).toBe(b64)
+    checked.push(asset.path)
+  }
+  expect(checked.length).toBe(manifest.assets.length)
 })
 
 test('container: office route never renders the editor for a signed-out visitor (build flag true)', async ({ page }) => {

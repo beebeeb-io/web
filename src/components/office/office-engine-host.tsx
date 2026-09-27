@@ -80,6 +80,28 @@ function pollForBridge(
   })
 }
 
+/** User-facing message when the engine document is not the one we serve. */
+export const DAMAGED_HOST_MESSAGE = "The editor's files did not arrive intact on this device. Reload the page to try again."
+
+/**
+ * Returns an error message when the iframe's loaded document is not the
+ * engine host page (task 1584), or null when it is, or when nothing can be
+ * checked yet (the initial about:blank, or a document this realm may not
+ * read). Exported for the unit test.
+ */
+export function inspectHostDocument(win: Window): string | null {
+  let doc: Document | null = null
+  try {
+    if (win.location.href === 'about:blank') return null
+    doc = win.document
+  } catch {
+    return null
+  }
+  if (!doc) return null
+  const hasBridgeScript = Array.from(doc.getElementsByTagName('script')).some((el) => /(^|\/)bb-office-api\.js(\?|$)/.test(el.getAttribute('src') ?? ''))
+  return hasBridgeScript ? null : DAMAGED_HOST_MESSAGE
+}
+
 export function useOfficeEngine(opts: OfficeEngineHostProps) {
   const { baseUrl = '/office', initialTheme, onReady, onError, bootTimeoutMs = DEFAULT_BOOT_TIMEOUT_MS } = opts
   const [status, setStatus] = useState<OfficeEngineStatus>('loading-manifest')
@@ -117,6 +139,21 @@ export function useOfficeEngine(opts: OfficeEngineHostProps) {
   const handleIframeLoad = useCallback(() => {
     const win = iframeRef.current?.contentWindow
     if (!win) return
+    // Task 1584: fail fast when the engine document itself arrived damaged.
+    // On iPhone Safari, bb-office-host.html came in double-encoded (Brotli
+    // + gzip, see nginx.conf); Safari undid one layer and rendered the rest
+    // as text, and this hook would have polled for a bridge that can never
+    // appear for the full 90 s boot timeout while the user watched symbols.
+    // The real document always carries the bb-office-api.js <script> (it is
+    // how `bbOffice` gets defined at all), so its absence after `load` means
+    // this is not our document.
+    const damage = inspectHostDocument(win)
+    if (damage) {
+      setError(damage)
+      setStatus('error')
+      onError?.(damage)
+      return
+    }
     const localSignal = { cancelled: false }
     cancelledRef.current = localSignal
     pollForBridge(win, bootTimeoutMs, localSignal)

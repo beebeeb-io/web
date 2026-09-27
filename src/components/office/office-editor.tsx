@@ -311,7 +311,7 @@ export function OfficeEditor({
   )
 
   const resolvedAppTheme = appTheme === 'dark' ? 'dark' : 'light'
-  const { status, error: engineError, iframeSrc, iframeRef, handleIframeLoad } = useOfficeEngine({
+  const { error: engineError, iframeSrc, iframeRef, handleIframeLoad } = useOfficeEngine({
     initialTheme: resolvedAppTheme,
     onReady: handleReady,
     onError: setOpenError,
@@ -803,7 +803,16 @@ export function OfficeEditor({
             </div>
           ) : (
             <>
-              {status !== 'ready' && !docReady && (
+              {/* Task 1584: covers the engine iframe until the document is
+                  OPEN (docReady), not just until the bridge exists. Before,
+                  this sat UNDER the iframe (earlier sibling, no z-index) and
+                  went away at status 'ready', so whatever the iframe showed
+                  while the editor still said "Preparing the editor…" was on
+                  screen, including, on iPhone Safari, the engine document's
+                  own undecoded bytes as text. Opaque and on top now; the
+                  iframe stays laid out underneath so the engine boots and
+                  sizes its canvas exactly as before. */}
+              {!docReady && (
                 // CRITIQUE.md finding #5: replaces the old opaque spinner
                 // card (which hid the whole canvas behind flat bg-paper-2)
                 // with the approved "firstload" mockup's own treatment — the
@@ -816,7 +825,10 @@ export function OfficeEditor({
                 // document has none yet). "Preparing…" copy moved to the
                 // status bar below (loadingLabel) per the mockup, which
                 // puts it there, not overlapping the document.
-                <div className="absolute inset-0 flex items-center justify-center overflow-hidden p-8" data-testid="office-loading-thumbnail">
+                <div
+                  className={`absolute inset-0 z-10 flex items-center justify-center overflow-hidden p-8 ${officeApp === 'impress' ? 'bg-canvas-dark' : 'bg-paper-3'}`}
+                  data-testid="office-loading-thumbnail"
+                >
                   {thumbnailUrl ? (
                     <img
                       src={thumbnailUrl}
