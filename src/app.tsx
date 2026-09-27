@@ -9,7 +9,8 @@ import { readPlanIntent, guestRouteFallback } from './lib/plan-intent'
 import { WsProvider } from './lib/ws-context'
 import { SyncProvider } from './lib/sync-context'
 import { OnboardingProvider } from './lib/onboarding-context'
-import { FEATURE_TEAMS } from './lib/flags'
+import { FEATURE_TEAMS, FEATURE_OFFICE_EDITOR } from './lib/flags'
+import { isOfficeLabsEnabled } from './lib/office/office-labs'
 import { ToastProvider, useToast } from './components/toast'
 import { ErrorBoundary } from './components/error-boundary'
 import { WasmGuard } from './components/wasm-guard'
@@ -51,6 +52,7 @@ const ForgotPassword = lazyNamed(() => import('./pages/forgot-password'),'Forgot
 const ResetPassword  = lazyNamed(() => import('./pages/reset-password'), 'ResetPassword')
 const RecoverWithPhrase = lazyNamed(() => import('./pages/recover-with-phrase'), 'RecoverWithPhrase')
 const VerifyEmail    = lazyNamed(() => import('./pages/verify-email'),   'VerifyEmail')
+const OfficeEditorPage = lazyNamed(() => import('./pages/office-editor-page'), 'OfficeEditorPage')
 const Unlock         = lazyNamed(() => import('./pages/unlock'),         'Unlock')
 const Migration      = lazyNamed(() => import('./pages/migration'),      'Migration')
 const Team           = lazyNamed(() => import('./pages/team'),           'Team')
@@ -65,6 +67,13 @@ const ImpersonateRedeem = lazyNamed(
   'ImpersonateRedeem',
 )
 const JoinPage       = lazyNamed(() => import('./pages/join'),            'JoinPage')
+// Dev-only harness for the office loading skeleton (task 1567) — never
+// imported, let alone routed to, in a production build (see the
+// `import.meta.env.DEV`-gated Route below). Vite constant-folds that check
+// and Rollup tree-shakes both the import and the chunk out of `bun run build`.
+const DevOfficePreview = import.meta.env.DEV
+  ? lazyNamed(() => import('./pages/dev-office-preview'), 'DevOfficePreview')
+  : null
 const NotFound       = lazyNamed(() => import('./pages/errors/not-found'),   'NotFound')
 const Logout         = lazyNamed(() => import('./pages/logout'),             'Logout')
 const ServerError    = lazyNamed(() => import('./pages/errors/server-error'), 'ServerError')
@@ -421,6 +430,34 @@ export function App() {
               </ProtectedRoute>
             }
           />
+          {/* Office editor (task 1567) — its OWN top-level route, opened via
+              window.open() from file-preview.tsx, never nested in the Drive
+              page. See office-editor-page.tsx's header comment for why this
+              must be a real navigation and not an in-app overlay. Path is
+              `/office/:fileId` (not e.g. `/office-editor`) specifically to
+              reuse nginx.conf's PRE-EXISTING `location /office/` block,
+              which the task 1567 delivery-groundwork phase already wrote for
+              exactly this — "office page route itself (e.g. /office/<fileId>)
+              is client-rendered — SPA fallback... carrying the SAME
+              isolation headers" — rather than inventing a second one. */}
+          <Route
+            path="/office/:fileId"
+            element={
+              // Ship prep (task 1567, 2026-09-27): FEATURE_OFFICE_EDITOR
+              // (build-time) gates whether this route/chunk exists in the
+              // build AT ALL; isOfficeLabsEnabled() (runtime, office-labs.ts)
+              // gates whether THIS visitor sees it in an already-deployed
+              // build carrying the flag on. Both must be true — see
+              // office-labs.ts's own header for why there are two.
+              FEATURE_OFFICE_EDITOR && isOfficeLabsEnabled() ? (
+                <ProtectedRoute>
+                  <OfficeEditorPage />
+                </ProtectedRoute>
+              ) : (
+                <Navigate to="/" replace />
+              )
+            }
+          />
           <Route
             path="/onboarding"
             element={
@@ -603,6 +640,8 @@ export function App() {
           <Route path="/r/:token" element={<UploadRequestPage />} />
           <Route path="/logout" element={<Logout />} />
           <Route path="/500" element={<ServerError />} />
+          {/* Dev-only: task 1567 office loading-skeleton harness. Not present in prod. */}
+          {DevOfficePreview && <Route path="/dev/office-preview" element={<DevOfficePreview />} />}
           <Route path="*" element={<NotFound />} />
         </Routes>
         </Suspense>

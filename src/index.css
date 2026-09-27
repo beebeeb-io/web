@@ -31,6 +31,13 @@
   --color-green-border: oklch(0.85 0.09 155);
   --color-red-bg: oklch(0.97 0.02 25);
   --color-red-border: oklch(0.88 0.05 25);
+  /* Impress-only (task 1567 Impress lane): the editing canvas stays dark in
+     BOTH app themes, matching Word/Keynote's own convention (design/
+     office-editor.html's `.impcanvas`/`--canvas-dark`) — a shade darker than
+     this theme's own `--color-paper-3`, redefined (not reused) under `.dark`
+     below so it stays a near-black tone there too, not the lighter dark-mode
+     paper-3. */
+  --color-canvas-dark: #242320;
 
   /* Typography */
   --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
@@ -100,6 +107,7 @@
   --color-green-border: oklch(0.35 0.08 155);
   --color-red-bg: oklch(0.22 0.04 25);
   --color-red-border: oklch(0.35 0.08 25);
+  --color-canvas-dark: #070706;
   --shadow-1: 0 1px 3px oklch(0 0 0 / 0.2), 0 1px 2px oklch(0 0 0 / 0.3);
   --shadow-2: 0 4px 12px oklch(0 0 0 / 0.25), 0 2px 4px oklch(0 0 0 / 0.2);
   --shadow-3: 0 12px 32px oklch(0 0 0 / 0.35), 0 4px 8px oklch(0 0 0 / 0.2);
