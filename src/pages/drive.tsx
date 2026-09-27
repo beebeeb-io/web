@@ -835,10 +835,19 @@ export function Drive() {
   // could otherwise leave a ghost row until manual navigation.
   useSelfHealRefetch(fetchFiles)
 
-  // Star toggled on another device or by a collaborator — update in-place
+  // Star toggled on another device or by a collaborator — update in-place.
+  //
+  // Only while the sync engine is NOT ready. Once it is, the rows are derived
+  // from the sync tree, and the tree's single realtime writer for stars is the
+  // ordered `/sync/stream` connection (SyncClient.applyStarredFrame). The same
+  // file.starred event also arrives here over the WebSocket, and the two
+  // deliveries can be reordered against each other: a delayed older `true`
+  // landing here after the newer `false` would re-star the row (PR #115
+  // review). One ordered source per mode, never two.
   useWsEvent(
     ['file.starred'],
     useCallback((event) => {
+      if (syncReadyRef.current) return
       // Server shape: `{ type: 'file.starred', data: { id, is_starred } }`
       // (event_bus.rs SyncEvent::FileStarred). This read `data.file_id`, which
       // the server never sends, so the handler was a silent no-op (task 1577).
@@ -846,14 +855,13 @@ export function Drive() {
       if (typeof data.id === 'string' && typeof data.is_starred === 'boolean') {
         const id = data.id
         const isStarred = data.is_starred
-        sync.setNodeStarred(id, isStarred)
         setFiles((prev) =>
           prev.map((f) =>
             f.id === id ? { ...f, is_starred: isStarred } : f,
           ),
         )
       }
-    }, [sync.setNodeStarred]),
+    }, []),
   )
 
   // Share link opened — show toast

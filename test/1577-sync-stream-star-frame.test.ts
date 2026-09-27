@@ -51,11 +51,11 @@ function fileCreateFrame(seq: number): string {
 }
 
 /** The realtime frame `routes/starred.rs` publishes (serde tag/content). */
-function starredFrame(isStarred: boolean): string {
+function starredFrame(isStarred: boolean, timestamp = new Date().toISOString()): string {
   return JSON.stringify({
     type: 'file.starred',
     data: { id: FILE_ID, is_starred: isStarred },
-    timestamp: new Date().toISOString(),
+    timestamp,
   })
 }
 
@@ -120,9 +120,13 @@ describe('1577: classifyStreamFrame', () => {
   test('sequenced op', () => {
     expect(classifyStreamFrame(JSON.parse(fileCreateFrame(7))).kind).toBe('op')
   })
-  test('file.starred realtime event', () => {
-    expect(classifyStreamFrame(JSON.parse(starredFrame(true)))).toEqual({
-      kind: 'starred', id: FILE_ID, isStarred: true,
+  test('file.starred realtime event carries the server publish time', () => {
+    const ts = '2026-09-27T10:00:00.123456Z'
+    expect(classifyStreamFrame(JSON.parse(starredFrame(true, ts)))).toEqual({
+      kind: 'starred', id: FILE_ID, isStarred: true, at: Date.parse(ts),
+    })
+    expect(classifyStreamFrame({ type: 'file.starred', data: { id: FILE_ID, is_starred: false } })).toEqual({
+      kind: 'starred', id: FILE_ID, isStarred: false,
     })
   })
   test('other realtime events and junk are ignored', () => {
@@ -131,5 +135,67 @@ describe('1577: classifyStreamFrame', () => {
     expect(classifyStreamFrame({ seq_id: 'nope', op_type: 'file_create' }).kind).toBe('ignore')
     expect(classifyStreamFrame(null).kind).toBe('ignore')
     expect(classifyStreamFrame('keepalive').kind).toBe('ignore')
+  })
+})
+
+/**
+ * PR #115 review (Codex P2): star → unstar, the star's `file.starred` frame
+ * delayed past the unstar. The older `true` must not restore the star.
+ */
+describe('1577: star frame ordering', () => {
+  const T0 = '2026-09-27T10:00:00.000000Z'
+  const T1 = '2026-09-27T10:00:01.000000Z'
+  const T2 = '2026-09-27T10:00:02.000000Z'
+
+  test('star → unstar locally, then the delayed older true frame lands → stays false', () => {
+    const { client } = seededClient()
+    client.setNodeStarred(FILE_ID, true) // PATCH #1 response
+    client.setNodeStarred(FILE_ID, false) // PATCH #2 response
+    client.ingestStreamFrame(starredFrame(true, T0)) // PATCH #1 echo, late
+    expect(client.getNode(FILE_ID)?.is_starred).toBe(false)
+    client.ingestStreamFrame(starredFrame(false, T1)) // PATCH #2 echo
+    expect(client.getNode(FILE_ID)?.is_starred).toBe(false)
+  })
+
+  test('an older frame arriving after a newer one is dropped (no local writes)', () => {
+    const { client } = seededClient()
+    client.ingestStreamFrame(starredFrame(true, T0))
+    client.ingestStreamFrame(starredFrame(false, T1))
+    client.ingestStreamFrame(starredFrame(true, T0)) // reordered duplicate/older publish
+    expect(client.getNode(FILE_ID)?.is_starred).toBe(false)
+  })
+
+  test('once the own echo is back, another device\'s later toggle still applies', () => {
+    const { client } = seededClient()
+    client.setNodeStarred(FILE_ID, true)
+    client.ingestStreamFrame(starredFrame(true, T0)) // own echo
+    client.ingestStreamFrame(starredFrame(false, T1)) // other device unstars
+    expect(client.getNode(FILE_ID)?.is_starred).toBe(false)
+  })
+
+  test('echo landing BEFORE its PATCH response does not swallow the next foreign toggle', () => {
+    const { client } = seededClient()
+    client.ingestStreamFrame(starredFrame(true, T0)) // echo first (published pre-response)
+    client.setNodeStarred(FILE_ID, true) // then the response
+    client.ingestStreamFrame(starredFrame(false, T1)) // other device unstars
+    expect(client.getNode(FILE_ID)?.is_starred).toBe(false)
+    client.ingestStreamFrame(starredFrame(true, T2))
+    expect(client.getNode(FILE_ID)?.is_starred).toBe(true)
+  })
+
+  test('a lost echo stops holding frames back after the TTL', () => {
+    const realNow = Date.now
+    let now = realNow.call(Date)
+    Date.now = () => now
+    try {
+      const { client } = seededClient()
+      client.setNodeStarred(FILE_ID, true)
+      client.setNodeStarred(FILE_ID, false) // both echoes lost (stream dropped)
+      now += 60_000
+      client.ingestStreamFrame(starredFrame(true, T2)) // later foreign star
+      expect(client.getNode(FILE_ID)?.is_starred).toBe(true)
+    } finally {
+      Date.now = realNow
+    }
   })
 })
