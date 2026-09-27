@@ -51,11 +51,53 @@ function devCspPlugin(apiUrl: string): Plugin {
   }
 }
 
+/**
+ * Route-scoped Cross-Origin-Opener-Policy / Cross-Origin-Embedder-Policy for
+ * the office editor (task 1567) in `bun dev` — the same isolation nginx.conf
+ * applies in prod, under `/office/*` only. LibreOffice-WASM's pthread build
+ * needs `crossOriginIsolated === true` for SharedArrayBuffer
+ * (repos/office/docs/PHASE2-RESULTS.md); applying it site-wide would isolate
+ * every OTHER route too, breaking any future cross-origin embed elsewhere in
+ * the app. Registered directly on `server.middlewares` (not returned from
+ * `configureServer`'s post-hook) so it runs BEFORE Vite's own static-file
+ * middleware serves the `public/office/...` bytes — headers set on the
+ * response object here are still present when that later middleware calls
+ * `res.end()`.
+ *
+ * This SAME prefix also covers the office editor's own SPA route,
+ * `/office/:fileId` (office-editor-page.tsx, task 1567) — client-rendered,
+ * served through Vite's history-fallback like any other app route, but under
+ * `/office/`, so it inherits these headers automatically. That is load-
+ * bearing, not incidental: a nested iframe only becomes `crossOriginIsolated`
+ * when its ENTIRE ancestor chain, including the top-level document, also
+ * carries COOP+COEP — verified empirically against a real Chromium build
+ * while building this (a plain iframe nested in the ordinary Drive page
+ * measured `crossOriginIsolated === false` inside the iframe every time).
+ * `/office/:fileId` is deliberately this route's own isolated top-level
+ * document; every other app route stays uninstrumented, per PLAN.md.
+ */
+function officeIsolationHeadersPlugin(): Plugin {
+  return {
+    name: 'beebeeb-office-isolation-headers',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (req.url && req.url.startsWith('/office/')) {
+          res.setHeader('Cross-Origin-Opener-Policy', 'same-origin')
+          res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp')
+          res.setHeader('Cross-Origin-Resource-Policy', 'same-origin')
+        }
+        next()
+      })
+    },
+  }
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), 'VITE_')
   const apiUrl = env.VITE_API_URL || 'http://localhost:3001'
   return {
-    plugins: [react(), tailwindcss(), wasm(), preloadWasmPlugin(), devCspPlugin(apiUrl)],
+    plugins: [react(), tailwindcss(), wasm(), preloadWasmPlugin(), devCspPlugin(apiUrl), officeIsolationHeadersPlugin()],
     worker: {
       format: 'es',
       plugins: () => [wasm()],

@@ -9,7 +9,7 @@ import { readPlanIntent, guestRouteFallback } from './lib/plan-intent'
 import { WsProvider } from './lib/ws-context'
 import { SyncProvider } from './lib/sync-context'
 import { OnboardingProvider } from './lib/onboarding-context'
-import { FEATURE_TEAMS } from './lib/flags'
+import { FEATURE_TEAMS, FEATURE_OFFICE_EDITOR } from './lib/flags'
 import { ToastProvider, useToast } from './components/toast'
 import { ErrorBoundary } from './components/error-boundary'
 import { WasmGuard } from './components/wasm-guard'
@@ -51,6 +51,7 @@ const ForgotPassword = lazyNamed(() => import('./pages/forgot-password'),'Forgot
 const ResetPassword  = lazyNamed(() => import('./pages/reset-password'), 'ResetPassword')
 const RecoverWithPhrase = lazyNamed(() => import('./pages/recover-with-phrase'), 'RecoverWithPhrase')
 const VerifyEmail    = lazyNamed(() => import('./pages/verify-email'),   'VerifyEmail')
+const OfficeEditorPage = lazyNamed(() => import('./pages/office-editor-page'), 'OfficeEditorPage')
 const Unlock         = lazyNamed(() => import('./pages/unlock'),         'Unlock')
 const Migration      = lazyNamed(() => import('./pages/migration'),      'Migration')
 const Team           = lazyNamed(() => import('./pages/team'),           'Team')
@@ -426,6 +427,28 @@ export function App() {
               <ProtectedRoute>
                 <VerifyEmail />
               </ProtectedRoute>
+            }
+          />
+          {/* Office editor (task 1567) — its OWN top-level route, opened via
+              window.open() from file-preview.tsx, never nested in the Drive
+              page. See office-editor-page.tsx's header comment for why this
+              must be a real navigation and not an in-app overlay. Path is
+              `/office/:fileId` (not e.g. `/office-editor`) specifically to
+              reuse nginx.conf's PRE-EXISTING `location /office/` block,
+              which the task 1567 delivery-groundwork phase already wrote for
+              exactly this — "office page route itself (e.g. /office/<fileId>)
+              is client-rendered — SPA fallback... carrying the SAME
+              isolation headers" — rather than inventing a second one. */}
+          <Route
+            path="/office/:fileId"
+            element={
+              FEATURE_OFFICE_EDITOR ? (
+                <ProtectedRoute>
+                  <OfficeEditorPage />
+                </ProtectedRoute>
+              ) : (
+                <Navigate to="/" replace />
+              )
             }
           />
           <Route
