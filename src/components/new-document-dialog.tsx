@@ -18,22 +18,28 @@ import { checkNewDocumentName, defaultNewDocumentName, type NewDocumentType } fr
 interface NewDocumentDialogProps {
   type: NewDocumentType | null
   existingNames: string[]
+  /** False while the folder listing or its sibling names are still being
+   *  loaded/decrypted — Create waits, and the default name is recomputed
+   *  once they are known (unless the user already typed one). */
+  namesReady: boolean
   onClose: () => void
   /** Returns once the file exists (or throws with a user-facing message). */
   onCreate: (type: NewDocumentType, name: string) => Promise<void>
 }
 
-export function NewDocumentDialog({ type, existingNames, onClose, onCreate }: NewDocumentDialogProps) {
+export function NewDocumentDialog({ type, existingNames, namesReady, onClose, onCreate }: NewDocumentDialogProps) {
   const open = type !== null
   const [name, setName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const touchedRef = useRef(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const focusTrapRef = useFocusTrap<HTMLFormElement>(open)
 
   useEffect(() => {
     if (!type) return
     const initial = defaultNewDocumentName(type, existingNames)
+    touchedRef.current = false
     setName(initial)
     setError(null)
     setBusy(false)
@@ -50,11 +56,19 @@ export function NewDocumentDialog({ type, existingNames, onClose, onCreate }: Ne
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type])
 
+  // Names arrived after the prompt opened: refresh the proposed default so
+  // it is unique against the complete folder — only if not edited yet.
+  useEffect(() => {
+    if (!type || !namesReady || touchedRef.current) return
+    setName(defaultNewDocumentName(type, existingNames))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [namesReady])
+
   if (!type) return null
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (busy) return
+    if (busy || !namesReady) return
     const check = checkNewDocumentName(name, type, existingNames)
     if (!check.ok) {
       setError(check.reason)
@@ -113,6 +127,7 @@ export function NewDocumentDialog({ type, existingNames, onClose, onCreate }: Ne
               value={name}
               disabled={busy}
               onChange={(e) => {
+                touchedRef.current = true
                 setName(e.target.value)
                 setError(null)
               }}
@@ -128,6 +143,10 @@ export function NewDocumentDialog({ type, existingNames, onClose, onCreate }: Ne
             <p id={errorId} role="alert" className="mt-1.5 text-[12px] text-red" data-testid="new-document-error">
               {error}
             </p>
+          ) : !namesReady ? (
+            <p className="mt-1.5 text-[12px] text-ink-3" data-testid="new-document-names-pending" aria-live="polite">
+              Checking the names already in this folder…
+            </p>
           ) : (
             <p className="mt-1.5 flex items-center gap-1.5 text-[12px] text-ink-3">
               <Icon name="lock" size={11} className="text-amber-deep" />
@@ -140,7 +159,7 @@ export function NewDocumentDialog({ type, existingNames, onClose, onCreate }: Ne
           <BBButton type="button" variant="ghost" size="sm" onClick={onClose} disabled={busy}>
             Cancel
           </BBButton>
-          <BBButton type="submit" variant="amber" size="sm" disabled={busy || !name.trim()} data-testid="new-document-create">
+          <BBButton type="submit" variant="amber" size="sm" disabled={busy || !namesReady || !name.trim()} data-testid="new-document-create">
             {busy ? 'Creating…' : type.editor === 'office' ? 'Create and open' : 'Create'}
           </BBButton>
         </div>

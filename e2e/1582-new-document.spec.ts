@@ -251,6 +251,20 @@ test.describe('Task 1582 — + New menu', () => {
     await shot(page, 'name-prompt-dark')
   })
 
+  test('command palette: "New Markdown file" from another page lands in Drive with the prompt open', async ({ page }) => {
+    await gotoDrive(page, { labs: false })
+    await page.goto('/recent')
+    await dismissDevBanner(page)
+    await page.evaluate(() => window.dispatchEvent(new Event('beebeeb:open-command-palette')))
+    const input = page.getByPlaceholder('Type to search or run a command...')
+    await input.fill('New Markdown file')
+    await input.press('Enter')
+    await expect(page).toHaveURL(/\/(\?.*)?$/)
+    await expect(page.getByRole('dialog', { name: 'New Markdown file' })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('new-document-name')).toHaveValue(/^Untitled( \d+)?\.md$/)
+    await expect(page.getByTestId('new-document-create')).toBeEnabled({ timeout: 15_000 })
+  })
+
   test('New → Markdown opens the text editor; ⌘S saves; reload shows the text; next default name is unique', async ({ page }) => {
     test.setTimeout(120_000)
     await gotoDrive(page, { labs: false })

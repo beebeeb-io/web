@@ -216,7 +216,17 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
         description: t.hint,
         group: 'actions',
         keywords: `create new file ${t.ext} ${t.hint.toLowerCase()}`,
-        action: () => { onClose(); window.dispatchEvent(new CustomEvent('beebeeb:new-document-trigger', { detail: { type: t.id } })) },
+        // Drive acknowledges the event (preventDefault) when it is mounted and
+        // opens the prompt for the folder on screen. Anywhere else (Recent,
+        // Settings, …) nobody listens, so go to Drive and hand it the intent
+        // through navigation state (PR #117 review).
+        action: () => {
+          onClose()
+          const handled = !window.dispatchEvent(
+            new CustomEvent('beebeeb:new-document-trigger', { detail: { type: t.id }, cancelable: true }),
+          )
+          if (!handled) navigate('/', { state: { newDocumentType: t.id } })
+        },
       })
     }
 

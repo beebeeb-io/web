@@ -641,6 +641,22 @@ export function Drive() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sync.treeVersion, sync.ready, refreshFromSync])
 
+  // Command palette → "New …" from a page other than Drive (task 1582, PR
+  // #117 review): the palette navigates here with the type in state.
+  useEffect(() => {
+    const id = (location.state as { newDocumentType?: NewDocumentType['id'] } | null)?.newDocumentType
+    if (!id) return
+    navigate(location.pathname + location.search, { replace: true, state: null })
+    let t: NewDocumentType
+    try {
+      t = getNewDocumentType(id)
+    } catch {
+      return
+    }
+    if (t.editor === 'office' && !(FEATURE_OFFICE_EDITOR && isOfficeLabsEnabled())) return
+    setNewDocType(t)
+  }, [location.state, navigate, location.pathname, location.search])
+
   // Deep-link into a folder when navigating from search results
   useEffect(() => {
     const state = location.state as {
@@ -919,6 +935,7 @@ export function Drive() {
         return
       }
       if (t.editor === 'office' && !(FEATURE_OFFICE_EDITOR && isOfficeLabsEnabled())) return
+      e.preventDefault() // tells the palette Drive handled it
       setNewDocType(t)
     }
     window.addEventListener('beebeeb:upload-trigger', handleUploadTrigger)
@@ -2866,6 +2883,11 @@ export function Drive() {
       <NewDocumentDialog
         type={newDocType}
         existingNames={files.map((f) => externalDecryptedNames[f.id]).filter((n): n is string => !!n)}
+        // Every sibling name must be known before a name can be checked: the
+        // server cannot catch a clash between encrypted names (PR #117
+        // review). `undefined` = still decrypting; `null` = failed, which
+        // can never resolve, so it does not block.
+        namesReady={!loading && files.every((f) => externalDecryptedNames[f.id] !== undefined)}
         onClose={() => setNewDocType(null)}
         onCreate={handleCreateDocument}
       />
