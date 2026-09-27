@@ -10,6 +10,7 @@ import { WsProvider } from './lib/ws-context'
 import { SyncProvider } from './lib/sync-context'
 import { OnboardingProvider } from './lib/onboarding-context'
 import { FEATURE_TEAMS, FEATURE_OFFICE_EDITOR } from './lib/flags'
+import { isOfficeLabsEnabled } from './lib/office/office-labs'
 import { ToastProvider, useToast } from './components/toast'
 import { ErrorBoundary } from './components/error-boundary'
 import { WasmGuard } from './components/wasm-guard'
@@ -442,7 +443,13 @@ export function App() {
           <Route
             path="/office/:fileId"
             element={
-              FEATURE_OFFICE_EDITOR ? (
+              // Ship prep (task 1567, 2026-09-27): FEATURE_OFFICE_EDITOR
+              // (build-time) gates whether this route/chunk exists in the
+              // build AT ALL; isOfficeLabsEnabled() (runtime, office-labs.ts)
+              // gates whether THIS visitor sees it in an already-deployed
+              // build carrying the flag on. Both must be true — see
+              // office-labs.ts's own header for why there are two.
+              FEATURE_OFFICE_EDITOR && isOfficeLabsEnabled() ? (
                 <ProtectedRoute>
                   <OfficeEditorPage />
                 </ProtectedRoute>

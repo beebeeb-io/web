@@ -50,6 +50,7 @@ import { UnsavedChangesDialog } from '../editor/unsaved-changes-dialog'
 import { ImpressFilmstrip } from './impress-filmstrip'
 import { ImpressPresentOverlay } from './impress-present-overlay'
 import { useImpressChrome } from '../../hooks/use-impress-chrome'
+import { useImpressFitZoom } from '../../hooks/use-impress-fit-zoom'
 
 // CRITIQUE.md finding #4 (task 1567): these four aren't ribbon buttons with a
 // fixed command/args pair (the user picks the value), so they're not entries
@@ -186,6 +187,7 @@ export function OfficeEditor({
   const unsubscribersRef = useRef<Array<() => void>>([])
   const inFlightUploadRef = useRef<AbortController | null>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
+  const canvasAreaRef = useRef<HTMLDivElement>(null)
 
   const reportDirty = useCallback(
     (v: boolean) => {
@@ -291,6 +293,11 @@ export function OfficeEditor({
   // use-impress-chrome.ts's header for why), so no-op for Writer/Calc.
   const getBridge = useCallback(() => bridgeRef.current, [])
   const impress = useImpressChrome(officeApp === 'impress' && docReady, getBridge)
+  // Fix pass round 2 (task 1567, 2026-09-27, Impress zoom-to-fit): see the
+  // hook's own header comment for why `active` must match ImpressFilmstrip's
+  // own docReady gate exactly, and why the engine-side ENTIRE_PAGE dispatch
+  // this replaces was removed rather than kept alongside this.
+  useImpressFitZoom(officeApp === 'impress' && docReady, canvasAreaRef, getBridge, setZoom)
 
   // Cleanup all engine subscriptions on unmount.
   useEffect(() => {
@@ -723,7 +730,7 @@ export function OfficeEditor({
             themes (design/office-editor.html's own explicit decision, same
             convention as Word/Keynote) — every other app keeps the shared
             theme-following bg-paper-3. */}
-        <div className={`relative min-h-0 flex-1 ${officeApp === 'impress' ? 'bg-canvas-dark' : 'bg-paper-3'}`}>
+        <div ref={canvasAreaRef} className={`relative min-h-0 flex-1 ${officeApp === 'impress' ? 'bg-canvas-dark' : 'bg-paper-3'}`}>
           {openError || engineError ? (
             <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-center">
               <p className="text-[13px] text-ink-2">We couldn&apos;t prepare the editor on this device.</p>
@@ -759,7 +766,7 @@ export function OfficeEditor({
                   )}
                 </div>
               )}
-              <OfficeEngineFrame iframeSrc={iframeSrc} iframeRef={iframeRef} onLoad={handleIframeLoad} />
+              <OfficeEngineFrame iframeSrc={iframeSrc} iframeRef={iframeRef} onLoad={handleIframeLoad} cropScrollbar={officeApp === 'impress'} />
             </>
           )}
           <FloatingSelectionToolbar

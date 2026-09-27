@@ -70,6 +70,10 @@ test('upload .pptx, manage slides via our filmstrip/ribbon, Present opens+exits,
   page,
   context,
 }) => {
+  // Ship prep (task 1567, 2026-09-27): runtime Labs opt-in, see
+  // 1567-office-editor.spec.ts's own comment for why this is needed
+  // alongside VITE_FEATURE_OFFICE_EDITOR.
+  await page.addInitScript(() => localStorage.setItem('bb-office-labs', 'true'))
   await page.goto('/')
   await dismissDevBanner(page)
 
@@ -114,6 +118,26 @@ test('upload .pptx, manage slides via our filmstrip/ribbon, Present opens+exits,
 
   const engineFrame = officeTab.frameLocator('[data-testid="office-engine-frame"]')
   await engineFrame.locator('#qtcanvas').waitFor({ state: 'visible', timeout: 30_000 })
+
+  // Fix pass round 2 (task 1567, 2026-09-27, Impress zoom-to-fit) —
+  // use-impress-fit-zoom.ts's own applyFit() must have actually run and
+  // pinned a real fit percent (not the engine's literal BY_VALUE/100%
+  // default, which is what the round-1 fix left in place — see that hook's
+  // header comment for the real, pixel-diffed evidence this was a genuine
+  // regression, not a guess). Asserting != 100 rather than a specific
+  // number: the exact fit percent is a function of viewport size (this
+  // fixture's own slide is ~74-96% depending on the runner's exact window),
+  // and pinning a specific number here would make this test change every
+  // time Playwright's default viewport does.
+  await expect(officeTab.getByTestId('office-zoom-slider')).not.toHaveValue('100', { timeout: 15_000 })
+  // The native Impress vertical scrollbar is a confirmed engine no-op to
+  // hide via UNO (bb-office-worker.js's own item-2 comment) — cropped in
+  // the web shell instead (office-engine-host.tsx's IMPRESS_SCROLLBAR_CROP_PX).
+  // Asserting the crop element itself exists (not a screenshot pixel diff,
+  // which the visual-gate spec already does) keeps this a fast, reliable
+  // regression guard against someone removing `cropScrollbar` from the
+  // Impress OfficeEngineFrame call by accident.
+  await expect(officeTab.getByTestId('office-engine-scrollbar-crop')).toBeVisible()
 
   // Starts at 1 slide (the fixture's own single slide) — .uno:PageStatus
   // read back through our OWN status bar.

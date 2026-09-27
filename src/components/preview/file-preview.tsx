@@ -25,6 +25,7 @@ import { FileEditor, type FileEditorHandle } from '../editor/file-editor'
 import { UnsavedChangesDialog } from '../editor/unsaved-changes-dialog'
 import { FEATURE_OFFICE_EDITOR } from '../../lib/flags'
 import { resolveOfficeFileKind } from '../../lib/office/office-file-kind'
+import { isOfficeLabsEnabled } from '../../lib/office/office-labs'
 
 interface FilePreviewProps {
   file: DriveFile
@@ -645,7 +646,14 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   // comment for why) rather than inline here — the engine's SharedArrayBuffer
   // requirement needs the TOP-LEVEL document itself cross-origin isolated,
   // which this page (shared with the rest of Drive) deliberately is not.
-  const officeKind = FEATURE_OFFICE_EDITOR && selectedVersionId === null ? resolveOfficeFileKind(effectiveMime, name) : null
+  // Ship prep (task 1567, 2026-09-27): see app.tsx's own route-gate comment
+  // and office-labs.ts's header for why BOTH the build flag and the runtime
+  // Labs opt-in are required here too — this is the OTHER entry point into
+  // `/office/:fileId` (the route guard alone would still block navigation,
+  // but leaving the "Edit" affordance visible to everyone on a build that
+  // merely HAS the flag on would defeat the opt-in's entire purpose).
+  const officeKind =
+    FEATURE_OFFICE_EDITOR && isOfficeLabsEnabled() && selectedVersionId === null ? resolveOfficeFileKind(effectiveMime, name) : null
   const canEditOffice = !!officeKind
 
   function openOfficeEditorTab() {

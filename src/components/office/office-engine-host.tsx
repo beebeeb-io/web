@@ -189,6 +189,37 @@ export interface OfficeEngineHostViewProps extends OfficeEngineHostProps {
 const TITLE_BAR_CROP_PX = 26
 
 /**
+ * Impress scrollbar crop (task 1567 fix pass round 2, 2026-09-27, item 2's
+ * OWN follow-up — the lead's review of pass2-verify-impress-dark.png found
+ * the native vertical scrollbar still visible on the right edge). Same
+ * "crop it in our web shell" convention as `TITLE_BAR_CROP_PX` above, for
+ * the same underlying reason: `.uno:ScrollBar` is a CONFIRMED engine no-op
+ * for Impress specifically (3 independent verification attempts in
+ * bb-office-worker.js's own item-2 comment all showed no effect; Writer and
+ * Calc both have real, working per-property scrollbar toggles and need no
+ * such crop). MEASURED, not guessed: `pass2-verify-impress-dark.png` was
+ * scanned pixel-by-pixel — the native scrollbar's own track (a bright
+ * ~250,250,250 column against the app's dark canvas background) starts at
+ * x=1266 of a 1280px-wide capture, i.e. the rightmost 14px; this overlay
+ * uses 20px for a safety margin, matching the title-bar crop's own
+ * "measured width plus a few px" convention. Unlike the title-bar crop
+ * (which re-anchors the iframe itself, since that chrome sits ABOVE the
+ * document and shifting the whole frame reveals more real canvas at the
+ * bottom instead of wasting it), this is a simple opaque overlay div: the
+ * scrollbar's own track sits in the dark canvas MARGIN to the right of the
+ * slide, never over the slide's own rendered pixels (confirmed in the same
+ * scan — the transition at every sampled row goes directly from the dark
+ * canvas background to the scrollbar's bright track, with no intervening
+ * white slide pixels), so painting over just that margin strip in the SAME
+ * canvas-dark color hides the scrollbar without touching, resizing, or
+ * reflowing the document canvas underneath it. `useImpressFitZoom` (the
+ * OTHER half of this fix pass round) keeps the slide clear of this margin
+ * by design (its own `FIT_MARGIN_FACTOR`), so this overlay never needs to
+ * cover live content even as the container is resized.
+ */
+const IMPRESS_SCROLLBAR_CROP_PX = 20
+
+/**
  * The presentational half: renders the iframe once a manifest-derived src is
  * known. `useOfficeEngine` (above) is exported separately so OfficeEditor can
  * own the hook's return value directly instead of prop-drilling through a
@@ -199,11 +230,14 @@ export function OfficeEngineFrame({
   iframeRef,
   onLoad,
   className,
+  cropScrollbar = false,
 }: {
   iframeSrc: string | null
   iframeRef: React.RefObject<HTMLIFrameElement | null>
   onLoad: () => void
   className?: string
+  /** Impress only — see `IMPRESS_SCROLLBAR_CROP_PX`'s own comment. */
+  cropScrollbar?: boolean
 }) {
   if (!iframeSrc) return null
   return (
@@ -250,6 +284,14 @@ export function OfficeEngineFrame({
         // `right` alone.
         style={{ top: -TITLE_BAR_CROP_PX, height: `calc(100% + ${TITLE_BAR_CROP_PX}px)`, width: '100%' }}
       />
+      {cropScrollbar && (
+        <div
+          aria-hidden="true"
+          data-testid="office-engine-scrollbar-crop"
+          className="pointer-events-none absolute inset-y-0 right-0 bg-canvas-dark"
+          style={{ width: IMPRESS_SCROLLBAR_CROP_PX }}
+        />
+      )}
     </div>
   )
 }

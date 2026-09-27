@@ -46,6 +46,11 @@ export interface OfficeBridge {
   getDocStats(): Promise<DocStats>
   goToHeading(index: number): Promise<OutlineHeading>
   setZoom(percent: number): Promise<{ zoom: number }>
+  /** Fix pass round 2 (task 1567, 2026-09-27, Impress zoom-to-fit): the
+   *  active document's page size (1/100 mm), for `use-impress-fit-zoom.ts`'s
+   *  own fit-to-container computation. Null for a non-Draw/Impress active
+   *  document. */
+  getSlideSize(): Promise<{ width: number; height: number } | null>
   newDocument(docKind: OfficeDocKind, templateBytes?: Uint8Array): Promise<{ docKind: OfficeDocKind }>
   /** KNOWN ENGINE GAP (task 1567 phase 4): the config write is real and
    *  persists, but never repaints the CURRENTLY open document or window —

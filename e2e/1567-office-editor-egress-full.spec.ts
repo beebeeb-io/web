@@ -96,6 +96,10 @@ test('full session — open, type, every ribbon tab, ⌘K, insert image, insert+
   page,
   context,
 }) => {
+  // Ship prep (task 1567, 2026-09-27): runtime Labs opt-in, see
+  // 1567-office-editor.spec.ts's own comment for why this is needed
+  // alongside VITE_FEATURE_OFFICE_EDITOR.
+  await page.addInitScript(() => localStorage.setItem('bb-office-labs', 'true'))
   await page.goto('/')
   await dismissDevBanner(page)
 

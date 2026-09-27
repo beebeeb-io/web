@@ -56,6 +56,14 @@ function readDocumentXml(bytes: Uint8Array): string {
 }
 
 test('upload .docx, edit in the real engine, Bold via our ribbon, save as new version, reopen shows the edit — zero egress', async ({ page, context }) => {
+  // Ship prep (task 1567, 2026-09-27): the office editor is now gated by
+  // TWO flags — VITE_FEATURE_OFFICE_EDITOR (build-time, set by this spec's
+  // own run line) AND a runtime Labs opt-in (office-labs.ts), default off
+  // even on a build that carries the feature. Set here so this suite still
+  // exercises the real feature, not the "not opted in" redirect — localStorage
+  // is per-origin, so this covers the `/office/<fileId>` popup tab too (same
+  // browser context, same origin).
+  await page.addInitScript(() => localStorage.setItem('bb-office-labs', 'true'))
   await page.goto('/')
   await dismissDevBanner(page)
 
