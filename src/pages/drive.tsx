@@ -21,7 +21,6 @@ import { NewDocumentDialog } from '../components/new-document-dialog'
 import { foldName, getNewDocumentType, NewDocumentNameClashError, type NewDocumentType } from '../lib/new-document'
 import { blankDocumentBytes } from '../lib/office/blank-documents'
 import { FEATURE_OFFICE_EDITOR } from '../lib/flags'
-import { isOfficeLabsEnabled } from '../lib/office/office-labs'
 import { DeleteBackupsDialog } from '../components/delete-backups-dialog'
 import { VersionHistory } from '../components/version-history'
 import { DuplicateFileDialog, getUniqueName, type ConflictItem } from '../components/duplicate-file-dialog'
@@ -156,9 +155,10 @@ export function Drive() {
   // id of a just-created text file whose preview should open in edit mode.
   const [newDocType, setNewDocType] = useState<NewDocumentType | null>(null)
   const [previewEditFileId, setPreviewEditFileId] = useState<string | null>(null)
-  // Office types need the editor to be reachable: build flag AND Labs opt-in
-  // (office-labs.ts) — the same gate as the preview's Edit button.
-  const officeAvailable = FEATURE_OFFICE_EDITOR && isOfficeLabsEnabled()
+  // Office types need the editor to be reachable: the build flag, the one
+  // gate for the office editor (office-labs.ts; the Labs opt-in was dropped,
+  // task 1567) — the same gate as the preview's Edit button and the route.
+  const officeAvailable = FEATURE_OFFICE_EDITOR
   const [uploads, setUploads] = useState<UploadItem[]>([])
   const uploadAbortRef = useRef<Map<string, AbortController>>(new Map())
   // Cache the File object per upload-id so we can re-invoke the encrypted
@@ -653,7 +653,7 @@ export function Drive() {
     } catch {
       return
     }
-    if (t.editor === 'office' && !(FEATURE_OFFICE_EDITOR && isOfficeLabsEnabled())) return
+    if (t.editor === 'office' && !FEATURE_OFFICE_EDITOR) return
     setNewDocType(t)
   }, [location.state, navigate, location.pathname, location.search])
 
@@ -934,7 +934,7 @@ export function Drive() {
       } catch {
         return
       }
-      if (t.editor === 'office' && !(FEATURE_OFFICE_EDITOR && isOfficeLabsEnabled())) return
+      if (t.editor === 'office' && !FEATURE_OFFICE_EDITOR) return
       e.preventDefault() // tells the palette Drive handled it
       setNewDocType(t)
     }
@@ -1730,7 +1730,7 @@ export function Drive() {
     if (!isUnlocked || !cryptoReady) {
       return Promise.reject(new Error('Your vault is locked. Log in again to unlock encryption, then try again.'))
     }
-    if (type.editor === 'office' && !(FEATURE_OFFICE_EDITOR && isOfficeLabsEnabled())) {
+    if (type.editor === 'office' && !FEATURE_OFFICE_EDITOR) {
       return Promise.reject(new Error('The Office editor is not enabled on this device.'))
     }
     const fileId = crypto.randomUUID()

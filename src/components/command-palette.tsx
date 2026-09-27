@@ -10,7 +10,6 @@ import { decryptFileMetadata } from '../lib/crypto'
 import { modLabel } from '../hooks/use-keyboard-shortcuts'
 import { listClientDevices, type ClientDevice } from '../lib/api'
 import { FEATURE_OFFICE_EDITOR } from '../lib/flags'
-import { isOfficeLabsEnabled } from '../lib/office/office-labs'
 import { visibleNewDocumentTypes } from '../lib/new-document'
 
 /** A resolved search hit: file_id + the metadata the palette renders. */
@@ -203,11 +202,11 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       { id: 'upload', icon: 'upload', label: 'Upload files...', shortcut: `${modLabel} U`, group: 'actions', keywords: 'add new file import', action: () => { onClose(); window.dispatchEvent(new Event('beebeeb:upload-trigger')) } },
       { id: 'new-folder', icon: 'folder', label: 'New folder', shortcut: `${modLabel} N`, group: 'actions', keywords: 'create directory', action: () => { onClose(); window.dispatchEvent(new Event('beebeeb:new-folder-trigger')) } },
     )
-    // "+ New" document types (task 1582) — the same list, and the same Labs
+    // "+ New" document types (task 1582) — the same list, and the same build-flag
     // gate for the Office ones, as Drive's New menu. Drive listens for the
     // event and opens its name prompt for the current folder. The OpenDocument
     // variants stay in Drive's menu only; the palette keeps the common ones.
-    for (const t of visibleNewDocumentTypes(FEATURE_OFFICE_EDITOR && isOfficeLabsEnabled())) {
+    for (const t of visibleNewDocumentTypes(FEATURE_OFFICE_EDITOR)) {
       if (t.group === 'opendocument') continue
       all.push({
         id: `new-doc-${t.id}`,

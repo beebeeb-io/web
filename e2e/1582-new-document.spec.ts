@@ -4,10 +4,18 @@
  * open it straight in the right editor.
  *
  * Rungs (task file ## Verification):
- *   - Labs off: the menu shows only Folder / Text file / Markdown; keyboard
- *     opens and closes it; light + dark screenshots.
- *   - Labs on: Document / Spreadsheet / Presentation + More formats
- *     (OpenDocument); light + dark screenshots.
+ *   - Build flag off (a build without VITE_FEATURE_OFFICE_EDITOR): the menu
+ *     shows only Folder / Text file / Markdown; keyboard opens and closes it;
+ *     light + dark screenshots.
+ *   - Build flag on: Document / Spreadsheet / Presentation + More formats
+ *     (OpenDocument) with no opt-in anywhere (no Labs key, no query — the
+ *     Labs opt-in was dropped, task 1567 / web #118); light + dark.
+ *
+ * Like e2e/1567-office-build-flag.spec.ts, each flag-specific test skips in
+ * the other build flavour, so run this spec once per build:
+ *
+ *   VITE_FEATURE_OFFICE_EDITOR=true … ./e2e/scripts/web-e2e.sh e2e/1582-new-document.spec.ts
+ *   ./e2e/scripts/web-e2e.sh e2e/1582-new-document.spec.ts   (flag off)
  *   - New → Markdown → name → the text editor opens by itself → type → ⌘S →
  *     reload → reopen shows the text; the next default name is unique.
  *   - New → Document → name → the office tab opens → type → save → a fresh
@@ -20,7 +28,8 @@
  *
  * Needs the real engine assets (scripts/office-dev-assets.sh) and
  * VITE_FEATURE_OFFICE_EDITOR=true; the office tests skip without them, and
- * the gate treats a skip as a failure.
+ * in a flag-on run the gate treats any skip other than the flag-off test as
+ * a failure.
  *
  *   VITE_FEATURE_OFFICE_EDITOR=true VITE_STATUS_URL=http://localhost:38731 \
  *   E2E_API_PORT=38731 E2E_VITE_PORT=38732 E2E_DB_NAME=beebeeb_web_e2e_1582 \
@@ -51,18 +60,12 @@ async function shot(page: Page, name: string) {
   await page.screenshot({ path: path.join(EVIDENCE_DIR, `${name}.png`) })
 }
 
-async function gotoDrive(page: Page, opts: { labs: boolean; theme?: 'light' | 'dark' }) {
+async function gotoDrive(page: Page, opts: { theme?: 'light' | 'dark' } = {}) {
   // Set once, then reload: an init script would re-apply on every later
-  // reload and undo the theme switches below.
+  // reload and undo the theme switches below. Only the theme — the office
+  // types depend on the build flag alone, never on anything in storage.
   await page.goto('/')
-  await page.evaluate(
-    ({ labs, theme }) => {
-      if (labs) localStorage.setItem('bb-office-labs', 'true')
-      else localStorage.removeItem('bb-office-labs')
-      localStorage.setItem('beebeeb-theme', theme)
-    },
-    { labs: opts.labs, theme: opts.theme ?? 'light' },
-  )
+  await page.evaluate((theme) => localStorage.setItem('beebeeb-theme', theme), opts.theme ?? 'light')
   await page.reload()
   await dismissDevBanner(page)
   await page.waitForFunction(() => document.body.dataset.cryptoReady === 'true', { timeout: 20_000 })
@@ -162,8 +165,9 @@ async function reopen(context: BrowserContext, tab: Page): Promise<Page> {
 const td = new TextDecoder()
 
 test.describe('Task 1582 — + New menu', () => {
-  test('Labs off: only Folder, Text file and Markdown; keyboard open/close; light + dark', async ({ page }) => {
-    await gotoDrive(page, { labs: false })
+  test('build flag off: only Folder, Text file and Markdown; keyboard open/close; light + dark', async ({ page }) => {
+    test.skip(OFFICE_FLAG_ON, 'VITE_FEATURE_OFFICE_EDITOR=true — the build-flag-on test below covers this build')
+    await gotoDrive(page)
     const trigger = page.getByTestId('new-menu-trigger')
     await expect(trigger).toHaveAttribute('aria-haspopup', 'menu')
     await expect(trigger).toHaveAttribute('aria-expanded', 'false')
@@ -180,7 +184,7 @@ test.describe('Task 1582 — + New menu', () => {
     await expect(page.getByTestId('new-menu-md')).toBeFocused()
     await page.keyboard.press('ArrowDown') // wraps
     await expect(page.getByTestId('new-menu-folder')).toBeFocused()
-    await shot(page, 'menu-labs-off-light')
+    await shot(page, 'menu-flag-off-light')
     await page.keyboard.press('Escape')
     await expect(page.getByTestId('new-menu-list')).toHaveCount(0)
     await expect(trigger).toBeFocused()
@@ -205,12 +209,15 @@ test.describe('Task 1582 — + New menu', () => {
     await dismissDevBanner(page)
     await page.getByTestId('new-menu-trigger').click()
     await expect(page.getByTestId('new-menu-list')).toBeVisible()
-    await shot(page, 'menu-labs-off-dark')
+    await shot(page, 'menu-flag-off-dark')
   })
 
-  test('Labs on: Document, Spreadsheet, Presentation + More formats; light + dark', async ({ page }) => {
-    test.skip(!OFFICE_FLAG_ON, 'VITE_FEATURE_OFFICE_EDITOR!=true')
-    await gotoDrive(page, { labs: true })
+  test('build flag on: Document, Spreadsheet, Presentation + More formats, no opt-in; light + dark', async ({ page }) => {
+    test.skip(!OFFICE_FLAG_ON, 'VITE_FEATURE_OFFICE_EDITOR!=true — the build-flag-off test above covers this build')
+    await gotoDrive(page)
+    // No opt-in anywhere: the build flag alone puts the office types here.
+    expect(await page.evaluate(() => localStorage.getItem('bb-office-labs'))).toBeNull()
+    expect(new URL(page.url()).search).toBe('')
     await page.getByTestId('new-menu-trigger').click()
     expect(await menuItemIds(page)).toEqual([
       'new-menu-folder',
@@ -222,7 +229,7 @@ test.describe('Task 1582 — + New menu', () => {
       'new-menu-md',
     ])
     await expect(page.getByTestId('new-menu-more-formats')).toHaveAttribute('aria-expanded', 'false')
-    await shot(page, 'menu-labs-on-light')
+    await shot(page, 'menu-flag-on-light')
     await page.getByTestId('new-menu-more-formats').click()
     await expect(page.getByTestId('new-menu-more-formats')).toHaveAttribute('aria-expanded', 'true')
     expect(await menuItemIds(page)).toEqual([
@@ -237,14 +244,14 @@ test.describe('Task 1582 — + New menu', () => {
       'new-menu-txt',
       'new-menu-md',
     ])
-    await shot(page, 'menu-labs-on-more-formats-light')
+    await shot(page, 'menu-flag-on-more-formats-light')
 
     await page.evaluate(() => localStorage.setItem('beebeeb-theme', 'dark'))
     await page.reload()
     await dismissDevBanner(page)
     await page.getByTestId('new-menu-trigger').click()
     await page.getByTestId('new-menu-more-formats').click()
-    await shot(page, 'menu-labs-on-dark')
+    await shot(page, 'menu-flag-on-dark')
     // The name prompt, dark.
     await page.getByTestId('new-menu-xlsx').click()
     await expect(page.getByTestId('new-document-name')).toHaveValue(/^Untitled spreadsheet( \d+)?\.xlsx$/)
@@ -252,7 +259,7 @@ test.describe('Task 1582 — + New menu', () => {
   })
 
   test('command palette: "New Markdown file" from another page lands in Drive with the prompt open', async ({ page }) => {
-    await gotoDrive(page, { labs: false })
+    await gotoDrive(page)
     await page.goto('/recent')
     await dismissDevBanner(page)
     await page.evaluate(() => window.dispatchEvent(new Event('beebeeb:open-command-palette')))
@@ -267,7 +274,7 @@ test.describe('Task 1582 — + New menu', () => {
 
   test('New → Markdown opens the text editor; ⌘S saves; reload shows the text; next default name is unique', async ({ page }) => {
     test.setTimeout(120_000)
-    await gotoDrive(page, { labs: false })
+    await gotoDrive(page)
     const marker = `NEW-MD-1582-${process.pid}`
 
     await page.getByTestId('new-menu-trigger').click()
@@ -325,7 +332,7 @@ test.describe('Task 1582 — + New → Office (real engine)', () => {
   test.setTimeout(240_000)
 
   test('New → Document: encrypted upload, Writer opens, type, save, reopen shows the text', async ({ page, context }) => {
-    await gotoDrive(page, { labs: true })
+    await gotoDrive(page)
     const name = `Plan ${process.pid}`
     let tab!: Page
     const bodies = await captureChunkPuts(page, async () => {
@@ -359,7 +366,7 @@ test.describe('Task 1582 — + New → Office (real engine)', () => {
   })
 
   test('New → Spreadsheet: Calc opens, a cell value survives save + reopen', async ({ page, context }) => {
-    await gotoDrive(page, { labs: true })
+    await gotoDrive(page)
     const name = `Budget ${process.pid}`
     const tab = await officeTabFrom(context, () => createViaMenu(page, 'xlsx', name))
     await tab.getByTestId('calc-formula-bar').waitFor({ state: 'visible', timeout: 150_000 })
@@ -386,7 +393,7 @@ test.describe('Task 1582 — + New → Office (real engine)', () => {
   })
 
   test('New → Presentation: Impress opens, add a slide, save, reopen has 2 slides', async ({ page, context }) => {
-    await gotoDrive(page, { labs: true })
+    await gotoDrive(page)
     const name = `Pitch ${process.pid}`
     const tab = await officeTabFrom(context, () => createViaMenu(page, 'pptx', name))
     await tab.getByTestId('impress-filmstrip').waitFor({ state: 'visible', timeout: 150_000 })

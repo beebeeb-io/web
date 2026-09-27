@@ -1,6 +1,7 @@
 /**
  * "+ New" menu (task 1582) — Drive's single entry point for creating
- * something in the current folder: a folder, an Office document (Labs), or a
+ * something in the current folder: a folder, an Office document (when the build carries the
+ * office editor), or a
  * text / Markdown file.
  *
  * Keyboard: the trigger opens with Enter/Space/ArrowDown (first item
@@ -14,7 +15,7 @@ import { BBButton, Icon } from '@beebeeb/shared'
 import { visibleNewDocumentTypes, type NewDocumentType } from '../lib/new-document'
 
 export interface NewMenuProps {
-  /** FEATURE_OFFICE_EDITOR && isOfficeLabsEnabled() — computed by the caller. */
+  /** FEATURE_OFFICE_EDITOR (the build flag) — computed by the caller. */
   officeAvailable: boolean
   onNewFolder: () => void
   onNewDocument: (type: NewDocumentType) => void

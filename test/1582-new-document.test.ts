@@ -10,11 +10,11 @@ import {
 import { resolveOfficeFileKind } from '../src/lib/office/office-file-kind'
 
 describe('type table', () => {
-  test('Labs off: only Text file and Markdown (no office type the app cannot open)', () => {
+  test('office editor not in this build: only Text file and Markdown (no office type the app cannot open)', () => {
     expect(visibleNewDocumentTypes(false).map((t) => t.id)).toEqual(['txt', 'md'])
   })
 
-  test('Labs on: Document, Spreadsheet, Presentation, the OpenDocument trio, then text', () => {
+  test('office editor in this build: Document, Spreadsheet, Presentation, the OpenDocument trio, then text', () => {
     expect(visibleNewDocumentTypes(true).map((t) => t.id)).toEqual(['docx', 'xlsx', 'pptx', 'odt', 'ods', 'odp', 'txt', 'md'])
   })
 

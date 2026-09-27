@@ -10,8 +10,8 @@
  * Which editor opens:
  *   - 'office' types open in the LibreOffice-WASM office editor
  *     (/office/:fileId, task 1567). They are offered ONLY when that editor is
- *     reachable: the build flag AND the Labs opt-in, the same gate as the
- *     preview's Edit button — a user must never be able to create a file the
+ *     reachable: the build flag (VITE_FEATURE_OFFICE_EDITOR), the same gate as
+ *     the preview's Edit button and the /office/:fileId route — a user must never be able to create a file the
  *     app then cannot open for editing.
  *   - 'text' types open in the in-preview text editor (task 1563), which is
  *     live for everyone.
@@ -147,8 +147,8 @@ export function getNewDocumentType(id: NewDocumentType['id']): NewDocumentType {
 
 /**
  * The types the menu shows. Office types only when the office editor is
- * actually reachable (`officeAvailable` = FEATURE_OFFICE_EDITOR &&
- * isOfficeLabsEnabled(), computed by the caller so this stays pure).
+ * actually reachable (`officeAvailable` = FEATURE_OFFICE_EDITOR, the build
+ * flag, passed in by the caller so this stays pure).
  */
 export function visibleNewDocumentTypes(officeAvailable: boolean): NewDocumentType[] {
   return NEW_DOCUMENT_TYPES.filter((t) => officeAvailable || t.editor !== 'office')
