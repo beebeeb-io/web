@@ -107,6 +107,10 @@ const GENERIC_PALETTE: PaletteEntry[] = WRITER_HOME_COMMANDS.filter((d) => ['bol
   shortcut: d.shortcut,
 }))
 
+/** Upper bound on how long "Discard" waits for an in-flight save to settle
+ *  and the server abandon to land before the tab exits (see onDiscard). */
+const DISCARD_EXIT_CAP_MS = 15_000
+
 const EXT_MIME: Record<string, string> = {
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   doc: 'application/msword',
@@ -246,6 +250,25 @@ export function OfficeEditor({
         setOpenError(err instanceof Error ? err.message : 'Failed to open this document')
         return
       }
+      // The dirty listener goes FIRST, straight after open(), ahead of the
+      // workspace colour and the ~14 sequential onState round trips below.
+      // Observed in e2e (PR #113 Keep Both spec, two engines booting at
+      // once): text typed into a freshly opened document never produced the
+      // unsaved dot, so Save stayed disabled on a genuinely edited document.
+      // Working hypothesis, not proven: the modify broadcast fires on the
+      // modified-state transition, so a keystroke landing before this
+      // listener exists is never reported — and the old order registered it
+      // only after ~14 sequential round trips. Registering it first shrinks
+      // that window to one round trip; it does not close it completely.
+      try {
+        const unsubMod = await bridge.onModifiedChange((modified) => {
+          reportDirty(modified)
+          refreshDocStats()
+        })
+        unsubscribersRef.current.push(unsubMod)
+      } catch {
+        // best-effort
+      }
       // Fix pass item 1 (task 1567): AFTER open(), not before/at boot —
       // found empirically that Application::SetSettings()'s own
       // DataChangedEvent broadcast (the mechanism that makes this apply
@@ -274,15 +297,6 @@ export function OfficeEditor({
           // list) — the ribbon button for it just stays at its default
           // enabled/unpressed render state.
         }
-      }
-      try {
-        const unsubMod = await bridge.onModifiedChange((modified) => {
-          reportDirty(modified)
-          refreshDocStats()
-        })
-        unsubscribersRef.current.push(unsubMod)
-      } catch {
-        // best-effort
       }
       try {
         const unsubSel = await bridge.onSelectionChange((sel) => setSelection(sel.text ? sel : null))
@@ -631,6 +645,16 @@ export function OfficeEditor({
             setLastSavedAt(new Date())
             onSaved(updated, savedBytes)
           } else {
+            // The session now belongs to the sibling (the parent retargets
+            // `file`/`decryptedName` via onSiblingCreated). The conflict
+            // baseline must move with it: `versionNumber` was the ORIGINAL
+            // file's opened version, and leaving it there disables the
+            // write-ahead conflict check on the sibling until the sibling's
+            // own version climbs past the original's (hasVersionConflict is
+            // `server > opened`), so a concurrent edit to the sibling in that
+            // window would be silently overwritten.
+            setVersionNumber(updated.version_number ?? 1)
+            setLastSavedAt(new Date())
             onSiblingCreated(updated, nameOverride ?? decryptedName)
           }
         } catch (err) {
@@ -831,18 +855,25 @@ export function OfficeEditor({
           {confirmExit && (
             <UnsavedChangesDialog
               onDiscard={() => {
-                // Fire-and-forget from the dialog's own perspective (it
-                // doesn't wait on this) — discardInFlightUpload internally
-                // waits for any in-flight save to settle before telling the
-                // server to abandon it (task 1571 fix, PR #106 Codex P1 —
-                // see the refs' own comment above for the race this closes;
-                // calling abandonUpload the instant abort() fires can race
-                // a still-in-flight initUpload and no-op, leaving the file
-                // wedged `is_uploading=true` once that late response lands).
-                void discardInFlightUpload(inFlightUploadRef.current, inFlightFileIdRef.current, inFlightUploadPromiseRef.current, abandonUpload)
+                // discardInFlightUpload waits for any in-flight save to
+                // settle before telling the server to abandon it (task 1571
+                // fix, PR #106 Codex P1 — calling abandonUpload the instant
+                // abort() fires can race a still-in-flight initUpload and
+                // no-op, leaving the file wedged `is_uploading=true` once that
+                // late response lands).
+                //
+                // It MUST finish before onExit(): on the top-level
+                // /office/:fileId route onExit() is window.close(), which
+                // tears down this JS context — found by e2e (PR #113 Codex P1
+                // regression spec): firing it and exiting in the same tick
+                // meant the abandon request was never sent at all. Capped so
+                // a save that somehow never settles cannot trap the user in
+                // the tab; the server's TTL sweep (task 1571) is the backstop
+                // for that case.
                 setConfirmExit(false)
                 reportDirty(false)
-                onExit()
+                const discard = discardInFlightUpload(inFlightUploadRef.current, inFlightFileIdRef.current, inFlightUploadPromiseRef.current, abandonUpload)
+                void Promise.race([discard, new Promise<void>((resolve) => setTimeout(resolve, DISCARD_EXIT_CAP_MS))]).then(() => onExit())
               }}
               onCancel={() => setConfirmExit(false)}
             />
