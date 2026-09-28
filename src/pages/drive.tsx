@@ -60,6 +60,7 @@ import {
   type SyncNode,
 } from '../lib/api'
 import { userFriendlyError } from '../lib/user-friendly-error'
+import { usePlanBlock } from '../hooks/use-plan-block'
 import type { FileActivityEntry } from '../components/file-details-panel'
 import { timeAgo } from '../components/file-list'
 import { getRemainingBytes } from '../components/quota-warning'
@@ -834,6 +835,9 @@ export function Drive() {
   }, [])
 
   const { showToast } = useToast()
+  // Task 1037 — needs_plan / lapsed accounts cannot upload (quota 0 by design):
+  // a clear notice instead of the generic "Not enough storage" toast.
+  const { blockUpload, handlePlanError } = usePlanBlock()
 
   // ─── Real-time WebSocket event handling ──────────
 
@@ -1168,6 +1172,7 @@ export function Drive() {
   }
 
   async function handleFilesSelected(selectedFiles: File[]) {
+    if (selectedFiles.length > 0 && blockUpload()) return
     // Quota is checked in queueResolvedUploads, AFTER conflict/auto-version
     // resolution — see task 1544 finding 1. Checking here (before we know
     // which files will replace an existing one) rejects same-size version
@@ -1419,12 +1424,16 @@ export function Drive() {
         return
       }
       const errorMessage = userFriendlyError(err)
-      showToast({
-        icon: 'upload',
-        title: 'Upload failed',
-        description: errorMessage,
-        danger: true,
-      })
+      // Task 1037 — 409 plan_required / account_lapsed get the plan notice
+      // (and the chooser for plan_required), not a generic "Upload failed".
+      if (!handlePlanError(err)) {
+        showToast({
+          icon: 'upload',
+          title: 'Upload failed',
+          description: errorMessage,
+          danger: true,
+        })
+      }
       // Mark the card as Error so the user sees it failed and can hit Retry.
       // Keep the cached File in uploadFilesRef so handleRetryUpload can re-run
       // the encrypted-upload pipeline without the user re-picking the file.
@@ -1439,6 +1448,7 @@ export function Drive() {
   }
 
   function handleRetryUpload(uploadId: string) {
+    if (blockUpload()) return
     const file = uploadFilesRef.current.get(uploadId)
     if (!file) {
       // Cached File was lost (e.g. page reload between failure and retry click).
@@ -1467,6 +1477,7 @@ export function Drive() {
   }
 
   async function handleFolderFilesSelected(folderFiles: FolderFile[]) {
+    if (folderFiles.length > 0 && blockUpload()) return
     if (!isUnlocked || !cryptoReady) {
       showToast({
         icon: 'lock',
@@ -1641,12 +1652,14 @@ export function Drive() {
       fetchFiles()
     } catch (err) {
       const errorMessage = userFriendlyError(err)
-      showToast({
-        icon: 'upload',
-        title: 'Folder upload failed',
-        description: errorMessage,
-        danger: true,
-      })
+      if (!handlePlanError(err)) {
+        showToast({
+          icon: 'upload',
+          title: 'Folder upload failed',
+          description: errorMessage,
+          danger: true,
+        })
+      }
       // Folder uploads don't support per-file retry yet (we'd need to remember
       // which subfile failed and how far it got). Surface as Error so the user
       // sees it failed; the dismiss (×) button removes the card.

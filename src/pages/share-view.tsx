@@ -374,10 +374,10 @@ function AcquisitionCTA({
         href={signupUrl}
         className="inline-flex items-center gap-2 px-5 py-2 bg-amber text-ink text-[13px] font-semibold rounded-lg hover:brightness-105 transition-all no-underline"
       >
-        Sign up free — 5 GB
+        Start a 14-day free trial
       </a>
       <p className="text-[11px] text-ink-4 mt-2.5">
-        No credit card. No tracking. Just encrypted storage.
+        From €1.99/month. Cancel any time during the trial. No tracking, no ads.
       </p>
     </div>
   )
@@ -1245,7 +1245,7 @@ export function ShareViewPage() {
                   href="https://app.beebeeb.io/signup"
                   className="mt-6 inline-flex items-center gap-2 px-5 py-2 bg-amber text-ink text-[13px] font-semibold rounded-lg hover:brightness-105 transition-all no-underline"
                 >
-                  Get Beebeeb — free 5 GB
+                  Try Beebeeb free for 14 days
                 </a>
               </div>
               <div className="px-8 py-3.5 bg-paper-2 border-t border-line">

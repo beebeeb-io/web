@@ -42,6 +42,19 @@ interface DriveDataState {
 
   planDetails: PlanDetails
   refreshPlanDetails: () => void
+  /**
+   * True once the first `GET /billing/subscription` for the signed-in account
+   * has settled (success OR failure). The needs_plan route gate (task 1037)
+   * waits for it so a new account never flashes the drive before being sent
+   * to /choose-plan. A failure settles with `subscription: null` → "ok".
+   */
+  subscriptionSettled: boolean
+  /**
+   * Put a freshly-fetched subscription into the shared cache immediately
+   * (task 1037: /choose-plan does this once the trial is live, so the route
+   * gate sees the new state before it navigates to the drive).
+   */
+  applySubscription: (subscription: Subscription) => void
 
   incomingCount: number
   refreshIncoming: () => void
@@ -66,6 +79,7 @@ export function DriveDataProvider({ children }: { children: ReactNode }) {
   const [pinnedFolderIds, setPinnedFolderIds] = useState<string[]>([])
   const [usage, setUsage] = useState<StorageUsage | null>(null)
   const [planDetails, setPlanDetails] = useState<PlanDetails>({ plan: null, subscription: null })
+  const [subscriptionSettled, setSubscriptionSettled] = useState(false)
   const [incomingCount, setIncomingCount] = useState(0)
   const [isOffline, setIsOffline] = useState(false)
 
@@ -131,13 +145,50 @@ export function DriveDataProvider({ children }: { children: ReactNode }) {
   // ── Plan + subscription ───────────────────────────────────────────────────
 
   const refreshPlanDetails = useCallback(() => {
-    Promise.all([getPlans(), getSubscription()])
+    // The subscription lands on its own (task 1037) — the route gate reads
+    // `account_state` from it and must not wait on, or fail with, the plans
+    // catalogue. The plan match follows once both are in.
+    const subPromise = getSubscription()
+    subPromise
+      .then((subscription) => {
+        setPlanDetails((prev) => ({
+          plan: prev.plan && prev.plan.id === subscription.plan ? prev.plan : null,
+          subscription,
+        }))
+      })
+      .catch(() => {})
+      .finally(() => setSubscriptionSettled(true))
+    Promise.all([getPlans(), subPromise])
       .then(([plans, subscription]) => {
         const plan = plans.find((p) => p.id === subscription.plan) ?? null
         setPlanDetails({ plan, subscription })
       })
       .catch(() => {})
   }, [])
+
+  const applySubscription = useCallback((subscription: Subscription) => {
+    setPlanDetails((prev) => ({
+      plan: prev.plan && prev.plan.id === subscription.plan ? prev.plan : null,
+      subscription,
+    }))
+    setSubscriptionSettled(true)
+  }, [])
+
+  // Signed out (or a different account signs in): drop the previous account's
+  // subscription so the route gate never decides on someone else's state.
+  const userId = user?.user_id ?? null
+  useEffect(() => {
+    setPlanDetails({ plan: null, subscription: null })
+    setSubscriptionSettled(false)
+  }, [userId])
+
+  // Safety net: a subscription request that never answers must not hold every
+  // protected route on a blank screen. After 8s the gate proceeds as "ok".
+  useEffect(() => {
+    if (subscriptionSettled || !isUnlocked || !user) return
+    const t = setTimeout(() => setSubscriptionSettled(true), 8_000)
+    return () => clearTimeout(t)
+  }, [subscriptionSettled, isUnlocked, user])
 
   // ── Incoming share invites count ──────────────────────────────────────────
 
@@ -214,6 +265,8 @@ export function DriveDataProvider({ children }: { children: ReactNode }) {
         refreshUsage,
         planDetails,
         refreshPlanDetails,
+        subscriptionSettled,
+        applySubscription,
         incomingCount,
         refreshIncoming,
         isOffline,

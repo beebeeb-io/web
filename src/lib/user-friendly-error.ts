@@ -148,6 +148,16 @@ export function userFriendlyError(err: unknown): string {
       // Object-COUNT cap, distinct from the byte/storage quota below.
       return "File limit reached. This account has hit its maximum number of files — delete some files or contact support to raise the limit."
     }
+    // Task 1037 — an account without a plan: upload init and share creation
+    // are refused with 409 plan_required / account_lapsed (never
+    // quota_exceeded — a 0 quota would read as unlimited). Branch before the
+    // generic 409 handling so they never surface as a vague conflict.
+    if (err.code === 'plan_required') {
+      return 'Choose a plan and start your free trial to upload or share files.'
+    }
+    if (err.code === 'account_lapsed') {
+      return 'Your trial has ended and your vault is read-only. Subscribe to upload or share again.'
+    }
     if (err.code === 'quota_exceeded') {
       return 'Storage full. Free up space or upgrade your plan to keep uploading.'
     }

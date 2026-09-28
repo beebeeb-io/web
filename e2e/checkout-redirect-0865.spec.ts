@@ -279,7 +279,10 @@ test.describe('0865 checkout redirect + poll-confirmed success', () => {
   })
 
   test('GATE 6 — copy audit: no user-visible Stripe on checkout path, single amber, no emoji', async ({ page }) => {
-    await installMocks(page, { subForRequest: () => FREE_SUB })
+    // Task 1037: a trial-ELIGIBLE Free user's trial CTAs now go to
+    // /choose-plan (trial with a payment mandate), not this dialog — audit the
+    // paid-checkout dialog as an account that already used its trial sees it.
+    await installMocks(page, { subForRequest: () => ({ ...FREE_SUB, has_used_trial: true }) })
     await bootBilling(page, '/settings/billing')
     // The upgrade CTA lives on the "change" view (post-0942 summary/change
     // split — "Choose a plan" opens it), not the /settings/billing summary.
@@ -290,7 +293,7 @@ test.describe('0865 checkout redirect + poll-confirmed success', () => {
     // checkout, so this clicks "Start 14-day Pro trial" — mocked above to 409
     // trial_already_used, which billing.tsx falls back to `openUpgrade` for
     // (the real behavior for a user who already used their trial).
-    await page.getByRole('button', { name: /Start 14-day Pro trial/i }).first().click()
+    await page.getByRole('button', { name: /Upgrade to Basic/i }).first().click()
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 10_000 })
     // The dialog opens on the billing-cycle step; "Continue" advances to
     // BillingInfoStep, which holds the "Choose your payment method on the

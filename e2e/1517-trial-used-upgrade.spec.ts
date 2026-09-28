@@ -90,10 +90,18 @@ interface MockOpts {
   sub: unknown
   /** When set, POST /billing/trial/start returns this instead of succeeding. */
   trialStartResponse?: { status: number; body: unknown }
+  /** Task 1037 — POST /billing/trial/checkout (the trial now needs a mandate). */
+  trialCheckoutResponse?: { status: number; body: unknown }
+}
+
+// A saved billing profile, so the /choose-plan billing step can submit as-is.
+const PROFILE = {
+  full_name: 'Dev User', billing_country: 'NL', billing_street: 'Hoofdstraat 1',
+  billing_postal: '6602 AB', billing_city: 'Wijchen', customer_type: 'b2c', vat_validated: 'unchecked',
 }
 
 function installMocks(page: Page, opts: MockOpts) {
-  const counters = { trialStartPosts: 0, checkoutPosts: 0 }
+  const counters = { trialStartPosts: 0, checkoutPosts: 0, trialCheckoutPosts: 0 }
 
   return page.route('**/*', async (route) => {
     const url = route.request().url()
@@ -139,6 +147,17 @@ function installMocks(page: Page, opts: MockOpts) {
         extra_storage_tb: 0, base_storage_tb: 0, max_storage_tb: 0,
         effective_storage_bytes: 100_000_000_000,
       })
+    }
+    if (url.includes('/billing/trial/checkout')) {
+      counters.trialCheckoutPosts += 1
+      if (opts.trialCheckoutResponse) {
+        return json(route, opts.trialCheckoutResponse.body, opts.trialCheckoutResponse.status)
+      }
+      return json(route, { error: 'unexpected_trial_checkout_call' }, 500)
+    }
+    if (url.includes('/billing/profile')) return json(route, PROFILE)
+    if (url.includes('/billing/vat-preview')) {
+      return json(route, { net_cents: 825, vat_rate_bps: 2100, vat_cents: 174, gross_cents: 999, treatment: 'domestic' })
     }
     if (url.includes('/billing/checkout')) {
       counters.checkoutPosts += 1
@@ -224,9 +243,11 @@ test.describe('1517 — trial-already-used accounts can upgrade', () => {
     // server still rejects — the EXACT double-encoded body captured from
     // repos/server/beebeeb-api/src/error.rs's generic Conflict render path
     // (ApiError::Conflict(json!({...}).to_string()) double-wrapped).
-    await installMocks(page, {
+    // Task 1037: the trial now starts on /choose-plan with a payment mandate
+    // (POST /billing/trial/checkout); the no-card /trial/start is never called.
+    const counters = await installMocks(page, {
       sub: FREE_SUB_TRIAL_UNUSED,
-      trialStartResponse: {
+      trialCheckoutResponse: {
         status: 409,
         body: {
           error:
@@ -237,13 +258,20 @@ test.describe('1517 — trial-already-used accounts can upgrade', () => {
     await bootBilling(page, '/settings/billing?view=change')
 
     await page.getByRole('button', { name: /Start 14-day Pro trial/i }).click()
+    await page.waitForURL(/\/choose-plan\?plan=pro/, { timeout: 15_000 })
+    await page.getByTestId('choose-plan-continue').click()
+    await expect(page.getByTestId('billing-info-step')).toBeVisible({ timeout: 15_000 })
+    await page.getByRole('button', { name: /Start 14-day free trial/i }).click()
 
-    // The clean, mapped message must appear...
+    // The clean, mapped message must appear, on normal paid checkout...
     await expect(page.getByText(/already used your free trial/i)).toBeVisible({ timeout: 15_000 })
+    await page.waitForURL(/\/settings\/billing\?view=change/, { timeout: 15_000 })
     // ...and the raw JSON blob must NEVER appear anywhere on the page.
     const bodyText = await page.locator('body').innerText()
     expect(bodyText).not.toContain('{"error"')
     expect(bodyText).not.toContain('\\"message\\"')
+    expect(counters.trialStartPosts).toBe(0)
+    expect(counters.trialCheckoutPosts).toBe(1)
 
     await page.screenshot({ path: 'e2e/screenshots/1517-gate2-clean-toast-not-raw-json.png', fullPage: true })
   })

@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from 'react'
+import { type FormEvent, useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams, useNavigate, useLocation } from 'react-router-dom'
 import { AuthShell } from '../components/auth-shell'
 import { BBButton } from '@beebeeb/shared'
@@ -6,12 +6,28 @@ import { BBCheckbox } from '@beebeeb/shared'
 import { BBInput } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { shouldShowPilotKeyField, buildOnboardingState, pilotKeyBlocksSubmit } from '../lib/signup-pilot-gate'
-import { parsePlanIntent, savePlanIntent } from '../lib/plan-intent'
+import { parsePlanIntent, readPlanIntent, savePlanIntent, type BillingCycle, type PlanIntent } from '../lib/plan-intent'
+import { getPlans, type Plan } from '../lib/api'
+import {
+  DEFAULT_TRIAL_PLAN,
+  buildTrialPlanOptions,
+  isTrialPlanSlug,
+  trialTermsCopy,
+  type TrialPlanSlug,
+} from '../lib/trial-checkout'
+import { TrialPlanPicker } from '../components/trial-plan-picker'
 
 // Referral keys — read here, forwarded to onboarding, cleared after signup
 export const REFERRAL_SOURCE_KEY = 'bb_ref_source'
 export const REFERRAL_SHARER_KEY = 'bb_ref_sharer'
 export const REFERRAL_CODE_KEY   = 'bb_ref_code'
+
+/** A trial plan slug for an intent (the legacy `personal` alias is Basic). */
+function trialPlanFor(intent: PlanIntent | null): TrialPlanSlug | null {
+  if (!intent) return null
+  if (isTrialPlanSlug(intent.plan)) return intent.plan
+  return intent.plan === 'personal' ? 'basic' : null
+}
 
 export function Signup() {
   const navigate = useNavigate()
@@ -30,6 +46,25 @@ export function Signup() {
   const [pilotKeyError, setPilotKeyError] = useState(navState?.pilotKeyError ?? '')
   const [accepted, setAccepted] = useState(false)
   const [error, setError] = useState('')
+
+  // Task 1037 — no free signups. The trial plans come FIRST: Starter / Basic /
+  // Pro, monthly or yearly, preselected from a marketing-site intent
+  // (?plan=&cycle=) or one saved earlier in this browser. The choice is saved
+  // as the plan intent and preselected again on /choose-plan after onboarding,
+  // where the payment method is taken and the trial starts.
+  const initialIntent = useMemo(
+    () => parsePlanIntent(searchParams.get('plan'), searchParams.get('cycle')) ?? readPlanIntent(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- first render only
+    [],
+  )
+  const [plan, setPlan] = useState<TrialPlanSlug>(trialPlanFor(initialIntent) ?? DEFAULT_TRIAL_PLAN)
+  const [cycle, setCycle] = useState<BillingCycle>(initialIntent?.cycle ?? 'monthly')
+  const [apiPlans, setApiPlans] = useState<Plan[] | null>(null)
+  useEffect(() => {
+    getPlans().then(setApiPlans).catch(() => { /* plan-constants fallback */ })
+  }, [])
+  const planOptions = useMemo(() => buildTrialPlanOptions(apiPlans), [apiPlans])
+  const trialDays = planOptions.find((o) => o.id === plan)?.trialDays ?? planOptions[0].trialDays
 
   // Task 1520: the server's pilot gate is OFF by default (launched, phase 2 —
   // BB_REQUIRE_PILOT_KEY=0 on both prod nodes). See src/lib/signup-pilot-gate.ts
@@ -57,6 +92,15 @@ export function Signup() {
     if (intent) savePlanIntent(intent)
   }, [searchParams])
 
+  function choosePlan(next: TrialPlanSlug) {
+    setPlan(next)
+    savePlanIntent({ plan: next, cycle })
+  }
+  function chooseCycle(next: BillingCycle) {
+    setCycle(next)
+    savePlanIntent({ plan, cycle: next })
+  }
+
   function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setError('')
@@ -78,6 +122,9 @@ export function Signup() {
       return
     }
 
+    // The trial plan picked above travels to /choose-plan as the plan intent.
+    savePlanIntent({ plan, cycle })
+
     // The key (if any) is re-checked server-side at register-start (during
     // onboarding). buildOnboardingState carries it forward only when one was
     // entered — most signups have none, and opaqueRegisterStart/Finish only
@@ -87,13 +134,30 @@ export function Signup() {
 
   return (
     <AuthShell
-      title="Create your account"
-      subtitle="Encrypted end-to-end before it leaves your device. We can't read any of it."
+      title="Start your free trial"
+      subtitle="Pick a plan, then create your account. Encrypted end-to-end before it leaves your device — we can't read any of it."
       step={1}
       totalSteps={4}
       hideTrust
     >
       <form onSubmit={handleSubmit}>
+        <TrialPlanPicker
+          options={planOptions}
+          plan={plan}
+          cycle={cycle}
+          onPlanChange={choosePlan}
+          onCycleChange={chooseCycle}
+        />
+        <div
+          className="mt-2.5 flex items-start gap-2 rounded-md border border-line bg-paper-2 px-3 py-2.5"
+          data-testid="trial-terms"
+        >
+          <Icon name="clock" size={13} className="text-amber-deep shrink-0 mt-[2px]" />
+          <p className="text-[11.5px] text-ink-2 leading-relaxed">{trialTermsCopy(trialDays)}</p>
+        </div>
+
+        <div className="border-t border-line mt-4 mb-4" />
+
         {/* Pilot-gate notice — only shown when a real server refusal bounced
             us back here (see showPilotKeyField above). Signups are open by
             default; this never renders on a fresh visit to /signup. */}

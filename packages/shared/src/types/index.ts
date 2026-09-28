@@ -564,7 +564,33 @@ export interface Subscription {
    * no storage add-on.
    */
   addon_per_tb_cents?: number | null
+  /**
+   * The plan the account is ENTITLED to right now (server task 1601). `"none"`
+   * for a `needs_plan` or `lapsed` account (task 1037). Absent on older servers.
+   */
+  effective_plan?: string
+  /**
+   * Account lifecycle state (task 1037 — no free signups). Additive; absent on
+   * older servers, which clients treat as `"ok"`.
+   *   - `ok`         — normal (entitled, or grandfathered Free).
+   *   - `needs_plan` — a new-model account that never started a trial or plan:
+   *                    the app sends it to `/choose-plan`. Upload quota is 0.
+   *   - `lapsed`     — a trial/plan ended unpaid: read-only (quota 0), data
+   *                    deleted at `data_deletion_at` unless the user subscribes.
+   */
+  account_state?: AccountState
+  /** RFC3339 deletion date for a `lapsed` account; null otherwise (task 1037). */
+  data_deletion_at?: string | null
+  /**
+   * True when a `trialing` row already has a Mollie mandate + subscription, so
+   * it is charged automatically at `trial_ends_at` (task 1037). False/absent
+   * for legacy no-card trials, which still use `POST /billing/trial/convert`.
+   */
+  trial_auto_converts?: boolean
 }
+
+/** `GET /billing/subscription` → `account_state` (task 1037). */
+export type AccountState = 'ok' | 'needs_plan' | 'lapsed'
 
 export interface Invoice {
   id: string

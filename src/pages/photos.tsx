@@ -22,6 +22,9 @@ import { isLikelyAlbumArtOrIcon } from '../lib/photo-library'
 import { useWsEvent } from '../lib/ws-context'
 import { useSelfHealRefetch } from '../hooks/use-self-heal-refetch'
 import { UpgradeNudge } from '../components/upgrade-nudge'
+import { usePlanBlock } from '../hooks/use-plan-block'
+import { accountStateFromError } from '../lib/account-state'
+import { userFriendlyError } from '../lib/user-friendly-error'
 
 // ─── Constants ──────────────────────────────────
 
@@ -135,6 +138,8 @@ export function Photos() {
   const navigate = useNavigate()
   const { getFileKey, getMasterKey, isUnlocked, cryptoReady } = useKeys()
   const { showToast } = useToast()
+  // Task 1037 — needs_plan / lapsed accounts cannot upload: say so clearly.
+  const { blockUpload, handlePlanError } = usePlanBlock()
   const { planDetails } = useDriveData()
   const planSlug = planDetails.subscription?.plan ?? 'free'
   const isFree = planSlug === 'free'
@@ -333,6 +338,11 @@ export function Photos() {
   }
 
   async function doEncryptedUpload(uploadId: string, file: File) {
+    if (blockUpload()) {
+      setUploads((prev) => prev.filter((u) => u.id !== uploadId))
+      uploadFilesRef.current.delete(uploadId)
+      return
+    }
     if (!isUnlocked || !cryptoReady) {
       showToast({ icon: 'lock', title: 'Vault is locked', description: 'Log in again to unlock encryption before uploading.', danger: true })
       setUploads((prev) => prev.filter((u) => u.id !== uploadId))
@@ -381,8 +391,12 @@ export function Photos() {
         uploadFilesRef.current.delete(uploadId)
         return
       }
-      const errorMessage = err instanceof Error ? err.message : 'Upload failed'
-      showToast({ icon: 'upload', title: 'Upload failed', description: errorMessage, danger: true })
+      const errorMessage = accountStateFromError(err)
+        ? userFriendlyError(err)
+        : err instanceof Error ? err.message : 'Upload failed'
+      if (!handlePlanError(err)) {
+        showToast({ icon: 'upload', title: 'Upload failed', description: errorMessage, danger: true })
+      }
       setUploads((prev) => prev.map((u) => u.id === uploadId ? { ...u, stage: 'Error' as const, progress: 0, errorMessage } : u))
     }
   }

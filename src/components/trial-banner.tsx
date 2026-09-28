@@ -23,6 +23,13 @@
  * A lapsed trial (status back to free) renders NOTHING here — the normal Free
  * plan + upgrade path takes over, so a lapsed user never sees a stale banner.
  *
+ * Task 1037 — a trial started WITH a payment mandate (`trial_auto_converts:
+ * true`) already has a Mollie subscription that charges at `trial_ends_at`, so
+ * there is nothing to convert: the banner states the end date and the amount
+ * that will be charged automatically, and links to billing (where the trial
+ * can be cancelled). Legacy no-card trials (`trial_auto_converts` false/absent)
+ * keep the "Add payment method" convert CTA below.
+ *
  * Brand: amber only on the primary "Add payment method" CTA; the day count is
  * mono (it reads like data); honest copy, no emojis.
  */
@@ -34,6 +41,7 @@ import { useDriveData } from '../lib/drive-data-context'
 import { useToast } from './toast'
 import { convertTrial, ApiError } from '../lib/api'
 import { persistTrialConvertIntent } from '../lib/pending-checkout'
+import { trialAutoConvertCopy, trialRenewalAmount } from '../lib/trial-checkout'
 import { userFriendlyError } from '../lib/user-friendly-error'
 
 /** Whole days remaining until an RFC3339 instant (ceil; never negative). */
@@ -56,6 +64,35 @@ export function TrialBanner() {
   if (!sub || sub.status !== 'trialing' || !sub.trial_ends_at) return null
   const remaining = daysLeft(sub.trial_ends_at)
   if (remaining <= 0) return null
+
+  // Task 1037 — mandate already captured: it converts on its own.
+  if (sub.trial_auto_converts === true) {
+    const amount = trialRenewalAmount(sub, planDetails.plan)
+    const cycle = sub.billing_cycle === 'yearly' ? 'yearly' : 'monthly'
+    return (
+      <div
+        role="status"
+        data-testid="trial-banner-auto"
+        className="flex items-center gap-3 px-4 py-2.5 bg-paper-2 border-b border-line text-[12.5px] text-ink"
+      >
+        <Icon name="clock" size={12} className="text-amber-deep shrink-0" />
+        <span className="flex-1 text-ink-2">
+          {amount != null
+            ? trialAutoConvertCopy(sub.trial_ends_at, amount, cycle)
+            : `Trial — ends ${new Date(sub.trial_ends_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}. Then charged automatically.`}{' '}
+          <span className="text-ink-3">
+            <span className="font-mono">{remaining}</span> {remaining === 1 ? 'day' : 'days'} left.
+          </span>
+        </span>
+        <Link
+          to="/billing"
+          className="shrink-0 text-[12px] text-ink-3 hover:text-ink underline underline-offset-2 transition-colors"
+        >
+          Manage
+        </Link>
+      </div>
+    )
+  }
 
   // Honest, urgency-aware copy near expiry.
   const nearExpiry = remaining <= 2

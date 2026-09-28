@@ -105,6 +105,9 @@ Hi-fi designs are in the workspace: `../../design/hifi/`. Key files:
 
 - `/signup`, `/login` — guest only
 - `/onboarding` — post-signup recovery phrase
+- `/choose-plan` — trial with a payment mandate (task 1037). Every new account lands here after
+  onboarding; `account_state: "needs_plan"` redirects every other protected route here (see
+  `src/lib/account-state.ts` `planGateRedirect`); Mollie returns to `/choose-plan?returned=1`.
 - `/` — Drive (main file view)
 - `/trash` — trashed files
 - `/search` — search results

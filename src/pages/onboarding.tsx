@@ -305,11 +305,12 @@ export function Onboarding() {
       // 6. Refresh user state and navigate to drive
       setProcessingStatus('Almost there...')
       await refreshUser()
-      // A plan picked on the marketing site (/signup?plan=&cycle=) opens the
-      // plan chooser on that plan with its one-click trial; otherwise the drive.
-      // Not cleared here: GuestRoute's stale re-render after refreshUser()
-      // reads the same intent (guestRouteFallback) so both navigations agree.
-      // Billing consumes it once the URL carries it.
+      // Task 1037 — no free accounts: every new account continues to
+      // /choose-plan (payment method → trial), preselected on the plan picked
+      // on /signup or the marketing site. Not cleared here: GuestRoute's stale
+      // re-render after refreshUser() reads the same intent
+      // (guestRouteFallback) so both navigations agree; /choose-plan clears it
+      // once the trial is live.
       navigate(postSignupDestination(readPlanIntent()), { replace: true })
     } catch (err) {
       // Pilot gate (private development): register-start rejects a missing/wrong
