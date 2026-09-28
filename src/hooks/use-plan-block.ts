@@ -33,7 +33,10 @@ export function usePlanBlock() {
 
   const show = useCallback(
     (n: UploadBlockedNotice) => {
-      showToast({ icon: 'lock', title: n.title, description: n.description, href: n.href, danger: true })
+      // Not `danger`: a danger toast never auto-dismisses, and this one would
+      // then sit over the (persistent) lapsed banner's Subscribe button. The
+      // banner already carries the state; the toast just explains the refusal.
+      showToast({ icon: 'lock', title: n.title, description: n.description, href: n.href })
     },
     [showToast],
   )

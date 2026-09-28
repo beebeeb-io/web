@@ -69,6 +69,7 @@ test('site CTA /signup?plan=basic&cycle=yearly → plans first → /choose-plan 
   const sub = await subRes.json()
   const state: string = sub.account_state ?? '(absent)'
   testInfo.annotations.push({ type: 'account_state', description: state })
+  console.log(`[flow-money] account_state=${state} → ${state === 'needs_plan' ? 'needs_plan branch' : 'gate-off branch'}`)
 
   if (state === 'needs_plan') {
     await expect(page).toHaveURL(/\/choose-plan/, { timeout: 30_000 })

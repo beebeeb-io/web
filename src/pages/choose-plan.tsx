@@ -33,6 +33,8 @@ import { useToast } from '../components/toast'
 import { useAuth } from '../lib/auth-context'
 import { useDriveData } from '../lib/drive-data-context'
 import { useWsEvent } from '../lib/ws-context'
+import { useKeys } from '../lib/key-context'
+import { flushDeferredWelcomeFile } from '../lib/welcome-file-upload'
 import {
   getPaymentStatus,
   getPlans,
@@ -94,6 +96,7 @@ export function ChoosePlan() {
   const navigate = useNavigate()
   const { showToast } = useToast()
   const { user } = useAuth()
+  const { getMasterKey } = useKeys()
   const { planDetails, applySubscription, refreshPlanDetails } = useDriveData()
   const sub = planDetails.subscription
 
@@ -147,11 +150,25 @@ export function ChoosePlan() {
   const finishedRef = useRef(false)
 
   const goLive = useCallback(
-    (latest: Subscription) => {
+    async (latest: Subscription) => {
       if (finishedRef.current) return
       finishedRef.current = true
       clearPendingCheckout()
       clearPlanIntent()
+      // The welcome file onboarding deferred while the account had no plan
+      // (src/lib/welcome-file.ts) — upload it now, once, so the drive shows it
+      // on arrival. Bounded: a slow upload never holds the user here.
+      if (user?.user_id) {
+        try {
+          const masterKey = getMasterKey(user.user_id)
+          await Promise.race([
+            flushDeferredWelcomeFile(user.user_id, masterKey),
+            new Promise((r) => setTimeout(r, 15_000)),
+          ])
+        } catch {
+          /* key not resident — the route gate retries on the next page */
+        }
+      }
       // The gate reads the shared cache: put the trialing subscription in it
       // BEFORE navigating, or "/" would bounce straight back here.
       applySubscription(latest)
@@ -167,7 +184,7 @@ export function ChoosePlan() {
       })
       navigate('/', { replace: true })
     },
-    [applySubscription, refreshPlanDetails, showToast, navigate, trialDays],
+    [applySubscription, refreshPlanDetails, showToast, navigate, trialDays, user, getMasterKey],
   )
 
   /** One reconcile pass. Returns true once it reached a final outcome. */
@@ -190,7 +207,7 @@ export function ChoosePlan() {
     }
     const outcome = trialReturnOutcome(lastStatusRef.current, latest)
     if (outcome === 'live' && latest) {
-      goLive(latest)
+      await goLive(latest)
       return true
     }
     if (outcome === 'failed') {

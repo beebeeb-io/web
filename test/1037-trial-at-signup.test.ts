@@ -64,7 +64,7 @@ describe('resolveAccountState', () => {
 
 describe('planGateRedirect — needs_plan sends every app route to /choose-plan', () => {
   test('protected app routes redirect', () => {
-    for (const p of ['/', '/photos', '/settings/security', '/settings/import', '/shared', '/trash', '/cli-auth']) {
+    for (const p of ['/', '/photos', '/settings/security', '/settings/import', '/shared', '/trash']) {
       expect(planGateRedirect(p, 'needs_plan')).toBe(CHOOSE_PLAN_PATH)
     }
     expect(CHOOSE_PLAN_PATH).toBe('/choose-plan')
@@ -80,6 +80,8 @@ describe('planGateRedirect — needs_plan sends every app route to /choose-plan'
       '/billing',
       '/logout',
       '/verify-email',
+      // `bb login --browser` must still work for an account without a plan.
+      '/cli-auth',
     ]) {
       expect(planGateRedirect(p, 'needs_plan')).toBeNull()
     }

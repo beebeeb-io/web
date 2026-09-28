@@ -37,7 +37,8 @@ export function resolveAccountState(
 /**
  * Routes a `needs_plan` account may still open: the chooser itself, account
  * settings (`/settings/account` forwards to `/settings/profile`, which holds
- * the account details and the delete-account entry) and deletion, logout, the billing page (the paid-checkout fallback
+ * the account details and the delete-account entry) and deletion, logout,
+ * the CLI browser login (`/cli-auth`), the billing page (the paid-checkout fallback
  * for `trial_already_used`, and the normal checkout return), and email
  * verification (the link in the welcome email).
  */
@@ -50,6 +51,9 @@ export const NEEDS_PLAN_ALLOWED_PATHS: readonly string[] = [
   '/billing',
   '/logout',
   '/verify-email',
+  // `bb login --browser` (CLI device auth) — the CLI never creates accounts,
+  // but a needs_plan account must still be able to sign the CLI in.
+  '/cli-auth',
 ]
 
 /**
