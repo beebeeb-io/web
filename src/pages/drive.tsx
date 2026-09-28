@@ -74,6 +74,7 @@ import {
   shouldShowUpgradeNudge,
 } from '../components/upgrade-nudge-modal'
 import { encryptedUpload } from '../lib/encrypted-upload'
+import { UploadRestartFailedError } from '../lib/upload-session-reinit'
 import { encryptedDownload } from '../lib/encrypted-download'
 import { downloadAsZip, ZIP_SIZE_WARNING_BYTES } from '../lib/bulk-download'
 import {
@@ -1030,6 +1031,20 @@ export function Drive() {
         showToast({ icon: 'check', title: 'Upload resumed', description: file.name })
         fetchFiles()
       } catch (err) {
+        // Task 1589: the server swept this paused upload (its lease expired)
+        // and a fresh start failed too. encryptedUpload already dropped the
+        // dead IndexedDB entry, so the banner will not offer it again — say
+        // so plainly and drop the row instead of leaving it "Queued" forever.
+        if (err instanceof UploadRestartFailedError) {
+          showToast({
+            icon: 'upload',
+            title: 'Paused upload expired',
+            description: `${file.name}: ${userFriendlyError(err)}`,
+            danger: true,
+          })
+          setUploads((prev) => prev.filter((u) => u.id !== uploadId))
+          continue
+        }
         showToast({
           icon: 'upload',
           title: 'Resume failed',

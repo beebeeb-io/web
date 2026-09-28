@@ -10,6 +10,7 @@
 
 import { ApiError } from './api'
 import { consumeAccountDeletedNotice, type NoticeStorage } from './account-deleted-notice'
+import { UploadRestartFailedError } from './upload-session-reinit'
 
 /** Maximum length below which we trust the existing message as user-facing. */
 const SHORT_MESSAGE_MAX = 80
@@ -114,6 +115,10 @@ function upgradeLimitMessage(message: string): string | null {
 }
 
 export function userFriendlyError(err: unknown): string {
+  // Task 1589 — a swept upload session whose fresh re-init also failed. Its
+  // message is written for users and says what to do (upload again).
+  if (err instanceof UploadRestartFailedError) return err.message
+
   // Network / offline takes priority — a 5xx during a flaky connection is
   // really "you have no connection", not "the server is down".
   if (isNetworkError(err)) {
