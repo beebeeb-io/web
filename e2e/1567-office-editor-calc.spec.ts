@@ -37,6 +37,7 @@ import { test, expect, type Page } from '@playwright/test'
 import fs from 'fs'
 import { writeXlsxFixture } from './helpers/office-fixtures-calc'
 import { uploadAndWait, openPreview, previewOverlay, escapeRe } from './helpers/thumb-fixtures'
+import { OFFICE_SETTLE_BUDGET_MS, waitOfficeSettled } from './helpers/office-ready'
 
 const OFFICE_ASSETS_PRESENT = fs.existsSync('public/office/manifest.json')
 const OFFICE_FLAG_ON = process.env.VITE_FEATURE_OFFICE_EDITOR === 'true'
@@ -50,7 +51,8 @@ test.skip(
   'VITE_FEATURE_OFFICE_EDITOR!=true — this suite exercises the real feature-flagged engine, not the default-off production build',
 )
 
-test.setTimeout(180_000)
+// Task 1585: 2 engine boot(s) at the ready helper's budget, plus the test's own work.
+test.setTimeout(2 * OFFICE_SETTLE_BUDGET_MS + 120_000)
 
 async function dismissDevBanner(page: Page): Promise<void> {
   const dismiss = page.getByRole('button', { name: 'Dismiss dev banner' })
@@ -75,10 +77,6 @@ test('upload .xlsx, real Sum/Average/Count via our status bar, edit a cell, Bold
   // clipboard (see use-calc-selection-stats.ts's header for why).
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
 
-  // Ship prep (task 1567, 2026-09-27): runtime Labs opt-in, see
-  // 1567-office-editor.spec.ts's own comment for why this is needed
-  // alongside VITE_FEATURE_OFFICE_EDITOR.
-  await page.addInitScript(() => localStorage.setItem('bb-office-labs', 'true'))
   await page.goto('/')
   await dismissDevBanner(page)
 
@@ -115,7 +113,9 @@ test('upload .xlsx, real Sum/Average/Count via our status bar, edit a cell, Bold
   // Calc-specific chrome, not Writer's outline pane — this is the readiness
   // gate for a Calc document (its own ribbon tabs + formula bar + sheet
   // tabs, all rendered only once bbOffice.open() has resolved).
-  await officeTab.getByTestId('calc-formula-bar').waitFor({ state: 'visible', timeout: 120_000 })
+  // Task 1585: the editor's real ready signal at the app's own budget.
+  await waitOfficeSettled(officeTab)
+  await officeTab.getByTestId('calc-formula-bar').waitFor({ state: 'visible', timeout: 15_000 })
   await officeTab.getByTestId('calc-sheet-tabs').waitFor({ state: 'visible', timeout: 15_000 })
   await expect(officeTab.getByTestId('ribbon-tab-home')).toHaveAttribute('aria-current', 'true')
 
@@ -193,7 +193,9 @@ test('upload .xlsx, real Sum/Average/Count via our status bar, edit a cell, Bold
   const officeTab2 = await popup2Promise
   trackEgress(officeTab2)
   await dismissDevBanner(officeTab2)
-  await officeTab2.getByTestId('calc-formula-bar').waitFor({ state: 'visible', timeout: 120_000 })
+  // Task 1585: the editor's real ready signal at the app's own budget.
+  await waitOfficeSettled(officeTab2)
+  await officeTab2.getByTestId('calc-formula-bar').waitFor({ state: 'visible', timeout: 15_000 })
   await officeTab2.getByTestId('calc-sheet-tabs').waitFor({ state: 'visible', timeout: 15_000 })
   const engineFrame2 = officeTab2.frameLocator('[data-testid="office-engine-frame"]')
   await engineFrame2.locator('#qtcanvas').waitFor({ state: 'visible', timeout: 30_000 })

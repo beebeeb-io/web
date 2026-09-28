@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { installMocks, cap, resetCaptures } from './helpers/upload-share-mocks'
 
-// Shared mock setup (task 0753): see helpers/upload-share-mocks.ts. The capturing
-// ./api + streaming ./crypto mocks live there (shared with folder-share-crypto so
-// bun's global mock.module doesn't collide). This suite asserts on `cap`.
-installMocks()
+// Shared mock setup (tasks 0753, 1590): see helpers/upload-share-mocks.ts. The
+// capturing ./api + streaming ./crypto overrides live there; each mock is the
+// real module plus those overrides and is restored when this file finishes.
+// This suite asserts on `cap`.
+await installMocks()
 
 describe('encryptedUpload v2 server file id contract', () => {
   beforeEach(() => { resetCaptures() })

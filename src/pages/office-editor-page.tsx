@@ -38,12 +38,13 @@ import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { useKeys } from '../lib/key-context'
 import { resolveOfficeFileKind } from '../lib/office/office-file-kind'
 import { checkOfficeBytes, extensionOf } from '../lib/office/office-magic'
+import { OfficeOpenError, asDecryptFailure, errorText } from '../lib/office/office-open-error'
 import { OfficeEditor } from '../components/office/office-editor'
 import { ShareDialog } from '../components/share-dialog'
 
 type LoadState =
   | { stage: 'loading' }
-  | { stage: 'error'; message: string }
+  | { stage: 'error'; message: string; kind?: string; detail?: string }
   | {
       stage: 'ready'
       file: DriveFile
@@ -89,7 +90,11 @@ export function OfficeEditorPage() {
       try {
         const file = await getFile(fileId!)
         const fileKey = await getFileKeyForFile(file)
-        const { name, mimeType } = await decryptFileMetadata(fileKey, file.name_encrypted)
+        // Codex P2 on PR #123: a corrupt name blob or a wrong file key fails
+        // HERE, before the content download; it is the same honest kind.
+        const { name, mimeType } = await decryptFileMetadata(fileKey, file.name_encrypted).catch((err: unknown) => {
+          throw asDecryptFailure(err)
+        })
         const officeKind = resolveOfficeFileKind(mimeType ?? file.mime_type, name)
         if (!officeKind) {
           if (!cancelled) setState({ stage: 'error', message: `"${name}" is not an office document this editor can open.` })
@@ -97,7 +102,9 @@ export function OfficeEditorPage() {
         }
         const [{ current_version: openedVersionNumber }, { plaintext }, thumbnailUrl] = await Promise.all([
           listVersions(file.id).catch(() => ({ current_version: file.version_number ?? 1 })),
-          decryptToBlob(file.id, fileKey, file.name_encrypted, mimeType ?? undefined, file.chunk_count, file.size_bytes),
+          decryptToBlob(file.id, fileKey, file.name_encrypted, mimeType ?? undefined, file.chunk_count, file.size_bytes).catch((err: unknown) => {
+            throw asDecryptFailure(err)
+          }),
           // CRITIQUE.md finding #5: best-effort — a brand-new/never-
           // thumbnailed file has none, and that must never block opening
           // the document itself.
@@ -128,7 +135,13 @@ export function OfficeEditorPage() {
           openedVersionNumber,
         })
       } catch (err) {
-        if (!cancelled) setState({ stage: 'error', message: err instanceof Error ? err.message : 'Failed to open this file.' })
+        if (cancelled) return
+        if (err instanceof OfficeOpenError) {
+          console.error(`[office] open failed (${err.kind}): ${err.detail}`)
+          setState({ stage: 'error', message: err.message, kind: err.kind, detail: err.detail })
+        } else {
+          setState({ stage: 'error', message: errorText(err) || 'Failed to open this file.' })
+        }
       }
     }
     load()
@@ -193,7 +206,10 @@ export function OfficeEditorPage() {
   if (state.stage === 'error') {
     return (
       <div className="flex h-screen w-full flex-col items-center justify-center gap-3 bg-paper text-center" data-testid="office-editor-page-error">
-        <p className="text-[14px] text-ink">{state.message}</p>
+        <p className="max-w-[480px] px-6 text-[14px] text-ink" data-kind={state.kind}>
+          {state.message}
+        </p>
+        {state.detail && <p className="max-w-[520px] break-words px-6 font-mono text-[11px] text-ink-4">{state.detail}</p>}
         <button type="button" onClick={() => window.close()} className="text-[13px] text-amber-deep underline">
           Close this tab
         </button>

@@ -79,7 +79,6 @@ function recordEngineInput() {
 }
 
 async function prepareContext(context: BrowserContext): Promise<void> {
-  await context.addInitScript(() => localStorage.setItem('bb-office-labs', 'true'))
   await context.addInitScript(recordEngineInput)
 }
 

@@ -6,7 +6,7 @@
  * pattern).
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { OutlineHeading } from '../../lib/office/bb-office-bridge'
 import { IconCollapse } from './office-icons'
 
@@ -22,16 +22,49 @@ export interface OutlinePaneProps {
   loading?: boolean
 }
 
+/**
+ * Task 1585 item 3: below this width (phone portrait) the 216 px pane took
+ * about half the screen away from the document. There it starts collapsed to
+ * its 32 px rail, and when opened it floats OVER the canvas instead of
+ * squeezing it (so the engine canvas is not resized every time the outline is
+ * toggled), and closes again once a heading is picked. Tailwind's `sm`.
+ */
+export const OUTLINE_NARROW_QUERY = '(max-width: 639px)'
+
+function isNarrowViewport(): boolean {
+  try {
+    return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(OUTLINE_NARROW_QUERY).matches
+  } catch {
+    return false
+  }
+}
+
 export function OutlinePane({ headings, onSelect, loading = false }: OutlinePaneProps) {
-  const [collapsed, setCollapsed] = useState(false)
+  const [narrow, setNarrow] = useState(isNarrowViewport)
+  const [collapsed, setCollapsed] = useState(isNarrowViewport)
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
+
+  // Crossing the breakpoint (rotating a phone, resizing a window) resets the
+  // pane to that width's default; a user's own toggle holds until then.
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
+    const mql = window.matchMedia(OUTLINE_NARROW_QUERY)
+    const onChange = (e: MediaQueryListEvent) => {
+      setNarrow(e.matches)
+      setCollapsed(e.matches)
+    }
+    mql.addEventListener('change', onChange)
+    return () => mql.removeEventListener('change', onChange)
+  }, [])
 
   if (collapsed) {
     return (
-      <div className="flex w-8 shrink-0 flex-col items-center border-r border-line bg-paper-2 pt-3">
+      <div className="flex w-8 shrink-0 flex-col items-center border-r border-line bg-paper-2 pt-3" data-testid="office-outline-rail">
         <button
           type="button"
           aria-label="Show outline"
+          aria-expanded={false}
+          data-testid="office-outline-show"
           onClick={() => setCollapsed(false)}
           className="grid h-6 w-6 place-items-center rounded-md text-ink-3 hover:bg-paper-3"
         >
@@ -41,7 +74,7 @@ export function OutlinePane({ headings, onSelect, loading = false }: OutlinePane
     )
   }
 
-  return (
+  const pane = (
     // IMPORTANT: `data-testid="office-outline-pane"` is an existing e2e
     // ready-signal (e2e/1567-office-editor.spec.ts waits on it as its proxy
     // for "the document is actually open" before dispatching into the
@@ -51,12 +84,24 @@ export function OutlinePane({ headings, onSelect, loading = false }: OutlinePane
     // real testid on this wrapper unconditionally, and the spec's dispatch
     // then raced a still-null document model — a real regression, not
     // hypothetical).
-    <div className="flex w-[216px] shrink-0 flex-col border-r border-line bg-paper-2" data-testid={loading ? 'office-outline-pane-loading' : 'office-outline-pane'}>
+    <div
+      className={
+        narrow
+          ? // Floats over the canvas (see OUTLINE_NARROW_QUERY). Absolute
+            // within the editor's body row, which is `relative`.
+            'absolute inset-y-0 left-0 z-20 flex w-[min(260px,82vw)] flex-col border-r border-line bg-paper-2 shadow-2'
+          : 'flex w-[216px] shrink-0 flex-col border-r border-line bg-paper-2'
+      }
+      data-testid={loading ? 'office-outline-pane-loading' : 'office-outline-pane'}
+      data-overlay={narrow ? 'true' : undefined}
+    >
       <div className="flex items-center justify-between px-3.5 pb-2 pt-3.5">
         <span className="text-[10.5px] font-semibold uppercase tracking-wider text-ink-3">Outline</span>
         <button
           type="button"
           aria-label="Collapse outline"
+          aria-expanded={true}
+          data-testid="office-outline-collapse"
           onClick={() => setCollapsed(true)}
           className="grid h-[22px] w-[22px] place-items-center rounded-md text-ink-3 hover:bg-paper-3"
         >
@@ -85,6 +130,7 @@ export function OutlinePane({ headings, onSelect, loading = false }: OutlinePane
             onClick={() => {
               setActiveIndex(i)
               onSelect(i)
+              if (narrow) setCollapsed(true)
             }}
             className={`rounded-md px-2.5 py-1.5 text-left text-[12.5px] ${
               h.level >= 2 ? 'pl-[22px] text-[12px]' : ''
@@ -95,5 +141,14 @@ export function OutlinePane({ headings, onSelect, loading = false }: OutlinePane
         ))}
       </div>
     </div>
+  )
+  if (!narrow) return pane
+  // Keep the 32 px rail's footprint under the floating pane so opening it
+  // never reflows (and so never resizes) the engine canvas.
+  return (
+    <>
+      <div aria-hidden="true" className="w-8 shrink-0 border-r border-line bg-paper-2" />
+      {pane}
+    </>
   )
 }

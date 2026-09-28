@@ -20,6 +20,7 @@ import { test, expect, type BrowserContext, type Page } from '@playwright/test'
 import fs from 'fs'
 import { writeDocxFixture } from './helpers/office-fixtures'
 import { uploadAndWait, openPreview, previewOverlay } from './helpers/thumb-fixtures'
+import { OFFICE_SETTLE_BUDGET_MS, autoDismissDevBanner, waitOfficeSettled } from './helpers/office-ready'
 
 const OFFICE_ASSETS_PRESENT = fs.existsSync('public/office/manifest.json')
 const OFFICE_FLAG_ON = process.env.VITE_FEATURE_OFFICE_EDITOR === 'true'
@@ -28,16 +29,19 @@ const API_URL = process.env.E2E_API_URL ?? 'http://localhost:3001'
 test.skip(!OFFICE_ASSETS_PRESENT, 'public/office/manifest.json missing — run scripts/office-dev-assets.sh first')
 test.skip(!OFFICE_FLAG_ON, 'VITE_FEATURE_OFFICE_EDITOR!=true — this suite exercises the real feature-flagged engine')
 
-test.setTimeout(300_000)
+// Task 1585: (c) boots the engine twice and saves three times. The budget
+// covers two full boots at the app's own boot budget plus the saves, so the
+// test's own clock is never shorter than the product's.
+test.setTimeout(2 * OFFICE_SETTLE_BUDGET_MS + 240_000)
 
 async function dismissDevBanner(page: Page): Promise<void> {
-  const dismiss = page.getByRole('button', { name: 'Dismiss dev banner' })
-  try {
-    await dismiss.waitFor({ state: 'visible', timeout: 5_000 })
-    await dismiss.click()
-  } catch {
-    // Never appeared this session.
-  }
+  // Task 1585: a locator handler dismisses the banner before any later
+  // action, whenever it appears (see autoDismissDevBanner). Deliberately NO
+  // explicit wait-and-click as well: clicking the handler's own locator
+  // triggers the handler inside that click's actionability check, and the
+  // two deadlocked for the whole test timeout (seen once in the 1585 gate:
+  // "locator.click: Test timeout of 300000ms exceeded" on the dismiss button).
+  await autoDismissDevBanner(page)
 }
 
 /** Drive → preview → Edit → the office editor's own tab, engine booted and document open. */
@@ -50,7 +54,8 @@ async function openInOffice(page: Page, context: BrowserContext, base: string): 
   const tab = await popupPromise
   await tab.waitForLoadState('domcontentloaded')
   await dismissDevBanner(tab)
-  await tab.getByTestId('office-outline-pane').waitFor({ state: 'visible', timeout: 120_000 })
+  // Task 1585 item 4: the real ready signal, not the outline pane as a proxy.
+  await waitOfficeSettled(tab)
   await tab.frameLocator('[data-testid="office-engine-frame"]').locator('#qtcanvas').waitFor({ state: 'visible', timeout: 30_000 })
   // Close the preview overlay on the Drive tab so a later openPreview() starts clean.
   await page.keyboard.press('Escape')
@@ -59,6 +64,9 @@ async function openInOffice(page: Page, context: BrowserContext, base: string): 
 
 /** Replace the whole document text through the real engine (select-all is awaited — see 1567-office-editor.spec.ts). */
 async function typeIntoDoc(tab: Page, text: string): Promise<void> {
+  // Every engine subscription is registered before the first keystroke
+  // (task 1585 item 4), so no input competes with them.
+  await waitOfficeSettled(tab)
   const frame = tab.frames().find((f) => f.url().includes('bb-office-host.html'))
   expect(frame, 'engine frame').toBeTruthy()
   await tab.frameLocator('[data-testid="office-engine-frame"]').locator('#qtcanvas').click()
@@ -66,7 +74,9 @@ async function typeIntoDoc(tab: Page, text: string): Promise<void> {
     await (window as unknown as { bbOffice: { dispatch(cmd: string): Promise<unknown> } }).bbOffice.dispatch('.uno:SelectAll')
   })
   await tab.keyboard.type(text, { delay: 30 })
-  await expect(tab.getByTestId('office-unsaved-dot')).toBeVisible({ timeout: 10_000 })
+  // The dot follows the engine's own modified event; under load the engine
+  // takes longer to process the typed keys, never less.
+  await expect(tab.getByTestId('office-unsaved-dot')).toBeVisible({ timeout: 30_000 })
 }
 
 function fileIdOf(tab: Page): string {
@@ -82,7 +92,6 @@ async function currentVersion(page: Page, fileId: string): Promise<number> {
 }
 
 async function setup(page: Page, name: string): Promise<string> {
-  await page.addInitScript(() => localStorage.setItem('bb-office-labs', 'true'))
   await page.goto('/')
   await dismissDevBanner(page)
   const base = await uploadAndWait(page, writeDocxFixture(name, ['Original fixture paragraph.']))

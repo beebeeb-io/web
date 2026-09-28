@@ -32,6 +32,7 @@ import fs from 'fs'
 import { unzipSync } from 'fflate'
 import { writePptxFixture } from './helpers/office-fixtures'
 import { uploadAndWait, openPreview, previewOverlay, escapeRe } from './helpers/thumb-fixtures'
+import { OFFICE_SETTLE_BUDGET_MS, waitOfficeSettled } from './helpers/office-ready'
 
 const OFFICE_ASSETS_PRESENT = fs.existsSync('public/office/manifest.json')
 const OFFICE_FLAG_ON = process.env.VITE_FEATURE_OFFICE_EDITOR === 'true'
@@ -45,7 +46,8 @@ test.skip(
   'VITE_FEATURE_OFFICE_EDITOR!=true — this suite exercises the real feature-flagged engine, not the default-off production build',
 )
 
-test.setTimeout(180_000)
+// Task 1585: 2 engine boot(s) at the ready helper's budget, plus the test's own work.
+test.setTimeout(2 * OFFICE_SETTLE_BUDGET_MS + 120_000)
 
 async function dismissDevBanner(page: Page): Promise<void> {
   const dismiss = page.getByRole('button', { name: 'Dismiss dev banner' })
@@ -70,10 +72,6 @@ test('upload .pptx, manage slides via our filmstrip/ribbon, Present opens+exits,
   page,
   context,
 }) => {
-  // Ship prep (task 1567, 2026-09-27): runtime Labs opt-in, see
-  // 1567-office-editor.spec.ts's own comment for why this is needed
-  // alongside VITE_FEATURE_OFFICE_EDITOR.
-  await page.addInitScript(() => localStorage.setItem('bb-office-labs', 'true'))
   await page.goto('/')
   await dismissDevBanner(page)
 
@@ -114,7 +112,9 @@ test('upload .pptx, manage slides via our filmstrip/ribbon, Present opens+exits,
   // Real engine boot + document open — our OWN filmstrip only renders once
   // docReady flips true (office-editor.tsx), so waiting on it is already a
   // real-engine-ready signal, same role office-outline-pane plays for Writer.
-  await officeTab.getByTestId('impress-filmstrip').waitFor({ state: 'visible', timeout: 120_000 })
+  // Task 1585: the editor's real ready signal at the app's own budget.
+  await waitOfficeSettled(officeTab)
+  await officeTab.getByTestId('impress-filmstrip').waitFor({ state: 'visible', timeout: 15_000 })
 
   const engineFrame = officeTab.frameLocator('[data-testid="office-engine-frame"]')
   await engineFrame.locator('#qtcanvas').waitFor({ state: 'visible', timeout: 30_000 })
@@ -219,7 +219,9 @@ test('upload .pptx, manage slides via our filmstrip/ribbon, Present opens+exits,
   const officeTab2 = await popup2Promise
   trackEgress(officeTab2)
   await dismissDevBanner(officeTab2)
-  await officeTab2.getByTestId('impress-filmstrip').waitFor({ state: 'visible', timeout: 120_000 })
+  // Task 1585: the editor's real ready signal at the app's own budget.
+  await waitOfficeSettled(officeTab2)
+  await officeTab2.getByTestId('impress-filmstrip').waitFor({ state: 'visible', timeout: 15_000 })
   const engineFrame2 = officeTab2.frameLocator('[data-testid="office-engine-frame"]')
   await engineFrame2.locator('#qtcanvas').waitFor({ state: 'visible', timeout: 30_000 })
   // A freshly-reopened document naturally boots on its FIRST slide (found by
