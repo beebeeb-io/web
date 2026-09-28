@@ -88,13 +88,16 @@ describe('runWithSessionReinit', () => {
     expect(log).toEqual(['attempt:sess-old', 'drop:sess-old', 'reinit', 'attempt:sess-new'])
   })
 
-  test('re-inits only ONCE: a second swept session drops the new entry and throws', async () => {
+  test('re-inits only ONCE: a second swept session (re-inited session also swept) drops the new entry and surfaces as UploadRestartFailedError', async () => {
     const second = httpError(404, 'Not found again')
     const { run, log } = harness([
       () => { throw httpError(404) },
       () => { throw second },
     ])
-    await expect(run).rejects.toBe(second)
+    const err = await run.catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(UploadRestartFailedError)
+    expect((err as UploadRestartFailedError).cause).toBe(second)
+    expect((err as Error).message).toMatch(/expired on the server/)
     expect(log).toEqual(['attempt:sess-old', 'drop:sess-old', 'reinit', 'attempt:sess-new', 'drop:sess-new'])
   })
 

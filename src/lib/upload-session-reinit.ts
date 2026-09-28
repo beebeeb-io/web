@@ -12,10 +12,25 @@
 // drops its IndexedDB resume entry and re-inits ONCE with the same file id,
 // then uploads from the start.
 //
+// The re-init is bounded to ONE attempt per resume click, never a retry
+// loop: if the freshly re-inited session is ALSO swept (a second sleep
+// during the restarted transfer, or an unlucky short lease), there is
+// nothing left to retry — the dead entry is dropped and the failure
+// surfaces the same {@link UploadRestartFailedError} as a failed re-init,
+// so the caller's single typed-error branch removes the row with an
+// honest message instead of resetting it to a "Queued" state with no
+// backing resume entry and no way to actually retry.
+//
 // Kept free of any `./api` import (duck-typed status) so it is unit-testable
 // without bun's process-global `mock.module('./api')` (see task 1590).
 
-/** Thrown when a swept session was detected but the fresh init failed. */
+/**
+ * Thrown when a swept upload session cannot be resumed: the fresh re-init
+ * itself failed, or the freshly re-inited session was swept too. Either
+ * way the resume attempt is over — the dead resume entry has already been
+ * dropped by the time this is thrown, and the caller must remove the row
+ * and tell the user to upload the file again, never leave it "Queued".
+ */
 export class UploadRestartFailedError extends Error {
   readonly cause: unknown
   constructor(cause: unknown) {
@@ -71,8 +86,10 @@ export interface SessionReinitOptions<T> {
 /**
  * Run `attempt`. If it fails because the v2 session was swept, drop the
  * resume entry, re-init once and run `attempt` again from the start.
- * A second swept-session failure drops the (new) entry and is rethrown;
- * a failed re-init surfaces as {@link UploadRestartFailedError}.
+ * Bounded to ONE re-init per call — never a retry loop. A second
+ * swept-session failure (the re-inited session was swept too) drops the
+ * (new) entry and surfaces as {@link UploadRestartFailedError}, exactly
+ * like a failed re-init.
  */
 export async function runWithSessionReinit<T>(opts: SessionReinitOptions<T>): Promise<T> {
   const { attempt, hasSession, dropResumeEntry, reinit, signal } = opts
@@ -96,9 +113,12 @@ export async function runWithSessionReinit<T>(opts: SessionReinitOptions<T>): Pr
   try {
     return await attempt()
   } catch (err) {
-    if (!isAbort(err, signal) && hasSession() && isUploadSessionGone(err)) {
-      await dropResumeEntry().catch(() => {})
-    }
-    throw err
+    if (isAbort(err, signal) || !hasSession() || !isUploadSessionGone(err)) throw err
+    // The freshly re-inited session was swept too. Bounded to one re-init
+    // per resume attempt — do NOT reinit again — so this is terminal
+    // exactly like a failed reinit: drop the (new) dead entry and surface
+    // the same typed error the caller already maps to a removed row.
+    await dropResumeEntry().catch(() => {})
+    throw new UploadRestartFailedError(err)
   }
 }
