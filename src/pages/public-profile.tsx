@@ -343,7 +343,7 @@ export function PublicProfilePage() {
       {/* Footer */}
       <footer className="border-t border-line px-5 py-5 text-center space-y-1">
         <p className="text-[11px] text-ink-4 leading-relaxed">
-          End-to-end encrypted · Stored in Falkenstein, Germany · Zero-knowledge
+          End-to-end encrypted · Stored in the EU · Zero-knowledge
         </p>
         <p className="text-[11px] text-ink-4">
           Operated by{' '}
