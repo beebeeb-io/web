@@ -35,7 +35,7 @@ const fallbackPlans = PRICING_PAGE_PLANS.filter((p) => marketed.has(p.id))
 
 const trustPoints: [string, string, string][] = [
   ['shield', 'All plans E2E encrypted', 'AES-256-GCM · keys never leave your device'],
-  ['cloud', 'EU-only infrastructure', 'Stored in Falkenstein, Germany'],
+  ['cloud', 'EU-only infrastructure', 'Stored in the EU, under EU jurisdiction'],
   ['users', '30-day refund', 'No questions, no retention calls'],
   ['key', 'Open-source client apps', 'Audit the code · GitHub'],
 ]
@@ -59,8 +59,8 @@ const faqItems: FaqItem[] = [
     a: 'Your files stay encrypted and accessible. If you exceed the storage limit of your new plan, you can still download everything — you just cannot upload new files until you are under the limit.',
   },
   {
-    q: 'Where exactly is my data stored?',
-    a: 'Today, all data is stored in Falkenstein, Germany — inside the EU, under GDPR. More EU regions (Helsinki and Ede) are coming soon. Either way, your files are end-to-end encrypted before they leave your device, so we only ever hold encrypted blobs.',
+    q: 'Where is my data stored?',
+    a: 'All data is stored in the EU, under EU jurisdiction and GDPR. More EU locations are coming. Either way, your files are end-to-end encrypted before they leave your device, so we only ever hold encrypted blobs.',
   },
   {
     q: 'Do you support SEPA, cards, and invoicing?',

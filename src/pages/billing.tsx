@@ -1580,7 +1580,7 @@ function openUpgrade(plan: string) {
                   <p className="text-[13.5px] text-ink-2 leading-relaxed mb-4">
                     Your vault just got bigger. You now have{' '}
                     <span className="font-semibold text-ink">{formatStorageSI(totalStorageBytes)}</span>{' '}
-                    of encrypted storage — stored in Falkenstein, Germany.
+                    of encrypted storage — stored in the EU.
                   </p>
                   <BBButton
                     variant="amber"
