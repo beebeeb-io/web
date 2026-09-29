@@ -836,15 +836,24 @@ export function Billing() {
     const totalCents = cycleSwitchTargetTotalCents(basePlanTargetCents, sub?.addon_cents, currentCycle, cycle)
     return `EUR ${(totalCents / 100).toFixed(2)}`
   }
+  // Task 1605 — an active mandated trial's REAL enforced ceiling is the 25 GB
+  // cap, not the plan's full quota (PR #128 review, Codex P2: the meter was
+  // showing e.g. "24 GB / 200 GB" (~12%) for a trial the server would refuse
+  // uploads on at 25 GB — computed early so it can gate `totalStorageBytes`
+  // below, alongside the `cancelCopy`/`trialCapped` consts further down that
+  // read the same `sub`).
+  const trialCapBytes = isTrialCapped(sub) ? sub?.trial_storage_cap_bytes ?? null : null
   // When addon data is available, use the effective storage (base + extra).
   // Otherwise fall back to the plan-level storage from planMeta.
   const rawTotalStorageBytes = addonState
     ? addonState.effective_storage_bytes
     : meta.storageGB * 1_000_000_000
   // Guard against NaN/undefined — show 0 rather than NaN in the UI
-  const totalStorageBytes = Number.isFinite(rawTotalStorageBytes) && rawTotalStorageBytes > 0
-    ? rawTotalStorageBytes
-    : meta.storageGB * 1_000_000_000
+  const totalStorageBytes = trialCapBytes != null
+    ? trialCapBytes
+    : Number.isFinite(rawTotalStorageBytes) && rawTotalStorageBytes > 0
+      ? rawTotalStorageBytes
+      : meta.storageGB * 1_000_000_000
   const usedBytes = contextUsage?.used_bytes ?? 0
   const usedPercent = totalStorageBytes > 0 ? (usedBytes / totalStorageBytes) * 100 : 0
 
@@ -1098,6 +1107,17 @@ function openUpgrade(plan: string) {
     } catch (err) {
       const e = err instanceof ApiError ? { status: err.status, code: err.code, message: err.message } : { message: err instanceof Error ? err.message : undefined }
       setPayNowState(stateAfterPayNowError(e))
+      // Task 1605 (PR #128 review, Codex P2): `trial_not_active` means the
+      // trial ended/converted/was cancelled between render and submit — the
+      // stale capped `sub` in state would otherwise keep showing the 25 GB
+      // card with a now-re-enabled "Pay now" button the user could hit
+      // again. Refetch so the real current state (no longer trialing, or a
+      // fresh trial state) replaces it immediately, same as a settled
+      // pay-now already does via onPayNowSettled().
+      if (e.code === 'trial_not_active') {
+        refreshPlanDetails()
+        void loadData()
+      }
     }
   }
 

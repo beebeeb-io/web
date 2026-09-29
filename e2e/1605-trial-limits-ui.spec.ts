@@ -15,13 +15,14 @@ import os from 'os'
 import path from 'path'
 
 const WEB = process.env.E2E_WEB_URL ?? 'http://localhost:5205'
-// The worktree (this repo checkout) and the workspace root (where task
-// evidence lives) are separate trees — not reachable via a relative path
-// from __dirname — so this is an absolute path, overridable for a different
-// workspace location.
+// Default to a repo-relative, always-writable directory (PR #128 review,
+// Codex P1: the CI runner has no `/Users/...` and cannot create one, so a
+// hardcoded developer path there failed `beforeAll` before any test ran).
+// To capture the real task QA evidence, pass the workspace path explicitly:
+// `E2E_EVIDENCE_DIR=<workspace>/.claude/tasks/_qa-evidence/1605/web bunx
+// playwright test --config=e2e/1605-trial-limits-ui.config.ts`.
 const EVIDENCE_DIR =
-  process.env.E2E_EVIDENCE_DIR ??
-  '/Users/guuslangelaar/Development/Beebeeb/beebeeb.io/.claude/tasks/_qa-evidence/1605/web'
+  process.env.E2E_EVIDENCE_DIR ?? path.resolve(__dirname, '../test-results/1605')
 
 const ACCESS_UNTIL = '2026-10-13T00:00:00Z'
 const DATA_DELETION_AT = '2026-10-27T00:00:00Z'
