@@ -61,7 +61,15 @@ import {
   formatCentsAsEur,
 } from '../lib/plan-pricing'
 import { PlanComparisonTable } from '../components/plan-comparison'
-import { isTrialing, trialCycleSwitchNote, trialCycleSwitchToast } from '../lib/cycle-switch-copy'
+import {
+  isTrialing,
+  isCancelledTrial,
+  trialCancelledSwitchNote,
+  trialCycleSwitchNoteFor,
+  trialCycleSwitchToastFor,
+  cycleSwitchTargetTotalCents,
+  type BillingCycle,
+} from '../lib/cycle-switch-copy'
 import { InvoiceList } from '../components/billing/InvoiceList'
 import { TransactionList } from '../components/billing/TransactionList'
 import { PLAN_META, PLAN_RANK } from '../lib/plan-constants'
@@ -82,6 +90,7 @@ import { resolveHasUsedTrial, isTrialEligible } from '../lib/trial-eligibility'
 import { parsePlanIntent, clearPlanIntent } from '../lib/plan-intent'
 import { choosePlanPath, trialAutoConvertCopy, trialRenewalAmount, trialTermsCopy } from '../lib/trial-checkout'
 import { lapsedBannerCopy, resolveAccountState } from '../lib/account-state'
+import { billingPeriodLine } from '../lib/billing-period-line'
 
 /* ── Plan metadata (imported from plan-constants.ts) ──── */
 
@@ -722,6 +731,29 @@ export function Billing() {
     sub?.status === 'cancelling' ? (sub.plan ?? 'free') :
     (sub?.plan ?? 'free')
   const meta = planMeta[effectivePlan] ?? planMeta.free
+  // Task 1604 review thread PRRT_kwDOSLX6Nc6nC4Vb: this used to pass
+  // `effectivePlan` (forced to 'free' the instant `account_state` is
+  // `lapsed`, above) into `billingPeriodLine`, which returns null at its own
+  // `plan === 'free'` guard before it can even look at `status`/
+  // `data_deletion_at`. But a `lapsed` account_state does NOT mean the raw
+  // subscription row itself flipped to 'free' — the server's own
+  // `resolve_account_state` (signup_plan.rs) derives `lapsed` from the
+  // ENTITLED plan (`quota::get_user_quota`), which is independent of the
+  // newest row's own `plan`/`status` columns exposed here. Concretely: a
+  // cancelled paid row stays `status: 'cancelling'` with its OLD `plan` (e.g.
+  // 'pro') in the DB until a later sweep tidies it up, even once
+  // `current_period_end` has passed and entitlement (and therefore
+  // `account_state`) has already flipped to `lapsed` — and `data_deletion_at`
+  // is set at exactly that same moment (`resolve_account_state`: non-null
+  // only once `account_state === Lapsed`). So the ONE shape that carries
+  // `data_deletion_at` is exactly the shape `effectivePlan` was clobbering to
+  // 'free' before `billingPeriodLine` ever saw the real `status`. Pass the
+  // row's own `plan`/`status` (not the display-only `effectivePlan`) —
+  // `billingPeriodLine`'s own guards (`plan === 'free'`, `status ===
+  // 'cancelled' | 'paused'`) already null out every case that should render
+  // nothing, using the ACTUAL row shape rather than a value already
+  // overwritten for an unrelated "No plan" display concern.
+  const periodLine = billingPeriodLine(sub ?? null)
   // Task 1517 — authoritative trial-eligibility signal. `sub?.has_used_trial`
   // is the server truth (set the moment ANY trial was ever started, whether
   // it lapsed, converted, or is still running); `trialUsed` is the optimistic
@@ -763,6 +795,20 @@ export function Billing() {
   const apiPlan = plans?.find(p => p.id === effectivePlan)
   const currentPriceMonthly = apiPlan?.price_eur ?? meta.priceMonthly
   const currentPriceYearly = apiPlan?.price_yearly_eur ?? meta.priceYearly
+  /**
+   * "EUR X.XX" for the TARGET cycle's full recurring total — base plan PLUS
+   * add-ons (task 1604 review thread PRRT_kwDOSLX6Nc6nC4VT). Used for the
+   * cycle-switch confirm/toast copy, which otherwise promised a "first
+   * charge" that silently dropped the storage/user add-on. See
+   * `cycleSwitchTargetTotalCents`'s doc comment for why this is exact and not
+   * an approximation.
+   */
+  function targetCycleTotalLabel(cycle: BillingCycle): string {
+    const basePlanTargetCents = Math.round((cycle === 'yearly' ? currentPriceYearly : currentPriceMonthly) * 100)
+    const currentCycle: BillingCycle = sub?.billing_cycle === 'yearly' ? 'yearly' : 'monthly'
+    const totalCents = cycleSwitchTargetTotalCents(basePlanTargetCents, sub?.addon_cents, currentCycle, cycle)
+    return `EUR ${(totalCents / 100).toFixed(2)}`
+  }
   // When addon data is available, use the effective storage (base + extra).
   // Otherwise fall back to the plan-level storage from planMeta.
   const rawTotalStorageBytes = addonState
@@ -1210,15 +1256,18 @@ function openUpgrade(plan: string) {
     try {
       const result = await switchBillingCycle(cycle)
       setCycleSwitchConfirm(null)
-      // Flow-4 finding 4: during a trial the server only re-pins the cycle the
-      // trial will convert on — nothing is charged, so the paid-subscriber
-      // "next billing period" copy would be wrong.
+      // Flow-4 finding 4 / task 1604: during a trial the server only re-pins
+      // the cycle (a mandated trial re-prices the pending first charge; a
+      // no-card trial re-pins what it will convert to) — nothing is charged
+      // today either way, so the paid-subscriber "next billing period" copy
+      // would be wrong. `trialCycleSwitchToastFor` routes on the payload.
       const trialEnd = sub?.trial_ends_at ?? sub?.current_period_end ?? null
+      const newPriceLabel = targetCycleTotalLabel(cycle)
       showToast({
         icon: 'check',
         title: cycle === 'yearly' ? 'Switched to annual billing' : 'Switched to monthly billing',
         description: isTrialing(sub?.status)
-          ? trialCycleSwitchToast(cycle, formatDate(trialEnd))
+          ? trialCycleSwitchToastFor(sub, cycle, formatDate(trialEnd), newPriceLabel)
           : result.annual_billing_start
             ? `Your annual billing starts on ${formatDate(result.annual_billing_start)}.`
             : 'The change takes effect at the start of your next billing period.',
@@ -1238,10 +1287,15 @@ function openUpgrade(plan: string) {
         showToast({ icon: 'info', title: 'Subscription reset', description: resetMessage })
         return
       }
+      // Task 1604 — a trial cancelled before its first charge (server #128)
+      // answers 409 `trial_cancelled`, never the bare "not found" it used to.
+      // Same copy as the pre-emptive UI gate (case c), in case of a race
+      // where the confirm dialog was already open in a stale tab.
+      const cancelled = e instanceof ApiError && e.code === 'trial_cancelled'
       showToast({
         icon: 'x',
-        title: 'Failed to switch billing cycle',
-        description: e instanceof Error ? e.message : 'Please try again.',
+        title: cancelled ? 'Your trial is cancelled' : 'Failed to switch billing cycle',
+        description: cancelled ? trialCancelledSwitchNote() : e instanceof Error ? e.message : 'Please try again.',
         danger: true,
       })
     } finally {
@@ -2032,17 +2086,27 @@ function openUpgrade(plan: string) {
                 </div>
               </div>
 
-              {/* Footer strip: next charge / renews */}
-              {sub?.current_period_end &&
-                effectivePlan !== 'free' &&
-                sub.status !== 'cancelling' &&
-                sub.status !== 'paused' && (
+              {/* Footer strip: renews / trial ends / access until.
+                  Flow-money #5: a trial does not renew and a cancelling plan
+                  lapses — billingPeriodLine picks the honest label (same
+                  rules as mobile billing-status.ts and the CLI). */}
+              {periodLine && (
                   <div className="flex items-center gap-3 px-5 py-3 border-t border-line bg-paper-2 text-xs">
                     <Icon name="clock" size={13} className="text-ink-3 shrink-0" />
                     <span className="flex-1 text-ink-2">
-                      Renews <strong className="font-mono text-ink">{formatDate(sub.current_period_end)}</strong>
-                      {paymentMethod?.brand && (
+                      {periodLine.label} <strong className="font-mono text-ink">{formatDate(periodLine.dateIso)}</strong>
+                      {periodLine.label === 'Renews' && paymentMethod?.brand && (
                         <> via <span className="text-ink">{paymentMethod.brand}</span></>
+                      )}
+                      {/* Task 1037/1604 — a cancelling row already marked for
+                          deletion surfaces that alongside "Access until", not
+                          in place of it: the two dates can differ. */}
+                      {periodLine.extra && (
+                        <>
+                          {' · '}
+                          {periodLine.extra.text}{' '}
+                          <strong className="font-mono text-ink">{formatDate(periodLine.extra.dateIso)}</strong>
+                        </>
                       )}
                     </span>
                     {currentExtraTB > 0 && (
@@ -2222,10 +2286,22 @@ function openUpgrade(plan: string) {
         {/* ── Plan summary ──────────────────────────── */}
         <div className="grid gap-4">
 
+          {/* Task 1604 (c): a trial cancelled before its first charge (server
+              #128) has no cycle to switch — replaces whichever switch-cycle
+              prompt would otherwise have shown below. */}
+          {isCancelledTrial(sub) && (
+            <div className="border border-line rounded-xl p-5 bg-paper-2 text-sm text-ink-2">
+              {trialCancelledSwitchNote()}
+            </div>
+          )}
+
           {/* Annual savings prompt — shown to monthly paid subscribers. Moved ABOVE
               the Current plan card (task 0942) to match mockup #8's order:
-              savings banner → current plan → switch plan → manage storage → cancel. */}
-          {sub?.billing_cycle === 'monthly' && effectivePlan !== 'free' && (
+              savings banner → current plan → switch plan → manage storage → cancel.
+              Task 1604 (c): a trial cancelled before its first charge has no
+              cycle left to switch — the prompt (and its switch UI) is not
+              offered at all for that row. */}
+          {sub?.billing_cycle === 'monthly' && effectivePlan !== 'free' && !isCancelledTrial(sub) && (
             <div className="border border-amber/30 bg-amber-bg/30 rounded-xl p-5">
               <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep mb-1">
                 Save on your plan
@@ -2257,7 +2333,12 @@ function openUpgrade(plan: string) {
                   </div>
                   {isTrialing(sub?.status) ? (
                     <p className="text-xs text-ink-3" data-testid="cycle-switch-trial-note">
-                      {trialCycleSwitchNote('yearly', formatDate(sub?.trial_ends_at ?? sub?.current_period_end ?? null))}
+                      {trialCycleSwitchNoteFor(
+                        sub,
+                        'yearly',
+                        formatDate(sub?.trial_ends_at ?? sub?.current_period_end ?? null),
+                        targetCycleTotalLabel('yearly'),
+                      )}
                     </p>
                   ) : (
                     <p className="text-xs text-ink-3">
@@ -2362,12 +2443,13 @@ function openUpgrade(plan: string) {
               )}
             </div>
 
-            {/* Next billing / cancels on */}
-            {sub?.current_period_end && effectivePlan !== 'free' && sub.status !== 'cancelling' && sub.status !== 'paused' && (
+            {/* Next billing / trial ends (flow-money #5). Cancelling is
+                excluded here: the cancelling panel below owns that date. */}
+            {periodLine && periodLine.label !== 'Access until' && (
               <div className="flex items-center gap-3 p-3 bg-paper-2 border border-line rounded-lg text-xs">
                 <Icon name="clock" size={13} className="text-ink-3 shrink-0" />
                 <span className="flex-1">
-                  Renews <strong>{formatDate(sub.current_period_end)}</strong>
+                  {periodLine.label} <strong>{formatDate(periodLine.dateIso)}</strong>
                 </span>
               </div>
             )}
@@ -2836,7 +2918,12 @@ function openUpgrade(plan: string) {
                   </div>
                   {isTrialing(sub.status) ? (
                     <p className="text-xs text-ink-3" data-testid="cycle-switch-trial-note">
-                      {trialCycleSwitchNote('monthly', formatDate(sub.trial_ends_at ?? sub.current_period_end ?? null))}
+                      {trialCycleSwitchNoteFor(
+                        sub,
+                        'monthly',
+                        formatDate(sub.trial_ends_at ?? sub.current_period_end ?? null),
+                        targetCycleTotalLabel('monthly'),
+                      )}
                     </p>
                   ) : (
                     <p className="text-xs text-ink-3">

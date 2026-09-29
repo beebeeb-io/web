@@ -20,8 +20,14 @@
  * Run: bunx playwright test --config=e2e/trial-0905.config.ts
  */
 import { test, expect, type Page, type Route } from '@playwright/test'
+import { WEB_URL } from './trial-0905-web-url'
 
-const WEB = process.env.E2E_WEB_URL ?? 'http://localhost:5173'
+// Task 1604 review thread PRRT_kwDOSLX6Nc6nC4VK — `WEB` used to default to
+// :5173 independently of the config's `webServer`/`baseURL` (which defaults
+// to :5199), so the documented default command either got
+// ERR_CONNECTION_REFUSED or silently tested an unrelated :5173 dev server.
+// Both files now import the SAME constant.
+const WEB = WEB_URL
 
 const FREE_SUB = {
   plan: 'free',
@@ -48,6 +54,97 @@ function trialingSub() {
     trial_ends_at: ends,
     pending_downgrade_plan: null,
   }
+}
+
+/**
+ * Server-realistic trial payload: trial.rs `start_trial` sets
+ * current_period_end == trial_ends_at. GATE 4 needs this shape — the payload
+ * above has current_period_end: null, which is why the "Renews" bug for a
+ * no-card trial (flow-money #5) was never caught.
+ */
+function trialingSubWithPeriodEnd() {
+  const s = trialingSub()
+  return { ...s, current_period_end: s.trial_ends_at }
+}
+
+/** Mollie cancel path: status 'cancelling', current_period_end kept as the grace end. */
+function cancellingSub() {
+  const ends = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000).toISOString()
+  return {
+    plan: 'pro', billing_cycle: 'monthly', seats: 1, region: 'eu-central',
+    status: 'cancelling', created_at: '2026-06-01T00:00:00Z',
+    current_period_end: ends, trial_ends_at: null, pending_downgrade_plan: null,
+  }
+}
+
+function activeSub() {
+  const ends = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000).toISOString()
+  return {
+    plan: 'pro', billing_cycle: 'monthly', seats: 1, region: 'eu-central',
+    status: 'active', created_at: '2026-06-01T00:00:00Z',
+    current_period_end: ends, trial_ends_at: null, pending_downgrade_plan: null,
+  }
+}
+
+/**
+ * Task 1604 — a trialing row that already holds a Mollie mandate (server
+ * #125): `trial_auto_converts: true`, `current_period_end == trial_ends_at`
+ * (same server-realistic shape as `trialingSubWithPeriodEnd`). Charges
+ * automatically at `trial_ends_at` instead of dropping to Free.
+ */
+function mandatedTrialSub() {
+  const s = trialingSubWithPeriodEnd()
+  return { ...s, trial_auto_converts: true }
+}
+
+/**
+ * Task 1604 review thread PRRT_kwDOSLX6Nc6nC4VT — a mandated trial with an
+ * active storage add-on. `addon_cents: 1499` mirrors the server's
+ * `addon_amount_cents(plan, 'monthly', 1, 0)` for a EUR 14.99/mo, 1 TB
+ * add-on (the current cycle is monthly here, so no ×12 yet). The promised
+ * "first charge" for a monthly→yearly switch must be the PLAN'S yearly
+ * price PLUS the add-on re-priced at yearly (×12) — EUR 99.00 + EUR 179.88 =
+ * EUR 278.88 — never just the EUR 99.00 base plan price.
+ */
+function mandatedTrialSubWithAddon() {
+  const s = mandatedTrialSub()
+  return { ...s, extra_storage_tb: 1, addon_cents: 1499 }
+}
+
+/**
+ * Task 1604 (c) — a trial cancelled before its first charge (server #128:
+ * `status='cancelling' AND current_period_end <= trial_ends_at`). Unlike
+ * `cancellingSub` (a normal paid cancellation, no `trial_ends_at`), this row
+ * keeps `trial_ends_at` and `current_period_end` pinned equal — the row
+ * never reached a real billing period.
+ */
+function cancelledTrialSub() {
+  const ends = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString()
+  return {
+    plan: 'pro', billing_cycle: 'monthly', seats: 1, region: 'eu-central',
+    status: 'cancelling', created_at: '2026-06-01T00:00:00Z',
+    current_period_end: ends, trial_ends_at: ends, pending_downgrade_plan: null,
+  }
+}
+
+/**
+ * Task 1604 — a cancelling row already marked for deletion
+ * (`data_deletion_at` set, server #125/#1037). Distinct from
+ * `cancelledTrialSub`: this is a LAPSED account (no trial fields), not a
+ * trial cancelled before its first charge.
+ *
+ * Review thread PRRT_kwDOSLX6Nc6nC4Vb: `account_state: 'lapsed'` is NOT
+ * optional here — per `resolve_account_state` (server signup_plan.rs),
+ * `data_deletion_at` is only ever non-null once `account_state` has already
+ * resolved to `lapsed`, so a production row that carries `data_deletion_at`
+ * ALWAYS carries `account_state: 'lapsed'` too. Without it this fixture
+ * couldn't have caught the billing.tsx bug it exists to catch (a missing
+ * `account_state` resolves to `'ok'`, which never hit the lapsed code path at
+ * all — the test passed for the wrong reason).
+ */
+const DELETION_AT = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString()
+function cancellingWithDeletionSub() {
+  return { ...cancellingSub(), data_deletion_at: DELETION_AT, account_state: 'lapsed' }
 }
 
 const PLANS = [
@@ -243,5 +340,115 @@ test.describe('0905 14-day free trial — web UI (UNIT C)', () => {
     await page.waitForURL(/mollie\.com\/checkout\/trial-convert-mock/, { timeout: 15_000 })
     expect(counters.convertPosts).toBeGreaterThanOrEqual(1)
     await page.screenshot({ path: 'e2e/screenshots/0905-gate3-convert-redirect.png', fullPage: true })
+  })
+  // Flow-money #5 (P2): a no-card trial will not renew — it drops to Free on
+  // trial_ends_at. The summary footer and the change-view period line must
+  // say "Trial ends", never "Renews". Cancelling says "Access until".
+  test('GATE 4 — trialing sub shows "Trial ends", never "Renews" (summary + change view)', async ({ page }) => {
+    await installMocks(page, { sub: trialingSubWithPeriodEnd() })
+    await bootBilling(page, '/settings/billing')
+    await expect(page.getByRole('heading', { name: /days left in your free trial/i })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText(/^Trial ends /).first()).toBeVisible()
+    expect(await page.getByText(/\bRenews\b/).count()).toBe(0)
+    await page.screenshot({ path: 'e2e/screenshots/flow-money-5-trial-summary.png', fullPage: true })
+
+    await page.getByRole('button', { name: /Change plan/i }).click()
+    await expect(page.getByText(/Plan & billing/i).first()).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText(/^Trial ends /).first()).toBeVisible()
+    expect(await page.getByText(/\bRenews\b/).count()).toBe(0)
+    await page.screenshot({ path: 'e2e/screenshots/flow-money-5-trial-change.png', fullPage: true })
+  })
+
+  test('GATE 5 — cancelling sub shows "Access until" in the summary footer, never "Renews"', async ({ page }) => {
+    await installMocks(page, { sub: cancellingSub() })
+    await bootBilling(page, '/settings/billing')
+    await expect(page.getByText(/^Access until /).first()).toBeVisible({ timeout: 15_000 })
+    expect(await page.getByText(/\bRenews\b/).count()).toBe(0)
+    await page.screenshot({ path: 'e2e/screenshots/flow-money-5-cancelling-summary.png', fullPage: true })
+  })
+
+  test('GATE 6 — control: active paid sub still shows "Renews"', async ({ page }) => {
+    await installMocks(page, { sub: activeSub() })
+    await bootBilling(page, '/settings/billing')
+    await expect(page.getByText(/^Renews /).first()).toBeVisible({ timeout: 15_000 })
+    expect(await page.getByText(/Trial ends|Access until/).count()).toBe(0)
+  })
+
+  // Task 1604 — server #125/#128: a `trialing` row can already hold a Mollie
+  // mandate (`trial_auto_converts: true`) and charge automatically at
+  // trial_ends_at, instead of lapsing to Free like the legacy no-card trial.
+  // Same status, opposite outcome — the label and the switch-cycle copy must
+  // say so.
+  test('GATE 7 — mandated trial shows "Trial · first charge on", never "Trial ends"', async ({ page }) => {
+    await installMocks(page, { sub: mandatedTrialSub() })
+    await bootBilling(page, '/settings/billing')
+    // A mandated trial renders the "billing-trial-auto" banner
+    // (billing.tsx:1841), whose heading names the PLAN, not "free" — "N days
+    // left in your Pro trial" — distinct from the no-card banner GATE 1/2 use.
+    await expect(page.getByTestId('billing-trial-auto')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('heading', { name: /days left in your Pro trial/i })).toBeVisible()
+    await expect(page.getByText(/^Trial · first charge on /).first()).toBeVisible()
+    expect(await page.getByText(/^Trial ends /).count()).toBe(0)
+    expect(await page.getByText(/\bRenews\b/).count()).toBe(0)
+    await page.screenshot({ path: 'e2e/screenshots/1604-gate7-mandated-trial-label.png', fullPage: true })
+  })
+
+  test('GATE 8 — mandated trial cycle-switch note: "Nothing is charged today", first charge on the trial-end date, no "add a payment method"', async ({ page }) => {
+    await installMocks(page, { sub: mandatedTrialSub() })
+    await bootBilling(page, '/settings/billing')
+    await page.getByRole('button', { name: /Change plan/i }).click()
+    await expect(page.getByText(/Plan & billing/i).first()).toBeVisible({ timeout: 15_000 })
+    // mandatedTrialSub is billing_cycle: 'monthly' → the annual-savings prompt
+    // (Switch to annual) is the one offered.
+    await page.getByRole('button', { name: /^Switch to annual$/ }).click()
+    const note = page.getByTestId('cycle-switch-trial-note')
+    await expect(note).toBeVisible({ timeout: 10_000 })
+    await expect(note).toContainText('Nothing is charged today')
+    await expect(note).toContainText('then every year')
+    await expect(note).not.toContainText('add a payment method')
+    await page.screenshot({ path: 'e2e/screenshots/1604-gate8-mandated-trial-switch-note.png', fullPage: true })
+  })
+
+  test('GATE 9 — cancelled trial: switch UI is not offered, shows "resume it to change billing"', async ({ page }) => {
+    await installMocks(page, { sub: cancelledTrialSub() })
+    await bootBilling(page, '/settings/billing')
+    await page.getByRole('button', { name: /Change plan/i }).click()
+    await expect(page.getByText(/Plan & billing/i).first()).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText('Your trial is cancelled — resume it to change billing.')).toBeVisible({ timeout: 10_000 })
+    // Neither switch-cycle prompt is offered.
+    expect(await page.getByRole('button', { name: /^Switch to annual$/ }).count()).toBe(0)
+    expect(await page.getByRole('button', { name: /^Switch to monthly$/ }).count()).toBe(0)
+    await page.screenshot({ path: 'e2e/screenshots/1604-gate9-cancelled-trial-no-switch.png', fullPage: true })
+  })
+
+  test('GATE 10 — cancelling row with data_deletion_at set shows "Access until" plus "Files deleted on"', async ({ page }) => {
+    await installMocks(page, { sub: cancellingWithDeletionSub() })
+    await bootBilling(page, '/settings/billing')
+    await expect(page.getByText(/^Access until /).first()).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText(/Files deleted on /).first()).toBeVisible()
+    await page.screenshot({ path: 'e2e/screenshots/1604-gate10-cancelling-deletion-note.png', fullPage: true })
+  })
+
+  // Review thread PRRT_kwDOSLX6Nc6nC4VT: the promised "first charge" for a
+  // mandated trial with an active storage add-on must include the add-on,
+  // re-priced at the TARGET cycle — not just the plan's catalog base price.
+  test('GATE 11 — mandated trial with a storage add-on: cycle-switch note names base + add-on, not base alone', async ({
+    page,
+  }) => {
+    await installMocks(page, { sub: mandatedTrialSubWithAddon() })
+    await bootBilling(page, '/settings/billing')
+    await page.getByRole('button', { name: /Change plan/i }).click()
+    await expect(page.getByText(/Plan & billing/i).first()).toBeVisible({ timeout: 15_000 })
+    // mandatedTrialSubWithAddon is billing_cycle: 'monthly' → the
+    // annual-savings prompt (Switch to annual) is offered.
+    await page.getByRole('button', { name: /^Switch to annual$/ }).click()
+    const note = page.getByTestId('cycle-switch-trial-note')
+    await expect(note).toBeVisible({ timeout: 10_000 })
+    // Pro yearly EUR 99.00 + (EUR 14.99/mo add-on × 12 = EUR 179.88) = EUR 278.88.
+    await expect(note).toContainText('EUR 278.88')
+    // The base-price-only number from the P1 bug must NOT appear as the
+    // first-charge figure.
+    await expect(note).not.toContainText('first charge of EUR 99.00')
+    await page.screenshot({ path: 'e2e/screenshots/1604-gate11-mandated-trial-addon-switch-note.png', fullPage: true })
   })
 })
