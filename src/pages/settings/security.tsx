@@ -14,7 +14,7 @@ import {
   getAccountSessions, revokeAccountSession, revokeAllOtherSessions,
   listPasskeys, deletePasskey,
   setup2fa, enable2fa, disable2fa,
-  getMe,
+  ApiError,
   getMySignIns,
   type AccountSession, type PasskeyInfo, type MySignIn,
 } from '../../lib/api'
@@ -327,54 +327,92 @@ function PasskeysSection() {
 
 type TotpStep = 'idle' | 'setup' | 'verify' | 'backup'
 
-function TotpSection() {
+/**
+ * Task 1610 — the settings row used to run its OWN `getMe()` fetch and start
+ * `enabled` at `false` while it was in flight, so an already-enrolled account
+ * briefly showed the "Set up" affordance on every mount. `useAuth()`'s
+ * `user.totp_enabled` is already resolved by the time this renders —
+ * `ProtectedRoute` (app.tsx) blocks on `loading` before any protected page,
+ * including this one, ever mounts — so read it directly instead of a second,
+ * racy round trip. This is also the "entry point" the task's repro item asked
+ * to pin down: the race made "click Set up before the fetch settles" the only
+ * way to send an ALREADY-enabled account into a bare `setup2fa()` call, which
+ * the server correctly 403s (`confirmation_required` — server behavior is
+ * correct, this fix removes the client's ability to hit it by mistake).
+ */
+export function TotpSection() {
   const { showToast } = useToast()
-  const { refreshUser } = useAuth()
-  const [enabled, setEnabled] = useState(false)
+  const { user, refreshUser } = useAuth()
+  const enabled = user?.totp_enabled ?? false
   const [step, setStep] = useState<TotpStep>('idle')
   const [qrDataUrl, setQrDataUrl] = useState('')
   const [secret, setSecret] = useState('')
   const [backupCodes, setBackupCodes] = useState<string[]>([])
   const [code, setCode] = useState('')
-  const [disabling, setDisabling] = useState(false)
+  // Mutually exclusive inline panels under the On-state row — only one of
+  // "Turn off" / "Set up again" can be expanded at a time.
+  const [panel, setPanel] = useState<'none' | 'disable' | 'reauth'>('none')
   const [disableCode, setDisableCode] = useState('')
+  const [reauthCode, setReauthCode] = useState('')
+  const [stepUpOpen, setStepUpOpen] = useState(false)
   const [error, setError] = useState('')
 
-  useEffect(() => {
-    let cancelled = false
-
-    getMe()
-      .then((user) => {
-        if (cancelled) return
-        const status =
-          user.totp_enabled ??
-          user.two_factor_enabled ??
-          user.twoFactorEnabled
-        if (typeof status === 'boolean') {
-          setEnabled(status)
-        }
-      })
-      .catch(() => {
-        // No dedicated 2FA status endpoint exists; leave the setup affordance visible
-        // when /me does not expose a usable TOTP flag.
-      })
-
-    return () => { cancelled = true }
+  /** Shared by the fresh-setup and the reauthenticated "set up again" paths —
+   *  both end at the same QR/secret/backup-codes step. */
+  const runSetup = useCallback(async (opts?: { code?: string; confirmToken?: string }) => {
+    const data = await setup2fa(opts)
+    setSecret(data.secret)
+    setBackupCodes(data.backup_codes)
+    const url = await QRCode.toDataURL(data.qr_uri, { width: 180, margin: 1 })
+    setQrDataUrl(url)
+    setStep('setup')
   }, [])
 
   const handleSetup = useCallback(async () => {
     setError('')
     try {
-      const data = await setup2fa()
-      setSecret(data.secret)
-      setBackupCodes(data.backup_codes)
-      const url = await QRCode.toDataURL(data.qr_uri, { width: 180, margin: 1 })
-      setQrDataUrl(url)
-      setStep('setup')
+      await runSetup()
+    } catch (err) {
+      // Defensive, not the primary fix: if the account turns out to already
+      // have 2FA on (e.g. enabled in another tab moments ago) the server
+      // still 403s `confirmation_required` here. Never show that raw error —
+      // refresh the known status and drop into the same "set up again"
+      // confirmation the On-state offers.
+      if (err instanceof ApiError && err.code === 'confirmation_required') {
+        refreshUser().catch(() => {})
+        setPanel('reauth')
+        return
+      }
+      showToast({ icon: 'x', title: 'Failed to start 2FA setup', danger: true })
+    }
+  }, [runSetup, refreshUser, showToast])
+
+  const handleReauthCode = useCallback(async () => {
+    setError('')
+    try {
+      await runSetup({ code: reauthCode })
+      setPanel('none')
+      setReauthCode('')
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'invalid_totp_code') {
+        setError('Incorrect code. Try again.')
+      } else {
+        setError('Could not verify that code. Try again, or use your password instead.')
+      }
+    }
+  }, [reauthCode, runSetup])
+
+  const handleStepUpConfirmed = useCallback(async (confirmToken: string) => {
+    setStepUpOpen(false)
+    setError('')
+    try {
+      await runSetup({ confirmToken })
+      setPanel('none')
+      setReauthCode('')
     } catch {
       showToast({ icon: 'x', title: 'Failed to start 2FA setup', danger: true })
     }
-  }, [showToast])
+  }, [runSetup, showToast])
 
   const handleVerify = useCallback(async () => {
     setError('')
@@ -392,19 +430,21 @@ function TotpSection() {
   }, [code, refreshUser])
 
   const handleBackupDone = useCallback(() => {
-    setEnabled(true)
     setStep('idle')
     setCode('')
     setQrDataUrl('')
     showToast({ icon: 'check', title: 'Two-factor authentication enabled' })
-  }, [showToast])
+    // The On-state chip reads straight from useAuth().user now, so it needs
+    // the same refresh handleVerify already fires — belt and suspenders for
+    // callers that land here without that refresh having settled yet.
+    refreshUser().catch(() => {})
+  }, [showToast, refreshUser])
 
   const handleDisable = useCallback(async () => {
     setError('')
     try {
       await disable2fa(disableCode)
-      setEnabled(false)
-      setDisabling(false)
+      setPanel('none')
       setDisableCode('')
       showToast({ icon: 'check', title: 'Two-factor authentication disabled' })
       // See handleVerify above — same stale-`user` fix (Codex review, PR #74).
@@ -413,6 +453,18 @@ function TotpSection() {
       setError('Invalid code. Try again.')
     }
   }, [disableCode, showToast, refreshUser])
+
+  // Rendered from every branch below (StepUpAuth itself no-ops while closed),
+  // so "Use your password instead" works no matter which panel triggered it.
+  const stepUpModal = (
+    <StepUpAuth
+      open={stepUpOpen}
+      onConfirmed={handleStepUpConfirmed}
+      onClose={() => setStepUpOpen(false)}
+      description="Confirm your password to set up two-factor authentication again."
+      submitLabel="Continue"
+    />
+  )
 
   if (step === 'setup') {
     return (
@@ -451,6 +503,7 @@ function TotpSection() {
             </BBButton>
           </div>
         </div>
+        {stepUpModal}
       </SettingsRow>
     )
   }
@@ -493,6 +546,7 @@ function TotpSection() {
           </div>
           <BBButton size="sm" variant="amber" onClick={handleBackupDone}>I've saved these codes</BBButton>
         </div>
+        {stepUpModal}
       </SettingsRow>
     )
   }
@@ -505,14 +559,25 @@ function TotpSection() {
       {enabled ? (
         <div className="flex flex-col gap-2 max-w-[420px]">
           <div className="flex items-center gap-2">
-            <BBChip variant="green">Enabled</BBChip>
-            <BBButton size="sm" variant="ghost" onClick={() => { setDisabling(true); setError('') }}>
-              Disable
+            <BBChip variant="green">On</BBChip>
+            <BBButton
+              size="sm"
+              variant="ghost"
+              onClick={() => { setPanel(panel === 'disable' ? 'none' : 'disable'); setError('') }}
+            >
+              Turn off
+            </BBButton>
+            <BBButton
+              size="sm"
+              variant="ghost"
+              onClick={() => { setPanel(panel === 'reauth' ? 'none' : 'reauth'); setError('') }}
+            >
+              Set up again
             </BBButton>
           </div>
-          {disabling && (
+          {panel === 'disable' && (
             <div className="flex flex-col gap-2 p-3 bg-paper-2 border border-line rounded-md">
-              <div className="text-[12.5px] text-ink-2">Enter your current authenticator code to disable 2FA.</div>
+              <div className="text-[12.5px] text-ink-2">Enter your current authenticator code to turn off 2FA.</div>
               <BBInput
                 value={disableCode}
                 onChange={(e) => setDisableCode(e.target.value)}
@@ -523,11 +588,44 @@ function TotpSection() {
               {error && <div className="text-xs text-red">{error}</div>}
               <div className="flex gap-2">
                 <BBButton size="sm" variant="danger" onClick={handleDisable} disabled={disableCode.length < 6}>
-                  Disable 2FA
+                  Turn off 2FA
                 </BBButton>
-                <BBButton size="sm" variant="ghost" onClick={() => { setDisabling(false); setDisableCode(''); setError('') }}>
+                <BBButton size="sm" variant="ghost" onClick={() => { setPanel('none'); setDisableCode(''); setError('') }}>
                   Cancel
                 </BBButton>
+              </div>
+            </div>
+          )}
+          {panel === 'reauth' && (
+            <div className="flex flex-col gap-2 p-3 bg-paper-2 border border-line rounded-md">
+              <div className="text-[12.5px] text-ink-2">
+                Two-factor authentication is already on. Enter your current authenticator code to
+                set it up again — this replaces your existing secret and backup codes.
+              </div>
+              <BBInput
+                value={reauthCode}
+                onChange={(e) => setReauthCode(e.target.value)}
+                placeholder="6-digit code"
+                className="max-w-[200px] font-mono"
+                maxLength={6}
+              />
+              {error && <div className="text-xs text-red">{error}</div>}
+              <div className="flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => { setError(''); setStepUpOpen(true) }}
+                  className="text-[12px] text-ink-3 hover:text-ink transition-colors cursor-pointer"
+                >
+                  Use your password instead
+                </button>
+                <div className="flex gap-2">
+                  <BBButton size="sm" variant="ghost" onClick={() => { setPanel('none'); setReauthCode(''); setError('') }}>
+                    Cancel
+                  </BBButton>
+                  <BBButton size="sm" variant="amber" onClick={handleReauthCode} disabled={reauthCode.length < 6}>
+                    Continue
+                  </BBButton>
+                </div>
               </div>
             </div>
           )}
@@ -535,6 +633,7 @@ function TotpSection() {
       ) : (
         <BBButton size="sm" onClick={handleSetup}>Set up</BBButton>
       )}
+      {stepUpModal}
     </SettingsRow>
   )
 }
