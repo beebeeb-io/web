@@ -260,6 +260,8 @@ export type {
 } from '@beebeeb/shared'
 
 export type { ActivityEncryptedNameSnapshot } from '@beebeeb/shared'
+// Task 1037 — `GET /billing/subscription` → `account_state`.
+export type { AccountState } from '@beebeeb/shared'
 
 // DEPRECATED: legacy JSON-password signup bypasses OPAQUE. It still has an
 // active caller in auth-context and must be removed when signup migrates fully
@@ -2313,7 +2315,48 @@ export async function createCheckoutSession(params: {
   })
 }
 
+/** Payment method that captures the trial mandate (task 1037). */
+export type TrialCheckoutMethod = 'creditcard' | 'ideal'
+
+export interface TrialCheckoutResult {
+  /** Mollie hosted checkout — redirect the browser here. */
+  url: string
+  /** Mollie payment id (`tr_…`) — persist it for the return reconcile. */
+  payment_id: string
+}
+
 /**
+ * Start a trial WITH a payment mandate (task 1037 — no free signups).
+ *
+ * `POST /api/v1/billing/trial/checkout` creates the Mollie mandate payment
+ * (card: €0 first payment; iDEAL: €0.01, refunded, creating a SEPA mandate)
+ * and returns the hosted-checkout `{url, payment_id}`. Nothing is granted
+ * until Mollie reports the payment `paid`; the webhook then flips the
+ * subscription to `trialing` with a Mollie subscription starting at
+ * `trial_ends_at`. Mollie sends the user back to `/choose-plan?returned=1`.
+ *
+ * On a 409 the thrown ApiError's `.code`:
+ *   - `trial_already_used`            → normal paid checkout (`/billing?view=change`).
+ *   - `trial_has_active_subscription` → the account already has a plan.
+ * A 400 means an invalid plan/cycle/method, or Mollie is not configured.
+ */
+export async function startTrialCheckout(params: {
+  plan: string
+  billing_cycle: 'monthly' | 'yearly'
+  method: TrialCheckoutMethod
+}): Promise<TrialCheckoutResult> {
+  return request<TrialCheckoutResult>('/api/v1/billing/trial/checkout', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
+/**
+ * DEPRECATED (task 1037) — the no-card trial start. The server now refuses it
+ * with `409 trial_requires_payment_method` while `BB_REQUIRE_PLAN_AT_SIGNUP` is
+ * on (the release default). The web no longer calls it; use
+ * `startTrialCheckout` via `/choose-plan`. Kept for older-server parity only.
+ *
  * Start a 14-day free trial (task 0905, Pattern B — no card required).
  *
  * `POST /api/v1/billing/trial/start` sets the subscription to `status:'trialing'`

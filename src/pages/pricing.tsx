@@ -21,6 +21,8 @@ import { handleBillingResetTestMode } from '../lib/billing-reset'
 import { setPendingCheckout, makePreState } from '../lib/pending-checkout'
 import { PRICING_PAGE_PLANS, MARKETED_PLAN_SLUGS, type PricingPlanDef } from '../lib/plan-constants'
 import { ensureWasm, isWasmReady, planMonthlyCostCents } from '../lib/plan-pricing'
+import { choosePlanPath, isTrialPlanSlug } from '../lib/trial-checkout'
+import { resolveAccountState } from '../lib/account-state'
 
 type BillingCycle = 'monthly' | 'yearly'
 
@@ -479,6 +481,20 @@ export function Pricing() {
     // the server would reject for a plan-mismatch reason — that mismatch could
     // otherwise surface as a differentiated error out of the catch below.
     const promoCodeForThisPlan = promoQuotes[planId] ? promoAppliedCode : null
+    // Task 1037 — "Start 14-day trial" for a signed-in account that can still
+    // trial (never used one, not on a plan) goes through the trial-with-mandate
+    // chooser, not straight to a paid checkout. A promo code keeps the checkout
+    // path (the server may turn it into an extended trial itself).
+    if (
+      !promoCodeForThisPlan &&
+      isTrialPlanSlug(planId) &&
+      (subscription?.status === 'cancelled' || (subscription?.plan ?? 'free') === 'free' || resolveAccountState(subscription) !== 'ok') &&
+      subscription?.status !== 'trialing' &&
+      subscription?.has_used_trial !== true
+    ) {
+      navigate(choosePlanPath({ plan: planId, cycle }, { fromBilling: true }))
+      return
+    }
     try {
       const result = await startPlanCheckout(planId, cycle, promoCodeForThisPlan, subscription)
       if ('trial' in result) {

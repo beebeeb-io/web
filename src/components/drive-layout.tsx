@@ -490,6 +490,9 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   const resolvedUsedBytes  = usage?.used_bytes  ?? 0
   const resolvedQuotaBytes = storageLimit
   const planName = usage?.plan_name ?? contextPlanDetails.plan?.name ?? 'Free'
+  // Task 1037: the server's internal no-plan slug is "none" (needs_plan /
+  // lapsed) — never render it as "none plan".
+  const planLabel = planName === 'none' ? 'No plan' : `${planName} plan`
 
   return (
     <div className="h-screen flex overflow-hidden bg-paper">
@@ -615,7 +618,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
             <div className="text-[10px] font-medium uppercase tracking-wider text-ink-3">
               Storage
             </div>
-            <span className="text-[10px] text-ink-3">{planName} plan</span>
+            <span className="text-[10px] text-ink-3">{planLabel}</span>
           </div>
           <StorageUsageBar
             usedBytes={resolvedUsedBytes}

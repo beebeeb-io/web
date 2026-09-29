@@ -9,11 +9,11 @@
  *
  * Flow: /signup persists a VALID intent to localStorage (it has to survive the
  * multi-step onboarding, exactly like the referral attribution next to it);
- * onboarding reads + clears it after the account exists and routes to
- * `postSignupDestination(intent)` — the change-plan view with the plan
- * preselected, where billing.tsx offers the one-click trial for that plan and
- * cycle. Nothing is started automatically: starting the trial uses the
- * account's single trial, so the user confirms it with one click.
+ * onboarding reads it after the account exists and routes to
+ * `postSignupDestination(intent)` — `/choose-plan` with that plan + cycle
+ * preselected (task 1037: /signup itself now shows the trial plans first and
+ * saves the choice here too). Nothing is started automatically: the trial
+ * needs a payment mandate, which the user gives on /choose-plan.
  *
  * Only plans the server accepts for a trial (`TRIALABLE_PLANS` in
  * beebeeb-api/src/trial.rs) are honoured; anything else (free, business/Teams,
@@ -94,11 +94,17 @@ export function clearPlanIntent(store = storage()): void {
   }
 }
 
-/** Where a freshly created account goes: the plan chooser for an intent, else the drive. */
+/**
+ * Where a freshly created account goes (task 1037 — no free signups): ALWAYS
+ * the plan chooser. There is no free account to land on; `/choose-plan` takes
+ * the payment method and starts the trial. An intent preselects its plan +
+ * cycle there. (On a server with the gate off, or without `account_state`, the
+ * chooser forwards an `ok` account straight on to the drive.)
+ */
 export function postSignupDestination(intent: PlanIntent | null): string {
-  if (!intent) return '/'
-  const q = new URLSearchParams({ view: 'change', plan: intent.plan, cycle: intent.cycle })
-  return `/billing?${q.toString()}`
+  if (!intent) return '/choose-plan'
+  const q = new URLSearchParams({ plan: intent.plan, cycle: intent.cycle })
+  return `/choose-plan?${q.toString()}`
 }
 
 /**
@@ -113,7 +119,7 @@ export function postSignupDestination(intent: PlanIntent | null): string {
  * real stack: /billing?view=change&plan=basic&cycle=yearly → "/"). Making
  * GuestRoute compute the SAME destination for /onboarding removes the race as a
  * user-visible symptom. The intent is NOT cleared by onboarding for that reason;
- * billing consumes it once the URL carries it.
+ * /choose-plan clears it once the trial is live.
  */
 export function guestRouteFallback(pathname: string, intent: PlanIntent | null): string {
   return pathname === '/onboarding' ? postSignupDestination(intent) : '/'

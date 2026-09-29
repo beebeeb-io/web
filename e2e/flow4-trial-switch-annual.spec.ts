@@ -14,6 +14,8 @@ import { test, expect, type Page } from '@playwright/test'
  * Run: E2E_API_PORT=… E2E_VITE_PORT=… bash e2e/scripts/web-e2e.sh e2e/flow4-trial-switch-annual.spec.ts
  */
 
+const API_URL = process.env.E2E_API_URL ?? 'http://localhost:3001'
+
 async function waitForCryptoReady(page: Page) {
   await page.waitForFunction(() => document.body.dataset.cryptoReady === 'true', { timeout: 20_000 })
 }
@@ -23,10 +25,18 @@ test('trialing user switches to annual: no error toast, plan card shows Yearly',
   await page.goto('/settings/billing')
   await waitForCryptoReady(page)
 
-  // Free user → the change view holds the trial CTA.
-  await page.getByRole('button', { name: /Choose a plan/i }).click()
-  await page.getByRole('button', { name: /Start 14-day Pro trial/i }).click()
-  await expect(page.getByText('Your free trial has started')).toBeVisible({ timeout: 15_000 })
+  // Task 1037: the web no longer starts a no-card trial (its CTAs go to
+  // /choose-plan for a mandate checkout, which Mollie-less e2e cannot
+  // complete). Seed the LEGACY no-card trial through the API instead — the
+  // debug server keeps BB_REQUIRE_PLAN_AT_SIGNUP off, so /trial/start still
+  // works there — then exercise the cycle switch this spec is about.
+  const start = await page.request.post(`${API_URL}/api/v1/billing/trial/start`, {
+    data: { plan: 'pro', billing_cycle: 'monthly' },
+  })
+  expect(start.status(), `POST /billing/trial/start: ${start.status()} ${await start.text()}`).toBe(201)
+  // The savings banner lives on the change view.
+  await page.goto('/settings/billing?view=change')
+  await waitForCryptoReady(page)
 
   // The trial is monthly (no cycle choice at trial start) → the annual
   // savings banner is offered.

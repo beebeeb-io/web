@@ -88,8 +88,10 @@ async function signUp(page: Page): Promise<{ email: string; password: string; re
   const phraseWords = await reachPasswordStep(page)
   await createAccount(page, STRONG_PW)
 
-  // Account created → lands on the drive.
-  await page.waitForURL(/\/(?:$|\?|#)/, { timeout: 25_000 })
+  // Account created → lands on the drive, or (task 1037, server gate ON) on
+  // /choose-plan: a new account has no plan yet. /cli-auth is exempt from the
+  // needs_plan gate, so the CLI handshake below works either way.
+  await page.waitForURL(/\/(?:$|\?|#)|\/choose-plan/, { timeout: 25_000 })
 
   return { email, password: STRONG_PW, recoveryPhrase: phraseWords.join(' ') }
 }

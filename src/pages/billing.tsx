@@ -33,7 +33,6 @@ import {
   createStorageAddonCheckout,
   payOverdue,
   exportBillingTransactions,
-  startTrial,
   convertTrial,
   createCheckoutSession,
   ApiError,
@@ -81,6 +80,8 @@ import {
 } from '../lib/checkout-reconcile'
 import { resolveHasUsedTrial, isTrialEligible } from '../lib/trial-eligibility'
 import { parsePlanIntent, clearPlanIntent } from '../lib/plan-intent'
+import { choosePlanPath, trialAutoConvertCopy, trialRenewalAmount, trialTermsCopy } from '../lib/trial-checkout'
+import { lapsedBannerCopy, resolveAccountState } from '../lib/account-state'
 
 /* ── Plan metadata (imported from plan-constants.ts) ──── */
 
@@ -335,8 +336,7 @@ export function Billing() {
   // checkout for a saved plan that differs from the current one); the
   // cycle-switch branch reuses `cycleSwitchLoading` via handleSwitchBillingCycle.
   const [resumeCheckoutLoading, setResumeCheckoutLoading] = useState(false)
-  // 14-day free trial (task 0905). `trialStarting` tracks the plan currently
-  // being started; `trialUsed` is an OPTIMISTIC local flip set when the server
+  // 14-day free trial (task 0905). `trialUsed` is an OPTIMISTIC local flip set when the server
   // reports the user already had a trial (409 trial_already_used) — kept as a
   // same-tab fallback for the instant between that 409 and `sub` re-fetching.
   // `convertLoading` tracks the convert/add-payment flow.
@@ -347,9 +347,12 @@ export function Billing() {
   // used weeks ago (no 409 this session at all) never sees a trial CTA in the
   // first place, instead of discovering ineligibility only after clicking
   // "Start trial" and getting a 409.
-  const [trialStarting, setTrialStarting] = useState<string | null>(null)
-  const [trialUsed, setTrialUsed] = useState(false)
+  // Task 1037: no local 409 path any more (trials start on /choose-plan), so
+  // this stays false; kept so `resolveHasUsedTrial` keeps its two-signal shape.
+  const [trialUsed] = useState(false)
   const [convertLoading, setConvertLoading] = useState(false)
+  // Task 1037 — inline confirm for cancelling a trial that converts on its own.
+  const [trialCancelConfirm, setTrialCancelConfirm] = useState(false)
   // Upgraded return — the user came back from the provider's hosted checkout.
   // Provisioning is async (the payment webhook writes the subscription row, NOT
   // the redirect), and the provider reuses ONE redirect URL for paid/cancelled/
@@ -710,7 +713,11 @@ export function Billing() {
   // Use the effective plan for display:
   // - 'cancelling' = user cancelled but still has access until current_period_end → show actual plan
   // - 'cancelled'  = subscription has ended (period expired) → show as free
+  // Task 1037: a needs_plan / lapsed account is entitled to nothing
+  // (server `effective_plan: "none"`) whatever plan the row still names — it
+  // shows as "No plan" and buys through normal checkout, like Free.
   const effectivePlan =
+    resolveAccountState(sub) !== 'ok' ? 'free' :
     sub?.status === 'cancelled' ? 'free' :
     sub?.status === 'cancelling' ? (sub.plan ?? 'free') :
     (sub?.plan ?? 'free')
@@ -723,6 +730,10 @@ export function Billing() {
   // already used their trial — even in a PAST session, before this page ever
   // loaded — never sees "Start trial" and instead goes straight to checkout.
   const hasUsedTrial = resolveHasUsedTrial(sub?.has_used_trial, trialUsed)
+  // Task 1037 — `needs_plan` (never started a trial) / `lapsed` (trial or plan
+  // ended unpaid: read-only, deletion at data_deletion_at). Missing = ok.
+  const accountState = resolveAccountState(sub)
+  const hasNoPlan = accountState !== 'ok'
   // Plan picked on the marketing site before signup, carried here by
   // onboarding as /billing?view=change&plan=<slug>&cycle=<cycle>
   // (src/lib/plan-intent.ts). Only offered to a Free account — a trialing or
@@ -1254,6 +1265,11 @@ function openUpgrade(plan: string) {
    */
   async function handleResumeCheckout(pending: PendingCheckout) {
     const action = resolveResumeAction(pending, effectivePlan)
+    if (action.kind === 'trial') {
+      // Task 1037 — an abandoned trial-mandate checkout resumes on the chooser.
+      navigate(choosePlanPath({ plan: action.plan, cycle: action.cycle }, { fromBilling: true }))
+      return
+    }
     if (action.kind === 'switch-cycle') {
       await handleSwitchBillingCycle(action.cycle as 'monthly' | 'yearly')
       return
@@ -1305,70 +1321,17 @@ function openUpgrade(plan: string) {
   }
 
   /**
-   * Start a 14-day free trial (task 0905, Pattern B — no card). On success the
-   * subscription flips to `trialing` immediately; we refresh state so the page
-   * shows the trialing summary + the global "N days left" banner. A 409
-   * `trial_already_used` is honest signal that this account already had a trial —
-   * we hide the trial CTA and fall back to the normal paid checkout.
+   * Start a trial for `plan` (task 1037 — trial WITH a payment mandate). The
+   * no-card `POST /billing/trial/start` is refused now (409
+   * `trial_requires_payment_method`), so every trial CTA on this page goes to
+   * `/choose-plan` — payment method → billing details →
+   * `POST /billing/trial/checkout` → Mollie — preselected on this plan + cycle.
+   * `from=billing` tells the chooser an existing account asked for it (it
+   * forwards a no-longer-eligible account back to paid checkout here).
+   * `setTrialUsed` stays for the chooser's `trial_already_used` bounce.
    */
-  async function handleStartTrial(plan: string, billingCycle: 'monthly' | 'yearly' = 'monthly') {
-    setTrialStarting(plan)
-    try {
-      await startTrial({ plan, billing_cycle: billingCycle })
-      // A plan intent carried in from signup (?plan=&cycle=) is consumed once
-      // the trial exists — drop it from the URL so the card never re-offers it.
-      if (searchParams.has('plan') || searchParams.has('cycle')) {
-        setSearchParams(
-          (prev) => {
-            const p = new URLSearchParams(prev)
-            p.delete('plan')
-            p.delete('cycle')
-            return p
-          },
-          { replace: true },
-        )
-      }
-      showToast({
-        icon: 'check',
-        title: 'Your free trial has started',
-        description: '14 days of full access. No card required — cancel anytime, you keep your files.',
-      })
-      window.dispatchEvent(new Event('beebeeb:plan-changed'))
-      refreshPlanDetails()
-      await loadData()
-    } catch (err) {
-      if (err instanceof ApiError && err.code === 'trial_already_used') {
-        setTrialUsed(true)
-        showToast({
-          icon: 'clock',
-          title: 'You have already used your free trial',
-          description: 'Subscribe to keep full access — your files stay encrypted either way.',
-        })
-        openUpgrade(plan)
-        return
-      }
-      if (err instanceof ApiError && err.code === 'trial_has_active_subscription') {
-        showToast({
-          icon: 'check',
-          title: 'You already have a plan',
-          description: 'Manage it from billing below.',
-        })
-        await loadData()
-        return
-      }
-      // Task 1517 — never surface a raw error body (a server 409 for this
-      // endpoint can come back double-JSON-encoded; `request()` now unwraps
-      // that, but `userFriendlyError` is the belt-and-suspenders that keeps
-      // ANY opaque/JSON-shaped fragment from ever reaching this toast).
-      showToast({
-        icon: 'x',
-        title: 'Could not start your trial',
-        description: userFriendlyError(err),
-        danger: true,
-      })
-    } finally {
-      setTrialStarting(null)
-    }
+  function handleStartTrial(plan: string, billingCycle: 'monthly' | 'yearly' = 'monthly') {
+    navigate(choosePlanPath({ plan, cycle: billingCycle }, { fromBilling: true }))
   }
 
   /**
@@ -1722,13 +1685,15 @@ function openUpgrade(plan: string) {
               <span className="flex-1 text-ink-2">
                 {pendingCheckout.kind === 'storage' ? (
                   <>You started adding storage but didn't complete checkout.</>
+                ) : pendingCheckout.kind === 'trial' ? (
+                  <>You started a free trial of <span className="font-semibold text-ink">{PLAN_META[pendingCheckout.plan]?.label ?? pendingCheckout.plan}</span> but didn't finish adding a payment method.</>
                 ) : pendingCheckout.plan !== effectivePlan ? (
                   <>You started upgrading to <span className="font-semibold text-ink">{PLAN_META[pendingCheckout.plan]?.label ?? pendingCheckout.plan}</span> but didn't complete checkout.</>
                 ) : (
                   <>You started switching to <span className="font-semibold text-ink">{pendingCheckout.cycle}</span> billing but didn't complete checkout.</>
                 )}
               </span>
-              {pendingCheckout.kind === 'plan' && (
+              {(pendingCheckout.kind === 'plan' || pendingCheckout.kind === 'trial') && (
                 <BBButton
                   size="sm"
                   variant="amber"
@@ -1829,7 +1794,88 @@ function openUpgrade(plan: string) {
             this also guards against a stale "trialing" panel. Honest copy near
             expiry; the day count is mono (it reads like data); amber on the
             primary convert CTA only. */}
-        {sub?.status === 'trialing' && sub.trial_ends_at && remainingDays(sub.trial_ends_at) > 0 && (
+        {/* Task 1037 — a trial that ended unpaid: the vault is read-only and is
+            deleted at data_deletion_at unless the user subscribes. Normal paid
+            checkout (the trial is used), so the CTA opens the change view. */}
+        {accountState === 'lapsed' && (
+          <div className="rounded-xl border border-red/30 bg-red/5 px-6 py-5" data-testid="billing-lapsed">
+            <div className="flex items-start gap-3">
+              <Icon name="lock" size={16} className="text-red shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-red mb-1">
+                  Read-only
+                </div>
+                <h2 className="text-lg font-bold text-ink leading-snug mb-1.5">Your trial has ended</h2>
+                <p className="text-[13.5px] text-ink-2 leading-relaxed mb-4">
+                  {lapsedBannerCopy(sub?.data_deletion_at)} You can still browse and download everything until then.
+                </p>
+                {view !== 'change' && (
+                  <BBButton variant="amber" size="md" onClick={() => setView('change')}>
+                    Choose a plan
+                    <Icon name="chevron-right" size={13} className="ml-1.5" />
+                  </BBButton>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Task 1037 — a trial started WITH a mandate converts on its own at
+            trial_ends_at: state the date + amount, offer the cancel action. */}
+        {sub?.status === 'trialing' && sub.trial_auto_converts === true && sub.trial_ends_at && remainingDays(sub.trial_ends_at) > 0 && (
+          <div className="rounded-xl border border-line bg-paper-2 px-6 py-5" data-testid="billing-trial-auto">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep mb-1">
+              Free trial
+            </div>
+            <h2 className="text-lg font-bold text-ink leading-snug mb-1">
+              <span className="font-mono">{remainingDays(sub.trial_ends_at)}</span>{' '}
+              {remainingDays(sub.trial_ends_at) === 1 ? 'day' : 'days'} left in your {meta.label} trial
+            </h2>
+            <p className="text-[13.5px] text-ink-2 leading-relaxed mb-4" data-testid="billing-trial-auto-copy">
+              {(() => {
+                const amount = trialRenewalAmount(sub, apiPlan ?? null)
+                return amount != null
+                  ? trialAutoConvertCopy(sub.trial_ends_at, amount, sub.billing_cycle === 'yearly' ? 'yearly' : 'monthly')
+                  : `Trial — ends ${formatDate(sub.trial_ends_at)}. Then charged automatically.`
+              })()}{' '}
+              Cancel any time before then and nothing is charged.
+            </p>
+            {!trialCancelConfirm ? (
+              <button
+                className="text-[13px] text-ink-3 hover:text-red transition-colors disabled:opacity-50"
+                disabled={cancelLoading}
+                onClick={() => setTrialCancelConfirm(true)}
+                data-testid="billing-trial-cancel"
+              >
+                Cancel trial
+              </button>
+            ) : (
+              <div className="p-4 bg-paper border border-line rounded-lg space-y-3">
+                <p className="text-[13px] text-ink-2 leading-relaxed">
+                  Cancelling stops the automatic charge. You keep {meta.label} until{' '}
+                  <span className="font-mono text-ink">{formatDate(sub.trial_ends_at)}</span>. After that your
+                  vault becomes read-only, and your files are permanently deleted 60 days later unless you
+                  subscribe. We can&apos;t recover them once they&apos;re deleted.
+                </p>
+                <div className="flex gap-2">
+                  <BBButton size="sm" variant="amber" onClick={() => setTrialCancelConfirm(false)}>
+                    Keep my trial
+                  </BBButton>
+                  <BBButton
+                    size="sm"
+                    variant="ghost"
+                    disabled={cancelLoading}
+                    onClick={() => { setTrialCancelConfirm(false); void handleCancelSubscription() }}
+                  >
+                    {cancelLoading ? 'Cancelling...' : 'Cancel trial'}
+                  </BBButton>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {sub?.status === 'trialing' && sub.trial_auto_converts !== true && sub.trial_ends_at && remainingDays(sub.trial_ends_at) > 0 && (
           <div className="rounded-xl border border-amber/60 bg-amber-bg px-6 py-5">
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1">
@@ -1893,9 +1939,9 @@ function openUpgrade(plan: string) {
                   <SectionLabel className="mb-2">Current plan</SectionLabel>
                   <div className="flex items-center gap-3 mb-1">
                     <span className="text-[28px] font-bold tracking-tight leading-none">
-                      {meta.label}
+                      {hasNoPlan ? 'No plan' : meta.label}
                     </span>
-                    {effectivePlan !== 'free' && statusBadge()}
+                    {effectivePlan !== 'free' && !hasNoPlan && statusBadge()}
                   </div>
                   {effectivePlan !== 'free' && (
                     <div className="font-mono text-[13px] text-ink-2">
@@ -1914,8 +1960,14 @@ function openUpgrade(plan: string) {
                       )}
                     </div>
                   )}
-                  {effectivePlan === 'free' && (
+                  {effectivePlan === 'free' && !hasNoPlan && (
                     <div className="text-[13px] text-ink-3">5 GB encrypted storage</div>
+                  )}
+                  {accountState === 'lapsed' && (
+                    <div className="text-[13px] text-ink-3">Read-only — uploads are paused</div>
+                  )}
+                  {accountState === 'needs_plan' && (
+                    <div className="text-[13px] text-ink-3">Start a free trial to begin uploading</div>
                   )}
 
                   <div className="mt-5 flex items-center gap-3">
@@ -2143,8 +2195,7 @@ function openUpgrade(plan: string) {
             </div>
             {planIntentTrialEligible ? (
               <p className="text-sm text-ink-2 mb-4">
-                Try it free for 14 days. No card required. When it ends you decide whether to
-                subscribe; your files stay encrypted either way.
+                {trialTermsCopy(14)}
               </p>
             ) : (
               <p className="text-sm text-ink-2 mb-4">
@@ -2156,12 +2207,9 @@ function openUpgrade(plan: string) {
               <BBButton
                 variant="amber"
                 size="md"
-                onClick={() => void handleStartTrial(planIntent.plan, planIntent.cycle)}
-                disabled={trialStarting !== null}
+                onClick={() => handleStartTrial(planIntent.plan, planIntent.cycle)}
               >
-                {trialStarting === planIntent.plan
-                  ? 'Starting trial...'
-                  : `Start 14-day ${planMeta[planIntent.plan].label} trial`}
+                {`Start 14-day ${planMeta[planIntent.plan].label} trial`}
               </BBButton>
             ) : (
               <BBButton variant="amber" size="md" onClick={() => openUpgrade(planIntent.plan)}>
@@ -2468,17 +2516,15 @@ function openUpgrade(plan: string) {
                     <BBButton
                       variant="amber"
                       size="md"
-                      onClick={() => void handleStartTrial('pro')}
-                      disabled={trialStarting !== null}
+                      onClick={() => handleStartTrial('pro')}
                     >
-                      {trialStarting === 'pro' ? 'Starting trial...' : 'Start 14-day Pro trial'}
+                      Start 14-day Pro trial
                     </BBButton>
                     <BBButton
                       size="md"
-                      onClick={() => void handleStartTrial('basic')}
-                      disabled={trialStarting !== null}
+                      onClick={() => handleStartTrial('basic')}
                     >
-                      {trialStarting === 'basic' ? 'Starting trial...' : 'Start 14-day Basic trial'}
+                      Start 14-day Basic trial
                     </BBButton>
                   </>
                 ) : (
@@ -2498,6 +2544,11 @@ function openUpgrade(plan: string) {
                     </BBButton>
                   </>
                 )
+              ) : sub?.status === 'trialing' && sub.trial_auto_converts === true ? (
+                /* Task 1037 — a trial started with a mandate converts on its
+                   own; nothing to add. The trial panel above carries the
+                   charge date + amount and the cancel action. */
+                null
               ) : sub?.status === 'trialing' ? (
                 /* Trialing on a paid plan (task 0905). The user has no Mollie
                    customer yet, so "Manage billing" would dead-end — the primary
@@ -2534,7 +2585,7 @@ function openUpgrade(plan: string) {
                 so an account that already used its trial never sees this. */}
             {effectivePlan === 'free' && sub?.status !== 'trialing' && !hasUsedTrial && (
               <p className="mt-2.5 text-[11.5px] text-ink-3">
-                14 days free. No card required. Cancel anytime — you keep your files.
+                {trialTermsCopy(14)}
               </p>
             )}
 

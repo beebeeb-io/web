@@ -11,6 +11,7 @@ import {
   clearLegacyBearer,
   opaqueRegisterStart,
   opaqueRegisterFinish,
+  getSubscription,
 } from '../lib/api'
 import { REFERRAL_SOURCE_KEY, REFERRAL_SHARER_KEY, REFERRAL_CODE_KEY } from './signup'
 import { readPlanIntent, postSignupDestination } from '../lib/plan-intent'
@@ -23,11 +24,12 @@ import {
   opaqueRegistrationFinish,
   deriveX25519Public,
   computeRecoveryCheck,
-  deriveFileKey,
   toBase64,
 } from '../lib/crypto'
 import { userFriendlyError } from '../lib/user-friendly-error'
-import { encryptedUpload } from '../lib/encrypted-upload'
+import { markWelcomeFilePending, uploadWelcomeFile } from '../lib/welcome-file-upload'
+import { welcomeFileAtSignup } from '../lib/welcome-file'
+import { accountStateFromError, resolveAccountState } from '../lib/account-state'
 
 type Step = 'display' | 'verify' | 'password' | 'processing'
 
@@ -260,56 +262,36 @@ export function Onboarding() {
       setProcessingStatus('Securing your vault...')
       await setMasterKey(masterKeyBytes, password, registerResult.user_id)
 
-      // 5. Upload a welcome file so new users land on a non-empty drive
+      // 5. Upload a welcome file so new users land on a non-empty drive.
+      // Task 1037: a new account without a plan (`needs_plan`, quota 0) can't
+      // store anything yet — the server refuses the upload with 409
+      // plan_required. Defer it instead: record `welcome_file: "pending"` and
+      // let /choose-plan (or the route gate, later) upload it ONCE the trial
+      // is live (src/lib/welcome-file.ts).
       setProcessingStatus('Setting up your vault...')
       try {
-        const welcomeContent = [
-          '# Welcome to Beebeeb',
-          '',
-          'Your files are now protected by end-to-end encryption.',
-          'The decryption key lives on this device — we never see it.',
-          '',
-          '## Try it',
-          '- Drag a file here to upload (it\'s encrypted before leaving your browser)',
-          '- Click "Share" to create a link (the key is in the URL fragment)',
-          '- Open the link in an incognito tab — watch it decrypt in the browser',
-          '',
-          '## Need help?',
-          '- Support: support@beebeeb.io',
-          '',
-          'You can delete this file anytime.',
-        ].join('\n')
-        const welcomeFile = new File(
-          [new TextEncoder().encode(welcomeContent)],
-          'Welcome to Beebeeb.md',
-          { type: 'text/markdown' },
-        )
-        const fileId = crypto.randomUUID()
-        const fileKey = await deriveFileKey(masterKeyBytes, fileId)
-        await encryptedUpload(
-          welcomeFile,
-          fileId,
-          fileKey,
-          masterKeyBytes,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          (serverFileId) => deriveFileKey(masterKeyBytes, serverFileId),
-        )
-      } catch {
+        const sub = await getSubscription().catch(() => null)
+        if (welcomeFileAtSignup(resolveAccountState(sub)) === 'defer') {
+          await markWelcomeFilePending()
+        } else {
+          await uploadWelcomeFile(masterKeyBytes)
+        }
+      } catch (err) {
+        // Belt and braces: a plan_required refusal we did not predict still
+        // defers rather than dropping the file.
+        if (accountStateFromError(err)) await markWelcomeFilePending().catch(() => {})
         // Welcome file is a nice-to-have — never block account creation on failure
       }
 
       // 6. Refresh user state and navigate to drive
       setProcessingStatus('Almost there...')
       await refreshUser()
-      // A plan picked on the marketing site (/signup?plan=&cycle=) opens the
-      // plan chooser on that plan with its one-click trial; otherwise the drive.
-      // Not cleared here: GuestRoute's stale re-render after refreshUser()
-      // reads the same intent (guestRouteFallback) so both navigations agree.
-      // Billing consumes it once the URL carries it.
+      // Task 1037 — no free accounts: every new account continues to
+      // /choose-plan (payment method → trial), preselected on the plan picked
+      // on /signup or the marketing site. Not cleared here: GuestRoute's stale
+      // re-render after refreshUser() reads the same intent
+      // (guestRouteFallback) so both navigations agree; /choose-plan clears it
+      // once the trial is live.
       navigate(postSignupDestination(readPlanIntent()), { replace: true })
     } catch (err) {
       // Pilot gate (private development): register-start rejects a missing/wrong

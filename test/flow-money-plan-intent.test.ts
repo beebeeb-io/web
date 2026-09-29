@@ -80,13 +80,13 @@ describe('plan intent storage', () => {
   })
 })
 
-describe('postSignupDestination', () => {
-  test('no intent → the drive', () => {
-    expect(postSignupDestination(null)).toBe('/')
+describe('postSignupDestination — task 1037: every new account lands on /choose-plan', () => {
+  test('no intent → the plan chooser (there is no free account to land on)', () => {
+    expect(postSignupDestination(null)).toBe('/choose-plan')
   })
-  test('intent → change-plan view preselected on that plan + cycle', () => {
+  test('intent → the plan chooser preselected on that plan + cycle', () => {
     expect(postSignupDestination({ plan: 'basic', cycle: 'yearly' })).toBe(
-      '/billing?view=change&plan=basic&cycle=yearly',
+      '/choose-plan?plan=basic&cycle=yearly',
     )
   })
 })
@@ -95,10 +95,10 @@ describe('guestRouteFallback — GuestRoute agrees with onboarding (race, task 1
   test('/onboarding with an intent → the same plan chooser onboarding navigates to', () => {
     const intent = { plan: 'basic', cycle: 'yearly' as const }
     expect(guestRouteFallback('/onboarding', intent)).toBe(postSignupDestination(intent))
-    expect(guestRouteFallback('/onboarding', intent)).toBe('/billing?view=change&plan=basic&cycle=yearly')
+    expect(guestRouteFallback('/onboarding', intent)).toBe('/choose-plan?plan=basic&cycle=yearly')
   })
-  test('/onboarding without an intent → drive', () => {
-    expect(guestRouteFallback('/onboarding', null)).toBe('/')
+  test('/onboarding without an intent → still the plan chooser, never the drive', () => {
+    expect(guestRouteFallback('/onboarding', null)).toBe('/choose-plan')
   })
   test('other guest pages never use the intent', () => {
     const intent = { plan: 'pro', cycle: 'monthly' as const }

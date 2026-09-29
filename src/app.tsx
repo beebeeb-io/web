@@ -6,6 +6,8 @@ import { AuthProvider, useAuth } from './lib/auth-context'
 import { KeyProvider, useKeys } from './lib/key-context'
 import { sanitizeRedirect } from './lib/safe-redirect'
 import { readPlanIntent, guestRouteFallback } from './lib/plan-intent'
+import { planGateRedirect, resolveAccountState } from './lib/account-state'
+import { flushDeferredWelcomeFile } from './lib/welcome-file-upload'
 import { WsProvider } from './lib/ws-context'
 import { SyncProvider } from './lib/sync-context'
 import { OnboardingProvider } from './lib/onboarding-context'
@@ -47,6 +49,7 @@ const Search         = lazyNamed(() => import('./pages/search'),         'Search
 const Photos         = lazyNamed(() => import('./pages/photos'),         'Photos')
 const Pricing        = lazyNamed(() => import('./pages/pricing'),        'Pricing')
 const Billing        = lazyNamed(() => import('./pages/billing'),        'Billing')
+const ChoosePlan     = lazyNamed(() => import('./pages/choose-plan'),    'ChoosePlan')
 const ShareViewPage  = lazyNamed(() => import('./pages/share-view'),     'ShareViewPage')
 const ForgotPassword = lazyNamed(() => import('./pages/forgot-password'),'ForgotPassword')
 const ResetPassword  = lazyNamed(() => import('./pages/reset-password'), 'ResetPassword')
@@ -109,7 +112,7 @@ import { BillingBanner } from './components/billing-banner'
 import { IncidentBanner } from './components/incident-banner'
 import { BillingSuspendedOverlay } from './components/billing-suspended-overlay'
 import { CookieBanner } from './components/cookie-banner'
-import { DriveDataProvider } from './lib/drive-data-context'
+import { DriveDataProvider, useDriveData } from './lib/drive-data-context'
 import { SearchIndexProvider } from './lib/search-index-context'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
@@ -130,11 +133,54 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
   if (!isUnlocked) return vaultExists ? <VaultUnlock /> : <Navigate to={loginTo} replace />
 
   return (
-    <>
+    <PlanGate>
       <SessionTimeoutWarning />
       <WasmGuard>{children}</WasmGuard>
-    </>
+    </PlanGate>
   )
+}
+
+/**
+ * Task 1037 — no free signups. A `needs_plan` account (never started a trial
+ * or plan) is sent to /choose-plan from every protected route except the few
+ * it still needs (the chooser, account settings/deletion, billing, logout —
+ * see `planGateRedirect`). Waits for the first subscription fetch so a new
+ * account never flashes the drive; the shared cache in DriveDataProvider is
+ * refreshed on `billing_updated` / plan-changed, so the gate lifts itself the
+ * moment the trial is live. A missing `account_state` (older server) is "ok".
+ */
+function PlanGate({ children }: { children: ReactNode }) {
+  const { planDetails, subscriptionSettled } = useDriveData()
+  const location = useLocation()
+  const { user } = useAuth()
+  const { getMasterKey } = useKeys()
+  const accountState = resolveAccountState(planDetails.subscription)
+  // A welcome file onboarding deferred while the account had no plan is
+  // uploaded once the account is entitled — here for every later page (another
+  // tab, a later visit); /choose-plan's success path does it inline. Deduped +
+  // "pending"-guarded in src/lib/welcome-file.ts, so this is one preference
+  // GET per session for everyone else.
+  const userId = user?.user_id
+  useEffect(() => {
+    if (!subscriptionSettled || accountState !== 'ok' || !userId) return
+    let masterKey: Uint8Array
+    try {
+      masterKey = getMasterKey(userId)
+    } catch {
+      return
+    }
+    void flushDeferredWelcomeFile(userId, masterKey)
+  }, [subscriptionSettled, accountState, userId, getMasterKey])
+  if (!subscriptionSettled) {
+    return (
+      <div className="flex items-center justify-center min-h-screen" aria-busy="true">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-amber" />
+      </div>
+    )
+  }
+  const to = planGateRedirect(location.pathname, accountState)
+  if (to) return <Navigate to={to} replace />
+  return <>{children}</>
 }
 
 /**
@@ -550,6 +596,16 @@ export function App() {
             element={
               <ProtectedRoute>
                 <Search />
+              </ProtectedRoute>
+            }
+          />
+          {/* Task 1037 — trial with a payment mandate. Every new account lands
+              here after onboarding; Mollie returns here (?returned=1). */}
+          <Route
+            path="/choose-plan"
+            element={
+              <ProtectedRoute>
+                <ChoosePlan />
               </ProtectedRoute>
             }
           />

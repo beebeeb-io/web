@@ -3,6 +3,7 @@ import { Icon } from '@beebeeb/shared'
 import { useAuth } from '../lib/auth-context'
 import { useDriveData } from '../lib/drive-data-context'
 import { useNavigate } from 'react-router-dom'
+import { lapsedBannerCopy, PAID_CHECKOUT_PATH, resolveAccountState } from '../lib/account-state'
 
 export function BillingBanner() {
   const { user } = useAuth()
@@ -12,6 +13,26 @@ export function BillingBanner() {
   const state = sub?.billing_state
 
   if (!user) return null
+
+  // Task 1037 — a trial/plan that ended unpaid: the vault is read-only and the
+  // data is deleted at `data_deletion_at`. Persistent and NOT dismissable —
+  // it is the one thing this account must act on. Takes precedence over every
+  // other billing notice.
+  if (resolveAccountState(sub) === 'lapsed') {
+    return (
+      <div
+        role="alert"
+        data-testid="lapsed-banner"
+        className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 bg-red/10 border-b border-red/30 text-[12.5px]"
+      >
+        <Icon name="lock" size={13} className="text-red shrink-0" />
+        <span className="flex-1 min-w-[16rem] text-ink">{lapsedBannerCopy(sub?.data_deletion_at)}</span>
+        <BBButton size="sm" variant="amber" onClick={() => navigate(PAID_CHECKOUT_PATH)}>
+          Subscribe
+        </BBButton>
+      </div>
+    )
+  }
 
   if (sub?.storage_grace_deadline) {
     const deadline = new Date(sub.storage_grace_deadline)

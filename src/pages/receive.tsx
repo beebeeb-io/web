@@ -765,7 +765,7 @@ function Received({
           className="mt-2 w-full inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 px-4 py-2.5 text-sm text-white/70 hover:text-white hover:border-white/20 transition-colors"
         >
           <Icon name="cloud" size={14} />
-          Create free account to save this file
+          Create an account to save this file
         </a>
       )}
 

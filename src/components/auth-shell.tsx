@@ -11,6 +11,8 @@ interface AuthShellProps {
   children: ReactNode
   /** Hide the trust footer (default: shown) */
   hideTrust?: boolean
+  /** A wider card for plan choice (task 1037: /choose-plan). */
+  wide?: boolean
 }
 
 export function AuthShell({
@@ -20,6 +22,7 @@ export function AuthShell({
   totalSteps,
   children,
   hideTrust,
+  wide,
 }: AuthShellProps) {
   return (
     <div className="auth-bg min-h-screen flex flex-col items-center justify-center bg-paper px-4 py-6 sm:p-xl">
@@ -29,7 +32,7 @@ export function AuthShell({
       <div className="fixed top-0 inset-x-0 z-30">
         <AnnouncementBanner />
       </div>
-      <div className="auth-card w-full max-w-[28rem] bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
+      <div className={`auth-card w-full ${wide ? 'max-w-[34rem]' : 'max-w-[28rem]'} bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden`}>
         {/* Header */}
         <div className="px-5 py-4 sm:px-xl sm:py-lg border-b border-line">
           <BBLogo size={16} />

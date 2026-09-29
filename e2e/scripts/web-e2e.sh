@@ -116,6 +116,23 @@ export BB_REQUIRE_PILOT_KEY BB_PILOT_SIGNUP_KEY
 # expected key so an opted-in gate-ON run satisfies both sides.
 export BB_TEST_PILOT_KEY="${BB_TEST_PILOT_KEY:-$BB_PILOT_SIGNUP_KEY}"
 
+# Task 1037 — no free signups. Forwarded to the isolated API (all default
+# empty = the debug defaults: plan gate OFF, Mollie not configured):
+#   BB_REQUIRE_PLAN_AT_SIGNUP=1  new accounts start as account_state
+#                                "needs_plan" (release builds default ON).
+#   MOLLIE_API_KEY / MOLLIE_API_BASE  point the debug server at its OWN
+#                                built-in mock Mollie, so the trial-mandate
+#                                checkout can be walked end to end:
+#   BB_REQUIRE_PLAN_AT_SIGNUP=1 MOLLIE_API_KEY=test_mock_local \
+#     MOLLIE_API_BASE=http://localhost:$E2E_API_PORT/dev/mock-mollie/v2 \
+#     ./e2e/scripts/web-e2e.sh e2e/1037-trial-at-signup-real.spec.ts
+# The server ignores an empty MOLLIE_API_KEY and treats an empty gate flag as
+# its build default, so forwarding unset values is a no-op.
+BB_REQUIRE_PLAN_AT_SIGNUP="${BB_REQUIRE_PLAN_AT_SIGNUP:-}"
+MOLLIE_API_KEY="${MOLLIE_API_KEY:-}"
+MOLLIE_API_BASE="${MOLLIE_API_BASE:-}"
+export BB_REQUIRE_PLAN_AT_SIGNUP
+
 # psql wrapper: prefer host `psql`, otherwise fall back to `docker exec` into
 # the dev Postgres container (task 1406 — this harness previously assumed
 # `psql` was on PATH, which it is not on this machine: only the Dockerized
@@ -251,6 +268,8 @@ SQL
     WEBAUTHN_RP_ID=localhost WEBAUTHN_RP_ORIGIN="http://localhost:$VITE_PORT" \
     BB_REQUIRE_PILOT_KEY="$BB_REQUIRE_PILOT_KEY" \
     BB_PILOT_SIGNUP_KEY="$BB_PILOT_SIGNUP_KEY" \
+    BB_REQUIRE_PLAN_AT_SIGNUP="$BB_REQUIRE_PLAN_AT_SIGNUP" \
+    MOLLIE_API_KEY="$MOLLIE_API_KEY" MOLLIE_API_BASE="$MOLLIE_API_BASE" \
     setsid "$API_BIN" >"$API_LOG" 2>&1 &
   API_PID=$!
   # -m10 (not -m3): the FIRST auto-login also creates the dev user (Argon2id
