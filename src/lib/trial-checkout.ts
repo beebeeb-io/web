@@ -176,12 +176,28 @@ export type MandatePaymentStatus =
   | 'expired'
   | 'unknown'
 
-export type TrialReturnOutcome = 'live' | 'failed' | 'pending'
+export type TrialReturnOutcome = 'live' | 'failed' | 'blocked' | 'pending'
+
+/** `trial_block_reason` for a card / bank account that already had a trial. */
+export const TRIAL_BLOCK_PAYMENT_METHOD_USED = 'payment_method_already_used'
+
+/**
+ * Inline copy for a trial the server refused to start although the mandate
+ * was paid (`trial_block_reason`). Null when there is no reason.
+ */
+export function trialBlockedCopy(reason: string | null | undefined): string | null {
+  if (!reason) return null
+  if (reason === TRIAL_BLOCK_PAYMENT_METHOD_USED) {
+    return "This card or bank account has already been used for a free trial. You can subscribe now — you'll be charged today."
+  }
+  return "We couldn't start a free trial with this payment method. You can subscribe now — you'll be charged today."
+}
 
 /**
  * Reconcile after the Mollie return. The subscription is the truth for
- * success (the webhook, not the redirect, starts the trial); the payment
- * status is the truth for failure.
+ * success (the webhook, not the redirect, starts the trial) and for a
+ * refused trial (`trial_block_reason`); the payment status is the truth for
+ * failure.
  */
 export function trialReturnOutcome(
   paymentStatus: MandatePaymentStatus | null,
@@ -194,6 +210,11 @@ export function trialReturnOutcome(
   if (paymentStatus === 'failed' || paymentStatus === 'canceled' || paymentStatus === 'expired') {
     return 'failed'
   }
+  // One trial per payment method: the mandate went through but the server
+  // started no trial. The reason is cleared on every /trial/checkout, so one
+  // seen after the return belongs to THIS attempt — no need to wait for the
+  // payment status call to say "paid".
+  if (sub?.trial_block_reason) return 'blocked'
   return 'pending'
 }
 

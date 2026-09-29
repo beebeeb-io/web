@@ -587,6 +587,14 @@ export interface Subscription {
    * for legacy no-card trials, which still use `POST /billing/trial/convert`.
    */
   trial_auto_converts?: boolean
+  /**
+   * Why a paid trial mandate did NOT start a trial (task 1037, one trial per
+   * payment method): `"payment_method_already_used"` when the card / bank
+   * account already started a trial on any account. The account stays
+   * `needs_plan` (the iDEAL cent is refunded). Null otherwise; cleared on the
+   * next `POST /billing/trial/checkout` and on a successful trial.
+   */
+  trial_block_reason?: string | null
 }
 
 /** `GET /billing/subscription` → `account_state` (task 1037). */

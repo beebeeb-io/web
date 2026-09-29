@@ -152,6 +152,12 @@ export function userFriendlyError(err: unknown): string {
     // are refused with 409 plan_required / account_lapsed (never
     // quota_exceeded — a 0 quota would read as unlimited). Branch before the
     // generic 409 handling so they never surface as a vague conflict.
+    // Task 1037 — signup is web-only; mobile/CLI get this 403. The web IS the
+    // signup surface so it should never see it, but never let it fall
+    // through to the generic 403 "permission" line.
+    if (err.code === 'signup_web_only') {
+      return 'Accounts can only be created at app.beebeeb.io/signup. Open that page in your browser to continue.'
+    }
     if (err.code === 'plan_required') {
       return 'Choose a plan and start your free trial to upload or share files.'
     }

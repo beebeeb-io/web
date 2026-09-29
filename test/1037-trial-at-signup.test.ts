@@ -24,6 +24,7 @@ import {
   trialPriceLabel,
   classifyTrialCheckoutError,
   trialRenewalAmount,
+  trialBlockedCopy,
 } from '../src/lib/trial-checkout'
 import { resolveResumeAction } from '../src/lib/pending-checkout'
 
@@ -326,5 +327,52 @@ describe('trialRenewalAmount — what an auto-converting trial will charge', () 
   })
   test('unknown plan → null (the caller omits the amount rather than inventing one)', () => {
     expect(trialRenewalAmount(sub({ plan: 'mystery', billing_cycle: 'monthly' }), null)).toBeNull()
+  })
+})
+
+describe('one trial per payment method — trial_block_reason (Guus, 2026-09-29)', () => {
+  const blocked = (o: Partial<Subscription> = {}) =>
+    sub({ account_state: 'needs_plan', trial_block_reason: 'payment_method_already_used', ...o })
+
+  test('paid mandate + the reason → blocked: stop polling, offer paid checkout', () => {
+    expect(trialReturnOutcome('paid', blocked())).toBe('blocked')
+  })
+  test('the reason is set by THIS attempt (cleared on every /trial/checkout), so a failed status call still reads blocked', () => {
+    expect(trialReturnOutcome(null, blocked())).toBe('blocked')
+    expect(trialReturnOutcome('pending', blocked())).toBe('blocked')
+  })
+  test('a failed/cancelled/expired payment is a failure, not a block (nothing was verified)', () => {
+    expect(trialReturnOutcome('failed', blocked())).toBe('failed')
+    expect(trialReturnOutcome('canceled', blocked())).toBe('failed')
+    expect(trialReturnOutcome('expired', blocked())).toBe('failed')
+  })
+  test('null / absent reason keeps the normal outcomes', () => {
+    expect(trialReturnOutcome('paid', sub({ account_state: 'needs_plan', trial_block_reason: null }))).toBe('pending')
+    expect(trialReturnOutcome('paid', sub({ account_state: 'needs_plan' }))).toBe('pending')
+  })
+  test('a live trial wins over a stale reason (the server clears it on success anyway)', () => {
+    expect(trialReturnOutcome('paid', sub({ status: 'trialing', plan: 'basic', account_state: 'ok', trial_block_reason: 'payment_method_already_used' }))).toBe('live')
+  })
+  test('trialBlockedCopy: the known reason gets the exact copy; unknown reasons stay honest; none → null', () => {
+    expect(trialBlockedCopy('payment_method_already_used')).toBe(
+      "This card or bank account has already been used for a free trial. You can subscribe now — you'll be charged today.",
+    )
+    expect(trialBlockedCopy('something_new')).toBe(
+      "We couldn't start a free trial with this payment method. You can subscribe now — you'll be charged today.",
+    )
+    expect(trialBlockedCopy(null)).toBeNull()
+    expect(trialBlockedCopy(undefined)).toBeNull()
+    expect(trialBlockedCopy('')).toBeNull()
+  })
+  test('the paid-checkout return (/billing?upgraded=true → /settings/billing) stays open to a needs_plan account', () => {
+    expect(planGateRedirect('/billing', 'needs_plan')).toBeNull()
+    expect(planGateRedirect('/settings/billing', 'needs_plan')).toBeNull()
+  })
+})
+
+describe('signup_web_only (403 from signup — defensive; the web IS the signup surface)', () => {
+  test('mapped to a clear message, never "You don\'t have permission to do that."', () => {
+    const msg = userFriendlyError(new ApiError('Create your account at https://app.beebeeb.io/signup, then sign in here.', 403, 'signup_web_only'))
+    expect(msg).toBe('Accounts can only be created at app.beebeeb.io/signup. Open that page in your browser to continue.')
   })
 })

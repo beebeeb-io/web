@@ -93,8 +93,9 @@ interface Mock {
   paymentStatus: string
   checkout: { status: number; body: unknown }
   profile: Json | null
-  calls: { subscription: number; trialStart: number; trialCheckout: number; paymentStatus: number; profilePut: number }
+  calls: { subscription: number; trialStart: number; trialCheckout: number; paymentStatus: number; profilePut: number; paidCheckout: number }
   trialCheckoutBodies: Json[]
+  paidCheckoutBodies: Json[]
 }
 
 async function installMocks(page: Page, partial: Partial<Mock>): Promise<Mock> {
@@ -104,8 +105,9 @@ async function installMocks(page: Page, partial: Partial<Mock>): Promise<Mock> {
     paymentStatus: 'open',
     checkout: { status: 200, body: { url: `${WEB}/choose-plan?returned=1`, payment_id: 'tr_mock1037' } },
     profile: null,
-    calls: { subscription: 0, trialStart: 0, trialCheckout: 0, paymentStatus: 0, profilePut: 0 },
+    calls: { subscription: 0, trialStart: 0, trialCheckout: 0, paymentStatus: 0, profilePut: 0, paidCheckout: 0 },
     trialCheckoutBodies: [],
+    paidCheckoutBodies: [],
     ...partial,
   }
   await page.route('**/*', async (route) => {
@@ -141,6 +143,11 @@ async function installMocks(page: Page, partial: Partial<Mock>): Promise<Mock> {
       m.calls.trialCheckout += 1
       m.trialCheckoutBodies.push(JSON.parse(req.postData() ?? '{}'))
       return json(route, m.checkout.body, m.checkout.status)
+    }
+    if (url.includes('/billing/checkout') && method === 'POST') {
+      m.calls.paidCheckout += 1
+      m.paidCheckoutBodies.push(JSON.parse(req.postData() ?? '{}'))
+      return json(route, { url: `${WEB}/billing?upgraded=true`, payment_id: 'tr_paid1037' })
     }
     if (url.includes('/billing/payment/')) {
       m.calls.paymentStatus += 1
@@ -356,5 +363,69 @@ test.describe('1037 — trial with a payment mandate at signup', () => {
     await expect(page.getByTestId('choose-plan')).toBeVisible({ timeout: 15_000 })
     await expect(page.getByTestId('trial-plan-pro')).toHaveAttribute('aria-checked', 'true')
     expect(m.calls.trialStart).toBe(0)
+  })
+
+  test('GATE 8 — card/bank account already used for a trial: stop polling, offer paid checkout or another method', async ({ page }) => {
+    const BLOCKED = { ...NEEDS_PLAN, trial_block_reason: 'payment_method_already_used' }
+    const m = await installMocks(page, {
+      sub: () => BLOCKED,
+      paymentStatus: 'paid',
+      profile: { full_name: 'T', billing_country: 'NL', billing_street: 'S 1', billing_postal: '1', billing_city: 'C', customer_type: 'b2c', vat_validated: 'unchecked' },
+    })
+    await page.addInitScript(() => {
+      localStorage.setItem('bb_pending_checkout', JSON.stringify({
+        kind: 'trial', plan: 'pro', cycle: 'yearly', ts: Date.now(), paymentId: 'tr_mock1037',
+        pre: { plan: 'none', status: 'active', extraStorageTb: 0, storageTbQuantity: 0 },
+      }))
+    })
+    await boot(page, '/choose-plan?returned=1', { planIntent: { plan: 'pro', cycle: 'yearly' } })
+
+    const blocked = page.getByTestId('choose-plan-blocked')
+    await expect(blocked).toBeVisible({ timeout: 30_000 })
+    await expect(page.getByTestId('choose-plan-blocked-copy')).toHaveText(
+      "This card or bank account has already been used for a free trial. You can subscribe now — you'll be charged today.",
+    )
+    await expect(page.getByTestId('choose-plan-blocked-plan')).toContainText('€109.90/year')
+    // Polling stopped: no further subscription reads after the block.
+    const readsAtBlock = m.calls.subscription
+    await page.waitForTimeout(5_000)
+    expect(m.calls.subscription).toBe(readsAtBlock)
+    await page.screenshot({ path: `${SHOTS}/1037-gate8-trial-blocked.png`, fullPage: true })
+
+    // Secondary: another payment method → back to the chooser (trial again).
+    await page.getByTestId('choose-plan-other-method').click()
+    await expect(page.getByTestId('choose-plan')).toBeVisible()
+    expect(new URL(page.url()).searchParams.get('returned')).toBeNull()
+    await expect(page.getByTestId('choose-plan-block-note')).toBeVisible()
+
+    // Primary: normal paid checkout for the selected plan/cycle, via the
+    // billing-details step — never another trial checkout.
+    await page.getByTestId('choose-plan-block-note').getByRole('button', { name: /Subscribe to Pro now/ }).click()
+    await expect(page.getByTestId('billing-info-step')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('vat-preview-note')).toContainText('Charged today, then every year until you cancel.')
+    await page.screenshot({ path: `${SHOTS}/1037-gate8-paid-billing.png`, fullPage: true })
+    await page.getByTestId('billing-continue').click()
+    // Mollie's paid return: /billing?upgraded=true — open to a needs_plan account.
+    await page.waitForURL(/\/settings\/billing\?upgraded=true/, { timeout: 15_000 })
+    await page.waitForTimeout(1_500)
+    expect(new URL(page.url()).pathname).toBe('/settings/billing')
+    expect(m.calls.paidCheckout).toBe(1)
+    expect(m.paidCheckoutBodies[0]).toEqual({ plan: 'pro', billing_cycle: 'yearly' })
+    expect(m.calls.trialCheckout).toBe(0)
+    const pending = await page.evaluate(() => JSON.parse(localStorage.getItem('bb_pending_checkout') ?? 'null'))
+    if (pending) expect(pending).toMatchObject({ kind: 'plan', plan: 'pro', cycle: 'yearly' })
+  })
+
+  test('GATE 8b — the blocked state straight from the return screen goes to paid checkout too', async ({ page }) => {
+    const m = await installMocks(page, {
+      sub: () => ({ ...NEEDS_PLAN, trial_block_reason: 'payment_method_already_used' }),
+      paymentStatus: 'paid',
+      profile: { full_name: 'T', billing_country: 'NL', billing_street: 'S 1', billing_postal: '1', billing_city: 'C', customer_type: 'b2c', vat_validated: 'unchecked' },
+    })
+    await boot(page, '/choose-plan?returned=1', { planIntent: { plan: 'basic', cycle: 'monthly' } })
+    await page.getByTestId('choose-plan-subscribe').click()
+    await page.getByTestId('billing-continue').click()
+    await page.waitForURL(/\/settings\/billing\?upgraded=true/, { timeout: 15_000 })
+    expect(m.paidCheckoutBodies[0]).toEqual({ plan: 'basic', billing_cycle: 'monthly' })
   })
 })

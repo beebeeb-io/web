@@ -36,6 +36,7 @@ import { useWsEvent } from '../lib/ws-context'
 import { useKeys } from '../lib/key-context'
 import { flushDeferredWelcomeFile } from '../lib/welcome-file-upload'
 import {
+  createCheckoutSession,
   getPaymentStatus,
   getPlans,
   getSubscription,
@@ -71,13 +72,17 @@ import {
   trialReturnFailedCopy,
   trialReturnOutcome,
   trialTermsCopy,
+  trialBlockedCopy,
   type MandatePaymentStatus,
   type TrialMethod,
   type TrialPlanSlug,
 } from '../lib/trial-checkout'
 import { userFriendlyError } from '../lib/user-friendly-error'
 
-type Step = 'pick' | 'billing' | 'reconcile'
+type Step = 'pick' | 'billing' | 'reconcile' | 'blocked'
+/** What the billing-details step leads to: the trial mandate, or (when this
+ *  card / bank account already had a trial) a normal paid checkout. */
+type BillingPurpose = 'trial' | 'paid'
 type ReconcileState =
   | { kind: 'checking' }
   | { kind: 'slow' }
@@ -124,6 +129,11 @@ export function ChoosePlan() {
 
   // ── Arrival decision (once) ────────────────────────────────────────────
   const [step, setStep] = useState<Step | null>(null)
+  const [purpose, setPurpose] = useState<BillingPurpose>('trial')
+  // One trial per payment method: why the server started no trial after a
+  // paid mandate (`trial_block_reason`), from the reconcile or the cached sub.
+  const [blockReason, setBlockReason] = useState<string | null>(null)
+  const knownBlockReason = blockReason ?? sub?.trial_block_reason ?? null
   const decidedRef = useRef(false)
   useEffect(() => {
     if (decidedRef.current) return
@@ -214,6 +224,16 @@ export function ChoosePlan() {
       setReconcile({ kind: 'failed', status: lastStatusRef.current })
       return true
     }
+    if (outcome === 'blocked' && latest) {
+      // The card / bank account already had a trial: no trial started (the
+      // iDEAL cent is refunded). Stop polling; offer paid checkout or another
+      // payment method.
+      finishedRef.current = true
+      clearPendingCheckout()
+      setBlockReason(latest.trial_block_reason ?? null)
+      setStep('blocked')
+      return true
+    }
     return false
   }, [goLive])
 
@@ -261,7 +281,14 @@ export function ChoosePlan() {
       },
       { replace: true },
     )
+    setPurpose('trial')
     setStep('pick')
+  }
+
+  /** Blocked trial → the billing-details step, then a normal paid checkout. */
+  function subscribeNow() {
+    setPurpose('paid')
+    setStep('billing')
   }
 
   // ── Pick → billing details → Mollie ─────────────────────────────────────
@@ -305,6 +332,23 @@ export function ChoosePlan() {
       throw new Error(userFriendlyError(err))
     }
   }, [plan, cycle, method, sub, showToast, navigate, refreshPlanDetails])
+
+  // Paid checkout for the selected plan + cycle — the path for a card / bank
+  // account that already had a trial. Same request + pending intent as every
+  // other plan purchase; Mollie returns to /billing?upgraded=true (open to a
+  // needs_plan account), where the existing reconcile confirms it.
+  const startPaidCheckout = useCallback(async () => {
+    try {
+      const { url, payment_id } = await createCheckoutSession({ plan, billing_cycle: cycle })
+      setPendingCheckout('plan', plan, cycle, makePreState(sub), payment_id)
+      window.location.href = url
+    } catch (err) {
+      if (classifyTrialCheckoutError(err) === 'billing_profile') {
+        throw new Error('Add your billing details to subscribe.')
+      }
+      throw new Error(userFriendlyError(err))
+    }
+  }, [plan, cycle, sub])
 
   const chargeDate = trialChargeDate(trialDays)
   const todayLabel = method === 'ideal' ? '€0.01' : '€0.00'
@@ -406,6 +450,79 @@ export function ChoosePlan() {
     )
   }
 
+  if (step === 'blocked') {
+    return (
+      <AuthShell wide title="No free trial for this payment method" hideTrust>
+        <div data-testid="choose-plan-blocked">
+          <div role="alert" className="rounded-md border border-line bg-paper-2 px-4 py-3.5">
+            <div className="flex items-start gap-2.5">
+              <Icon name="info" size={14} className="text-amber-deep shrink-0 mt-[2px]" />
+              <p className="text-[13px] text-ink-2 leading-relaxed" data-testid="choose-plan-blocked-copy">
+                {trialBlockedCopy(knownBlockReason)}
+              </p>
+            </div>
+            <p className="text-[11.5px] text-ink-3 leading-relaxed mt-2 pl-[22px]">
+              Nothing was charged for the verification — an iDEAL cent is refunded automatically.
+            </p>
+          </div>
+          <div className="mt-4 flex items-baseline gap-2 text-[13px]" data-testid="choose-plan-blocked-plan">
+            <span className="font-medium text-ink">{selected.name}</span>
+            <span className="text-ink-3">·</span>
+            <span className="font-mono text-ink">{trialPriceLabel(price, cycle)}</span>
+            <span className="text-ink-3 text-[12px]">· charged today, cancel any time</span>
+          </div>
+          <BBButton
+            variant="amber"
+            size="lg"
+            className="w-full justify-center mt-3"
+            onClick={subscribeNow}
+            data-testid="choose-plan-subscribe"
+          >
+            Subscribe to {selected.name}
+            <Icon name="chevron-right" size={13} className="ml-1" />
+          </BBButton>
+          <BBButton
+            variant="ghost"
+            size="lg"
+            className="w-full justify-center mt-2"
+            onClick={tryAgain}
+            data-testid="choose-plan-other-method"
+          >
+            Use a different payment method
+          </BBButton>
+          {footer}
+        </div>
+      </AuthShell>
+    )
+  }
+
+  if (step === 'billing' && purpose === 'paid') {
+    return (
+      <AuthShell
+        wide
+        title={`Subscribe to ${selected.name}`}
+        subtitle="For your invoices and VAT. You are charged today; cancel any time."
+        hideTrust
+      >
+        <div className="flex items-center gap-2 mb-4 text-[12px] text-ink-3" data-testid="choose-plan-billing-summary">
+          <span className="font-medium text-ink">{selected.name}</span>
+          <span className="text-line-2">·</span>
+          <span className="font-mono">{trialPriceLabel(price, cycle)}</span>
+        </div>
+        <BillingInfoStep
+          planId={plan}
+          planName={selected.name}
+          cycle={cycle}
+          netCentsFallback={Math.round(price * 100)}
+          onProceed={startPaidCheckout}
+          onBack={() => setStep(knownBlockReason ? 'blocked' : 'pick')}
+          summaryNote={`Charged today, then every ${cycle === 'yearly' ? 'year' : 'month'} until you cancel.`}
+        />
+        {footer}
+      </AuthShell>
+    )
+  }
+
   if (step === 'billing') {
     return (
       <AuthShell
@@ -461,6 +578,18 @@ export function ChoosePlan() {
       hideTrust
     >
       <div className="flex flex-col gap-[18px]" data-testid="choose-plan">
+        {knownBlockReason && (
+          <div className="rounded-md border border-line bg-paper-2 px-3.5 py-3" data-testid="choose-plan-block-note">
+            <p className="text-[12.5px] text-ink-2 leading-relaxed">{trialBlockedCopy(knownBlockReason)}</p>
+            <button
+              type="button"
+              onClick={subscribeNow}
+              className="mt-1.5 text-[12.5px] font-medium text-amber-deep hover:underline cursor-pointer"
+            >
+              Subscribe to {selected.name} now
+            </button>
+          </div>
+        )}
         <TrialPlanPicker
           options={options}
           plan={plan}
@@ -499,6 +628,7 @@ export function ChoosePlan() {
           data-testid="choose-plan-continue"
           onClick={() => {
             savePlanIntent({ plan, cycle })
+            setPurpose('trial')
             setStep('billing')
           }}
         >
