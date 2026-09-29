@@ -1521,13 +1521,13 @@ function openUpgrade(plan: string) {
   const serverMollieAmountCents = sub?.mollie_amount_cents
 
   // Per-TB price: server truth first, else derive from the WASM ladder (the
-  // marginal cost of 1 extra TB), else the €14.99/TB add-on rate as a
-  // last-resort constant (1499 cents; raised from 1099, Guus ruling
-  // 2026-09-22, task 1463).
+  // marginal cost of 1 extra TB), else the €10.99/TB add-on rate as a
+  // last-resort constant (1099 cents; reverted from 1499, Guus ruling
+  // 2026-09-29, task 1607, reversing task 1463's 2026-09-22 raise).
   const addonPerTbCents =
     serverAddonPerTbCents != null && serverAddonPerTbCents > 0
       ? serverAddonPerTbCents
-      : (planMonthlyCostCents(effectivePlan, 1) - planMonthlyCostCents(effectivePlan, 0)) || 1499
+      : (planMonthlyCostCents(effectivePlan, 1) - planMonthlyCostCents(effectivePlan, 0)) || 1099
 
   const basePlanCents =
     serverBasePlanCents != null && serverBasePlanCents > 0

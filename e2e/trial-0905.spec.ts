@@ -99,16 +99,18 @@ function mandatedTrialSub() {
 
 /**
  * Task 1604 review thread PRRT_kwDOSLX6Nc6nC4VT — a mandated trial with an
- * active storage add-on. `addon_cents: 1499` mirrors the server's
- * `addon_amount_cents(plan, 'monthly', 1, 0)` for a EUR 14.99/mo, 1 TB
- * add-on (the current cycle is monthly here, so no ×12 yet). The promised
- * "first charge" for a monthly→yearly switch must be the PLAN'S yearly
- * price PLUS the add-on re-priced at yearly (×12) — EUR 99.00 + EUR 179.88 =
- * EUR 278.88 — never just the EUR 99.00 base plan price.
+ * active storage add-on. `addon_cents: 1099` mirrors the server's
+ * `addon_amount_cents(plan, 'monthly', 1, 0)` for a EUR 10.99/mo, 1 TB
+ * add-on (task 1607, Guus ruling 2026-09-29, reverting task 1463's
+ * 2026-09-22 raise to EUR 14.99; the current cycle is monthly here, so no
+ * ×12 yet). The promised "first charge" for a monthly→yearly switch must be
+ * the PLAN'S yearly price PLUS the add-on re-priced at yearly (×12) —
+ * EUR 99.00 + EUR 131.88 = EUR 230.88 — never just the EUR 99.00 base plan
+ * price.
  */
 function mandatedTrialSubWithAddon() {
   const s = mandatedTrialSub()
-  return { ...s, extra_storage_tb: 1, addon_cents: 1499 }
+  return { ...s, extra_storage_tb: 1, addon_cents: 1099 }
 }
 
 /**
@@ -444,8 +446,8 @@ test.describe('0905 14-day free trial — web UI (UNIT C)', () => {
     await page.getByRole('button', { name: /^Switch to annual$/ }).click()
     const note = page.getByTestId('cycle-switch-trial-note')
     await expect(note).toBeVisible({ timeout: 10_000 })
-    // Pro yearly EUR 99.00 + (EUR 14.99/mo add-on × 12 = EUR 179.88) = EUR 278.88.
-    await expect(note).toContainText('EUR 278.88')
+    // Pro yearly EUR 99.00 + (EUR 10.99/mo add-on × 12 = EUR 131.88) = EUR 230.88.
+    await expect(note).toContainText('EUR 230.88')
     // The base-price-only number from the P1 bug must NOT appear as the
     // first-charge figure.
     await expect(note).not.toContainText('first charge of EUR 99.00')

@@ -20,7 +20,7 @@ import { useDriveData } from '../lib/drive-data-context'
 import { handleBillingResetTestMode } from '../lib/billing-reset'
 import { setPendingCheckout, makePreState } from '../lib/pending-checkout'
 import { PRICING_PAGE_PLANS, MARKETED_PLAN_SLUGS, type PricingPlanDef } from '../lib/plan-constants'
-import { ensureWasm, isWasmReady, planMonthlyCostCents } from '../lib/plan-pricing'
+import { ensureWasm, deriveAddonAwarePriceDisplay } from '../lib/plan-pricing'
 import { choosePlanPath, isTrialPlanSlug } from '../lib/trial-checkout'
 import { resolveAccountState } from '../lib/account-state'
 
@@ -348,48 +348,34 @@ export function Pricing() {
       // Keep the static coming-soon card if either the constant or the server
       // marks it coming-soon / not purchasable (Teams stays non-checkout).
       if (!ap || fp.comingSoon || ap.coming_soon || ap.purchasable === false) return fp
-      const monthlyEq = ap.price_yearly_eur > 0 ? ap.price_yearly_eur / 12 : 0
-      const tbCount = Math.round(ap.storage_bytes / 1_000_000_000_000)
-
       // Task 1550: the storage-addon rate is NOT (base plan price ÷ base TB
       // count) — that's the base plan's own unit economics, not what an
       // EXTRA TB costs. It must be the real marginal add-on rate, so it
       // never contradicts the (already-correct) feature bullet three lines
-      // below. Derive it the same way billing.tsx derives its checkout-page
-      // addonPerTbCents fallback: the diff between core's WASM quota engine
-      // (beebeeb-types::quota — the single source of truth for what Mollie
-      // actually bills) at extraTB=1 vs extraTB=0. `/api/v1/billing/plans`
-      // itself carries no per-TB add-on field today (server catalogue gap —
-      // see task 1550's Notes for the recommended companion server task), so
-      // this is the closest available non-page-local source: the same
-      // pricing engine checkout falls back to, not a second literal.
-      // Until WASM is ready (this route isn't behind <WasmGuard>), leave
-      // note/perTb untouched — the static plan-constants.ts default is
-      // already the correct €14.99/TB, a safer fallback than a wrong number.
-      let note = fp.note
-      let perTb = fp.perTb
-      if (tbCount > 0 && isWasmReady()) {
-        const addonCents = planMonthlyCostCents(fp.id, 1) - planMonthlyCostCents(fp.id, 0)
-        if (addonCents > 0) {
-          const perTbMonthly = addonCents / 100
-          const perTbStr = perTbMonthly % 1 === 0 ? perTbMonthly.toFixed(0) : perTbMonthly.toFixed(2)
-          note = `${ap.storage_label} · €${perTbStr}/TB`
-          perTb = `€${perTbStr}/TB`
-        }
-      }
+      // below. `deriveAddonAwarePriceDisplay` derives it the same way
+      // billing.tsx derives its checkout-page addonPerTbCents fallback: the
+      // diff between core's WASM quota engine (beebeeb-types::quota — the
+      // single source of truth for what Mollie actually bills) at extraTB=1
+      // vs extraTB=0. `/api/v1/billing/plans` itself carries no per-TB
+      // add-on field today (server catalogue gap — see task 1550's Notes for
+      // the recommended companion server task), so this is the closest
+      // available non-page-local source: the same pricing engine checkout
+      // falls back to, not a second literal. Until WASM is ready (this
+      // route isn't behind <WasmGuard>) or the plan has no base TB, it
+      // leaves note/perTb at the static plan-constants.ts fallback — already
+      // the correct €10.99/TB, a safer default than a wrong number. See
+      // test/pricing-addon-display-1550.test.ts for the unit-level guard
+      // against the price_eur/tbCount regression, with WASM mocked out.
+      const display = deriveAddonAwarePriceDisplay(fp.id, ap, { note: fp.note, perTb: fp.perTb })
 
       return {
         ...fp,
-        priceMonthly: ap.price_eur,
-        priceYearly: Math.round(monthlyEq * 100) / 100,
-        storage: ap.storage_label,
-        note,
-        perTb,
+        ...display,
       }
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- wasmVersion is a
-    // recompute trigger only (isWasmReady()/planMonthlyCostCents read live
-    // module state, not React state).
+    // recompute trigger only (deriveAddonAwarePriceDisplay's default addonRate
+    // reads live WASM module state, not React state).
   }, [apiPlans, wasmVersion])
 
   // ── Promo code (task 11, spec §4) ─────────────────────────────────────────
