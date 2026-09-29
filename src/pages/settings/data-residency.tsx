@@ -199,7 +199,7 @@ export function SettingsDataResidency() {
               <Icon name="shield" size={13} className="text-amber-deep shrink-0 mt-0.5" />
               <div className="text-[12px] text-ink-3 leading-relaxed">
                 <strong className="text-ink-2">Existing files stay where they are.</strong>{' '}
-                Only new uploads use your preferred region. All data is stored in Falkenstein, Germany, under EU law.
+                Only new uploads use your preferred region. All data is stored in the EU (currently Falkenstein, Germany), under EU law.
               </div>
             </div>
           </div>

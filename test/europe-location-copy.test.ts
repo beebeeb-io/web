@@ -12,7 +12,9 @@ import { PRICING_PAGE_PLANS } from '../src/lib/plan-constants'
  * Deliberately NOT covered (they show where a file or pool ACTUALLY is, from
  * storage-pool data, with 'Falkenstein' only as the fallback): the trust
  * details panel, upload progress, file-list encryption city, drive-layout's
- * region map, upload-error region and settings/data-residency. The
+ * region map, upload-error region and settings/data-residency's pool list —
+ * though data-residency's static note is a transparency surface and says
+ * "the EU (currently Falkenstein, Germany)". The
  * settings/privacy error-report disclosure also keeps its specific location:
  * it states where one server processes crash reports, not where files live.
  *
@@ -69,6 +71,12 @@ describe('static location copy says the EU / Europe, not Falkenstein', () => {
     const pricing = read('src/pages/pricing.tsx')
     expect(pricing).toContain("'Stored in the EU, under EU jurisdiction'")
     expect(pricing).toContain('All data is stored in the EU, under EU jurisdiction and GDPR. More EU locations are coming.')
+  })
+
+  test('data-residency (a transparency surface): the EU first, the current location named as current', () => {
+    const src = read('src/pages/settings/data-residency.tsx')
+    expect(src).toContain('All data is stored in the EU (currently Falkenstein, Germany), under EU law.')
+    expect(src).not.toContain('All data is stored in Falkenstein, Germany, under EU law.')
   })
 
   test('receive relay + empty drive', () => {
