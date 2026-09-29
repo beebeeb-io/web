@@ -854,9 +854,29 @@ export async function getMe(): Promise<AuthUser> {
   return user
 }
 
-export async function setup2fa(): Promise<TotpSetupResponse> {
+/**
+ * POST /api/v1/auth/2fa/setup — start (or restart) TOTP enrollment.
+ *
+ * When the account has NO 2FA enabled yet, call with no arguments — the
+ * server issues a fresh secret unconditionally (this is the original,
+ * unchanged behavior).
+ *
+ * When 2FA is ALREADY enabled, the server requires step-up before it will
+ * replace the live secret (`routes/totp.rs` `setup_step_up_validated_if_required`
+ * — task 1610): either the account's CURRENT 6-digit TOTP/backup code as
+ * `opts.code`, or a step-up `X-Confirm-Token` (password/passkey re-auth via
+ * `confirmAction`/`<StepUpAuth>`) as `opts.confirmToken`. Passing neither
+ * against an enabled account throws `ApiError(403, ..., 'confirmation_required')` —
+ * callers MUST offer one of the two paths before calling this for
+ * "set up again", never call it bare.
+ */
+export async function setup2fa(opts?: { code?: string; confirmToken?: string }): Promise<TotpSetupResponse> {
+  const headers: Record<string, string> = {}
+  if (opts?.confirmToken) headers['X-Confirm-Token'] = opts.confirmToken
   return request<TotpSetupResponse>('/api/v1/auth/2fa/setup', {
     method: 'POST',
+    ...(opts?.code ? { body: JSON.stringify({ code: opts.code }) } : {}),
+    ...(opts?.confirmToken ? { headers } : {}),
   })
 }
 
