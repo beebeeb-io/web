@@ -365,7 +365,7 @@ export function Pricing() {
       // pricing engine checkout falls back to, not a second literal.
       // Until WASM is ready (this route isn't behind <WasmGuard>), leave
       // note/perTb untouched — the static plan-constants.ts default is
-      // already the correct €14.99/TB, a safer fallback than a wrong number.
+      // already the correct €10.99/TB, a safer fallback than a wrong number.
       let note = fp.note
       let perTb = fp.perTb
       if (tbCount > 0 && isWasmReady()) {
