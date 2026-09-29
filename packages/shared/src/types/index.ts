@@ -579,7 +579,14 @@ export interface Subscription {
    *                    deleted at `data_deletion_at` unless the user subscribes.
    */
   account_state?: AccountState
-  /** RFC3339 deletion date for a `lapsed` account; null otherwise (task 1037). */
+  /**
+   * RFC3339 deletion date. Originally `lapsed`-only (task 1037); since server
+   * PR #129 (task 1605) it is ALSO populated for a never-paid trial the
+   * moment it enters `cancelling` (= `access_until` + the 14-day never-paid
+   * retention window), not only once it has actually lapsed. Null for a paid
+   * cancelling account unless/until the server has computed a real deletion
+   * date for it.
+   */
   data_deletion_at?: string | null
   /**
    * True when a `trialing` row already has a Mollie mandate + subscription, so
@@ -595,6 +602,33 @@ export interface Subscription {
    * next `POST /billing/trial/checkout` and on a successful trial.
    */
   trial_block_reason?: string | null
+  /**
+   * Task 1605 (server PR #129, `GET /billing/subscription`). Set the instant
+   * a never-paid mandated trial is cancelled (`subscriptions.canceled_at`) —
+   * uploads and new shares are refused (409 `trial_cancelled_read_only`) from
+   * this moment, even though `status` stays `cancelling` and view/download
+   * keep working until `access_until`. Null for every other state, including
+   * a PAID account's ordinary cancel (which keeps full access, uploads
+   * included, until `current_period_end` — no upload block at all).
+   */
+  uploads_blocked_at?: string | null
+  /**
+   * Task 1605. For a cancelled never-paid trial, the date view/download stop
+   * working (= `trial_ends_at` at the moment of cancel) — the read-only
+   * window's end, not a renewal. Mirrors `current_period_end` for this case
+   * but is the field to read: it stays correct even where `current_period_end`
+   * has server-internal meanings that shift. Null outside this state.
+   */
+  access_until?: string | null
+  /**
+   * Task 1605. Non-null only while a `trialing` row (i) already holds a
+   * Mollie mandate/subscription (`trial_auto_converts: true`) AND (ii) has
+   * never had a successful real charge — the storage quota is capped at this
+   * many bytes (25 GB) until the first payment settles, after which the
+   * server drops the cap and this reads null on the next fetch. Never set for
+   * the legacy no-card trial pattern (that one keeps the full plan quota).
+   */
+  trial_storage_cap_bytes?: number | null
 }
 
 /** `GET /billing/subscription` → `account_state` (task 1037). */

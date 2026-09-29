@@ -1093,10 +1093,15 @@ async function uploadChunkRequest(
     // can branch on it. Chunk uploads use raw fetch(), so unlike the shared
     // request() helper this had previously dropped the code.
     const code = typeof body.error === 'string' ? body.error : undefined
+    // Task 1605: also thread the raw body through as `.details` (mirrors the
+    // shared request() helper) so a 413 `quota_exceeded` chunk-PUT failure
+    // carries `is_trial_cap`/`limit_bytes`/`used_bytes` the same way a
+    // request()-routed one does.
     throw new ApiError(
       (body.message ?? body.error ?? res.statusText) as string,
       res.status,
       code,
+      body,
     )
   }
 
@@ -2398,6 +2403,41 @@ export async function startTrial(params: {
  */
 export async function convertTrial(): Promise<{ url: string; payment_id?: string }> {
   return request<{ url: string; payment_id?: string }>('/api/v1/billing/trial/convert', {
+    method: 'POST',
+  })
+}
+
+/**
+ * Task 1605 (server PR #129, `POST /billing/trial/pay-now`). Ends a mandated
+ * trial's 25 GB cap early by charging the first period NOW on the existing
+ * mandate, instead of waiting for the automatic charge at `trial_ends_at`.
+ *
+ * Two settlement shapes, both 200:
+ *   - `{payment_id, status: 'paid', amount_cents}` — a card/instant-method
+ *     mandate settled synchronously; the caller can refetch the subscription
+ *     immediately (quota unlocks, trial badge drops).
+ *   - `{pending: true, payment_id}` — a SEPA/off-session mandate that will
+ *     settle over the next few days via webhook; the caller shows a waiting
+ *     state and polls `getSubscription()` (see `trial-pay-now.ts`'s bounded
+ *     poll helpers) rather than assuming it already worked.
+ *
+ * 409 `trial_not_active` (the server's own code) means the trial already
+ * ended/converted/was cancelled between the button rendering and the click —
+ * callers should refetch and show the current state, not retry blindly.
+ * Idempotent server-side (per-user advisory lock + local-status-only reuse
+ * check) — a double-click here is safe to just re-send; the client ALSO
+ * disables the button while a request is in flight as a first line of
+ * defense against firing two at once.
+ */
+export interface TrialPayNowResult {
+  payment_id: string
+  status?: string
+  amount_cents?: number
+  pending?: boolean
+}
+
+export async function payTrialNow(): Promise<TrialPayNowResult> {
+  return request<TrialPayNowResult>('/api/v1/billing/trial/pay-now', {
     method: 'POST',
   })
 }

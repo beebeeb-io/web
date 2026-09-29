@@ -126,3 +126,44 @@ export function accountStateFromError(err: unknown): Exclude<AccountState, 'ok'>
   if (code === 'account_lapsed') return 'lapsed'
   return null
 }
+
+/**
+ * Task 1605 (server PR #129) — two upload refusals that are NOT modeled by
+ * `account_state` at all (the account is still `ok`/`cancelling`, not
+ * `lapsed`/`needs_plan`):
+ *
+ *  - `trial_cancelled_read_only` (409, upload/share init) — a never-paid
+ *    trial cancelled before its first charge. Distinct from `lapsed`: the
+ *    trial hasn't ENDED, it's cancelled early, and resuming it (or paying
+ *    now) restores uploads immediately — never "subscribe" as the CTA.
+ *  - `quota_exceeded` (413) with the additive `is_trial_cap: true` flag — an
+ *    ACTIVE mandated trial hit the 25 GB cap. The server's own `message`
+ *    field is already the exact actionable copy; used verbatim when present.
+ *
+ * Both route to `/billing`, where the trial card's own "pay now"/"resume
+ * trial" actions live — no separate CTA wiring needed here.
+ */
+export function uploadRefusalNotice(err: unknown): UploadBlockedNotice | null {
+  if (!err || typeof err !== 'object') return null
+  const code = (err as { code?: unknown }).code
+  if (code === 'trial_cancelled_read_only') {
+    return {
+      title: 'Uploads are off',
+      description:
+        'You cancelled your trial before its first payment, so uploads and new shares are off. Resume your trial or pay now to upload again.',
+      href: '/billing',
+    }
+  }
+  if (code === 'quota_exceeded') {
+    const details = (err as { details?: Record<string, unknown> }).details
+    if (details?.is_trial_cap === true) {
+      const rawMessage = (err as { message?: unknown }).message
+      const description =
+        typeof rawMessage === 'string' && rawMessage.length > 0 && rawMessage.length <= 200
+          ? rawMessage
+          : "You've reached the 25 GB trial storage cap. Pay now to unlock your full plan storage."
+      return { title: '25 GB trial cap reached', description, href: '/billing' }
+    }
+  }
+  return null
+}
