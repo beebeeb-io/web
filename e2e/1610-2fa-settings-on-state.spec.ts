@@ -81,7 +81,7 @@ test('2FA on: settings shows the On state and "Set up again" via code reissues +
   await expect(page.getByRole('button', { name: /^turn off$/i })).toBeVisible()
   await expect(page.getByRole('button', { name: /^set up again$/i })).toBeVisible()
   await page.screenshot({
-    path: '/Users/guuslangelaar/Development/Beebeeb/beebeeb.io/.claude/tasks/_qa-evidence/1610/web/1610-gate1-on-state.png',
+    path: test.info().outputPath('1610-gate1-on-state.png'),
   })
 
   // "Set up again" — the reauth panel: code input + password alternative.
@@ -90,7 +90,7 @@ test('2FA on: settings shows the On state and "Set up again" via code reissues +
   await expect(reauthInput).toBeVisible({ timeout: 5_000 })
   await expect(page.getByText(/use your password instead/i)).toBeVisible()
   await page.screenshot({
-    path: '/Users/guuslangelaar/Development/Beebeeb/beebeeb.io/.claude/tasks/_qa-evidence/1610/web/1610-gate2-reauth-code-prompt.png',
+    path: test.info().outputPath('1610-gate2-reauth-code-prompt.png'),
   })
 
   // A wrong code is a clear inline message, never a raw error.
@@ -112,7 +112,7 @@ test('2FA on: settings shows the On state and "Set up again" via code reissues +
   const newSecret = (await newSecretEl.innerText()).trim()
   expect(newSecret).not.toBe(secret)
   await page.screenshot({
-    path: '/Users/guuslangelaar/Development/Beebeeb/beebeeb.io/.claude/tasks/_qa-evidence/1610/web/1610-gate3-reauth-new-secret.png',
+    path: test.info().outputPath('1610-gate3-reauth-new-secret.png'),
   })
 
   // Re-verify with the NEW secret to finish the "set up again" round trip.
@@ -121,7 +121,7 @@ test('2FA on: settings shows the On state and "Set up again" via code reissues +
   const savedAgain = page.getByRole('button', { name: /I've saved these codes/i })
   await expect(savedAgain).toBeVisible({ timeout: 15_000 })
   await page.screenshot({
-    path: '/Users/guuslangelaar/Development/Beebeeb/beebeeb.io/.claude/tasks/_qa-evidence/1610/web/1610-gate4-reauth-success-backup-codes.png',
+    path: test.info().outputPath('1610-gate4-reauth-success-backup-codes.png'),
   })
   await savedAgain.click()
 
