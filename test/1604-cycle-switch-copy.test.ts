@@ -10,6 +10,7 @@ import {
   trialCycleSwitchToast,
   trialCycleSwitchNoteFor,
   trialCycleSwitchToastFor,
+  cycleSwitchTargetTotalCents,
 } from '../src/lib/cycle-switch-copy'
 
 const TRIAL_END = '9 Oct 2026'
@@ -131,6 +132,22 @@ describe('flow-4 finding 4 / task 1604 — trial cycle-switch copy', () => {
       expect(isCancelledTrial(null)).toBe(false)
     })
 
+    // Review thread PRRT_kwDOSLX6Nc6nC4VY: the server contract
+    // (switch_cycle_not_found_reason, routes/billing.rs) classifies
+    // `current_period_end <= trial_ends_at` as cancelled-before-first-charge,
+    // not `===`. current_period_end BEFORE trial_ends_at is reachable (a
+    // webhook race / clock skew between the cancel write and the trial-end
+    // timestamp) and must still be case (c) — an equality-only check missed
+    // it, showing the paid cycle-switch UI for a row the server would still
+    // 409 trial_cancelled.
+    test('isCancelledTrial is also true when current_period_end is strictly BEFORE trial_ends_at (the "<" case)', () => {
+      const earlier = '2026-10-08T23:59:00Z' // one minute before TRIAL_END_ISO
+      expect(earlier < TRIAL_END_ISO).toBe(true) // sanity: the fixture really is "<", not "="
+      expect(isCancelledTrial({ status: 'cancelling', trial_ends_at: TRIAL_END_ISO, current_period_end: earlier })).toBe(
+        true,
+      )
+    })
+
     test('note text is the fixed "resume to change billing" copy', () => {
       expect(trialCancelledSwitchNote()).toBe('Your trial is cancelled — resume it to change billing.')
     })
@@ -148,6 +165,49 @@ describe('flow-4 finding 4 / task 1604 — trial cycle-switch copy', () => {
           'EUR 5.49',
         ),
       ).toBe(trialCancelledSwitchNote())
+    })
+  })
+
+  // Review thread PRRT_kwDOSLX6Nc6nC4VT: the promised "first charge" for a
+  // mandated-trial cycle switch must include add-ons (storage/users), not
+  // just the plan's catalog base price.
+  describe('cycleSwitchTargetTotalCents — target-cycle total including add-ons', () => {
+    test('no add-on: target total is just the base plan price for the target cycle', () => {
+      // pro monthly EUR 9.99 -> yearly EUR 99.00, no add-on either cycle.
+      expect(cycleSwitchTargetTotalCents(9900, 0, 'monthly', 'yearly')).toBe(9900)
+      expect(cycleSwitchTargetTotalCents(999, 0, 'yearly', 'monthly')).toBe(999)
+    })
+
+    test('with a storage add-on: monthly -> yearly scales the add-on ×12, not just the base plan', () => {
+      // Base plan yearly EUR 99.00 (9900c). Currently monthly with a storage
+      // add-on billed at EUR 14.99/mo (1499c) -> server `addon_cents` on the
+      // CURRENT (monthly) cycle is exactly 1499. Switching to yearly must
+      // charge 9900 (base) + 1499*12 = 9900 + 17988 = 27888, never just 9900.
+      const targetBaseCents = 9900
+      const currentAddonCentsMonthly = 1499
+      const total = cycleSwitchTargetTotalCents(targetBaseCents, currentAddonCentsMonthly, 'monthly', 'yearly')
+      expect(total).toBe(9900 + 1499 * 12)
+      expect(total).not.toBe(targetBaseCents) // the P1 bug: base price alone, add-on silently dropped
+    })
+
+    test('with a storage add-on: yearly -> monthly recovers the exact monthly add-on rate', () => {
+      // Currently yearly with the SAME add-on -> server `addon_cents` on the
+      // current (yearly) cycle is 1499*12 = 17988. Switching to monthly must
+      // recover exactly 1499/mo, not 17988/mo or some rounded approximation.
+      const targetBaseCents = 999 // pro monthly EUR 9.99
+      const currentAddonCentsYearly = 1499 * 12
+      const total = cycleSwitchTargetTotalCents(targetBaseCents, currentAddonCentsYearly, 'yearly', 'monthly')
+      expect(total).toBe(999 + 1499)
+    })
+
+    test('null/undefined addon_cents (no add-on data available) is treated as zero, never NaN', () => {
+      expect(cycleSwitchTargetTotalCents(9900, null, 'monthly', 'yearly')).toBe(9900)
+      expect(cycleSwitchTargetTotalCents(9900, undefined, 'monthly', 'yearly')).toBe(9900)
+    })
+
+    test('same-cycle call (defensive) is exact — no rounding drift from the round-trip', () => {
+      expect(cycleSwitchTargetTotalCents(9900, 1499, 'monthly', 'monthly')).toBe(9900 + 1499)
+      expect(cycleSwitchTargetTotalCents(9900, 1499 * 12, 'yearly', 'yearly')).toBe(9900 + 1499 * 12)
     })
   })
 })

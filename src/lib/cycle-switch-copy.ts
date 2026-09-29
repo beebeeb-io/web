@@ -47,18 +47,29 @@ export function isMandatedTrial(sub: CycleSwitchSubscription | null | undefined)
 /**
  * Case (c) — a trial cancelled before its first charge (server #128:
  * `status='cancelling' AND current_period_end <= trial_ends_at`). The row
- * never reached a real billing period, so `current_period_end` is still
- * pinned at `trial_ends_at` exactly (`trial.rs start_trial` sets them equal;
- * nothing since has moved either forward). A cancelling row with its OWN
- * grace period (a paid plan cancelled normally) has no `trial_ends_at` at
- * all, or a `current_period_end` that has since moved past it — never equal.
+ * never reached a real billing period, so `current_period_end` is pinned at
+ * or before `trial_ends_at` (`trial.rs start_trial` sets them equal; nothing
+ * since has moved `current_period_end` forward — it only ever advances on a
+ * real charge landing, per `mollie_webhook.rs`'s "current_period_end only
+ * moves forward" invariant, so it can equal but never exceed `trial_ends_at`
+ * pre-charge). Server's own `switch_cycle_not_found_reason` (routes/
+ * billing.rs) uses `<=`, not `===` — a `<` case is reachable whenever the
+ * cancellation is recorded slightly before the exact trial-end instant, e.g.
+ * a webhook race or clock skew between the cancel write and the trial-end
+ * timestamp. `===` alone missed that case: the row still fits case (c), but
+ * fell through to the paid-subscriber cycle-switch UI instead of the resume
+ * message, and the server's own `<=` still answered `trial_cancelled`. A
+ * cancelling row with its OWN grace period (a paid plan cancelled normally)
+ * has no `trial_ends_at` at all, or a `current_period_end` that has since
+ * moved *past* it — never `<=`.
  */
 export function isCancelledTrial(sub: CycleSwitchSubscription | null | undefined): boolean {
   if (!sub) return false
   return (
     sub.status === 'cancelling' &&
     !!sub.trial_ends_at &&
-    sub.current_period_end === sub.trial_ends_at
+    !!sub.current_period_end &&
+    sub.current_period_end <= sub.trial_ends_at
   )
 }
 
@@ -132,4 +143,46 @@ export function trialCycleSwitchToastFor(
   if (isCancelledTrial(sub)) return trialCancelledSwitchNote()
   if (isMandatedTrial(sub)) return mandatedTrialCycleSwitchToast(newPriceLabel, trialEndLabel)
   return trialCycleSwitchToast(target, trialEndLabel)
+}
+
+/**
+ * The exact target-cycle recurring total (integer cents), base plan PLUS
+ * add-ons — review thread PRRT_kwDOSLX6Nc6nC4VT: the promised "first charge"
+ * for a mandated-trial cycle switch previously used `currentPriceYearly`/
+ * `currentPriceMonthly` alone, dropping the storage/user add-on even though
+ * the switch confirmation's own copy says the add-on switches cycle too.
+ *
+ * Server truth (`mollie_switch_billing_cycle`, routes/billing.rs): the
+ * target-cycle catalog total is `recurring_amount_cents(plan, target_cycle,
+ * 1) + addon_amount_cents(plan, target_cycle, extra_storage_tb,
+ * extra_users)`, where `addon_amount_cents` is a flat PER-MONTH rate scaled
+ * ×12 for yearly — the add-on unit price itself never varies by cycle. The
+ * web does not have that per-unit rate broken out (no `user_addon_price_cents`
+ * field is exposed), but `GET /billing/subscription` already resolves
+ * `addon_cents` — the CURRENT cycle's add-on total, computed server-side by
+ * that exact same `(unit rate) × months` rule. Dividing it by the CURRENT
+ * cycle's month count recovers the monthly unit-rate sum exactly (integer,
+ * no remainder, because the server produced it via the same multiplication),
+ * and re-multiplying by the TARGET cycle's month count reproduces the exact
+ * server total for the new cycle — no new endpoint needed, and no
+ * approximation. (`GET /billing/vat-preview` was considered instead, but it
+ * only takes `plan`/`cycle`/`quantity` — it has no add-on inputs at all, so
+ * it cannot reproduce this number either.)
+ *
+ * This intentionally leaves VAT treatment unresolved, same as every other
+ * price already shown in this dialog (`currentPriceYearly`/
+ * `currentPriceMonthly`, the catalog display price) — the server's VAT
+ * engine (buyer country, reverse charge, OSS) is not reproducible client-side
+ * and was already out of scope for the pre-existing base-price display.
+ */
+export function cycleSwitchTargetTotalCents(
+  basePlanTargetCycleCents: number,
+  addonCentsCurrentCycle: number | null | undefined,
+  currentCycle: BillingCycle,
+  targetCycle: BillingCycle,
+): number {
+  const months = (c: BillingCycle) => (c === 'yearly' ? 12 : 1)
+  const addonMonthlyCents = (addonCentsCurrentCycle ?? 0) / months(currentCycle)
+  const addonTargetCents = Math.round(addonMonthlyCents * months(targetCycle))
+  return Math.round(basePlanTargetCycleCents) + addonTargetCents
 }

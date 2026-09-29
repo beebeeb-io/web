@@ -1,5 +1,6 @@
 import { defineConfig } from '@playwright/test'
 import path from 'path'
+import { WEB_URL } from './trial-0905-web-url'
 
 /**
  * Standalone Playwright config for the 0905 14-day free-trial web UI (UNIT C).
@@ -14,8 +15,11 @@ import path from 'path'
  * a developer's or another lane's `bun dev` on :5173 — override with
  * E2E_WEB_URL like before. `reuseExistingServer: true` only ever reuses OUR
  * OWN prior instance on this same dedicated port, never someone else's.
+ *
+ * Review thread PRRT_kwDOSLX6Nc6nC4VK — `WEB_URL` now comes from
+ * `trial-0905-web-url.ts`, the SAME module the spec imports it from, rather than
+ * each file computing its own default that could (and did) drift apart.
  */
-const WEB_URL = process.env.E2E_WEB_URL ?? 'http://localhost:5199'
 const WEB_PORT = new URL(WEB_URL).port || '5199'
 
 export default defineConfig({

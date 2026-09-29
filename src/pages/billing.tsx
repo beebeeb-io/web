@@ -67,6 +67,8 @@ import {
   trialCancelledSwitchNote,
   trialCycleSwitchNoteFor,
   trialCycleSwitchToastFor,
+  cycleSwitchTargetTotalCents,
+  type BillingCycle,
 } from '../lib/cycle-switch-copy'
 import { InvoiceList } from '../components/billing/InvoiceList'
 import { TransactionList } from '../components/billing/TransactionList'
@@ -729,7 +731,29 @@ export function Billing() {
     sub?.status === 'cancelling' ? (sub.plan ?? 'free') :
     (sub?.plan ?? 'free')
   const meta = planMeta[effectivePlan] ?? planMeta.free
-  const periodLine = billingPeriodLine(sub ? { ...sub, plan: effectivePlan } : null)
+  // Task 1604 review thread PRRT_kwDOSLX6Nc6nC4Vb: this used to pass
+  // `effectivePlan` (forced to 'free' the instant `account_state` is
+  // `lapsed`, above) into `billingPeriodLine`, which returns null at its own
+  // `plan === 'free'` guard before it can even look at `status`/
+  // `data_deletion_at`. But a `lapsed` account_state does NOT mean the raw
+  // subscription row itself flipped to 'free' — the server's own
+  // `resolve_account_state` (signup_plan.rs) derives `lapsed` from the
+  // ENTITLED plan (`quota::get_user_quota`), which is independent of the
+  // newest row's own `plan`/`status` columns exposed here. Concretely: a
+  // cancelled paid row stays `status: 'cancelling'` with its OLD `plan` (e.g.
+  // 'pro') in the DB until a later sweep tidies it up, even once
+  // `current_period_end` has passed and entitlement (and therefore
+  // `account_state`) has already flipped to `lapsed` — and `data_deletion_at`
+  // is set at exactly that same moment (`resolve_account_state`: non-null
+  // only once `account_state === Lapsed`). So the ONE shape that carries
+  // `data_deletion_at` is exactly the shape `effectivePlan` was clobbering to
+  // 'free' before `billingPeriodLine` ever saw the real `status`. Pass the
+  // row's own `plan`/`status` (not the display-only `effectivePlan`) —
+  // `billingPeriodLine`'s own guards (`plan === 'free'`, `status ===
+  // 'cancelled' | 'paused'`) already null out every case that should render
+  // nothing, using the ACTUAL row shape rather than a value already
+  // overwritten for an unrelated "No plan" display concern.
+  const periodLine = billingPeriodLine(sub ?? null)
   // Task 1517 — authoritative trial-eligibility signal. `sub?.has_used_trial`
   // is the server truth (set the moment ANY trial was ever started, whether
   // it lapsed, converted, or is still running); `trialUsed` is the optimistic
@@ -771,6 +795,20 @@ export function Billing() {
   const apiPlan = plans?.find(p => p.id === effectivePlan)
   const currentPriceMonthly = apiPlan?.price_eur ?? meta.priceMonthly
   const currentPriceYearly = apiPlan?.price_yearly_eur ?? meta.priceYearly
+  /**
+   * "EUR X.XX" for the TARGET cycle's full recurring total — base plan PLUS
+   * add-ons (task 1604 review thread PRRT_kwDOSLX6Nc6nC4VT). Used for the
+   * cycle-switch confirm/toast copy, which otherwise promised a "first
+   * charge" that silently dropped the storage/user add-on. See
+   * `cycleSwitchTargetTotalCents`'s doc comment for why this is exact and not
+   * an approximation.
+   */
+  function targetCycleTotalLabel(cycle: BillingCycle): string {
+    const basePlanTargetCents = Math.round((cycle === 'yearly' ? currentPriceYearly : currentPriceMonthly) * 100)
+    const currentCycle: BillingCycle = sub?.billing_cycle === 'yearly' ? 'yearly' : 'monthly'
+    const totalCents = cycleSwitchTargetTotalCents(basePlanTargetCents, sub?.addon_cents, currentCycle, cycle)
+    return `EUR ${(totalCents / 100).toFixed(2)}`
+  }
   // When addon data is available, use the effective storage (base + extra).
   // Otherwise fall back to the plan-level storage from planMeta.
   const rawTotalStorageBytes = addonState
@@ -1224,7 +1262,7 @@ function openUpgrade(plan: string) {
       // today either way, so the paid-subscriber "next billing period" copy
       // would be wrong. `trialCycleSwitchToastFor` routes on the payload.
       const trialEnd = sub?.trial_ends_at ?? sub?.current_period_end ?? null
-      const newPriceLabel = `EUR ${(cycle === 'yearly' ? currentPriceYearly : currentPriceMonthly).toFixed(2)}`
+      const newPriceLabel = targetCycleTotalLabel(cycle)
       showToast({
         icon: 'check',
         title: cycle === 'yearly' ? 'Switched to annual billing' : 'Switched to monthly billing',
@@ -2299,7 +2337,7 @@ function openUpgrade(plan: string) {
                         sub,
                         'yearly',
                         formatDate(sub?.trial_ends_at ?? sub?.current_period_end ?? null),
-                        `EUR ${currentPriceYearly.toFixed(2)}`,
+                        targetCycleTotalLabel('yearly'),
                       )}
                     </p>
                   ) : (
@@ -2884,7 +2922,7 @@ function openUpgrade(plan: string) {
                         sub,
                         'monthly',
                         formatDate(sub.trial_ends_at ?? sub.current_period_end ?? null),
-                        `EUR ${currentPriceMonthly.toFixed(2)}`,
+                        targetCycleTotalLabel('monthly'),
                       )}
                     </p>
                   ) : (

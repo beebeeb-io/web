@@ -20,8 +20,14 @@
  * Run: bunx playwright test --config=e2e/trial-0905.config.ts
  */
 import { test, expect, type Page, type Route } from '@playwright/test'
+import { WEB_URL } from './trial-0905-web-url'
 
-const WEB = process.env.E2E_WEB_URL ?? 'http://localhost:5173'
+// Task 1604 review thread PRRT_kwDOSLX6Nc6nC4VK — `WEB` used to default to
+// :5173 independently of the config's `webServer`/`baseURL` (which defaults
+// to :5199), so the documented default command either got
+// ERR_CONNECTION_REFUSED or silently tested an unrelated :5173 dev server.
+// Both files now import the SAME constant.
+const WEB = WEB_URL
 
 const FREE_SUB = {
   plan: 'free',
@@ -92,6 +98,20 @@ function mandatedTrialSub() {
 }
 
 /**
+ * Task 1604 review thread PRRT_kwDOSLX6Nc6nC4VT — a mandated trial with an
+ * active storage add-on. `addon_cents: 1499` mirrors the server's
+ * `addon_amount_cents(plan, 'monthly', 1, 0)` for a EUR 14.99/mo, 1 TB
+ * add-on (the current cycle is monthly here, so no ×12 yet). The promised
+ * "first charge" for a monthly→yearly switch must be the PLAN'S yearly
+ * price PLUS the add-on re-priced at yearly (×12) — EUR 99.00 + EUR 179.88 =
+ * EUR 278.88 — never just the EUR 99.00 base plan price.
+ */
+function mandatedTrialSubWithAddon() {
+  const s = mandatedTrialSub()
+  return { ...s, extra_storage_tb: 1, addon_cents: 1499 }
+}
+
+/**
  * Task 1604 (c) — a trial cancelled before its first charge (server #128:
  * `status='cancelling' AND current_period_end <= trial_ends_at`). Unlike
  * `cancellingSub` (a normal paid cancellation, no `trial_ends_at`), this row
@@ -112,10 +132,19 @@ function cancelledTrialSub() {
  * (`data_deletion_at` set, server #125/#1037). Distinct from
  * `cancelledTrialSub`: this is a LAPSED account (no trial fields), not a
  * trial cancelled before its first charge.
+ *
+ * Review thread PRRT_kwDOSLX6Nc6nC4Vb: `account_state: 'lapsed'` is NOT
+ * optional here — per `resolve_account_state` (server signup_plan.rs),
+ * `data_deletion_at` is only ever non-null once `account_state` has already
+ * resolved to `lapsed`, so a production row that carries `data_deletion_at`
+ * ALWAYS carries `account_state: 'lapsed'` too. Without it this fixture
+ * couldn't have caught the billing.tsx bug it exists to catch (a missing
+ * `account_state` resolves to `'ok'`, which never hit the lapsed code path at
+ * all — the test passed for the wrong reason).
  */
 const DELETION_AT = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString()
 function cancellingWithDeletionSub() {
-  return { ...cancellingSub(), data_deletion_at: DELETION_AT }
+  return { ...cancellingSub(), data_deletion_at: DELETION_AT, account_state: 'lapsed' }
 }
 
 const PLANS = [
@@ -398,5 +427,28 @@ test.describe('0905 14-day free trial — web UI (UNIT C)', () => {
     await expect(page.getByText(/^Access until /).first()).toBeVisible({ timeout: 15_000 })
     await expect(page.getByText(/Files deleted on /).first()).toBeVisible()
     await page.screenshot({ path: 'e2e/screenshots/1604-gate10-cancelling-deletion-note.png', fullPage: true })
+  })
+
+  // Review thread PRRT_kwDOSLX6Nc6nC4VT: the promised "first charge" for a
+  // mandated trial with an active storage add-on must include the add-on,
+  // re-priced at the TARGET cycle — not just the plan's catalog base price.
+  test('GATE 11 — mandated trial with a storage add-on: cycle-switch note names base + add-on, not base alone', async ({
+    page,
+  }) => {
+    await installMocks(page, { sub: mandatedTrialSubWithAddon() })
+    await bootBilling(page, '/settings/billing')
+    await page.getByRole('button', { name: /Change plan/i }).click()
+    await expect(page.getByText(/Plan & billing/i).first()).toBeVisible({ timeout: 15_000 })
+    // mandatedTrialSubWithAddon is billing_cycle: 'monthly' → the
+    // annual-savings prompt (Switch to annual) is offered.
+    await page.getByRole('button', { name: /^Switch to annual$/ }).click()
+    const note = page.getByTestId('cycle-switch-trial-note')
+    await expect(note).toBeVisible({ timeout: 10_000 })
+    // Pro yearly EUR 99.00 + (EUR 14.99/mo add-on × 12 = EUR 179.88) = EUR 278.88.
+    await expect(note).toContainText('EUR 278.88')
+    // The base-price-only number from the P1 bug must NOT appear as the
+    // first-charge figure.
+    await expect(note).not.toContainText('first charge of EUR 99.00')
+    await page.screenshot({ path: 'e2e/screenshots/1604-gate11-mandated-trial-addon-switch-note.png', fullPage: true })
   })
 })
