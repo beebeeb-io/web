@@ -34,6 +34,7 @@ import {
   payOverdue,
   exportBillingTransactions,
   convertTrial,
+  payTrialNow,
   createCheckoutSession,
   ApiError,
   type Subscription,
@@ -91,6 +92,22 @@ import { parsePlanIntent, clearPlanIntent } from '../lib/plan-intent'
 import { choosePlanPath, trialAutoConvertCopy, trialRenewalAmount, trialTermsCopy } from '../lib/trial-checkout'
 import { lapsedBannerCopy, resolveAccountState } from '../lib/account-state'
 import { billingPeriodLine } from '../lib/billing-period-line'
+import {
+  cancelledCardCopy,
+  cancelledCompactLine,
+  isTrialCapped,
+  trialCapExplainer,
+  payNowButtonLabel,
+} from '../lib/trial-limits-copy'
+import {
+  type PayNowState,
+  IDLE_STATE as PAY_NOW_IDLE_STATE,
+  stateAfterPayNowResult,
+  stateAfterPayNowError,
+  payNowPollDecision,
+  stateForPollOutcome,
+  PAY_NOW_POLL_INTERVAL_MS,
+} from '../lib/trial-pay-now'
 
 /* ── Plan metadata (imported from plan-constants.ts) ──── */
 
@@ -320,6 +337,16 @@ export function Billing() {
   const [upgradePlan, setUpgradePlan] = useState<string>('pro')
   const [portalLoading, setPortalLoading] = useState(false)
   const [payOverdueLoading, setPayOverdueLoading] = useState(false)
+  // Task 1605 — "pay now" to end a mandated trial's 25 GB cap early. See
+  // ../lib/trial-pay-now.ts for the phase/poll state machine.
+  const [payNowState, setPayNowState] = useState<PayNowState>(PAY_NOW_IDLE_STATE)
+  const payNowPollStartRef = useRef<number | null>(null)
+  const payNowPollCancelledRef = useRef(false)
+  useEffect(() => {
+    return () => {
+      payNowPollCancelledRef.current = true
+    }
+  }, [])
   // Cancel flow is a four-step machine (task 0544 added 'pause'):
   //   'idle'    — initial state, "Cancel plan" link is visible
   //   'offer'   — win-back offer card (50% off / 3 months); only when eligible
@@ -831,6 +858,11 @@ export function Billing() {
   // subscription (task 0946, F4). A SEPA charge is "settling", never "failed".
   const checkoutIsSepa = intentMandate === 'directdebit' || isSepaMandate
 
+  // Task 1605 — cancelling-panel copy (never-paid trial vs. paid cancel) and
+  // the active-trial 25 GB cap. Pure helpers in ../lib/trial-limits-copy.ts.
+  const cancelCopy = cancelledCardCopy(sub, meta.label)
+  const trialCapped = isTrialCapped(sub)
+
   // Storage slider derived values
   const canAddStorage = planCanAddStorage(effectivePlan)
   const baseTB = addonState?.base_storage_tb || planBaseTB(effectivePlan)
@@ -1037,6 +1069,66 @@ function openUpgrade(plan: string) {
       })
     } finally {
       setReactivateLoading(false)
+    }
+  }
+
+  /**
+   * Task 1605 — "pay now" ends a mandated trial's 25 GB cap early by
+   * charging the first period on the existing mandate right away. Double-
+   * click safe: refuses to re-enter while `submitting`/`pending`. Two
+   * settlement shapes from the server (see ../lib/trial-pay-now.ts):
+   *   - synchronous (card) → refresh once, done.
+   *   - `pending: true` (SEPA/off-session) → bounded poll of
+   *     GET /billing/subscription until `status === 'active'`.
+   */
+  async function handlePayNow() {
+    if (payNowState.phase === 'submitting' || payNowState.phase === 'pending') return
+    payNowPollCancelledRef.current = false
+    setPayNowState({ phase: 'submitting' })
+    try {
+      const result = await payTrialNow()
+      const next = stateAfterPayNowResult(result)
+      setPayNowState(next)
+      if (next.phase === 'pending') {
+        payNowPollStartRef.current = Date.now()
+        void pollPayNow(next.paymentId)
+        return
+      }
+      await onPayNowSettled()
+    } catch (err) {
+      const e = err instanceof ApiError ? { status: err.status, code: err.code, message: err.message } : { message: err instanceof Error ? err.message : undefined }
+      setPayNowState(stateAfterPayNowError(e))
+    }
+  }
+
+  async function onPayNowSettled() {
+    window.dispatchEvent(new Event('beebeeb:plan-changed'))
+    refreshPlanDetails()
+    await loadData()
+    showToast({ icon: 'check', title: `${meta.label} unlocked`, description: 'Your full plan storage is now available.' })
+  }
+
+  async function pollPayNow(paymentId?: string) {
+    if (payNowPollCancelledRef.current) return
+    const start = payNowPollStartRef.current ?? Date.now()
+    let status: string | null = null
+    try {
+      const latest = await getSubscription()
+      status = latest.status ?? null
+      if (status === 'active') setSub(latest)
+    } catch {
+      // Transient fetch failure — keep polling until the bounded timeout.
+    }
+    if (payNowPollCancelledRef.current) return
+    const elapsed = Date.now() - start
+    const outcome = payNowPollDecision(elapsed, status)
+    setPayNowState(stateForPollOutcome(outcome, elapsed, paymentId))
+    if (outcome === 'keep_polling') {
+      setTimeout(() => { void pollPayNow(paymentId) }, PAY_NOW_POLL_INTERVAL_MS)
+      return
+    }
+    if (outcome === 'settled') {
+      await onPayNowSettled()
     }
   }
 
@@ -2023,6 +2115,13 @@ function openUpgrade(plan: string) {
                   {accountState === 'needs_plan' && (
                     <div className="text-[13px] text-ink-3">Start a free trial to begin uploading</div>
                   )}
+                  {/* Task 1605 — a never-paid trial cancelled before its first
+                      charge is read-only for UPLOADS immediately, distinct
+                      from `accountState === 'lapsed'` above (the trial hasn't
+                      lapsed yet, it's cancelled early). */}
+                  {cancelCopy?.uploadsBlockedNow && (
+                    <div className="text-[13px] text-ink-3">Uploads and new shares are off — view and download still work</div>
+                  )}
 
                   <div className="mt-5 flex items-center gap-3">
                     <BBButton variant="amber" size="md" onClick={() => setView('change')}>
@@ -2089,11 +2188,33 @@ function openUpgrade(plan: string) {
               {/* Footer strip: renews / trial ends / access until.
                   Flow-money #5: a trial does not renew and a cancelling plan
                   lapses — billingPeriodLine picks the honest label (same
-                  rules as mobile billing-status.ts and the CLI). */}
-              {periodLine && (
-                  <div className="flex items-center gap-3 px-5 py-3 border-t border-line bg-paper-2 text-xs">
+                  rules as mobile billing-status.ts and the CLI).
+                  Task 1605 — a never-paid trial cancelled before its first
+                  charge gets its OWN compact line ("Uploads stopped ·
+                  Access until · Files deleted on", never "Renews"), driven
+                  by uploads_blocked_at/access_until/data_deletion_at —
+                  distinct from a paying customer's ordinary cancel (unchanged
+                  below, uploads keep working through the grace period). */}
+              {cancelCopy?.kind === 'never_paid_trial' ? (
+                <div
+                  data-testid="cancelling-card"
+                  data-cancel-kind="never_paid_trial"
+                  className="flex items-center gap-3 px-5 py-3 border-t border-line bg-amber-bg/40 text-xs"
+                >
+                  <Icon name="upload" size={13} className="text-amber-deep shrink-0" />
+                  <span className="flex-1 text-ink-2" data-testid="cancelling-headline">
+                    {cancelledCompactLine(cancelCopy, formatDate)}
+                  </span>
+                </div>
+              ) : (
+                periodLine && (
+                  <div
+                    className="flex items-center gap-3 px-5 py-3 border-t border-line bg-paper-2 text-xs"
+                    data-testid={cancelCopy?.kind === 'paid_cancelling' ? 'cancelling-card' : undefined}
+                    data-cancel-kind={cancelCopy?.kind}
+                  >
                     <Icon name="clock" size={13} className="text-ink-3 shrink-0" />
-                    <span className="flex-1 text-ink-2">
+                    <span className="flex-1 text-ink-2" data-testid={cancelCopy?.kind === 'paid_cancelling' ? 'cancelling-headline' : undefined}>
                       {periodLine.label} <strong className="font-mono text-ink">{formatDate(periodLine.dateIso)}</strong>
                       {periodLine.label === 'Renews' && paymentMethod?.brand && (
                         <> via <span className="text-ink">{paymentMethod.brand}</span></>
@@ -2113,7 +2234,42 @@ function openUpgrade(plan: string) {
                       <span className="font-mono text-ink-4">incl. add-on storage</span>
                     )}
                   </div>
-                )}
+                )
+              )}
+
+              {/* Task 1605 — active mandated trial, still under the 25 GB
+                  cap. Guus, 2026-09-29: "we need to make sure the user is
+                  not limited to 25gb for 2 weeks" — pay now ends the trial
+                  early and unlocks the full plan quota. */}
+              {trialCapped && sub?.trial_storage_cap_bytes != null && (
+                <div data-testid="trial-cap-card" className="flex items-center gap-3 px-5 py-3 border-t border-line bg-paper-2 text-xs">
+                  <Icon name="lock" size={13} className="text-ink-3 shrink-0" />
+                  <span className="flex-1 text-ink-2" data-testid="trial-cap-explainer">
+                    {trialCapExplainer(meta.label, sub.trial_storage_cap_bytes, formatStorageSI)}
+                  </span>
+                  <BBButton
+                    size="sm"
+                    variant="amber"
+                    data-testid="pay-now-button"
+                    onClick={() => void handlePayNow()}
+                    disabled={payNowState.phase === 'submitting' || payNowState.phase === 'pending'}
+                  >
+                    {payNowState.phase === 'submitting' || payNowState.phase === 'pending'
+                      ? 'Processing…'
+                      : payNowButtonLabel(meta.label)}
+                  </BBButton>
+                </div>
+              )}
+              {trialCapped && payNowState.phase === 'pending' && (
+                <div data-testid="pay-now-pending" className="px-5 py-2 border-t border-line bg-paper-2 text-xs text-amber-deep">
+                  {payNowState.message}
+                </div>
+              )}
+              {trialCapped && payNowState.phase === 'error' && (
+                <div data-testid="pay-now-error" className="px-5 py-2 border-t border-line bg-paper-2 text-xs text-red">
+                  {payNowState.message}
+                </div>
+              )}
             </Card>
 
             {/* Payment Method card (#7) — restyled. Binds ONLY to real
@@ -2487,43 +2643,101 @@ function openUpgrade(plan: string) {
               </div>
             )}
 
-            {/* Cancelling state — prominent remaining period display */}
-            {sub?.current_period_end && sub.status === 'cancelling' && (
-              <div className="rounded-lg border border-amber/40 bg-amber-bg/40 p-4 space-y-3">
+            {/* Cancelling state — task 1605: server-driven copy from
+                uploads_blocked_at / access_until / data_deletion_at, in place
+                of the previous hardcoded "stays fully active until
+                <current_period_end>" / "permanently deleted on
+                <current_period_end>" text. That copy was wrong on two counts
+                (task 1605 Notes, 1604 gate-9 screenshot): it claimed a
+                deletion date that BB_CANCEL_WIPE_ENABLED-off prod never
+                enforces, and — Guus's 2026-09-29 ruling — it is flatly untrue
+                for a never-paid trial cancelled before its first charge,
+                which loses UPLOAD access immediately, not at period end. */}
+            {cancelCopy && (
+              <div
+                data-testid="cancelling-card"
+                data-cancel-kind={cancelCopy.kind}
+                className="rounded-lg border border-amber/40 bg-amber-bg/40 p-4 space-y-3"
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 space-y-1.5">
                     <div className="flex items-center gap-2">
-                      <Icon name="clock" size={14} className="text-amber-deep shrink-0" />
-                      <span className="text-sm font-semibold text-ink">
-                        {formatRemainingTime(sub.current_period_end) ?? 'Expires soon'}
+                      <Icon name={cancelCopy.uploadsBlockedNow ? 'upload' : 'clock'} size={14} className="text-amber-deep shrink-0" />
+                      <span className="text-sm font-semibold text-ink" data-testid="cancelling-headline">
+                        {cancelCopy.kind === 'never_paid_trial'
+                          ? cancelledCompactLine(cancelCopy, formatDate)
+                          : (formatRemainingTime(cancelCopy.accessUntilIso) ?? 'Expires soon')}
                       </span>
                     </div>
-                    <p className="text-xs text-ink-2 leading-relaxed">
-                      Your {meta.label} plan stays fully active until{' '}
-                      <strong className="font-mono">{formatDate(sub.current_period_end)}</strong>.
-                      {sub.billing_cycle === 'yearly' && remainingDays(sub.current_period_end) > 30 && (
-                        <> You have pre-paid for the full year.</>
-                      )}
-                    </p>
-                    {/* WP-B (task 1060): the true wipe model — at period-end the
-                        account closes and ALL files are permanently deleted. The
-                        remaining paid period IS the download window. Honest, calm,
-                        no "drops to Free" (Free is admin-only). */}
-                    <p className="text-xs text-ink-2 leading-relaxed">
-                      Your files will be permanently deleted on{' '}
-                      <strong className="font-mono text-ink">{formatDate(sub.current_period_end)}</strong>
-                      {(() => {
-                        const left = remainingDays(sub.current_period_end)
-                        return left > 0 ? (
-                          <> (<span className="font-mono">{left} day{left !== 1 ? 's' : ''}</span> left)</>
-                        ) : null
-                      })()}
-                      . Download them first — the{' '}
-                      <span className="font-mono">bb</span> CLI or the desktop app can pull your whole vault.
-                    </p>
-                    <p className="text-xs text-ink-3 leading-relaxed">
-                      We can&apos;t recover this. Reactivate any time before then to keep everything.
-                    </p>
+
+                    {cancelCopy.kind === 'never_paid_trial' ? (
+                      <>
+                        <p className="text-xs text-ink-2 leading-relaxed">
+                          You cancelled your trial before its first payment, so
+                          uploads and new shares are off. You can still view
+                          and download your files
+                          {cancelCopy.accessUntilIso && (
+                            <>
+                              {' '}until{' '}
+                              <strong className="font-mono">{formatDate(cancelCopy.accessUntilIso)}</strong>
+                            </>
+                          )}
+                          .
+                        </p>
+                        {cancelCopy.deletionIso && (
+                          <p className="text-xs text-ink-2 leading-relaxed">
+                            Files deleted on{' '}
+                            <strong className="font-mono text-ink">{formatDate(cancelCopy.deletionIso)}</strong>.
+                            Download them first — the{' '}
+                            <span className="font-mono">bb</span> CLI or the desktop app can pull your whole vault.
+                          </p>
+                        )}
+                        <p className="text-xs text-ink-3 leading-relaxed">
+                          We can&apos;t recover this after that date. Resume your trial to upload again.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-xs text-ink-2 leading-relaxed">
+                          Your {meta.label} plan stays fully active until{' '}
+                          {cancelCopy.accessUntilIso ? (
+                            <strong className="font-mono">{formatDate(cancelCopy.accessUntilIso)}</strong>
+                          ) : (
+                            '—'
+                          )}
+                          .
+                          {sub?.billing_cycle === 'yearly' &&
+                            cancelCopy.accessUntilIso &&
+                            remainingDays(cancelCopy.accessUntilIso) > 30 && <> You have pre-paid for the full year.</>}
+                        </p>
+                        {/* WP-B (task 1060): the true wipe model. Task 1605: only
+                            claim a deletion date the server has actually
+                            computed — data_deletion_at, never a blind reuse of
+                            the access date. */}
+                        {cancelCopy.deletionIso ? (
+                          <p className="text-xs text-ink-2 leading-relaxed">
+                            Your files will be permanently deleted on{' '}
+                            <strong className="font-mono text-ink">{formatDate(cancelCopy.deletionIso)}</strong>
+                            {(() => {
+                              const left = remainingDays(cancelCopy.deletionIso)
+                              return left > 0 ? (
+                                <> (<span className="font-mono">{left} day{left !== 1 ? 's' : ''}</span> left)</>
+                              ) : null
+                            })()}
+                            . Download them first — the{' '}
+                            <span className="font-mono">bb</span> CLI or the desktop app can pull your whole vault.
+                          </p>
+                        ) : (
+                          <p className="text-xs text-ink-2 leading-relaxed">
+                            Download your files before then — the{' '}
+                            <span className="font-mono">bb</span> CLI or the desktop app can pull your whole vault.
+                          </p>
+                        )}
+                        <p className="text-xs text-ink-3 leading-relaxed">
+                          We can&apos;t recover this. Reactivate any time before then to keep everything.
+                        </p>
+                      </>
+                    )}
                   </div>
                   <BBButton
                     size="sm"
@@ -2532,6 +2746,50 @@ function openUpgrade(plan: string) {
                     disabled={reactivateLoading}
                   >
                     {reactivateLoading ? 'Reactivating...' : 'Reactivate'}
+                  </BBButton>
+                </div>
+              </div>
+            )}
+
+            {/* Task 1605 — active mandated trial, still under the 25 GB cap
+                (server clears trial_storage_cap_bytes after the first
+                successful charge). Guus, 2026-09-29: "we need to make sure
+                the user is not limited to 25gb for 2 weeks" — pay now ends
+                the trial early and unlocks the full plan quota. */}
+            {trialCapped && sub?.trial_storage_cap_bytes != null && (
+              <div data-testid="trial-cap-card" className="rounded-lg border border-line-2 bg-paper-2 p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <Icon name="lock" size={14} className="text-ink-3 shrink-0" />
+                      <span className="text-sm font-semibold text-ink">Trial storage cap</span>
+                    </div>
+                    <p className="text-xs text-ink-2 leading-relaxed" data-testid="trial-cap-explainer">
+                      {trialCapExplainer(meta.label, sub.trial_storage_cap_bytes, formatStorageSI)}
+                    </p>
+                    {payNowState.phase === 'pending' && (
+                      <p className="text-xs text-amber-deep leading-relaxed" data-testid="pay-now-pending">
+                        {payNowState.message}
+                      </p>
+                    )}
+                    {payNowState.phase === 'error' && (
+                      <p className="text-xs text-red leading-relaxed" data-testid="pay-now-error">
+                        {payNowState.message}
+                      </p>
+                    )}
+                  </div>
+                  <BBButton
+                    size="sm"
+                    variant="amber"
+                    data-testid="pay-now-button"
+                    onClick={() => void handlePayNow()}
+                    disabled={payNowState.phase === 'submitting' || payNowState.phase === 'pending'}
+                  >
+                    {payNowState.phase === 'submitting'
+                      ? 'Processing…'
+                      : payNowState.phase === 'pending'
+                        ? 'Processing…'
+                        : payNowButtonLabel(meta.label)}
                   </BBButton>
                 </div>
               </div>

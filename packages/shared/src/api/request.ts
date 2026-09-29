@@ -242,7 +242,11 @@ export async function request<T>(
         throw new ApiError(message, 401, code)
       }
 
-      throw new ApiError(message, res.status, code)
+      // Task 1605: carry the parsed body through as `.details` so callers can
+      // read additive fields (`is_trial_cap`, `limit_bytes`, …) without a
+      // second parse — the 401 branches above stay message/code-only (no
+      // caller needs more there today).
+      throw new ApiError(message, res.status, code, body)
     }
 
     // 204 No Content (and other empty-body 2xx, e.g. DELETE) carry no JSON —

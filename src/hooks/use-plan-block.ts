@@ -22,6 +22,7 @@ import {
   accountStateFromError,
   resolveAccountState,
   uploadBlockedNotice,
+  uploadRefusalNotice,
   type UploadBlockedNotice,
 } from '../lib/account-state'
 
@@ -51,12 +52,24 @@ export function usePlanBlock() {
   const handlePlanError = useCallback(
     (err: unknown): boolean => {
       const state = accountStateFromError(err)
-      if (!state) return false
-      const n = uploadBlockedNotice(state)
-      if (n) show(n)
-      refreshPlanDetails()
-      if (state === 'needs_plan') navigate(CHOOSE_PLAN_PATH, { replace: true })
-      return true
+      if (state) {
+        const n = uploadBlockedNotice(state)
+        if (n) show(n)
+        refreshPlanDetails()
+        if (state === 'needs_plan') navigate(CHOOSE_PLAN_PATH, { replace: true })
+        return true
+      }
+      // Task 1605 — trial_cancelled_read_only (409) / the 25 GB trial-cap
+      // quota_exceeded (413). Neither is an `account_state` value, so this
+      // is a separate branch, but the same "notice + refresh, no crash into
+      // the generic Upload failed toast" contract.
+      const refusal = uploadRefusalNotice(err)
+      if (refusal) {
+        show(refusal)
+        refreshPlanDetails()
+        return true
+      }
+      return false
     },
     [show, refreshPlanDetails, navigate],
   )

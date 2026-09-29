@@ -164,7 +164,22 @@ export function userFriendlyError(err: unknown): string {
     if (err.code === 'account_lapsed') {
       return 'Your trial has ended and your vault is read-only. Subscribe to upload or share again.'
     }
+    // Task 1605 (server PR #129) — a never-paid trial cancelled before its
+    // first charge: uploads + new shares are refused immediately, even
+    // though the account is still `cancelling` (view/download keep working
+    // until access_until). Distinct copy from `account_lapsed` (the trial
+    // hasn't lapsed yet — it's cancelled, and resuming restores uploads).
+    if (err.code === 'trial_cancelled_read_only') {
+      return 'Uploads are off — you cancelled your trial before its first payment. Resume your trial or pay now to upload again.'
+    }
     if (err.code === 'quota_exceeded') {
+      // Task 1605 — the 25 GB TRIAL cap (not the account's real plan quota)
+      // carries its own actionable server message ("...Pay now to unlock
+      // your full plan storage.") via the additive `is_trial_cap` flag. An
+      // ordinary plan-quota hit keeps the existing generic copy.
+      if (err.details?.is_trial_cap === true && looksUserFriendly(err.message)) {
+        return err.message
+      }
       return 'Storage full. Free up space or upgrade your plan to keep uploading.'
     }
     if (err.code === 'downgrade_blocked_over_quota') {

@@ -12,11 +12,20 @@ export class ApiError extends Error {
    * `message` field, which can change without notice.
    */
   code?: string
-  constructor(message: string, status: number, code?: string) {
+  /**
+   * Task 1605: the raw parsed JSON error body, additive fields and all (e.g.
+   * `is_trial_cap`, `limit_bytes`, `used_bytes` on a 413 `quota_exceeded`).
+   * Callers that need more than `code`/`message` read this instead of
+   * re-parsing anything — never guaranteed to be present (network errors,
+   * synthetic client-side ApiErrors have none).
+   */
+  details?: Record<string, unknown>
+  constructor(message: string, status: number, code?: string, details?: Record<string, unknown>) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.code = code
+    this.details = details
   }
 }
 
