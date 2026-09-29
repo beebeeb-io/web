@@ -61,7 +61,13 @@ import {
   formatCentsAsEur,
 } from '../lib/plan-pricing'
 import { PlanComparisonTable } from '../components/plan-comparison'
-import { isTrialing, trialCycleSwitchNote, trialCycleSwitchToast } from '../lib/cycle-switch-copy'
+import {
+  isTrialing,
+  isCancelledTrial,
+  trialCancelledSwitchNote,
+  trialCycleSwitchNoteFor,
+  trialCycleSwitchToastFor,
+} from '../lib/cycle-switch-copy'
 import { InvoiceList } from '../components/billing/InvoiceList'
 import { TransactionList } from '../components/billing/TransactionList'
 import { PLAN_META, PLAN_RANK } from '../lib/plan-constants'
@@ -1212,15 +1218,18 @@ function openUpgrade(plan: string) {
     try {
       const result = await switchBillingCycle(cycle)
       setCycleSwitchConfirm(null)
-      // Flow-4 finding 4: during a trial the server only re-pins the cycle the
-      // trial will convert on — nothing is charged, so the paid-subscriber
-      // "next billing period" copy would be wrong.
+      // Flow-4 finding 4 / task 1604: during a trial the server only re-pins
+      // the cycle (a mandated trial re-prices the pending first charge; a
+      // no-card trial re-pins what it will convert to) — nothing is charged
+      // today either way, so the paid-subscriber "next billing period" copy
+      // would be wrong. `trialCycleSwitchToastFor` routes on the payload.
       const trialEnd = sub?.trial_ends_at ?? sub?.current_period_end ?? null
+      const newPriceLabel = `EUR ${(cycle === 'yearly' ? currentPriceYearly : currentPriceMonthly).toFixed(2)}`
       showToast({
         icon: 'check',
         title: cycle === 'yearly' ? 'Switched to annual billing' : 'Switched to monthly billing',
         description: isTrialing(sub?.status)
-          ? trialCycleSwitchToast(cycle, formatDate(trialEnd))
+          ? trialCycleSwitchToastFor(sub, cycle, formatDate(trialEnd), newPriceLabel)
           : result.annual_billing_start
             ? `Your annual billing starts on ${formatDate(result.annual_billing_start)}.`
             : 'The change takes effect at the start of your next billing period.',
@@ -1240,10 +1249,15 @@ function openUpgrade(plan: string) {
         showToast({ icon: 'info', title: 'Subscription reset', description: resetMessage })
         return
       }
+      // Task 1604 — a trial cancelled before its first charge (server #128)
+      // answers 409 `trial_cancelled`, never the bare "not found" it used to.
+      // Same copy as the pre-emptive UI gate (case c), in case of a race
+      // where the confirm dialog was already open in a stale tab.
+      const cancelled = e instanceof ApiError && e.code === 'trial_cancelled'
       showToast({
         icon: 'x',
-        title: 'Failed to switch billing cycle',
-        description: e instanceof Error ? e.message : 'Please try again.',
+        title: cancelled ? 'Your trial is cancelled' : 'Failed to switch billing cycle',
+        description: cancelled ? trialCancelledSwitchNote() : e instanceof Error ? e.message : 'Please try again.',
         danger: true,
       })
     } finally {
@@ -2046,6 +2060,16 @@ function openUpgrade(plan: string) {
                       {periodLine.label === 'Renews' && paymentMethod?.brand && (
                         <> via <span className="text-ink">{paymentMethod.brand}</span></>
                       )}
+                      {/* Task 1037/1604 — a cancelling row already marked for
+                          deletion surfaces that alongside "Access until", not
+                          in place of it: the two dates can differ. */}
+                      {periodLine.extra && (
+                        <>
+                          {' · '}
+                          {periodLine.extra.text}{' '}
+                          <strong className="font-mono text-ink">{formatDate(periodLine.extra.dateIso)}</strong>
+                        </>
+                      )}
                     </span>
                     {currentExtraTB > 0 && (
                       <span className="font-mono text-ink-4">incl. add-on storage</span>
@@ -2224,10 +2248,22 @@ function openUpgrade(plan: string) {
         {/* ── Plan summary ──────────────────────────── */}
         <div className="grid gap-4">
 
+          {/* Task 1604 (c): a trial cancelled before its first charge (server
+              #128) has no cycle to switch — replaces whichever switch-cycle
+              prompt would otherwise have shown below. */}
+          {isCancelledTrial(sub) && (
+            <div className="border border-line rounded-xl p-5 bg-paper-2 text-sm text-ink-2">
+              {trialCancelledSwitchNote()}
+            </div>
+          )}
+
           {/* Annual savings prompt — shown to monthly paid subscribers. Moved ABOVE
               the Current plan card (task 0942) to match mockup #8's order:
-              savings banner → current plan → switch plan → manage storage → cancel. */}
-          {sub?.billing_cycle === 'monthly' && effectivePlan !== 'free' && (
+              savings banner → current plan → switch plan → manage storage → cancel.
+              Task 1604 (c): a trial cancelled before its first charge has no
+              cycle left to switch — the prompt (and its switch UI) is not
+              offered at all for that row. */}
+          {sub?.billing_cycle === 'monthly' && effectivePlan !== 'free' && !isCancelledTrial(sub) && (
             <div className="border border-amber/30 bg-amber-bg/30 rounded-xl p-5">
               <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep mb-1">
                 Save on your plan
@@ -2259,7 +2295,12 @@ function openUpgrade(plan: string) {
                   </div>
                   {isTrialing(sub?.status) ? (
                     <p className="text-xs text-ink-3" data-testid="cycle-switch-trial-note">
-                      {trialCycleSwitchNote('yearly', formatDate(sub?.trial_ends_at ?? sub?.current_period_end ?? null))}
+                      {trialCycleSwitchNoteFor(
+                        sub,
+                        'yearly',
+                        formatDate(sub?.trial_ends_at ?? sub?.current_period_end ?? null),
+                        `EUR ${currentPriceYearly.toFixed(2)}`,
+                      )}
                     </p>
                   ) : (
                     <p className="text-xs text-ink-3">
@@ -2839,7 +2880,12 @@ function openUpgrade(plan: string) {
                   </div>
                   {isTrialing(sub.status) ? (
                     <p className="text-xs text-ink-3" data-testid="cycle-switch-trial-note">
-                      {trialCycleSwitchNote('monthly', formatDate(sub.trial_ends_at ?? sub.current_period_end ?? null))}
+                      {trialCycleSwitchNoteFor(
+                        sub,
+                        'monthly',
+                        formatDate(sub.trial_ends_at ?? sub.current_period_end ?? null),
+                        `EUR ${currentPriceMonthly.toFixed(2)}`,
+                      )}
                     </p>
                   ) : (
                     <p className="text-xs text-ink-3">
