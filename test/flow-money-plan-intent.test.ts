@@ -89,3 +89,54 @@ describe('postSignupDestination', () => {
     )
   })
 })
+
+/**
+ * GuestRoute race (found gating PR #94 on a real stack): onboarding makes the
+ * account (setMasterKey → isUnlocked) and then refreshUser() sets `user`, so
+ * the GuestRoute wrapping /onboarding renders `<Navigate to="/">` in the same
+ * window where onboarding navigates to the plan chooser. The last one wins,
+ * and the user lands on the drive with the intent already cleared. Onboarding
+ * therefore registers its destination BEFORE refreshUser(), and GuestRoute
+ * resolves its redirect through guestRedirectTarget() so both navigations
+ * agree (same pattern as task 1437's `?next=`).
+ */
+import {
+  setPendingPostSignupDestination,
+  pendingPostSignupDestination,
+  clearPendingPostSignupDestination,
+  guestRedirectTarget,
+  PENDING_POST_SIGNUP_TTL_MS,
+} from '../src/lib/plan-intent'
+
+describe('pending post-signup destination (GuestRoute race)', () => {
+  test('GuestRoute follows the destination onboarding registered, not "/"', () => {
+    clearPendingPostSignupDestination()
+    const now = 1_000_000
+    setPendingPostSignupDestination('/billing?view=change&plan=basic&cycle=yearly', now)
+    expect(guestRedirectTarget(null, now + 500)).toBe('/billing?view=change&plan=basic&cycle=yearly')
+    clearPendingPostSignupDestination()
+  })
+  test('an explicit ?next= still wins; with nothing pending the fallback is "/"', () => {
+    clearPendingPostSignupDestination()
+    expect(guestRedirectTarget(null)).toBe('/')
+    setPendingPostSignupDestination('/billing?view=change&plan=pro&cycle=monthly', 10)
+    expect(guestRedirectTarget('/cli-auth?code=abc', 20)).toBe('/cli-auth?code=abc')
+    clearPendingPostSignupDestination()
+  })
+  test('the pending destination expires and can be cleared', () => {
+    clearPendingPostSignupDestination()
+    setPendingPostSignupDestination('/billing?view=change&plan=basic&cycle=monthly', 0)
+    expect(pendingPostSignupDestination(PENDING_POST_SIGNUP_TTL_MS + 1)).toBeNull()
+    setPendingPostSignupDestination('/billing?view=change&plan=basic&cycle=monthly', 0)
+    clearPendingPostSignupDestination()
+    expect(pendingPostSignupDestination(1)).toBeNull()
+  })
+  test('only an internal path is ever honoured', () => {
+    clearPendingPostSignupDestination()
+    setPendingPostSignupDestination('https://evil.example/', 0)
+    expect(pendingPostSignupDestination(1)).toBeNull()
+    setPendingPostSignupDestination('//evil.example/x', 0)
+    expect(pendingPostSignupDestination(1)).toBeNull()
+    clearPendingPostSignupDestination()
+  })
+})

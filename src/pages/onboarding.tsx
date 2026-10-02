@@ -12,7 +12,12 @@ import {
   opaqueRegisterFinish,
 } from '../lib/api'
 import { REFERRAL_SOURCE_KEY, REFERRAL_SHARER_KEY, REFERRAL_CODE_KEY } from './signup'
-import { readPlanIntent, clearPlanIntent, postSignupDestination } from '../lib/plan-intent'
+import {
+  readPlanIntent,
+  clearPlanIntent,
+  postSignupDestination,
+  setPendingPostSignupDestination,
+} from '../lib/plan-intent'
 import { generateRecoveryKitPDF } from '../lib/recovery-kit-pdf'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
@@ -279,12 +284,16 @@ export function Onboarding() {
 
       // 6. Refresh user state and navigate to drive
       setProcessingStatus('Almost there...')
-      await refreshUser()
       // A plan picked on the marketing site (/signup?plan=&cycle=) opens the
       // plan chooser on that plan with its one-click trial; otherwise the drive.
-      const planIntent = readPlanIntent()
+      // Register the destination BEFORE refreshUser(): setting `user` makes the
+      // GuestRoute around /onboarding redirect in the same window, and it must
+      // pick the same target (src/lib/plan-intent.ts, guestRedirectTarget).
+      const destination = postSignupDestination(readPlanIntent())
       clearPlanIntent()
-      navigate(postSignupDestination(planIntent), { replace: true })
+      setPendingPostSignupDestination(destination)
+      await refreshUser()
+      navigate(destination, { replace: true })
     } catch (err) {
       // Pilot gate (private development): register-start rejects a missing/wrong
       // key with a typed 403. The key field lives on /signup, so bounce back

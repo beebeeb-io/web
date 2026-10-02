@@ -5,6 +5,7 @@ import { reportError } from '@beebeeb/shared'
 import { AuthProvider, useAuth } from './lib/auth-context'
 import { KeyProvider, useKeys } from './lib/key-context'
 import { sanitizeRedirect } from './lib/safe-redirect'
+import { guestRedirectTarget } from './lib/plan-intent'
 import { WsProvider } from './lib/ws-context'
 import { SyncProvider } from './lib/sync-context'
 import { OnboardingProvider } from './lib/onboarding-context'
@@ -191,8 +192,13 @@ function GuestRoute({ children }: { children: ReactNode }) {
     // race lands on, the user still ends up where they were headed —
     // eliminating the race as a user-visible symptom rather than trying to
     // win a timing contest against React's scheduling.
+    //
+    // Same race after SIGNUP: onboarding's refreshUser() re-renders this
+    // guard while onboarding navigates to the plan chooser for a plan picked
+    // on the marketing site. guestRedirectTarget() returns the destination
+    // onboarding registered, so this redirect agrees with it (flow-4 money).
     const fromQuery = sanitizeRedirect(searchParams.get('next'))
-    return <Navigate to={fromQuery ?? '/'} replace />
+    return <Navigate to={guestRedirectTarget(fromQuery)} replace />
   }
   return <>{children}</>
 }

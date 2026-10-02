@@ -100,3 +100,55 @@ export function postSignupDestination(intent: PlanIntent | null): string {
   const q = new URLSearchParams({ view: 'change', plan: intent.plan, cycle: intent.cycle })
   return `/billing?${q.toString()}`
 }
+
+/*
+ * ── Pending post-signup destination (GuestRoute race) ──────────────────────
+ *
+ * /onboarding is wrapped in GuestRoute. Account creation flips `isUnlocked`
+ * (setMasterKey) and then refreshUser() sets `user`. At that point GuestRoute
+ * renders `<Navigate replace>`, which races onboarding's own
+ * navigate(postSignupDestination(...)). Whichever lands last wins. When both
+ * targets were "/" this was invisible. With a plan intent, GuestRoute's "/"
+ * won and dropped the user on the drive (seen gating PR #94 on a real stack).
+ * Onboarding registers its destination here BEFORE refreshUser(), and
+ * GuestRoute resolves its target through guestRedirectTarget(), so both
+ * navigations agree whichever render lands last (the task 1437 pattern).
+ *
+ * The value lives in memory only: same tab, same JS context, and it expires
+ * after PENDING_POST_SIGNUP_TTL_MS so a later login never inherits it.
+ */
+
+export const PENDING_POST_SIGNUP_TTL_MS = 60_000
+
+let pendingPostSignup: { to: string; at: number } | null = null
+
+/** Only same-origin absolute paths ("/x", never "//host" or a URL). */
+function isInternalPath(to: string): boolean {
+  return to.startsWith('/') && !to.startsWith('//') && !to.startsWith('/\\')
+}
+
+export function setPendingPostSignupDestination(to: string, now = Date.now()): void {
+  pendingPostSignup = isInternalPath(to) ? { to, at: now } : null
+}
+
+export function pendingPostSignupDestination(now = Date.now()): string | null {
+  if (!pendingPostSignup) return null
+  if (now - pendingPostSignup.at > PENDING_POST_SIGNUP_TTL_MS) {
+    pendingPostSignup = null
+    return null
+  }
+  return pendingPostSignup.to
+}
+
+export function clearPendingPostSignupDestination(): void {
+  pendingPostSignup = null
+}
+
+/**
+ * Where GuestRoute sends a fully signed-in user. An allowlisted `?next=` wins
+ * (task 1437). Otherwise it goes to the destination onboarding registered, and
+ * falls back to the drive.
+ */
+export function guestRedirectTarget(sanitizedNext: string | null, now = Date.now()): string {
+  return sanitizedNext ?? pendingPostSignupDestination(now) ?? '/'
+}
