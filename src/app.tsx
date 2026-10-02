@@ -54,6 +54,7 @@ const ChoosePlan     = lazyNamed(() => import('./pages/choose-plan'),    'Choose
 const ShareViewPage  = lazyNamed(() => import('./pages/share-view'),     'ShareViewPage')
 const ForgotPassword = lazyNamed(() => import('./pages/forgot-password'),'ForgotPassword')
 const ResetPassword  = lazyNamed(() => import('./pages/reset-password'), 'ResetPassword')
+const SetPassword    = lazyNamed(() => import('./pages/set-password'),   'SetPassword')
 const RecoverWithPhrase = lazyNamed(() => import('./pages/recover-with-phrase'), 'RecoverWithPhrase')
 const VerifyEmail    = lazyNamed(() => import('./pages/verify-email'),   'VerifyEmail')
 const OfficeEditorPage = lazyNamed(() => import('./pages/office-editor-page'), 'OfficeEditorPage')
@@ -478,6 +479,28 @@ export function App() {
             element={
               <GuestRoute>
                 <ResetPassword />
+              </GuestRoute>
+            }
+          />
+          {/* Task 1704 — one-time set-password page. The emailed link is the
+              entry proof; the token rides in the PATH (preview-safe). A user
+              finishing here is logging OUT everywhere else and IN on this
+              device, so no auth guard beyond GuestRoute's own semantics. */}
+          <Route
+            path="/set-password/:token"
+            element={
+              <GuestRoute>
+                <SetPassword />
+              </GuestRoute>
+            }
+          />
+          {/* A link opened without its token → the page renders its own
+              "incomplete link" state; route without param kept explicit. */}
+          <Route
+            path="/set-password"
+            element={
+              <GuestRoute>
+                <SetPassword />
               </GuestRoute>
             }
           />
