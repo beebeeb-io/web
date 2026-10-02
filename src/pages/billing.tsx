@@ -3768,6 +3768,11 @@ function openUpgrade(plan: string) {
         priceYearlySeat={upgradePlanDetails?.priceYearly ?? 383.52}
         open={upgradeOpen}
         onClose={() => setUpgradeOpen(false)}
+        // Task 1707 — the dialog needs to know when its target plan+cycle IS
+        // the user's active subscription (stale plan-intent revisit, racing
+        // state) so it can label the CTA "Current plan" instead of starting a
+        // checkout the server's same-plan guard refuses.
+        activePlanCycle={sub?.status === 'active' ? { plan: sub.plan, cycle: sub.billing_cycle } : null}
         onBeforeRedirect={(plan, cycle, paymentId) => setPendingCheckout('plan', plan, cycle, makePreState(sub), paymentId)}
         onSuccess={() => {
           void loadData()

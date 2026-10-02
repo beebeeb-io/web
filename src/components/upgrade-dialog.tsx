@@ -6,6 +6,7 @@ import { Icon } from '@beebeeb/shared'
 import { useToast } from './toast'
 import { createCheckoutSession } from '../lib/api'
 import { userFriendlyError } from '../lib/user-friendly-error'
+import { isSamePlanActiveError, samePlanConflictMessage } from '../lib/checkout-same-plan'
 import { useDriveData } from '../lib/drive-data-context'
 import { handleBillingResetTestMode } from '../lib/billing-reset'
 import { BillingInfoStep } from './billing/BillingInfoStep'
@@ -44,6 +45,15 @@ interface UpgradeDialogProps {
    * the cycle selector shows a note that the add-on will also switch cycles.
    */
   activeAddOnStorageTb?: number
+  /**
+   * Task 1707 — the user's current subscription's plan+cycle when its status
+   * is 'active' (the parent already holds the snapshot; null otherwise). When
+   * it equals this dialog's plan on the currently-selected cycle, the checkout
+   * would be the exact purchase the server's same-plan guard refuses — the
+   * Continue CTA is labelled "Current plan" and disabled instead of letting
+   * the server bounce the flow one step later.
+   */
+  activePlanCycle?: { plan: string; cycle: string } | null
 }
 
 export function UpgradeDialog({
@@ -56,6 +66,7 @@ export function UpgradeDialog({
   onSuccess,
   onBeforeRedirect,
   activeAddOnStorageTb = 0,
+  activePlanCycle = null,
 }: UpgradeDialogProps) {
   const [cycle, setCycle] = useState<BillingCycle>('yearly')
   const [step, setStep] = useState<Step>('cycle')
@@ -63,6 +74,12 @@ export function UpgradeDialog({
   const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
   const { showToast } = useToast()
   const { refreshPlanDetails } = useDriveData()
+
+  // Task 1707 — same-plan re-purchase guard, client side: the dialog targets
+  // THIS plan on the CURRENTLY-SELECTED cycle and the user's active
+  // subscription is already exactly that, so there is nothing to buy.
+  const isCurrentPlanCycle =
+    activePlanCycle !== null && activePlanCycle.plan === planId && activePlanCycle.cycle === cycle
 
   // All plans are single-user — no seat multiplier needed
   const monthlyTotal = pricePerSeat
@@ -125,6 +142,20 @@ export function UpgradeDialog({
           title: 'Billing not configured',
           description: 'Payments are not set up yet. Contact support to upgrade.',
           danger: true,
+        })
+        handleClose()
+        return
+      }
+      // Task 1707 — the server refused the checkout because this exact
+      // plan+cycle is already active (same-plan re-purchase guard; only
+      // reachable when the parent's subscription snapshot was stale). Close
+      // the dialog with the server's plan+cycle-specific copy — there is no
+      // retry to offer.
+      if (isSamePlanActiveError(checkoutErr)) {
+        showToast({
+          icon: 'info',
+          title: 'Already subscribed',
+          description: samePlanConflictMessage(checkoutErr),
         })
         handleClose()
         return
@@ -259,9 +290,10 @@ export function UpgradeDialog({
             size="lg"
             className="w-full justify-center"
             onClick={() => { setError(null); setStep('billing-info') }}
+            disabled={isCurrentPlanCycle}
             data-testid="upgrade-continue"
           >
-            Continue
+            {isCurrentPlanCycle ? 'Current plan' : 'Continue'}
             <Icon name="chevron-right" size={13} className="ml-1" />
           </BBButton>
 

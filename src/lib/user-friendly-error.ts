@@ -199,6 +199,14 @@ export function userFriendlyError(err: unknown): string {
       // falling through `looksUserFriendly` into the generic fallback.
       return err.message
     }
+    if (err.code === 'already_subscribed') {
+      // Task 1707 — the same-plan re-purchase guard: the server refused a
+      // checkout for the exact plan+cycle the user already has active. The
+      // server's message names the exact plan + cycle and points at /billing;
+      // keep it verbatim regardless of the 80-char cutoff so the plan/cycle
+      // specifics never degrade into a generic conflict line.
+      return err.message || 'You already have an active subscription on this plan. Manage it in Billing.'
+    }
     if (status === 401) return 'Your session expired. Sign in again.'
     if (status === 403) return "You don't have permission to do that."
     if (status === 404) return 'Not found.'

@@ -18,6 +18,7 @@ import {
 import { useAuth, isAuthenticated } from '../lib/auth-context'
 import { useDriveData } from '../lib/drive-data-context'
 import { handleBillingResetTestMode } from '../lib/billing-reset'
+import { isSamePlanActiveError, samePlanConflictMessage, isCurrentPlanCycle } from '../lib/checkout-same-plan'
 import { setPendingCheckout, makePreState } from '../lib/pending-checkout'
 import { PRICING_PAGE_PLANS, MARKETED_PLAN_SLUGS, type PricingPlanDef } from '../lib/plan-constants'
 import { ensureWasm, deriveAddonAwarePriceDisplay } from '../lib/plan-pricing'
@@ -142,12 +143,19 @@ function PlanCard({
   cycle,
   onSelect,
   promoSchedule,
+  isCurrentPlan = false,
 }: {
   plan: PlanDef
   cycle: BillingCycle
   onSelect: (id: string) => void
   /** Ready-to-display promo schedule sentence for this specific plan, if an applied code applies here. */
   promoSchedule?: string
+  /** Task 1707 — the signed-in user's subscription snapshot already IS this
+   * plan on THIS cycle (status='active'): the checkout this CTA would start is
+   * exactly what the server's same-plan guard refuses, so label it honestly
+   * instead of letting the server bounce the click. Flips back to a normal CTA
+   * when the cycle toggle moves off the user's current cycle. */
+  isCurrentPlan?: boolean
 }) {
   const displayPrice =
     cycle === 'yearly' && plan.priceYearly > 0
@@ -242,10 +250,10 @@ function PlanCard({
           variant={plan.ctaVariant}
           size="lg"
           className="w-full justify-center"
-          onClick={() => !plan.comingSoon && onSelect(plan.id)}
-          disabled={plan.comingSoon}
+          onClick={() => !plan.comingSoon && !isCurrentPlan && onSelect(plan.id)}
+          disabled={plan.comingSoon || isCurrentPlan}
         >
-          {plan.cta}
+          {isCurrentPlan ? 'Current plan' : plan.cta}
         </BBButton>
       </div>
     </div>
@@ -507,6 +515,20 @@ export function Pricing() {
         })
         return
       }
+      // Task 1707 — the server refused a checkout for the exact plan+cycle the
+      // user already has active (same-plan re-purchase guard). Say so plainly
+      // instead of a generic "Checkout failed"; the plan card itself is
+      // already labelled/disabled as "Current plan" for this plan+cycle (see
+      // PlanCard below), so this only fires when the loaded subscription
+      // snapshot was stale or the user raced the state.
+      if (isSamePlanActiveError(err)) {
+        showToast({
+          icon: 'info',
+          title: 'Already subscribed',
+          description: samePlanConflictMessage(err),
+        })
+        return
+      }
       showToast({
         icon: 'x',
         title: 'Checkout failed',
@@ -624,6 +646,7 @@ export function Pricing() {
                   cycle={cycle}
                   onSelect={handleSelect}
                   promoSchedule={promoQuotes[p.id]?.description_schedule}
+                  isCurrentPlan={isCurrentPlanCycle(subscription, p.id, cycle)}
                 />
               ))}
             </div>
