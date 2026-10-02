@@ -131,6 +131,14 @@ function useProvideSearchIndex(): SearchIndexContextValue {
    * one is running queues behind it instead of interleaving (task 1700).
    */
   const reconcileQueueRef = useRef<Promise<void>>(Promise.resolve())
+  /**
+   * Bounded retry after a failed shard push (PR #130 review): the diff stays
+   * dirty and is retried without waiting for an unrelated mutation.
+   */
+  const reconcileRetryRef = useRef<{
+    timer: ReturnType<typeof setTimeout> | null
+    attempts: number
+  }>({ timer: null, attempts: 0 })
 
   // ── Coalesced unindex queue (review S3) ───────────────────────────────────
   // Foreign delete/trash WS events previously ran remove+pushBuckets per
@@ -159,14 +167,19 @@ function useProvideSearchIndex(): SearchIndexContextValue {
         for (const id of ids) pendingPrunesRef.current.add(id)
         return
       }
-      const dirtyCount = await applyIndexDiff(idx, masterKey, { upserts: [], prunes: ids })
+      const { dirtyCount, pushed } = await applyIndexDiff(idx, masterKey, { upserts: [], prunes: ids })
+      if (!pushed) {
+        // Keep the ids queued for a retry in a later window (PR #130 review).
+        for (const id of ids) removeCoalescer.add(id)
+        return
+      }
       for (const id of ids) {
         indexedIdsRef.current.delete(id)
         nameCacheRef.current.delete(id)
       }
       if (dirtyCount > 0) bump()
     },
-    [isUnlocked, getMasterKey, bump],
+    [isUnlocked, getMasterKey, bump, removeCoalescer],
   )
 
   useEffect(() => {
@@ -174,6 +187,10 @@ function useProvideSearchIndex(): SearchIndexContextValue {
   }, [flushQueuedRemoves])
 
   useEffect(() => () => removeCoalescer.cancel(), [removeCoalescer])
+
+  useEffect(() => () => {
+    if (reconcileRetryRef.current.timer) clearTimeout(reconcileRetryRef.current.timer)
+  }, [])
 
   // ── Unlock / lock lifecycle ──────────────────────────────────────────────
   useEffect(() => {
@@ -188,6 +205,8 @@ function useProvideSearchIndex(): SearchIndexContextValue {
       nameCacheRef.current.clear()
       indexedIdsRef.current.clear()
       reconcileQueueRef.current = Promise.resolve()
+      if (reconcileRetryRef.current.timer) clearTimeout(reconcileRetryRef.current.timer)
+      reconcileRetryRef.current = { timer: null, attempts: 0 }
       removeCoalescer.cancel()
       setReady(false)
       if (idx) void idx.dispose()
@@ -253,16 +272,21 @@ function useProvideSearchIndex(): SearchIndexContextValue {
       const ids = [...pending]
       pending.clear()
       void (async () => {
-        const dirty = new Set<number>()
+        const { dirtyCount, pushed } = await applyIndexDiff(idx, masterKey, {
+          upserts: [],
+          prunes: ids,
+        })
+        if (!pushed) {
+          // Keep the ids pending so a later flush/reconcile removes them
+          // (PR #130 review: do not mark failed pushes as reconciled).
+          for (const id of ids) pendingPrunesRef.current.add(id)
+          return
+        }
         for (const id of ids) {
-          for (const b of await idx.remove(id)) dirty.add(b)
           indexedIdsRef.current.delete(id)
           nameCacheRef.current.delete(id)
         }
-        if (dirty.size > 0) {
-          await idx.pushBuckets(masterKey, [...dirty]).catch(() => {})
-          bump()
-        }
+        if (dirtyCount > 0) bump()
       })()
     }
 
@@ -485,7 +509,29 @@ function useProvideSearchIndex(): SearchIndexContextValue {
           indexedIds: indexedIdsRef.current,
           cachedNames: cache,
         })
-        const dirtyCount = await applyIndexDiff(idx, masterKey, plan)
+        const { dirtyCount, pushed } = await applyIndexDiff(idx, masterKey, plan)
+
+        if (!pushed) {
+          // The push failed: keep indexedIds/name cache dirty so the SAME diff
+          // is produced again, and schedule a bounded retry instead of waiting
+          // for an unrelated mutation (PR #130 review).
+          const retry = reconcileRetryRef.current
+          if (!retry.timer) {
+            const delay = Math.min(1500 * 2 ** retry.attempts, 10_000)
+            retry.attempts += 1
+            retry.timer = setTimeout(() => {
+              retry.timer = null
+              void reconcileFromTree(nodes, resolveName)
+            }, delay)
+          }
+          return
+        }
+        // Push landed (or nothing to push): reset the retry backoff.
+        if (reconcileRetryRef.current.timer) {
+          clearTimeout(reconcileRetryRef.current.timer)
+          reconcileRetryRef.current.timer = null
+        }
+        reconcileRetryRef.current.attempts = 0
 
         for (const u of plan.upserts) indexedIdsRef.current.add(u.id)
         for (const id of plan.prunes) indexedIdsRef.current.delete(id)

@@ -280,3 +280,137 @@ describe('1700 round-3: gap-fill vs in-flight snapshot', () => {
     }
   })
 })
+
+describe('1700 round-4 (PR #130): snapshot absence + pending targets', () => {
+  test('R4-1a persisted pending rename on a fresh page load is replayed over the snapshot', async () => {
+    // A page reload with a persisted pending op starts from an EMPTY in-memory
+    // tree — there is no optimistic node to preserve. The snapshot must insert
+    // the real node, and the persisted op must be re-applied over it.
+    storage.setItem('bb_sync_pending_ops', JSON.stringify([{
+      client_op_id: 'persisted-1',
+      op_type: 'file_rename',
+      payload: { id: FILE_ID, new_name_encrypted: 'cipher-renamed' },
+      target_id: FILE_ID,
+    }]))
+    snapshotImpl = async () => ({
+      seq_id: 5,
+      nodes: [node(FILE_ID, { name_encrypted: 'cipher-snap' })],
+    })
+    const client = new SyncClient()
+    try {
+      await client.start()
+      expect(client.getNode(FILE_ID)).toBeDefined()
+      expect(client.getNode(FILE_ID)?.name_encrypted).toBe('cipher-renamed')
+      expect(client.getLastSeq()).toBe(5)
+      expect(client.isCoverageComplete()).toBe(true)
+    } finally {
+      await stopAndSettle(client)
+    }
+  })
+
+  test('R4-1b an optimistic node is still preserved over an older snapshot', async () => {
+    const client = new SyncClient()
+    try {
+      client.ingestStreamFrame(JSON.stringify(op(1, 'file_create', {
+        id: FILE_ID, name_encrypted: 'orig', parent_id: null, size_bytes: 1,
+      })))
+      await client.submitOp('file_rename', { id: FILE_ID, new_name_encrypted: 'local' })
+      let resolveSnap: ((snap: SyncSnapshot) => void) | null = null
+      let started = false
+      snapshotImpl = () => {
+        started = true
+        return new Promise<SyncSnapshot>((resolve) => { resolveSnap = resolve })
+      }
+      // Missing-node op → coverage resync; the snapshot predates the rename.
+      client.ingestStreamFrame(JSON.stringify(op(2, 'file_update', { id: OTHER_ID, size_bytes: 9 })))
+      await waitFor(() => started, 'snapshot fetch started')
+      resolveSnap?.({ seq_id: 1, nodes: [node(FILE_ID, { name_encrypted: 'snap-old' })] })
+      await waitFor(() => client.isCoverageComplete(), 'coverage complete')
+      // The unconfirmed local rename must win over the older snapshot value.
+      expect(client.getNode(FILE_ID)?.name_encrypted).toBe('local')
+    } finally {
+      await stopAndSettle(client)
+    }
+  })
+
+  test('R4-4a a live node absent from the snapshot is pruned', async () => {
+    const client = new SyncClient()
+    try {
+      client.ingestStreamFrame(JSON.stringify(op(1, 'file_create', {
+        id: OTHER_ID, name_encrypted: 'x', parent_id: null, size_bytes: 1,
+      })))
+      let resolveSnap: ((snap: SyncSnapshot) => void) | null = null
+      let started = false
+      snapshotImpl = () => {
+        started = true
+        return new Promise<SyncSnapshot>((resolve) => { resolveSnap = resolve })
+      }
+      client.ingestStreamFrame(JSON.stringify(op(2, 'file_update', { id: 'missing-node', size_bytes: 1 })))
+      await waitFor(() => started, 'snapshot fetch started')
+      resolveSnap?.({ seq_id: 1, nodes: [node(FILE_ID)] })
+      await waitFor(
+        () => client.isCoverageComplete() && client.getLastSeq() === 2,
+        'coverage complete',
+      )
+      // The snapshot is authoritative: a live node it does not contain is gone.
+      expect(client.getNode(OTHER_ID)).toBeUndefined()
+      expect(client.getNode(FILE_ID)).toBeDefined()
+    } finally {
+      await stopAndSettle(client)
+    }
+  })
+
+  test('R4-4b a trashed node absent from the snapshot is kept (absence ≠ deleted for trashed)', async () => {
+    const client = new SyncClient()
+    try {
+      client.ingestStreamFrame(JSON.stringify(op(1, 'file_create', {
+        id: OTHER_ID, name_encrypted: 'x', parent_id: null, size_bytes: 1,
+      })))
+      client.ingestStreamFrame(JSON.stringify(op(2, 'file_trash', { id: OTHER_ID })))
+      let resolveSnap: ((snap: SyncSnapshot) => void) | null = null
+      let started = false
+      snapshotImpl = () => {
+        started = true
+        return new Promise<SyncSnapshot>((resolve) => { resolveSnap = resolve })
+      }
+      client.ingestStreamFrame(JSON.stringify(op(3, 'file_update', { id: 'missing-node', size_bytes: 1 })))
+      await waitFor(() => started, 'snapshot fetch started')
+      resolveSnap?.({ seq_id: 2, nodes: [] })
+      await waitFor(
+        () => client.isCoverageComplete() && client.getLastSeq() === 3,
+        'coverage complete',
+      )
+      // The snapshot excludes trashed nodes; that is not a deletion signal.
+      expect(client.getNode(OTHER_ID)?.is_trashed).toBe(true)
+    } finally {
+      await stopAndSettle(client)
+    }
+  })
+
+  test('R4-4c a pending-target node absent from the snapshot is kept', async () => {
+    const client = new SyncClient()
+    try {
+      client.ingestStreamFrame(JSON.stringify(op(1, 'file_create', {
+        id: OTHER_ID, name_encrypted: 'x', parent_id: null, size_bytes: 1,
+      })))
+      await client.submitOp('file_rename', { id: OTHER_ID, new_name_encrypted: 'local' })
+      let resolveSnap: ((snap: SyncSnapshot) => void) | null = null
+      let started = false
+      snapshotImpl = () => {
+        started = true
+        return new Promise<SyncSnapshot>((resolve) => { resolveSnap = resolve })
+      }
+      client.ingestStreamFrame(JSON.stringify(op(2, 'file_update', { id: 'missing-node', size_bytes: 1 })))
+      await waitFor(() => started, 'snapshot fetch started')
+      resolveSnap?.({ seq_id: 1, nodes: [] })
+      await waitFor(
+        () => client.isCoverageComplete() && client.getLastSeq() === 2,
+        'coverage complete',
+      )
+      expect(client.getNode(OTHER_ID)).toBeDefined()
+      expect(client.getNode(OTHER_ID)?.name_encrypted).toBe('local')
+    } finally {
+      await stopAndSettle(client)
+    }
+  })
+})

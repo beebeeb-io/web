@@ -73,7 +73,7 @@ describe('1700: planIndexDiff + applyIndexDiff', () => {
       const plan = planIndexDiff({ nodes, resolved, indexedIds, cachedNames })
       expect(plan.upserts).toEqual([])
       expect(plan.prunes).toEqual([])
-      expect(await applyIndexDiff(index.target, KEY, plan)).toBe(0)
+      expect(await applyIndexDiff(index.target, KEY, plan)).toEqual({ dirtyCount: 0, pushed: true })
     }
     expect(index.pushes).toEqual([])
     expect(index.upserted).toEqual([])
@@ -94,13 +94,13 @@ describe('1700: planIndexDiff + applyIndexDiff', () => {
     expect(plan.upserts).toEqual([{ id: 'a', name: 'alpha-renamed' }])
 
     const index = fakeIndex({ a: [3] })
-    const dirty = await applyIndexDiff(index.target, KEY, plan)
-    expect(dirty).toBe(1)
+    const result = await applyIndexDiff(index.target, KEY, plan)
+    expect(result).toEqual({ dirtyCount: 1, pushed: true })
     expect(index.pushes).toEqual([[3]])
     expect(index.upserted).toEqual(['a'])
   })
 
-  test('a node missing from the index is upserted once; an unindexed trashed node is not pruned', async () => {
+  test('a node missing from the index is upserted once; a trashed node is pruned even when never indexed this session', async () => {
     const cachedNames = new Map<string, IndexNameCacheEntry>([
       ['a', { cipher: 'cipher-a', name: 'alpha' }],
     ])
@@ -110,7 +110,10 @@ describe('1700: planIndexDiff + applyIndexDiff', () => {
 
     const plan = planIndexDiff({ nodes, resolved, indexedIds, cachedNames })
     expect(plan.upserts).toEqual([{ id: 'new', name: 'new-name' }])
-    expect(plan.prunes).toEqual([])
+    // PR #130 review: indexedIds is session-local; a node trashed while this
+    // client was offline still sits in the loaded server index and must be
+    // removed. remove(missing) is a no-op, so pruning is always safe.
+    expect(plan.prunes).toEqual(['ghost'])
   })
 
   test('a trashed node that was indexed is pruned', async () => {
@@ -131,6 +134,79 @@ describe('1700: planIndexDiff + applyIndexDiff', () => {
     const nodes = [node('a')]
     const plan = planIndexDiff({ nodes, resolved: new Map(), indexedIds, cachedNames: new Map() })
     expect(plan.upserts).toEqual([])
+  })
+})
+
+/**
+ * PR #130 review round 4 — a failed shard push must stay dirty (retry), and
+ * trashed/absent snapshot ids must prune regardless of session-local tracking.
+ */
+describe('1700 round-4 (PR #130): push failure + shard-loaded prunes', () => {
+  test('R4-2 a failed push reports pushed:false and leaves the diff retryable', async () => {
+    const cachedNames = new Map<string, IndexNameCacheEntry>([
+      ['a', { cipher: 'cipher-a', name: 'alpha' }],
+    ])
+    const indexedIds = new Set(['a'])
+    const nodes = [node('a', { name_encrypted: 'cipher-a2' })]
+    const resolved = new Map([['a', 'alpha-renamed']])
+    const planFor = () => planIndexDiff({ nodes, resolved, indexedIds, cachedNames })
+    expect(planFor().upserts).toEqual([{ id: 'a', name: 'alpha-renamed' }])
+
+    const index = fakeIndex({ a: [3] })
+    let failNext = true
+    const flaky = {
+      ...index.target,
+      pushBuckets: async (masterKey: Uint8Array, dirty: number[]) => {
+        if (failNext) {
+          failNext = false
+          throw new Error('transient shard failure')
+        }
+        return index.target.pushBuckets(masterKey, dirty)
+      },
+    }
+
+    // First push fails: callers must NOT update their caches.
+    const first = await applyIndexDiff(flaky, KEY, planFor())
+    expect(first).toEqual({ dirtyCount: 1, pushed: false })
+
+    // Because the caller kept its caches dirty, the same diff is produced and
+    // retried on the next pass (no unrelated mutation required).
+    expect(planFor().upserts).toEqual([{ id: 'a', name: 'alpha-renamed' }])
+    const second = await applyIndexDiff(index.target, KEY, planFor())
+    expect(second).toEqual({ dirtyCount: 1, pushed: true })
+    expect(index.pushes).toEqual([[3]])
+
+    // After the caller records the success, an unchanged pass is clean.
+    const updatedCache = new Map<string, IndexNameCacheEntry>([
+      ['a', { cipher: 'cipher-a2', name: 'alpha-renamed' }],
+    ])
+    const updatedIndexed = new Set(['a'])
+    const cleanPlan = planIndexDiff({
+      nodes,
+      resolved,
+      indexedIds: updatedIndexed,
+      cachedNames: updatedCache,
+    })
+    expect(cleanPlan.upserts).toEqual([])
+    const third = await applyIndexDiff(index.target, KEY, cleanPlan)
+    expect(third).toEqual({ dirtyCount: 0, pushed: true })
+    expect(index.pushes.length).toBe(1)
+  })
+
+  test('R4-3 a trashed node loaded from shards is pruned without session-local membership', async () => {
+    const plan = planIndexDiff({
+      nodes: [node('x', { is_trashed: true }), node('a')],
+      resolved: new Map([['a', 'alpha']]),
+      indexedIds: new Set(['a']), // x was never written this session
+      cachedNames: new Map([['a', { cipher: 'cipher-a', name: 'alpha' }]]),
+    })
+    expect(plan.prunes).toEqual(['x'])
+
+    const index = fakeIndex({ x: [9] })
+    const result = await applyIndexDiff(index.target, KEY, plan)
+    expect(result).toEqual({ dirtyCount: 1, pushed: true })
+    expect(index.removed).toEqual(['x'])
+    expect(index.pushes).toEqual([[9]])
   })
 })
 

@@ -716,11 +716,14 @@ export function Drive() {
   // Re-derive when the sync engine pushes an op affecting the visible folder.
   // Uses refreshFromSync (sync tree only, no API call) — fetchFiles is reserved
   // for navigation changes so SSE events don't hammer the server.
+  // `treeComplete` is a dep so a snapshot-absence prune (which lands while
+  // coverage is still false, and is then applied by refreshFromSync's
+  // no-clobber guard) is re-derived once coverage completes. PR #130 review.
   useEffect(() => {
     if (!sync.ready) return
     refreshFromSync()
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sync.treeVersion, sync.ready, refreshFromSync])
+  }, [sync.treeVersion, sync.ready, sync.treeComplete, refreshFromSync])
 
   // Command palette → "New …" from a page other than Drive (task 1582, PR
   // #117 review): the palette navigates here with the type in state.

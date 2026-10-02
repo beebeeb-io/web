@@ -48,7 +48,11 @@ export function planIndexDiff(input: IndexReconcileInput): IndexReconcilePlan {
   const prunes: string[] = []
   for (const node of nodes) {
     if (liveIds.has(node.id)) continue
-    if (indexedIds.has(node.id)) prunes.push(node.id)
+    // Removing an id the index doesn't hold is a no-op, so prune every id the
+    // tree no longer has live — including trashed nodes loaded from shards in
+    // a previous session (indexedIds is session-local and empty on boot).
+    // PR #130 review.
+    prunes.push(node.id)
   }
   return { upserts, prunes }
 }
@@ -60,16 +64,27 @@ export interface IndexDiffTarget {
   pushBuckets(masterKey: Uint8Array, dirty: number[]): Promise<unknown>
 }
 
+export interface IndexDiffResult {
+  /** Dirty buckets in the plan. */
+  dirtyCount: number
+  /**
+   * True when there was nothing to push OR the push succeeded. False on a
+   * failed push: callers must leave their caches/indexed ids dirty so the same
+   * diff is retried (PR #130 review).
+   */
+  pushed: boolean
+}
+
 /**
  * Apply a plan: mutate only the diff, then encrypt+PUT the union of dirty
- * buckets in ONE call. Returns the number of dirty buckets — 0 means nothing
- * was pushed.
+ * buckets in ONE call. Returns the dirty count and whether the push actually
+ * landed — a failed push is reported (not swallowed) so callers can retry.
  */
 export async function applyIndexDiff(
   index: IndexDiffTarget,
   masterKey: Uint8Array,
   plan: IndexReconcilePlan,
-): Promise<number> {
+): Promise<IndexDiffResult> {
   const dirty = new Set<number>()
   for (const u of plan.upserts) {
     for (const b of await index.upsert(u.id, u.name)) dirty.add(b)
@@ -77,11 +92,14 @@ export async function applyIndexDiff(
   for (const id of plan.prunes) {
     for (const b of await index.remove(id)) dirty.add(b)
   }
-  if (dirty.size === 0) return 0
-  await index.pushBuckets(masterKey, [...dirty]).catch(() => {
-    /* best-effort cache: rebuilds on next load/reconcile */
-  })
-  return dirty.size
+  if (dirty.size === 0) return { dirtyCount: 0, pushed: true }
+  try {
+    await index.pushBuckets(masterKey, [...dirty])
+    return { dirtyCount: dirty.size, pushed: true }
+  } catch {
+    // Best-effort cache: the caller keeps state dirty and retries. PR #130 review.
+    return { dirtyCount: dirty.size, pushed: false }
+  }
 }
 
 export interface RemoveCoalescerOptions {

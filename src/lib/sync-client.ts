@@ -334,20 +334,39 @@ export class SyncClient {
   }
 
   /**
-   * Merge snapshot nodes into the tree (task 1700). Nodes with an outstanding
-   * local op are skipped: the snapshot predates that op, and the optimistic
-   * state (or its rollback) is authoritative until the echo confirms it.
-   * Buffered ops at or below the snapshot are dropped once `lastSeq` advances
-   * past them by the caller.
+   * Merge snapshot nodes into the tree (task 1700), then reconcile absence.
+   *
+   * - A pending-target node is preserved ONLY when the tree actually holds its
+   *   optimistic state: a persisted pending op on a fresh page load starts
+   *   from an empty tree, and skipping its target would leave the file absent
+   *   forever (the echo confirms without mutating the tree). PR #130 review.
+   * - Nodes absent from the snapshot are pruned unless trashed (the server
+   *   snapshot excludes trashed items — absence is not a deletion signal for
+   *   them) or the target of a pending op. Coverage is marked complete only
+   *   after this prune, by the caller. PR #130 review.
+   * - Persisted pending ops whose optimistic state is not in the tree are
+   *   re-applied over the snapshot so the echo stays a pure confirmation.
+   *   PR #130 review.
    */
   private mergeSnapshot(snap: { seq_id: number; nodes: SyncNode[] }): void {
     const pendingTargets = new Set<string>()
     for (const p of this.pendingOps) {
       if (p.target_id) pendingTargets.add(p.target_id)
     }
+    const snapshotIds = new Set<string>()
     for (const node of snap.nodes) {
-      if (pendingTargets.has(node.id)) continue
+      snapshotIds.add(node.id)
+      if (pendingTargets.has(node.id) && this.tree.has(node.id)) continue
       this.tree.set(node.id, node)
+    }
+    for (const [id, node] of this.tree) {
+      if (snapshotIds.has(id)) continue
+      if (node.is_trashed) continue
+      if (pendingTargets.has(id)) continue
+      this.tree.delete(id)
+    }
+    for (const p of this.pendingOps) {
+      this.applyOpToTree(p.op_type, p.payload)
     }
     this.emit({ type: 'snapshot' })
   }
