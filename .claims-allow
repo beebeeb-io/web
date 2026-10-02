@@ -1,0 +1,21 @@
+# path|token|evidence (evidence is mandatory and is what a reviewer reads)
+#
+# Phantom-region hits only (decision 1413, 2026-09-13): docs/canon/data-
+# residency.md's "The truth" section (git 37a15d6d, the LATER, explicitly-
+# titled "CORRECT DR-1 model" correction) says Helsinki and Ede are real,
+# committed future regions that must stay in region lists, clearly marked
+# not-yet-available — "Do NOT delete them." These four hits are exactly that:
+# honestly-labelled roadmap copy, never implying either region stores data or
+# is selectable today. Provider-name and capability-claim hits (e.g. "EU
+# jurisdiction of choice", a false present-tense region CHOICE) are NOT
+# covered by this file and still get fixed, not allow-listed.
+src/components/drive-layout.tsx|helsinki|docs/canon/data-residency.md "The truth" (37a15d6d) + decision 1413 — REGION_META label for a real, clearly-marked coming-soon region
+src/components/drive-layout.tsx|Helsinki|docs/canon/data-residency.md "The truth" (37a15d6d) + decision 1413 — REGION_META label for a real, clearly-marked coming-soon region
+src/components/drive-layout.tsx| ede:|docs/canon/data-residency.md "The truth" (37a15d6d) + decision 1413 — REGION_META label for a real, clearly-marked coming-soon region
+src/components/drive-layout.tsx|'Ede,|docs/canon/data-residency.md "The truth" (37a15d6d) + decision 1413 — REGION_META label for a real, clearly-marked coming-soon region
+src/pages/pricing.tsx| Ede)|docs/canon/data-residency.md "The truth" (37a15d6d) + decision 1413 — pricing FAQ honestly says Falkenstein is live today, Helsinki/Ede are "coming soon"
+src/pages/pricing.tsx|Helsinki|docs/canon/data-residency.md "The truth" (37a15d6d) + decision 1413 — pricing FAQ honestly says Falkenstein is live today, Helsinki/Ede are "coming soon"
+src/pages/settings/data-residency.tsx| Ede |docs/canon/data-residency.md "The truth" (37a15d6d) + decision 1413 — code comment naming the roadmap regions this file's countryFromCity map supports
+src/pages/settings/data-residency.tsx|Helsinki|docs/canon/data-residency.md "The truth" (37a15d6d) + decision 1413 — code comment naming the roadmap regions this file's countryFromCity map supports
+src/pages/settings/data-residency.tsx|helsinki|docs/canon/data-residency.md "The truth" (37a15d6d) + decision 1413 — countryFromCity map entry for a real, clearly-marked coming-soon region
+src/pages/settings/data-residency.tsx| ede:|docs/canon/data-residency.md "The truth" (37a15d6d) + decision 1413 — countryFromCity map entry for a real, clearly-marked coming-soon region
