@@ -843,11 +843,19 @@ export function Billing() {
   // below, alongside the `cancelCopy`/`trialCapped` consts further down that
   // read the same `sub`).
   const trialCapBytes = isTrialCapped(sub) ? sub?.trial_storage_cap_bytes ?? null : null
-  // When addon data is available, use the effective storage (base + extra).
-  // Otherwise fall back to the plan-level storage from planMeta.
-  const rawTotalStorageBytes = addonState
-    ? addonState.effective_storage_bytes
-    : meta.storageGB * 1_000_000_000
+  // Task 1706 — server truth first: the drive-context usage carries
+  // `plan_limit_bytes` (GET /files/usage, merged with GET /billing/usage's
+  // bonus-inclusive `quota_bytes` — get_user_quota). It is the same number the
+  // quota engine enforces, so it outranks `addonState.effective_storage_bytes`;
+  // addonState stays authoritative ONLY for add-on quantities/prices. The
+  // final fallback is the static plan metadata.
+  const contextPlanLimitBytes = contextUsage?.plan_limit_bytes
+  const rawTotalStorageBytes =
+    typeof contextPlanLimitBytes === 'number' && Number.isFinite(contextPlanLimitBytes) && contextPlanLimitBytes > 0
+      ? contextPlanLimitBytes
+      : addonState
+        ? addonState.effective_storage_bytes
+        : meta.storageGB * 1_000_000_000
   // Guard against NaN/undefined — show 0 rather than NaN in the UI
   const totalStorageBytes = trialCapBytes != null
     ? trialCapBytes
@@ -881,6 +889,14 @@ export function Billing() {
   const maxExtraTB = Number.isFinite(rawMaxExtraTB) && rawMaxExtraTB > 0 ? rawMaxExtraTB : 0
   const maxTotalTB = baseTB + maxExtraTB
   const currentExtraTB = addonState?.extra_storage_tb ?? 0
+  // Task 1706 — the "Current total" readout prefers the server-truth quota
+  // (drive-context /files/usage, bonus-inclusive get_user_quota bytes) over
+  // the TB-integer reconstruction (baseTB + currentExtraTB); addonState's TB
+  // fields stay authoritative for the add-on axis (quantities/prices) only.
+  const currentTotalStorageBytes =
+    typeof contextPlanLimitBytes === 'number' && Number.isFinite(contextPlanLimitBytes) && contextPlanLimitBytes > 0
+      ? contextPlanLimitBytes
+      : (baseTB + currentExtraTB) * 1_000_000_000_000
   const sliderChanged = sliderTB !== currentExtraTB
   const currentCostCents = planMonthlyCostCents(effectivePlan, currentExtraTB)
   const newCostCents = planMonthlyCostCents(effectivePlan, sliderTB)
@@ -3382,7 +3398,7 @@ function openUpgrade(plan: string) {
               <div className="flex items-baseline justify-between">
                 <span className="text-[13px] text-ink-2">Current total</span>
                 <span className="font-mono text-sm font-semibold text-ink">
-                  {formatStorageSI((baseTB + currentExtraTB) * 1_000_000_000_000)}
+                  {formatStorageSI(currentTotalStorageBytes)}
                   {currentExtraTB > 0 && (
                     <span className="text-ink-3 font-normal ml-1.5">
                       ({formatStorageSI(baseTB * 1_000_000_000_000)} base + {formatStorageSI(currentExtraTB * 1_000_000_000_000)} extra)

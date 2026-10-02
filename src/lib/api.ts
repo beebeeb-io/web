@@ -2586,37 +2586,49 @@ export interface StorageAddonState {
   pending?: boolean
 }
 
+/**
+ * Task 1706 — shared normalization for GET/POST /billing/addons payloads.
+ *
+ * `effective_storage_bytes` is the server's bonus-inclusive truth
+ * (`get_user_quota` — catalog base + add-on TB + admin bonus). When the field
+ * is present it is used as-is; when it is absent we return 0 and let callers
+ * fall back to their own server-truth sources. The old tb×1e12 synthesis
+ * (total/base+extra → bytes) is DELIBERATELY GONE: it multiplied the stale
+ * pre-pricing-v2 whole-TB literals (basic advertised as 1 TB) into a fake
+ * quota. Add-on quantities/prices stay authoritative from the same payload;
+ * only the byte total must come from the server.
+ */
+export function normalizeStorageAddonState(
+  raw: Record<string, unknown>,
+  fallbackExtraTB = 0,
+): StorageAddonState {
+  const baseTB = typeof raw.base_storage_tb === 'number' ? raw.base_storage_tb : 0
+  const extraTB = typeof raw.extra_storage_tb === 'number' ? raw.extra_storage_tb : fallbackExtraTB
+  const maxTB = typeof raw.max_storage_tb === 'number' ? raw.max_storage_tb : baseTB + extraTB
+
+  const rawEffective = raw.effective_storage_bytes
+  const effectiveBytes =
+    typeof rawEffective === 'number' && Number.isFinite(rawEffective) && rawEffective >= 0
+      ? rawEffective
+      : 0
+
+  return {
+    plan: typeof raw.plan === 'string' ? raw.plan : 'free',
+    extra_storage_tb: extraTB,
+    max_storage_tb: maxTB,
+    storage_addon_price_cents: typeof raw.storage_addon_price_cents === 'number' ? raw.storage_addon_price_cents : null,
+    base_storage_tb: baseTB,
+    effective_storage_bytes: effectiveBytes,
+    // SEPA deferred-apply marker (task 0941) — pass-through, task 1706 keeps it.
+    pending: raw.pending === true,
+  }
+}
+
 /** GET /api/v1/billing/addons — current add-on state */
 export async function getStorageAddons(): Promise<StorageAddonState | null> {
   try {
     const raw = await request<Record<string, unknown>>('/api/v1/billing/addons')
-
-    // Normalize: the API may return total_storage_tb instead of effective_storage_bytes,
-    // and some fields may be null. Compute missing values defensively.
-    const baseTB = typeof raw.base_storage_tb === 'number' ? raw.base_storage_tb : 0
-    const extraTB = typeof raw.extra_storage_tb === 'number' ? raw.extra_storage_tb : 0
-    const totalTB = typeof raw.total_storage_tb === 'number' ? raw.total_storage_tb : null
-    const maxTB = typeof raw.max_storage_tb === 'number' ? raw.max_storage_tb : baseTB + extraTB
-
-    // effective_storage_bytes: prefer the explicit field if present and valid,
-    // then fall back to total_storage_tb, then compute from base + extra.
-    let effectiveBytes: number
-    if (typeof raw.effective_storage_bytes === 'number' && raw.effective_storage_bytes > 0) {
-      effectiveBytes = raw.effective_storage_bytes
-    } else if (totalTB != null && totalTB > 0) {
-      effectiveBytes = totalTB * 1_000_000_000_000
-    } else {
-      effectiveBytes = (baseTB + extraTB) * 1_000_000_000_000
-    }
-
-    return {
-      plan: typeof raw.plan === 'string' ? raw.plan : 'free',
-      extra_storage_tb: extraTB,
-      max_storage_tb: maxTB,
-      storage_addon_price_cents: typeof raw.storage_addon_price_cents === 'number' ? raw.storage_addon_price_cents : null,
-      base_storage_tb: baseTB,
-      effective_storage_bytes: effectiveBytes,
-    }
+    return normalizeStorageAddonState(raw)
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) return null
     throw err
@@ -2655,30 +2667,10 @@ export async function updateStorageAddons(params: {
     body: JSON.stringify(params),
   })
 
-  // Normalize the same way as getStorageAddons
-  const baseTB = typeof raw.base_storage_tb === 'number' ? raw.base_storage_tb : 0
-  const extraTB = typeof raw.extra_storage_tb === 'number' ? raw.extra_storage_tb : params.extra_storage_tb
-  const totalTB = typeof raw.total_storage_tb === 'number' ? raw.total_storage_tb : null
-  const maxTB = typeof raw.max_storage_tb === 'number' ? raw.max_storage_tb : baseTB + extraTB
-
-  let effectiveBytes: number
-  if (typeof raw.effective_storage_bytes === 'number' && raw.effective_storage_bytes > 0) {
-    effectiveBytes = raw.effective_storage_bytes
-  } else if (totalTB != null && totalTB > 0) {
-    effectiveBytes = totalTB * 1_000_000_000_000
-  } else {
-    effectiveBytes = (baseTB + extraTB) * 1_000_000_000_000
-  }
-
-  return {
-    plan: typeof raw.plan === 'string' ? raw.plan : 'free',
-    extra_storage_tb: extraTB,
-    max_storage_tb: maxTB,
-    storage_addon_price_cents: typeof raw.storage_addon_price_cents === 'number' ? raw.storage_addon_price_cents : null,
-    base_storage_tb: baseTB,
-    effective_storage_bytes: effectiveBytes,
-    pending: raw.pending === true,
-  }
+  // Task 1706: same normalization as getStorageAddons — explicit
+  // effective_storage_bytes when the server sends it, never a tb×1e12
+  // synthesis. (The apply response carries the field server-side.)
+  return normalizeStorageAddonState(raw, params.extra_storage_tb)
 }
 
 /**
