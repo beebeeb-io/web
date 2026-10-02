@@ -11,6 +11,7 @@ import {
   downloadSharedFile,
   downloadBundleItem,
   fetchShareCiphertextPreview,
+  getPlans,
   ApiError,
   type ShareView as ShareViewData,
   type ShareItem,
@@ -20,6 +21,7 @@ import { decryptFilename, fromBase64, toBase64url, parseEncryptedBlob, unwrapKey
 import { decryptEncryptedBytes, inferChunkCountFromEncryptedSize } from '../lib/encrypted-download'
 import { withNetworkRetry } from '../lib/net-retry'
 import { formatBytes } from '../lib/format'
+import { formatEur } from '../lib/trial-checkout'
 import { parseShareKey, extractShareKeyToken, decodeShareKeyToken } from '../lib/share-key'
 
 // ─── Meta tag helpers ─────────────────────────────────────────────────────────
@@ -363,6 +365,28 @@ function AcquisitionCTA({
 }: {
   signupUrl: string
 }) {
+  // Task 1701 — "From €X/month" renders the STORED price (the cheapest
+  // purchasable plan from the public /billing/plans), never a hardcoded
+  // literal: the owner's stored price is the only honest number here. Until
+  // the plans answer (or on error), the price sentence is simply omitted —
+  // a missing claim beats a made-up one.
+  const [fromPriceEur, setFromPriceEur] = useState<number | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    getPlans()
+      .then((plans) => {
+        if (cancelled) return
+        const purchasable = (plans ?? []).filter(
+          (p) => p.purchasable !== false && !p.coming_soon,
+        )
+        if (purchasable.length === 0) return
+        setFromPriceEur(Math.min(...purchasable.map((p) => p.price_eur)))
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [])
   return (
     <div className="mt-6 text-center px-4">
       <p className="text-[12.5px] text-ink-4 mb-1">Liked how this worked?</p>
@@ -377,7 +401,8 @@ function AcquisitionCTA({
         Start a 14-day free trial
       </a>
       <p className="text-[11px] text-ink-4 mt-2.5">
-        From €1.99/month. Cancel any time during the trial. No tracking, no ads.
+        {fromPriceEur != null && <>From {formatEur(fromPriceEur)}/month. </>}
+        Cancel any time during the trial. No tracking, no ads.
       </p>
     </div>
   )

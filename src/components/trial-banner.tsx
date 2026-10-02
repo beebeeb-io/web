@@ -102,7 +102,19 @@ export function TrialBanner() {
     if (converting) return
     setConverting(true)
     try {
-      const { url, payment_id } = await convertTrial()
+      const res = await convertTrial()
+      // Task 1702 — a €0 plan's conversion is a direct activation: no Mollie
+      // checkout, nothing to poll or reconcile.
+      if (res.activated) {
+        showToast({
+          icon: 'check',
+          title: 'Your plan is activated',
+          description: 'This plan is free right now — nothing was charged.',
+        })
+        navigate('/billing')
+        setConverting(false)
+        return
+      }
       // Mirror the 0865 redirect plumbing: stamp the SAME precise pending-
       // checkout shape billing.tsx itself writes before a checkout redirect
       // (task 1064 / D6) — `kind: 'plan'` + a real `pre` snapshot of the
@@ -112,8 +124,8 @@ export function TrialBanner() {
       // review: this used to omit payment_id, losing the direct
       // `GET /payment/{id}/status` reconciliation path for banner-started
       // conversions).
-      persistTrialConvertIntent(sub, payment_id)
-      window.location.href = url
+      persistTrialConvertIntent(sub, res.payment_id)
+      window.location.href = res.url
     } catch (err) {
       // Surface the typed 409s and route the user to the right place.
       if (err instanceof ApiError) {
