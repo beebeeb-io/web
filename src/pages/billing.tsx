@@ -53,6 +53,7 @@ import { userFriendlyError } from '../lib/user-friendly-error'
 import { handleBillingResetTestMode, type BillingResetNavigationState } from '../lib/billing-reset'
 
 import { formatStorageSI } from '../lib/format'
+import { resolveMeterTotalBytes, resolveCurrentTotalBytes, storageAllocationBreakdown } from '../lib/storage-totals'
 import { StorageBreakdown } from '../components/storage-breakdown'
 import {
   planCanAddStorage,
@@ -324,7 +325,17 @@ export function Billing() {
       { replace: true },
     )
   }, [setSearchParams])
-  const { usage: contextUsage, planDetails: contextPlanDetails, refreshPlanDetails } = useDriveData()
+  const { usage: contextUsage, planDetails: contextPlanDetails, refreshPlanDetails, refreshUsage } = useDriveData()
+
+  // Task 1706 review #132-A — clear the transient add-on authority override on
+  // the next successful contextUsage refresh: every delivery is a new object
+  // (identity changes even when the numbers are unchanged), so the moment the
+  // drive context holds fresh usage the normal server-truth-first hierarchy is
+  // trustworthy again. Setting the already-current value is a no-op re-render
+  // (React bails out), so this is safe to run on every identity change.
+  useEffect(() => {
+    setAddonAuthorityOverride(false)
+  }, [contextUsage])
   // sub comes from context; re-synced after cancel/reactivate via loadData
   const [sub, setSub] = useState<Subscription | null>(contextPlanDetails.subscription)
   const [invoices, setInvoices] = useState<BillingInvoice[]>([])
@@ -573,6 +584,13 @@ export function Billing() {
   const [addonState, setAddonState] = useState<StorageAddonState | null>(null)
   const [sliderTB, setSliderTB] = useState<number>(0)
   const [addonSaving, setAddonSaving] = useState(false)
+  // Task 1706 review #132-A — transient override: set when the usage refresh
+  // after a just-applied add-on change FAILED (the drive-context value is
+  // then known-stale), so both storage readouts prefer the fresh apply
+  // response's `effective_storage_bytes` until the next successful
+  // contextUsage refresh clears it (effect below, keyed on the context
+  // usage's identity — every delivery is a new object).
+  const [addonAuthorityOverride, setAddonAuthorityOverride] = useState(false)
   const [addonPreview, setAddonPreview] = useState<StorageAddonPreview | null>(null)
   const [addonPreviewLoading, setAddonPreviewLoading] = useState(false)
   // SEPA two-path storage update (task 0941). `addonInstantPayLoading` tracks the
@@ -849,13 +867,17 @@ export function Billing() {
   // quota engine enforces, so it outranks `addonState.effective_storage_bytes`;
   // addonState stays authoritative ONLY for add-on quantities/prices. The
   // final fallback is the static plan metadata.
+  // Task 1706 review #132-A — `addonAuthorityOverride` (a failed post-apply
+  // usage refresh) promotes the JUST-APPLIED response's
+  // `effective_storage_bytes` to first place until the context refreshes;
+  // decision logic unit-tested in test/1706-storage-authority.test.ts.
   const contextPlanLimitBytes = contextUsage?.plan_limit_bytes
-  const rawTotalStorageBytes =
-    typeof contextPlanLimitBytes === 'number' && Number.isFinite(contextPlanLimitBytes) && contextPlanLimitBytes > 0
-      ? contextPlanLimitBytes
-      : addonState
-        ? addonState.effective_storage_bytes
-        : meta.storageGB * 1_000_000_000
+  const rawTotalStorageBytes = resolveMeterTotalBytes(
+    contextPlanLimitBytes,
+    addonState?.effective_storage_bytes,
+    addonAuthorityOverride,
+    meta.storageGB * 1_000_000_000,
+  )
   // Guard against NaN/undefined — show 0 rather than NaN in the UI
   const totalStorageBytes = trialCapBytes != null
     ? trialCapBytes
@@ -893,10 +915,22 @@ export function Billing() {
   // (drive-context /files/usage, bonus-inclusive get_user_quota bytes) over
   // the TB-integer reconstruction (baseTB + currentExtraTB); addonState's TB
   // fields stay authoritative for the add-on axis (quantities/prices) only.
-  const currentTotalStorageBytes =
-    typeof contextPlanLimitBytes === 'number' && Number.isFinite(contextPlanLimitBytes) && contextPlanLimitBytes > 0
-      ? contextPlanLimitBytes
-      : (baseTB + currentExtraTB) * 1_000_000_000_000
+  // Task 1706 review #132-A — the same transient override applies here (fresh
+  // add-on bytes win only when positive); decision logic unit-tested in
+  // test/1706-storage-authority.test.ts.
+  const currentTotalStorageBytes = resolveCurrentTotalBytes(
+    contextPlanLimitBytes,
+    addonState?.effective_storage_bytes,
+    addonAuthorityOverride,
+    (baseTB + currentExtraTB) * 1_000_000_000_000,
+  )
+  // Task 1706 review #132-B — reconcile the displayed total against the
+  // base+extra parts the parenthetical names: a bonus-inclusive total is
+  // larger than base+extra, so the remainder is surfaced as a neutral
+  // "additional storage" term (no web payload exposes a bonus-specific
+  // field — see storage-totals.ts) and irreconcilable parts omit the
+  // parenthetical instead of contradicting the total.
+  const currentAllocation = storageAllocationBreakdown(currentTotalStorageBytes, baseTB, currentExtraTB)
   const sliderChanged = sliderTB !== currentExtraTB
   const currentCostCents = planMonthlyCostCents(effectivePlan, currentExtraTB)
   const newCostCents = planMonthlyCostCents(effectivePlan, sliderTB)
@@ -1275,6 +1309,19 @@ function openUpgrade(plan: string) {
         })
       }
       window.dispatchEvent(new Event('beebeeb:plan-changed'))
+      // Task 1706 review #132-A — make the usage refresh awaitable and its
+      // outcome observable: on success the drive-context `/files/usage` is
+      // fresh and the normal server-truth-first hierarchy renders correctly;
+      // on failure the context value is KNOWN-stale, so the transient
+      // override keeps the just-applied response's effective_storage_bytes
+      // authoritative until the next successful contextUsage refresh clears
+      // it (effect keyed on contextUsage identity).
+      try {
+        const usageFresh = await refreshUsage()
+        if (!usageFresh) setAddonAuthorityOverride(true)
+      } catch {
+        setAddonAuthorityOverride(true)
+      }
       refreshPlanDetails()
     } catch (err) {
       const resetMessage = await handleBillingResetTestMode(err, {
@@ -3399,9 +3446,20 @@ function openUpgrade(plan: string) {
                 <span className="text-[13px] text-ink-2">Current total</span>
                 <span className="font-mono text-sm font-semibold text-ink">
                   {formatStorageSI(currentTotalStorageBytes)}
-                  {currentExtraTB > 0 && (
+                  {/* Task 1706 review #132-B — the parenthetical must reconcile
+                      with the displayed total: a bonus-inclusive server total is
+                      larger than base+extra, so the unexplained remainder is
+                      rendered as a neutral "additional storage" term (no web
+                      payload exposes a bonus-specific field), and when the parts
+                      exceed the total the parenthetical is omitted instead of
+                      contradicting the number next to it. */}
+                  {currentAllocation.show && (
                     <span className="text-ink-3 font-normal ml-1.5">
-                      ({formatStorageSI(baseTB * 1_000_000_000_000)} base + {formatStorageSI(currentExtraTB * 1_000_000_000_000)} extra)
+                      ({formatStorageSI(currentAllocation.baseBytes)} base
+                      {currentAllocation.extraBytes != null && ` + ${formatStorageSI(currentAllocation.extraBytes)} extra`}
+                      {currentAllocation.remainderBytes != null &&
+                        ` + ${formatStorageSI(currentAllocation.remainderBytes)} additional storage`}
+                      )
                     </span>
                   )}
                 </span>

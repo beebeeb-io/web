@@ -45,7 +45,10 @@ interface DriveDataState {
   unpinFolders: (folderIds: string[]) => void
 
   usage: StorageUsage | null
-  refreshUsage: () => void
+  /** Task 1706 review #132-A — resolves true when the primary /files/usage
+   * fetch delivered a value into context, false when it failed. Existing
+   * fire-and-forget callers are unaffected (a statement call ignores it). */
+  refreshUsage: () => Promise<boolean>
 
   planDetails: PlanDetails
   refreshPlanDetails: () => void
@@ -132,21 +135,35 @@ export function DriveDataProvider({ children }: { children: ReactNode }) {
 
   // ── Usage ─────────────────────────────────────────────────────────────────
 
-  const refreshUsage = useCallback(() => {
-    getStorageUsage()
-      .then((u) => setUsage(u))
-      .catch(() => {})
-    // Try the billing endpoint (may 404 when not yet deployed) — if it returns
-    // data, merge it in so the sidebar shows the billing-aware numbers.
-    fetchUsage()
-      .then((b) => {
-        if (!b) return
-        setUsage((prev) => {
-          if (!prev) return prev
-          return { ...prev, used_bytes: b.used_bytes, plan_limit_bytes: b.quota_bytes }
-        })
+  /**
+   * Task 1706 review #132-A — awaitable outcome. Resolves true when the
+   * primary `/files/usage` fetch DELIVERED a value into context, false when it
+   * failed; callers that need to know whether the shared usage is now fresh
+   * (billing.tsx's post-add-on-apply authority decision) await this, while
+   * every existing fire-and-forget caller keeps working unchanged (a bare
+   * statement call ignores the promise). The `/billing/usage` merge stays
+   * best-effort enrichment that never flips the outcome.
+   */
+  const refreshUsage = useCallback((): Promise<boolean> => {
+    return getStorageUsage()
+      .then(async (u) => {
+        setUsage(u)
+        // Try the billing endpoint (may 404 when not yet deployed) — if it returns
+        // data, merge it in so the sidebar shows the billing-aware numbers.
+        // Enrichment failure does not un-freshen the primary fetch.
+        try {
+          const b = await fetchUsage()
+          if (!b) return true
+          setUsage((prev) => {
+            if (!prev) return prev
+            return { ...prev, used_bytes: b.used_bytes, plan_limit_bytes: b.quota_bytes }
+          })
+        } catch {
+          // best-effort enrichment
+        }
+        return true
       })
-      .catch(() => {})
+      .catch(() => false)
   }, [])
 
   // ── Plan + subscription ───────────────────────────────────────────────────
