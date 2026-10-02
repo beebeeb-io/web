@@ -131,7 +131,9 @@ export async function startPlanCheckout(
   const result = promoCode
     ? await checkout({ plan: planId, billing_cycle: cycle, promo_code: promoCode })
     : await checkout({ plan: planId, billing_cycle: cycle })
-  if (!('trial' in result)) {
+  if (!('trial' in result) && !result.activated) {
+    // A €0 plan (task 1702) came back already activated — there is no
+    // checkout to abandon, so no pending intent is persisted.
     setPendingCheckout('plan', planId, cycle, makePreState(subscription), result.payment_id)
   }
   return result
@@ -491,6 +493,20 @@ export function Pricing() {
         })
         window.dispatchEvent(new Event('beebeeb:plan-changed'))
         navigate('/')
+        return
+      }
+      // Task 1702 — a €0 plan came back already activated (no payment
+      // provider round trip). Show the honest state instead of redirecting
+      // to a provider page that does not exist.
+      if (result.activated) {
+        showToast({
+          icon: 'check',
+          title: 'Your plan is activated',
+          description: 'This plan is free right now — nothing was charged.',
+        })
+        window.dispatchEvent(new Event('beebeeb:plan-changed'))
+        refreshPlanDetails()
+        navigate('/billing')
         return
       }
       window.location.href = result.url

@@ -58,8 +58,13 @@ export function buildTrialPlanOptions(apiPlans: Plan[] | null | undefined): Tria
     return {
       id,
       name: api?.name || meta.label,
-      priceMonthly: api && api.price_eur > 0 ? api.price_eur : meta.priceMonthly,
-      priceYearly: api && api.price_yearly_eur > 0 ? api.price_yearly_eur : meta.priceYearly,
+      // Task 1701 — render the STORED price: a plan the API prices at €0 shows
+      // €0, never the static fallback (the 1.99 substitution hid the owner's
+      // stored price and sent testers to a checkout that then failed on the
+      // zero amount — task 1702). The static constants only fill in when the
+      // API has no row for the plan at all.
+      priceMonthly: api ? api.price_eur : meta.priceMonthly,
+      priceYearly: api ? api.price_yearly_eur : meta.priceYearly,
       storageLabel: api?.storage_label || storageLabelFromGB(meta.storageGB),
       trialDays,
     }
@@ -68,6 +73,19 @@ export function buildTrialPlanOptions(apiPlans: Plan[] | null | undefined): Tria
 
 export function isTrialPlanSlug(slug: string | null | undefined): slug is TrialPlanSlug {
   return (TRIAL_PLAN_SLUGS as readonly string[]).includes(slug ?? '')
+}
+
+/**
+ * Task 1702 — true when the plan's price for `cycle` is €0: the server
+ * activates it directly (no payment method, no mandate, no trial), so the
+ * checkout flow must skip the payment steps entirely.
+ */
+export function isZeroPriceForCycle(
+  priceMonthly: number,
+  priceYearly: number,
+  cycle: BillingCycle,
+): boolean {
+  return (cycle === 'yearly' ? priceYearly : priceMonthly) === 0
 }
 
 /** "€3.99", "€10", "€39.90" — cents shown only when there are any. */
@@ -252,6 +270,12 @@ export function classifyTrialCheckoutError(err: unknown): TrialCheckoutErrorKind
  * EUR the trial converts into per cycle: the row's `mollie_amount_cents` (what
  * Mollie will actually charge), else the catalogue price for the cycle, else
  * plan-constants. Null for an unknown plan.
+ *
+ * Task 1701 — the API catalogue price passes through VERBATIM, including €0:
+ * the old `p > 0` guard substituted the static 1.99 for a plan the owner
+ * stored at €0. The plan-constants fallback (only reached when the API has no
+ * matching row at all) keeps its guard — there the real price is unknowable,
+ * and guessing €0 would be as wrong as guessing 1.99.
  */
 export function trialRenewalAmount(
   sub: Pick<Subscription, 'plan' | 'billing_cycle' | 'mollie_amount_cents'>,
@@ -262,8 +286,7 @@ export function trialRenewalAmount(
   }
   const yearly = sub.billing_cycle === 'yearly'
   if (plan && plan.id === sub.plan) {
-    const p = yearly ? plan.price_yearly_eur : plan.price_eur
-    if (p > 0) return p
+    return yearly ? plan.price_yearly_eur : plan.price_eur
   }
   const meta = PLAN_META[sub.plan]
   if (!meta) return null

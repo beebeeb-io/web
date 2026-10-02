@@ -1442,12 +1442,28 @@ function openUpgrade(plan: string) {
     }
     setResumeCheckoutLoading(true)
     try {
-      const { url, payment_id } = await createCheckoutSession({
+      const res = await createCheckoutSession({
         plan: action.plan,
         billing_cycle: action.cycle,
       })
-      setPendingCheckout(pending.kind, action.plan, action.cycle, makePreState(sub), payment_id)
-      window.location.href = url
+      // Task 1702 — a €0 plan came back already activated: no payment to
+      // reconcile, no redirect. Refresh and land on the page itself.
+      if (res.activated) {
+        showToast({
+          icon: 'check',
+          title: 'Your plan is activated',
+          description: 'This plan is free right now — nothing was charged.',
+        })
+        clearPendingCheckout()
+        setPendingCheckoutState(null)
+        await loadData()
+        window.dispatchEvent(new Event('beebeeb:plan-changed'))
+        refreshPlanDetails()
+        setResumeCheckoutLoading(false)
+        return
+      }
+      setPendingCheckout(pending.kind, action.plan, action.cycle, makePreState(sub), res.payment_id)
+      window.location.href = res.url
     } catch (err) {
       // Task 1518 (server PR #94) — the subscription this resume was trying
       // to recreate got reset because it was created while Mollie was in
@@ -1510,15 +1526,29 @@ function openUpgrade(plan: string) {
   async function handleConvertTrial() {
     setConvertLoading(true)
     try {
-      const { url, payment_id } = await convertTrial()
+      const res = await convertTrial()
+      // Task 1702 — a €0 plan's conversion is a direct activation: no Mollie
+      // checkout, nothing to poll. Refresh in place.
+      if (res.activated) {
+        showToast({
+          icon: 'check',
+          title: 'Your plan is activated',
+          description: 'This plan is free right now — nothing was charged.',
+        })
+        window.dispatchEvent(new Event('beebeeb:plan-changed'))
+        refreshPlanDetails()
+        await loadData()
+        setConvertLoading(false)
+        return
+      }
       setPendingCheckout(
         'plan',
         sub?.plan ?? effectivePlan,
         sub?.billing_cycle ?? 'monthly',
         makePreState(sub),
-        payment_id,
+        res.payment_id,
       )
-      window.location.href = url
+      window.location.href = res.url
     } catch (err) {
       if (err instanceof ApiError && err.code === 'trial_not_active') {
         showToast({

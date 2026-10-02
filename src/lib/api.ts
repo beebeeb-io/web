@@ -2308,7 +2308,29 @@ export interface CheckoutTrialResult {
   message: string
 }
 
-export type CheckoutResult = { url: string; payment_id?: string } | CheckoutTrialResult
+export type CheckoutResult = CheckoutSuccess | CheckoutTrialResult
+
+/**
+ * The redirect-shaped checkout result. Paid plans get the provider hosted
+ * checkout (`payment_id` set). A plan priced €0 (task 1702) comes back
+ * `activated: true` instead: the server activated the plan directly, with NO
+ * payment provider involved (no Mollie checkout, no subscription create, no
+ * mandate). `url` still carries the post-success destination per the checkout
+ * contract, so a caller that only redirects keeps working; callers that want
+ * honest messaging branch on `activated`. There is no `payment_id` — nothing
+ * was charged.
+ */
+export interface ZeroPriceActivation {
+  activated: true
+  plan: string
+  billing_cycle: string
+  status: string
+  current_period_end: string
+  url: string
+  payment_id?: undefined
+}
+
+export type CheckoutSuccess = { url: string; payment_id?: string; activated?: false } | ZeroPriceActivation
 
 // Overloaded so existing no-promo call sites (upgrade-dialog, upgrade-nudge-modal)
 // keep destructuring `{ url }` unchanged — the trial branch is only reachable
@@ -2319,7 +2341,7 @@ export async function createCheckoutSession(params: {
   plan: string
   billing_cycle: string
   promo_code?: undefined
-}): Promise<{ url: string; payment_id?: string }>
+}): Promise<CheckoutSuccess>
 export async function createCheckoutSession(params: {
   plan: string
   billing_cycle: string
@@ -2343,12 +2365,16 @@ export async function createCheckoutSession(params: {
 /** Payment method that captures the trial mandate (task 1037). */
 export type TrialCheckoutMethod = 'creditcard' | 'ideal'
 
-export interface TrialCheckoutResult {
-  /** Mollie hosted checkout — redirect the browser here. */
-  url: string
-  /** Mollie payment id (`tr_…`) — persist it for the return reconcile. */
-  payment_id: string
-}
+/**
+ * `POST /billing/trial/checkout` result. Paid plans get the Mollie hosted
+ * checkout (`payment_id` set, redirect to `url`). A plan priced €0 (task
+ * 1702) comes back `activated: true` — the server activated the plan
+ * directly, no payment provider involved; `url` keeps the post-success
+ * destination and there is no `payment_id`.
+ */
+export type TrialCheckoutResult =
+  | { url: string; payment_id: string; activated?: false }
+  | ZeroPriceActivation
 
 /**
  * Start a trial WITH a payment mandate (task 1037 — no free signups).
@@ -2421,10 +2447,15 @@ export async function startTrial(params: {
  *   - `trial_already_subscribed`→ already converted; send to billing management.
  * A 400 means Mollie is not configured server-side.
  */
-export async function convertTrial(): Promise<{ url: string; payment_id?: string }> {
-  return request<{ url: string; payment_id?: string }>('/api/v1/billing/trial/convert', {
-    method: 'POST',
-  })
+export async function convertTrial(): Promise<
+  { url: string; payment_id?: string; activated?: false } | ZeroPriceActivation
+> {
+  return request<{ url: string; payment_id?: string; activated?: false } | ZeroPriceActivation>(
+    '/api/v1/billing/trial/convert',
+    {
+      method: 'POST',
+    },
+  )
 }
 
 /**

@@ -84,20 +84,32 @@ export function UpgradeDialog({
   // existing 0865 pending-checkout watchdog marker is stamped here as before.
   const proceedToPayment = useCallback(async () => {
     try {
-      const { url, payment_id } = await createCheckoutSession({
+      const res = await createCheckoutSession({
         plan: planId,
         billing_cycle: cycle,
       })
+      // Task 1702 — a €0 plan came back already activated: no payment, no
+      // redirect. Refresh the parent's plan state and close.
+      if (res.activated) {
+        showToast({
+          icon: 'check',
+          title: 'Your plan is activated',
+          description: 'This plan is free right now — nothing was charged.',
+        })
+        onSuccess?.()
+        handleClose()
+        return
+      }
       // Stamp the unified pre-checkout intent (task 0946). The parent owns the
       // live subscription, so it captures the pre-state snapshot; if no callback
       // was wired, fall back to the legacy minimal marker so the abandoned-
       // checkout watchdog still works.
       if (onBeforeRedirect) {
-        onBeforeRedirect(planId, cycle, payment_id)
+        onBeforeRedirect(planId, cycle, res.payment_id)
       } else {
         try { localStorage.setItem('bb_pending_checkout', JSON.stringify({ kind: 'plan', plan: planId, cycle, ts: Date.now() })) } catch { /* ok */ }
       }
-      window.location.href = url
+      window.location.href = res.url
     } catch (checkoutErr) {
       // Task 1518 part C — the ordinary upgrade path used to fall through
       // to the generic re-throw below, which BillingInfoStep showed inline

@@ -43,6 +43,7 @@ import {
   startTrialCheckout,
   type Plan,
   type Subscription,
+  type ZeroPriceActivation,
 } from '../lib/api'
 import { resolveAccountState, PAID_CHECKOUT_PATH } from '../lib/account-state'
 import { resolveHasUsedTrial } from '../lib/trial-eligibility'
@@ -66,6 +67,7 @@ import {
   classifyTrialCheckoutError,
   formatEur,
   isTrialPlanSlug,
+  isZeroPriceForCycle,
   startTrialLabel,
   trialChargeDate,
   trialPriceLabel,
@@ -118,6 +120,9 @@ export function ChoosePlan() {
   const [plan, setPlan] = useState<TrialPlanSlug>(toTrialPlan(initialIntent?.plan) ?? DEFAULT_TRIAL_PLAN)
   const [cycle, setCycle] = useState<BillingCycle>(initialIntent?.cycle ?? 'monthly')
   const [method, setMethod] = useState<TrialMethod>('creditcard')
+  // Task 1702 — the €0 direct-activation click guard (the pick step calls the
+  // checkout itself; there is no BillingInfoStep submitting state here).
+  const [activating, setActivating] = useState(false)
   const [apiPlans, setApiPlans] = useState<Plan[] | null>(null)
   useEffect(() => {
     getPlans().then(setApiPlans).catch(() => { /* plan-constants fallback */ })
@@ -126,6 +131,10 @@ export function ChoosePlan() {
   const selected = options.find((o) => o.id === plan) ?? options[0]
   const trialDays = selected.trialDays
   const price = cycle === 'yearly' ? selected.priceYearly : selected.priceMonthly
+  // Task 1702 — a €0 plan (for the chosen cycle) activates directly: no
+  // payment method, no billing details, no trial. The whole mandate flow is
+  // skipped below.
+  const zeroPrice = isZeroPriceForCycle(selected.priceMonthly, selected.priceYearly, cycle)
 
   // ── Arrival decision (once) ────────────────────────────────────────────
   const [step, setStep] = useState<Step | null>(null)
@@ -285,8 +294,24 @@ export function ChoosePlan() {
     setStep('pick')
   }
 
-  /** Blocked trial → the billing-details step, then a normal paid checkout. */
+  /** Blocked trial → the billing-details step, then a normal paid checkout.
+   * Task 1702 — for a €0 plan there is nothing to bill: activate directly. */
   function subscribeNow() {
+    if (zeroPrice) {
+      if (activating) return
+      setActivating(true)
+      void startPaidCheckout()
+        .catch((err) => {
+          showToast({
+            icon: 'x',
+            title: 'Could not activate the plan',
+            description: err instanceof Error ? err.message : 'Please try again.',
+            danger: true,
+          })
+        })
+        .finally(() => setActivating(false))
+      return
+    }
     setPurpose('paid')
     setStep('billing')
   }
@@ -301,12 +326,44 @@ export function ChoosePlan() {
     savePlanIntent({ plan, cycle: next })
   }
 
+  // Task 1702 — the server activated a €0 plan directly; there is no payment
+  // and no pending-checkout marker to reconcile. Pull the now-active
+  // subscription into the shared cache and go to the drive.
+  const finishZeroActivation = useCallback(
+    async (activated: ZeroPriceActivation) => {
+      try {
+        const latest = await getSubscription()
+        if (latest) {
+          applySubscription(latest)
+          window.dispatchEvent(new Event('beebeeb:plan-changed'))
+        }
+        refreshPlanDetails()
+      } catch {
+        /* refetch raced — the account is active server-side regardless */
+      }
+      clearPendingCheckout()
+      clearPlanIntent()
+      const label = activated.plan.charAt(0).toUpperCase() + activated.plan.slice(1)
+      showToast({
+        icon: 'check',
+        title: `${label} is activated`,
+        description: 'This plan is free right now — nothing was charged and no payment method is needed.',
+      })
+      navigate('/', { replace: true })
+    },
+    [applySubscription, refreshPlanDetails, showToast, navigate],
+  )
+
   const startCheckout = useCallback(async () => {
     try {
-      const { url, payment_id } = await startTrialCheckout({ plan, billing_cycle: cycle, method })
+      const res = await startTrialCheckout({ plan, billing_cycle: cycle, method })
+      if (res.activated) {
+        await finishZeroActivation(res)
+        return
+      }
       savePlanIntent({ plan, cycle })
-      setPendingCheckout('trial', plan, cycle, makePreState(sub), payment_id)
-      window.location.href = url
+      setPendingCheckout('trial', plan, cycle, makePreState(sub), res.payment_id)
+      window.location.href = res.url
     } catch (err) {
       const kind = classifyTrialCheckoutError(err)
       if (kind === 'trial_used') {
@@ -331,7 +388,7 @@ export function ChoosePlan() {
       // Re-throw so BillingInfoStep shows it inline and resets its button.
       throw new Error(userFriendlyError(err))
     }
-  }, [plan, cycle, method, sub, showToast, navigate, refreshPlanDetails])
+  }, [plan, cycle, method, sub, showToast, navigate, refreshPlanDetails, finishZeroActivation])
 
   // Paid checkout for the selected plan + cycle — the path for a card / bank
   // account that already had a trial. Same request + pending intent as every
@@ -339,21 +396,26 @@ export function ChoosePlan() {
   // needs_plan account), where the existing reconcile confirms it.
   const startPaidCheckout = useCallback(async () => {
     try {
-      const { url, payment_id } = await createCheckoutSession({ plan, billing_cycle: cycle })
-      setPendingCheckout('plan', plan, cycle, makePreState(sub), payment_id)
-      window.location.href = url
+      const res = await createCheckoutSession({ plan, billing_cycle: cycle })
+      if (res.activated) {
+        await finishZeroActivation(res)
+        return
+      }
+      setPendingCheckout('plan', plan, cycle, makePreState(sub), res.payment_id)
+      window.location.href = res.url
     } catch (err) {
       if (classifyTrialCheckoutError(err) === 'billing_profile') {
         throw new Error('Add your billing details to subscribe.')
       }
       throw new Error(userFriendlyError(err))
     }
-  }, [plan, cycle, sub])
+  }, [plan, cycle, sub, finishZeroActivation])
 
   const chargeDate = trialChargeDate(trialDays)
-  const todayLabel = method === 'ideal' ? '€0.01' : '€0.00'
-  const todayCaption =
-    method === 'ideal'
+  const todayLabel = zeroPrice ? '€0.00' : method === 'ideal' ? '€0.01' : '€0.00'
+  const todayCaption = zeroPrice
+    ? 'Nothing is charged — this plan is free right now'
+    : method === 'ideal'
       ? 'iDEAL verification, refunded automatically'
       : 'Card authorization only — nothing is charged'
   const isNeedsPlan = resolveAccountState(sub) === 'needs_plan'
@@ -571,9 +633,13 @@ export function ChoosePlan() {
       wide
       title="Choose your plan"
       subtitle={
-        isNeedsPlan
-          ? `Your encrypted vault is ready. Start your ${trialDays}-day free trial to begin uploading.`
-          : `Start your ${trialDays}-day free trial.`
+        zeroPrice
+          ? isNeedsPlan
+            ? 'Your encrypted vault is ready. Activate your plan to begin uploading.'
+            : 'This plan is free right now — activate it to continue.'
+          : isNeedsPlan
+            ? `Your encrypted vault is ready. Start your ${trialDays}-day free trial to begin uploading.`
+            : `Start your ${trialDays}-day free trial.`
       }
       hideTrust
     >
@@ -597,7 +663,9 @@ export function ChoosePlan() {
           onPlanChange={choosePlan}
           onCycleChange={chooseCycle}
         />
-        <TrialMethodPicker method={method} onChange={setMethod} />
+        {/* Task 1702 — a €0 plan needs no payment method: skip the method
+            picker entirely (the server activates without any mandate call). */}
+        {!zeroPrice && <TrialMethodPicker method={method} onChange={setMethod} />}
 
         {/* Summary — dark block, as in the upgrade flow (hifi-billing HiUpgradeFlow). */}
         <div className="p-3.5 bg-ink text-paper rounded-md" data-testid="choose-plan-summary">
@@ -611,32 +679,65 @@ export function ChoosePlan() {
             <span className="font-mono text-[13px] font-semibold ml-auto">{trialPriceLabel(price, cycle)}</span>
           </div>
           <div className="text-[11px] opacity-60">
-            {selected.name} · {selected.storageLabel} · charged automatically unless you cancel
+            {selected.name} · {selected.storageLabel} ·{' '}
+            {zeroPrice
+              ? 'no payment needed while this plan stays free'
+              : 'charged automatically unless you cancel'}
             {cycle === 'yearly' && ` · ${formatEur(Math.round((price / 12) * 100) / 100)}/month equivalent`}
           </div>
         </div>
 
-        <div className="flex items-start gap-2" data-testid="trial-terms">
-          <Icon name="clock" size={13} className="text-amber-deep shrink-0 mt-[2px]" />
-          <p className="text-[11.5px] text-ink-2 leading-relaxed">{trialTermsCopy(trialDays)}</p>
-        </div>
+        {zeroPrice ? (
+          // Task 1702 — the trial/mandate terms read "Card or iDEAL needed to
+          // start", which is untrue for a €0 plan. One honest line instead.
+          <div className="flex items-start gap-2" data-testid="zero-price-terms">
+            <Icon name="check" size={13} className="text-green shrink-0 mt-[2px]" />
+            <p className="text-[11.5px] text-ink-2 leading-relaxed">
+              {selected.name} costs €0 right now — it activates immediately, with no payment method and no
+              trial period.
+            </p>
+          </div>
+        ) : (
+          <div className="flex items-start gap-2" data-testid="trial-terms">
+            <Icon name="clock" size={13} className="text-amber-deep shrink-0 mt-[2px]" />
+            <p className="text-[11.5px] text-ink-2 leading-relaxed">{trialTermsCopy(trialDays)}</p>
+          </div>
+        )}
 
         <BBButton
           variant="amber"
           size="lg"
           className="w-full justify-center"
           data-testid="choose-plan-continue"
+          disabled={activating}
           onClick={() => {
+            if (zeroPrice) {
+              if (activating) return
+              setActivating(true)
+              void startCheckout()
+                .catch((err) => {
+                  showToast({
+                    icon: 'x',
+                    title: 'Could not activate the plan',
+                    description: err instanceof Error ? err.message : 'Please try again.',
+                    danger: true,
+                  })
+                })
+                .finally(() => setActivating(false))
+              return
+            }
             savePlanIntent({ plan, cycle })
             setPurpose('trial')
             setStep('billing')
           }}
         >
-          Continue
+          {zeroPrice ? 'Activate plan' : 'Continue'}
           <Icon name="chevron-right" size={13} className="ml-1" />
         </BBButton>
         <p className="text-[11px] text-ink-4 text-center -mt-2.5">
-          Next: billing details, then {method === 'ideal' ? 'iDEAL' : 'your card'} at Mollie.
+          {zeroPrice
+            ? 'Next: nothing else — this plan is free right now.'
+            : `Next: billing details, then ${method === 'ideal' ? 'iDEAL' : 'your card'} at Mollie.`}
         </p>
       </div>
       {footer}
