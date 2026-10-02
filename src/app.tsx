@@ -17,8 +17,9 @@ import { ToastProvider, useToast } from './components/toast'
 import { ErrorBoundary } from './components/error-boundary'
 import { WasmGuard } from './components/wasm-guard'
 import { VaultUnlock } from './components/vault-unlock'
+import { VaultLockedImpersonated } from './components/vault-locked-impersonated'
 import { OfflineBanner } from './components/offline-banner'
-import { ImpersonationProvider } from './lib/impersonation-context'
+import { ImpersonationProvider, isImpersonationSessionActive } from './lib/impersonation-context'
 import { ImpersonationBanner } from './components/impersonation-banner'
 import { DevAuthGate } from './components/dev-auth-gate'
 import { registerAccountDeletedHandler, registerErrorNotifier, registerSessionExpiredHandler } from './lib/api'
@@ -115,7 +116,15 @@ import { CookieBanner } from './components/cookie-banner'
 import { DriveDataProvider, useDriveData } from './lib/drive-data-context'
 import { SearchIndexProvider } from './lib/search-index-context'
 
-function ProtectedRoute({ children }: { children: ReactNode }) {
+/**
+ * Task 1693 Part B renders this as the explicit, metadata-only "Vault
+ * locked" state for an impersonated session (ruling D-2026-10-02, option A:
+ * "net zoals in iOS dat er staat 'vault locked', de rest hetzelfde").
+ * Exported for `bun test` (this repo has no jsdom/@testing-library; see
+ * test/1693-impersonated-vault-locked.test.tsx for the render harness).
+ * NOT exported from the app bundle elsewhere.
+ */
+export function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
   const { isUnlocked, vaultExists, vaultChecked } = useKeys()
   const location = useLocation()
@@ -130,7 +139,21 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
   const loginTo = `/login?next=${encodeURIComponent(location.pathname + location.search)}`
 
   if (!user) return <Navigate to={loginTo} replace />
-  if (!isUnlocked) return vaultExists ? <VaultUnlock /> : <Navigate to={loginTo} replace />
+  if (!isUnlocked) {
+    if (!vaultExists) return <Navigate to={loginTo} replace />
+    // Task 1693 (Part B, ruling D-2026-10-02 — option A, "net zoals in iOS
+    // dat er staat vault locked, de rest hetzelfde"): an impersonated
+    // session must NOT render the password form. VaultUnlock's submit calls
+    // unlockVault(password, <target user_id>) — the admin would be typing
+    // their own password against the TARGET account's vault entry (tagged
+    // to a different user_id; after task 1531 it correctly refuses, so the
+    // form is not just wrong, it can never succeed). Zero-knowledge means
+    // no key material for the target exists in this session, period. Show
+    // the explicit, metadata-only "Vault locked" state instead. Normal
+    // (non-impersonated) users keep the existing VaultUnlock flow untouched.
+    if (isImpersonationSessionActive()) return <VaultLockedImpersonated />
+    return <VaultUnlock />
+  }
 
   return (
     <PlanGate>

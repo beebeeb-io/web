@@ -47,6 +47,7 @@ import { cacheKeyPersistent, cacheKeySessionOnly } from './key-cache'
 import { setRecoveryCheckIfAbsent, verifyRecoveryCheck } from './api'
 import type { DriveFile } from './api'
 import { useAuth } from './auth-context'
+import { isImpersonationSessionActive, shouldReconcileLock } from './impersonation-context'
 import { isRequestUpload, createRequestKeyResolver, type RequestKeyResolver } from './file-request-crypto'
 import { backfillRecoveryCheckIfAbsent, recoveredKeyMatchesAccount } from './recovery-validation'
 import { setExpectedUserProvider, registerAccountMismatchHandler } from '@beebeeb/shared'
@@ -669,12 +670,30 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     // would lock() a key that is about to be confirmed correct a moment
     // later (this is not hypothetical: it reproduced on every dev-auto-
     // login e2e boot before this guard was added).
-    if (!vaultChecked || authLoading) return
+    //
+    // Task 1693 (Part A, ruling D-2026-10-02): under an impersonation
+    // (support view) session the TARGET account's id resolves here while the
+    // ADMIN's own key is still resident — a mismatch by design. Locking it
+    // destroyed the admin's unlock the moment the impersonated session
+    // landed (the "impersonation werkt niet" end state). While this tab is
+    // impersonating, the resident key belongs to the admin's OWN account on
+    // this same origin, so the cross-account confusion this watchdog exists
+    // for cannot arise from the impersonation itself: skip the lock. Every
+    // non-impersonated identity change keeps locking exactly as before.
+    // Decision factored into shouldReconcileLock() (impersonation-context.tsx)
+    // so it is unit-testable without a React harness.
+    const impersonating = isImpersonationSessionActive()
     const currentUserId = user?.user_id ?? null
-    if (residentKeyUserIdRef.current === currentUserId) return // matches (both null counts as "nothing to protect")
-    if (!masterKeyRef.current) {
-      // Nothing resident to misattribute — whichever proof-based unlock
-      // runs next binds residentKeyUserIdRef itself, correctly.
+    if (
+      !shouldReconcileLock({
+        vaultChecked,
+        authLoading,
+        hasResidentKey: masterKeyRef.current !== null,
+        residentUserId: residentKeyUserIdRef.current,
+        currentUserId,
+        impersonating,
+      })
+    ) {
       return
     }
     // A key IS resident, bound to a DIFFERENT (or no) account than the one
