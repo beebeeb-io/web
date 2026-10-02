@@ -102,6 +102,14 @@ function devCspPlugin(apiUrl: string): Plugin {
  * header block carries the identical fix for prod, with the identical
  * citation.
  */
+// Matches ONLY the assembled engine host page (public/office/<version>/
+// bb-office-host.html, scripts/office-dev-assets.sh's own output) — the
+// SAME regex shape as nginx.conf's `location ~* ^/office/[^/]+/.+\.html$`,
+// kept in sync deliberately (see that location's own comment for why this
+// one document's CSP must be strict `connect-src 'self'` while the outer
+// `/office/:fileId` SPA route below still needs the app-wide allowlist).
+const OFFICE_HOST_HTML_RE = /^\/office\/[^/]+\/.+\.html$/
+
 function officeIsolationHeadersPlugin(): Plugin {
   return {
     name: 'beebeeb-office-isolation-headers',
@@ -112,6 +120,13 @@ function officeIsolationHeadersPlugin(): Plugin {
           res.setHeader('Cross-Origin-Opener-Policy', 'same-origin')
           res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp')
           res.setHeader('Cross-Origin-Resource-Policy', 'same-origin')
+          const path = req.url.split('?')[0]
+          if (OFFICE_HOST_HTML_RE.test(path)) {
+            res.setHeader(
+              'Content-Security-Policy',
+              "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; worker-src 'self' blob:; media-src 'self' blob:; frame-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'; object-src 'none'",
+            )
+          }
         } else {
           res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp')
           res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin')
