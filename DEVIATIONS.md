@@ -79,3 +79,27 @@ review, not decided silently:
   this device." is replaced by a message per error kind, with the raw engine
   text on a mono line underneath (`src/lib/office/office-open-error.ts`). The
   mockup has no error screen.
+
+## Task 1690 — share dialog: always ONE full link (split presentation removed)
+
+**Design:** `design/hifi/hifi-upload-share.jsx` (`HiShare`) shows the share
+result as two separate items: a bare link input plus a "Decryption key" box
+badged "Send via a different channel" (the code added a
+"Full link / Link + key (extra secure)" toggle on top of it).
+
+**Ruling (Guus, verbatim, 2026-10-02):**
+> "Met delen voortaan altijd full link, er staat nu dat het los is maar is
+> eigenlijk alsnog 1 geheel. Maak er gewoon 1 geheel van."
+
+**What shipped instead (2026-10-02):** the share dialog always presents and
+copies ONE complete link — `/s/<token>#key=<K_c>` built by the new
+`src/lib/share-full-link.ts` `buildFullShareLink()`. The toggle, the bare-URL
+box, the separate "Decryption key" box, and the "send the link and the key
+through separate channels" copy are removed. The key still travels only in
+the URL fragment (1531 semantics untouched); the lead-in now says the key is
+embedded in the link and never reaches the servers. The passphrase surface
+("Share it separately") is unchanged — the passphrase genuinely is separate
+from the link.
+
+**Why:** the ruling is dated after the artefact and explicitly supersedes it
+(precedent: task 1357, "a verbal ruling from Guus supersedes the artefact").
