@@ -378,6 +378,11 @@ export class SyncClient {
       this.eventSource.close()
       this.eventSource = null
     }
+    // Round-3 hygiene: drop held frames and snapshot state. In-flight
+    // continuations are gated by `destroyed`, so this only releases memory.
+    this.deferredStreamFrames.length = 0
+    this.snapshotInFlight = null
+    this.snapshotFetchInFlight = false
     this.setStatus('idle')
     this.listeners.clear()
   }
@@ -481,10 +486,13 @@ export class SyncClient {
       // state — hold the frame and replay it right after the merge (review S1).
       if (this.deferredStreamFrames.length >= DEFERRED_FRAMES_MAX) {
         // Never grow without bound. `lastSeq` does not advance for dropped
-        // frames, so the next frame opens a gap and coverage recovery
-        // refetches them (status-quo snapshot fetch is time-bounded).
+        // frames, so a fresh coverage resync supersedes them; schedule one so
+        // a failed in-flight fetch can't leave treeComplete=false until
+        // reconnect (round-3 hardening).
         this.deferredStreamFrames.length = 0
         this.coverageSnapshotMerged = false
+        this.setTreeComplete(false)
+        this.scheduleCoverageResync()
       }
       this.deferredStreamFrames.push(frame)
       return
@@ -780,9 +788,21 @@ export class SyncClient {
 
   private async runGapFill(): Promise<void> {
     if (this.destroyed || this.gapFillInFlight || this.reorderBuffer.size === 0) return
+    if (this.snapshotFetchInFlight) {
+      // Round-3 review: a snapshot merge is in flight. Applying op-log results
+      // now would let the pending (older) snapshot overwrite them afterwards.
+      // Leave the buffer intact — resyncSnapshot's finally re-arms this fill.
+      return
+    }
     const run = (async () => {
       try {
         const ops = await this.withTimeout(getSyncOps(this.lastSeq), GAP_FILL_TIMEOUT_MS)
+        if (this.snapshotFetchInFlight) {
+          // A coverage resync started while the op page was in flight: the
+          // same hold applies. Do NOT apply anything an older snapshot would
+          // overwrite; the finally below re-arms once the merge settles.
+          return
+        }
         if (ops.length >= SYNC_OPS_PAGE_CAP) {
           // Truncated backlog — the snapshot merges the whole thing.
           await this.resyncSnapshot()
@@ -816,7 +836,10 @@ export class SyncClient {
   /** Debounced single-flight snapshot merge for missing-node ops. */
   private scheduleCoverageResync(): void {
     if (this.destroyed) return
-    if (this.resyncInFlight) {
+    if (this.resyncInFlight || this.snapshotInFlight) {
+      // A snapshot merge is already running; queue exactly one follow-up so a
+      // coverage hole (missing node, dropped held frames) cannot be masked by
+      // the in-flight fetch. resyncSnapshot's wrapper runs it as a FRESH fetch.
       this.resyncQueued = true
       return
     }
@@ -862,7 +885,10 @@ export class SyncClient {
    * Merge a fresh snapshot once — single-flight across ALL callers (boot,
    * reconnect, gap-cap, gap-error, missing-node, overflow) and time-bounded
    * (review S1). Stream frames arriving during the fetch are held and replayed
-   * after the merge, so an older snapshot can never overwrite newer op state.
+   * after the merge, and gap-fill refuses to apply op-log results while a
+   * fetch is in flight (round-3 review) — every op-application path is either
+   * before this fetch started or replayed after the merge, so an older
+   * snapshot cannot overwrite newer op state.
    */
   private resyncSnapshot(): Promise<void> {
     if (this.destroyed) return Promise.resolve()
@@ -898,6 +924,14 @@ export class SyncClient {
       } finally {
         this.snapshotInFlight = null
         this.replayDeferredFrames()
+        if (this.resyncQueued && !this.resyncInFlight) {
+          // A resync was requested while this fetch ran (dropped held frames)
+          // and needs a FRESH fetch — the settled snapshot may predate the
+          // frames that requested it (round-3 hardening).
+          this.resyncQueued = false
+          this.resyncAttempts = 0
+          void this.runCoverageResync()
+        }
         if (this.reorderBuffer.size > 0) this.scheduleGapFill()
         this.refreshCoverageFlag()
       }

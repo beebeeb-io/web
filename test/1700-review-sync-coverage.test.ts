@@ -56,6 +56,7 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, {
 const { SyncClient } = await import('../src/lib/sync-client')
 
 const FILE_ID = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa'
+const OTHER_ID = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb'
 
 function op(seq: number, op_type: string, payload: Record<string, unknown>): SyncOp {
   return { seq_id: seq, op_type, payload, created_at: '' }
@@ -220,6 +221,60 @@ describe('1700 review S1: snapshot single-flight + timeout', () => {
       client.ingestStreamFrame(JSON.stringify(op(1, 'file_update', { id: FILE_ID, size_bytes: 2 })))
       await waitFor(() => calls >= 2, 'retry after snapshot timeout', 4000)
       expect(calls).toBeGreaterThanOrEqual(2)
+    } finally {
+      await stopAndSettle(client)
+    }
+  })
+})
+
+describe('1700 round-3: gap-fill vs in-flight snapshot', () => {
+  test('R3 gap-fill never applies while a snapshot fetch is in flight (no overwrite, no op lost)', async () => {
+    let resolveOps1: ((ops: SyncOp[]) => void) | null = null
+    let opsCalls = 0
+    let snapshotStarted = false
+    let resolveSnap: ((snap: SyncSnapshot) => void) | null = null
+    // The op page that fills the hole above `lastSeq = 1`.
+    const tail = [
+      op(2, 'file_create', { id: FILE_ID, name_encrypted: 'op', parent_id: null, size_bytes: 50 }),
+      op(3, 'file_update', { id: FILE_ID, size_bytes: 50 }),
+    ]
+    syncOpsImpl = async () => {
+      opsCalls += 1
+      if (opsCalls === 1) {
+        // Held: the gap-fill is mid-fetch when the snapshot fetch starts.
+        return new Promise<SyncOp[]>((resolve) => { resolveOps1 = resolve })
+      }
+      return tail
+    }
+    snapshotImpl = () => {
+      snapshotStarted = true
+      return new Promise<SyncSnapshot>((resolve) => { resolveSnap = resolve })
+    }
+    const client = new SyncClient({ snapshotTimeoutMs: 8000 })
+    try {
+      // Hole below 4 with a buffered future op; gap-fill starts after ~30 ms.
+      client.ingestStreamFrame(JSON.stringify(op(4, 'file_update', { id: FILE_ID, size_bytes: 50 })))
+      await waitFor(() => opsCalls === 1, 'gap-fill op fetch started')
+      // A missing-node op (in-order) starts a coverage resync whose snapshot we hold.
+      client.ingestStreamFrame(JSON.stringify(op(1, 'file_update', { id: OTHER_ID, size_bytes: 9 })))
+      await waitFor(() => snapshotStarted, 'snapshot fetch started')
+      // Release the op page while the snapshot fetch is STILL in flight.
+      resolveOps1?.(tail)
+      await new Promise((r) => setTimeout(r, 150))
+      // Nothing from the op log may be applied before the snapshot merges.
+      expect(client.getNode(FILE_ID)).toBeUndefined()
+      expect(client.getNode(OTHER_ID)).toBeUndefined()
+      expect(client.getLastSeq()).toBe(1)
+      // Merge the older snapshot, then let coverage recovery re-fetch the tail.
+      resolveSnap?.({ seq_id: 0, nodes: [node(FILE_ID, { size_bytes: 999 })] })
+      await waitFor(
+        () => client.isCoverageComplete() && client.getLastSeq() === 4,
+        'coverage complete and tail applied',
+      )
+      // The op tail wins: the buffered create/update are applied after the merge.
+      expect(client.getNode(FILE_ID)?.name_encrypted).toBe('op')
+      expect(client.getNode(FILE_ID)?.size_bytes).toBe(50)
+      expect(client.getLastSeq()).toBe(4)
     } finally {
       await stopAndSettle(client)
     }
