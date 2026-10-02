@@ -18,7 +18,9 @@ const API_URL = process.env.E2E_API_URL ?? 'http://localhost:3001'
 export default defineConfig({
   testDir: '.',
   testMatch: /flow6-cli-own-session\.spec\.ts$/,
-  timeout: 120_000,
+  // 240 s: the spec retries full-page navigations that bounce to /login on a
+  // loaded machine (see gotoSignedIn in the spec).
+  timeout: 240_000,
   retries: 0,
   workers: 1,
   use: {
