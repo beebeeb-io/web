@@ -257,7 +257,7 @@ export function VaultLockedNoKey({ onTryPreviousPassword }: VaultLockedNoKeyProp
         {/* Exit 1 — cancel subscription */}
         <div className="rounded-lg border border-line bg-paper-2 px-3.5 py-3 mb-2.5">
           <div className="flex items-center gap-2 mb-1">
-            <Icon name="bell" size={13} className="text-ink-3 shrink-0" />
+            <Icon name="pause" size={13} className="text-ink-3 shrink-0" />
             <span className="text-[13px] font-medium text-ink">Cancel subscription</span>
           </div>
           <p className="text-[12px] text-ink-3 leading-relaxed mb-2.5">
@@ -324,6 +324,20 @@ export function VaultLockedNoKey({ onTryPreviousPassword }: VaultLockedNoKeyProp
                 {wipeState === 'working' ? 'Erasing…' : 'Erase all files'}
               </BBButton>
             </>
+          )}
+          {/* A done state with leftovers (verification failed) must keep the
+              retry affordance — "finished" is only claimed when the server
+              was re-listed empty. */}
+          {wipeState === 'done' && wipeResult && !wipeResult.verifiedEmpty && (
+            <BBButton
+              type="button"
+              variant="danger"
+              size="sm"
+              onClick={() => setStepUpKind('wipe')}
+              disabled={!wipeGate}
+            >
+              Try again
+            </BBButton>
           )}
           {wipeState === 'working' && wipeProgress && (
             <p className="text-[12px] text-ink-3 mt-2">{wipeProgress}</p>
