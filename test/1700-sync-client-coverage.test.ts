@@ -171,9 +171,16 @@ describe('1700: start() coverage', () => {
   test('a returning device always merges the full snapshot, not only when the tree is empty', async () => {
     storage.setItem('bb_sync_last_seq', '5')
     let snapshotCalls = 0
+    // Review B1: the tail is fetched from the SNAPSHOT position (10), not the
+    // persisted position (5). Recorded and asserted AFTER start() so a
+    // mismatch is a loud test failure, never a swallowed throw inside the mock
+    // (a throw here is caught by catchUpOps and only logged).
+    const seenSince: number[] = []
     syncOpsImpl = async (since: number) => {
-      expect(since).toBe(5)
-      return [op(6, 'file_create', { id: FILE_ID, name_encrypted: 'x', parent_id: null, size_bytes: 1 })]
+      seenSince.push(since)
+      // Empty tail: the snapshot at 10 already carries the full node set, so
+      // lastSeq stays 10 (the test's intent).
+      return []
     }
     snapshotImpl = async () => {
       snapshotCalls += 1
@@ -181,8 +188,10 @@ describe('1700: start() coverage', () => {
     }
     const client = new SyncClient()
     await client.start()
-    // The catch-up op made tree.size > 0 — the old tree.size===0 heuristic
-    // would now skip the snapshot and leave OTHER_ID invisible.
+    // The persisted position (5) must have been superseded before catch-up.
+    expect(seenSince).toEqual([10])
+    // The old tree.size===0 heuristic could skip the snapshot; the returning
+    // device must always merge it so OTHER_ID is visible.
     expect(snapshotCalls).toBe(1)
     expect(client.getNode(FILE_ID)).toBeDefined()
     expect(client.getNode(OTHER_ID)).toBeDefined()
