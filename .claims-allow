@@ -54,10 +54,12 @@ src/types/mammoth.d.ts|github.com|doc-comment citing mammoth.js's own GitHub rep
 # is either (a) explicitly labelled "coming soon"/"roadmap" in the same
 # sentence or an adjacent comment, or (b) a generic IANA timezone-zone name
 # picker that has nothing to do with Beebeeb storage regions at all.
-src/components/drive-layout.tsx|helsinki|REGION_META lookup table, comment above explicitly labels Helsinki/Ede "coming-soon roadmap regions" (decision 1413/1414 precedent)
-src/components/drive-layout.tsx|Helsinki|same REGION_META entry, display label
-src/components/drive-layout.tsx| ede:|same REGION_META table, Ede entry
-src/components/drive-layout.tsx|'Ede,|same REGION_META table, Ede display label
+# (moved verbatim from drive-layout.tsx → sidebar-storage-footer.tsx in
+# task 1705; the "coming-soon roadmap regions" comment moved with it)
+src/components/sidebar-storage-footer.tsx|helsinki|REGION_META lookup table, comment above explicitly labels Helsinki/Ede "coming-soon roadmap regions" (decision 1413/1414 precedent)
+src/components/sidebar-storage-footer.tsx|Helsinki|same REGION_META entry, display label
+src/components/sidebar-storage-footer.tsx| ede:|same REGION_META table, Ede entry
+src/components/sidebar-storage-footer.tsx|'Ede,|same REGION_META table, Ede display label
 src/pages/pricing.tsx| Ede)|pricing FAQ answer: "More EU regions (Helsinki and Ede) are coming soon" — explicit coming-soon label in the same sentence
 src/pages/pricing.tsx|Helsinki|same FAQ answer, same sentence
 src/pages/settings/data-residency.tsx| Ede |comment: "Falkenstein is live; Helsinki + Ede are roadmap regions (activate on S3)" — explicit roadmap label

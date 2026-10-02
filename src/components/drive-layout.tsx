@@ -16,7 +16,7 @@ import {
   type ShareInvite,
 } from '../lib/api'
 import { useDriveData } from '../lib/drive-data-context'
-import { StorageUsageBar } from './storage-usage-bar'
+import { SidebarStorageFooter } from './sidebar-storage-footer'
 import { decryptChildFileKey } from '../lib/folder-share-crypto'
 import { resolveRecipientFolderKey } from '../lib/recipient-folder-key'
 import { decryptFileMetadata } from '../lib/crypto'
@@ -28,7 +28,6 @@ import { EmailVerifyBanner } from './email-verify-banner'
 import { TrialBanner } from './trial-banner'
 import { AnnouncementBanner } from './announcement-banner'
 import { IosAppBanner } from './ios-app-banner'
-import { formatStorageSI } from '../lib/format'
 import { NotificationInbox, useNotifications } from './notification-inbox'
 
 // ─── PWA install prompt ──────────────────────────────────────────────────────
@@ -96,54 +95,9 @@ function PwaInstallBanner() {
   )
 }
 
-// ─── Sidebar storage quota warning ──────────────────────────────────────────
-
-interface SidebarQuotaBarProps {
-  usedBytes: number
-  quotaBytes: number
-}
-
-/**
- * Shows a compact warning bar below the regular storage meter when usage
- * is at or above 80%. Hidden entirely below that threshold.
- *
- * - ≥ 80% and < 95%: amber bar + "X GB of Y GB used"
- * - ≥ 95%: red bar + "Almost full — upgrade your plan" link to /billing
- */
-function SidebarQuotaBar({ usedBytes, quotaBytes }: SidebarQuotaBarProps) {
-  if (quotaBytes <= 0) return null
-
-  const pct = Math.min(100, (usedBytes / quotaBytes) * 100)
-
-  if (pct < 80) return null
-
-  const isCritical = pct >= 95
-
-  return (
-    <div className="mt-2 pt-2 border-t border-line">
-      {/* Bar track + fill */}
-      <div className="h-[3px] w-full rounded-full bg-line overflow-hidden mb-1.5">
-        <div
-          className={`h-full rounded-full transition-all duration-700 ease-out ${isCritical ? 'bg-red' : 'bg-amber'}`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-
-      {isCritical ? (
-        <div className="text-[11px] text-red leading-snug">
-          Almost full —{' '}
-          <Link to="/billing" className="font-semibold underline underline-offset-2 hover:text-red/80">
-            upgrade your plan
-          </Link>
-        </div>
-      ) : (
-        <div className="text-[11px] text-ink-2 font-mono tabular-nums">
-          {formatStorageSI(usedBytes)} of {formatStorageSI(quotaBytes)} used
-        </div>
-      )}
-    </div>
-  )
-}
+// ─── Sidebar storage footer lives in ./sidebar-storage-footer (task 1705:
+// exactly ONE storage bar + at most one compact warning line; the old
+// duplicate ≥80% SidebarQuotaBar was removed). ──────────────────────────────
 
 const navItems: { path: string; icon: IconName; label: string }[] = [
   { path: '/', icon: 'folder', label: 'All files' },
@@ -154,15 +108,6 @@ const navItems: { path: string; icon: IconName; label: string }[] = [
   { path: '/trash', icon: 'trash', label: 'Trash' },
   { path: '/devices', icon: 'cloud', label: 'Devices' },
 ]
-
-const REGION_META: Record<string, { label: string; flag: string }> = {
-  auto: { label: 'Europe', flag: '' },
-  falkenstein: { label: 'Falkenstein, Germany', flag: '' },
-  // Coming-soon roadmap regions (DR-1 canon): labelled so a file stored there
-  // shows a real city instead of the raw region string once those pools go live.
-  helsinki: { label: 'Helsinki, Finland', flag: '' },
-  ede: { label: 'Ede, Netherlands', flag: '' },
-}
 
 const PINNED_FOLDERS_PREF = 'pinned_folders'
 
@@ -618,31 +563,12 @@ export function DriveLayout({ children }: { children: ReactNode }) {
 
         <div className="mx-4 my-2.5 h-px bg-line" />
 
-        <div className="mt-auto px-4 py-4 border-t border-line">
-          <div className="flex items-baseline justify-between mb-2">
-            <div className="text-[10px] font-medium uppercase tracking-wider text-ink-3">
-              Storage
-            </div>
-            <span className="text-[10px] text-ink-3">{planLabel}</span>
-          </div>
-          <StorageUsageBar
-            usedBytes={resolvedUsedBytes}
-            quotaBytes={resolvedQuotaBytes}
-            compact
-          />
-          <SidebarQuotaBar
-            usedBytes={resolvedUsedBytes}
-            quotaBytes={resolvedQuotaBytes}
-          />
-          <div className="mt-3 flex items-center gap-1.5 text-[10px] text-ink-3">
-            {REGION_META[storageRegion]?.flag ? (
-              <span className="text-[12px]">{REGION_META[storageRegion].flag}</span>
-            ) : (
-              <Icon name="shield" size={11} className="text-amber-deep" />
-            )}
-            <span className="font-mono">{REGION_META[storageRegion]?.label ?? storageRegion}</span>
-          </div>
-        </div>
+        <SidebarStorageFooter
+          usedBytes={resolvedUsedBytes}
+          quotaBytes={resolvedQuotaBytes}
+          planLabel={planLabel}
+          storageRegion={storageRegion}
+        />
 
         {isAdmin && (
           <div className="px-3 pt-2">
