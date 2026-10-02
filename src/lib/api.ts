@@ -1404,6 +1404,50 @@ export async function forgotPassword(
   })
 }
 
+/**
+ * Task 1704 — email-based self-service password reset (the /set-password page).
+ *
+ * The emailed one-time link is the entry proof; the password is chosen
+ * client-side via OPAQUE re-registration and is never transmitted. ZERO key
+ * material on the wire: unlike recoverWithPhraseFinalize, the client does NOT
+ * send recovery_check / x25519_public_key — those bindings are set-once
+ * (1554/1556) and an email-only reset keeps them untouched server-side. The
+ * vault stays locked until the user re-enters their recovery phrase / vault
+ * key (the /recover-with-phrase re-wrap ceremony).
+ */
+
+/** OPAQUE registration start authorized by the one-time set-password token. */
+export async function setPasswordOpaqueRegister(
+  token: string,
+  clientMessage: string,
+): Promise<{ server_message: string }> {
+  return request<{ server_message: string }>('/api/v1/auth/set-password-opaque-register', {
+    method: 'POST',
+    body: JSON.stringify({ token, client_message: clientMessage }),
+  })
+}
+
+/**
+ * Consume the one-time token and replace the account credential. Server
+ * deletes ALL sessions and mints a fresh one for this device (returned as
+ * `session_token` and set as the bb_session httpOnly cookie).
+ */
+export async function setPasswordFinalize(
+  token: string,
+  opaqueRegistration: string,
+): Promise<{ user_id: string; email: string; session_token: string }> {
+  const data = await request<{ user_id: string; email: string; session_token: string }>(
+    '/api/v1/auth/set-password-finish',
+    {
+      method: 'POST',
+      body: JSON.stringify({ token, opaque_registration: opaqueRegistration }),
+    },
+  )
+  setToken(data.session_token)
+  setEmail(data.email)
+  return data
+}
+
 export async function resetPassword(
   token: string,
   newPassword: string,
