@@ -25,6 +25,7 @@ import {
 } from '../lib/billing-reset'
 import { formatBytes } from '../lib/format'
 import { planCanAddStorage } from '../lib/plan-pricing'
+import { isCurrentPlanCycle, isSamePlanActiveError, samePlanConflictMessage } from '../lib/checkout-same-plan'
 import {
   PLAN_META,
   UPGRADE_CHAIN,
@@ -95,12 +96,35 @@ export async function startUpgradeCheckout(
   return result
 }
 
+/**
+ * Task 1707 — honesty guard on the nudge's upgrade claim. The chain target
+ * (`UPGRADE_CHAIN[currentPlan]`) is the next MARKETED tier, but the nudge
+ * always checks out that target YEARLY; if the user's live subscription
+ * snapshot is already exactly that plan+cycle (status='active'), the
+ * "Upgrade to X" claim cannot happen — the server's same-plan re-purchase
+ * guard would refuse it. Returns null in that case so the modal degrades to
+ * the add-storage / no-claim state instead of advertising an upgrade the
+ * server will bounce. Exported for the same helper-level test harness as
+ * `startUpgradeCheckout` above.
+ */
+export function effectiveUpgradeTarget(
+  currentPlan: string,
+  subscription: Subscription | null,
+): string | null {
+  const chainSlug = UPGRADE_CHAIN[currentPlan] ?? null
+  if (!chainSlug) return null
+  if (isCurrentPlanCycle(subscription, chainSlug, 'yearly')) return null
+  return chainSlug
+}
+
 /** What `handleUpgrade`'s catch block should do with a failed checkout,
  * decided by `resolveUpgradeCheckoutFailure`. */
 export interface UpgradeCheckoutFailure {
-  /** Always '/billing' today — kept as a field (not hardcoded at the call
-   * site) so a future non-billing destination doesn't need a second shape. */
-  navigateTo: string
+  /** '/billing' for every case that leaves the modal — null when the failure
+   * should stay ON the modal (task 1707's same-plan 409: the inline
+   * `checkoutError` IS the friendly copy the user needs, and navigating away
+   * would discard it). */
+  navigateTo: string | null
   /** Present only for the `billing_reset_test_mode` case — carried via
    * `navigate(navigateTo, { state: navigateState })` so the explanation
    * survives the redirect instead of being discarded with this component's
@@ -110,7 +134,8 @@ export interface UpgradeCheckoutFailure {
    * away. Omitted for the billing-reset case: the modal is about to unmount
    * on this navigation, so the local error state would never be seen — the
    * explanation instead travels via `navigateState` and billing.tsx shows it
-   * as a toast after landing. */
+   * as a toast after landing. For the same-plan 409 (navigateTo null) this is
+   * the ONLY surface, so it is always set there. */
   localError?: string
 }
 
@@ -122,6 +147,13 @@ export interface UpgradeCheckoutFailure {
  * returns the real server message) and carries that message to `/billing`
  * via router state; any other error falls back to the pre-1518 behavior
  * (local inline error, plain navigate).
+ *
+ * Task 1707 addition: the same-plan re-purchase 409 (`already_subscribed`)
+ * stays ON the modal — `refreshPlanDetails()` is called (the 409 means the
+ * caller's snapshot had drifted from the server's truth) and the resolver
+ * returns `navigateTo: null` + the friendly plan+cycle-specific copy as
+ * `localError`, so `handleUpgrade` skips the navigation and the modal's
+ * inline error shows it.
  */
 export async function resolveUpgradeCheckoutFailure(
   err: unknown,
@@ -131,6 +163,12 @@ export async function resolveUpgradeCheckoutFailure(
   if (resetMessage) {
     return { navigateTo: '/billing', navigateState: billingResetNavigationState(resetMessage) }
   }
+  if (isSamePlanActiveError(err)) {
+    options.refreshPlanDetails()
+    return { navigateTo: null, localError: samePlanConflictMessage(err) }
+  }
+  // Pre-1707 behaviour kept verbatim (task 1518's contract test asserts the
+  // non-Error fallback): only the same-plan 409 gets the new treatment.
   return {
     navigateTo: '/billing',
     localError: err instanceof Error ? err.message : 'Could not start checkout',
@@ -159,7 +197,12 @@ export function UpgradeNudgeModal({
   const [checkoutError, setCheckoutError] = useState<string | null>(null)
   const { refreshPlanDetails } = useDriveData()
 
-  const nextSlug = UPGRADE_CHAIN[currentPlan] ?? null
+  // Task 1707 — the chain target only when the upgrade can actually happen:
+  // if the live subscription snapshot already IS the chain target on the
+  // yearly cycle the nudge checks out, the upgrade claim is dropped (the
+  // server's same-plan guard would refuse it) and the modal degrades to the
+  // add-storage / no-claim state.
+  const nextSlug = effectiveUpgradeTarget(currentPlan, subscription)
   const currentInfo = PLAN_INFO[currentPlan] ?? PLAN_INFO.free
   const nextInfo = nextSlug ? PLAN_INFO[nextSlug] : null
   const canAddAddonStorage = planCanAddStorage(currentPlan)
@@ -182,7 +225,11 @@ export function UpgradeNudgeModal({
       setLoading(false)
       const failure = await resolveUpgradeCheckoutFailure(err, { refreshPlanDetails })
       if (failure.localError) setCheckoutError(failure.localError)
-      navigate(failure.navigateTo, failure.navigateState ? { state: failure.navigateState } : undefined)
+      // Task 1707 — navigateTo is null for the same-plan 409: the modal stays
+      // up and its inline error IS the friendly copy the user needs.
+      if (failure.navigateTo) {
+        navigate(failure.navigateTo, failure.navigateState ? { state: failure.navigateState } : undefined)
+      }
     }
   }, [nextSlug, navigate, subscription, refreshPlanDetails])
 
@@ -337,15 +384,25 @@ export function UpgradeNudgeModal({
 export interface StorageFullBannerProps {
   currentPlan: string
   onUpgrade: () => void
+  /**
+   * Task 1707 — the live subscription snapshot when the caller has one
+   * (drive.tsx passes `useDriveData().planDetails.subscription`). When it is
+   * already the chain target on the yearly cycle the nudge checks out, the
+   * "Upgrade to X" link would advertise a purchase the server's same-plan
+   * guard refuses — it degrades to the plain "View plans" link instead.
+   */
+  subscription?: Subscription | null
 }
 
 /**
  * Persistent full-width amber banner shown when storage is at 100%.
  * Shown regardless of the session dismissal flag (always visible when full).
  */
-export function StorageFullBanner({ currentPlan, onUpgrade }: StorageFullBannerProps) {
+export function StorageFullBanner({ currentPlan, onUpgrade, subscription = null }: StorageFullBannerProps) {
   const navigate = useNavigate()
-  const nextSlug = UPGRADE_CHAIN[currentPlan] ?? null
+  // Task 1707 — same honesty guard as the modal's `effectiveUpgradeTarget`:
+  // drop the upgrade claim when the user already holds the target plan+cycle.
+  const nextSlug = effectiveUpgradeTarget(currentPlan, subscription)
   const nextInfo = nextSlug ? PLAN_INFO[nextSlug] : null
   const canAddAddon = planCanAddStorage(currentPlan)
 

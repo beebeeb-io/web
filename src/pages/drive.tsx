@@ -2825,6 +2825,7 @@ export function Drive() {
           <StorageFullBanner
             currentPlan={storageUsage.plan_name}
             onUpgrade={() => setShowUpgradeNudge(true)}
+            subscription={drivePlanDetails.subscription}
           />
         )}
 
