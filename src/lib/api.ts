@@ -59,6 +59,7 @@ import type {
   MySignInsResponse,
   Notification,
   NotificationPreferences,
+  LegacyNotificationPreferences,
   OnboardingState,
   PasskeyInfo,
   PasskeyLoginStartResponse,
@@ -3595,19 +3596,51 @@ export async function getMyActivity(opts?: {
 }
 
 /** GET /api/v1/notifications/preferences */
-export async function getNotificationPreferences(): Promise<NotificationPreferences> {
-  const res = await request<{ preferences: NotificationPreferences }>('/api/v1/notifications/preferences')
+export async function getNotificationPreferences(): Promise<
+  NotificationPreferences | LegacyNotificationPreferences
+> {
+  const res = await request<{ preferences: NotificationPreferences | LegacyNotificationPreferences }>(
+    '/api/v1/notifications/preferences',
+  )
   return res.preferences
 }
 
-/** PUT /api/v1/notifications/preferences */
+/**
+ * Keys the server stores in `users.push_preferences` (flat booleans). The PUT
+ * handler deserializes each of these as `Option<bool>` and ignores any other
+ * key, so a per-channel `{in_app, email}` object for one of them is a 422.
+ */
+const SERVER_STORED_NOTIFICATION_KEYS = [
+  'new_device_login',
+  'share_received',
+  'storage_warning',
+  'backup_complete',
+] as const satisfies readonly (keyof LegacyNotificationPreferences)[]
+
+/**
+ * Wire body for PUT /api/v1/notifications/preferences: the in-app switch of
+ * each server-stored key as a flat boolean. Nothing else is sent — the server
+ * reads no per-type email preference.
+ */
+export function toServerNotificationPreferences(
+  prefs: NotificationPreferences,
+): LegacyNotificationPreferences {
+  const body = {} as LegacyNotificationPreferences
+  for (const key of SERVER_STORED_NOTIFICATION_KEYS) body[key] = prefs[key].in_app
+  return body
+}
+
+/** PUT /api/v1/notifications/preferences — returns the server's stored (flat) preferences. */
 export async function setNotificationPreferences(
   prefs: NotificationPreferences,
-): Promise<NotificationPreferences> {
-  const res = await request<{ preferences: NotificationPreferences }>('/api/v1/notifications/preferences', {
-    method: 'PUT',
-    body: JSON.stringify(prefs),
-  })
+): Promise<NotificationPreferences | LegacyNotificationPreferences> {
+  const res = await request<{ preferences: NotificationPreferences | LegacyNotificationPreferences }>(
+    '/api/v1/notifications/preferences',
+    {
+      method: 'PUT',
+      body: JSON.stringify(toServerNotificationPreferences(prefs)),
+    },
+  )
   return res.preferences
 }
 

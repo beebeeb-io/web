@@ -260,8 +260,16 @@ export function SettingsNotifications() {
 
       setSaving(true)
       try {
-        const saved = await setNotificationPreferences(next)
-        setPrefs(migratePreferences(saved))
+        const saved = migratePreferences(await setNotificationPreferences(next))
+        // The server stores only the push-backed keys; keep the local state of
+        // the rest, and take the server's word for the keys it stores.
+        setPrefs({
+          ...next,
+          new_device_login: saved.new_device_login,
+          share_received: saved.share_received,
+          storage_warning: saved.storage_warning,
+          backup_complete: saved.backup_complete,
+        })
       } catch (err) {
         setPrefs(prefs)
         if (err instanceof ApiError && err.status === 404) {
