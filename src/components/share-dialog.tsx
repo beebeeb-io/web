@@ -36,6 +36,7 @@ import {
 } from '../lib/folder-share-crypto'
 import { useKeys } from '../lib/key-context'
 import { userFriendlyError } from '../lib/user-friendly-error'
+import { buildFullShareLink } from '../lib/share-full-link'
 
 interface ShareDialogProps {
   open: boolean
@@ -495,8 +496,11 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
   const [loading, setLoading] = useState(false)
   const [shareResult, setShareResult] = useState<ShareInfo | null>(null)
   const [decryptionKey, setDecryptionKey] = useState<string>('')
-  const [copied, setCopied] = useState<'full-link' | 'split-link' | 'split-key' | null>(null)
-  const [shareMode, setShareMode] = useState<'full' | 'split'>('split')
+  const [copied, setCopied] = useState<'full-link' | null>(null)
+  // Task 1690 (Guus, 2026-10-02): sharing always yields ONE full link — the
+  // URL with the decryption key embedded as a #key= fragment. The old
+  // presentation toggle (defaulted to the split view on every open) is gone;
+  // there is nothing to re-set here.
   const [error, setError] = useState<string | null>(null)
   const [inviteDone, setInviteDone] = useState<string | null>(null)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
@@ -534,11 +538,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       setLoading(false)
       setInviteDone(null)
       setFeedbackOpen(false)
-      // Pre-select the split view so the user sees two distinct things (URL +
-      // key) to send through separate channels — the maximum-security path.
-      // Double-encrypted is now the only mode (task 0538), so there is no
-      // longer a toggle to reset here.
-      setShareMode('split')
+      // Task 1690: the share is ONE full link — no split/full mode to reset.
     }
   }, [open])
 
@@ -608,7 +608,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
         setDecryptionKey(keyForUrl)
 
         if (onShareCreated) {
-          const url = `${window.location.origin}/s/${bundleResult.token}#key=${encodeURIComponent(keyForUrl)}`
+          const url = buildFullShareLink(window.location.origin, bundleResult.token, keyForUrl)
           onShareCreated({ fileId: bundleFiles[0].id, shareUrl: url })
         }
         setLoading(false)
@@ -666,7 +666,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       setDecryptionKey(keyForUrl)
 
       if (onShareCreated) {
-        const url = `${window.location.origin}/s/${result.token}#key=${encodeURIComponent(keyForUrl)}`
+        const url = buildFullShareLink(window.location.origin, result.token, keyForUrl)
         onShareCreated({ fileId, shareUrl: url })
       }
     } catch (e) {
@@ -705,7 +705,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
     setTimeout(() => setPasswordCopied(false), 2000)
   }, [])
 
-  const copyToClipboard = useCallback(async (text: string, type: 'full-link' | 'split-link' | 'split-key') => {
+  const copyToClipboard = useCallback(async (text: string, type: 'full-link') => {
     try {
       await navigator.clipboard.writeText(text)
       setCopied(type)
@@ -723,22 +723,17 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       setCopied(type)
       setTimeout(() => setCopied(null), 2000)
     }
-    // Auto-clear clipboard after 60s for sensitive payloads (full link contains #key=, split-key is the raw key).
-    // 'split-link' is the URL without the key and is not sensitive.
-    if (type === 'full-link' || type === 'split-key') {
-      setTimeout(() => { navigator.clipboard.writeText('').catch(() => {}) }, 60000)
-    }
+    // Auto-clear clipboard after 60s: the full link carries the #key= fragment.
+    setTimeout(() => { navigator.clipboard.writeText('').catch(() => {}) }, 60000)
   }, [])
 
   if (!open) return null
 
-  // The share URL includes the decryption key as a URL fragment (#key=...).
-  // Fragments are never sent to the server, preserving zero-knowledge.
-  const shareUrl = shareResult
-    ? `${window.location.origin}/s/${shareResult.token}`
-    : ''
+  // Task 1690: the ONE share string we show and copy — share URL + the
+  // decryption key as a URL fragment. Fragments are never sent to the
+  // server, preserving zero-knowledge (1531: the fragment is never stripped).
   const fullShareUrl = shareResult && decryptionKey
-    ? `${shareUrl}#key=${encodeURIComponent(decryptionKey)}`
+    ? buildFullShareLink(window.location.origin, shareResult.token, decryptionKey)
     : ''
 
   return (
@@ -782,24 +777,6 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
             {/* Link share result view */}
             {mode === 'link' && shareResult ? (
               <>
-                {/* Share mode toggle */}
-                <div className="flex gap-1 mb-3 p-0.5 bg-paper-2 rounded-md border border-line">
-                  <button
-                    type="button"
-                    onClick={() => { setShareMode('full'); setCopied(null) }}
-                    className={`flex-1 text-xs py-1.5 rounded transition-all ${shareMode === 'full' ? 'bg-paper shadow-1 text-ink font-medium' : 'text-ink-3 hover:text-ink-2'}`}
-                  >
-                    Full link
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setShareMode('split'); setCopied(null) }}
-                    className={`flex-1 text-xs py-1.5 rounded transition-all ${shareMode === 'split' ? 'bg-paper shadow-1 text-ink font-medium' : 'text-ink-3 hover:text-ink-2'}`}
-                  >
-                    Link + key (extra secure)
-                  </button>
-                </div>
-
                 {/* Settings summary + edit affordance */}
                 <div className="flex items-start gap-3 mb-3 text-[11.5px] text-ink-3 flex-wrap">
                   <div className="flex items-center gap-3 flex-wrap flex-1 min-w-0">
@@ -852,98 +829,52 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
                   </button>
                 </div>
 
-                {shareMode === 'full' ? (
-                  <>
-                    <label className="block text-xs font-medium text-ink-2 mb-1.5">Share link</label>
-                    <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 mb-3">
-                      <Icon name="link" size={13} className="text-ink-3 shrink-0" />
-                      <input
-                        value={fullShareUrl}
-                        readOnly
-                        onFocus={(e) => e.target.select()}
-                        className="flex-1 bg-transparent font-mono text-xs text-ink outline-none truncate select-all"
-                      />
-                    </div>
-                    <BBButton
-                      variant="amber"
-                      size="lg"
-                      className="w-full justify-center gap-2"
-                      onClick={() => copyToClipboard(fullShareUrl, 'full-link')}
-                    >
-                      <Icon name={copied === 'full-link' ? 'check' : 'copy'} size={14} />
-                      {copied === 'full-link' ? 'Copied' : 'Copy link'}
-                    </BBButton>
-                    {/* Copy password CTA — only when a password was set */}
-                    {shareResult.has_passphrase && passphrase && (
-                      <BBButton
-                        size="lg"
-                        className="w-full justify-center gap-2 mt-2"
-                        onClick={() => copyPasswordToClipboard(passphrase)}
-                      >
-                        <Icon name={passwordCopied ? 'check' : 'key'} size={14} />
-                        {passwordCopied ? 'Password copied' : 'Copy password'}
-                      </BBButton>
-                    )}
-                    {/* Expiry badge — prominent amber below the CTA */}
-                    {EXPIRY_OPTIONS[expiryIdx].hours && (
-                      <div className="flex items-center justify-center gap-1.5 mt-2.5 px-3 py-1.5 bg-amber-bg border border-amber/30 rounded-md text-[11.5px] font-medium text-amber-deep">
-                        <Icon name="clock" size={11} />
-                        Expires in {EXPIRY_OPTIONS[expiryIdx].label.toLowerCase()}
-                      </div>
-                    )}
-                    <div className="flex items-center gap-1.5 mt-3 text-[11.5px] text-ink-3">
-                      <Icon name="shield" size={11} className="text-amber-deep" />
-                      Key is embedded in the link. One click to share.
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <label className="block text-xs font-medium text-ink-2 mb-1.5">Share link</label>
-                    <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 mb-3">
-                      <Icon name="link" size={13} className="text-ink-3 shrink-0" />
-                      <input
-                        value={shareUrl}
-                        readOnly
-                        onFocus={(e) => e.target.select()}
-                        className="flex-1 bg-transparent font-mono text-xs text-ink outline-none truncate select-all"
-                      />
-                      <BBButton size="sm" onClick={() => copyToClipboard(shareUrl, 'split-link')} className="shrink-0 gap-1">
-                        <Icon name={copied === 'split-link' ? 'check' : 'copy'} size={11} />
-                        {copied === 'split-link' ? 'Copied' : 'Copy'}
-                      </BBButton>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 mb-1.5">
-                      <span className="text-xs font-medium text-ink-2">Decryption key</span>
-                      <BBChip variant="amber">Send via a different channel</BBChip>
-                    </div>
-                    <div className="flex items-center gap-2 border border-amber-deep/40 bg-amber-bg rounded-md px-3 py-2 mb-3">
-                      <Icon name="key" size={13} className="text-amber-deep shrink-0" />
-                      <input
-                        value={decryptionKey}
-                        readOnly
-                        onFocus={(e) => e.target.select()}
-                        className="flex-1 bg-transparent font-mono text-xs font-medium text-amber-deep outline-none truncate select-all"
-                      />
-                      <BBButton size="sm" onClick={() => copyToClipboard(decryptionKey, 'split-key')} className="shrink-0 gap-1">
-                        <Icon name={copied === 'split-key' ? 'check' : 'copy'} size={11} />
-                        {copied === 'split-key' ? 'Copied' : 'Copy'}
-                      </BBButton>
-                    </div>
-
-                    {/* Expiry badge in split mode */}
-                    {EXPIRY_OPTIONS[expiryIdx].hours && (
-                      <div className="flex items-center gap-1.5 mt-2.5 px-3 py-1.5 bg-amber-bg border border-amber/30 rounded-md text-[11.5px] font-medium text-amber-deep">
-                        <Icon name="clock" size={11} />
-                        Expires in {EXPIRY_OPTIONS[expiryIdx].label.toLowerCase()}
-                      </div>
-                    )}
-                    <div className="flex items-center gap-1.5 mt-3 text-[11.5px] text-ink-3">
-                      <Icon name="shield" size={11} className="text-amber-deep" />
-                      Zero-knowledge by default — we never see the key.
-                    </div>
-                  </>
+                {/* Task 1690: the share is ONE full link — the URL with the
+                    decryption key embedded as a #key= fragment. The old
+                    presentation toggle and its split view (bare URL + separate
+                    key box) were removed so every produced/copyable share
+                    string is the whole link. */}
+                <label className="block text-xs font-medium text-ink-2 mb-1.5">Share link</label>
+                <div className="flex items-center gap-2 border border-line rounded-md bg-paper px-3 py-2 mb-3">
+                  <Icon name="link" size={13} className="text-ink-3 shrink-0" />
+                  <input
+                    value={fullShareUrl}
+                    readOnly
+                    onFocus={(e) => e.target.select()}
+                    className="flex-1 bg-transparent font-mono text-xs text-ink outline-none truncate select-all"
+                  />
+                </div>
+                <BBButton
+                  variant="amber"
+                  size="lg"
+                  className="w-full justify-center gap-2"
+                  onClick={() => copyToClipboard(fullShareUrl, 'full-link')}
+                >
+                  <Icon name={copied === 'full-link' ? 'check' : 'copy'} size={14} />
+                  {copied === 'full-link' ? 'Copied' : 'Copy link'}
+                </BBButton>
+                {/* Copy password CTA — only when a password was set */}
+                {shareResult.has_passphrase && passphrase && (
+                  <BBButton
+                    size="lg"
+                    className="w-full justify-center gap-2 mt-2"
+                    onClick={() => copyPasswordToClipboard(passphrase)}
+                  >
+                    <Icon name={passwordCopied ? 'check' : 'key'} size={14} />
+                    {passwordCopied ? 'Password copied' : 'Copy password'}
+                  </BBButton>
                 )}
+                {/* Expiry badge — prominent amber below the CTA */}
+                {EXPIRY_OPTIONS[expiryIdx].hours && (
+                  <div className="flex items-center justify-center gap-1.5 mt-2.5 px-3 py-1.5 bg-amber-bg border border-amber/30 rounded-md text-[11.5px] font-medium text-amber-deep">
+                    <Icon name="clock" size={11} />
+                    Expires in {EXPIRY_OPTIONS[expiryIdx].label.toLowerCase()}
+                  </div>
+                )}
+                <div className="flex items-center gap-1.5 mt-3 text-[11.5px] text-ink-3">
+                  <Icon name="shield" size={11} className="text-amber-deep" />
+                  Key is embedded in the link. One click to share.
+                </div>
               </>
             ) : mode === 'invite' && inviteDone ? (
               /* Invite success view */
@@ -1057,8 +988,10 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
                             End-to-end encrypted — Beebeeb cannot decrypt this share.
                           </span>
                         </div>
+                        {/* Task 1690: the share is one whole — the key travels
+                            inside the link. */}
                         <p className="text-[11px] text-ink-2 leading-relaxed">
-                          Send the link <span className="font-medium">and</span> the key through separate channels for maximum security.
+                          The decryption key is embedded in the link (as a #key= fragment) and never reaches our servers.
                         </p>
                       </div>
                     </div>
