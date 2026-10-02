@@ -381,6 +381,11 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   // every authenticated file surface (drive, /search, trash), not just the drive
   // page. reconcileFromTree adds missing nodes, prunes dead ones, and emits
   // `beebeeb:search-index-updated` so open search surfaces reload.
+  //
+  // Task 1700: reconcileFromTree now diffs names against a ciphertext-keyed
+  // cache and single-flights passes, so an unchanged pass performs zero
+  // upserts and zero shard PUTs — this 1.5 s debounce may keep firing under a
+  // foreign op storm without re-encrypting the whole index every window.
   const backfillTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     if (!isUnlocked || !cryptoReady || !sync.ready) return

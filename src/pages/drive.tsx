@@ -90,6 +90,7 @@ import { useSearchIndex } from '../hooks/use-search-index'
 import { EmptyDrive } from '../components/empty-states/empty-drive'
 import { formatBytes } from '../lib/format'
 import { cacheFileList, getCachedFileList } from '../lib/offline-cache'
+import { decideSyncRows, EMPTY_CONFIRM_MS } from '../lib/sync-rows'
 import { hashFile, checkDuplicate, recordUpload } from '../lib/upload-dedup'
 import { isBackupsRoot as isBackupsRootPure } from '../lib/backups-root'
 
@@ -375,6 +376,31 @@ export function Drive() {
   const syncReadyRef = useRef(sync.ready)
   useEffect(() => { syncReadyRef.current = sync.ready }, [sync.ready])
 
+  // Ref-tracked sync.treeComplete (task 1700). Declared BEFORE the treeVersion
+  // effect below so a render that flips both (snapshot merged) always updates
+  // this ref before refreshFromSync runs.
+  const syncTreeCompleteRef = useRef(sync.treeComplete)
+  useEffect(() => { syncTreeCompleteRef.current = sync.treeComplete }, [sync.treeComplete])
+
+  // Current rows / folder, readable from refreshFromSync and WS handlers
+  // without adding them to callbacks' dep arrays (task 1700 no-clobber +
+  // scoping checks).
+  const filesRef = useRef<DriveFile[]>([])
+  useEffect(() => { filesRef.current = files }, [files])
+  const currentParentIdRef = useRef<string | null>(null)
+  useEffect(() => { currentParentIdRef.current = currentParentId ?? null }, [currentParentId])
+
+  // Empty-derive confirmation (task 1700): an all-empty derive from the tree
+  // is deferred briefly so a delete+create burst cannot flash EmptyDrive.
+  const emptyConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const emptyConfirmedRef = useRef(false)
+  // Coalescer for WS-triggered API fallbacks (task 1700).
+  const wsRefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => {
+    if (emptyConfirmTimerRef.current) clearTimeout(emptyConfirmTimerRef.current)
+    if (wsRefetchTimerRef.current) clearTimeout(wsRefetchTimerRef.current)
+  }, [])
+
   // Sync nodes (snapshot) carry no has_large_thumbnail; GET /files does. Keep
   // every value we have seen so a sync-sourced refresh cannot silently demote
   // the preview to the medium thumbnail (see lib/sync-thumb-flags.ts).
@@ -406,6 +432,11 @@ export function Drive() {
   // refreshFromSync — reads sync.children() without an API call.
   // Used by the treeVersion effect so SSE-pushed updates don't hit the server
   // on every mutation event.
+  //
+  // Task 1700: this must not redraw for unrelated ops (identical derived rows
+  // are skipped by signature), must not clobber a good list with an empty
+  // derive while tree coverage is incomplete, and must not persist either
+  // state to the offline cache.
   const refreshFromSync = useCallback(() => {
     if (!isUnlocked || !syncReadyRef.current) return
     const trashed = location.pathname === '/trash'
@@ -414,11 +445,37 @@ export function Drive() {
       .filter((n) => Boolean(n.is_trashed) === trashed)
       .map(syncNodeToDriveFile)
     const nodes = withKnownLargeThumbs(syncNodes)
+    const coverageComplete = syncTreeCompleteRef.current
+
+    const decision = decideSyncRows({
+      next: nodes,
+      current: filesRef.current,
+      coverageComplete,
+      emptyConfirmed: emptyConfirmedRef.current,
+    })
+    emptyConfirmedRef.current = false
+
+    if (decision.confirmEmpty) {
+      if (emptyConfirmTimerRef.current) clearTimeout(emptyConfirmTimerRef.current)
+      emptyConfirmTimerRef.current = setTimeout(() => {
+        emptyConfirmTimerRef.current = null
+        emptyConfirmedRef.current = true
+        refreshFromSync()
+      }, EMPTY_CONFIRM_MS)
+      return
+    }
+    if (emptyConfirmTimerRef.current) {
+      clearTimeout(emptyConfirmTimerRef.current)
+      emptyConfirmTimerRef.current = null
+    }
+    if (!decision.apply) return
+
     setFiles(nodes)
     setDriveOffline(false)
-    if (!trashed) {
+    if (!trashed && coverageComplete && nodes.length > 0) {
       // Persist current decryptedNames map alongside so a cold offline reload
-      // can display names without re-running the crypto bootstrap.
+      // can display names without re-running the crypto bootstrap. Only a
+      // complete tree may write the cache (task 1700).
       const names: Record<string, string> = {}
       for (const [id, name] of Object.entries(externalDecryptedNamesRef.current)) {
         if (typeof name === 'string') names[id] = name
@@ -447,7 +504,10 @@ export function Drive() {
       setFiles(nodes)
       setDriveOffline(false)
       setLoading(false)
-      void cacheFileList(currentParentId ?? null, nodes)
+      if (syncTreeCompleteRef.current && nodes.length > 0) {
+        // Never cache a list derived from an incomplete tree (task 1700).
+        void cacheFileList(currentParentId ?? null, nodes)
+      }
       // Fall through to the API refresh — do NOT return here.
     } else {
       setLoading(true)
@@ -842,11 +902,33 @@ export function Drive() {
   // ─── Real-time WebSocket event handling ──────────
 
   // File list changes: refresh on create, upload, delete, trash, restore, move, rename
+  // Task 1700: once tree coverage is complete, the tree already drives the
+  // visible rows (refreshFromSync above). Only events touching the watched
+  // folder need an API refetch, and those are coalesced; while coverage is
+  // incomplete the unconditional API fallback is kept.
   useWsEvent(
     ['file.created', 'file.uploaded', 'file.deleted', 'file.trashed', 'file.restored', 'file.moved', 'file.renamed', 'version.restored'],
-    useCallback(() => {
+    useCallback((event) => {
+      if (syncReadyRef.current && syncTreeCompleteRef.current) {
+        const eventData = event.data as { id?: string } | undefined
+        const nodeId = eventData?.id
+        if (typeof nodeId === 'string') {
+          const node = sync.getNode(nodeId)
+          if (node && (node.parent_id ?? null) !== currentParentIdRef.current) {
+            // A parent/deeper/unrelated folder changed — its tree update
+            // already landed and must not redraw this list.
+            return
+          }
+        }
+        if (wsRefetchTimerRef.current) clearTimeout(wsRefetchTimerRef.current)
+        wsRefetchTimerRef.current = setTimeout(() => {
+          wsRefetchTimerRef.current = null
+          fetchFiles()
+        }, 500)
+        return
+      }
       fetchFiles()
-    }, [fetchFiles]),
+    }, [fetchFiles, sync]),
   )
 
   // Cross-client search-index pruning. The encrypted index is shared across a
@@ -2511,6 +2593,13 @@ export function Drive() {
     .filter((f): f is DriveFile => !!f && !f.is_folder)
     .map((f) => ({ id: f.id, name: displayName(f), size: f.size_bytes }))
 
+  // Task 1700: while the sync client exists but its tree coverage is not
+  // complete, an empty list is not proof of an empty vault — keep the boot
+  // skeleton rather than rendering EmptyDrive. Only when there is nothing
+  // else to show and no explicit load error.
+  const syncHydrating =
+    sync.ready && !sync.treeComplete && files.length === 0 && !loadError
+
   return (
     <DriveLayout>
       <HiddenInput />
@@ -2826,7 +2915,7 @@ export function Drive() {
         <UploadZone onFiles={handleFilesSelected} onFolderFiles={handleFolderFilesSelected}>
           <FileList
             files={files}
-            loading={loading}
+            loading={loading || syncHydrating}
             parentId={currentParentId ?? null}
             emptyState={
               currentParentId ? (

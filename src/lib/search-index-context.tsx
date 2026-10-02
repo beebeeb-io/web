@@ -21,6 +21,7 @@ import type { ReactNode } from 'react'
 import { useKeys } from './key-context'
 import type { SyncNode } from '@beebeeb/shared'
 import { CoreSearchIndex } from './search-index-core'
+import { applyIndexDiff, planIndexDiff, type IndexNameCacheEntry } from './search-index-diff'
 // Legacy blob path — retained ONLY for the rebuild-window fallback/seed (B/D).
 import {
   fetchIndex,
@@ -108,6 +109,19 @@ function useProvideSearchIndex(): SearchIndexContextValue {
   const rebuildingRef = useRef(false)
   // Ids whose prune arrived before the index was ready — flushed once it loads.
   const pendingPrunesRef = useRef<Set<string>>(new Set())
+  /**
+   * Task 1700 name cache: last resolved plaintext name per id, alongside the
+   * ciphertext it was decrypted from. An unchanged ciphertext means the name
+   * is unchanged — no decrypt, no upsert, no dirty bucket, no shard PUT.
+   */
+  const nameCacheRef = useRef<Map<string, IndexNameCacheEntry>>(new Map())
+  /** Ids written to the index this session — the prune set for the diff. */
+  const indexedIdsRef = useRef<Set<string>>(new Set())
+  /**
+   * Single-flight queue: reconcile passes serialize; a pass requested while
+   * one is running queues behind it instead of interleaving (task 1700).
+   */
+  const reconcileQueueRef = useRef<Promise<void>>(Promise.resolve())
 
   // ── Unlock / lock lifecycle ──────────────────────────────────────────────
   useEffect(() => {
@@ -119,6 +133,9 @@ function useProvideSearchIndex(): SearchIndexContextValue {
       fallbackRef.current = null
       pendingPrunesRef.current.clear()
       rebuildingRef.current = false
+      nameCacheRef.current.clear()
+      indexedIdsRef.current.clear()
+      reconcileQueueRef.current = Promise.resolve()
       setReady(false)
       if (idx) void idx.dispose()
       return
@@ -186,6 +203,8 @@ function useProvideSearchIndex(): SearchIndexContextValue {
         const dirty = new Set<number>()
         for (const id of ids) {
           for (const b of await idx.remove(id)) dirty.add(b)
+          indexedIdsRef.current.delete(id)
+          nameCacheRef.current.delete(id)
         }
         if (dirty.size > 0) {
           await idx.pushBuckets(masterKey, [...dirty]).catch(() => {})
@@ -234,6 +253,8 @@ function useProvideSearchIndex(): SearchIndexContextValue {
       await idx.pushBuckets(masterKey, dirty).catch(() => {
         /* best-effort cache: rebuilds on next load/reconcile */
       })
+      indexedIdsRef.current.add(fileId)
+      nameCacheRef.current.set(fileId, { cipher: '', name: entry.name })
       bump()
     },
     [isUnlocked, getMasterKey, ensureIndex, bump],
@@ -257,6 +278,8 @@ function useProvideSearchIndex(): SearchIndexContextValue {
       // upsert is insert-or-update; a rename of an indexed id updates in place.
       const dirty = await idx.upsert(fileId, fields.name)
       await idx.pushBuckets(masterKey, dirty).catch(() => {})
+      indexedIdsRef.current.add(fileId)
+      nameCacheRef.current.set(fileId, { cipher: '', name: fields.name })
       bump()
     },
     [isUnlocked, getMasterKey, bump],
@@ -278,6 +301,8 @@ function useProvideSearchIndex(): SearchIndexContextValue {
         return
       }
       const dirty = await idx.remove(fileId)
+      indexedIdsRef.current.delete(fileId)
+      nameCacheRef.current.delete(fileId)
       if (dirty.length === 0) return
       await idx.pushBuckets(masterKey, dirty).catch(() => {})
       bump()
@@ -302,6 +327,8 @@ function useProvideSearchIndex(): SearchIndexContextValue {
       const dirty = new Set<number>()
       for (const id of fileIds) {
         for (const b of await idx.remove(id)) dirty.add(b)
+        indexedIdsRef.current.delete(id)
+        nameCacheRef.current.delete(id)
       }
       if (dirty.size === 0) return
       await idx.pushBuckets(masterKey, [...dirty]).catch(() => {})
@@ -312,109 +339,138 @@ function useProvideSearchIndex(): SearchIndexContextValue {
 
   // ── Backfill + rebuild-on-empty (A) + cross-client self-heal ───────────────
   const reconcileFromTree = useCallback(
-    async (nodes: SyncNode[], resolveName: NodeNameResolver) => {
-      if (!isUnlocked || nodes.length === 0) return
-      let masterKey: Uint8Array
-      try {
-        masterKey = getMasterKey()
-      } catch {
-        return
-      }
-
-      const liveNodes = nodes.filter((n) => !n.is_trashed)
-      const byId = new Map<string, SyncNode>(nodes.map((n) => [n.id, n]))
-      const liveIds = new Set<string>(liveNodes.map((n) => n.id))
-
-      // Resolve plaintext names with the warm-up retry passes (the crypto worker
-      // / key cache is still warming on a cold rebuild, so a chunk of decrypts
-      // transiently fail). Only cache SUCCESSES so a transient failure is
-      // re-attempted, never memoized as null.
-      const nameCache = new Map<string, string>()
-      let pendingIds = liveNodes.map((n) => n.id)
-      const MAX_PASSES = 5
-      for (let pass = 0; pass < MAX_PASSES && pendingIds.length > 0; pass++) {
-        if (pass > 0) await new Promise((r) => setTimeout(r, 300 * pass))
-        const stillPending: string[] = []
-        for (const id of pendingIds) {
-          const node = byId.get(id)
-          if (!node) continue
-          let name: string | null = null
-          try {
-            name = await resolveName(node)
-          } catch {
-            name = null
-          }
-          if (name) nameCache.set(id, name)
-          else stillPending.push(id)
-        }
-        pendingIds = stillPending
-      }
-
-      const idx = await ensureIndex()
-      if (!idx) return
-
-      // ── Rebuild-on-empty (first unlock after migration) ──────────────────
-      // If the core index is empty AND we have resolved names, do a full BUILD +
-      // push-all-shards once. Guarded so two reconcile passes don't both rebuild.
-      const fileCount = await idx.fileCount()
-      if (fileCount === 0 && nameCache.size > 0 && !shardReadyRef.current) {
-        if (rebuildingRef.current) return
-        rebuildingRef.current = true
+    (nodes: SyncNode[], resolveName: NodeNameResolver): Promise<void> => {
+      // Single-flight (task 1700): reconcile passes serialize. A treeVersion
+      // burst queues at most one follow-up pass behind the running one instead
+      // of interleaving decrypts and pushes.
+      const run = async (): Promise<void> => {
+        if (!isUnlocked || nodes.length === 0) return
+        let masterKey: Uint8Array
         try {
-          const entries = liveNodes
-            .map((n) => ({ fileId: n.id, name: nameCache.get(n.id) }))
-            .filter((e): e is { fileId: string; name: string } => typeof e.name === 'string')
-          // Rebuild a fresh index and publish ALL shards.
-          const rebuilt = await CoreSearchIndex.buildFrom(entries)
-          const previous = indexRef.current
-          indexRef.current = rebuilt
-          if (previous && previous !== rebuilt) void previous.dispose()
-          await rebuilt.pushAllShards(masterKey).catch(() => {
-            /* best-effort: a failed publish self-heals on the next reconcile */
-          })
-          // Shards now populated → queries flip to core; drop the blob fallback.
+          masterKey = getMasterKey()
+        } catch {
+          return
+        }
+
+        const liveNodes = nodes.filter((n) => !n.is_trashed)
+        const byId = new Map<string, SyncNode>(nodes.map((n) => [n.id, n]))
+
+        // Reuse already-decrypted names while a node's ciphertext is unchanged;
+        // only new/renamed nodes are decrypted this pass (task 1700).
+        const resolvedNames = new Map<string, string>()
+        const cache = nameCacheRef.current
+        let pendingIds: string[] = []
+        for (const node of liveNodes) {
+          const cached = cache.get(node.id)
+          if (cached && cached.cipher === node.name_encrypted) {
+            resolvedNames.set(node.id, cached.name)
+          } else {
+            pendingIds.push(node.id)
+          }
+        }
+
+        // Resolve fresh names with the warm-up retry passes (the crypto worker
+        // / key cache is still warming on a cold rebuild, so a chunk of decrypts
+        // transiently fail). Only cache SUCCESSES so a transient failure is
+        // re-attempted, never memoized as null.
+        const MAX_PASSES = 5
+        for (let pass = 0; pass < MAX_PASSES && pendingIds.length > 0; pass++) {
+          if (pass > 0) await new Promise((r) => setTimeout(r, 300 * pass))
+          const stillPending: string[] = []
+          for (const id of pendingIds) {
+            const node = byId.get(id)
+            if (!node) continue
+            let name: string | null = null
+            try {
+              name = await resolveName(node)
+            } catch {
+              name = null
+            }
+            if (name) resolvedNames.set(id, name)
+            else stillPending.push(id)
+          }
+          pendingIds = stillPending
+        }
+
+        const idx = await ensureIndex()
+        if (!idx) return
+
+        // ── Rebuild-on-empty (first unlock after migration) ──────────────────
+        // If the core index is empty AND we have resolved names, do a full BUILD +
+        // push-all-shards once. Guarded so two reconcile passes don't both rebuild.
+        const fileCount = await idx.fileCount()
+        if (fileCount === 0 && resolvedNames.size > 0 && !shardReadyRef.current) {
+          if (rebuildingRef.current) return
+          rebuildingRef.current = true
+          try {
+            const entries = liveNodes
+              .map((n) => ({ fileId: n.id, name: resolvedNames.get(n.id) }))
+              .filter((e): e is { fileId: string; name: string } => typeof e.name === 'string')
+            // Rebuild a fresh index and publish ALL shards.
+            const rebuilt = await CoreSearchIndex.buildFrom(entries)
+            const previous = indexRef.current
+            indexRef.current = rebuilt
+            if (previous && previous !== rebuilt) void previous.dispose()
+            await rebuilt.pushAllShards(masterKey).catch(() => {
+              /* best-effort: a failed publish self-heals on the next reconcile */
+            })
+            // The replaced instance contained exactly these entries; reset the
+            // session tracking to match it.
+            indexedIdsRef.current = new Set(entries.map((e) => e.fileId))
+            for (const e of entries) {
+              const node = byId.get(e.fileId)
+              cache.set(e.fileId, { cipher: node?.name_encrypted ?? '', name: e.name })
+            }
+            // Shards now populated → queries flip to core; drop the blob fallback.
+            fallbackRef.current = null
+            setReady(true)
+            bump()
+            window.dispatchEvent(new Event('beebeeb:search-index-updated'))
+          } finally {
+            rebuildingRef.current = false
+          }
+          return
+        }
+
+        // ── Incremental self-heal (already-populated index) ──────────────────
+        // Diff against the cipher-keyed name cache: unchanged nodes perform
+        // zero upserts, an unchanged pass performs ZERO putShards (task 1700).
+        const plan = planIndexDiff({
+          nodes,
+          resolved: resolvedNames,
+          indexedIds: indexedIdsRef.current,
+          cachedNames: cache,
+        })
+        const dirtyCount = await applyIndexDiff(idx, masterKey, plan)
+
+        for (const u of plan.upserts) indexedIdsRef.current.add(u.id)
+        for (const id of plan.prunes) indexedIdsRef.current.delete(id)
+        // Refresh the cipher-keyed cache for everything decrypted this pass;
+        // pruned ids drop out entirely.
+        for (const [id, name] of resolvedNames) {
+          const node = byId.get(id)
+          if (node) cache.set(id, { cipher: node.name_encrypted, name })
+        }
+        for (const id of plan.prunes) cache.delete(id)
+
+        // Once we've reconciled with resolved names, the core index is the source
+        // of truth → flip to shard-backed and drop the legacy fallback.
+        if (!shardReadyRef.current && resolvedNames.size > 0) {
           fallbackRef.current = null
           setReady(true)
-          bump()
-          window.dispatchEvent(new Event('beebeeb:search-index-updated'))
-        } finally {
-          rebuildingRef.current = false
         }
-        return
+
+        if (dirtyCount === 0) {
+          // Nothing changed: no push, no bump, no re-query event.
+          return
+        }
+        bump()
+        window.dispatchEvent(new Event('beebeeb:search-index-updated'))
       }
 
-      // ── Incremental self-heal (already-populated index) ──────────────────
-      // Add new live nodes, refresh renamed ones (name drift), prune dead ones.
-      const dirty = new Set<number>()
-      for (const node of liveNodes) {
-        const name = nameCache.get(node.id)
-        if (!name) continue // undecryptable this pass — a later run retries
-        // upsert is idempotent for an unchanged name (returns its bucket as
-        // dirty, but re-encrypting an unchanged bucket is harmless + LWW).
-        for (const b of await idx.upsert(node.id, name)) dirty.add(b)
-      }
-      // Prune entries whose node is trashed or gone. We can only enumerate the
-      // index's file_ids indirectly, so prune any tree id that is no longer live
-      // AND any node present in the snapshot but trashed. (A genuinely-absent id
-      // that was indexed is dropped on the next full rebuild; the common
-      // trash/delete path goes through unindexFile/WS prune already.)
-      for (const node of nodes) {
-        if (!liveIds.has(node.id)) {
-          for (const b of await idx.remove(node.id)) dirty.add(b)
-        }
-      }
-
-      if (dirty.size > 0) {
-        await idx.pushBuckets(masterKey, [...dirty]).catch(() => {})
-      }
-      // Once we've reconciled with resolved names, the core index is the source
-      // of truth → flip to shard-backed and drop the legacy fallback.
-      if (!shardReadyRef.current && nameCache.size > 0) {
-        fallbackRef.current = null
-        setReady(true)
-      }
-      bump()
-      window.dispatchEvent(new Event('beebeeb:search-index-updated'))
+      const next = reconcileQueueRef.current.then(run, run)
+      reconcileQueueRef.current = next.catch(() => {})
+      return next
     },
     [isUnlocked, getMasterKey, ensureIndex, bump, setReady],
   )

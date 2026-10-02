@@ -20,6 +20,21 @@ const DEVICE_ID_KEY = 'bb_sync_device_id'
 const RECONNECT_DELAY_MS = 1500
 const RECONNECT_MAX_DELAY_MS = 30_000
 
+/**
+ * Server op-log page cap (`GET /sync/ops`, server sync.rs). A response this
+ * long means the backlog was truncated — only a snapshot merge can restore
+ * full coverage (task 1700).
+ */
+const SYNC_OPS_PAGE_CAP = 1000
+/** Debounce before a detected seq gap is filled from the op log. */
+const GAP_FILL_DEBOUNCE_MS = 30
+/** A gap-fill request that never answers must not stall coverage (task 1700). */
+const GAP_FILL_TIMEOUT_MS = 10_000
+/** Debounce for the coverage resync a missing-node op schedules. */
+const MISSING_NODE_RESYNC_DEBOUNCE_MS = 100
+/** Upper bound on out-of-order ops held while a gap is filled. */
+const REORDER_BUFFER_MAX = 500
+
 export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
 
 export interface PendingOp {
@@ -34,10 +49,12 @@ export interface PendingOp {
 
 interface SyncEvent {
   /** `tree` = the tree changed outside the sequenced op log (e.g. a star). */
-  type: 'snapshot' | 'op' | 'tree' | 'status' | 'error'
+  type: 'snapshot' | 'op' | 'tree' | 'status' | 'error' | 'coverage'
   status?: ConnectionStatus
   error?: Error
   op?: SyncOp
+  /** Set on `coverage`: true once a snapshot merged and the stream is contiguous. */
+  complete?: boolean
 }
 
 type Listener = (event: SyncEvent) => void
@@ -113,6 +130,32 @@ export class SyncClient {
   private started = false
   private destroyed = false
   /**
+   * Tree coverage (task 1700). True once a full snapshot has merged and the
+   * sequenced stream has been contiguous since (no known hole). While false,
+   * consumers must not treat an empty `children()` result as authoritative —
+   * that is how a partial tree produced the false EmptyDrive.
+   */
+  private treeComplete = false
+  /** True after a snapshot merge in this process; gates the coverage flag. */
+  private coverageSnapshotMerged = false
+  /** Out-of-order ops held by seq_id until the hole below them fills. */
+  private reorderBuffer = new Map<number, SyncOp>()
+  private gapFillTimer: ReturnType<typeof setTimeout> | null = null
+  private gapFillInFlight: Promise<void> | null = null
+  private gapFillAttempts = 0
+  private resyncTimer: ReturnType<typeof setTimeout> | null = null
+  private resyncInFlight: Promise<void> | null = null
+  private resyncQueued = false
+  private resyncAttempts = 0
+  /** Ops whose node is missing at schedule time (resolved after the resync). */
+  private pendingMissingIds = new Set<string>()
+  /**
+   * Ids a completed snapshot confirmed absent server-side. Repeat missing-node
+   * ops for such an id must not trigger resync after resync (task 1700) — only
+   * a genuinely unknown id (or a reconnect) retries.
+   */
+  private knownAbsentIds = new Set<string>()
+  /**
    * Star ordering state (task 1577, PR #115 review). `file.starred` is a
    * realtime event, not a sequenced op, so it has no seq_id to order by.
    * - `starFrameAt`: server `timestamp` (ms) of the newest `file.starred`
@@ -174,6 +217,30 @@ export class SyncClient {
     this.emit({ type: 'status', status })
   }
 
+  /**
+   * True once a snapshot has merged and the op stream has been contiguous
+   * since (task 1700). UI layers use this to avoid treating a partial tree as
+   * an empty vault. Exposed as a method so the sync context can mirror it.
+   */
+  isCoverageComplete(): boolean {
+    return this.treeComplete
+  }
+
+  private setTreeComplete(complete: boolean): void {
+    if (this.treeComplete === complete) return
+    this.treeComplete = complete
+    this.emit({ type: 'coverage', complete })
+  }
+
+  /** Recompute the coverage flag from the current buffering state. */
+  private refreshCoverageFlag(): void {
+    if (!this.coverageSnapshotMerged) return
+    if (this.reorderBuffer.size > 0) return
+    if (this.gapFillTimer || this.gapFillInFlight) return
+    if (this.resyncTimer || this.resyncInFlight || this.resyncQueued) return
+    this.setTreeComplete(true)
+  }
+
   /** Boot. Idempotent — calling twice is a no-op. */
   async start(): Promise<void> {
     if (this.started || this.destroyed) return
@@ -181,32 +248,11 @@ export class SyncClient {
     this.setStatus('connecting')
 
     try {
-      if (this.lastSeq === 0) {
-        // Fresh device — load full snapshot.
-        const snap = await getSnapshot()
-        this.applySnapshot(snap)
-      } else {
-        // Returning device — catch up on missed ops.
-        try {
-          const ops = await getSyncOps(this.lastSeq)
-          for (const op of ops) {
-            this.applyRemoteOp(op)
-          }
-          // If catch-up returned no ops and tree is empty (page refresh
-          // cleared in-memory state but lastSeq persisted), reload the
-          // full snapshot so we don't show an empty drive.
-          if (this.tree.size === 0) {
-            const snap = await getSnapshot()
-            this.applySnapshot(snap)
-          }
-        } catch (err) {
-          // Catch-up failed — fall back to full snapshot to recover.
-          console.warn('[SyncClient] catch-up failed, fetching snapshot', err)
-          const snap = await getSnapshot()
-          this.tree.clear()
-          this.applySnapshot(snap)
-        }
-      }
+      // Always establish full coverage from a snapshot (task 1700). The old
+      // `tree.size === 0` heuristic trusted a catch-up that silently dropped
+      // ops for unknown nodes, leaving root-level nodes missing — which the
+      // drive read as an empty vault.
+      await this.establishCoverage()
 
       this.openStream()
 
@@ -222,6 +268,70 @@ export class SyncClient {
     }
   }
 
+  /**
+   * Merge a full snapshot, then apply the op tail after the stream position.
+   * Merge-only + idempotent: the tree is never cleared, so a snapshot can
+   * never turn a populated vault into an empty one. `lastSeq` only ever moves
+   * forward, to `max(stream, snapshot)`.
+   */
+  private async establishCoverage(): Promise<void> {
+    this.setTreeComplete(false)
+    // A reconnect/first boot may see nodes the last snapshot confirmed absent.
+    this.knownAbsentIds.clear()
+    this.pendingMissingIds.clear()
+    const snap = await getSnapshot()
+    this.mergeSnapshot(snap)
+    try {
+      await this.catchUpOps()
+    } catch (err) {
+      // The snapshot already covers everything up to snap.seq_id; the op tail
+      // is best-effort and a buffered hole re-triggers a gap fill on its own.
+      console.warn('[SyncClient] op catch-up after snapshot failed', err)
+    }
+    if (snap.seq_id > this.lastSeq) {
+      this.lastSeq = snap.seq_id
+      saveLastSeq(this.lastSeq)
+      this.dropBufferedThrough(this.lastSeq)
+    }
+    this.coverageSnapshotMerged = true
+    if (this.reorderBuffer.size > 0) this.scheduleGapFill()
+    this.refreshCoverageFlag()
+  }
+
+  /** Apply the op tail after `lastSeq`; report a server-truncated backlog. */
+  private async catchUpOps(): Promise<{ truncated: boolean }> {
+    const ops = await getSyncOps(this.lastSeq)
+    for (const op of ops) {
+      this.applyRemoteOp(op)
+    }
+    return { truncated: ops.length >= SYNC_OPS_PAGE_CAP }
+  }
+
+  /**
+   * Merge snapshot nodes into the tree (task 1700). Nodes with an outstanding
+   * local op are skipped: the snapshot predates that op, and the optimistic
+   * state (or its rollback) is authoritative until the echo confirms it.
+   * Buffered ops at or below the snapshot are dropped once `lastSeq` advances
+   * past them by the caller.
+   */
+  private mergeSnapshot(snap: { seq_id: number; nodes: SyncNode[] }): void {
+    const pendingTargets = new Set<string>()
+    for (const p of this.pendingOps) {
+      if (p.target_id) pendingTargets.add(p.target_id)
+    }
+    for (const node of snap.nodes) {
+      if (pendingTargets.has(node.id)) continue
+      this.tree.set(node.id, node)
+    }
+    this.emit({ type: 'snapshot' })
+  }
+
+  private dropBufferedThrough(seq: number): void {
+    for (const [buffered] of this.reorderBuffer) {
+      if (buffered <= seq) this.reorderBuffer.delete(buffered)
+    }
+  }
+
   /** Tear down. Stream closed, last_seq persisted, pending ops kept. */
   stop(): void {
     this.destroyed = true
@@ -230,21 +340,20 @@ export class SyncClient {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
     }
+    if (this.gapFillTimer) {
+      clearTimeout(this.gapFillTimer)
+      this.gapFillTimer = null
+    }
+    if (this.resyncTimer) {
+      clearTimeout(this.resyncTimer)
+      this.resyncTimer = null
+    }
     if (this.eventSource) {
       this.eventSource.close()
       this.eventSource = null
     }
     this.setStatus('idle')
     this.listeners.clear()
-  }
-
-  private applySnapshot(snap: { seq_id: number; nodes: SyncNode[] }): void {
-    for (const node of snap.nodes) {
-      this.tree.set(node.id, node)
-    }
-    this.lastSeq = snap.seq_id
-    saveLastSeq(this.lastSeq)
-    this.emit({ type: 'snapshot' })
   }
 
   private async openStream(): Promise<void> {
@@ -307,15 +416,13 @@ export class SyncClient {
 
   private async reconnect(): Promise<void> {
     if (this.destroyed) return
-    // After a long disconnect, fetch any ops we missed before re-opening
-    // the stream — gapless resume.
+    // Always re-establish full coverage (task 1700): a disconnect can span
+    // more ops than the server's op log retains, so an ops-only catch-up is
+    // not guaranteed gapless.
     try {
-      const ops = await getSyncOps(this.lastSeq)
-      for (const op of ops) {
-        this.applyRemoteOp(op)
-      }
+      await this.establishCoverage()
     } catch (err) {
-      console.warn('[SyncClient] reconnect catch-up failed', err)
+      console.warn('[SyncClient] reconnect coverage failed', err)
     }
     void this.openStream()
   }
@@ -419,13 +526,56 @@ export class SyncClient {
   }
 
   /**
-   * Apply a remote op (from SSE or catch-up) to the tree. If the op was
-   * originally submitted by this client (echo), the optimistic update is
-   * already in place — we just confirm it.
+   * Apply a remote op (from SSE or catch-up) to the tree. Ops must arrive in
+   * seq order: a future op is held in a bounded reorder buffer until the hole
+   * below it is filled (task 1700), instead of the old drop-with-advance that
+   * silently lost updates. If the op was originally submitted by this client
+   * (echo), the optimistic update is already in place — we just confirm it.
    */
   private applyRemoteOp(op: SyncOp): void {
     if (op.seq_id <= this.lastSeq) return // already applied
 
+    if (op.seq_id === this.lastSeq + 1) {
+      this.applyOpNow(op)
+      this.drainReorderBuffer()
+      if (this.reorderBuffer.size > 0) {
+        this.setTreeComplete(false)
+        this.scheduleGapFill()
+      } else {
+        this.refreshCoverageFlag()
+      }
+      return
+    }
+
+    // Future op: hold it until the hole below it is filled.
+    this.reorderBuffer.set(op.seq_id, op)
+    if (this.reorderBuffer.size > REORDER_BUFFER_MAX) {
+      // Buffer exhausted — a snapshot merge is the bounded fallback.
+      this.reorderBuffer.clear()
+      void this.resyncSnapshot().catch(() => {})
+      return
+    }
+    this.setTreeComplete(false)
+    this.scheduleGapFill()
+  }
+
+  /** Apply every buffered op that is now contiguous with `lastSeq`. */
+  private drainReorderBuffer(): void {
+    for (;;) {
+      const next = this.reorderBuffer.get(this.lastSeq + 1)
+      if (!next) break
+      this.reorderBuffer.delete(next.seq_id)
+      this.applyOpNow(next)
+    }
+  }
+
+  /**
+   * Apply one in-order op, preserving the original echo/pending-op semantics:
+   * a locally submitted op already applied optimistically is only confirmed
+   * here. A missing-node op schedules a debounced coverage resync instead of
+   * being silently dropped (task 1700).
+   */
+  private applyOpNow(op: SyncOp): void {
     // Echo suppression.
     if (op.client_op_id) {
       const idx = this.pendingOps.findIndex((p) => p.client_op_id === op.client_op_id)
@@ -440,26 +590,49 @@ export class SyncClient {
       }
     }
 
-    this.applyOpToTree(op.op_type, op.payload)
+    const applied = this.applyOpToTree(op.op_type, op.payload)
     this.lastSeq = op.seq_id
     saveLastSeq(this.lastSeq)
     this.emit({ type: 'op', op })
+
+    if (applied === 'missing-node') {
+      // The op targets a node the tree has never seen (restore/rename/move/
+      // update/trash). The full snapshot is the only authoritative backfill —
+      // do not fabricate node fields (task 1700).
+      const id = op.payload.id as string | undefined
+      if (id && this.knownAbsentIds.has(id)) {
+        // A completed snapshot already confirmed this id is absent
+        // server-side — do not resync again for every repeat op.
+        return
+      }
+      if (id) this.pendingMissingIds.add(id)
+      this.coverageSnapshotMerged = false
+      this.setTreeComplete(false)
+      this.scheduleCoverageResync()
+    }
   }
 
   /** Mutate the in-memory tree based on op type + payload. */
-  private applyOpToTree(opType: string, payload: Record<string, unknown>): void {
+  private applyOpToTree(
+    opType: string,
+    payload: Record<string, unknown>,
+  ): 'applied' | 'missing-node' {
     switch (opType) {
       case 'file_create':
       case 'folder_create': {
         const node = payloadToNode(payload, opType === 'folder_create')
-        if (node) this.tree.set(node.id, node)
-        break
+        if (node) {
+          this.tree.set(node.id, node)
+          // The id exists now — a later missing-node op must resync again.
+          this.knownAbsentIds.delete(node.id)
+        }
+        return 'applied'
       }
       case 'file_update': {
         const id = payload.id as string | undefined
-        if (!id) return
+        if (!id) return 'applied'
         const existing = this.tree.get(id)
-        if (!existing) return
+        if (!existing) return 'missing-node'
         this.tree.set(id, {
           ...existing,
           size_bytes: (payload.size_bytes as number | undefined) ?? existing.size_bytes,
@@ -473,63 +646,204 @@ export class SyncClient {
             (payload.has_large_thumbnail as boolean | undefined) ?? existing.has_large_thumbnail,
           updated_at: new Date().toISOString(),
         })
-        break
+        return 'applied'
       }
       case 'file_move':
       case 'folder_move': {
         const id = payload.id as string | undefined
-        if (!id) return
+        if (!id) return 'applied'
         const existing = this.tree.get(id)
-        if (!existing) return
+        if (!existing) return 'missing-node'
         this.tree.set(id, {
           ...existing,
           parent_id: (payload.new_parent_id as string | null | undefined) ?? null,
           updated_at: new Date().toISOString(),
         })
-        break
+        return 'applied'
       }
       case 'file_rename':
       case 'folder_rename': {
         const id = payload.id as string | undefined
-        if (!id) return
+        if (!id) return 'applied'
         const existing = this.tree.get(id)
-        if (!existing) return
+        if (!existing) return 'missing-node'
         this.tree.set(id, {
           ...existing,
           name_encrypted:
             (payload.new_name_encrypted as string | undefined) ?? existing.name_encrypted,
           updated_at: new Date().toISOString(),
         })
-        break
+        return 'applied'
       }
       case 'file_trash': {
         const id = payload.id as string | undefined
-        if (!id) return
+        if (!id) return 'applied'
         const existing = this.tree.get(id)
-        if (existing) this.tree.set(id, { ...existing, is_trashed: true })
-        break
+        if (!existing) return 'missing-node'
+        this.tree.set(id, { ...existing, is_trashed: true })
+        return 'applied'
       }
       case 'file_restore': {
         const id = payload.id as string | undefined
-        if (!id) return
+        if (!id) return 'applied'
         const existing = this.tree.get(id)
-        if (existing) this.tree.set(id, { ...existing, is_trashed: false })
-        break
+        if (!existing) return 'missing-node'
+        this.tree.set(id, { ...existing, is_trashed: false })
+        return 'applied'
       }
       case 'file_delete': {
         const id = payload.id as string | undefined
         if (id) this.tree.delete(id)
-        break
+        return 'applied'
       }
       case 'share_create':
       case 'share_revoke':
         // Notification-only — UI listens for these to refresh share state.
-        break
+        return 'applied'
       default:
         // Unknown op type — keep going. Future protocol versions may add
         // new types and we don't want to crash on them.
-        break
+        return 'applied'
     }
+  }
+
+  // ─── Coverage recovery (task 1700) ─────────────────────────────────────
+  // A seq gap is filled from the op log; if that errors, times out, or hits
+  // the server page cap, a snapshot merge is the bounded fallback. Both paths
+  // are single-flight and time-bounded so coverage can never stall forever.
+
+  private scheduleGapFill(): void {
+    if (this.destroyed || this.gapFillTimer || this.gapFillInFlight) return
+    if (this.reorderBuffer.size === 0) return
+    // Back off exponentially across failed attempts (capped): a persistently
+    // failing server must not be hammered by the recovery path (task 1700).
+    const delay = Math.min(GAP_FILL_DEBOUNCE_MS * 2 ** this.gapFillAttempts, 5_000)
+    this.gapFillTimer = setTimeout(() => {
+      this.gapFillTimer = null
+      void this.runGapFill()
+    }, delay)
+  }
+
+  private async runGapFill(): Promise<void> {
+    if (this.destroyed || this.gapFillInFlight || this.reorderBuffer.size === 0) return
+    const run = (async () => {
+      try {
+        const ops = await this.withTimeout(getSyncOps(this.lastSeq), GAP_FILL_TIMEOUT_MS)
+        if (ops.length >= SYNC_OPS_PAGE_CAP) {
+          // Truncated backlog — the snapshot merges the whole thing.
+          await this.resyncSnapshot()
+          return
+        }
+        for (const op of ops) {
+          this.applyRemoteOp(op)
+        }
+        if (this.reorderBuffer.size > 0) {
+          // The op log no longer reaches the hole (purged server-side).
+          await this.resyncSnapshot()
+        }
+      } catch (err) {
+        console.warn('[SyncClient] gap-fill failed, falling back to snapshot', err)
+        await this.resyncSnapshot().catch(() => {})
+      } finally {
+        this.gapFillInFlight = null
+        if (this.reorderBuffer.size > 0) {
+          this.gapFillAttempts += 1
+          this.scheduleGapFill()
+        } else {
+          this.gapFillAttempts = 0
+          this.refreshCoverageFlag()
+        }
+      }
+    })()
+    this.gapFillInFlight = run
+    await run
+  }
+
+  /** Debounced single-flight snapshot merge for missing-node ops. */
+  private scheduleCoverageResync(): void {
+    if (this.destroyed) return
+    if (this.resyncInFlight) {
+      this.resyncQueued = true
+      return
+    }
+    if (this.resyncTimer) return
+    // Retries back off exponentially (capped) after a failed snapshot fetch.
+    const delay = Math.min(MISSING_NODE_RESYNC_DEBOUNCE_MS * 2 ** this.resyncAttempts, 10_000)
+    this.resyncTimer = setTimeout(() => {
+      this.resyncTimer = null
+      void this.runCoverageResync()
+    }, delay)
+  }
+
+  private async runCoverageResync(): Promise<void> {
+    if (this.destroyed || this.resyncInFlight) return
+    let ok = false
+    this.resyncInFlight = (async () => {
+      try {
+        await this.resyncSnapshot()
+        ok = true
+      } catch (err) {
+        console.warn('[SyncClient] coverage resync failed', err)
+      } finally {
+        this.resyncInFlight = null
+        if (this.resyncQueued) {
+          this.resyncQueued = false
+          this.resyncAttempts = 0
+          this.scheduleCoverageResync()
+        } else if (!ok && !this.destroyed) {
+          // Retry with backoff — a transient failure must not leave coverage
+          // incomplete forever, and a persistent one must not spin.
+          this.resyncAttempts += 1
+          this.scheduleCoverageResync()
+        } else {
+          this.resyncAttempts = 0
+          this.refreshCoverageFlag()
+        }
+      }
+    })()
+    await this.resyncInFlight
+  }
+
+  /** Merge a fresh snapshot, advance `lastSeq`, and recompute coverage. */
+  private async resyncSnapshot(): Promise<void> {
+    if (this.destroyed) return
+    this.setTreeComplete(false)
+    const snap = await getSnapshot()
+    this.mergeSnapshot(snap)
+    if (snap.seq_id > this.lastSeq) {
+      this.lastSeq = snap.seq_id
+      saveLastSeq(this.lastSeq)
+      this.dropBufferedThrough(this.lastSeq)
+    }
+    // Snapshot is authoritative for the missing ids that scheduled it: a node
+    // that is still absent is genuinely gone — never resync for it again until
+    // a reconnect or a create brings it back (task 1700).
+    for (const id of this.pendingMissingIds) {
+      if (this.tree.has(id)) this.knownAbsentIds.delete(id)
+      else this.knownAbsentIds.add(id)
+    }
+    this.pendingMissingIds.clear()
+    this.coverageSnapshotMerged = true
+    this.refreshCoverageFlag()
+  }
+
+  /** Bound a sync request so coverage recovery can never hang indefinitely. */
+  private withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`sync request timed out after ${ms}ms`))
+      }, ms)
+      promise.then(
+        (value) => {
+          clearTimeout(timer)
+          resolve(value)
+        },
+        (err) => {
+          clearTimeout(timer)
+          reject(err)
+        },
+      )
+    })
   }
 
   /**
