@@ -11,7 +11,7 @@ import {
   submitSyncOps,
   getStreamToken,
 } from './api'
-import type { SyncOp, SyncNode } from './api'
+import type { SyncOp, SyncNode, SyncSnapshot } from './api'
 
 const LAST_SEQ_KEY = 'bb_sync_last_seq'
 const PENDING_OPS_KEY = 'bb_sync_pending_ops'
@@ -34,6 +34,13 @@ const GAP_FILL_TIMEOUT_MS = 10_000
 const MISSING_NODE_RESYNC_DEBOUNCE_MS = 100
 /** Upper bound on out-of-order ops held while a gap is filled. */
 const REORDER_BUFFER_MAX = 500
+/**
+ * Upper bound on stream frames held while a snapshot fetch is in flight. A
+ * fetch is time-bounded, so this only guards against pathological storms.
+ */
+const DEFERRED_FRAMES_MAX = 10_000
+/** Bound on a full-snapshot fetch: a hung request must never stall coverage. */
+const SNAPSHOT_TIMEOUT_MS = 10_000
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
 
@@ -167,6 +174,21 @@ export class SyncClient {
    */
   private starFrameAt = new Map<string, number>()
   private starEchoes = new Map<string, number[]>()
+  /**
+   * In-flight single snapshot merge, shared by every resync caller (review
+   * S1) — overlapping merges can never land out of order.
+   */
+  private snapshotInFlight: Promise<void> | null = null
+  /** True while the snapshot HTTP fetch is outstanding — stream frames are held. */
+  private snapshotFetchInFlight = false
+  /** Frames held during a snapshot fetch, replayed right after the merge. */
+  private deferredStreamFrames: StreamFrame[] = []
+  /** Snapshot fetch bound; overridable so tests can exercise the timeout. */
+  private readonly snapshotTimeoutMs: number
+
+  constructor(options?: { snapshotTimeoutMs?: number }) {
+    this.snapshotTimeoutMs = options?.snapshotTimeoutMs ?? SNAPSHOT_TIMEOUT_MS
+  }
 
   getStatus(): ConnectionStatus {
     return this.status
@@ -269,31 +291,35 @@ export class SyncClient {
   }
 
   /**
-   * Merge a full snapshot, then apply the op tail after the stream position.
+   * Merge a full snapshot, then apply the op tail AFTER the snapshot position.
    * Merge-only + idempotent: the tree is never cleared, so a snapshot can
    * never turn a populated vault into an empty one. `lastSeq` only ever moves
    * forward, to `max(stream, snapshot)`.
+   *
+   * Review B1: the persisted op position can be thousands of ops behind the
+   * snapshot. Replaying that window over the newer snapshot would clobber its
+   * state (a stale rename/size/parent/trash inside the first LIMIT-1000 page
+   * would win), so the snapshot advances `lastSeq` BEFORE any catch-up and the
+   * tail is fetched from the snapshot position.
    */
   private async establishCoverage(): Promise<void> {
     this.setTreeComplete(false)
     // A reconnect/first boot may see nodes the last snapshot confirmed absent.
     this.knownAbsentIds.clear()
     this.pendingMissingIds.clear()
-    const snap = await getSnapshot()
-    this.mergeSnapshot(snap)
+    await this.resyncSnapshot()
     try {
-      await this.catchUpOps()
+      const { truncated } = await this.catchUpOps()
+      if (truncated) {
+        // The tail itself exceeds one server page — merge a newer snapshot
+        // rather than silently skipping the rest of it.
+        await this.resyncSnapshot()
+      }
     } catch (err) {
-      // The snapshot already covers everything up to snap.seq_id; the op tail
+      // The snapshot already covers everything up to its seq_id; the op tail
       // is best-effort and a buffered hole re-triggers a gap fill on its own.
       console.warn('[SyncClient] op catch-up after snapshot failed', err)
     }
-    if (snap.seq_id > this.lastSeq) {
-      this.lastSeq = snap.seq_id
-      saveLastSeq(this.lastSeq)
-      this.dropBufferedThrough(this.lastSeq)
-    }
-    this.coverageSnapshotMerged = true
     if (this.reorderBuffer.size > 0) this.scheduleGapFill()
     this.refreshCoverageFlag()
   }
@@ -450,6 +476,23 @@ export class SyncClient {
       console.error('[SyncClient] Failed to parse SSE message', err)
       return
     }
+    if (this.snapshotFetchInFlight && (frame.kind === 'op' || frame.kind === 'starred')) {
+      // A snapshot fetched before this frame landed would overwrite its tree
+      // state — hold the frame and replay it right after the merge (review S1).
+      if (this.deferredStreamFrames.length >= DEFERRED_FRAMES_MAX) {
+        // Never grow without bound. `lastSeq` does not advance for dropped
+        // frames, so the next frame opens a gap and coverage recovery
+        // refetches them (status-quo snapshot fetch is time-bounded).
+        this.deferredStreamFrames.length = 0
+        this.coverageSnapshotMerged = false
+      }
+      this.deferredStreamFrames.push(frame)
+      return
+    }
+    this.dispatchStreamFrame(frame)
+  }
+
+  private dispatchStreamFrame(frame: StreamFrame): void {
     switch (frame.kind) {
       case 'op':
         this.applyRemoteOp(frame.op)
@@ -463,6 +506,14 @@ export class SyncClient {
         // just makes every consumer re-derive for nothing).
         break
     }
+  }
+
+  /** Replay frames held while a snapshot fetch was in flight. */
+  private replayDeferredFrames(): void {
+    if (this.deferredStreamFrames.length === 0) return
+    const frames = this.deferredStreamFrames
+    this.deferredStreamFrames = []
+    for (const frame of frames) this.dispatchStreamFrame(frame)
   }
 
   /**
@@ -550,9 +601,12 @@ export class SyncClient {
     // Future op: hold it until the hole below it is filled.
     this.reorderBuffer.set(op.seq_id, op)
     if (this.reorderBuffer.size > REORDER_BUFFER_MAX) {
-      // Buffer exhausted — a snapshot merge is the bounded fallback.
+      // Buffer exhausted — a snapshot merge is the bounded fallback, routed
+      // through the single-flight/retry path (review S1).
       this.reorderBuffer.clear()
-      void this.resyncSnapshot().catch(() => {})
+      this.coverageSnapshotMerged = false
+      this.setTreeComplete(false)
+      this.scheduleCoverageResync()
       return
     }
     this.setTreeComplete(false)
@@ -804,27 +858,52 @@ export class SyncClient {
     await this.resyncInFlight
   }
 
-  /** Merge a fresh snapshot, advance `lastSeq`, and recompute coverage. */
-  private async resyncSnapshot(): Promise<void> {
-    if (this.destroyed) return
-    this.setTreeComplete(false)
-    const snap = await getSnapshot()
-    this.mergeSnapshot(snap)
-    if (snap.seq_id > this.lastSeq) {
-      this.lastSeq = snap.seq_id
-      saveLastSeq(this.lastSeq)
-      this.dropBufferedThrough(this.lastSeq)
-    }
-    // Snapshot is authoritative for the missing ids that scheduled it: a node
-    // that is still absent is genuinely gone — never resync for it again until
-    // a reconnect or a create brings it back (task 1700).
-    for (const id of this.pendingMissingIds) {
-      if (this.tree.has(id)) this.knownAbsentIds.delete(id)
-      else this.knownAbsentIds.add(id)
-    }
-    this.pendingMissingIds.clear()
-    this.coverageSnapshotMerged = true
-    this.refreshCoverageFlag()
+  /**
+   * Merge a fresh snapshot once — single-flight across ALL callers (boot,
+   * reconnect, gap-cap, gap-error, missing-node, overflow) and time-bounded
+   * (review S1). Stream frames arriving during the fetch are held and replayed
+   * after the merge, so an older snapshot can never overwrite newer op state.
+   */
+  private resyncSnapshot(): Promise<void> {
+    if (this.destroyed) return Promise.resolve()
+    if (this.snapshotInFlight) return this.snapshotInFlight
+    const run = (async () => {
+      this.setTreeComplete(false)
+      this.snapshotFetchInFlight = true
+      let snap: SyncSnapshot
+      try {
+        snap = await this.withTimeout(getSnapshot(), this.snapshotTimeoutMs)
+      } finally {
+        this.snapshotFetchInFlight = false
+      }
+      this.mergeSnapshot(snap)
+      if (snap.seq_id > this.lastSeq) {
+        this.lastSeq = snap.seq_id
+        saveLastSeq(this.lastSeq)
+        this.dropBufferedThrough(this.lastSeq)
+      }
+      // Snapshot is authoritative for the missing ids that scheduled it: a
+      // node that is still absent is genuinely gone — never resync for it
+      // again until a reconnect or a create brings it back (task 1700).
+      for (const id of this.pendingMissingIds) {
+        if (this.tree.has(id)) this.knownAbsentIds.delete(id)
+        else this.knownAbsentIds.add(id)
+      }
+      this.pendingMissingIds.clear()
+      this.coverageSnapshotMerged = true
+    })()
+    const wrapped = (async () => {
+      try {
+        await run
+      } finally {
+        this.snapshotInFlight = null
+        this.replayDeferredFrames()
+        if (this.reorderBuffer.size > 0) this.scheduleGapFill()
+        this.refreshCoverageFlag()
+      }
+    })()
+    this.snapshotInFlight = wrapped
+    return wrapped
   }
 
   /** Bound a sync request so coverage recovery can never hang indefinitely. */

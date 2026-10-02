@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { SyncNode } from '../src/lib/api'
-import { applyIndexDiff, planIndexDiff, type IndexNameCacheEntry } from '../src/lib/search-index-diff'
+import { applyIndexDiff, createRemoveCoalescer, planIndexDiff, type IndexNameCacheEntry } from '../src/lib/search-index-diff'
 
 /**
  * Task 1700 — reconcileFromTree used to upsert EVERY live node on every pass,
@@ -131,5 +131,87 @@ describe('1700: planIndexDiff + applyIndexDiff', () => {
     const nodes = [node('a')]
     const plan = planIndexDiff({ nodes, resolved: new Map(), indexedIds, cachedNames: new Map() })
     expect(plan.upserts).toEqual([])
+  })
+})
+
+/**
+ * Review finding S3 — per-event `unindexFile` called remove+pushBuckets for
+ * every foreign delete/trash event, so a bulk delete storm re-encrypted and
+ * PUT shard pages per event. The coalescer collects ids in a window and the
+ * single applyIndexDiff call pushes once.
+ */
+describe('1700 review S3: delete coalescing', () => {
+  test('N deletes inside one window → exactly one putShards with the affected buckets', async () => {
+    const index = fakeIndex({ a: [1], b: [2], c: [3] })
+    let latest: (() => void) | null = null
+    let scheduleCalls = 0
+    const coalescer = createRemoveCoalescer({
+      windowMs: 1500,
+      onFlush: (ids) => {
+        void applyIndexDiff(index.target, KEY, { upserts: [], prunes: ids })
+      },
+      schedule: (fn) => {
+        scheduleCalls += 1
+        latest = fn
+        return 0 as unknown as ReturnType<typeof setTimeout>
+      },
+      clear: () => {},
+    })
+
+    coalescer.add('a')
+    coalescer.add('b')
+    coalescer.add('c')
+    expect(coalescer.pendingCount()).toBe(3)
+    expect(index.pushes).toEqual([]) // nothing pushed before the window closes
+
+    latest?.()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(index.removed).toEqual(['a', 'b', 'c'])
+    expect(index.pushes.length).toBe(1)
+    expect(index.pushes[0]).toEqual([1, 2, 3])
+    expect(scheduleCalls).toBe(3)
+    expect(coalescer.pendingCount()).toBe(0)
+  })
+
+  test('a delete arriving after the flush opens a new window (second push)', async () => {
+    const index = fakeIndex({ a: [1], d: [4] })
+    let latest: (() => void) | null = null
+    const coalescer = createRemoveCoalescer({
+      windowMs: 1500,
+      onFlush: (ids) => {
+        void applyIndexDiff(index.target, KEY, { upserts: [], prunes: ids })
+      },
+      schedule: (fn) => {
+        latest = fn
+        return 0 as unknown as ReturnType<typeof setTimeout>
+      },
+      clear: () => {},
+    })
+
+    coalescer.add('a')
+    latest?.()
+    await new Promise((r) => setTimeout(r, 0))
+    coalescer.add('d')
+    latest?.()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(index.pushes).toEqual([[1], [4]])
+  })
+
+  test('with real timers the window batches and fires once', async () => {
+    const index = fakeIndex({ x: [5], y: [6] })
+    const flushes: string[][] = []
+    const coalescer = createRemoveCoalescer({
+      windowMs: 20,
+      onFlush: (ids) => {
+        flushes.push(ids)
+        void applyIndexDiff(index.target, KEY, { upserts: [], prunes: ids })
+      },
+    })
+    coalescer.add('x')
+    await new Promise((r) => setTimeout(r, 5))
+    coalescer.add('y')
+    await new Promise((r) => setTimeout(r, 60))
+    expect(flushes).toEqual([['x', 'y']])
+    expect(index.pushes).toEqual([[5, 6]])
   })
 })

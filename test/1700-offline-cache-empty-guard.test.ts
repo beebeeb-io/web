@@ -78,7 +78,7 @@ afterAll(() => {
   ;(globalThis as { indexedDB?: unknown }).indexedDB = realIndexedDB
 })
 
-const { cacheFileList } = await import('../src/lib/offline-cache')
+const { cacheFileList, invalidateFileListCache } = await import('../src/lib/offline-cache')
 
 function row(id: string): DriveFile {
   return {
@@ -135,6 +135,21 @@ describe('1700: cacheFileList empty-list guard', () => {
     reset()
     await cacheFileList(null, [])
     expect(fakeIDB.puts).toEqual([])
+    expect(DB_RECORDS.has('__root__')).toBe(false)
+  })
+
+  test('NIT an authoritative empty API list can invalidate the cached folder', async () => {
+    reset()
+    DB_RECORDS.set('__root__', {
+      parentId: '__root__',
+      files: [row('a')],
+      decryptedNames: { a: 'Alpha' },
+      cachedAt: Date.now(),
+      accessedAt: Date.now(),
+    })
+    // The drive calls this when GET /files authoritatively returns [] — the
+    // no-[]-write guard otherwise keeps deleted rows cached up to TTL.
+    await invalidateFileListCache(null)
     expect(DB_RECORDS.has('__root__')).toBe(false)
   })
 })

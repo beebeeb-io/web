@@ -21,13 +21,22 @@ import type { ReactNode } from 'react'
 import { useKeys } from './key-context'
 import type { SyncNode } from '@beebeeb/shared'
 import { CoreSearchIndex } from './search-index-core'
-import { applyIndexDiff, planIndexDiff, type IndexNameCacheEntry } from './search-index-diff'
+import {
+  applyIndexDiff,
+  createRemoveCoalescer,
+  planIndexDiff,
+  type IndexNameCacheEntry,
+  type RemoveCoalescer,
+} from './search-index-diff'
 // Legacy blob path — retained ONLY for the rebuild-window fallback/seed (B/D).
 import {
   fetchIndex,
   searchIndex as scoreLegacyIndex,
   type SearchIndex as LegacyIndex,
 } from './search-index'
+
+/** Window that batches cross-client delete/trash unindex events (review S3). */
+const UNINDEX_COALESCE_MS = 1500
 
 /** Resolves a sync node's plaintext name (decrypt + cache lives in the caller). */
 export type NodeNameResolver = (node: SyncNode) => Promise<string | null>
@@ -123,6 +132,49 @@ function useProvideSearchIndex(): SearchIndexContextValue {
    */
   const reconcileQueueRef = useRef<Promise<void>>(Promise.resolve())
 
+  // ── Coalesced unindex queue (review S3) ───────────────────────────────────
+  // Foreign delete/trash WS events previously ran remove+pushBuckets per
+  // event; batch them into one window so a bulk delete storm pushes once.
+  const flushRemovesRef = useRef<(ids: string[]) => void>(() => {})
+  const removeCoalescerRef = useRef<RemoveCoalescer | null>(null)
+  if (!removeCoalescerRef.current) {
+    removeCoalescerRef.current = createRemoveCoalescer({
+      windowMs: UNINDEX_COALESCE_MS,
+      onFlush: (ids) => flushRemovesRef.current(ids),
+    })
+  }
+  const removeCoalescer = removeCoalescerRef.current
+
+  const flushQueuedRemoves = useCallback(
+    async (ids: string[]) => {
+      if (!isUnlocked || ids.length === 0) return
+      let masterKey: Uint8Array
+      try {
+        masterKey = getMasterKey()
+      } catch {
+        return
+      }
+      const idx = indexRef.current
+      if (!idx) {
+        for (const id of ids) pendingPrunesRef.current.add(id)
+        return
+      }
+      const dirtyCount = await applyIndexDiff(idx, masterKey, { upserts: [], prunes: ids })
+      for (const id of ids) {
+        indexedIdsRef.current.delete(id)
+        nameCacheRef.current.delete(id)
+      }
+      if (dirtyCount > 0) bump()
+    },
+    [isUnlocked, getMasterKey, bump],
+  )
+
+  useEffect(() => {
+    flushRemovesRef.current = (ids) => { void flushQueuedRemoves(ids) }
+  }, [flushQueuedRemoves])
+
+  useEffect(() => () => removeCoalescer.cancel(), [removeCoalescer])
+
   // ── Unlock / lock lifecycle ──────────────────────────────────────────────
   useEffect(() => {
     if (!isUnlocked) {
@@ -136,6 +188,7 @@ function useProvideSearchIndex(): SearchIndexContextValue {
       nameCacheRef.current.clear()
       indexedIdsRef.current.clear()
       reconcileQueueRef.current = Promise.resolve()
+      removeCoalescer.cancel()
       setReady(false)
       if (idx) void idx.dispose()
       return
@@ -217,7 +270,7 @@ function useProvideSearchIndex(): SearchIndexContextValue {
     return () => {
       cancelled = true
     }
-  }, [isUnlocked, getMasterKey, bump, setReady])
+  }, [isUnlocked, getMasterKey, bump, setReady, removeCoalescer])
 
   /** Ensure an index exists (lazily create an empty one if the load hasn't run). */
   const ensureIndex = useCallback(async (): Promise<CoreSearchIndex | null> => {
@@ -288,26 +341,17 @@ function useProvideSearchIndex(): SearchIndexContextValue {
   const unindexFile = useCallback(
     async (fileId: string) => {
       if (!isUnlocked) return
-      let masterKey: Uint8Array
-      try {
-        masterKey = getMasterKey()
-      } catch {
-        return
-      }
       const idx = indexRef.current
       if (!idx) {
         // Index still loading — queue so the load's flush drops it.
         pendingPrunesRef.current.add(fileId)
         return
       }
-      const dirty = await idx.remove(fileId)
-      indexedIdsRef.current.delete(fileId)
-      nameCacheRef.current.delete(fileId)
-      if (dirty.length === 0) return
-      await idx.pushBuckets(masterKey, dirty).catch(() => {})
-      bump()
+      // Coalesced (review S3): a foreign delete/trash storm flushes as one
+      // remove+push, not one per event.
+      removeCoalescer.add(fileId)
     },
-    [isUnlocked, getMasterKey, bump],
+    [isUnlocked, removeCoalescer],
   )
 
   const unindexFiles = useCallback(

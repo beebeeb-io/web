@@ -83,3 +83,59 @@ export async function applyIndexDiff(
   })
   return dirty.size
 }
+
+export interface RemoveCoalescerOptions {
+  windowMs: number
+  onFlush: (ids: string[]) => void
+  /** Injectable for tests; defaults to setTimeout/clearTimeout. */
+  schedule?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
+  clear?: (handle: ReturnType<typeof setTimeout>) => void
+}
+
+export interface RemoveCoalescer {
+  add(id: string): void
+  flush(): void
+  cancel(): void
+  pendingCount(): number
+}
+
+/**
+ * Collect `unindexFile` ids for `windowMs` and flush them in one batch (review
+ * S3). A foreign bulk delete/trash storm must not run remove+pushBuckets per
+ * event; the single applyIndexDiff call pushes once.
+ */
+export function createRemoveCoalescer(options: RemoveCoalescerOptions): RemoveCoalescer {
+  const schedule = options.schedule ?? ((fn, ms) => setTimeout(fn, ms))
+  const clear = options.clear ?? ((handle) => clearTimeout(handle))
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const pending = new Set<string>()
+
+  const flush = (): void => {
+    if (timer) {
+      clear(timer)
+      timer = null
+    }
+    if (pending.size === 0) return
+    const ids = [...pending]
+    pending.clear()
+    options.onFlush(ids)
+  }
+
+  return {
+    add(id: string): void {
+      pending.add(id)
+      // Each add restarts the window so a burst coalesces.
+      if (timer) clear(timer)
+      timer = schedule(flush, options.windowMs)
+    },
+    flush,
+    cancel(): void {
+      if (timer) {
+        clear(timer)
+        timer = null
+      }
+      pending.clear()
+    },
+    pendingCount: () => pending.size,
+  }
+}

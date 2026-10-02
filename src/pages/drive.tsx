@@ -89,8 +89,9 @@ import { encryptFilename, encryptFileMetadata, serializeEncryptedBlob, decryptFi
 import { useSearchIndex } from '../hooks/use-search-index'
 import { EmptyDrive } from '../components/empty-states/empty-drive'
 import { formatBytes } from '../lib/format'
-import { cacheFileList, getCachedFileList } from '../lib/offline-cache'
+import { cacheFileList, getCachedFileList, invalidateFileListCache } from '../lib/offline-cache'
 import { decideSyncRows, EMPTY_CONFIRM_MS } from '../lib/sync-rows'
+import { createScopedTimer } from '../lib/scoped-timer'
 import { hashFile, checkDuplicate, recordUpload } from '../lib/upload-dedup'
 import { isBackupsRoot as isBackupsRootPure } from '../lib/backups-root'
 
@@ -390,16 +391,23 @@ export function Drive() {
   const currentParentIdRef = useRef<string | null>(null)
   useEffect(() => { currentParentIdRef.current = currentParentId ?? null }, [currentParentId])
 
+  // Navigation scope for the delayed actions below (review S2): route + folder.
+  // A timer scheduled for one scope must never fire against another — the
+  // scope is re-checked at fire time and pending runs are cancelled on change.
+  const syncScopeRef = useRef('')
+  const emptyConfirmTimer = useRef(createScopedTimer(() => syncScopeRef.current)).current
+  const wsRefetchTimer = useRef(createScopedTimer(() => syncScopeRef.current)).current
   // Empty-derive confirmation (task 1700): an all-empty derive from the tree
   // is deferred briefly so a delete+create burst cannot flash EmptyDrive.
-  const emptyConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const emptyConfirmedRef = useRef(false)
-  // Coalescer for WS-triggered API fallbacks (task 1700).
-  const wsRefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(() => () => {
-    if (emptyConfirmTimerRef.current) clearTimeout(emptyConfirmTimerRef.current)
-    if (wsRefetchTimerRef.current) clearTimeout(wsRefetchTimerRef.current)
-  }, [])
+  useEffect(() => {
+    syncScopeRef.current = `${location.pathname}|${currentParentId ?? ''}`
+    // Scope change or unmount: drop delayed actions that belong to the old view.
+    return () => {
+      emptyConfirmTimer.cancel()
+      wsRefetchTimer.cancel()
+    }
+  }, [location.pathname, currentParentId, emptyConfirmTimer, wsRefetchTimer])
 
   // Sync nodes (snapshot) carry no has_large_thumbnail; GET /files does. Keep
   // every value we have seen so a sync-sourced refresh cannot silently demote
@@ -456,18 +464,13 @@ export function Drive() {
     emptyConfirmedRef.current = false
 
     if (decision.confirmEmpty) {
-      if (emptyConfirmTimerRef.current) clearTimeout(emptyConfirmTimerRef.current)
-      emptyConfirmTimerRef.current = setTimeout(() => {
-        emptyConfirmTimerRef.current = null
+      emptyConfirmTimer.schedule(EMPTY_CONFIRM_MS, () => {
         emptyConfirmedRef.current = true
-        refreshFromSync()
-      }, EMPTY_CONFIRM_MS)
+        refreshFromSyncRef.current()
+      })
       return
     }
-    if (emptyConfirmTimerRef.current) {
-      clearTimeout(emptyConfirmTimerRef.current)
-      emptyConfirmTimerRef.current = null
-    }
+    emptyConfirmTimer.cancel()
     if (!decision.apply) return
 
     setFiles(nodes)
@@ -519,13 +522,21 @@ export function Drive() {
       setDriveOffline(false)
       setLoadError(null)
       if (!trashed) {
-        // Persist alongside whatever decrypted names the previous render
-        // produced — the new file set may be a superset of the cached entries.
-        const names: Record<string, string> = {}
-        for (const [id, name] of Object.entries(externalDecryptedNamesRef.current)) {
-          if (typeof name === 'string') names[id] = name
+        if (data.length === 0) {
+          // Authoritative empty list (the folder really is empty online) —
+          // clear any stale cache. The no-[]-write guard in offline-cache.ts
+          // exists to stop partial-tree clobbers, not genuine empties (review
+          // NIT: without this, deleted rows stay visible offline up to TTL).
+          void invalidateFileListCache(currentParentId ?? null)
+        } else {
+          // Persist alongside whatever decrypted names the previous render
+          // produced — the new file set may be a superset of the cached entries.
+          const names: Record<string, string> = {}
+          for (const [id, name] of Object.entries(externalDecryptedNamesRef.current)) {
+            if (typeof name === 'string') names[id] = name
+          }
+          void cacheFileList(currentParentId ?? null, data, names)
         }
-        void cacheFileList(currentParentId ?? null, data, names)
       }
       setSyncedAgo(0)
     } catch (err) {
@@ -570,6 +581,14 @@ export function Drive() {
   // state transition and re-trigger this effect, hammering the API.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentParentId, location.pathname, isUnlocked, syncNodeToDriveFile, withKnownLargeThumbs, setDriveOffline])
+
+  // Latest-callback refs for the scope-guarded timers (review S2): when the
+  // scope still matches, the CURRENT callback must run, not the closure from
+  // when the timer was scheduled.
+  const refreshFromSyncRef = useRef(refreshFromSync)
+  useEffect(() => { refreshFromSyncRef.current = refreshFromSync }, [refreshFromSync])
+  const fetchFilesRef = useRef(fetchFiles)
+  useEffect(() => { fetchFilesRef.current = fetchFiles }, [fetchFiles])
 
   useEffect(() => {
     fetchFiles()
@@ -920,11 +939,7 @@ export function Drive() {
             return
           }
         }
-        if (wsRefetchTimerRef.current) clearTimeout(wsRefetchTimerRef.current)
-        wsRefetchTimerRef.current = setTimeout(() => {
-          wsRefetchTimerRef.current = null
-          fetchFiles()
-        }, 500)
+        wsRefetchTimer.schedule(500, () => fetchFilesRef.current())
         return
       }
       fetchFiles()
