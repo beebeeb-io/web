@@ -18,6 +18,12 @@ import { ErrorBoundary } from './components/error-boundary'
 import { WasmGuard } from './components/wasm-guard'
 import { VaultUnlock } from './components/vault-unlock'
 import { VaultLockedImpersonated } from './components/vault-locked-impersonated'
+import { VaultLockedNoKey } from './components/vault-locked-no-key'
+import {
+  clearPostResetLock,
+  isPostResetLockedDevice,
+  resolveLockedVaultSurface,
+} from './lib/post-reset-lock'
 import { OfflineBanner } from './components/offline-banner'
 import { ImpersonationProvider, isImpersonationSessionActive } from './lib/impersonation-context'
 import { ImpersonationBanner } from './components/impersonation-banner'
@@ -129,6 +135,19 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
   const { isUnlocked, vaultExists, vaultChecked } = useKeys()
   const location = useLocation()
+  // Task 1704 SLICE 2 — the escape hatch out of the no-key surface: once the
+  // user asks for the password form ("I remember my previous password"), this
+  // instance renders VaultUnlock for the rest of its life. The marker itself
+  // is cleared by the surface's handler, so sibling route instances agree.
+  const [unlockFormRequested, setUnlockFormRequested] = useState(false)
+
+  // Once the vault IS unlocked (e.g. the /recover-with-phrase ceremony
+  // re-wrapped the key under the fresh password), the post-reset marker has
+  // served its purpose — clear it so any LATER lock in this tab returns to
+  // the normal password form, not the no-key surface.
+  useEffect(() => {
+    if (isUnlocked && isPostResetLockedDevice()) clearPostResetLock()
+  }, [isUnlocked])
 
   if (loading || !vaultChecked) return null
 
@@ -152,7 +171,31 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
     // no key material for the target exists in this session, period. Show
     // the explicit, metadata-only "Vault locked" state instead. Normal
     // (non-impersonated) users keep the existing VaultUnlock flow untouched.
-    if (isImpersonationSessionActive()) return <VaultLockedImpersonated />
+    //
+    // Task 1704 SLICE 2 (decision doc D-2026-10-02, Amendment + §4c): a
+    // NON-impersonated user who just completed the email password reset
+    // holds a FRESH account credential but no vault key — the device's
+    // wrapped vault can never open under the new password, so VaultUnlock's
+    // form is a dead end for them. The /set-password completion stamps a
+    // marker (src/lib/post-reset-lock.ts — no key-context/crypto change);
+    // with it present, render the honest locked-state surface instead:
+    // re-entry via the 12-word phrase plus the self-service exits (cancel
+    // billing, delete all data, delete account). The decision itself is
+    // factored into resolveLockedVaultSurface() — impersonation keeps
+    // priority exactly as 1693 shipped it, and users without the marker
+    // (a normal lock, or a tab where the old password may still work) get
+    // VaultUnlock byte-for-byte unchanged.
+    const surface = resolveLockedVaultSurface({
+      impersonating: isImpersonationSessionActive(),
+      postResetMarker: isPostResetLockedDevice(),
+      unlockFormRequested,
+    })
+    if (surface === 'impersonated') return <VaultLockedImpersonated />
+    if (surface === 'no_key') {
+      return (
+        <VaultLockedNoKey onTryPreviousPassword={() => setUnlockFormRequested(true)} />
+      )
+    }
     return <VaultUnlock />
   }
 

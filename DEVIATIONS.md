@@ -103,3 +103,38 @@ from the link.
 
 **Why:** the ruling is dated after the artefact and explicitly supersedes it
 (precedent: task 1357, "a verbal ruling from Guus supersedes the artefact").
+
+## Task 1704 SLICE 2 — locked-state self-service exits (2026-10-02)
+
+Three recorded choices on the honest "Vault locked (no vault key)" surface
+(`src/components/vault-locked-no-key.tsx`). The governing artefact is the
+approved decision doc (`.claude/tasks/decisions/2026-10-02-vault-key-password-
+recovery-and-admin-reset-policy.md`, §6 exits table + open-question #7
+default), not a hifi mockup — none exists for this state; 1693's
+`vault-locked-impersonated.tsx` is the design-language sibling it was told to
+follow.
+
+- **Destructive confirmations are danger/red, not amber.** The slice brief's
+  phrasing ("amber reserved for encryption state + primary destructive
+  confirmations") is overridden by the repo's own brand rule (CLAUDE.md:
+  "amber ONLY for encryption indicators and primary CTAs"; red = danger) and
+  the shipped destructive precedent (`settings/delete-account` uses the
+  `danger` BBButton variant). Amber appears exactly once on this surface: the
+  primary re-entry CTA ("Unlock with recovery phrase") — an encryption-state
+  primary CTA, squarely inside the brand rule.
+- **Detection signal is a reset-completion marker, not a new
+  VaultUnlockOutcome.** The brief pointed at VaultUnlockOutcome for the
+  "exact signal"; on study, no outcome can honestly carry it:
+  `wrong_password` is byte-identical for a typo and for a fresh password
+  against an old wrap (distinguishing them would require key-context crypto
+  changes, out of slice scope), and `needs_provisioning` means the opposite
+  case (password RIGHT, entry unproven). The honest fact that exists is the
+  SLICE-1 reset completion itself, so `/set-password` stamps a
+  sessionStorage marker (`src/lib/post-reset-lock.ts`) and ProtectedRoute
+  routes on it (`resolveLockedVaultSurface`). The wrapped vault is never
+  cleared — the old password may still be remembered — and the surface keeps
+  an explicit escape hatch back to the password form.
+- **Per-file blind deletion omitted.** Sanctioned by the brief's honesty rule
+  (drive rows are `name_encrypted` ciphertext — a list of unidentifiable
+  deletions is not self-service). The surface says so in plain copy instead
+  of hiding the gap; full detail in the task-file Notes entry.

@@ -22,7 +22,11 @@
  *
  * After success the app lands on the drive with a fresh session; the vault
  * is still wrapped under the old password, so unlockVault reports
- * wrong_password and the UI shows the honest "Vault locked" state (1693).
+ * wrong_password. Task 1704 SLICE 2 completes the loop: this page stamps a
+ * post-reset marker (src/lib/post-reset-lock.ts — sessionStorage, no vault
+ * touch), and ProtectedRoute routes that state to the honest
+ * "Vault locked (no key)" surface — re-entry via the recovery phrase plus
+ * the self-service exits — instead of the dead-end password form.
  * That is the designed outcome, not a bug.
  */
 
@@ -37,6 +41,7 @@ import {
   clearLegacyBearer,
 } from '../lib/api'
 import { opaqueRegistrationStart, opaqueRegistrationFinish, toBase64 } from '../lib/crypto'
+import { markPasswordResetCompleted } from '../lib/post-reset-lock'
 import { useAuth } from '../lib/auth-context'
 
 type Step = 'form' | 'success'
@@ -116,10 +121,20 @@ export function SetPassword() {
         // redundant legacy bearer slot like every other auth-completing flow.
         clearLegacyBearer()
 
+        // Task 1704 SLICE 2 — stamp the post-reset marker for THIS tab: the
+        // credential was just replaced, so the device's wrapped vault (if
+        // any) can no longer open under anything the user knows here. The
+        // wrapped vault itself is NEVER cleared — the old password may still
+        // be remembered, and destroying the only local wrap would be a
+        // data-loss bug. ProtectedRoute reads this marker to route to the
+        // honest locked-state surface (VaultLockedNoKey) instead of the
+        // dead-end password form. No key-context / vault touch (slice scope).
+        markPasswordResetCompleted()
+
         // The vault is still wrapped under the OLD password — do NOT touch
-        // key-context or setMasterKey here. The honest locked state (1693)
-        // takes over on the drive; re-wrapping is the /recover-with-phrase
-        // ceremony (SLICE 3).
+        // key-context or setMasterKey here. Re-wrapping is the
+        // /recover-with-phrase ceremony (SLICE 3), reached from the honest
+        // locked-state surface this marker routes to.
         setStep('success')
         await refreshUser()
       } catch (err) {
