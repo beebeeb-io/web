@@ -882,8 +882,20 @@ export function Billing() {
   const maxTotalTB = baseTB + maxExtraTB
   const currentExtraTB = addonState?.extra_storage_tb ?? 0
   const sliderChanged = sliderTB !== currentExtraTB
-  const currentCostCents = planMonthlyCostCents(effectivePlan, currentExtraTB)
-  const newCostCents = planMonthlyCostCents(effectivePlan, sliderTB)
+  // Task 1701 — the storage slider's "Monthly price" preview must come from
+  // the STORED plan price (the API plans row, the same source every other
+  // price on this page renders), never the WASM-compiled base price — the
+  // compiled-in numbers go stale the moment the owner edits the plan catalog
+  // (a plan priced €0 showed €1.99 here). The per-TB ADD-ON rate keeps the
+  // server-field → WASM-ladder → €10.99 chain: that is an add-on rate, not
+  // the plan price.
+  const sliderBaseCents = Math.round(currentPriceMonthly * 100)
+  const addonRateCents =
+    sub?.addon_per_tb_cents != null && sub.addon_per_tb_cents > 0
+      ? sub.addon_per_tb_cents
+      : (planMonthlyCostCents(effectivePlan, 1) - planMonthlyCostCents(effectivePlan, 0)) || 1099
+  const currentCostCents = sliderBaseCents + currentExtraTB * addonRateCents
+  const newCostCents = sliderBaseCents + sliderTB * addonRateCents
   const usedTB = Math.ceil(usedBytes / 1_000_000_000_000)
   const sliderMin = Math.max(0, usedTB - baseTB)
   const wouldReduceBelowUsage = (baseTB + sliderTB) * 1_000_000_000_000 < usedBytes
@@ -1659,17 +1671,13 @@ function openUpgrade(plan: string) {
      (server fields absent → fall back to the old client recompute). */
   const serverBasePlanCents = sub?.base_plan_cents
   const serverAddonCents = sub?.addon_cents
-  const serverAddonPerTbCents = sub?.addon_per_tb_cents
   const serverMollieAmountCents = sub?.mollie_amount_cents
 
-  // Per-TB price: server truth first, else derive from the WASM ladder (the
-  // marginal cost of 1 extra TB), else the €10.99/TB add-on rate as a
-  // last-resort constant (1099 cents; reverted from 1499, Guus ruling
+  // Per-TB price: the single add-on-rate chain computed above (server truth
+  // first, else the WASM ladder's marginal cost of 1 extra TB, else the
+  // €10.99/TB last-resort constant — reverted from 1499, Guus ruling
   // 2026-09-29, task 1607, reversing task 1463's 2026-09-22 raise).
-  const addonPerTbCents =
-    serverAddonPerTbCents != null && serverAddonPerTbCents > 0
-      ? serverAddonPerTbCents
-      : (planMonthlyCostCents(effectivePlan, 1) - planMonthlyCostCents(effectivePlan, 0)) || 1099
+  const addonPerTbCents = addonRateCents
 
   const basePlanCents =
     serverBasePlanCents != null && serverBasePlanCents > 0
@@ -3468,7 +3476,7 @@ function openUpgrade(plan: string) {
                   </div>
                   {sliderTB > currentExtraTB && (
                     <div className="text-[11px] text-ink-3 mt-1 font-mono">
-                      +{sliderTB - currentExtraTB} TB x EUR {formatCentsAsEur(addonState?.storage_addon_price_cents ?? (planMonthlyCostCents(effectivePlan, 1) - planMonthlyCostCents(effectivePlan, 0)))}/TB
+                      +{sliderTB - currentExtraTB} TB x EUR {formatCentsAsEur(addonState?.storage_addon_price_cents ?? addonRateCents)}/TB
                     </div>
                   )}
                   {sliderTB < currentExtraTB && (
@@ -3791,19 +3799,25 @@ function openUpgrade(plan: string) {
       )}
 
       {/* Upgrade dialog */}
-      <UpgradeDialog
-        planId={upgradePlan}
-        planName={upgradePlanDetails?.label ?? 'Pro'}
-        pricePerSeat={upgradePlanDetails?.priceMonthly ?? 39.95}
-        priceYearlySeat={upgradePlanDetails?.priceYearly ?? 383.52}
-        open={upgradeOpen}
-        onClose={() => setUpgradeOpen(false)}
-        onBeforeRedirect={(plan, cycle, paymentId) => setPendingCheckout('plan', plan, cycle, makePreState(sub), paymentId)}
-        onSuccess={() => {
-          void loadData()
-          window.dispatchEvent(new Event('beebeeb:plan-changed'))
-        }}
-      />
+      {/* Task 1701 — rendered only when a real plan card resolves (API row or
+          plan-constants). The old `?? 39.95` / `?? 383.52` literals were an
+          unreachable-in-practice fallback that would have shown a made-up
+          price for a plan that resolved to nothing. */}
+      {upgradePlanDetails && (
+        <UpgradeDialog
+          planId={upgradePlan}
+          planName={upgradePlanDetails.label}
+          pricePerSeat={upgradePlanDetails.priceMonthly}
+          priceYearlySeat={upgradePlanDetails.priceYearly}
+          open={upgradeOpen}
+          onClose={() => setUpgradeOpen(false)}
+          onBeforeRedirect={(plan, cycle, paymentId) => setPendingCheckout('plan', plan, cycle, makePreState(sub), paymentId)}
+          onSuccess={() => {
+            void loadData()
+            window.dispatchEvent(new Event('beebeeb:plan-changed'))
+          }}
+        />
+      )}
 
       {/* Downgrade dialog */}
       {downgradeTarget && (
