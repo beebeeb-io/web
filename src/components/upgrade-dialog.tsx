@@ -54,6 +54,17 @@ interface UpgradeDialogProps {
    * the server bounce the flow one step later.
    */
   activePlanCycle?: { plan: string; cycle: string } | null
+  /**
+   * Task 1707 review #133-A — the parent's own billing-state reload path for
+   * the same-plan-conflict 409, distinct from `onSuccess` (which stays
+   * reserved for real completions). The 409 proves the parent's subscription
+   * snapshot was stale — the dialog offered a purchase the server knows is
+   * moot — so the parent should re-fetch its billing/subscription state (and
+   * the shared plan details) BEFORE the dialog closes, without any
+   * success-toast UX. When not wired, the dialog falls back to its own shared
+   * plan-details refresh + the app-wide `beebeeb:plan-changed` signal.
+   */
+  onStaleSnapshot?: () => void
 }
 
 export function UpgradeDialog({
@@ -67,6 +78,7 @@ export function UpgradeDialog({
   onBeforeRedirect,
   activeAddOnStorageTb = 0,
   activePlanCycle = null,
+  onStaleSnapshot,
 }: UpgradeDialogProps) {
   const [cycle, setCycle] = useState<BillingCycle>('yearly')
   const [step, setStep] = useState<Step>('cycle')
@@ -157,6 +169,19 @@ export function UpgradeDialog({
           title: 'Already subscribed',
           description: samePlanConflictMessage(checkoutErr),
         })
+        // Task 1707 review #133-A — the 409 PROVES the parent's subscription
+        // snapshot was stale: refresh billing state (no success UX) so the
+        // billing page stops rendering the obsolete subscription and
+        // re-offering it. Prefer the parent's own reload path (billing.tsx's
+        // loadData — distinct from onSuccess, which stays reserved for real
+        // completions); the fallback refreshes the shared plan details and
+        // fires the app-wide signal the drive context listens on.
+        if (onStaleSnapshot) {
+          onStaleSnapshot()
+        } else {
+          refreshPlanDetails()
+          try { window.dispatchEvent(new Event('beebeeb:plan-changed')) } catch { /* non-browser env */ }
+        }
         handleClose()
         return
       }
@@ -164,7 +189,7 @@ export function UpgradeDialog({
       // submitting state from sticking.
       throw new Error(userFriendlyError(checkoutErr))
     }
-  }, [planId, cycle, handleClose, showToast, onBeforeRedirect, refreshPlanDetails, onSuccess])
+  }, [planId, cycle, handleClose, showToast, onBeforeRedirect, refreshPlanDetails, onSuccess, onStaleSnapshot])
 
   if (!open) return null
 

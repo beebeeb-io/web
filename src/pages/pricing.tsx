@@ -527,6 +527,14 @@ export function Pricing() {
           title: 'Already subscribed',
           description: samePlanConflictMessage(err),
         })
+        // Task 1707 review #133-B — the 409 proves the loaded snapshot was
+        // stale: re-fetch the subscription so the Current-plan predicate
+        // disables the card for the rest of the visit, and refresh the shared
+        // plan details the same way the billing-reset path does. Best-effort —
+        // a failed refetch leaves the previous snapshot (the toast above has
+        // already said what happened).
+        getSubscription().then(setSubscription).catch(() => {})
+        refreshPlanDetails()
         return
       }
       showToast({

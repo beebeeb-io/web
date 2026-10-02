@@ -3774,6 +3774,15 @@ function openUpgrade(plan: string) {
         // checkout the server's same-plan guard refuses.
         activePlanCycle={sub?.status === 'active' ? { plan: sub.plan, cycle: sub.billing_cycle } : null}
         onBeforeRedirect={(plan, cycle, paymentId) => setPendingCheckout('plan', plan, cycle, makePreState(sub), paymentId)}
+        // Task 1707 review #133-A — the same-plan 409 proves `sub` was stale:
+        // reload the billing page's subscription state (and the shared plan
+        // details via the plan-changed signal) before the dialog closes, so
+        // the obsolete snapshot stops re-offering the purchase. Distinct from
+        // onSuccess, which stays reserved for real completions.
+        onStaleSnapshot={() => {
+          void loadData()
+          window.dispatchEvent(new Event('beebeeb:plan-changed'))
+        }}
         onSuccess={() => {
           void loadData()
           window.dispatchEvent(new Event('beebeeb:plan-changed'))
