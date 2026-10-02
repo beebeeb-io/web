@@ -8,6 +8,8 @@ import { ApiError } from '@beebeeb/shared'
 import type { LoginResult } from '@beebeeb/shared'
 import { TwoFactorPrompt } from '../components/two-factor-prompt'
 import { DeviceProvision } from '../components/device-provision'
+import { VaultLockedNoKey } from '../components/vault-locked-no-key'
+import { isPostResetLockedDevice } from '../lib/post-reset-lock'
 import type { ProvisionAuthMethod } from '../lib/device-provision-logic'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
@@ -21,6 +23,54 @@ import { consumePendingExport, DATA_EXPORT_ROUTE } from '../lib/export-intent'
 import { accountDeletedMessage } from '../lib/user-friendly-error'
 import { consumeAccountDeletedNotice } from '../lib/account-deleted-notice'
 import { classifyTwoFactorFailure } from '../lib/two-factor-login'
+
+/**
+ * Task 1713 FIX B — the Login page's needs-provision branch as its own
+ * component, exported so the routing pin can render it directly
+ * (test/1713-post-reset-provisioning-routing.test.tsx; this repo has no
+ * jsdom/@testing-library — see test/1471's header note).
+ *
+ * When the /set-password completion marker is stamped in this tab's
+ * sessionStorage (isPostResetLockedDevice — src/lib/post-reset-lock.ts),
+ * this device just completed the 1704-slice-1 email password reset: the
+ * account credential is fresh, any pre-existing vault wrap on this device
+ * cannot open under it, and a device with no vault has no key at all. The
+ * bare 'Set up this device' screen offers no way forward for a user who
+ * lost their phrase and none of the 1704 slice-2 self-service exits — so
+ * render VaultLockedNoKey instead. Its phrase CTA targets the canonical
+ * /recover-with-phrase route: the same re-wrap ceremony DeviceProvision's
+ * phrase entry provides (verify the phrase → re-wrap the vault under the
+ * new password).
+ *
+ * WITHOUT the marker this stays DeviceProvision, byte-for-byte unchanged
+ * (a fresh device on a normal login). Impersonation needs no handling here:
+ * this branch is only reachable after a fresh OPAQUE sign-in on the login
+ * form; the impersonated-session locked surface lives in ProtectedRoute and
+ * keeps its 1693 priority there (resolveLockedVaultSurface — untouched).
+ */
+export function LoginProvisionBranch({ password, authMethod, email, onProvisioned, onTryPreviousPassword }: {
+  password: string
+  authMethod: ProvisionAuthMethod
+  email?: string
+  onProvisioned: () => void
+  /** Escape hatch from VaultLockedNoKey ("Remember your previous password?"):
+   *  back to the sign-in form. VaultLockedNoKey's own handler clears the
+   *  post-reset marker first; this then returns the user to where passwords
+   *  are actually typed. */
+  onTryPreviousPassword?: () => void
+}) {
+  if (isPostResetLockedDevice()) {
+    return <VaultLockedNoKey onTryPreviousPassword={onTryPreviousPassword} />
+  }
+  return (
+    <DeviceProvision
+      password={password}
+      authMethod={authMethod}
+      email={email}
+      onProvisioned={onProvisioned}
+    />
+  )
+}
 
 export function Login() {
   const navigate = useNavigate()
@@ -694,14 +744,17 @@ export function Login() {
     )
   }
 
-  // Show device provisioning when OPAQUE auth succeeded but no vault on this device
+  // Show device provisioning when OPAQUE auth succeeded but no vault on this device.
+  // Task 1713 FIX B — with the /set-password completion marker stamped, the
+  // post-reset locked surface takes priority over the bare device-setup screen.
   if (needsProvision) {
     return (
-      <DeviceProvision
+      <LoginProvisionBranch
         password={password}
         authMethod={provisionAuthMethod}
         email={email}
         onProvisioned={navigateAfterLogin}
+        onTryPreviousPassword={() => setNeedsProvision(false)}
       />
     )
   }
