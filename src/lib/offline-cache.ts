@@ -127,6 +127,12 @@ export async function cacheFileList(
   files: DriveFile[],
   decryptedNames?: Record<string, string>,
 ): Promise<void> {
+  // Task 1700: an empty list is never a cache write. A sync tree that is
+  // temporarily incomplete (or a transient empty derive) must not overwrite a
+  // good cached list with [] — that poisoned offline reloads during the
+  // false-EmptyDrive incident. Callers that genuinely empty a folder can
+  // invalidate explicitly via invalidateFileListCache.
+  if (files.length === 0) return
   const key = parentKey(parentId)
   try {
     const db = await openFileListDB()

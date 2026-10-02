@@ -17,6 +17,13 @@ import { useKeys } from './key-context'
 import { useWsEvent } from './ws-context'
 
 const USAGE_DEBOUNCE_MS = 500
+/**
+ * Floor between two event-storm-driven usage refreshes (task 1700). The 500 ms
+ * trailing debounce alone still lets a sustained op storm (a desktop bulk
+ * sync emitting several events per file) refetch `GET /files/usage` every
+ * ~500 ms; the floor caps that at one refresh per few seconds.
+ */
+const USAGE_MIN_INTERVAL_MS = 3_000
 
 const PINNED_FOLDERS_PREF = 'pinned_folders'
 const LEGACY_PINNED_FOLDERS_PREF = 'pinned_shared_folders'
@@ -224,12 +231,18 @@ export function DriveDataProvider({ children }: { children: ReactNode }) {
   // A mobile backup can fire 50+ file.uploaded events in a burst — coalesce.
 
   const usageDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastUsageRefreshAtRef = useRef(0)
   const debouncedRefreshUsage = useCallback(() => {
     if (usageDebounceRef.current) clearTimeout(usageDebounceRef.current)
+    // Keep the trailing debounce, plus a floor since the last refresh so a
+    // sustained event storm cannot refetch usage every window (task 1700).
+    const sinceLast = Date.now() - lastUsageRefreshAtRef.current
+    const delay = Math.max(USAGE_DEBOUNCE_MS, USAGE_MIN_INTERVAL_MS - sinceLast)
     usageDebounceRef.current = setTimeout(() => {
-      refreshUsage()
       usageDebounceRef.current = null
-    }, USAGE_DEBOUNCE_MS)
+      lastUsageRefreshAtRef.current = Date.now()
+      refreshUsage()
+    }, delay)
   }, [refreshUsage])
 
   useWsEvent(['file.uploaded', 'file.deleted', 'file.trashed', 'file.restored'], debouncedRefreshUsage)

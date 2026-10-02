@@ -1,0 +1,159 @@
+// ─── Search-index reconcile diff (task 1700) ───────────────────────────────
+//
+// `reconcileFromTree` used to `upsert` EVERY live node on every pass, and core
+// dirties a bucket unconditionally on upsert — so each foreign sync op
+// re-encrypted and re-PUT every search-index shard page (the shard PUT storm).
+// This module computes the minimal work: only new/changed (renamed) ids are
+// upserted, only ids this session indexed are pruned, and the union of dirty
+// buckets is pushed in ONE call. An unchanged pass never reaches putShards.
+
+import type { SyncNode } from './api'
+
+/** A resolved plaintext name and the ciphertext it was decrypted from. */
+export interface IndexNameCacheEntry {
+  cipher: string
+  name: string
+}
+
+export interface IndexReconcilePlan {
+  upserts: { id: string; name: string }[]
+  prunes: string[]
+}
+
+export interface IndexReconcileInput {
+  /** All nodes of the pass — live and trashed. */
+  nodes: SyncNode[]
+  /** Resolved plaintext names for live nodes (undecryptable ids omitted). */
+  resolved: Map<string, string>
+  /** Ids this session has already written to the index (the prune set). */
+  indexedIds: Set<string>
+  /** Last resolved name per id, keyed by ciphertext to detect renames. */
+  cachedNames: Map<string, IndexNameCacheEntry>
+}
+
+export function planIndexDiff(input: IndexReconcileInput): IndexReconcilePlan {
+  const { nodes, resolved, indexedIds, cachedNames } = input
+  const liveIds = new Set<string>()
+  const upserts: { id: string; name: string }[] = []
+  for (const node of nodes) {
+    if (node.is_trashed) continue
+    liveIds.add(node.id)
+    const name = resolved.get(node.id)
+    if (!name) continue // undecryptable this pass — a later pass retries
+    // Unchanged name for an id we already indexed → no upsert (and therefore
+    // no dirty bucket → no putShards).
+    if (indexedIds.has(node.id) && cachedNames.get(node.id)?.name === name) continue
+    upserts.push({ id: node.id, name })
+  }
+  const prunes: string[] = []
+  for (const node of nodes) {
+    if (liveIds.has(node.id)) continue
+    // Removing an id the index doesn't hold is a no-op, so prune every id the
+    // tree no longer has live — including trashed nodes loaded from shards in
+    // a previous session (indexedIds is session-local and empty on boot).
+    // PR #130 review.
+    prunes.push(node.id)
+  }
+  return { upserts, prunes }
+}
+
+/** The subset of `CoreSearchIndex` the diff application needs (fake-able). */
+export interface IndexDiffTarget {
+  upsert(id: string, name: string): Promise<number[]>
+  remove(id: string): Promise<number[]>
+  pushBuckets(masterKey: Uint8Array, dirty: number[]): Promise<unknown>
+}
+
+export interface IndexDiffResult {
+  /** Dirty buckets in the plan. */
+  dirtyCount: number
+  /**
+   * True when there was nothing to push OR the push succeeded. False on a
+   * failed push: callers must leave their caches/indexed ids dirty so the same
+   * diff is retried (PR #130 review).
+   */
+  pushed: boolean
+}
+
+/**
+ * Apply a plan: mutate only the diff, then encrypt+PUT the union of dirty
+ * buckets in ONE call. Returns the dirty count and whether the push actually
+ * landed — a failed push is reported (not swallowed) so callers can retry.
+ */
+export async function applyIndexDiff(
+  index: IndexDiffTarget,
+  masterKey: Uint8Array,
+  plan: IndexReconcilePlan,
+): Promise<IndexDiffResult> {
+  const dirty = new Set<number>()
+  for (const u of plan.upserts) {
+    for (const b of await index.upsert(u.id, u.name)) dirty.add(b)
+  }
+  for (const id of plan.prunes) {
+    for (const b of await index.remove(id)) dirty.add(b)
+  }
+  if (dirty.size === 0) return { dirtyCount: 0, pushed: true }
+  try {
+    await index.pushBuckets(masterKey, [...dirty])
+    return { dirtyCount: dirty.size, pushed: true }
+  } catch {
+    // Best-effort cache: the caller keeps state dirty and retries. PR #130 review.
+    return { dirtyCount: dirty.size, pushed: false }
+  }
+}
+
+export interface RemoveCoalescerOptions {
+  windowMs: number
+  onFlush: (ids: string[]) => void
+  /** Injectable for tests; defaults to setTimeout/clearTimeout. */
+  schedule?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
+  clear?: (handle: ReturnType<typeof setTimeout>) => void
+}
+
+export interface RemoveCoalescer {
+  add(id: string): void
+  flush(): void
+  cancel(): void
+  pendingCount(): number
+}
+
+/**
+ * Collect `unindexFile` ids for `windowMs` and flush them in one batch (review
+ * S3). A foreign bulk delete/trash storm must not run remove+pushBuckets per
+ * event; the single applyIndexDiff call pushes once.
+ */
+export function createRemoveCoalescer(options: RemoveCoalescerOptions): RemoveCoalescer {
+  const schedule = options.schedule ?? ((fn, ms) => setTimeout(fn, ms))
+  const clear = options.clear ?? ((handle) => clearTimeout(handle))
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const pending = new Set<string>()
+
+  const flush = (): void => {
+    if (timer) {
+      clear(timer)
+      timer = null
+    }
+    if (pending.size === 0) return
+    const ids = [...pending]
+    pending.clear()
+    options.onFlush(ids)
+  }
+
+  return {
+    add(id: string): void {
+      pending.add(id)
+      // Each add restarts the window so a burst coalesces.
+      if (timer) clear(timer)
+      timer = schedule(flush, options.windowMs)
+    },
+    flush,
+    cancel(): void {
+      if (timer) {
+        clear(timer)
+        timer = null
+      }
+      pending.clear()
+    },
+    pendingCount: () => pending.size,
+  }
+}
