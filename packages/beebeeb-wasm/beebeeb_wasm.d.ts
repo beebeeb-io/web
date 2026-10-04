@@ -2,6 +2,46 @@
 /* eslint-disable */
 
 /**
+ * k-anonymity breach check for one password. Core hashes and matches; **JS
+ * makes the HTTP call**, to the endpoint the onboarding document declares in
+ * `policy.password.breach_check.endpoint` (Beebeeb's own API, never a third
+ * party). Only `prefix` (5 hex chars) may be sent; the rest stays here and is
+ * zeroized when the object is freed.
+ *
+ * The object is bound to the password it was made from and remembers the
+ * answer: pass it to `WasmSignupCeremony.setPassword`, which refuses a check
+ * made for a different password. A response body over 262144 bytes is treated
+ * as an outage, so stop reading the response at that size.
+ *
+ * ```js
+ * const q = new WasmBreachCheck(password)
+ * let body = null
+ * try { const r = await fetch(endpoint.replace('{prefix}', q.prefix)); if (r.ok) body = await r.text() } catch {}
+ * const verdict = q.evaluate(body, failOpen)   // for the UI; body === null means the call failed
+ * ceremony.setPassword(password, confirmation, q)   // borrows q; omit-the-check cannot bypass a required gate
+ * q.free()
+ * ```
+ */
+export class WasmBreachCheck {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Record the answer and return the verdict for display. `body` is the
+     * response text of a 2xx answer, or `null`/`undefined` when the request
+     * failed (network error, timeout, non-2xx). An empty body counts as a
+     * failed request. `fail_open` is `policy.password.breach_check.fail_open`
+     * and only shapes this display value: the ceremony applies the value it
+     * was constructed with. Returns `{ kind, count, allows_proceeding, check_failed }`.
+     */
+    evaluate(body: string | null | undefined, fail_open: boolean): any;
+    constructor(password: string);
+    /**
+     * The 5 upper-case hex characters to send to the server.
+     */
+    readonly prefix: string;
+}
+
+/**
  * Stateful, single-file streaming encryptor for the web client.
  *
  * WASM is single-threaded and cannot `Read` a browser `File`, so the web
@@ -128,6 +168,121 @@ export class WasmSearchIndex {
 }
 
 /**
+ * The signup ceremony state machine, one per signup attempt.
+ *
+ * Holds the password, the recovery phrase and the master key inside WASM
+ * memory in zeroizing buffers. Call `abandon()` when the flow is left (back,
+ * cancel, error): freeing the object or waiting for garbage collection wipes
+ * it too, but on the finalizer's schedule, which can be much later. See `beebeeb_core::onboarding::ceremony` for the rules.
+ * Call order is enforced there: `startRegistration` fails until every other
+ * required step is done.
+ */
+export class WasmSignupCeremony {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Abandon the signup: wipe the password, phrase and master key and return
+     * to a fresh ceremony. Call on back, cancel and error exits.
+     */
+    abandon(): void;
+    /**
+     * The server accepted `register-finish`. Returns the 32-byte master key as
+     * `Uint8Array`; the caller owns it and must wipe it when done (the same
+     * contract as `generate_recovery_phrase`). The ceremony wipes the rest.
+     * The only Rust-side copy of the key is a `Zeroizing` temporary that is
+     * wiped as soon as the bytes have been copied into the JS array.
+     */
+    accountCreated(): Uint8Array;
+    /**
+     * The user confirms they saved the phrase.
+     */
+    acknowledgePhrase(): void;
+    /**
+     * Generate the recovery phrase and master key (Argon2id, about a second).
+     * Idempotent.
+     */
+    beginPhrase(): void;
+    /**
+     * 1-based word positions to ask for, ascending, stable for this phrase.
+     */
+    challengePositions(): Uint32Array;
+    /**
+     * `answers`: array of strings in `challengePositions` order. Throws
+     * `phrase_word_mismatch` / `phrase_answer_count`; retryable.
+     */
+    confirmPhrase(answers: Array<any>): void;
+    /**
+     * The user changed the email address after it was verified: back to the
+     * code step, password and confirmed phrase kept.
+     */
+    emailChanged(): void;
+    /**
+     * The server reported the signup ticket expired: back to the code step,
+     * password and confirmed phrase kept.
+     */
+    emailTicketInvalidated(): void;
+    /**
+     * The server accepted the email code.
+     */
+    emailVerified(): void;
+    /**
+     * OPAQUE step 2, from the server's `register-start` response. Returns
+     * `{ upload, x25519_public, recovery_check }` (all `Uint8Array`).
+     */
+    finishRegistration(server_message: Uint8Array): any;
+    /**
+     * `min_length` = `policy.password.min_length`; `email_verification_required`
+     * = the document lists a required `verify_email_code`; `verify_word_count`
+     * = `policy.recovery_phrase.verify_word_count`; `breach_check_required` =
+     * the document declares a breach check, with `breach_fail_open` =
+     * `policy.password.breach_check.fail_open` (applied by the ceremony, not
+     * by the caller).
+     */
+    constructor(min_length: number, email_verification_required: boolean, verify_word_count: number, breach_check_required: boolean, breach_fail_open: boolean);
+    /**
+     * Every pending step in canonical order, as `[{ step, spec_step_id }]`.
+     */
+    pendingSteps(): any;
+    /**
+     * The phrase to show. Throws `phrase_unavailable` before `beginPhrase` or
+     * after the phrase was confirmed (it is wiped then). The returned string
+     * is a plain copy that lives in JS and cannot be wiped: call this only
+     * while rendering the phrase and drop the reference afterwards.
+     */
+    phrase(): string;
+    /**
+     * The server rejected `register-finish` in a retryable way.
+     */
+    registrationFailed(): void;
+    /**
+     * Validate and store the password. `breach_check` is the
+     * `WasmBreachCheck` made for **this** password, after `evaluate` recorded
+     * the endpoint's answer. It is only borrowed: after a rejection the same
+     * check can be passed again. Throws an `Error` whose `code` is
+     * `password_mismatch`, `password_too_short`, `breach_check_missing`,
+     * `breach_check_stale`, `password_breached` or `breach_check_blocked`.
+     * Returns the password evaluation (same shape as `evaluate_password`).
+     */
+    setPassword(password: string, confirmation: string, breach_check: WasmBreachCheck): any;
+    /**
+     * `setPassword` for a document that declares no breach check. If the
+     * ceremony was constructed with `breachCheckRequired = true` this throws
+     * `breach_check_missing`: omitting the check cannot bypass the gate.
+     */
+    setPasswordUnchecked(password: string, confirmation: string): any;
+    /**
+     * OPAQUE step 1. Returns the `RegistrationRequest` bytes for
+     * `opaque/register-start`. Throws `step_not_done` until every other
+     * required step is done.
+     */
+    startRegistration(): Uint8Array;
+    /**
+     * First pending step: `{ step, spec_step_id }`.
+     */
+    step(): any;
+}
+
+/**
  * Compute recovery check from master key. Returns 32-byte `Uint8Array`.
  */
 export function compute_recovery_check(master_key: Uint8Array): Uint8Array;
@@ -212,6 +367,14 @@ export function encrypt_chunk(key: Uint8Array, plaintext: Uint8Array): any;
  * Returns the same JS object shape as `encrypt_chunk`.
  */
 export function encrypt_metadata(key: Uint8Array, metadata: string): any;
+
+/**
+ * Evaluate a password against the server's `policy.password.min_length`
+ * (clamped up to the core floor of 12). Returns
+ * `{ length, min_length, missing_characters, meets_minimum, has_mixed_case,
+ * has_number_or_symbol, strength, level, hint }`. Contains no part of the password.
+ */
+export function evaluate_password(password: string, min_length: number): any;
 
 /**
  * Generate a recovery kit PDF with a title, recovery words, and metadata.
@@ -423,8 +586,10 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly __wbg_wasmbreachcheck_free: (a: number, b: number) => void;
     readonly __wbg_wasmchunkencryptor_free: (a: number, b: number) => void;
     readonly __wbg_wasmsearchindex_free: (a: number, b: number) => void;
+    readonly __wbg_wasmsignupceremony_free: (a: number, b: number) => void;
     readonly compute_recovery_check: (a: number, b: number, c: number) => void;
     readonly decompress_gzip: (a: number, b: number, c: number) => void;
     readonly decrypt_chunk: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
@@ -439,6 +604,7 @@ export interface InitOutput {
     readonly derive_x25519_public: (a: number, b: number, c: number) => void;
     readonly encrypt_chunk: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly encrypt_metadata: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly evaluate_password: (a: number, b: number, c: number, d: number) => void;
     readonly generate_recovery_pdf: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly generate_recovery_phrase: (a: number) => void;
     readonly generate_share_token: (a: number) => void;
@@ -468,6 +634,9 @@ export interface InitOutput {
     readonly transfer_generate_keypair: (a: number) => void;
     readonly transfer_sas_to_words: (a: number, b: number, c: number) => void;
     readonly unwrap_request_private: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
+    readonly wasmbreachcheck_evaluate: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly wasmbreachcheck_new: (a: number, b: number) => number;
+    readonly wasmbreachcheck_prefix: (a: number, b: number) => void;
     readonly wasmchunkencryptor_chunkCount: (a: number) => number;
     readonly wasmchunkencryptor_chunkSize: (a: number) => number;
     readonly wasmchunkencryptor_chunksEmitted: (a: number) => number;
@@ -486,6 +655,24 @@ export interface InitOutput {
     readonly wasmsearchindex_query: (a: number, b: number, c: number, d: number) => void;
     readonly wasmsearchindex_remove: (a: number, b: number, c: number, d: number) => void;
     readonly wasmsearchindex_upsert: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly wasmsignupceremony_abandon: (a: number) => void;
+    readonly wasmsignupceremony_accountCreated: (a: number, b: number) => void;
+    readonly wasmsignupceremony_acknowledgePhrase: (a: number, b: number) => void;
+    readonly wasmsignupceremony_beginPhrase: (a: number, b: number) => void;
+    readonly wasmsignupceremony_challengePositions: (a: number, b: number) => void;
+    readonly wasmsignupceremony_confirmPhrase: (a: number, b: number, c: number) => void;
+    readonly wasmsignupceremony_emailChanged: (a: number) => void;
+    readonly wasmsignupceremony_emailTicketInvalidated: (a: number) => void;
+    readonly wasmsignupceremony_emailVerified: (a: number) => void;
+    readonly wasmsignupceremony_finishRegistration: (a: number, b: number, c: number, d: number) => void;
+    readonly wasmsignupceremony_new: (a: number, b: number, c: number, d: number, e: number) => number;
+    readonly wasmsignupceremony_pendingSteps: (a: number, b: number) => void;
+    readonly wasmsignupceremony_phrase: (a: number, b: number) => void;
+    readonly wasmsignupceremony_registrationFailed: (a: number) => void;
+    readonly wasmsignupceremony_setPassword: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly wasmsignupceremony_setPasswordUnchecked: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly wasmsignupceremony_startRegistration: (a: number, b: number) => void;
+    readonly wasmsignupceremony_step: (a: number, b: number) => void;
     readonly wrap_request_private: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly x25519_shared_secret: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;

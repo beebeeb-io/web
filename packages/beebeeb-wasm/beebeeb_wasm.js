@@ -1,6 +1,100 @@
 /* @ts-self-types="./beebeeb_wasm.d.ts" */
 
 /**
+ * k-anonymity breach check for one password. Core hashes and matches; **JS
+ * makes the HTTP call**, to the endpoint the onboarding document declares in
+ * `policy.password.breach_check.endpoint` (Beebeeb's own API, never a third
+ * party). Only `prefix` (5 hex chars) may be sent; the rest stays here and is
+ * zeroized when the object is freed.
+ *
+ * The object is bound to the password it was made from and remembers the
+ * answer: pass it to `WasmSignupCeremony.setPassword`, which refuses a check
+ * made for a different password. A response body over 262144 bytes is treated
+ * as an outage, so stop reading the response at that size.
+ *
+ * ```js
+ * const q = new WasmBreachCheck(password)
+ * let body = null
+ * try { const r = await fetch(endpoint.replace('{prefix}', q.prefix)); if (r.ok) body = await r.text() } catch {}
+ * const verdict = q.evaluate(body, failOpen)   // for the UI; body === null means the call failed
+ * ceremony.setPassword(password, confirmation, q)   // borrows q; omit-the-check cannot bypass a required gate
+ * q.free()
+ * ```
+ */
+export class WasmBreachCheck {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmBreachCheckFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmbreachcheck_free(ptr, 0);
+    }
+    /**
+     * Record the answer and return the verdict for display. `body` is the
+     * response text of a 2xx answer, or `null`/`undefined` when the request
+     * failed (network error, timeout, non-2xx). An empty body counts as a
+     * failed request. `fail_open` is `policy.password.breach_check.fail_open`
+     * and only shapes this display value: the ceremony applies the value it
+     * was constructed with. Returns `{ kind, count, allows_proceeding, check_failed }`.
+     * @param {string | null | undefined} body
+     * @param {boolean} fail_open
+     * @returns {any}
+     */
+    evaluate(body, fail_open) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            var ptr0 = isLikeNone(body) ? 0 : passStringToWasm0(body, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            var len0 = WASM_VECTOR_LEN;
+            wasm.wasmbreachcheck_evaluate(retptr, this.__wbg_ptr, ptr0, len0, fail_open);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * @param {string} password
+     */
+    constructor(password) {
+        const ptr0 = passStringToWasm0(password, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmbreachcheck_new(ptr0, len0);
+        this.__wbg_ptr = ret >>> 0;
+        WasmBreachCheckFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * The 5 upper-case hex characters to send to the server.
+     * @returns {string}
+     */
+    get prefix() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmbreachcheck_prefix(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            deferred1_0 = r0;
+            deferred1_1 = r1;
+            return getStringFromWasm0(r0, r1);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+            wasm.__wbindgen_export4(deferred1_0, deferred1_1, 1);
+        }
+    }
+}
+if (Symbol.dispose) WasmBreachCheck.prototype[Symbol.dispose] = WasmBreachCheck.prototype.free;
+
+/**
  * Stateful, single-file streaming encryptor for the web client.
  *
  * WASM is single-threaded and cannot `Read` a browser `File`, so the web
@@ -402,6 +496,354 @@ export class WasmSearchIndex {
 if (Symbol.dispose) WasmSearchIndex.prototype[Symbol.dispose] = WasmSearchIndex.prototype.free;
 
 /**
+ * The signup ceremony state machine, one per signup attempt.
+ *
+ * Holds the password, the recovery phrase and the master key inside WASM
+ * memory in zeroizing buffers. Call `abandon()` when the flow is left (back,
+ * cancel, error): freeing the object or waiting for garbage collection wipes
+ * it too, but on the finalizer's schedule, which can be much later. See `beebeeb_core::onboarding::ceremony` for the rules.
+ * Call order is enforced there: `startRegistration` fails until every other
+ * required step is done.
+ */
+export class WasmSignupCeremony {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmSignupCeremonyFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmsignupceremony_free(ptr, 0);
+    }
+    /**
+     * Abandon the signup: wipe the password, phrase and master key and return
+     * to a fresh ceremony. Call on back, cancel and error exits.
+     */
+    abandon() {
+        wasm.wasmsignupceremony_abandon(this.__wbg_ptr);
+    }
+    /**
+     * The server accepted `register-finish`. Returns the 32-byte master key as
+     * `Uint8Array`; the caller owns it and must wipe it when done (the same
+     * contract as `generate_recovery_phrase`). The ceremony wipes the rest.
+     * The only Rust-side copy of the key is a `Zeroizing` temporary that is
+     * wiped as soon as the bytes have been copied into the JS array.
+     * @returns {Uint8Array}
+     */
+    accountCreated() {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmsignupceremony_accountCreated(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * The user confirms they saved the phrase.
+     */
+    acknowledgePhrase() {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmsignupceremony_acknowledgePhrase(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            if (r1) {
+                throw takeObject(r0);
+            }
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Generate the recovery phrase and master key (Argon2id, about a second).
+     * Idempotent.
+     */
+    beginPhrase() {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmsignupceremony_beginPhrase(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            if (r1) {
+                throw takeObject(r0);
+            }
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * 1-based word positions to ask for, ascending, stable for this phrase.
+     * @returns {Uint32Array}
+     */
+    challengePositions() {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmsignupceremony_challengePositions(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+            if (r3) {
+                throw takeObject(r2);
+            }
+            var v1 = getArrayU32FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export4(r0, r1 * 4, 4);
+            return v1;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * `answers`: array of strings in `challengePositions` order. Throws
+     * `phrase_word_mismatch` / `phrase_answer_count`; retryable.
+     * @param {Array<any>} answers
+     */
+    confirmPhrase(answers) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmsignupceremony_confirmPhrase(retptr, this.__wbg_ptr, addHeapObject(answers));
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            if (r1) {
+                throw takeObject(r0);
+            }
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * The user changed the email address after it was verified: back to the
+     * code step, password and confirmed phrase kept.
+     */
+    emailChanged() {
+        wasm.wasmsignupceremony_emailChanged(this.__wbg_ptr);
+    }
+    /**
+     * The server reported the signup ticket expired: back to the code step,
+     * password and confirmed phrase kept.
+     */
+    emailTicketInvalidated() {
+        wasm.wasmsignupceremony_emailTicketInvalidated(this.__wbg_ptr);
+    }
+    /**
+     * The server accepted the email code.
+     */
+    emailVerified() {
+        wasm.wasmsignupceremony_emailVerified(this.__wbg_ptr);
+    }
+    /**
+     * OPAQUE step 2, from the server's `register-start` response. Returns
+     * `{ upload, x25519_public, recovery_check }` (all `Uint8Array`).
+     * @param {Uint8Array} server_message
+     * @returns {any}
+     */
+    finishRegistration(server_message) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passArray8ToWasm0(server_message, wasm.__wbindgen_export);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.wasmsignupceremony_finishRegistration(retptr, this.__wbg_ptr, ptr0, len0);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * `min_length` = `policy.password.min_length`; `email_verification_required`
+     * = the document lists a required `verify_email_code`; `verify_word_count`
+     * = `policy.recovery_phrase.verify_word_count`; `breach_check_required` =
+     * the document declares a breach check, with `breach_fail_open` =
+     * `policy.password.breach_check.fail_open` (applied by the ceremony, not
+     * by the caller).
+     * @param {number} min_length
+     * @param {boolean} email_verification_required
+     * @param {number} verify_word_count
+     * @param {boolean} breach_check_required
+     * @param {boolean} breach_fail_open
+     */
+    constructor(min_length, email_verification_required, verify_word_count, breach_check_required, breach_fail_open) {
+        const ret = wasm.wasmsignupceremony_new(min_length, email_verification_required, verify_word_count, breach_check_required, breach_fail_open);
+        this.__wbg_ptr = ret >>> 0;
+        WasmSignupCeremonyFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * Every pending step in canonical order, as `[{ step, spec_step_id }]`.
+     * @returns {any}
+     */
+    pendingSteps() {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmsignupceremony_pendingSteps(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * The phrase to show. Throws `phrase_unavailable` before `beginPhrase` or
+     * after the phrase was confirmed (it is wiped then). The returned string
+     * is a plain copy that lives in JS and cannot be wiped: call this only
+     * while rendering the phrase and drop the reference afterwards.
+     * @returns {string}
+     */
+    phrase() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmsignupceremony_phrase(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+            var ptr1 = r0;
+            var len1 = r1;
+            if (r3) {
+                ptr1 = 0; len1 = 0;
+                throw takeObject(r2);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+            wasm.__wbindgen_export4(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * The server rejected `register-finish` in a retryable way.
+     */
+    registrationFailed() {
+        wasm.wasmsignupceremony_registrationFailed(this.__wbg_ptr);
+    }
+    /**
+     * Validate and store the password. `breach_check` is the
+     * `WasmBreachCheck` made for **this** password, after `evaluate` recorded
+     * the endpoint's answer. It is only borrowed: after a rejection the same
+     * check can be passed again. Throws an `Error` whose `code` is
+     * `password_mismatch`, `password_too_short`, `breach_check_missing`,
+     * `breach_check_stale`, `password_breached` or `breach_check_blocked`.
+     * Returns the password evaluation (same shape as `evaluate_password`).
+     * @param {string} password
+     * @param {string} confirmation
+     * @param {WasmBreachCheck} breach_check
+     * @returns {any}
+     */
+    setPassword(password, confirmation, breach_check) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(password, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(confirmation, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len1 = WASM_VECTOR_LEN;
+            _assertClass(breach_check, WasmBreachCheck);
+            wasm.wasmsignupceremony_setPassword(retptr, this.__wbg_ptr, ptr0, len0, ptr1, len1, breach_check.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * `setPassword` for a document that declares no breach check. If the
+     * ceremony was constructed with `breachCheckRequired = true` this throws
+     * `breach_check_missing`: omitting the check cannot bypass the gate.
+     * @param {string} password
+     * @param {string} confirmation
+     * @returns {any}
+     */
+    setPasswordUnchecked(password, confirmation) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(password, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(confirmation, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len1 = WASM_VECTOR_LEN;
+            wasm.wasmsignupceremony_setPasswordUnchecked(retptr, this.__wbg_ptr, ptr0, len0, ptr1, len1);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * OPAQUE step 1. Returns the `RegistrationRequest` bytes for
+     * `opaque/register-start`. Throws `step_not_done` until every other
+     * required step is done.
+     * @returns {Uint8Array}
+     */
+    startRegistration() {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmsignupceremony_startRegistration(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+            if (r3) {
+                throw takeObject(r2);
+            }
+            var v1 = getArrayU8FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export4(r0, r1 * 1, 1);
+            return v1;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * First pending step: `{ step, spec_step_id }`.
+     * @returns {any}
+     */
+    step() {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmsignupceremony_step(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+}
+if (Symbol.dispose) WasmSignupCeremony.prototype[Symbol.dispose] = WasmSignupCeremony.prototype.free;
+
+/**
  * Compute recovery check from master key. Returns 32-byte `Uint8Array`.
  * @param {Uint8Array} master_key
  * @returns {Uint8Array}
@@ -795,6 +1237,33 @@ export function encrypt_metadata(key, metadata) {
         const ptr1 = passStringToWasm0(metadata, wasm.__wbindgen_export, wasm.__wbindgen_export2);
         const len1 = WASM_VECTOR_LEN;
         wasm.encrypt_metadata(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Evaluate a password against the server's `policy.password.min_length`
+ * (clamped up to the core floor of 12). Returns
+ * `{ length, min_length, missing_characters, meets_minimum, has_mixed_case,
+ * has_number_or_symbol, strength, level, hint }`. Contains no part of the password.
+ * @param {string} password
+ * @param {number} min_length
+ * @returns {any}
+ */
+export function evaluate_password(password, min_length) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(password, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.evaluate_password(retptr, ptr0, len0, min_length);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
@@ -1760,6 +2229,10 @@ function __wbg_get_imports() {
             const ret = new Uint8Array(getObject(arg0));
             return addHeapObject(ret);
         },
+        __wbg_new_5e360d2ff7b9e1c3: function(arg0, arg1) {
+            const ret = new Error(getStringFromWasm0(arg0, arg1));
+            return addHeapObject(ret);
+        },
         __wbg_new_682678e2f47e32bc: function() {
             const ret = new Array();
             return addHeapObject(ret);
@@ -1887,12 +2360,18 @@ function __wbg_get_imports() {
     };
 }
 
+const WasmBreachCheckFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmbreachcheck_free(ptr >>> 0, 1));
 const WasmChunkEncryptorFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmchunkencryptor_free(ptr >>> 0, 1));
 const WasmSearchIndexFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmsearchindex_free(ptr >>> 0, 1));
+const WasmSignupCeremonyFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmsignupceremony_free(ptr >>> 0, 1));
 
 function addHeapObject(obj) {
     if (heap_next === heap.length) heap.push(heap.length + 1);
@@ -1901,6 +2380,12 @@ function addHeapObject(obj) {
 
     heap[idx] = obj;
     return idx;
+}
+
+function _assertClass(instance, klass) {
+    if (!(instance instanceof klass)) {
+        throw new Error(`expected instance of ${klass.name}`);
+    }
 }
 
 function debugString(val) {
