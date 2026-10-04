@@ -567,6 +567,27 @@ export async function logout(): Promise<void> {
 // ─── Step-up re-auth ────────────────────────────────
 
 /**
+ * What a step-up is FOR (task 1734, round 2). Without a grant the token is the
+ * ordinary `password_step_up` every destructive action takes. With
+ * `cli_device_approval` the server mints a token that can ONLY approve the
+ * device-code login `cliCode`, in THIS session: the generic token is refused by
+ * `/auth/cli-session`, and this one is refused by everything else. A server from
+ * before this change ignores the extra fields and mints the generic token,
+ * which that same older server's `/auth/cli-session` accepts - so the web can
+ * ship first.
+ */
+export interface StepUpGrant {
+  purpose: 'cli_device_approval'
+  /** The device code the person typed, as shown on their own device (`XXXX-XXXX`). */
+  cliCode: string
+}
+
+/** The request-body fields for a grant; nothing at all for the ordinary step-up. */
+export function stepUpGrantFields(grant?: StepUpGrant): { purpose?: string; cli_code?: string } {
+  return grant ? { purpose: grant.purpose, cli_code: grant.cliCode } : {}
+}
+
+/**
  * Exchange the user's password for a short-lived confirmation token.
  * Pass that token via the X-Confirm-Token header on destructive endpoints
  * (permanent delete, change password, delete account).
@@ -590,6 +611,7 @@ export async function logout(): Promise<void> {
  */
 export async function confirmAction(
   password: string,
+  grant?: StepUpGrant,
 ): Promise<{ confirmation_token: string; expires_at: string }> {
   const token = getToken()
   const authHeaders: Record<string, string> = {
@@ -619,7 +641,7 @@ export async function confirmAction(
   if (startRes.status === 409) {
     const body = (await startRes.json().catch(() => ({}))) as Record<string, unknown>
     if (body.opaque_unavailable === true) {
-      return confirmActionPlaintext(password, authHeaders)
+      return confirmActionPlaintext(password, authHeaders, grant)
     }
     // Some other 409 — surface it rather than silently swallowing.
     throw new ApiError(
@@ -668,6 +690,7 @@ export async function confirmAction(
     body: JSON.stringify({
       client_message: toBase64(loginFinish.message),
       server_state: startBody.server_state,
+      ...stepUpGrantFields(grant),
     }),
     credentials: 'include',
   })
@@ -701,6 +724,7 @@ export async function confirmAction(
 async function confirmActionPlaintext(
   password: string,
   authHeaders: Record<string, string>,
+  grant?: StepUpGrant,
 ): Promise<{ confirmation_token: string; expires_at: string }> {
   // Direct fetch instead of request() — a 401 from /auth/confirm means the
   // user mistyped their password during step-up, NOT that their session
@@ -709,7 +733,7 @@ async function confirmActionPlaintext(
   const res = await fetch(`${API_URL}/api/v1/auth/confirm`, {
     method: 'POST',
     headers: authHeaders,
-    body: JSON.stringify({ password }),
+    body: JSON.stringify({ password, ...stepUpGrantFields(grant) }),
     // task 0447 — send cookie + accept Set-Cookie back. The confirm endpoint
     // is authenticated and may set a refreshed bb_session cookie.
     credentials: 'include',
@@ -758,7 +782,9 @@ async function confirmActionPlaintext(
  * cancelled/failed WebAuthn ceremony here must never clear the session or
  * bounce the user to /login — they are still logged in.
  */
-export async function confirmPasskey(): Promise<{ confirmation_token: string; expires_at: string }> {
+export async function confirmPasskey(
+  grant?: StepUpGrant,
+): Promise<{ confirmation_token: string; expires_at: string }> {
   const token = getToken()
   const authHeaders: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -797,7 +823,11 @@ export async function confirmPasskey(): Promise<{ confirmation_token: string; ex
   const finishRes = await fetch(`${API_URL}/api/v1/auth/confirm-passkey-finish`, {
     method: 'POST',
     headers: authHeaders,
-    body: JSON.stringify({ credential: credentialData, auth_state: startBody.auth_state }),
+    body: JSON.stringify({
+      credential: credentialData,
+      auth_state: startBody.auth_state,
+      ...stepUpGrantFields(grant),
+    }),
     credentials: 'include',
   })
 

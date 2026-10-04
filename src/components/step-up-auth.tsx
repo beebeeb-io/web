@@ -6,6 +6,7 @@ import {
   confirmPasskey,
   IncorrectPasswordError,
   SessionTooOldForConfirmationError,
+  type StepUpGrant,
 } from '../lib/api'
 import { useToast } from './toast'
 
@@ -23,6 +24,8 @@ interface StepUpAuthProps {
   onCancel?: () => void
   description?: string
   submitLabel?: string
+  /** What the confirmation is for (default: the ordinary step-up). Task 1734. */
+  grant?: StepUpGrant
 }
 
 export function StepUpAuth({
@@ -32,6 +35,7 @@ export function StepUpAuth({
   onCancel,
   description = 'Enter your password to continue.',
   submitLabel = 'Confirm',
+  grant,
 }: StepUpAuthProps) {
   const [mode, setMode] = useState<'password' | 'passkey'>('password')
   const [password, setPassword] = useState('')
@@ -57,7 +61,7 @@ export function StepUpAuth({
     setLoading(true)
     setError(null)
     try {
-      const { confirmation_token } = await confirmAction(password)
+      const { confirmation_token } = await confirmAction(password, grant)
       onConfirmed(confirmation_token)
     } catch (err) {
       if (err instanceof SessionTooOldForConfirmationError) {
@@ -75,7 +79,7 @@ export function StepUpAuth({
     } finally {
       setLoading(false)
     }
-  }, [close, loading, onConfirmed, password, showToast])
+  }, [close, grant, loading, onConfirmed, password, showToast])
 
   // Passkey-assertion step-up (task 1493) — the only path available to a
   // passkey-only account (no password/OPAQUE credential exists to type
@@ -89,14 +93,14 @@ export function StepUpAuth({
     setLoading(true)
     setError(null)
     try {
-      const { confirmation_token } = await confirmPasskey()
+      const { confirmation_token } = await confirmPasskey(grant)
       onConfirmed(confirmation_token)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not confirm your identity')
     } finally {
       setLoading(false)
     }
-  }, [loading, onConfirmed])
+  }, [grant, loading, onConfirmed])
 
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent) => {

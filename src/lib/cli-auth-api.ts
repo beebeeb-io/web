@@ -1,15 +1,19 @@
 /**
  * API calls behind the /cli-auth approval page (task 1734).
  *
- * All three go through the shared `request()` client, so they carry the
- * session cookie, the writer-provenance headers and — on the two mutating
- * calls — `X-Beebeeb-Expected-User` (server task 1554: refuses a request whose
+ * The lookup and the session mint go through the shared `request()` client;
+ * the relay (`authorizeCliRelay`) does its own fetch with the same headers, for
+ * the reason given there. All three carry the session cookie, the
+ * writer-provenance headers and — on the two mutating calls —
+ * `X-Beebeeb-Expected-User` (server task 1554: refuses a request whose
  * resident key belongs to a different account than the session). None of them
  * needs the raw session token, so this page no longer asks
  * `GET /auth/session-token` for it.
  */
 
+import { ApiError, expectedUserHeaders, getApiUrl, getToken, provenanceHeaders } from '@beebeeb/shared'
 import { request } from './api'
+import { readRelayResponse } from './cli-auth-relay'
 import type { CliRequestFacts } from './cli-auth-code'
 
 export interface CliPubkeyLookup {
@@ -53,18 +57,35 @@ export interface CliAuthorizeBody {
 }
 
 /**
- * Hand the encrypted payload to the relay. A server from before task 1734
- * answers 200 with an EMPTY body, which the shared client's `res.json()`
- * rejects as a SyntaxError even though the relay succeeded; the web ships
- * before the server (see the 1734 rollout note), so that one case is
- * accepted. Any HTTP error is an `ApiError` thrown before the body is read and
- * is NOT swallowed.
+ * Hand the encrypted payload to the relay.
+ *
+ * A server from before task 1734 answers 200 with an EMPTY body, which the
+ * shared client's `res.json()` rejects as a SyntaxError even though the relay
+ * succeeded, and the web ships before the server (see the 1734 rollout note).
+ * So this one call reads the body itself: an EMPTY body is success; anything
+ * else must parse as JSON (a malformed body still throws), and any HTTP error
+ * becomes an `ApiError` exactly as in `request()` - nothing else is swallowed.
+ * It sets the same headers `request()` does (cookie, provenance, expected-user).
  */
 export async function authorizeCliRelay(body: CliAuthorizeBody): Promise<void> {
-  try {
-    await request<unknown>('/api/v1/auth/cli-authorize', { method: 'POST', body: JSON.stringify(body) })
-  } catch (err) {
-    if (err instanceof SyntaxError) return
-    throw err
+  const token = getToken()
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...provenanceHeaders(),
+    ...expectedUserHeaders(),
   }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
+  let res: Response
+  try {
+    res = await fetch(`${getApiUrl()}/api/v1/auth/cli-authorize`, {
+      method: 'POST',
+      headers,
+      credentials: 'include',
+      body: JSON.stringify(body),
+    })
+  } catch {
+    throw new ApiError('Could not reach the server. Check your connection and try again.', 0)
+  }
+  await readRelayResponse(res)
 }

@@ -343,7 +343,6 @@ export function CliAuth() {
                   autoCapitalize="characters"
                   spellCheck={false}
                   autoFocus
-                  maxLength={9}
                   error={lookupProblem ?? undefined}
                   className="mb-4 [&_input]:font-mono [&_input]:text-lg [&_input]:tracking-[0.12em]"
                 />
@@ -545,6 +544,9 @@ export function CliAuth() {
         onClose={() => setStepUpOpen(false)}
         description="Approving gives this device your encryption key and a 30-day session. Confirm it's you."
         submitLabel="Approve device"
+        // The confirmation is minted FOR this device code only (task 1734, round 2):
+        // it cannot approve another code, and no other action accepts it.
+        grant={state.kind === 'review' ? { purpose: 'cli_device_approval', cliCode: state.code } : undefined}
       />
     </div>
   )

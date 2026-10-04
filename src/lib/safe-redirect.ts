@@ -3,7 +3,7 @@
  *
  * The login flow honours a `?next=` parameter so that an auth bounce can return
  * the user to where they were headed — most importantly the CLI device-auth
- * round-trip, which lands on `/cli-auth?code=…`. That parameter is attacker-
+ * round-trip, which lands on `/cli-auth`. That parameter is attacker-
  * influenceable (it travels in the URL), so it MUST be validated before we ever
  * `navigate()` to it, or it becomes an open-redirect.
  *
@@ -16,7 +16,9 @@
  */
 
 /** Exact pathnames a post-login redirect may target. Match is exact: the query
- *  string (`?code=…`) is preserved, but the path itself cannot vary.
+ *  string (`?folder=…`) is preserved, but the path itself cannot vary. (A
+ *  `?code=` on `/cli-auth` is also preserved - it is only ever IGNORED by that
+ *  page, which warns about it: a device code is typed, never taken from a link.)
  *  - `/`                — Drive root; carries `?folder=<id>` so a copied deep-link
  *    URL resumes at the exact vault location after login (task 0839). Same-origin
  *    own root → no open-redirect risk; only the query varies, never the path.
@@ -54,7 +56,7 @@ export function sanitizeRedirect(raw: string | null | undefined): string | null 
 
   // The pathname is everything before the query/fragment, and it must match an
   // allowlisted route EXACTLY — so "/cli-auth/../admin" and "/cli-auth-evil"
-  // are rejected while "/cli-auth?code=AB12-CD34" is accepted.
+  // are rejected while "/cli-auth?x=1" is accepted.
   const pathname = raw.split(/[?#]/)[0]
   if (!(REDIRECT_ALLOWLIST as readonly string[]).includes(pathname)) return null
 

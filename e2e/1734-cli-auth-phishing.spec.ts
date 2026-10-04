@@ -254,6 +254,17 @@ test.describe('task 1734: a device-approval link carries nothing to approve', ()
         .map((n) => n.title)
       expect(titles.some((t) => t.includes('Device sign-in approved from 127.0.0.1'))).toBe(true)
 
+      // The step-up was requested FOR this approval (server round 2): every
+      // confirmation the page asked for - the wrong password and the right one -
+      // carried the purpose and the typed code, and nothing else asked for a
+      // confirmation while the dialog was open. (A dev account is a legacy
+      // password account, so the mint is the plaintext `/auth/confirm`.)
+      const grantBodies = seen.bodies.filter((b) => b.includes('cli_device_approval'))
+      expect(grantBodies, 'the confirmation must be requested for the device-approval purpose').toHaveLength(2)
+      for (const b of grantBodies) {
+        expect(JSON.parse(b)).toMatchObject({ purpose: 'cli_device_approval', cli_code: attacker.code })
+      }
+
       // And the exact sequence the page used: lookup, mint, relay — in that order, once each.
       expect(seen.cliCalls).toEqual([
         'GET /api/v1/auth/cli-pubkey',

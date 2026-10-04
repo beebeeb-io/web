@@ -167,8 +167,9 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
   if (loading || !vaultChecked) return null
 
   // Preserve the intended destination so the login flow can return here after
-  // auth — notably the CLI device-auth round-trip to /cli-auth?code=…, which
-  // is bounced here before login.tsx ever sees the URL. login.tsx validates
+  // auth — notably the CLI device-auth round-trip to /cli-auth (the code is
+  // typed on that page, never carried in the URL), which is bounced here before
+  // login.tsx ever sees the URL. login.tsx validates
   // `next` against a strict allowlist (safe-redirect.ts), so a non-allowlisted
   // path simply falls back to "/" — safe to set for every protected route.
   const loginTo = `/login?next=${encodeURIComponent(location.pathname + location.search)}`
@@ -315,7 +316,7 @@ function GuestRoute({ children }: { children: ReactNode }) {
     // Task 1437 — this branch can fire a STALE render after login.tsx's
     // navigateAfterLogin() has ALREADY navigated the user to their real
     // `?next=` destination (notably the CLI device-auth round-trip,
-    // /cli-auth?code=…): `isUnlocked` flipping true (inside setMasterKey /
+    // /cli-auth): `isUnlocked` flipping true (inside setMasterKey /
     // unlockVault, on the OPAQUE-login or device-provision success path)
     // and the router committing the new location land in separate React
     // render passes, so GuestRoute — still matched against its own
@@ -323,7 +324,7 @@ function GuestRoute({ children }: { children: ReactNode }) {
     // after the URL has already moved on. Hard-coding "/" here would let
     // that stale render win the race with its own `replace` navigation,
     // silently bouncing the user off the CLI-authorize prompt onto the
-    // drive (the exact bug: reaches /cli-auth?code=… correctly, then ~1s
+    // drive (the exact bug: reaches /cli-auth correctly, then ~1s
     // later re-navigates to "/"). Honouring the SAME allowlisted `next`
     // login.tsx itself would follow (safe-redirect.ts) makes both
     // navigations agree on the destination, so whichever one the render
