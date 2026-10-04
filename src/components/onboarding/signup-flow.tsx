@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { BBButton, BBCheckbox, BBInput, Icon } from '@beebeeb/shared'
+import { runBreachCheck } from '../../lib/onboarding/breach-step'
 import { CeremonyError, type BreachCheckProxy, type CeremonyProxy, type PasswordEvaluation } from '../../lib/crypto'
 import { planScreen, type Screen, type StepScreen } from '../../lib/onboarding/plan'
 import { runCreateAccount } from '../../lib/onboarding/create-account'
@@ -69,6 +70,8 @@ function ceremonyMessage(code: string): string {
       return 'That password is too short.'
     case 'phrase_word_mismatch':
       return 'Those words do not match your recovery phrase. Check them against what you wrote down.'
+    case 'breach_prefix_mismatch':
+      return 'We could not check this password against known breaches. Try again.'
     case 'phrase_answer_count':
       return 'Fill in every word.'
     default:
@@ -418,10 +421,7 @@ function SetPasswordStep({ ctx }: { ctx: CeremonyCtx }) {
       const bc = policy.password.breachCheck
       if (bc) {
         breach = await ports.ceremony.breach(password)
-        // An invalid or missing endpoint counts as an outage: null body, and
-        // core applies the document's fail_open (the ceremony enforces it).
-        const body = bc.endpoint ? await ports.fetchBreachBody(bc.endpoint, breach.prefix) : null
-        await breach.evaluate(body, bc.failOpen)
+        await runBreachCheck(ports, breach, bc)
       }
       await ceremony.setPassword(password, confirmation, breach)
       session.current.password = password

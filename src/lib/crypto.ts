@@ -1249,10 +1249,14 @@ export class BreachCheckProxy {
     return this.#handle
   }
 
-  /** Record the endpoint's answer (`null` = the request failed) and get the verdict to display. */
-  async evaluate(body: string | null, failOpen: boolean): Promise<BreachVerdict> {
+  /**
+   * Record the endpoint's answer (`null` = the request failed) and get the verdict to display.
+   * `requestedPrefix` MUST be the exact prefix the request URL (or cache entry) used: core
+   * rejects any other with `breach_prefix_mismatch` rather than reading another prefix's body as clean.
+   */
+  async evaluate(requestedPrefix: string, body: string | null, failOpen: boolean): Promise<BreachVerdict> {
     return unwrapCeremony(
-      await withProxy((p) => p.breachCheckEvaluate(this.#handle, body, failOpen) as Promise<CeremonyResult<BreachVerdict>>),
+      await withProxy((p) => p.breachCheckEvaluate(this.#handle, requestedPrefix, body, failOpen) as Promise<CeremonyResult<BreachVerdict>>),
     )
   }
 

@@ -14,9 +14,10 @@
  *
  * ```js
  * const q = new WasmBreachCheck(password)
+ * const prefix = q.prefix               // send exactly this, and pass exactly what you sent back
  * let body = null
- * try { const r = await fetch(endpoint.replace('{prefix}', q.prefix)); if (r.ok) body = await r.text() } catch {}
- * const verdict = q.evaluate(body, failOpen)   // for the UI; body === null means the call failed
+ * try { const r = await fetch(endpoint.replace('{prefix}', prefix)); if (r.ok) body = await r.text() } catch {}
+ * const verdict = q.evaluate(prefix, body, failOpen)   // body === null means the call failed
  * ceremony.setPassword(password, confirmation, q)   // borrows q; omit-the-check cannot bypass a required gate
  * q.free()
  * ```
@@ -33,22 +34,29 @@ export class WasmBreachCheck {
         wasm.__wbg_wasmbreachcheck_free(ptr, 0);
     }
     /**
-     * Record the answer and return the verdict for display. `body` is the
+     * Record the answer and return the verdict for display. `requested_prefix`
+     * is the prefix the request URL (or the cache entry read) actually used;
+     * if it is not this password's prefix this throws an `Error` with code
+     * `breach_prefix_mismatch` and records nothing (a body for another prefix
+     * would otherwise read as clean). `body` is the
      * response text of a 2xx answer, or `null`/`undefined` when the request
      * failed (network error, timeout, non-2xx). An empty body counts as a
      * failed request. `fail_open` is `policy.password.breach_check.fail_open`
      * and only shapes this display value: the ceremony applies the value it
      * was constructed with. Returns `{ kind, count, allows_proceeding, check_failed }`.
+     * @param {string} requested_prefix
      * @param {string | null | undefined} body
      * @param {boolean} fail_open
      * @returns {any}
      */
-    evaluate(body, fail_open) {
+    evaluate(requested_prefix, body, fail_open) {
         try {
             const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-            var ptr0 = isLikeNone(body) ? 0 : passStringToWasm0(body, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-            var len0 = WASM_VECTOR_LEN;
-            wasm.wasmbreachcheck_evaluate(retptr, this.__wbg_ptr, ptr0, len0, fail_open);
+            const ptr0 = passStringToWasm0(requested_prefix, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            var ptr1 = isLikeNone(body) ? 0 : passStringToWasm0(body, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            var len1 = WASM_VECTOR_LEN;
+            wasm.wasmbreachcheck_evaluate(retptr, this.__wbg_ptr, ptr0, len0, ptr1, len1, fail_open);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
             var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
