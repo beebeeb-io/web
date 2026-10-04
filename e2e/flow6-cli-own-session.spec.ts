@@ -3,6 +3,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { approveDeviceInPage } from './helpers/cli-approve'
 
 /**
  * Flow "CLI end to end", fix 2 — the CLI must get its OWN session.
@@ -27,6 +28,8 @@ import { join } from 'node:path'
 const WEB_URL = process.env.E2E_WEB_URL ?? 'http://localhost:5173'
 const API_URL = process.env.E2E_API_URL ?? 'http://localhost:3001'
 const BB_BIN = process.env.E2E_BB_BIN ?? ''
+// The dev auto-login account's password (beebeeb-api/src/routes/dev.rs).
+const DEV_PASSWORD = 'devdevdevdevdev!'
 
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\x1b\[[0-9;?]*[A-Za-z]/g
@@ -90,7 +93,7 @@ function runBb(home: string, args: string[]): { rc: number; out: string } {
   return { rc: r.status ?? -1, out: `${r.stdout ?? ''}${r.stderr ?? ''}`.replace(ANSI_RE, '') }
 }
 
-/** `bb login --headless`, approved in `page` at /cli-auth. Resolves once bb exits 0. */
+/** `bb login --headless`, approved in `page` at /cli-auth (code typed, password re-proved). Resolves once bb exits 0. */
 async function bbLoginViaBrowser(page: Page, home: string): Promise<void> {
   const child = spawn(BB_BIN, ['--api', API_URL, 'login', '--headless'], { env: bbEnv(home) })
   let out = ''
@@ -102,9 +105,8 @@ async function bbLoginViaBrowser(page: Page, home: string): Promise<void> {
     await expect.poll(() => CODE_RE.test(out.replace(ANSI_RE, '')), { timeout: 20_000 }).toBe(true)
     const code = out.replace(ANSI_RE, '').match(CODE_RE)![1]
 
-    await page.goto(`${WEB_URL}/cli-auth?code=${code}`)
-    await page.getByRole('button', { name: /authorize cli access/i }).click()
-    await expect(page.getByText('CLI authorized')).toBeVisible({ timeout: 20_000 })
+    // Task 1734: the code is TYPED, then the password re-proved - no one-click approval.
+    await approveDeviceInPage(page, { code, password: DEV_PASSWORD, webUrl: WEB_URL })
 
     const rc = await Promise.race([
       exited,

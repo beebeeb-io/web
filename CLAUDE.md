@@ -121,6 +121,10 @@ Hi-fi designs are in the workspace: `../../design/hifi/`. Key files:
 
 In `src/components/`: bb-button, bb-input, bb-chip, bb-checkbox, bb-toggle, bb-logo, icons (24 SVGs), auth-shell, settings-shell, file-icon, upload-zone, upload-progress, share-dialog, new-folder-dialog, context-menu, move-modal, version-history, preview/* (chrome, rail, image, pdf, video, markdown, text), empty-states/*
 
+## Device approval page (`/cli-auth`, task 1734)
+
+`bb login` and the desktop app are approved here. The page NEVER reads a code from the URL (a `?code=` link is ignored and the page says so — an attacker who started their own device flow can send any link): the person types the code their own device shows (`src/lib/cli-auth-code.ts`), the page then shows what the server measured about the asker (address, country when known, time) next to what the device merely claims (`src/lib/cli-auth-api.ts` → `GET /auth/cli-pubkey`), and Approve opens `StepUpAuth` (password or passkey). Nothing is minted, encrypted or sent until the step-up succeeds (`mintCliSession` needs the `X-Confirm-Token`). Specs that approve a device must use `e2e/helpers/cli-approve.ts`; the phishing proof is `e2e/1734-cli-auth-phishing.spec.ts`. Deploy order: web first, server second.
+
 ## Brand rules
 
 - Amber ONLY for encryption indicators and primary CTAs

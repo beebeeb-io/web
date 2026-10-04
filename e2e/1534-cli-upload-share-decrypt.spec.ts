@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createShareLink } from './helpers/drive'
 import { anonymousContext } from './helpers/auth'
+import { approveDeviceInPage } from './helpers/cli-approve'
 
 /**
  * Task 1534 (folded into 1531) — "the unwrapped file key doesn't decrypt the
@@ -51,6 +52,8 @@ import { anonymousContext } from './helpers/auth'
  */
 
 const WEB_URL = process.env.E2E_WEB_URL ?? 'http://localhost:5173'
+// The dev auto-login account's password (beebeeb-api/src/routes/dev.rs).
+const DEV_PASSWORD = 'devdevdevdevdev!'
 const API_URL = process.env.E2E_API_URL ?? 'http://localhost:3001'
 const BB_BIN = process.env.E2E_BB_BIN ?? ''
 
@@ -86,9 +89,8 @@ async function bbLoginViaBrowser(page: Page, home: string): Promise<void> {
     await expect.poll(() => CODE_RE.test(out.replace(ANSI_RE, '')), { timeout: 20_000 }).toBe(true)
     const code = out.replace(ANSI_RE, '').match(CODE_RE)![1]
 
-    await page.goto(`${WEB_URL}/cli-auth?code=${code}`)
-    await page.getByRole('button', { name: /authorize cli access/i }).click()
-    await expect(page.getByText('CLI authorized')).toBeVisible({ timeout: 20_000 })
+    // Task 1734: the code is TYPED, then the password re-proved - no one-click approval.
+    await approveDeviceInPage(page, { code, password: DEV_PASSWORD, webUrl: WEB_URL })
 
     const rc = await Promise.race([
       exited,

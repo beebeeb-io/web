@@ -261,15 +261,20 @@ test.describe.serial('Production smoke — one throwaway account, real UI (task 
     )
 
     const handle = spawnCliLogin(CLI_BIN!, CLI_HOME!, CLI_API_URL)
-    const { url } = await handle.waitForAuthUrl(20_000)
+    const { url, code } = await handle.waitForAuthUrl(20_000)
 
     // The already-authenticated smoke user's own page authorizes the CLI —
-    // exactly the real gh-auth-login-style handoff, no code shortcuts.
+    // exactly the real gh-auth-login-style handoff, no code shortcuts. Since
+    // task 1734 that means: open the link (which carries no code), TYPE the code
+    // the CLI printed, approve, and re-prove the smoke account's password.
     await page.goto(url)
-    const authorizeBtn = page.getByRole('button', { name: /authorize cli access/i })
-    await expect(authorizeBtn).toBeVisible({ timeout: 15_000 })
-    await authorizeBtn.click()
-    await expect(page.getByText(/you're all set/i)).toBeVisible({ timeout: 15_000 })
+    await page.getByLabel('Code from your device').fill(code)
+    await page.getByRole('button', { name: 'Continue' }).click()
+    await page.getByRole('button', { name: /approve this device/i }).click()
+    const stepUp = page.getByRole('dialog', { name: 'Confirm your identity' })
+    await stepUp.getByLabel('Password').fill(PASSWORD_INITIAL)
+    await stepUp.getByRole('button', { name: 'Approve device' }).click()
+    await expect(page.getByText(/you're all set/i)).toBeVisible({ timeout: 30_000 })
 
     const { exitCode, output } = await handle.waitForExit(20_000)
     expect(exitCode, `bb login did not exit 0:\n${output}`).toBe(0)

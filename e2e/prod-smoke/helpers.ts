@@ -280,14 +280,17 @@ export function spawnCliLogin(cliBin: string, home: string, apiUrl: string): Cli
       const deadline = Date.now() + timeoutMs
       while (Date.now() < deadline) {
         const clean = stripAnsi(buf)
-        const m = clean.match(/https?:\/\/\S*\/cli-auth\?code=([A-Z0-9-]+)/)
-        if (m) return { url: m[0], code: m[1] }
+        // Task 1734: the printed link carries NO code any more; the code is a
+        // separate "Authorization code: XXXX-XXXX" line the person types on the page.
+        const url = clean.match(/https?:\/\/\S*\/cli-auth\b/)
+        const code = clean.match(/Authorization code:\s+([A-Z0-9]{4}-[A-Z0-9]{4})/)
+        if (url && code) return { url: url[0], code: code[1] }
         if (proc.exitCode !== null) {
           throw new Error(`bb login exited early (code ${proc.exitCode}) before printing a URL:\n${clean}`)
         }
         await new Promise((r) => setTimeout(r, 200))
       }
-      throw new Error(`bb login did not print an authorization URL within ${timeoutMs}ms. Output so far:\n${stripAnsi(buf)}`)
+      throw new Error(`bb login did not print an authorization URL and code within ${timeoutMs}ms. Output so far:\n${stripAnsi(buf)}`)
     },
     async waitForExit(timeoutMs = 20_000) {
       if (proc.exitCode !== null) return { exitCode: proc.exitCode, output: stripAnsi(buf) }
