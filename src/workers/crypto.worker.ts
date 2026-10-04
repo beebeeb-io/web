@@ -728,16 +728,21 @@ const cryptoWorker = {
     return { handle, prefix: b.prefix }
   },
 
-  /** Record the endpoint's answer (`null` = request failed) and return the display verdict. */
+  /**
+   * Record the endpoint's answer (`null` = request failed) and return the display verdict.
+   * `requestedPrefix` is the prefix the request actually used; core throws
+   * `breach_prefix_mismatch` (recording nothing) if it is not this password's.
+   */
   breachCheckEvaluate(
     handle: number,
+    requestedPrefix: string,
     body: string | null,
     failOpen: boolean,
   ): CeremonyResult<{ kind: string; count: number; allows_proceeding: boolean; check_failed: boolean }> {
     const b = liveBreachChecks.get(handle)
     if (!b) return { ok: false, code: 'breach_check_missing', message: 'breach check was disposed' }
     return ceremonyResult(
-      () => b.evaluate(body, failOpen) as { kind: string; count: number; allows_proceeding: boolean; check_failed: boolean },
+      () => b.evaluate(requestedPrefix, body, failOpen) as { kind: string; count: number; allows_proceeding: boolean; check_failed: boolean },
     )
   },
 

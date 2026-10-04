@@ -15,9 +15,10 @@
  *
  * ```js
  * const q = new WasmBreachCheck(password)
+ * const prefix = q.prefix               // send exactly this, and pass exactly what you sent back
  * let body = null
- * try { const r = await fetch(endpoint.replace('{prefix}', q.prefix)); if (r.ok) body = await r.text() } catch {}
- * const verdict = q.evaluate(body, failOpen)   // for the UI; body === null means the call failed
+ * try { const r = await fetch(endpoint.replace('{prefix}', prefix)); if (r.ok) body = await r.text() } catch {}
+ * const verdict = q.evaluate(prefix, body, failOpen)   // body === null means the call failed
  * ceremony.setPassword(password, confirmation, q)   // borrows q; omit-the-check cannot bypass a required gate
  * q.free()
  * ```
@@ -26,14 +27,18 @@ export class WasmBreachCheck {
     free(): void;
     [Symbol.dispose](): void;
     /**
-     * Record the answer and return the verdict for display. `body` is the
+     * Record the answer and return the verdict for display. `requested_prefix`
+     * is the prefix the request URL (or the cache entry read) actually used;
+     * if it is not this password's prefix this throws an `Error` with code
+     * `breach_prefix_mismatch` and records nothing (a body for another prefix
+     * would otherwise read as clean). `body` is the
      * response text of a 2xx answer, or `null`/`undefined` when the request
      * failed (network error, timeout, non-2xx). An empty body counts as a
      * failed request. `fail_open` is `policy.password.breach_check.fail_open`
      * and only shapes this display value: the ceremony applies the value it
      * was constructed with. Returns `{ kind, count, allows_proceeding, check_failed }`.
      */
-    evaluate(body: string | null | undefined, fail_open: boolean): any;
+    evaluate(requested_prefix: string, body: string | null | undefined, fail_open: boolean): any;
     constructor(password: string);
     /**
      * The 5 upper-case hex characters to send to the server.
@@ -634,7 +639,7 @@ export interface InitOutput {
     readonly transfer_generate_keypair: (a: number) => void;
     readonly transfer_sas_to_words: (a: number, b: number, c: number) => void;
     readonly unwrap_request_private: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
-    readonly wasmbreachcheck_evaluate: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly wasmbreachcheck_evaluate: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly wasmbreachcheck_new: (a: number, b: number) => number;
     readonly wasmbreachcheck_prefix: (a: number, b: number) => void;
     readonly wasmchunkencryptor_chunkCount: (a: number) => number;

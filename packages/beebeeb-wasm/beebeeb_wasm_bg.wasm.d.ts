@@ -49,7 +49,7 @@ export const transfer_encrypt: (a: number, b: number, c: number, d: number, e: n
 export const transfer_generate_keypair: (a: number) => void;
 export const transfer_sas_to_words: (a: number, b: number, c: number) => void;
 export const unwrap_request_private: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
-export const wasmbreachcheck_evaluate: (a: number, b: number, c: number, d: number, e: number) => void;
+export const wasmbreachcheck_evaluate: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const wasmbreachcheck_new: (a: number, b: number) => number;
 export const wasmbreachcheck_prefix: (a: number, b: number) => void;
 export const wasmchunkencryptor_chunkCount: (a: number) => number;
