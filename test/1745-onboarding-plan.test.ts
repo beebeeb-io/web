@@ -233,3 +233,20 @@ describe('account stage', () => {
     expect(planScreen(doc).kind).toBe('fallback')
   })
 })
+
+describe('round 2: blocked optional actions draw nothing (Codex P2 on web#134)', () => {
+  test('an optional start_trial / choose_plan with status blocked is not an account action; a todo one still is', () => {
+    const doc = load('account.allowance.web.json', (d) => {
+      for (const s of d.steps) if (s.id === 'start_trial' || s.id === 'choose_plan') s.status = 'blocked'
+    })
+    const blockedIds = doc.steps.filter((s) => s.status === 'blocked').map((s) => s.id)
+    expect(blockedIds.length).toBeGreaterThan(0)
+    const s = planScreen(doc)
+    expect(s.kind).toBe('account')
+    if (s.kind === 'account') {
+      for (const id of blockedIds) expect(s.actions.map((a) => a.step.id)).not.toContain(id)
+    }
+    const open = planScreen(load('account.allowance.web.json'))
+    expect(open.kind === 'account' && open.actions.map((a) => a.step.id)).toContain('start_trial')
+  })
+})

@@ -101,6 +101,13 @@ export interface OnboardingPorts {
   referral?: () => ReferralAttribution
   /** Persist the vault key and move on (web: `setMasterKey`, welcome file, navigate). */
   onAccountCreated: (info: AccountCreatedInfo) => Promise<void>
+  /**
+   * Sign the current session out. Supplied only where a session can exist (the
+   * account stage). The contract (rule 7) lets `update_required` block
+   * everything EXCEPT the update and Sign out, so that screen draws the button
+   * when, and only when, this port is present.
+   */
+  signOut?: () => Promise<void>
 }
 
 export const coreCeremonyPorts: CeremonyPorts = {

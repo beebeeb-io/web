@@ -231,9 +231,14 @@ test.describe('1745 onboarding renderer', () => {
     await expect(page.getByText('Your trial ends on 18 Oct. Files above 2 GB become read-only')).toBeVisible()
     await expect(page.getByTestId('usage-used')).toHaveText('6.3 GB used')
     await expect(page.getByTestId('usage-quota')).toHaveText('of 10 GB')
-    await expect(page.getByTestId('usage-over-allowance')).toBeVisible()
+    await expect(page.getByTestId('usage-over-allowance')).toHaveText(
+      'The trial allows up to 10 GB. After it ends, the 2 GB allowance applies.',
+    )
+    await expect(page.getByText('allowance is exceeded')).toHaveCount(0)
     await expect(page.locator('[data-capability="share"]')).toContainText('Up to 5 active links')
+    await expect(page.locator('[data-capability="download"] svg.text-green')).toHaveCount(0)
     await shot(page, join(EVIDENCE, '10-trialing-no-card.png'), true)
+    await shot(page, join(EVIDENCE, 'r2-trialing-no-card.png'), true)
   })
 
   test('trial_ended over the allowance (iOS fixture): read-only, deletion date, nothing to buy', async ({ page }) => {
@@ -274,6 +279,31 @@ test.describe('1745 onboarding renderer', () => {
     await expect(page.getByTestId('onboarding-email')).toHaveCount(0)
     await expect(page.getByTestId('update-required-action')).toBeVisible()
     await shot(page, join(EVIDENCE, '13-update-required.png'))
+  })
+
+  test('round 2: an authenticated update_required screen still offers Sign out (contract rule 7); pre-account does not', async ({ page }) => {
+    await page.goto('/dev/onboarding/account.active.web?client=update_required', { waitUntil: 'domcontentloaded' })
+    await expect(page.getByTestId('fixture-root')).toBeVisible({ timeout: 30_000 })
+    await expect(screen(page)).toHaveAttribute('data-screen', 'update_required')
+    await expect(page.getByTestId('update-required-action')).toBeVisible()
+    await expect(page.getByTestId('update-required-sign-out')).toBeVisible()
+    await shot(page, join(EVIDENCE, 'r2-update-required-account-sign-out.png'))
+    await page.getByTestId('update-required-sign-out').click()
+    await expect.poll(() => events(page)).toContain('sign_out')
+
+    await page.goto('/dev/onboarding/client.update_required.ios', { waitUntil: 'domcontentloaded' })
+    await expect(screen(page)).toHaveAttribute('data-screen', 'update_required')
+    await expect(page.getByTestId('update-required-sign-out')).toHaveCount(0)
+  })
+
+  test('round 2: after register-finish succeeded the recovery screen offers sign in, never try again or start over', async ({ page }) => {
+    await page.goto('/dev/onboarding/pre_account.web?screen=account_created_setup_failed', { waitUntil: 'domcontentloaded' })
+    await expect(page.getByTestId('fixture-root')).toBeVisible({ timeout: 30_000 })
+    await expect(screen(page)).toHaveAttribute('data-screen', 'account_created_setup_failed')
+    await expect(page.getByRole('heading', { name: 'Your account was created' })).toBeVisible()
+    await expect(page.getByTestId('account-created-sign-in')).toHaveAttribute('href', '/login')
+    await expect(page.getByRole('button', { name: /try again|start over/i })).toHaveCount(0)
+    await shot(page, join(EVIDENCE, 'r2-account-created-setup-failed.png'))
   })
 
   test('web allowance: plans link and the no-card trial offer are drawn (offer available)', async ({ page }) => {

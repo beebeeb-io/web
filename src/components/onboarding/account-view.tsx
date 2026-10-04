@@ -33,9 +33,9 @@ function UsageBar({ summary }: { summary: AccountSummary }) {
         <span data-testid="usage-used">{formatSize(u.usedBytes)} used</span>
         <span data-testid="usage-quota">of {formatSize(u.quotaBytes)}</span>
       </div>
-      {u.overAllowance && u.allowanceBytes !== null && (
+      {u.overAllowanceNote && (
         <p className="text-[11px] text-ink-3 mt-1" data-testid="usage-over-allowance">
-          <span className="font-mono">{formatSize(u.allowanceBytes)}</span> allowance is exceeded.
+          {u.overAllowanceNote}
         </p>
       )}
     </div>
@@ -48,7 +48,7 @@ function CapabilityRows({ summary }: { summary: AccountSummary }) {
       {summary.rows.map((r) => (
         <li key={r.name} className="flex items-center justify-between gap-3 px-3 py-2 text-[13px]" data-capability={r.name} data-allowed={r.allowed}>
           <span className="flex items-center gap-2 text-ink">
-            <Icon name={r.allowed ? 'check' : 'lock'} size={13} className={r.allowed ? 'text-green' : 'text-ink-4'} />
+            <Icon name={r.allowed ? 'check' : 'lock'} size={13} className={r.allowed ? 'text-amber-deep' : 'text-ink-4'} />
             {r.label}
           </span>
           <span className="text-ink-3 text-xs">

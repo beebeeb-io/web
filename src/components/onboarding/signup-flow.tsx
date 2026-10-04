@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type
 import { BBButton, BBCheckbox, BBInput, Icon } from '@beebeeb/shared'
 import { CeremonyError, type BreachCheckProxy, type CeremonyProxy, type PasswordEvaluation } from '../../lib/crypto'
 import { planScreen, type Screen, type StepScreen } from '../../lib/onboarding/plan'
+import { runCreateAccount } from '../../lib/onboarding/create-account'
 import { ActionError, type OnboardingPorts } from '../../lib/onboarding/ports'
 import type { OnboardingDocument, SignupPolicy } from '../../lib/onboarding/types'
 import {
@@ -702,74 +703,80 @@ function SaveRecoveryPhraseStep({ ctx }: { ctx: CeremonyCtx }) {
 
 // ── create_account ───────────────────────────────────────────────────────────
 
+/**
+ * The account exists on the server but finishing it on this device failed
+ * (vault, refresh, network). Registering again would collide with it, so there
+ * is deliberately no "Try again" and no "Start over" here: the way forward is to
+ * sign in, which unlocks the vault from the password the person just chose.
+ */
+export function AccountCreatedSetupFailed({ position, total }: { position?: number; total?: number }) {
+  return (
+    <OnboardingFrame
+      screen="account_created_setup_failed"
+      title="Your account was created"
+      subtitle="We could not finish setting it up on this device. Nothing is lost: your account, password and recovery phrase are all valid."
+      position={position}
+      total={total}
+    >
+      <p className="text-[13px] text-ink-2 leading-relaxed mb-4">
+        Sign in with the email and password you just chose to finish. Do not sign up again with the same address.
+      </p>
+      <a
+        href="/login"
+        data-testid="account-created-sign-in"
+        className="inline-flex w-full items-center justify-center rounded-lg bg-amber px-lg py-md text-base font-medium text-[oklch(0.22_0.01_70)] hover:brightness-95"
+      >
+        Sign in
+        <Icon name="chevron-right" size={16} className="ml-1.5" />
+      </a>
+    </OnboardingFrame>
+  )
+}
+
 function CreateAccountStep({ ctx }: { ctx: CeremonyCtx }) {
   const { ceremony, session, ports, doc, screen } = ctx
   const [status, setStatus] = useState('Setting up account encryption')
   const [error, setError] = useState('')
   const [attempt, setAttempt] = useState(0)
+  const [accountExists, setAccountExists] = useState(false)
   const running = useRef(-1)
 
   useEffect(() => {
     if (running.current === attempt) return
     running.current = attempt
     ;(async () => {
-      const s = session.current
-      try {
-        setError('')
-        setStatus('Setting up account encryption')
-        const clientMessage = await ceremony.startRegistration()
-        const serverMessage = await ports.actions.registerStart({
-          email: s.email,
-          ticket: s.ticket,
-          pilotKey: s.pilotKey,
-          clientMessage,
-        })
-        setStatus('Generating encryption keys')
-        const fin = await ceremony.finishRegistration(serverMessage)
-        setStatus('Registering with the server')
-        const { userId } = await ports.actions.registerFinish({
-          email: s.email,
-          ticket: s.ticket,
-          termsVersion: doc.policy?.terms.version ?? '',
-          pilotKey: s.pilotKey,
-          clientMessage: fin.upload,
-          x25519Public: fin.x25519_public,
-          recoveryCheck: fin.recovery_check,
-          referral: ports.referral?.(),
-        })
-        setStatus('Securing your vault')
-        const masterKey = await ceremony.accountCreated()
-        const password = s.password
-        s.password = ''
-        await ports.onAccountCreated({ userId, email: s.email, masterKey, password })
-        ctx.done('create_account')
-      } catch (err) {
-        if (err instanceof ActionError && err.code === 'signup_ticket_invalid') {
-          // Spec 5.9: back to the code step, keep the confirmed phrase and the
-          // typed password (core keeps them across emailTicketInvalidated).
-          try {
-            await ceremony.emailTicketInvalidated()
-          } catch {
-            /* the ceremony will refuse create_account until the code is redone anyway */
-          }
-          s.ticket = ''
+      setError('')
+      const outcome = await runCreateAccount({
+        ceremony,
+        ports,
+        session: session.current,
+        doc,
+        onStatus: setStatus,
+      })
+      switch (outcome.kind) {
+        case 'created':
+          ctx.done('create_account')
+          return
+        case 'ticket_invalid':
           ctx.setNotice('Your email code expired before the account was created. Request a new one. Your password and recovery phrase are kept.')
           ctx.undo('verify_email_code')
           return
-        }
-        try {
-          await ceremony.registrationFailed()
-        } catch {
-          /* not in a retryable state; the error line below tells the person */
-        }
-        setError(
-          err instanceof ActionError && err.code === 'rate_limited'
-            ? 'Too many sign-ups from this network. Try again later.'
-            : 'We could not create your account. Nothing was stored. You can try again.',
-        )
+        case 'account_exists_setup_failed':
+          // The account exists: no retry, no start over (either would collide with it).
+          setAccountExists(true)
+          return
+        case 'failed_before_account':
+          setError(
+            outcome.rateLimited
+              ? 'Too many sign-ups from this network. Try again later.'
+              : 'We could not create your account. Nothing was stored. You can try again.',
+          )
+          return
       }
     })()
-  }, [attempt, ceremony, ctx, doc.policy, ports, session])
+  }, [attempt, ceremony, ctx, doc, ports, session])
+
+  if (accountExists) return <AccountCreatedSetupFailed position={screen.position} total={screen.total} />
 
   return (
     <OnboardingFrame screen="step:create_account" title="Creating your account" position={screen.position} total={screen.total}>
@@ -828,10 +835,10 @@ function renderStep(ctx: Ctx): ReactNode {
 }
 
 /** Screens the planner can return that are not an interactive step. */
-export function renderTerminalScreen(screen: Screen, onRefresh: () => void): ReactNode {
+export function renderTerminalScreen(screen: Screen, onRefresh: () => void, onSignOut?: () => Promise<void>): ReactNode {
   switch (screen.kind) {
     case 'update_required':
-      return <UpdateRequired screen={screen} />
+      return <UpdateRequired screen={screen} onSignOut={onSignOut} />
     case 'unsupported_schema':
       return <UnsupportedSchema screen={screen} />
     case 'signup_unavailable':

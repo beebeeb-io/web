@@ -137,6 +137,7 @@ export function SignupFromDocument() {
 export function AccountStatusFromDocument() {
   const { state, refresh } = useOnboardingDocument()
   const navigate = useNavigate()
+  const { logout } = useAuth()
 
   const ports = useMemo<OnboardingPorts>(
     () => ({
@@ -146,8 +147,13 @@ export function AccountStatusFromDocument() {
       onAccountCreated: async () => {
         /* an account page never creates an account */
       },
+      // Contract rule 7: update_required still allows Sign out.
+      signOut: async () => {
+        await logout()
+        navigate('/login', { replace: true })
+      },
     }),
-    [refresh],
+    [refresh, logout, navigate],
   )
 
   useEffect(() => {

@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { OnboardingRenderer } from '../components/onboarding/renderer'
+import { AccountCreatedSetupFailed } from '../components/onboarding/signup-flow'
 import { coreCeremonyPorts, ActionError, type OnboardingPorts } from '../lib/onboarding/ports'
 import { parseOnboardingDocument } from '../lib/onboarding/parse'
 
@@ -21,7 +22,12 @@ import { parseOnboardingDocument } from '../lib/onboarding/parse'
  *     clean. `?breach=down` makes the endpoint fail instead (an outage, so the
  *     document's fail_open decides). `?failopen=0` rewrites the document to
  *     `fail_open: false` (the fixtures all say true), to exercise the blocking path;
- *   - register-start fails with `fixture_mode`: there is no server here.
+ *   - register-start fails with `fixture_mode`: there is no server here;
+ *   - `?client=update_required` rewrites the document's client status (an
+ *     account-stage document then shows Sign out, which logs `sign_out`);
+ *   - `?screen=account_created_setup_failed` draws the post-commit recovery
+ *     screen directly (it needs a server-side failure to reach for real; the
+ *     branch itself is covered by test/1745-onboarding-create-account.test.ts).
  *
  * Mounted only under `import.meta.env.DEV` (see `app.tsx`), never in a build.
  */
@@ -51,7 +57,7 @@ async function fixtureBreachBody(prefix: string, down: boolean): Promise<string 
   return lines.join('\r\n') + '\r\n'
 }
 
-function fixturePorts(breachDown: boolean): OnboardingPorts {
+function fixturePorts(breachDown: boolean, withSignOut: boolean): OnboardingPorts {
   // One array per page load, shared by any instance React builds (StrictMode
   // invokes useMemo twice in dev; a fresh array per call would orphan the one
   // the spec reads).
@@ -88,6 +94,13 @@ function fixturePorts(breachDown: boolean): OnboardingPorts {
     onAccountCreated: async () => {
       events.push('account_created')
     },
+    ...(withSignOut
+      ? {
+          signOut: async () => {
+            events.push('sign_out')
+          },
+        }
+      : {}),
   }
 }
 
@@ -95,7 +108,8 @@ export function DevOnboardingFixtures() {
   const { fixture } = useParams<{ fixture: string }>()
   const [query] = useSearchParams()
   const breachDown = query.get('breach') === 'down'
-  const ports = useMemo(() => fixturePorts(breachDown), [breachDown])
+  const forceUpdate = query.get('client') === 'update_required'
+  const ports = useMemo(() => fixturePorts(breachDown, true), [breachDown])
   const key = Object.keys(FIXTURES).find((p) => p.endsWith(`/${fixture}.json`))
   const parsed = key ? parseOnboardingDocument(FIXTURES[key]) : null
 
@@ -104,6 +118,16 @@ export function DevOnboardingFixtures() {
   }
   if (parsed.ok && query.get('failopen') === '0' && parsed.doc.policy?.password.breachCheck) {
     parsed.doc.policy.password.breachCheck.failOpen = false
+  }
+  if (query.get('screen') === 'account_created_setup_failed') {
+    return (
+      <div data-testid="fixture-root" data-fixture={fixture}>
+        <AccountCreatedSetupFailed />
+      </div>
+    )
+  }
+  if (parsed.ok && forceUpdate) {
+    parsed.doc.client = { ...parsed.doc.client, status: 'update_required', minVersion: parsed.doc.client.minVersion ?? '9.9.9' }
   }
   if (!parsed.ok) {
     return (

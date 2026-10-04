@@ -30,13 +30,13 @@ const ports: OnboardingPorts = {
   onAccountCreated: async () => {},
 }
 
-function html(name: string, initialCompleted?: string[], mutate?: (d: Record<string, any>) => void): string {
+function html(name: string, initialCompleted?: string[], mutate?: (d: Record<string, any>) => void, withPorts: OnboardingPorts = ports): string {
   const raw = fixtureJson(name)
   mutate?.(raw)
   const r = parseOnboardingDocument(raw)
   if (!r.ok) throw new Error('fixture did not parse')
   return renderToStaticMarkup(
-    createElement(MemoryRouter, null, createElement(OnboardingRenderer, { doc: r.doc, ports, initialCompleted })),
+    createElement(MemoryRouter, null, createElement(OnboardingRenderer, { doc: r.doc, ports: withPorts, initialCompleted })),
   )
 }
 
@@ -152,5 +152,42 @@ describe('what the screens say (fixtures B to E, spec 5.4)', () => {
   test('no emoji anywhere in any fixture screen (brand rule)', () => {
     const emoji = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u
     for (const f of fixtureFiles()) expect(html(f)).not.toMatch(emoji)
+  })
+})
+
+describe('round 2 (Codex P2 + nits on web#134)', () => {
+  test('authenticated update_required keeps Sign out (contract rule 7): present with a signOut port, absent without one', () => {
+    const toUpdateRequired = (d: Record<string, any>) => {
+      d.client = { ...d.client, status: 'update_required', min_version: '9.9.9' }
+    }
+    const withSignOut = html('account.active.web.json', undefined, toUpdateRequired, { ...ports, signOut: async () => {} })
+    expect(screenOf(withSignOut)).toBe('update_required')
+    expect(withSignOut).toContain('data-testid="update-required-sign-out"')
+    expect(withSignOut).toContain('data-testid="update-required-action"')
+    const without = html('account.active.web.json', undefined, toUpdateRequired)
+    expect(screenOf(without)).toBe('update_required')
+    expect(without).not.toContain('update-required-sign-out')
+  })
+
+  test('a pre-account update_required (no session) offers no Sign out even if a port were passed', () => {
+    const pre = html('pre_account.web.json', undefined, (d) => {
+      d.client = { ...d.client, status: 'update_required', min_version: '9.9.9' }
+    }, { ...ports, signOut: async () => {} })
+    expect(screenOf(pre)).toBe('update_required')
+    expect(pre).not.toContain('update-required-sign-out')
+  })
+
+  test('trialing_no_card no longer contradicts itself: states the trial cap and that the allowance applies after the trial', () => {
+    const m = html('account.trialing_no_card.desktop.json')
+    expect(m).toContain('The trial allows up to 10 GB. After it ends, the 2 GB allowance applies.')
+    expect(m).not.toContain('allowance is exceeded')
+  })
+
+  test('capability check marks use the one brand accent: 0 green classes on any account screen', () => {
+    for (const f of fixtureFiles().filter((n) => n.startsWith('account.'))) {
+      const m = html(f)
+      expect(m, f).not.toMatch(/text-green|bg-green/)
+    }
+    expect(html('account.active.web.json')).toContain('text-amber-deep')
   })
 })

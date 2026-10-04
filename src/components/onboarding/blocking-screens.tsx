@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { BBButton, Icon } from '@beebeeb/shared'
 import type { Fallback } from '../../lib/onboarding/types'
 import type {
@@ -46,7 +47,8 @@ function FallbackAction({ fallback, testId }: { fallback: Fallback; testId: stri
   return null
 }
 
-export function UpdateRequired({ screen }: { screen: UpdateRequiredScreen }) {
+export function UpdateRequired({ screen, onSignOut }: { screen: UpdateRequiredScreen; onSignOut?: () => Promise<void> }) {
+  const [signingOut, setSigningOut] = useState(false)
   return (
     <OnboardingFrame
       screen="update_required"
@@ -58,6 +60,24 @@ export function UpdateRequired({ screen }: { screen: UpdateRequiredScreen }) {
       }
     >
       <FallbackAction fallback={screen.fallback} testId="update-required-action" />
+      {onSignOut ? (
+        <BBButton
+          variant="ghost"
+          className="w-full mt-2"
+          data-testid="update-required-sign-out"
+          disabled={signingOut}
+          onClick={async () => {
+            setSigningOut(true)
+            try {
+              await onSignOut()
+            } finally {
+              setSigningOut(false)
+            }
+          }}
+        >
+          Sign out
+        </BBButton>
+      ) : null}
     </OnboardingFrame>
   )
 }

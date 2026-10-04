@@ -256,7 +256,10 @@ export function planScreen(doc: OnboardingDocument, completed: ReadonlySet<strin
     return stepScreen(doc, completed, next.step)
   }
 
-  const actions = railSteps(doc, completed, null).filter((p) => p.known && p.state !== 'done')
+  // `done` has nothing left to do; `blocked` is the server saying "not available
+  // to this account right now", so an optional blocked action draws no
+  // affordance at all (a required blocked one already stopped above).
+  const actions = railSteps(doc, completed, null).filter((p) => p.known && p.state !== 'done' && p.state !== 'blocked')
   return { kind: 'account', actions }
 }
 

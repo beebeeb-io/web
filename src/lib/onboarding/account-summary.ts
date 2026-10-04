@@ -35,6 +35,13 @@ export interface UsageSummary {
   quotaBytes: number
   allowanceBytes: number | null
   overAllowance: boolean
+  /**
+   * One sentence under the bar when usage is above the allowance, or null.
+   * During a trial the bar's "of N" is the TRIAL cap, so the sentence says so
+   * and says the smaller allowance applies after it (never "allowance exceeded"
+   * next to a bar that shows room).
+   */
+  overAllowanceNote: string | null
   /** used / quota clamped to 0..1; 0 when the quota is 0. */
   fraction: number
 }
@@ -113,6 +120,15 @@ function capabilityRow(name: CapabilityName, cap: Capability | undefined): Capab
   return { name, label, allowed: true, detail, rawReason: null }
 }
 
+function overAllowanceNote(state: string, s: { quotaBytes: number; allowanceBytes: number | null; overAllowance: boolean | null | undefined }): string | null {
+  if (s.overAllowance !== true || s.allowanceBytes === null) return null
+  const allowance = formatSize(s.allowanceBytes)
+  if (state === 'trialing_no_card' || state === 'trialing') {
+    return `The trial allows up to ${formatSize(s.quotaBytes)}. After it ends, the ${allowance} allowance applies.`
+  }
+  return `Your usage is above the ${allowance} allowance.`
+}
+
 function usageOf(doc: OnboardingDocument): UsageSummary | null {
   const s = doc.account?.storage
   if (!s) return null
@@ -121,6 +137,7 @@ function usageOf(doc: OnboardingDocument): UsageSummary | null {
     quotaBytes: s.quotaBytes,
     allowanceBytes: s.allowanceBytes,
     overAllowance: s.overAllowance === true,
+    overAllowanceNote: overAllowanceNote(doc.account?.state ?? '', s),
     fraction: s.quotaBytes > 0 ? Math.min(1, Math.max(0, s.usedBytes / s.quotaBytes)) : 0,
   }
 }

@@ -62,6 +62,6 @@ function AccountFlow({ doc, ports }: { doc: OnboardingDocument; ports: Onboardin
     case 'account':
       return <AccountView doc={doc} screen={screen} ports={ports} />
     default:
-      return <>{renderTerminalScreen(screen, refresh)}</>
+      return <>{renderTerminalScreen(screen, refresh, ports.signOut)}</>
   }
 }
