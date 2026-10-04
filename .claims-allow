@@ -68,3 +68,4 @@ src/pages/settings/data-residency.tsx|helsinki|countryFromCity() lookup map, sam
 src/pages/settings/data-residency.tsx| ede:|same lookup map, Ede entry
 src/lib/timezones.ts|Helsinki|NOT a region claim — "Europe/Helsinki" is a standard IANA tz-database zone name in a generic timezone picker, unrelated to Beebeeb storage regions
 src/components/office/office-engine-host.tsx|github.com|OFFICE_SOURCE_URL: href-only link in the Office Licenses panel (office-about.tsx) to the public MPL-2.0 source of the office engine; opened by the user in a new tab, never fetched by the app, not in the data path (task 1585, lead review 2026-09-28)
+src/contracts/onboarding/schema.v1.json|json-schema.org|JSON Schema meta-schema identifier in "$schema"/"$id" (draft 2020-12); an identifier string in the vendored contract, never fetched at runtime, not in the data path (task 1745)

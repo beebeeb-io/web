@@ -19,3 +19,14 @@ export const FEATURE_TEAMS = import.meta.env.VITE_FEATURE_TEAMS === 'true'
  * VITE_FEATURE_OFFICE_EDITOR=true once the lead enables it for real users.
  */
 export const FEATURE_OFFICE_EDITOR = import.meta.env.VITE_FEATURE_OFFICE_EDITOR === 'true';
+
+/**
+ * FEATURE_ONBOARDING_DOCUMENT — render signup and the account-state screens from
+ * the server's onboarding document (`GET /api/v1/onboarding`, contract v1, task
+ * 1745, epic 1725). OFF by default: the endpoint is task 1739 and is not built
+ * yet, so with the flag off `/signup` is the legacy page, byte for byte. Flip on
+ * with VITE_FEATURE_ONBOARDING_DOCUMENT=true once 1739 is on server main and the
+ * ticket flow (1738) is live; with it on, a 404 / network failure / malformed
+ * document still falls back to the legacy page (spec 5.8 rule 6).
+ */
+export const FEATURE_ONBOARDING_DOCUMENT = import.meta.env.VITE_FEATURE_ONBOARDING_DOCUMENT === 'true';

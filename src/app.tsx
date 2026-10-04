@@ -11,7 +11,7 @@ import { flushDeferredWelcomeFile } from './lib/welcome-file-upload'
 import { WsProvider } from './lib/ws-context'
 import { SyncProvider } from './lib/sync-context'
 import { OnboardingProvider } from './lib/onboarding-context'
-import { FEATURE_TEAMS } from './lib/flags'
+import { FEATURE_TEAMS, FEATURE_ONBOARDING_DOCUMENT } from './lib/flags'
 import { isOfficeLabsEnabled, OFFICE_ROUTE_MARKER } from './lib/office/office-labs'
 import { ToastProvider, useToast } from './components/toast'
 import { ErrorBoundary } from './components/error-boundary'
@@ -84,6 +84,21 @@ const JoinPage       = lazyNamed(() => import('./pages/join'),            'JoinP
 // and Rollup tree-shakes both the import and the chunk out of `bun run build`.
 const DevOfficePreview = import.meta.env.DEV
   ? lazyNamed(() => import('./pages/dev-office-preview'), 'DevOfficePreview')
+  : null
+// Task 1745: document-driven signup + account view. Behind
+// FEATURE_ONBOARDING_DOCUMENT (default off), so the flag-off build has no route
+// to them and `/signup` is the legacy page unchanged. Both fall back to the
+// legacy page on a 404 / network failure / malformed document (spec 5.8 rule 6).
+const SignupFromDocument = FEATURE_ONBOARDING_DOCUMENT
+  ? lazyNamed(() => import('./pages/onboarding-document'), 'SignupFromDocument')
+  : null
+const AccountStatusFromDocument = FEATURE_ONBOARDING_DOCUMENT
+  ? lazyNamed(() => import('./pages/onboarding-document'), 'AccountStatusFromDocument')
+  : null
+// Dev-only fixture harness for the onboarding renderer (task 1745). Same
+// `import.meta.env.DEV` gating as DevOfficePreview: absent from `bun run build`.
+const DevOnboardingFixtures = import.meta.env.DEV
+  ? lazyNamed(() => import('./pages/dev-onboarding-fixtures'), 'DevOnboardingFixtures')
   : null
 const NotFound       = lazyNamed(() => import('./pages/errors/not-found'),   'NotFound')
 const Logout         = lazyNamed(() => import('./pages/logout'),             'Logout')
@@ -497,7 +512,7 @@ export function App() {
             path="/signup"
             element={
               <GuestRoute>
-                <Signup />
+                {SignupFromDocument ? <SignupFromDocument /> : <Signup />}
               </GuestRoute>
             }
           />
@@ -785,6 +800,18 @@ export function App() {
           <Route path="/500" element={<ServerError />} />
           {/* Dev-only: task 1567 office loading-skeleton harness. Not present in prod. */}
           {DevOfficePreview && <Route path="/dev/office-preview" element={<DevOfficePreview />} />}
+          {/* Dev-only: task 1745 onboarding fixture harness. Not present in prod. */}
+          {DevOnboardingFixtures && <Route path="/dev/onboarding/:fixture" element={<DevOnboardingFixtures />} />}
+          {AccountStatusFromDocument && (
+            <Route
+              path="/account-status"
+              element={
+                <ProtectedRoute>
+                  <AccountStatusFromDocument />
+                </ProtectedRoute>
+              }
+            />
+          )}
           <Route path="*" element={<NotFound />} />
         </Routes>
         </Suspense>
