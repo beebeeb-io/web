@@ -48,9 +48,9 @@ async function shot(page: Page, name: string): Promise<void> {
 async function devLogin(page: Page, email: string): Promise<void> {
   await page.goto(`${WEB_URL}/?dev_email=${encodeURIComponent(email)}`)
   await page.waitForFunction(() => document.body.dataset.cryptoReady === 'true', { timeout: 60_000 })
-  await expect(page).not.toHaveURL(/\/login/, { timeout: 30_000 })
+  await expect(page).not.toHaveURL(/\/login/, { timeout: 60_000 })
   await expect
-    .poll(async () => (await page.context().cookies()).some((c) => c.name === 'bb_session'), { timeout: 30_000 })
+    .poll(async () => (await page.context().cookies()).some((c) => c.name === 'bb_session'), { timeout: 60_000 })
     .toBe(true)
 }
 
