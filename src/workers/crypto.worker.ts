@@ -35,6 +35,60 @@ let nextEncryptorHandle = 1
 const liveSearchIndexes = new Map<number, WasmTypes.WasmSearchIndex>()
 let nextSearchIndexHandle = 1
 
+
+// ── Worker-owned signup-ceremony + breach-check registries (task 1745) ──────
+// `WasmSignupCeremony` / `WasmBreachCheck` hold the password, the recovery
+// phrase and the master key in zeroizing WASM buffers. Like the encryptor they
+// are pointers into THIS worker's linear memory and never cross Comlink; the
+// main thread addresses them by opaque handle (`crypto.ts` `CeremonyProxy`).
+// A wasm-bindgen `Error` carries its stable `code` as an own property, which
+// Comlink's error serialiser drops, so every ceremony call returns a
+// `CeremonyResult` instead of throwing across the boundary.
+const liveCeremonies = new Map<number, WasmTypes.WasmSignupCeremony>()
+const liveBreachChecks = new Map<number, WasmTypes.WasmBreachCheck>()
+let nextCeremonyHandle = 1
+let nextBreachHandle = 1
+
+export type CeremonyResult<T = unknown> =
+  | { ok: true; value: T }
+  | { ok: false; code: string; message: string }
+
+function ceremonyResult<T>(fn: () => T): CeremonyResult<T> {
+  try {
+    return { ok: true, value: fn() }
+  } catch (err) {
+    const e = err as { code?: unknown; message?: unknown }
+    return {
+      ok: false,
+      code: typeof e?.code === 'string' ? e.code : 'unknown',
+      message: typeof e?.message === 'string' ? e.message : 'ceremony call failed',
+    }
+  }
+}
+
+/** Every ceremony call the renderer makes, with its argument and result types. */
+export type CeremonyOps = {
+  emailVerified: { args: []; result: null }
+  emailChanged: { args: []; result: null }
+  emailTicketInvalidated: { args: []; result: null }
+  /** `breachHandle` is null only for a document that declares no breach check. */
+  setPassword: { args: [password: string, confirmation: string, breachHandle: number | null]; result: unknown }
+  beginPhrase: { args: []; result: null }
+  phrase: { args: []; result: string }
+  acknowledgePhrase: { args: []; result: null }
+  challengePositions: { args: []; result: number[] }
+  confirmPhrase: { args: [answers: string[]]; result: null }
+  startRegistration: { args: []; result: Uint8Array }
+  finishRegistration: {
+    args: [serverMessage: Uint8Array]
+    result: { upload: Uint8Array; x25519_public: Uint8Array; recovery_check: Uint8Array }
+  }
+  registrationFailed: { args: []; result: null }
+  accountCreated: { args: []; result: Uint8Array }
+  step: { args: []; result: { step: string; spec_step_id: string } }
+  abandon: { args: []; result: null }
+}
+
 /** An encrypted shard page as core produces / consumes it. */
 interface EncryptedShardJs {
   bucket: number
@@ -565,6 +619,137 @@ const cryptoWorker = {
       }
       liveSearchIndexes.delete(handle)
     }
+  },
+
+  // ─── Signup ceremony (task 1745; core onboarding module, 1744) ───────────
+  // Thin pass-throughs. The password policy, the breach gate, the step order
+  // and the OPAQUE exchange all live in beebeeb-core; nothing is re-implemented
+  // here. `abandon`/`ceremonyDispose` must run on back, cancel and error exits
+  // (core review M3): freeing on the JS finalizer's schedule is too late.
+
+  /** Stateless advisory evaluation (meter, hint). Contains no part of the password. */
+  async evaluatePassword(password: string, minLength: number): Promise<CeremonyResult<unknown>> {
+    const wasm = await ensureWasm()
+    return ceremonyResult(() => wasm.evaluate_password(password, minLength))
+  },
+
+  async ceremonyNew(
+    minLength: number,
+    emailVerificationRequired: boolean,
+    verifyWordCount: number,
+    breachCheckRequired: boolean,
+    breachFailOpen: boolean,
+  ): Promise<number> {
+    const wasm = await ensureWasm()
+    const c = new wasm.WasmSignupCeremony(
+      minLength,
+      emailVerificationRequired,
+      verifyWordCount,
+      breachCheckRequired,
+      breachFailOpen,
+    )
+    const handle = nextCeremonyHandle++
+    liveCeremonies.set(handle, c)
+    return handle
+  },
+
+  ceremonyCall<K extends keyof CeremonyOps>(
+    handle: number,
+    op: K,
+    args: CeremonyOps[K]['args'],
+  ): CeremonyResult<CeremonyOps[K]['result']> {
+    const c = liveCeremonies.get(handle)
+    if (!c) return { ok: false, code: 'ceremony_gone', message: 'ceremony was disposed' }
+    return ceremonyResult(() => {
+      const a = args as unknown[]
+      switch (op) {
+        case 'emailVerified': c.emailVerified(); return null
+        case 'emailChanged': c.emailChanged(); return null
+        case 'emailTicketInvalidated': c.emailTicketInvalidated(); return null
+        case 'setPassword': {
+          const [password, confirmation, breachHandle] = a as [string, string, number | null]
+          if (breachHandle === null) return c.setPasswordUnchecked(password, confirmation)
+          const b = liveBreachChecks.get(breachHandle)
+          if (!b) {
+            const err = new Error('breach check was disposed') as Error & { code: string }
+            err.code = 'breach_check_missing'
+            throw err
+          }
+          return c.setPassword(password, confirmation, b)
+        }
+        case 'beginPhrase': c.beginPhrase(); return null
+        case 'phrase': return c.phrase()
+        case 'acknowledgePhrase': c.acknowledgePhrase(); return null
+        case 'challengePositions': return Array.from(c.challengePositions())
+        case 'confirmPhrase': c.confirmPhrase(a[0] as string[]); return null
+        case 'startRegistration': return c.startRegistration()
+        case 'finishRegistration': return c.finishRegistration(a[0] as Uint8Array)
+        case 'registrationFailed': c.registrationFailed(); return null
+        case 'accountCreated': return c.accountCreated()
+        case 'step': return c.step()
+        case 'abandon': c.abandon(); return null
+        default: {
+          const err = new Error(`unknown ceremony op ${String(op)}`) as Error & { code: string }
+          err.code = 'unknown_op'
+          throw err
+        }
+      }
+    }) as CeremonyResult<CeremonyOps[K]['result']>
+  },
+
+  /** Wipe, free and forget a ceremony. Idempotent; never throws. */
+  ceremonyDispose(handle: number): void {
+    const c = liveCeremonies.get(handle)
+    if (!c) return
+    try {
+      c.abandon()
+    } catch {
+      /* already wiped */
+    }
+    try {
+      c.free()
+    } catch {
+      /* already freed */
+    }
+    liveCeremonies.delete(handle)
+  },
+
+  /** How many ceremonies are live (parallels liveEncryptorCount). */
+  liveCeremonyCount(): number {
+    return liveCeremonies.size
+  },
+
+  /** A breach check bound to ONE password. Returns the handle and the 5-char prefix to send. */
+  async breachCheckNew(password: string): Promise<{ handle: number; prefix: string }> {
+    const wasm = await ensureWasm()
+    const b = new wasm.WasmBreachCheck(password)
+    const handle = nextBreachHandle++
+    liveBreachChecks.set(handle, b)
+    return { handle, prefix: b.prefix }
+  },
+
+  /** Record the endpoint's answer (`null` = request failed) and return the display verdict. */
+  breachCheckEvaluate(
+    handle: number,
+    body: string | null,
+    failOpen: boolean,
+  ): CeremonyResult<{ kind: string; count: number; allows_proceeding: boolean; check_failed: boolean }> {
+    const b = liveBreachChecks.get(handle)
+    if (!b) return { ok: false, code: 'breach_check_missing', message: 'breach check was disposed' }
+    return ceremonyResult(
+      () => b.evaluate(body, failOpen) as { kind: string; count: number; allows_proceeding: boolean; check_failed: boolean },
+    )
+  },
+
+  breachCheckDispose(handle: number): void {
+    const b = liveBreachChecks.get(handle)
+    if (!b) return
+    try {
+      b.free()
+    } catch {
+      /* already freed */
+    }
+    liveBreachChecks.delete(handle)
   },
 
   /** How many search indexes are live (parallels liveEncryptorCount). */

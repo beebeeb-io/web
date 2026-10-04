@@ -54,6 +54,9 @@ export const NEEDS_PLAN_ALLOWED_PATHS: readonly string[] = [
   // `bb login --browser` (CLI device auth) — the CLI never creates accounts,
   // but a needs_plan account must still be able to sign the CLI in.
   '/cli-auth',
+  // Task 1745: the document-driven account view (route exists only behind
+  // FEATURE_ONBOARDING_DOCUMENT); it is where a needs_plan account sees why.
+  '/account-status',
 ]
 
 /**
