@@ -32,7 +32,7 @@ async function blockDevAutoLogin(page: Page) {
  * WebSocket handshake (`GET /api/v1/auth/cli`, task 0179) — an ephemeral
  * P-256 ECDH keypair, same as `bb login --browser` would generate. Needed
  * (task 1437) so the spec can assert the "Authorize CLI access" prompt
- * actually renders, not just that the URL holds — a fabricated code 404s at
+ * actually renders (since task 1734: the type-the-code screen), not just that the URL holds — a fabricated code 404s at
  * the `cli-pubkey` fetch and never reaches the prompt regardless of the
  * redirect-race fix. The server stores the pubkey (Redis, or the in-process
  * `LOCAL_SESSIONS` map in dev without Redis) independent of the WS staying
@@ -235,7 +235,10 @@ test.describe('CLI auth — redirect preservation (0551)', () => {
       await page.waitForTimeout(100)
     }
 
-    await expect(page.getByRole('button', { name: /authorize cli access/i })).toBeVisible()
+    // Task 1734: the page after the bounce is the type-the-code screen (the code
+    // in the link is ignored on purpose), and it must NOT offer an approve button.
+    await expect(page.getByLabel('Code from your device')).toBeVisible()
+    await expect(page.getByRole('button', { name: /approve|authorize/i })).toHaveCount(0)
 
     await freshCtx.close()
   })
