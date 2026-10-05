@@ -104,7 +104,7 @@ describe('forward compatibility (rule 3 and 4)', () => {
     expect(s.kind).toBe('fallback')
     if (s.kind === 'fallback') {
       expect(s.stepId).toBe('confirm_phone_number')
-      expect(s.fallback).toEqual({ kind: 'use_web', url: 'https://beebeeb.io/signup' })
+      expect(s.fallback).toEqual({ kind: 'use_web', url: 'https://app.beebeeb.io/signup' })
     }
   })
 

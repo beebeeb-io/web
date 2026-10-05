@@ -12,7 +12,7 @@
     "allowed": false,
     "mode": "web_only",
     "reason": "update_required",
-    "web_url": "https://beebeeb.io/signup"
+    "web_url": "https://app.beebeeb.io/signup"
   },
   "policy": {
     "password": {
@@ -27,7 +27,7 @@
       "verify_word_count": 3
     },
     "terms": {
-      "version": "2026-10-01",
+      "version": "2026-09-29",
       "url": "https://beebeeb.io/terms",
       "privacy_url": "https://beebeeb.io/privacy"
     },
@@ -64,7 +64,7 @@
       "required": true,
       "ui": "action",
       "params": {
-        "version": "2026-10-01"
+        "version": "2026-09-29"
       }
     },
     {
