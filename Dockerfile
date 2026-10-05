@@ -52,6 +52,13 @@ ENV VITE_API_URL=$VITE_API_URL
 ARG VITE_FEATURE_OFFICE_EDITOR=false
 ENV VITE_FEATURE_OFFICE_EDITOR=$VITE_FEATURE_OFFICE_EDITOR
 
+# Document-rendered onboarding flag (task 1745, src/lib/flags.ts's
+# FEATURE_ONBOARDING_DOCUMENT) — build-time inlined like the flags above, so an
+# undeclared --build-arg is silently ignored. Default off (the flag-off build
+# carries no onboarding-document route); set by `make prod-build-web ONBOARDING=1`.
+ARG VITE_FEATURE_ONBOARDING_DOCUMENT=false
+ENV VITE_FEATURE_ONBOARDING_DOCUMENT=$VITE_FEATURE_ONBOARDING_DOCUMENT
+
 # Error-reporting DSN (task 1369) — same "inlined at build time" story as
 # VITE_API_URL above. No default: an empty/unset value keeps the shared
 # telemetry reporter (`@beebeeb/shared/telemetry`) a no-op (see
