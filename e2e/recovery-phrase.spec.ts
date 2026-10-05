@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { PILOT_KEY } from './helpers/signup'
+import { signupAndUnlock, uniqueEmail } from './helpers/signup'
 
 /**
  * E2E test for the recovery phrase password reset flow.
@@ -9,24 +9,21 @@ import { PILOT_KEY } from './helpers/signup'
  * server only returns `recovery_token`.
  *
  * Runs on the isolated e2e harness (task 1466): `./e2e/scripts/web-e2e.sh
- * e2e/recovery-phrase.spec.ts` — no manual env overrides needed. This spec
- * calls POST /api/v1/auth/signup directly (not through the /signup UI), so
- * it must present the pilot-key gate's `X-Beebeeb-Pilot-Key` header itself —
- * PILOT_KEY from the shared helper is kept in lockstep with the harness's
- * BB_PILOT_SIGNUP_KEY (single source of truth).
+ * e2e/recovery-phrase.spec.ts` — no manual env overrides needed.
+ *
+ * Task 1799: the account is created through the real signup UI (OPAQUE
+ * register, recovery phrase + `recovery_check`), not the retired legacy
+ * password signup route. Because the account is real, the wrong phrase is
+ * now rejected by the recovery_check comparison — the same user-facing error
+ * the legacy account (which had no recovery_check) produced.
  */
 
-// API origin for direct signup calls. Under the isolated e2e harness this is the
-// dedicated :3003 backend (E2E_API_URL); falls back to the dev :3001 API. Force
-// 127.0.0.1 (not localhost) — the API binds IPv4 and Playwright's apiRequestContext
-// resolves ::1 first, which the IPv4-only dev API refuses (task 0763).
-const API = (process.env.E2E_API_URL ?? 'http://127.0.0.1:3001').replace('://localhost', '://127.0.0.1')
-
 test.describe('Recovery phrase password reset', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, context }) => {
     // Block the dev auto-login endpoint so we see the real auth pages
     await page.route('**/dev/auto-login', (route) => route.abort())
-    // Clear any existing auth state
+    // Clear any existing auth state (cookie session included, task 1799)
+    await context.clearCookies()
     await page.goto('/login')
     await page.evaluate(() => {
       localStorage.clear()
@@ -37,15 +34,15 @@ test.describe('Recovery phrase password reset', () => {
   test('recovery page loads and shows proper error for invalid phrase (not "Session expired")', async ({ page }) => {
     test.setTimeout(60_000)
 
-    // Create a test account via API so the email exists. The pilot-key gate
-    // (BB_REQUIRE_PILOT_KEY, on by default on the isolated harness) is
-    // enforced on this endpoint too (pilot_gate.rs), so present the header.
-    const email = `e2e-recover-${Date.now()}@beebeeb.io`
-    const signupResp = await page.request.post(`${API}/api/v1/auth/signup`, {
-      data: { email, password: 'TestPassword2026!' },
-      headers: { 'X-Beebeeb-Pilot-Key': PILOT_KEY },
+    // Create a real account through the signup UI so the email exists, then
+    // drop the session so /recover-with-phrase is reached signed out.
+    const email = uniqueEmail('e2e-recover')
+    await signupAndUnlock(page, { email, password: 'TestPassword2026!' })
+    await page.context().clearCookies()
+    await page.evaluate(() => {
+      localStorage.clear()
+      sessionStorage.clear()
     })
-    expect(signupResp.ok()).toBeTruthy()
 
     // Navigate to recovery page
     await page.goto('/recover-with-phrase')
@@ -79,8 +76,8 @@ test.describe('Recovery phrase password reset', () => {
     const bodyText = await page.locator('body').textContent() ?? ''
     expect(bodyText.toLowerCase()).not.toContain('session expired')
 
-    // We should see a proper error about the phrase being wrong (account was
-    // created via legacy signup, has no recovery_check). Current copy is
+    // We should see a proper error about the phrase being wrong (the account's
+    // recovery_check does not match the phrase submitted). Current copy is
     // "The recovery phrase doesn't match this account." — match the contraction
     // ("doesn't") as well as the older "does not" wording (task 0763).
     const hasProperError = /does ?n.t match|doesn't match|invalid|incorrect|wrong|failed|try again/i.test(bodyText)

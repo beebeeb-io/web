@@ -168,7 +168,6 @@ async function renderProtectedRoute(opts: { email?: string; adminId?: string; im
       refreshUser: async () => {},
       logout: async () => {},
       login: async () => ({}),
-      signup: async () => ({}),
       verify2fa: async () => ({}),
     }),
   }))

@@ -31,8 +31,8 @@ import { REFERRAL_CODE_KEY, REFERRAL_SHARER_KEY, REFERRAL_SOURCE_KEY, Signup } f
  * What T8 (the remaining part of this task's epic step) removes once the
  * endpoint is live: the legacy `Signup` / `Onboarding` pages, `TRIAL_PLAN_SLUGS`
  * (`trial-checkout.ts`), `INTENT_PLANS` (`plan-intent.ts`) and the charge-date
- * maths, `planGateRedirect`, and the legacy `/auth/signup` caller (`api.ts`
- * `signup()`). None of them is touched here.
+ * maths, `planGateRedirect`. None of them is touched here. (The legacy
+ * password signup caller, `api.ts` `signup()`, was already removed in task 1799.)
  */
 
 function Loading() {

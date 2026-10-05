@@ -38,7 +38,6 @@ import type {
   ActivityResponse,
   AdminStats,
   AuditEvent,
-  AuthSessionResponse,
   AuthUser,
   BillingUsage,
   CreateBundleShareRequest,
@@ -79,7 +78,6 @@ import type {
   ShareStats,
   ShareView,
   SharedFileDownload,
-  SignupResult,
   StorageUsage,
   StreamTokenResponse,
   SubmittedSyncOp,
@@ -235,7 +233,6 @@ export type {
   ShareStats,
   ShareView,
   SharedFileDownload,
-  SignupResult,
   StorageUsage,
   StreamTokenResponse,
   SubmittedSyncOp,
@@ -263,21 +260,9 @@ export type { ActivityEncryptedNameSnapshot } from '@beebeeb/shared'
 // Task 1037 — `GET /billing/subscription` → `account_state`.
 export type { AccountState } from '@beebeeb/shared'
 
-// DEPRECATED: legacy JSON-password signup bypasses OPAQUE. It still has an
-// active caller in auth-context and must be removed when signup migrates fully
-// to the OPAQUE register flow.
-export async function signup(
-  email: string,
-  password: string,
-): Promise<SignupResult> {
-  const data = await request<AuthSessionResponse>('/api/v1/auth/signup', {
-    method: 'POST',
-    body: JSON.stringify({ email, password }),
-  })
-  setToken(data.session_token)
-  setEmail(email)
-  return data
-}
+// Task 1799: the legacy JSON-password signup caller was removed.
+// Account creation is the OPAQUE register flow below, gated by the signup
+// ticket (task 1738) when `BB_SIGNUP_EMAIL_CODE` is on.
 
 // ─── OPAQUE auth endpoints ─────────────────────────
 
