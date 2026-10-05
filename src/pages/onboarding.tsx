@@ -15,7 +15,7 @@ import {
 } from '../lib/api'
 import { REFERRAL_SOURCE_KEY, REFERRAL_SHARER_KEY, REFERRAL_CODE_KEY } from './signup'
 import { readPlanIntent, postSignupDestination } from '../lib/plan-intent'
-import { generateRecoveryKitPDF } from '../lib/recovery-kit-pdf'
+import { RecoveryPhraseExport } from '../components/recovery-phrase-export'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
 import {
@@ -374,37 +374,7 @@ export function Onboarding() {
                           ))}
                         </div>
                       </div>
-                      <div className="flex flex-wrap gap-2">
-                        <BBButton size="sm" onClick={async () => {
-                          await navigator.clipboard.writeText(phrase)
-                          // Auto-clear clipboard after 60s to limit exposure of the recovery phrase
-                          setTimeout(() => { navigator.clipboard.writeText('').catch(() => {}) }, 60000)
-                        }}>
-                          <Icon name="copy" size={14} className="mr-1.5" /> Copy
-                        </BBButton>
-                        <BBButton size="sm" onClick={() => {
-                          const blob = new Blob(
-                            [words.map((w, i) => `${String(i + 1).padStart(2, '0')}  ${w}`).join('\n')],
-                            { type: 'text/plain' },
-                          )
-                          const url = URL.createObjectURL(blob)
-                          const a = document.createElement('a')
-                          a.href = url
-                          a.download = 'beebeeb-recovery-phrase.txt'
-                          a.click()
-                          URL.revokeObjectURL(url)
-                        }}>
-                          <Icon name="download" size={14} className="mr-1.5" /> Download .txt
-                        </BBButton>
-                        <BBButton
-                          size="sm"
-                          variant="amber"
-                          onClick={() => generateRecoveryKitPDF(phrase, email)}
-                          title="Opens a print-ready page — choose 'Save as PDF' in the print dialog"
-                        >
-                          <Icon name="file-text" size={14} className="mr-1.5" /> Recovery Kit PDF
-                        </BBButton>
-                      </div>
+                      <RecoveryPhraseExport words={words} email={email} />
 
                       {/* Mobile-only continue CTA. On md+ the same CTA appears
                           in the right panel (along with the "I've saved it"
