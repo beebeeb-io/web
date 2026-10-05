@@ -142,7 +142,7 @@ describe('what the screens say (fixtures B to E, spec 5.4)', () => {
     const m = html('forward_compat.unknown_step.ios.json', ['enter_email', 'verify_email_code'])
     expect(screenOf(m)).toBe('fallback')
     expect(m).toContain('confirm_phone_number')
-    expect(m).toContain('href="https://beebeeb.io/signup"')
+    expect(m).toContain('href="https://app.beebeeb.io/signup"')
   })
 
   test('the pre-account first screen carries the server region line, not a hard-coded one', () => {

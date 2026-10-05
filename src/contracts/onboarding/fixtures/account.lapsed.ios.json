@@ -26,7 +26,7 @@
       "used_bytes": 120000000000
     },
     "lifecycle": {
-      "read_only_since": "2026-11-01T09:00:00Z",
+      "read_only_since": null,
       "data_deletion_at": "2026-12-01T09:00:00Z",
       "reason": "account_lapsed"
     }

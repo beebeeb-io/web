@@ -24,6 +24,11 @@
     "storage": {
       "quota_bytes": 25000000000,
       "used_bytes": 3000000000
+    },
+    "lifecycle": {
+      "data_deletion_at": "2026-11-01T09:00:00Z",
+      "read_only_since": "2026-10-06T09:00:00Z",
+      "reason": "trial_cancelled_read_only"
     }
   },
   "purchase": {
@@ -31,8 +36,10 @@
     "cta_allowed": true,
     "price_visibility": "full",
     "methods": [
-      "creditcard",
-      "ideal"
+      "banktransfer",
+      "directdebit",
+      "ideal",
+      "paypal"
     ]
   },
   "steps": [],

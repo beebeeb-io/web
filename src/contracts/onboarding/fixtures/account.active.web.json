@@ -29,8 +29,10 @@
     "cta_allowed": true,
     "price_visibility": "full",
     "methods": [
-      "creditcard",
-      "ideal"
+      "banktransfer",
+      "directdebit",
+      "ideal",
+      "paypal"
     ]
   },
   "steps": [],

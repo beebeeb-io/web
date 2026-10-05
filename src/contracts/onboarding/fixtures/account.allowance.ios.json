@@ -37,19 +37,6 @@
       "plans_managed_on_web": "Plans are managed from your account on the web."
     }
   },
-  "steps": [
-    {
-      "id": "verify_email",
-      "status": "done",
-      "required": true,
-      "ui": "action"
-    },
-    {
-      "id": "accept_terms",
-      "status": "done",
-      "required": true,
-      "ui": "action"
-    }
-  ],
+  "steps": [],
   "blocking": false
 }
