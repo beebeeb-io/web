@@ -167,3 +167,101 @@ describe('409 password_set_sign_in_required (task 1803)', () => {
     expect(SIGN_IN_REQUIRED_MESSAGE).toBe('Your new password is set. Sign in to continue.')
   })
 })
+
+describe('the reset 2FA step never trips the global session-expiry handler (task 1803 round 2, Codex P2)', () => {
+  // A signed-in user whose vault is locked can start a reset: getMe() has
+  // already marked the page load session-confirmed. Finalize then deletes every
+  // old session, so the first WRONG code at /auth/2fa/verify is an EXPECTED 401
+  // that must reach the step (which shows the retry message), not bounce the
+  // person to /login via the shared request client.
+  const WRONG_CODE_401 = { error: 'Invalid or expired code' }
+  const body409 = { error: 'password_set_sign_in_required', message: 'Your password was changed.' }
+
+  async function armSignedInPage() {
+    const shared = await import('@beebeeb/shared')
+    let expired = 0
+    shared.registerSessionExpiredHandler(() => {
+      expired += 1
+    })
+    shared.markSessionConfirmed() // what getMe() did for the signed-in, locked-vault page
+    shared.setToken('legacy-bearer-of-the-old-session')
+    return { shared, expiredCount: () => expired }
+  }
+
+  afterEach(async () => {
+    const shared = await import('@beebeeb/shared')
+    shared.clearSessionConfirmed()
+    shared.registerSessionExpiredHandler(() => {})
+  })
+
+  test('setPasswordFinalize challenge -> wrong code is a plain 401 for the step, handler not fired', async () => {
+    const { setPasswordFinalize, verify2fa, ApiError } = await import('../src/lib/api')
+    const { expiredCount } = await armSignedInPage()
+    globalThis.fetch = capturingFetch([], (url) =>
+      url.includes('/2fa/verify') ? { status: 401, body: WRONG_CODE_401 } : { status: 200, body: CHALLENGE },
+    )
+    const res = await setPasswordFinalize('tok', 'upload')
+    expect(res.requires_2fa).toBe(true)
+    let caught: unknown = null
+    try {
+      await verify2fa('partial-abc', '000000')
+    } catch (e) {
+      caught = e
+    }
+    expect(caught).toBeInstanceOf(ApiError)
+    expect((caught as InstanceType<typeof ApiError>).status).toBe(401)
+    expect((caught as Error).message).not.toBe('Session expired')
+    expect(expiredCount()).toBe(0)
+    expect(localStorage.getItem('bb_session')).toBe(null)
+  })
+
+  test('recoverWithPhraseFinalize challenge -> wrong code, handler not fired', async () => {
+    const { recoverWithPhraseFinalize, verify2fa } = await import('../src/lib/api')
+    const { expiredCount } = await armSignedInPage()
+    globalThis.fetch = capturingFetch([], (url) =>
+      url.includes('/2fa/verify')
+        ? { status: 401, body: WRONG_CODE_401 }
+        : { status: 200, body: { user_id: UID, requires_2fa: true, partial_token: 'partial-xyz' } },
+    )
+    const res = await recoverWithPhraseFinalize('rec', 'upload', 'check', 'pub')
+    expect(res.requires_2fa).toBe(true)
+    await expect(verify2fa('partial-xyz', '000000')).rejects.toThrow(/Invalid or expired code/)
+    expect(expiredCount()).toBe(0)
+  })
+
+  test('409 password_set_sign_in_required also ends the obsolete session state', async () => {
+    const { setPasswordFinalize, getMe } = await import('../src/lib/api')
+    const { expiredCount } = await armSignedInPage()
+    globalThis.fetch = capturingFetch([], (url) =>
+      url.includes('/set-password-finish') ? { status: 409, body: body409 } : { status: 401, body: { error: 'nope' } },
+    )
+    await expect(setPasswordFinalize('tok', 'upload')).rejects.toThrow()
+    expect(localStorage.getItem('bb_session')).toBe(null)
+    // Any later 401 on this page is an anonymous one, not "your session expired".
+    let laterErr: unknown = null
+    try {
+      await getMe()
+    } catch (e) {
+      laterErr = e
+    }
+    expect(laterErr).not.toBeNull()
+    expect((laterErr as Error).message).not.toBe('Session expired')
+    expect(expiredCount()).toBe(0)
+  })
+
+  test('control: without a reset challenge a confirmed-session 401 STILL fires the handler', async () => {
+    const { verify2fa } = await import('../src/lib/api')
+    const { expiredCount } = await armSignedInPage()
+    globalThis.fetch = capturingFetch([], () => ({ status: 401, body: WRONG_CODE_401 }))
+    await expect(verify2fa('partial', '000000')).rejects.toThrow(/Session expired/)
+    expect(expiredCount()).toBe(1)
+  })
+
+  test('control: a non-2FA finalize keeps the fresh session (nothing is cleared)', async () => {
+    const { setPasswordFinalize } = await import('../src/lib/api')
+    await armSignedInPage()
+    globalThis.fetch = capturingFetch([], () => ({ status: 200, body: SESSION }))
+    await setPasswordFinalize('tok', 'upload')
+    expect(localStorage.getItem('bb_session')).toBe('fresh-session')
+  })
+})
