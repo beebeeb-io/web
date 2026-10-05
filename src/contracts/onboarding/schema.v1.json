@@ -136,10 +136,11 @@
       }
     },
     {
-      "$comment": "4b.8: blocking is false for allowance, trialing_no_card, trial_ended; true for needs_plan (4.5 full-screen explanation).",
+      "$comment": "4b.8: blocking is false for allowance, trialing_no_card, trial_ended while no required step is outstanding (task 1740: an unaccepted accept_terms is one, and 5.3 says a required unfinished step blocks); true for needs_plan (4.5 full-screen explanation).",
       "if": {
         "required": [
-          "account"
+          "account",
+          "steps"
         ],
         "properties": {
           "account": {
@@ -155,6 +156,26 @@
                 ]
               }
             }
+          },
+          "steps": {
+            "not": {
+              "contains": {
+                "required": [
+                  "required",
+                  "status"
+                ],
+                "properties": {
+                  "required": {
+                    "const": true
+                  },
+                  "status": {
+                    "not": {
+                      "const": "done"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       },
@@ -162,6 +183,44 @@
         "properties": {
           "blocking": {
             "const": false
+          }
+        }
+      }
+    },
+    {
+      "$comment": "5.3 inverse of 4b.8 (task 1740 round 2, security review P2): a document with a required step that is not done MUST be blocking:true, in every account state. Without this a server bug or a hand-built document could carry an outstanding accept_terms (or any required step) with blocking:false and a client would let the person through.",
+      "if": {
+        "required": [
+          "steps"
+        ],
+        "properties": {
+          "steps": {
+            "contains": {
+              "required": [
+                "required",
+                "status"
+              ],
+              "properties": {
+                "required": {
+                  "const": true
+                },
+                "status": {
+                  "not": {
+                    "const": "done"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "blocking"
+        ],
+        "properties": {
+          "blocking": {
+            "const": true
           }
         }
       }
