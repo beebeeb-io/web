@@ -150,13 +150,21 @@ describe('recover-with-phrase.tsx also clears the stale bearer (1553 sweep)', ()
     const importBlock = src.slice(0, src.indexOf('\n\n', src.indexOf('from \'../lib/api\'')))
     expect(importBlock).toMatch(/\bclearLegacyBearer\b/)
 
+    // Task 1803: the post-finalize steps moved into `finishWithSession`, which
+    // BOTH the direct path and the 2FA path (after /auth/2fa/verify) call once
+    // the server has opened a session. The invariant is unchanged: the bearer
+    // is dropped before the vault re-wrap.
     const finalizeCallIdx = src.indexOf('const finalizeResult = await recoverWithPhraseFinalize(')
     expect(finalizeCallIdx).toBeGreaterThan(-1)
-    const wrapIdx = src.indexOf('setMasterKey(derivedMasterKey', finalizeCallIdx)
-    expect(wrapIdx).toBeGreaterThan(finalizeCallIdx)
-    const between = src.slice(finalizeCallIdx, wrapIdx)
+    const sessionFnIdx = src.indexOf('const finishWithSession = useCallback(')
+    expect(sessionFnIdx).toBeGreaterThan(-1)
+    const wrapIdx = src.indexOf('setMasterKey(derivedMasterKey', sessionFnIdx)
+    expect(wrapIdx).toBeGreaterThan(sessionFnIdx)
+    const between = src.slice(sessionFnIdx, wrapIdx)
     expect(callsBareStatement(between, 'clearLegacyBearer')).toBe(true)
     expect(callsBareStatement(between, 'clearToken')).toBe(false)
+    // ...and the direct (no-2FA) path still reaches it straight after finalize.
+    expect(src.indexOf('await finishWithSession(finalizeResult.user_id)', finalizeCallIdx)).toBeGreaterThan(finalizeCallIdx)
   })
 
   test('review-round-2 finding: recoverWithPhraseFinalize never sets bb_email itself, so recover-with-phrase.tsx now stamps it explicitly with the recovered account\'s own email', () => {
@@ -164,9 +172,12 @@ describe('recover-with-phrase.tsx also clears the stale bearer (1553 sweep)', ()
     const importBlock = src.slice(0, src.indexOf('\n\n', src.indexOf('from \'../lib/api\'')))
     expect(importBlock).toMatch(/\bsetEmail as setStoredEmail\b/)
 
-    const finalizeCallIdx = src.indexOf('const finalizeResult = await recoverWithPhraseFinalize(')
-    const wrapIdx = src.indexOf('setMasterKey(derivedMasterKey', finalizeCallIdx)
-    const between = src.slice(finalizeCallIdx, wrapIdx)
+    // Task 1803: stamped inside `finishWithSession` (both the direct and the
+    // 2FA path run it) — still before the vault re-wrap.
+    const sessionFnIdx = src.indexOf('const finishWithSession = useCallback(')
+    expect(sessionFnIdx).toBeGreaterThan(-1)
+    const wrapIdx = src.indexOf('setMasterKey(derivedMasterKey', sessionFnIdx)
+    const between = src.slice(sessionFnIdx, wrapIdx)
     expect(between).toContain('setStoredEmail(email')
     // Must be stamped BEFORE the redundant localStorage token is dropped —
     // order doesn't change behavior here (clearLegacyBearer never touches

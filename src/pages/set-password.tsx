@@ -13,6 +13,14 @@
  *      bindings untouched (an email-only reset NEVER rotates them), deletes
  *      ALL sessions, and mints a fresh session for this device.
  *
+ * Task 1803 (server 1730, Guus ruling A): a reset NEVER bypasses 2FA. The
+ * finalize call declares `X-Beebeeb-Capabilities: reset-2fa`; for an account
+ * with 2FA the server then answers `{requires_2fa, partial_token}` with NO
+ * session, and this page shows the sign-in 2FA code step and finishes through
+ * /auth/2fa/verify. A 409 `password_set_sign_in_required` (the credential was
+ * rotated but this page could not finish the 2FA step) says so plainly and
+ * links to /login.
+ *
  * HONEST COPY (the governing amendment, decisions/2026-10-02-…-policy.md):
  * setting a new password restores ACCOUNT access; the VAULT stays locked
  * until the user re-enters their recovery phrase or vault key — which then
@@ -34,17 +42,19 @@ import { type FormEvent, useCallback, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { AuthShell } from '../components/auth-shell'
 import { BBButton, BBInput, Icon } from '@beebeeb/shared'
+import { ResetSignInRequired, ResetTwoFactorStep } from '../components/reset-two-factor-step'
 import {
   setPasswordOpaqueRegister,
   setPasswordFinalize,
   ApiError,
   clearLegacyBearer,
 } from '../lib/api'
+import { isPasswordSetSignInRequired } from '../lib/reset-2fa'
 import { opaqueRegistrationStart, opaqueRegistrationFinish, toBase64 } from '../lib/crypto'
 import { markPasswordResetCompleted } from '../lib/post-reset-lock'
 import { useAuth } from '../lib/auth-context'
 
-type Step = 'form' | 'success'
+type Step = 'form' | 'two-factor' | 'sign-in-required' | 'success'
 
 /** Pure password validation shared with the harness tests (no React). */
 export function validateSetPasswordInput(pw: string, confirm: string): string | null {
@@ -55,6 +65,10 @@ export function validateSetPasswordInput(pw: string, confirm: string): string | 
 
 /** Map honest server statuses to honest copy (pure, testable). */
 export function describeSetPasswordError(err: unknown): string {
+  // Task 1803 — the password WAS set (409 after the rotation); never tell the
+  // person the link is invalid. The page shows the sign-in screen for this, the
+  // string is for any caller that only has text.
+  if (isPasswordSetSignInRequired(err)) return 'Your new password is set. Sign in to continue.'
   if (err instanceof ApiError) {
     if (err.status === 429) {
       return 'Too many attempts. For security, wait an hour and try again.'
@@ -80,6 +94,35 @@ export function SetPassword() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  // Task 1803 — the 2FA challenge handed back by the finalize call, and why the
+  // code step closed (sign-in-required screen detail).
+  const [partialToken, setPartialToken] = useState<string | null>(null)
+  const [closedDetail, setClosedDetail] = useState<string | undefined>(undefined)
+
+  // Everything after the server opened a session for this device — shared by
+  // the direct path (no 2FA) and the 2FA path (after /auth/2fa/verify).
+  const finishWithSession = useCallback(async () => {
+    // The fresh session also arrived as the bb_session cookie; drop the
+    // redundant legacy bearer slot like every other auth-completing flow.
+    clearLegacyBearer()
+
+    // Task 1704 SLICE 2 — stamp the post-reset marker for THIS tab: the
+    // credential was just replaced, so the device's wrapped vault (if
+    // any) can no longer open under anything the user knows here. The
+    // wrapped vault itself is NEVER cleared — the old password may still
+    // be remembered, and destroying the only local wrap would be a
+    // data-loss bug. ProtectedRoute reads this marker to route to the
+    // honest locked-state surface (VaultLockedNoKey) instead of the
+    // dead-end password form. No key-context / vault touch (slice scope).
+    markPasswordResetCompleted()
+
+    // The vault is still wrapped under the OLD password — do NOT touch
+    // key-context or setMasterKey here. Re-wrapping is the
+    // /recover-with-phrase ceremony (SLICE 3), reached from the honest
+    // locked-state surface this marker routes to.
+    setStep('success')
+    await refreshUser()
+  }, [refreshUser])
 
   const handleSubmit = useCallback(
     async (e: FormEvent) => {
@@ -112,38 +155,31 @@ export function SetPassword() {
         const regUpload = await opaqueRegistrationFinish(regStart.state, newPassword, serverMsg)
 
         // 4. Finalize — consumes the token atomically, replaces the record,
-        //    deletes ALL sessions, mints the fresh session for THIS device.
-        //    Deliberately NO recovery_check / x25519_public_key here: an
-        //    email-only reset never rotates the set-once vault-key bindings.
-        await setPasswordFinalize(token, toBase64(regUpload))
+        //    deletes ALL sessions. No 2FA: mints the fresh session for THIS
+        //    device. 2FA enabled (task 1803): NO session — a partial token for
+        //    the code step. Deliberately NO recovery_check / x25519_public_key
+        //    here: an email-only reset never rotates the set-once vault-key
+        //    bindings.
+        const result = await setPasswordFinalize(token, toBase64(regUpload))
 
-        // The fresh session also arrived as the bb_session cookie; drop the
-        // redundant legacy bearer slot like every other auth-completing flow.
-        clearLegacyBearer()
-
-        // Task 1704 SLICE 2 — stamp the post-reset marker for THIS tab: the
-        // credential was just replaced, so the device's wrapped vault (if
-        // any) can no longer open under anything the user knows here. The
-        // wrapped vault itself is NEVER cleared — the old password may still
-        // be remembered, and destroying the only local wrap would be a
-        // data-loss bug. ProtectedRoute reads this marker to route to the
-        // honest locked-state surface (VaultLockedNoKey) instead of the
-        // dead-end password form. No key-context / vault touch (slice scope).
-        markPasswordResetCompleted()
-
-        // The vault is still wrapped under the OLD password — do NOT touch
-        // key-context or setMasterKey here. Re-wrapping is the
-        // /recover-with-phrase ceremony (SLICE 3), reached from the honest
-        // locked-state surface this marker routes to.
-        setStep('success')
-        await refreshUser()
+        if (result.requires_2fa) {
+          setPartialToken(result.partial_token)
+          setStep('two-factor')
+          return
+        }
+        await finishWithSession()
       } catch (err) {
+        if (isPasswordSetSignInRequired(err)) {
+          setClosedDetail(undefined)
+          setStep('sign-in-required')
+          return
+        }
         setError(describeSetPasswordError(err))
       } finally {
         setSubmitting(false)
       }
     },
-    [token, newPassword, confirmPassword, refreshUser],
+    [token, newPassword, confirmPassword, finishWithSession],
   )
 
   if (!token) {
@@ -168,6 +204,24 @@ export function SetPassword() {
         </div>
       </AuthShell>
     )
+  }
+
+  if (step === 'two-factor' && partialToken) {
+    return (
+      <ResetTwoFactorStep
+        partialToken={partialToken}
+        onVerified={finishWithSession}
+        onClosed={(reason) => {
+          setPartialToken(null)
+          setClosedDetail(reason)
+          setStep('sign-in-required')
+        }}
+      />
+    )
+  }
+
+  if (step === 'sign-in-required') {
+    return <ResetSignInRequired detail={closedDetail} />
   }
 
   if (step === 'success') {
