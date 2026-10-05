@@ -189,6 +189,13 @@ describe('task 1713 FIX B / task 1810: post-login provisioning is the phrase scr
     expect(html).toContain('Recovery word 1')
   })
 
+  test('task 1810 round 2 (Codex P1): a stale vault removed at sign-in offers the lost-phrase exits even WITHOUT the tab marker', async () => {
+    // A reset/change made in another tab or on another device leaves no marker here.
+    const html = await renderProvisionBranch({ staleVault: true })
+    expect(html).toContain("I've lost my recovery phrase")
+    expect(html).toContain('sealed under your previous password, so it was removed')
+  })
+
   test('no marker → device setup, UNTOUCHED (fresh device on a normal login)', async () => {
     const html = await renderProvisionBranch({})
     expect(html).toContain('Set up this device')

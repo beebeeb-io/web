@@ -34,9 +34,13 @@ export function LoginProvisionBranch({ password, authMethod, email, onProvisione
   notice?: string
 }) {
   const [showExits, setShowExits] = useState(false)
-  const postReset = isPostResetLockedDevice()
+  // The exits are for a person whose vault key is out of reach: this tab's
+  // reset marker says so, and so does a sign-in that just removed a vault sealed
+  // under the previous password (a reset/change made in another tab or on another
+  // device leaves no marker here — Codex P1 on web#141).
+  const offerExits = isPostResetLockedDevice() || !!staleVault
 
-  if (postReset && showExits) {
+  if (offerExits && showExits) {
     return <VaultLockedNoKey onUnlockWithPhrase={() => setShowExits(false)} />
   }
   return (
@@ -46,7 +50,7 @@ export function LoginProvisionBranch({ password, authMethod, email, onProvisione
       email={email}
       onProvisioned={onProvisioned}
       notice={notice ?? (staleVault ? STALE_VAULT_NOTICE : undefined)}
-      onLostPhrase={postReset ? () => setShowExits(true) : undefined}
+      onLostPhrase={offerExits ? () => setShowExits(true) : undefined}
     />
   )
 }
