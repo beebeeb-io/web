@@ -14,6 +14,7 @@ import {
   UnsupportedSchema,
   UpdateRequired,
 } from './blocking-screens'
+import { RecoveryPhraseExport } from '../recovery-phrase-export'
 import { ErrorLine, OnboardingFrame, RegionFooter, Spinner } from './frame'
 
 /**
@@ -571,7 +572,7 @@ function SetPasswordStep({ ctx }: { ctx: CeremonyCtx }) {
 // ── save_recovery_phrase (ceremony: save_phrase, then confirm_phrase) ────────
 
 function SaveRecoveryPhraseStep({ ctx }: { ctx: CeremonyCtx }) {
-  const { ceremony, screen, policy } = ctx
+  const { ceremony, screen, policy, session } = ctx
   const [phase, setPhase] = useState<'loading' | 'show' | 'confirm'>('loading')
   const [words, setWords] = useState<string[]>([])
   const [saved, setSaved] = useState(false)
@@ -712,6 +713,11 @@ function SaveRecoveryPhraseStep({ ctx }: { ctx: CeremonyCtx }) {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+        {words.length > 0 && (
+          <div className="mb-4">
+            <RecoveryPhraseExport words={words} email={session.current.email} />
           </div>
         )}
         {error && <ErrorLine>{error}</ErrorLine>}
