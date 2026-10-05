@@ -20,17 +20,15 @@ import { useDriveData } from '../lib/drive-data-context'
 import {
   CHOOSE_PLAN_PATH,
   accountStateFromError,
-  resolveAccountState,
   uploadBlockedNotice,
   uploadRefusalNotice,
   type UploadBlockedNotice,
 } from '../lib/account-state'
 
 export function usePlanBlock() {
-  const { planDetails, refreshPlanDetails } = useDriveData()
+  const { accountState, refreshPlanDetails } = useDriveData()
   const { showToast } = useToast()
   const navigate = useNavigate()
-  const accountState = resolveAccountState(planDetails.subscription)
 
   const show = useCallback(
     (n: UploadBlockedNotice) => {

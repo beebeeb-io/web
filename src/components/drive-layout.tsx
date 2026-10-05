@@ -299,7 +299,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   const { reconcileFromTree } = useSearchIndex()
   const { isFrozen } = useFrozen()
   const adminUrl = import.meta.env.VITE_ADMIN_URL ?? 'https://admin.beebeeb.io'
-  const { usage, planDetails: contextPlanDetails, pinnedFolderIds, isOffline } = useDriveData()
+  const { usage, planDetails: contextPlanDetails, pinnedFolderIds, isOffline, accountStateLabel } = useDriveData()
   const [sharedFolders, setSharedFolders] = useState<(ShareInvite & { decryptedName?: string })[]>([])
   const [storageRegion, setStorageRegion] = useState<string>('auto')
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -442,7 +442,10 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   const planName = usage?.plan_name ?? contextPlanDetails.plan?.name ?? 'Free'
   // Task 1037: the server's internal no-plan slug is "none" (needs_plan /
   // lapsed) — never render it as "none plan".
-  const planLabel = planName === 'none' ? 'No plan' : `${planName} plan`
+  // Task 1816: an allowance account has no plan but a working vault; say what
+  // the meter measures instead of "No plan".
+  const planLabel =
+    accountStateLabel === 'allowance' ? 'Allowance' : planName === 'none' ? 'No plan' : `${planName} plan`
 
   return (
     <div className="h-screen flex overflow-hidden bg-paper">

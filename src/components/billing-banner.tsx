@@ -3,11 +3,11 @@ import { Icon } from '@beebeeb/shared'
 import { useAuth } from '../lib/auth-context'
 import { useDriveData } from '../lib/drive-data-context'
 import { useNavigate } from 'react-router-dom'
-import { lapsedBannerCopy, PAID_CHECKOUT_PATH, resolveAccountState } from '../lib/account-state'
+import { lapsedBannerCopy, PAID_CHECKOUT_PATH } from '../lib/account-state'
 
 export function BillingBanner() {
   const { user } = useAuth()
-  const { planDetails } = useDriveData()
+  const { planDetails, accountState } = useDriveData()
   const navigate = useNavigate()
   const sub = planDetails.subscription
   const state = sub?.billing_state
@@ -18,7 +18,7 @@ export function BillingBanner() {
   // data is deleted at `data_deletion_at`. Persistent and NOT dismissable —
   // it is the one thing this account must act on. Takes precedence over every
   // other billing notice.
-  if (resolveAccountState(sub) === 'lapsed') {
+  if (accountState === 'lapsed') {
     return (
       <div
         role="alert"

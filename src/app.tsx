@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, lazy, Suspense } from 'react'
+import React, { useState, useCallback, useRef, useEffect, lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { reportError } from '@beebeeb/shared'
@@ -6,7 +6,7 @@ import { AuthProvider, useAuth } from './lib/auth-context'
 import { KeyProvider, useKeys } from './lib/key-context'
 import { sanitizeRedirect } from './lib/safe-redirect'
 import { readPlanIntent, guestRouteFallback } from './lib/plan-intent'
-import { planGateRedirect, resolveAccountState } from './lib/account-state'
+import { planGateRedirect } from './lib/account-state'
 import { flushDeferredWelcomeFile } from './lib/welcome-file-upload'
 import { WsProvider } from './lib/ws-context'
 import { SyncProvider } from './lib/sync-context'
@@ -231,13 +231,21 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
  * account never flashes the drive; the shared cache in DriveDataProvider is
  * refreshed on `billing_updated` / plan-changed, so the gate lifts itself the
  * moment the trial is live. A missing `account_state` (older server) is "ok".
+ *
+ * Task 1816: `accountState` is the onboarding document's when it is available
+ * (an allowance account is `ok` and reaches the drive; only `needs_plan` WITHOUT
+ * an allowance goes to the chooser), else the legacy subscription's.
  */
 function PlanGate({ children }: { children: ReactNode }) {
-  const { planDetails, subscriptionSettled } = useDriveData()
+  const { accountState, accountBlocking, subscriptionSettled } = useDriveData()
   const location = useLocation()
+  // A billing refresh re-opens `subscriptionSettled` while the document is
+  // re-fetched (1816 round 2). Once the gate has decided for this account, keep
+  // the app mounted through that window — never a spinner that remounts the
+  // drive, never a redirect decided on the half-refreshed state.
+  const decidedFor = useRef<string | null>(null)
   const { user } = useAuth()
   const { getMasterKey } = useKeys()
-  const accountState = resolveAccountState(planDetails.subscription)
   // A welcome file onboarding deferred while the account had no plan is
   // uploaded once the account is entitled — here for every later page (another
   // tab, a later visit); /choose-plan's success path does it inline. Deduped +
@@ -254,6 +262,10 @@ function PlanGate({ children }: { children: ReactNode }) {
     }
     void flushDeferredWelcomeFile(userId, masterKey)
   }, [subscriptionSettled, accountState, userId, getMasterKey])
+  if (subscriptionSettled) decidedFor.current = userId ?? null
+  if (!subscriptionSettled && userId && decidedFor.current === userId) {
+    return <>{children}</>
+  }
   if (!subscriptionSettled) {
     return (
       <div className="flex items-center justify-center min-h-screen" aria-busy="true">
@@ -261,7 +273,7 @@ function PlanGate({ children }: { children: ReactNode }) {
       </div>
     )
   }
-  const to = planGateRedirect(location.pathname, accountState)
+  const to = planGateRedirect(location.pathname, accountState, accountBlocking)
   if (to) return <Navigate to={to} replace />
   return <>{children}</>
 }

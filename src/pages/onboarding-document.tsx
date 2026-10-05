@@ -1,18 +1,21 @@
-import { useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { OnboardingRenderer } from '../components/onboarding/renderer'
 import { OnboardingFrame, Spinner } from '../components/onboarding/frame'
 import { UnsupportedSchema } from '../components/onboarding/blocking-screens'
 import {
   accountStateFromError,
+  postSignupLanding,
   resolveAccountState,
 } from '../lib/account-state'
 import { getSubscription, setEmail } from '../lib/api'
 import { useAuth } from '../lib/auth-context'
+import { useDriveData } from '../lib/drive-data-context'
 import { useKeys } from '../lib/key-context'
 import { clearLegacyBearer } from '@beebeeb/shared'
 import { parsePlanIntent, postSignupDestination, readPlanIntent, savePlanIntent } from '../lib/plan-intent'
 import { unsupportedSchemaScreen } from '../lib/onboarding/plan'
+import { fetchOnboardingDocument } from '../lib/onboarding/client'
 import { coreCeremonyPorts, fetchBreachBody, httpActions, type OnboardingPorts } from '../lib/onboarding/ports'
 import { useOnboardingDocument } from '../lib/onboarding/use-document'
 import { markWelcomeFilePending, uploadWelcomeFile } from '../lib/welcome-file-upload'
@@ -112,7 +115,14 @@ export function SignupFromDocument() {
           }
         }
         await refreshUser()
-        navigate(postSignupDestination(readPlanIntent()), { replace: true })
+        // Task 1816: a usable allowance account goes straight to the drive. The
+        // server's account document decides; unavailable -> the chooser as before.
+        const intent = readPlanIntent()
+        const landed = await fetchOnboardingDocument().catch(() => null)
+        navigate(
+          postSignupLanding(landed?.kind === 'document' ? landed.doc : null, postSignupDestination(intent), intent !== null),
+          { replace: true },
+        )
       },
     }),
     [refresh, navigate, refreshUser, setMasterKey],
@@ -135,7 +145,15 @@ export function SignupFromDocument() {
 
 /** `/account-status` with the flag on: the account-stage document, signed in. */
 export function AccountStatusFromDocument() {
-  const { state, refresh } = useOnboardingDocument()
+  const { state, refresh: refreshDocument } = useOnboardingDocument()
+  const { refreshPlanDetails } = useDriveData()
+  // The route gate (PlanGate) reads its own copy of the account document from the
+  // drive data context; completing a blocking step here must refresh THAT copy
+  // too, or the gate keeps redirecting back to this page.
+  const refresh = useCallback(async () => {
+    await refreshDocument()
+    refreshPlanDetails()
+  }, [refreshDocument, refreshPlanDetails])
   const navigate = useNavigate()
   const { logout } = useAuth()
 
@@ -158,7 +176,7 @@ export function AccountStatusFromDocument() {
 
   useEffect(() => {
     // Legacy outcome: the document is unavailable, so this page has nothing to
-    // say. Send the person to the app, whose own gate (planGateRedirect) decides.
+    // say. Send the person to the app, whose own gate (PlanGate, app.tsx) decides.
     if (state.kind === 'legacy') navigate('/', { replace: true })
   }, [state.kind, navigate])
 

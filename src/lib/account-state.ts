@@ -14,6 +14,8 @@
  */
 
 import type { AccountState, Subscription } from '@beebeeb/shared'
+import type { OnboardingDocument } from './onboarding/types'
+import { planScreen } from './onboarding/plan'
 
 export type { AccountState }
 
@@ -32,6 +34,93 @@ export function resolveAccountState(
 ): AccountState {
   const s = sub?.account_state
   return s === 'needs_plan' || s === 'lapsed' ? s : 'ok'
+}
+
+/**
+ * Task 1816 (1745 acceptance 2/3) — the account state the ROUTE GATE, the lapsed
+ * banner and the upload entry points act on, read from the onboarding document
+ * when there is an account-stage one. The legacy `/billing/subscription`
+ * `account_state` cannot tell an allowance account from a plan-less one (the
+ * contract maps both to `needs_plan`), so reading it sent a verified account
+ * with a working allowance to /choose-plan and the drive never opened.
+ *
+ *   - `needs_plan`              -> needs_plan (no allowance: the chooser)
+ *   - `lapsed`, `trial_ended`   -> lapsed (read-only over the allowance)
+ *   - everything else, incl. `allowance` and states this build does not know
+ *     (the state is only a label, spec 5.8 rule 4)  -> ok; the capabilities and
+ *     the server's own refusals (409/413) stay the authority on what is allowed.
+ *
+ * Null when the document is unavailable or not an account-stage one: the caller
+ * then falls back to the legacy field (spec 5.8 rule 6).
+ */
+export function accountStateFromDocument(
+  doc: Pick<OnboardingDocument, 'stage' | 'account'> | null | undefined,
+): AccountState | null {
+  if (!doc || doc.stage !== 'account' || !doc.account) return null
+  switch (doc.account.state) {
+    case 'needs_plan':
+      return 'needs_plan'
+    case 'lapsed':
+    case 'trial_ended':
+      return 'lapsed'
+    default:
+      return 'ok'
+  }
+}
+
+/**
+ * Task 1816 round 2 (Codex P1) — an account-stage document can be `blocking`
+ * while its state label is `allowance`/`active` (a required unfinished step such
+ * as updated terms, or `update_required`). The label alone must never let such an
+ * account into the protected routes: classify blocking BEFORE mapping the state.
+ * Uses the renderer's own `planScreen`, so the gate blocks exactly when the
+ * renderer would draw a step / stop / update screen instead of the account page.
+ * `needs_plan` is excluded: the chooser redirect already owns that account.
+ */
+export function accountDocumentBlocks(
+  doc: OnboardingDocument | null | undefined,
+): boolean {
+  if (!doc || doc.stage !== 'account' || !doc.account) return false
+  if (doc.account.state === 'needs_plan') return false
+  const kind = planScreen(doc).kind
+  return kind !== 'account' && kind !== 'created'
+}
+
+/** Where a blocking account document is rendered (the document-driven screen). */
+export const ACCOUNT_STATUS_PATH = '/account-status'
+
+/** Routes a blocked account may still open: the step screen itself, sign out, deletion, email verification. */
+export const BLOCKING_ALLOWED_PATHS: readonly string[] = [
+  ACCOUNT_STATUS_PATH,
+  '/logout',
+  '/verify-email',
+  '/settings/delete-account',
+]
+
+/**
+ * Task 1816 — where a freshly created account lands. A usable (non-blocking)
+ * ALLOWANCE account goes straight to the drive: there is nothing to choose
+ * before it can use its allowance. An explicit plan intent (the person picked a
+ * plan on the pricing page) or any other / unavailable document keeps the
+ * existing chooser destination.
+ */
+export function postSignupLanding(
+  doc: Pick<OnboardingDocument, 'stage' | 'account' | 'blocking' | 'client' | 'steps' | 'fallback' | 'signup'> | null | undefined,
+  chooserDestination: string,
+  hasPlanIntent: boolean,
+): string {
+  if (hasPlanIntent || !doc || doc.stage !== 'account' || doc.account?.state !== 'allowance') {
+    return chooserDestination
+  }
+  return accountDocumentBlocks(doc as OnboardingDocument) ? chooserDestination : '/'
+}
+
+/** Document state when there is one, else the legacy subscription field. */
+export function effectiveAccountState(
+  doc: Pick<OnboardingDocument, 'stage' | 'account'> | null | undefined,
+  sub: Pick<Subscription, 'account_state'> | null | undefined,
+): AccountState {
+  return accountStateFromDocument(doc) ?? resolveAccountState(sub)
 }
 
 /**
@@ -64,9 +153,16 @@ export const NEEDS_PLAN_ALLOWED_PATHS: readonly string[] = [
  * `needs_plan` is gated; a `lapsed` account keeps browsing and downloading
  * (read-only) and sees the persistent banner instead.
  */
-export function planGateRedirect(pathname: string, state: AccountState): string | null {
-  if (state !== 'needs_plan') return null
+export function planGateRedirect(
+  pathname: string,
+  state: AccountState,
+  blocking = false,
+): string | null {
   const path = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname
+  if (blocking && state !== 'needs_plan') {
+    return BLOCKING_ALLOWED_PATHS.includes(path) ? null : ACCOUNT_STATUS_PATH
+  }
+  if (state !== 'needs_plan') return null
   return NEEDS_PLAN_ALLOWED_PATHS.includes(path) ? null : CHOOSE_PLAN_PATH
 }
 
