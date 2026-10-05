@@ -4,6 +4,7 @@ import { runBreachCheck } from '../../lib/onboarding/breach-step'
 import { CeremonyError, type BreachCheckProxy, type CeremonyProxy, type PasswordEvaluation } from '../../lib/crypto'
 import { planScreen, type Screen, type StepScreen } from '../../lib/onboarding/plan'
 import { runCreateAccount } from '../../lib/onboarding/create-account'
+import { formatCountdown, resendRemainingSeconds } from '../../lib/onboarding/resend'
 import { ActionError, type OnboardingPorts } from '../../lib/onboarding/ports'
 import type { OnboardingDocument, SignupPolicy } from '../../lib/onboarding/types'
 import {
@@ -37,7 +38,7 @@ interface Session {
   ticket: string
   /** Held only until the device vault is wrapped (create_account), then dropped. */
   password: string
-  /** When email-start last succeeded, for the "ask for a new email at HH:MM" line. */
+  /** When email-start last succeeded, for the "send a new code in m:ss" countdown. */
   emailSentAt: number | null
 }
 
@@ -196,9 +197,8 @@ function PilotKeyStep({ ctx }: { ctx: Ctx }) {
 
 // ── verify_email_code ────────────────────────────────────────────────────────
 
-function formatClock(ms: number): string {
-  return new Date(ms).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
-}
+/** Wrong guesses the server allows across all live codes of one address (contract README). */
+const GUESS_BUDGET = 5
 
 function VerifyEmailCodeStep({ ctx }: { ctx: Ctx }) {
   const { policy, session, ports, screen } = ctx
@@ -207,9 +207,32 @@ function VerifyEmailCodeStep({ ctx }: { ctx: Ctx }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [resent, setResent] = useState(false)
+  // Wrong codes on this screen. The server gives all live codes ONE shared
+  // guess budget (5); once it is spent a fresh code is the only way forward
+  // and the server issues it at once, so the wait is lifted (task 1738 F2).
+  const [failedVerifies, setFailedVerifies] = useState(0)
+  const budgetSpent = failedVerifies >= GUESS_BUDGET
 
-  const askAgainAt =
-    session.current.emailSentAt !== null ? session.current.emailSentAt + policy.emailCode.resendAfterSeconds * 1000 : null
+  // A resend sends a fresh code, but only `resend_after_seconds` after the last
+  // one (the server enforces the same window); count it down live.
+  // `sentAt` lives in state, not just in the session ref: the effect below must
+  // re-run on EVERY resend, and a boolean that stays true after the first one
+  // would not (the countdown froze at 1:00 on the second resend).
+  const [sentAt, setSentAt] = useState<number | null>(session.current.emailSentAt)
+  const [now, setNow] = useState(() => Date.now())
+  const remaining = resendRemainingSeconds(sentAt, policy.emailCode.resendAfterSeconds, now)
+  useEffect(() => {
+    if (resendRemainingSeconds(sentAt, policy.emailCode.resendAfterSeconds, Date.now()) <= 0) return
+    setNow(Date.now())
+    const timer = setInterval(() => {
+      const t = Date.now()
+      setNow(t)
+      if (resendRemainingSeconds(sentAt, policy.emailCode.resendAfterSeconds, t) <= 0) {
+        clearInterval(timer)
+      }
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [sentAt, policy.emailCode.resendAfterSeconds])
 
   async function submit(e: FormEvent) {
     e.preventDefault()
@@ -229,6 +252,7 @@ function VerifyEmailCodeStep({ ctx }: { ctx: Ctx }) {
       if (err instanceof ActionError && err.code === 'rate_limited') {
         setError('Too many tries. Wait a few minutes before trying again.')
       } else {
+        setFailedVerifies((n) => n + 1)
         setError('That code is not right, or it has expired.')
       }
     } finally {
@@ -242,6 +266,10 @@ function VerifyEmailCodeStep({ ctx }: { ctx: Ctx }) {
     try {
       await ports.actions.emailStart(session.current.email, session.current.pilotKey)
       session.current.emailSentAt = Date.now()
+      setNow(session.current.emailSentAt)
+      setSentAt(session.current.emailSentAt)
+      setFailedVerifies(0)
+      setCode('')
       setResent(true)
     } catch {
       setError('We could not send another email. Try again later.')
@@ -250,7 +278,7 @@ function VerifyEmailCodeStep({ ctx }: { ctx: Ctx }) {
     }
   }
 
-  const canAskAgain = askAgainAt === null || Date.now() >= askAgainAt
+  const canAskAgain = remaining <= 0 || budgetSpent
 
   return (
     <OnboardingFrame
@@ -279,6 +307,11 @@ function VerifyEmailCodeStep({ ctx }: { ctx: Ctx }) {
           required
         />
         {error && <ErrorLine>{error}</ErrorLine>}
+        {budgetSpent && (
+          <p className="text-xs text-ink-2 mb-3" data-testid="guess-budget-spent">
+            Too many wrong codes. Ask for a new one.
+          </p>
+        )}
         <BBButton type="submit" variant="amber" size="lg" className="w-full" disabled={busy || code.length !== length}>
           Verify
         </BBButton>
@@ -293,11 +326,11 @@ function VerifyEmailCodeStep({ ctx }: { ctx: Ctx }) {
           </button>
           {canAskAgain ? (
             <button type="button" className="underline hover:text-ink-2" onClick={askAgain} disabled={busy}>
-              Send a new email
+              Send a new code
             </button>
           ) : (
             <span data-testid="ask-again-at">
-              You can ask for a new email at <span className="font-mono">{formatClock(askAgainAt!)}</span>
+              You can ask for a new code in <span className="font-mono">{formatCountdown(remaining)}</span>
             </span>
           )}
         </div>

@@ -32,7 +32,7 @@
     "email_code": {
       "length": 8,
       "ttl_seconds": 900,
-      "resend_after_seconds": 900,
+      "resend_after_seconds": 60,
       "ticket_ttl_seconds": 1800
     },
     "pilot_key": {

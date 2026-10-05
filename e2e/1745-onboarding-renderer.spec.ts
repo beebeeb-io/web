@@ -73,6 +73,41 @@ async function shot(page: Page, path: string, fullPage = false) {
 const STRONG = 'Correct-Horse-Battery-9'
 
 test.describe('1745 onboarding renderer', () => {
+  test('1738 resend: the countdown restarts and the button returns after EVERY resend; spent guess budget lifts the wait', async ({ page }) => {
+    await page.clock.install()
+    await open(page, 'pre_account.web')
+    await page.getByTestId('onboarding-email').fill('again.person@beebeeb.io')
+    await page.getByRole('button', { name: /^continue$/i }).click()
+    await expect(screen(page)).toHaveAttribute('data-screen', 'step:verify_email_code')
+    const again = page.getByRole('button', { name: 'Send a new code' })
+    const wait = page.getByTestId('ask-again-at')
+
+    for (const round of [1, 2, 3]) {
+      await expect(wait).toContainText('1:00')
+      await expect(again).toHaveCount(0)
+      await page.clock.fastForward(5_000)
+      await expect(wait).toContainText('0:55')
+      await page.clock.fastForward(56_000)
+      await expect(again).toBeVisible()
+      await again.click()
+      expect((await events(page)).filter((e) => e.startsWith('email_start:')).length).toBe(round + 1)
+    }
+
+    // F2: five wrong codes spend the shared budget; a new code is offered with the countdown still running.
+    await expect(wait).toContainText('1:00')
+    for (let i = 0; i < 5; i++) {
+      await page.getByTestId('onboarding-code').fill('00000000')
+      await page.getByRole('button', { name: /^verify$/i }).click()
+      await expect(page.getByTestId('onboarding-error')).toContainText('not right')
+    }
+    await expect(page.getByTestId('guess-budget-spent')).toBeVisible()
+    await expect(again).toBeVisible()
+    await expect(wait).toHaveCount(0)
+    await again.click()
+    await expect(page.getByTestId('guess-budget-spent')).toHaveCount(0)
+    await expect(wait).toContainText('1:00')
+  })
+
   test('web new signup: email, code, terms, password (core meter), recovery phrase (core), create_account', async ({ page }) => {
     await open(page, 'pre_account.web')
     await expect(screen(page)).toHaveAttribute('data-screen', 'step:enter_email')
@@ -86,7 +121,12 @@ test.describe('1745 onboarding renderer', () => {
     // verify_email_code: anti-enumeration copy, identical for every address
     await expect(screen(page)).toHaveAttribute('data-screen', 'step:verify_email_code')
     await expect(page.getByText('If this address can be used, we sent an email.')).toBeVisible()
-    await expect(page.getByTestId('ask-again-at')).toContainText('You can ask for a new email at')
+    await expect(page.getByTestId('ask-again-at')).toContainText('You can ask for a new code in')
+    // The wait is the document's resend_after_seconds (60 in the fixture) and it ticks (task 1738).
+    await expect(page.getByTestId('ask-again-at')).toContainText(/0:[0-5]\d|1:00/)
+    const countdownBefore = await page.getByTestId('ask-again-at').innerText()
+    await page.waitForTimeout(2200)
+    expect(await page.getByTestId('ask-again-at').innerText()).not.toBe(countdownBefore)
     await page.getByTestId('onboarding-code').fill('00000000')
     await page.getByRole('button', { name: /^verify$/i }).click()
     await expect(page.getByTestId('onboarding-error')).toContainText('not right')
