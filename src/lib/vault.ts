@@ -340,6 +340,31 @@ export async function clearVault(): Promise<void> {
 }
 
 /**
+ * Delete ONLY the password-wrapped master key ('master'). A PRF-wrapped
+ * passkey vault ('master-passkey') is sealed under the authenticator, not the
+ * password, so it survives a password change and is left alone.
+ *
+ * Task 1810 (P0): used at sign-in when the server has just PROVEN the password
+ * (OPAQUE) and this entry still cannot be opened with it — the entry was
+ * sealed under a password the account no longer has (a reset or a change made
+ * elsewhere). It is never opened again, so it is removed rather than kept as an
+ * inert copy of the master key under a password the person gave up.
+ *
+ * Returns true if an entry was removed.
+ */
+export async function clearPasswordVault(): Promise<boolean> {
+  const db = await openDB()
+  try {
+    const entry = await dbGet(db, 'master')
+    if (!entry) return false
+    await dbDelete(db, 'master')
+    return true
+  } finally {
+    db.close()
+  }
+}
+
+/**
  * Task 1529 remediation: detect + clear a password vault that was wrapped
  * under an EMPTY string secret (the passkey-login provisioning bug — a
  * passkey sign-in reached device-provision.tsx's phrase step with

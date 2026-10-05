@@ -12,6 +12,12 @@
  * self-service exits (cancel billing / delete all data / delete account)
  * are unreachable.
  *
+ * TASK 1810 SUPERSEDES THE ROUTING BELOW: the locked surface's phrase button opened
+ * /recover-with-phrase, i.e. the password RESET, so "unlock with recovery phrase"
+ * looped back to a reset. The branch now always shows the phrase screen (the
+ * password is already proven) and offers the exits behind "I've lost my recovery
+ * phrase". Original 1713 text follows.
+ *
  * The fix: the needs-provision branch of the Login page, factored into an
  * exported `LoginProvisionBranch` component so this pin can render it
  * directly, checks `isPostResetLockedDevice()` and renders VaultLockedNoKey
@@ -64,7 +70,7 @@ afterEach(() => {
   restoreDom = null
 })
 
-async function renderProvisionBranch(opts: { marker?: boolean } = {}): Promise<string> {
+async function renderProvisionBranch(opts: { marker?: boolean; staleVault?: boolean } = {}): Promise<string> {
   const storage = new PersistentSessionStorage()
   if (opts.marker) {
     const { POST_RESET_LOCK_KEY, MARKER_VALUE } = await import('../src/lib/post-reset-lock')
@@ -128,7 +134,7 @@ async function renderProvisionBranch(opts: { marker?: boolean } = {}): Promise<s
       authMethod: 'opaque' | 'passkey'
       email?: string
       onProvisioned: () => void
-      onTryPreviousPassword?: () => void
+      staleVault?: boolean
     }>
   }
   const rr = (await import('react-router-dom')) as unknown as { MemoryRouter: React.FC<{ children?: React.ReactNode }> }
@@ -145,7 +151,7 @@ async function renderProvisionBranch(opts: { marker?: boolean } = {}): Promise<s
         authMethod: 'opaque',
         email: 'target@example.com',
         onProvisioned: () => {},
-        onTryPreviousPassword: () => {},
+        staleVault: opts.staleVault,
       }),
     ),
   )
@@ -159,30 +165,35 @@ async function renderProvisionBranch(opts: { marker?: boolean } = {}): Promise<s
     .replace(/&gt;/g, '>')
 }
 
-describe('task 1713 FIX B: post-login provisioning defers to the post-reset marker', () => {
-  test('marker present → the locked no-key surface (with the exits) renders, NOT device setup', async () => {
+describe('task 1713 FIX B / task 1810: post-login provisioning is the phrase screen, with the exits one click away', () => {
+  test('marker present → the 12-word phrase screen (the password is already proven), NOT the locked surface', async () => {
     const html = await renderProvisionBranch({ marker: true })
-    // The honest locked-state surface (1704 slice 2), not 'Set up this device':
-    expect(html).toContain('Vault locked')
-    expect(html).toContain('Unlock with recovery phrase')
-    // The self-service exits ARE reachable from the post-login state:
-    expect(html).toContain('Cancel subscription')
-    expect(html).toContain('Delete all data')
-    expect(html).toContain('Delete account')
-    // NOT the bare provisioning screen:
-    expect(html).not.toContain('Set up this device')
+    expect(html).toContain('Set up this device')
+    expect(html).toContain('Recovery word 1')
+    expect(html).toContain('Restore vault')
+    // The way out for a person who lost the phrase is one click away:
+    expect(html).toContain("I've lost my recovery phrase")
+    // The exits themselves open on that click, not before:
+    expect(html).not.toContain('Delete all data')
+    expect(html).not.toContain('Vault locked')
   })
 
-  test('the locked surface\'s phrase CTA targets the canonical /recover-with-phrase re-wrap ceremony', async () => {
+  test('task 1810: nothing on this screen leads to the password-reset page', async () => {
     const html = await renderProvisionBranch({ marker: true })
-    expect(html).toContain('href="/recover-with-phrase"')
+    expect(html).not.toContain('/recover-with-phrase')
+  })
+
+  test('task 1810: a stale vault that was just removed is explained above the phrase boxes', async () => {
+    const html = await renderProvisionBranch({ marker: true, staleVault: true })
+    expect(html).toContain('sealed under your previous password, so it was removed')
+    expect(html).toContain('Recovery word 1')
   })
 
   test('no marker → device setup, UNTOUCHED (fresh device on a normal login)', async () => {
     const html = await renderProvisionBranch({})
     expect(html).toContain('Set up this device')
+    expect(html).not.toContain("I've lost my recovery phrase")
     expect(html).not.toContain('Cancel subscription')
-    expect(html).not.toContain('Delete all data')
     expect(html).not.toContain('Vault locked')
   })
 })

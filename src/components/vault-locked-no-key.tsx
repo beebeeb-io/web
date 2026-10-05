@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { AuthShell } from './auth-shell'
 import { BBButton, BBCheckbox, BBInput, Icon } from '@beebeeb/shared'
 import { StepUpAuth } from './step-up-auth'
@@ -53,11 +53,28 @@ interface VaultLockedNoKeyProps {
   /** Escape hatch: show the normal password form (the old password may still
    *  be remembered). Clears the post-reset marker, then calls this. */
   onTryPreviousPassword?: () => void
+  /** Show the phrase screen in place (the sign-in / set-password steps, which
+   *  already hold the proven password). Without it — a session with no password
+   *  in hand — the button signs out and sends the person to sign in, where the
+   *  proven password plus the phrase re-seal the vault. Task 1810: it must never
+   *  open /recover-with-phrase, which is a password RESET. */
+  onUnlockWithPhrase?: () => void
 }
 
-export function VaultLockedNoKey({ onTryPreviousPassword }: VaultLockedNoKeyProps) {
+export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: VaultLockedNoKeyProps) {
   const { logout } = useAuth()
   const navigate = useNavigate()
+  const handleUnlockWithPhrase = useCallback(async () => {
+    if (onUnlockWithPhrase) {
+      onUnlockWithPhrase()
+      return
+    }
+    try {
+      await logout()
+    } finally {
+      navigate('/login', { replace: true })
+    }
+  }, [onUnlockWithPhrase, logout, navigate])
 
   // ── exit 1: cancel subscription ──
   const [cancelGate, setCancelGate] = useState(false)
@@ -211,23 +228,22 @@ export function VaultLockedNoKey({ onTryPreviousPassword }: VaultLockedNoKeyProp
 
       {/* Primary re-entry — the canonical route; amber = the encryption CTA. */}
       <div className="mt-5">
-        <Link to="/recover-with-phrase" className="block">
-          <BBButton variant="amber" size="lg" className="w-full">
-            Unlock with recovery phrase
-          </BBButton>
-        </Link>
+        <BBButton variant="amber" size="lg" className="w-full" onClick={() => void handleUnlockWithPhrase()}>
+          Unlock with recovery phrase
+        </BBButton>
         <p className="text-[12px] text-ink-3 leading-relaxed mt-2.5">
           Your 12-word recovery phrase is the vault key. Entering it unlocks
           this device and re-secures the vault under your new password.
+          {!onUnlockWithPhrase && ' You will sign in with your new password first, then enter the 12 words.'}
         </p>
         <p className="text-[11px] text-ink-4 leading-relaxed mt-1.5">
-          You only ever enter the phrase on{' '}
-          <span className="font-mono">beebeeb.io/recover-with-phrase</span> —
+          Only ever enter the phrase on <span className="font-mono">beebeeb.io</span> —
           never in an email, never on another site.
         </p>
       </div>
 
       {/* Escape hatch — honest: the old password may still be remembered. */}
+      {onTryPreviousPassword && (
       <button
         type="button"
         onClick={handleTryPreviousPassword}
@@ -235,6 +251,7 @@ export function VaultLockedNoKey({ onTryPreviousPassword }: VaultLockedNoKeyProp
       >
         Remember your previous password? Try it here
       </button>
+      )}
 
       {/* ── Self-service exits ──────────────────────────────────────────── */}
       <div className="mt-6 pt-5 border-t border-line">

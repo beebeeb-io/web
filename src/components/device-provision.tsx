@@ -38,9 +38,14 @@ interface DeviceProvisionProps {
   authMethod: ProvisionAuthMethod
   email?: string
   onProvisioned: () => void
+  /** Task 1810: why the phrase is being asked for, when it is not the plain
+   *  "new device" case (e.g. the vault here was sealed under a previous password). */
+  notice?: string
+  /** Task 1810: offers "I've lost my recovery phrase" (opens the self-service exits). */
+  onLostPhrase?: () => void
 }
 
-export function DeviceProvision({ password, authMethod, onProvisioned }: DeviceProvisionProps) {
+export function DeviceProvision({ password, authMethod, onProvisioned, notice, onLostPhrase }: DeviceProvisionProps) {
   const { setMasterKey, setMasterKeyDirect } = useKeys()
   // This screen only renders after OPAQUE or passkey auth already succeeded
   // server-side (the session cookie is set before login.tsx ever routes
@@ -175,6 +180,12 @@ export function DeviceProvision({ password, authMethod, onProvisioned }: DeviceP
       title="Set up this device"
       subtitle="This device doesn't have your encryption keys yet. Restore them to continue."
     >
+      {notice && (
+        <div role="status" className="flex items-start gap-2.5 p-3 mb-4 bg-amber-bg border border-amber/20 rounded-md">
+          <Icon name="shield" size={14} className="text-amber-deep shrink-0 mt-0.5" />
+          <p className="text-[12.5px] text-ink-2 leading-relaxed">{notice}</p>
+        </div>
+      )}
       <form onSubmit={handleRestore}>
         <label className="block text-xs font-medium text-ink-2 mb-2">
           Recovery phrase
@@ -233,6 +244,16 @@ export function DeviceProvision({ password, authMethod, onProvisioned }: DeviceP
           {submitting ? 'Restoring vault...' : 'Restore vault'}
         </BBButton>
       </form>
+      {onLostPhrase && (
+        <button
+          type="button"
+          onClick={onLostPhrase}
+          disabled={submitting}
+          className="w-full mt-3 text-xs text-ink-3 hover:text-ink-2 transition-colors cursor-pointer"
+        >
+          I've lost my recovery phrase
+        </button>
+      )}
     </AuthShell>
   )
 }

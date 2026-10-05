@@ -74,7 +74,7 @@ test('signed-in locked-vault user: wrong reset code keeps the step, right code s
   await codeInput.fill(totp(secret))
   expect((await good).status()).toBe(200)
   await expect(
-    locked.getByRole('heading', { name: /password set/i }).or(locked.getByText(/All files/i).first()),
+    locked.getByRole('heading', { name: /set up this device/i }).or(locked.getByText(/All files/i).first()),
   ).toBeVisible({ timeout: 30_000 })
   expect(new URL(locked.url()).pathname).not.toBe('/login')
   expect(await meStatus(locked)).toBe(200)

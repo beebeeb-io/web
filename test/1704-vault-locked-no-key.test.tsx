@@ -259,9 +259,13 @@ describe('task 1704 SLICE 2: ProtectedRoute routes the fresh-password/no-key cas
     expect(spies.confirmAction).not.toHaveBeenCalled()
   })
 
-  test('the re-entry CTA links to the canonical /recover-with-phrase route', async () => {
+  test('task 1810: the re-entry CTA never leads to the password-reset page (/recover-with-phrase)', async () => {
+    // It used to link there: "Unlock with recovery phrase" opened the full
+    // password RECOVERY ceremony (email + phrase + a second new password).
     const { text } = await renderProtectedRoute({ marker: true })
-    expect(text).toContain('/recover-with-phrase')
+    expect(text).toContain('Unlock with recovery phrase')
+    expect(text).not.toContain('/recover-with-phrase')
+    expect(text).toContain('sign in with your new password first')
   })
 
   test('no marker + locked vault → VaultUnlock, UNTOUCHED (normal users keep their password form)', async () => {
@@ -361,7 +365,7 @@ describe('task 1704 SLICE 2: ProtectedRoute routes the fresh-password/no-key cas
 // ── Component copy + confirmation gates (SSR markup — no effects run) ───────
 
 describe('task 1704 SLICE 2: VaultLockedNoKey copy + explicit confirmation gates', () => {
-  async function renderSurface(): Promise<string> {
+  async function renderSurface(props: Record<string, unknown> = {}): Promise<string> {
     const { doc, win } = makeDom()
     const storage = new PersistentSessionStorage()
     const g = globalThis as Record<string, unknown>
@@ -386,12 +390,12 @@ describe('task 1704 SLICE 2: VaultLockedNoKey copy + explicit confirmation gates
       ...makeApiSpies(),
     }))
 
-    const { VaultLockedNoKey } = (await import('../src/components/vault-locked-no-key.tsx')) as unknown as { VaultLockedNoKey: React.FC }
+    const { VaultLockedNoKey } = (await import('../src/components/vault-locked-no-key.tsx')) as unknown as { VaultLockedNoKey: React.FC<Record<string, unknown>> }
     const rr = (await import('react-router-dom')) as unknown as { MemoryRouter: React.FC<{ children?: React.ReactNode }> }
     const { renderToStaticMarkup } = (await import('react-dom/server')) as unknown as { renderToStaticMarkup: (n: React.ReactNode) => string }
 
     const html = renderToStaticMarkup(
-      React.createElement(rr.MemoryRouter, null, React.createElement(VaultLockedNoKey)),
+      React.createElement(rr.MemoryRouter, null, React.createElement(VaultLockedNoKey, props)),
     )
     restoreDom?.()
     restoreDom = null
@@ -414,11 +418,12 @@ describe('task 1704 SLICE 2: VaultLockedNoKey copy + explicit confirmation gates
     expect(html).toContain('no backdoor')
   })
 
-  test('primary re-entry: phrase CTA to /recover-with-phrase + the only-enter-it-here warning', async () => {
+  test('task 1810: primary re-entry is a button (not a link to the password reset) + the only-enter-it-here warning', async () => {
     const html = await renderSurface()
     expect(html).toContain('Unlock with recovery phrase')
-    expect(html).toContain('href="/recover-with-phrase"')
-    expect(html).toContain('beebeeb.io/recover-with-phrase')
+    expect(html).not.toContain('href="/recover-with-phrase"')
+    expect(html).not.toContain('recover-with-phrase')
+    expect(html).toContain('never in an email, never on another site')
   })
 
   test('all three exits render with their explicit confirmation gates INLINE (nothing fire-and-forget)', async () => {
@@ -444,8 +449,19 @@ describe('task 1704 SLICE 2: VaultLockedNoKey copy + explicit confirmation gates
     expect(html).toContain('encrypted')
   })
 
-  test('escape hatch is offered honestly (the previous password may still be remembered)', async () => {
+  test('escape hatch is offered honestly when the caller wires it (the previous password may still be remembered)', async () => {
+    const html = await renderSurface({ onTryPreviousPassword: () => {} })
+    expect(html).toContain('Remember your previous password? Try it here')
+  })
+
+  test('task 1810: without the escape-hatch handler (the sign-in / set-password steps) there is no dead hatch button', async () => {
     const html = await renderSurface()
-    expect(html).toContain('previous password')
+    expect(html).not.toContain('Remember your previous password')
+  })
+
+  test('task 1810: with onUnlockWithPhrase the explanatory line does not promise a second sign-in', async () => {
+    const html = await renderSurface({ onUnlockWithPhrase: () => {} })
+    expect(html).toContain('Unlock with recovery phrase')
+    expect(html).not.toContain('sign in with your new password first')
   })
 })
