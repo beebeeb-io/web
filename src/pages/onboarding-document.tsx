@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { OnboardingRenderer } from '../components/onboarding/renderer'
 import { OnboardingFrame, Spinner } from '../components/onboarding/frame'
@@ -9,6 +9,7 @@ import {
 } from '../lib/account-state'
 import { getSubscription, setEmail } from '../lib/api'
 import { useAuth } from '../lib/auth-context'
+import { useDriveData } from '../lib/drive-data-context'
 import { useKeys } from '../lib/key-context'
 import { clearLegacyBearer } from '@beebeeb/shared'
 import { parsePlanIntent, postSignupDestination, readPlanIntent, savePlanIntent } from '../lib/plan-intent'
@@ -135,7 +136,15 @@ export function SignupFromDocument() {
 
 /** `/account-status` with the flag on: the account-stage document, signed in. */
 export function AccountStatusFromDocument() {
-  const { state, refresh } = useOnboardingDocument()
+  const { state, refresh: refreshDocument } = useOnboardingDocument()
+  const { refreshPlanDetails } = useDriveData()
+  // The route gate (PlanGate) reads its own copy of the account document from the
+  // drive data context; completing a blocking step here must refresh THAT copy
+  // too, or the gate keeps redirecting back to this page.
+  const refresh = useCallback(async () => {
+    await refreshDocument()
+    refreshPlanDetails()
+  }, [refreshDocument, refreshPlanDetails])
   const navigate = useNavigate()
   const { logout } = useAuth()
 

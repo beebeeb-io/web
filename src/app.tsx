@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, lazy, Suspense } from 'react'
+import React, { useState, useCallback, useRef, useEffect, lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { reportError } from '@beebeeb/shared'
@@ -237,8 +237,13 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
  * an allowance goes to the chooser), else the legacy subscription's.
  */
 function PlanGate({ children }: { children: ReactNode }) {
-  const { accountState, subscriptionSettled } = useDriveData()
+  const { accountState, accountBlocking, subscriptionSettled } = useDriveData()
   const location = useLocation()
+  // A billing refresh re-opens `subscriptionSettled` while the document is
+  // re-fetched (1816 round 2). Once the gate has decided for this account, keep
+  // the app mounted through that window — never a spinner that remounts the
+  // drive, never a redirect decided on the half-refreshed state.
+  const decidedFor = useRef<string | null>(null)
   const { user } = useAuth()
   const { getMasterKey } = useKeys()
   // A welcome file onboarding deferred while the account had no plan is
@@ -257,6 +262,10 @@ function PlanGate({ children }: { children: ReactNode }) {
     }
     void flushDeferredWelcomeFile(userId, masterKey)
   }, [subscriptionSettled, accountState, userId, getMasterKey])
+  if (subscriptionSettled) decidedFor.current = userId ?? null
+  if (!subscriptionSettled && userId && decidedFor.current === userId) {
+    return <>{children}</>
+  }
   if (!subscriptionSettled) {
     return (
       <div className="flex items-center justify-center min-h-screen" aria-busy="true">
@@ -264,7 +273,7 @@ function PlanGate({ children }: { children: ReactNode }) {
       </div>
     )
   }
-  const to = planGateRedirect(location.pathname, accountState)
+  const to = planGateRedirect(location.pathname, accountState, accountBlocking)
   if (to) return <Navigate to={to} replace />
   return <>{children}</>
 }

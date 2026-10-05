@@ -15,6 +15,7 @@
 
 import type { AccountState, Subscription } from '@beebeeb/shared'
 import type { OnboardingDocument } from './onboarding/types'
+import { planScreen } from './onboarding/plan'
 
 export type { AccountState }
 
@@ -67,6 +68,35 @@ export function accountStateFromDocument(
   }
 }
 
+/**
+ * Task 1816 round 2 (Codex P1) — an account-stage document can be `blocking`
+ * while its state label is `allowance`/`active` (a required unfinished step such
+ * as updated terms, or `update_required`). The label alone must never let such an
+ * account into the protected routes: classify blocking BEFORE mapping the state.
+ * Uses the renderer's own `planScreen`, so the gate blocks exactly when the
+ * renderer would draw a step / stop / update screen instead of the account page.
+ * `needs_plan` is excluded: the chooser redirect already owns that account.
+ */
+export function accountDocumentBlocks(
+  doc: OnboardingDocument | null | undefined,
+): boolean {
+  if (!doc || doc.stage !== 'account' || !doc.account) return false
+  if (doc.account.state === 'needs_plan') return false
+  const kind = planScreen(doc).kind
+  return kind !== 'account' && kind !== 'created'
+}
+
+/** Where a blocking account document is rendered (the document-driven screen). */
+export const ACCOUNT_STATUS_PATH = '/account-status'
+
+/** Routes a blocked account may still open: the step screen itself, sign out, deletion, email verification. */
+export const BLOCKING_ALLOWED_PATHS: readonly string[] = [
+  ACCOUNT_STATUS_PATH,
+  '/logout',
+  '/verify-email',
+  '/settings/delete-account',
+]
+
 /** Document state when there is one, else the legacy subscription field. */
 export function effectiveAccountState(
   doc: Pick<OnboardingDocument, 'stage' | 'account'> | null | undefined,
@@ -105,9 +135,16 @@ export const NEEDS_PLAN_ALLOWED_PATHS: readonly string[] = [
  * `needs_plan` is gated; a `lapsed` account keeps browsing and downloading
  * (read-only) and sees the persistent banner instead.
  */
-export function planGateRedirect(pathname: string, state: AccountState): string | null {
-  if (state !== 'needs_plan') return null
+export function planGateRedirect(
+  pathname: string,
+  state: AccountState,
+  blocking = false,
+): string | null {
   const path = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname
+  if (blocking && state !== 'needs_plan') {
+    return BLOCKING_ALLOWED_PATHS.includes(path) ? null : ACCOUNT_STATUS_PATH
+  }
+  if (state !== 'needs_plan') return null
   return NEEDS_PLAN_ALLOWED_PATHS.includes(path) ? null : CHOOSE_PLAN_PATH
 }
 
