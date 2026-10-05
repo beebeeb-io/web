@@ -105,7 +105,7 @@ async function renderProvisionBranch(opts: { marker?: boolean } = {}): Promise<s
     useAuth: (): unknown => ({
       user: { user_id: TARGET, email: 'target@example.com', email_verified: true, created_at: '2026-01-01T00:00:00Z', totp_enabled: false },
       loading: false, refreshUser: async () => {}, logout: async () => {},
-      login: async () => ({}), signup: async () => ({}), verify2fa: async () => ({}),
+      login: async () => ({}), verify2fa: async () => ({}),
     }),
   }))
   await mockModuleScoped('../src/lib/key-context.tsx', import.meta.dir, (real: Record<string, unknown>) => ({

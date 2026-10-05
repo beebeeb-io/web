@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { PILOT_KEY } from './helpers/signup'
+import { signupAndUnlock } from './helpers/signup'
 
 /**
  * E2E test for the file upload flow.
@@ -10,11 +10,13 @@ import { PILOT_KEY } from './helpers/signup'
  * parsing, blob storage, listing query — fails the test.
  *
  * Runs on the isolated e2e harness (task 1466): `./e2e/scripts/web-e2e.sh
- * e2e/upload.spec.ts` — no manual env overrides needed. This spec calls
- * POST /api/v1/auth/signup directly (not through the /signup UI), so it must
- * present the pilot-key gate's `X-Beebeeb-Pilot-Key` header itself — PILOT_KEY
- * from the shared helper is kept in lockstep with the harness's
- * BB_PILOT_SIGNUP_KEY (single source of truth, task 1466).
+ * e2e/upload.spec.ts` — no manual env overrides needed.
+ *
+ * Task 1799: the account is created through the real signup UI (OPAQUE
+ * register), not the retired legacy password signup route. The upload and
+ * listing calls then ride the browser context's own session cookie, exactly as
+ * the web client's requests do — an OPAQUE account has no password-login
+ * endpoint to mint a bearer token from.
  */
 
 // Honor the harness-provided API URL so this spec runs against the isolated
@@ -33,6 +35,15 @@ function makeNameEncrypted(label: string): string {
 }
 
 test.describe('Upload E2E', () => {
+  // The spec signs up a brand-new account through the real /signup UI, so it
+  // must start UNauthenticated: in the `authenticated` project the dev
+  // auto-login would bounce the guest-only /signup to the drive (same pattern
+  // as refresh-stability.spec.ts).
+  test.beforeEach(async ({ page, context }) => {
+    await page.route('**/dev/auto-login', (route) => route.fulfill({ status: 404 }))
+    await context.clearCookies()
+  })
+
   test('signup → upload file → appears in drive listing', async ({ page }) => {
     const email = uniqueEmail()
     const filename = `e2e-upload-${Date.now()}.txt`
@@ -57,28 +68,15 @@ test.describe('Upload E2E', () => {
       Buffer.alloc(16), // fake 16-byte GCM tag
     ])
 
-    // 1. Signup creates the account and returns a session token. The
-    //    pilot-key gate (BB_REQUIRE_PILOT_KEY, on by default on the isolated
-    //    harness) is enforced on THIS endpoint too (pilot_gate.rs) — not just
-    //    the UI form — so a direct API call must present the header.
-    const signup = await page.request.post(`${API}/api/v1/auth/signup`, {
-      data: { email, password: PASSWORD },
-      headers: { 'X-Beebeeb-Pilot-Key': PILOT_KEY },
-    })
-    expect(signup.ok()).toBeTruthy()
-    const { session_token } = await signup.json()
-    expect(session_token).toBeTruthy()
+    // 1. Real signup through the UI: OPAQUE register, recovery phrase, vault
+    //    unlocked on the drive. Leaves the context holding the bb_session cookie.
+    await signupAndUnlock(page, { email, password: PASSWORD })
 
-    // 2. Login round-trips the credentials so the session-cookie/token path
-    //    is exercised end-to-end (signup also returns a token, but a separate
-    //    login is what real users hit).
-    const login = await page.request.post(`${API}/api/v1/auth/login`, {
-      data: { email, password: PASSWORD },
-    })
-    expect(login.ok()).toBeTruthy()
-    const loginBody = await login.json()
-    const token = loginBody.session_token ?? session_token
-    expect(token).toBeTruthy()
+    // 2. The session is a cookie scoped to host `localhost` (port-agnostic), so
+    //    page.request (same cookie jar) authenticates against the API origin.
+    const me = await page.request.get(`${API}/api/v1/auth/me`)
+    expect(me.ok(), `session cookie not accepted by the API: ${me.status()}`).toBeTruthy()
+    expect((await me.json()).email).toBe(email)
 
     // 3. Upload the file via the multipart endpoint that the web client uses.
     //    name_encrypted must be canonical V1Aes256Gcm JSON — the server now
@@ -90,7 +88,6 @@ test.describe('Upload E2E', () => {
       parent_id: null,
     })
     const upload = await page.request.post(`${API}/api/v1/files/upload`, {
-      headers: { Authorization: `Bearer ${token}` },
       multipart: {
         metadata: { name: 'metadata.json', mimeType: 'application/json', buffer: Buffer.from(metadata) },
         chunk_0: { name: filename, mimeType: 'text/plain', buffer: chunkBytes },
@@ -106,9 +103,7 @@ test.describe('Upload E2E', () => {
     expect(uploaded.chunk_count).toBe(1)
 
     // 4. The listing endpoint returns the new file.
-    const list = await page.request.get(`${API}/api/v1/files`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
+    const list = await page.request.get(`${API}/api/v1/files`)
     expect(list.ok()).toBeTruthy()
     const { files } = await list.json()
     const found = files.find((f: { id: string }) => f.id === uploaded.id)
@@ -118,10 +113,8 @@ test.describe('Upload E2E', () => {
     expect(found.size_bytes).toBe(fileBytes.length)
     expect(found.is_folder).toBe(false)
 
-    // 5. Drive UI loads the listing for this session (best-effort; the session
-    //    may hit the vault-unlock gate, both outcomes are valid — the API checks above
-    //    are the load-bearing assertions).
-    await page.addInitScript(t => localStorage.setItem('bb_session', t), token)
+    // 5. The drive UI of the same signed-in context still loads (best-effort;
+    //    the API checks above are the load-bearing assertions).
     await page.goto('/')
   })
 })

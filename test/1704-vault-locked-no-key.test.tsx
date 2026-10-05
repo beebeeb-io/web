@@ -182,7 +182,6 @@ async function renderProtectedRoute(opts: { marker?: boolean; impersonating?: bo
       refreshUser: async () => {},
       logout: async () => {},
       login: async () => ({}),
-      signup: async () => ({}),
       verify2fa: async () => ({}),
     }),
   }))
@@ -318,7 +317,7 @@ describe('task 1704 SLICE 2: ProtectedRoute routes the fresh-password/no-key cas
       useAuth: (): unknown => ({
         user: { user_id: TARGET, email: 'target@example.com', email_verified: true, created_at: '2026-01-01T00:00:00Z', totp_enabled: false },
         loading: false, refreshUser: async () => {}, logout: async () => {},
-        login: async () => ({}), signup: async () => ({}), verify2fa: async () => ({}),
+        login: async () => ({}), verify2fa: async () => ({}),
       }),
     }))
     await mockModuleScoped('../src/lib/key-context.tsx', import.meta.dir, (real: Record<string, unknown>) => ({
@@ -379,7 +378,7 @@ describe('task 1704 SLICE 2: VaultLockedNoKey copy + explicit confirmation gates
       useAuth: (): unknown => ({
         user: { user_id: TARGET, email: 'target@example.com', email_verified: true, created_at: '2026-01-01T00:00:00Z', totp_enabled: false },
         loading: false, refreshUser: async () => {}, logout: async () => {},
-        login: async () => ({}), signup: async () => ({}), verify2fa: async () => ({}),
+        login: async () => ({}), verify2fa: async () => ({}),
       }),
     }))
     await mockModuleScoped('../src/lib/api.ts', import.meta.dir, (real: Record<string, unknown>) => ({

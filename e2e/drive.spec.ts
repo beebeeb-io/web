@@ -2,7 +2,7 @@ import { test, expect, type Page, type Locator } from '@playwright/test'
 
 // All Drive E2E tests run in the `authenticated` Playwright project (dev
 // auto-login via storageState), so they exercise the signed-in app surface
-// directly. The legacy "create account via /api/v1/auth/signup then log in via
+// directly. The legacy "create account via the legacy password signup route then log in via
 // the UI" tests were removed — the login page is now OPAQUE-mandatory with no
 // password fallback, so a legacy account can't complete a UI login (task 0763).
 
@@ -20,7 +20,7 @@ test.describe('Drive E2E', () => {
   })
 
   test('drive renders with the file list for the authenticated dev account', async ({ page }) => {
-    // The legacy "create account via /api/v1/auth/signup then log in via the UI"
+    // The legacy "create account via the legacy password signup route then log in via the UI"
     // path is obsolete: the login page is OPAQUE-mandatory with no password
     // fallback (src/pages/login.tsx), so a legacy password account can't complete
     // a UI login. Instead assert the authenticated drive (dev auto-login via the

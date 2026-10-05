@@ -12,13 +12,11 @@ import {
   ApiError,
   type AuthUser,
   type LoginResult,
-  type SignupResult,
   clearToken,
   getMe,
   getToken,
   login as apiLogin,
   logout as apiLogout,
-  signup as apiSignup,
   verify2fa as apiVerify2fa,
 } from './api'
 
@@ -53,7 +51,6 @@ export function registerLoginBroadcastCallback(cb: (userId: string) => void): vo
 interface AuthState {
   user: AuthUser | null
   loading: boolean
-  signup: (email: string, password: string) => Promise<SignupResult>
   login: (email: string, password: string) => Promise<LoginResult>
   refreshUser: () => Promise<void>
   verify2fa: (partialToken: string, code: string) => Promise<LoginResult>
@@ -198,14 +195,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch { /* channel may already be closed during teardown */ }
   }, [])
 
-  const signup = useCallback(async (email: string, password: string): Promise<SignupResult> => {
-    const result = await apiSignup(email, password)
-    const u = await getMe()
-    setUser(u)
-    broadcastLogin(u.user_id)
-    return result
-  }, [broadcastLogin])
-
   const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
     const result = await apiLogin(email, password)
     if (!result.requires_2fa) {
@@ -252,8 +241,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo<AuthState>(
-    () => ({ user, loading, signup, login, refreshUser, verify2fa, logout }),
-    [user, loading, signup, login, refreshUser, verify2fa, logout],
+    () => ({ user, loading, login, refreshUser, verify2fa, logout }),
+    [user, loading, login, refreshUser, verify2fa, logout],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
