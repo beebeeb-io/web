@@ -50,6 +50,8 @@ import {
 import { isPasswordSetSignInRequired } from '../lib/reset-2fa'
 import { opaqueRegistrationStart, opaqueRegistrationFinish, toBase64 } from '../lib/crypto'
 import { markPasswordResetCompleted } from '../lib/post-reset-lock'
+import { completeResetSession } from '../lib/reset-session'
+import { useKeys } from '../lib/key-context'
 import { useAuth } from '../lib/auth-context'
 
 type Step = 'form' | 'two-factor' | 'sign-in-required' | 'success'
@@ -86,6 +88,7 @@ export function SetPassword() {
   const { token } = useParams<{ token: string }>()
   const navigate = useNavigate()
   const { refreshUser } = useAuth()
+  const { lock } = useKeys()
 
   const [step, setStep] = useState<Step>('form')
   const [newPassword, setNewPassword] = useState('')
@@ -100,27 +103,30 @@ export function SetPassword() {
   // Everything after the server opened a session for this device — shared by
   // the direct path (no 2FA) and the 2FA path (after /auth/2fa/verify).
   const finishWithSession = useCallback(async () => {
-    // The fresh session also arrived as the bb_session cookie; drop the
-    // redundant legacy bearer slot like every other auth-completing flow.
-    clearLegacyBearer()
-
-    // Task 1704 SLICE 2 — stamp the post-reset marker for THIS tab: the
-    // credential was just replaced, so the device's wrapped vault (if
-    // any) can no longer open under anything the user knows here. The
-    // wrapped vault itself is NEVER cleared — the old password may still
-    // be remembered, and destroying the only local wrap would be a
-    // data-loss bug. ProtectedRoute reads this marker to route to the
-    // honest locked-state surface (VaultLockedNoKey) instead of the
-    // dead-end password form. No key-context / vault touch (slice scope).
-    markPasswordResetCompleted()
-
-    // The vault is still wrapped under the OLD password — do NOT touch
-    // key-context or setMasterKey here. Re-wrapping is the
-    // /recover-with-phrase ceremony (SLICE 3), reached from the honest
-    // locked-state surface this marker routes to.
+    // Task 1704 SLICE 2 — the post-reset marker is stamped for THIS tab: the
+    // credential was just replaced, so the device's wrapped vault (if any) can
+    // no longer open under anything the user knows here. ProtectedRoute reads
+    // it to route a reload to the honest locked-state surface. The wrapped
+    // vault itself is not cleared here (the phrase step overwrites it; the
+    // next sign-in that cannot open it deletes it).
+    //
+    // Task 1810 round 2 (P2-2): lock() any key still resident from before and
+    // load the session's user BEFORE the phrase screen renders, so the
+    // recovered key can never be tagged under a previous account's id. See
+    // src/lib/reset-session.ts.
+    const outcome = await completeResetSession({
+      clearLegacyBearer,
+      lock,
+      markPasswordResetCompleted,
+      refreshUser,
+    })
+    if (outcome === 'failed') {
+      setClosedDetail('Your password was set, but this device could not open the session.')
+      setStep('sign-in-required')
+      return
+    }
     setStep('success')
-    await refreshUser()
-  }, [refreshUser])
+  }, [refreshUser, lock])
 
   const handleSubmit = useCallback(
     async (e: FormEvent) => {

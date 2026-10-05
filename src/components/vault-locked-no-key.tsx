@@ -4,6 +4,9 @@ import { AuthShell } from './auth-shell'
 import { BBButton, BBCheckbox, BBInput, Icon } from '@beebeeb/shared'
 import { StepUpAuth } from './step-up-auth'
 import { useAuth } from '../lib/auth-context'
+import { useKeys } from '../lib/key-context'
+import { DeviceProvision } from './device-provision'
+import { prepareInPlacePhraseUnlock } from '../lib/locked-phrase-unlock'
 import {
   ApiError,
   bulkPermanentDelete,
@@ -55,26 +58,33 @@ interface VaultLockedNoKeyProps {
   onTryPreviousPassword?: () => void
   /** Show the phrase screen in place (the sign-in / set-password steps, which
    *  already hold the proven password). Without it — a session with no password
-   *  in hand — the button signs out and sends the person to sign in, where the
-   *  proven password plus the phrase re-seal the vault. Task 1810: it must never
-   *  open /recover-with-phrase, which is a password RESET. */
+   *  in hand — the button drops only this account's stale password-sealed entry
+   *  and shows the phrase screen in place (session-only key, nothing persisted,
+   *  no sign-out, a passkey vault is untouched). Task 1810: it must never open
+   *  /recover-with-phrase, which is a password RESET. */
   onUnlockWithPhrase?: () => void
 }
 
 export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: VaultLockedNoKeyProps) {
-  const { logout } = useAuth()
+  const { logout, user } = useAuth()
+  const { discardStalePasswordVault } = useKeys()
   const navigate = useNavigate()
+  // Task 1810 round 2 (P2-3): with no password in hand the phrase screen is
+  // shown IN PLACE. The button no longer signs out: logout() wipes the whole
+  // local vault store (a passkey-sealed vault included), which a button labelled
+  // as an unlock must never do silently.
+  const [phraseInPlace, setPhraseInPlace] = useState(false)
   const handleUnlockWithPhrase = useCallback(async () => {
     if (onUnlockWithPhrase) {
       onUnlockWithPhrase()
       return
     }
-    try {
-      await logout()
-    } finally {
-      navigate('/login', { replace: true })
-    }
-  }, [onUnlockWithPhrase, logout, navigate])
+    await prepareInPlacePhraseUnlock({
+      userId: user?.user_id ?? null,
+      discardStalePasswordVault,
+    })
+    setPhraseInPlace(true)
+  }, [onUnlockWithPhrase, user, discardStalePasswordVault])
 
   // ── exit 1: cancel subscription ──
   const [cancelGate, setCancelGate] = useState(false)
@@ -204,6 +214,17 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
 
   const canDeleteAccount = accountGate && accountConfirm === 'DELETE' && accountState !== 'working'
 
+  if (phraseInPlace) {
+    return (
+      <DeviceProvision
+        password=""
+        authMethod="passkey"
+        notice="Your new password is set. Enter your recovery phrase to open your vault for this session. To keep it on this device, sign in again with your new password afterwards."
+        onProvisioned={() => navigate('/', { replace: true })}
+      />
+    )
+  }
+
   return (
     <AuthShell
       title="Vault locked"
@@ -232,9 +253,10 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
           Unlock with recovery phrase
         </BBButton>
         <p className="text-[12px] text-ink-3 leading-relaxed mt-2.5">
-          Your 12-word recovery phrase is the vault key. Entering it unlocks
-          this device and re-secures the vault under your new password.
-          {!onUnlockWithPhrase && ' You will sign in with your new password first, then enter the 12 words.'}
+          Your 12-word recovery phrase is the vault key.{' '}
+          {onUnlockWithPhrase
+            ? 'Entering it unlocks this device and re-secures the vault under your new password.'
+            : 'Entering it opens the vault for this session only; sign in again with your new password to keep it on this device.'}
         </p>
         <p className="text-[11px] text-ink-4 leading-relaxed mt-1.5">
           Only ever enter the phrase on <span className="font-mono">beebeeb.io</span> —

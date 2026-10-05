@@ -350,13 +350,20 @@ export async function clearVault(): Promise<void> {
  * elsewhere). It is never opened again, so it is removed rather than kept as an
  * inert copy of the master key under a password the person gave up.
  *
+ * `userId` scopes the deletion (task 1810 round 2, security review P2-1): the
+ * 'master' slot is ONE slot per browser, so it may hold ANOTHER account's key.
+ * With `userId` given, an entry tagged for a DIFFERENT account is left alone
+ * (it is not this account's stale copy; it is another person's vault). An
+ * untagged (pre-1531) entry cannot be attributed, so it is removed as before.
+ *
  * Returns true if an entry was removed.
  */
-export async function clearPasswordVault(): Promise<boolean> {
+export async function clearPasswordVault(userId?: string): Promise<boolean> {
   const db = await openDB()
   try {
     const entry = await dbGet(db, 'master')
     if (!entry) return false
+    if (userId !== undefined && entry.userId !== undefined && entry.userId !== userId) return false
     await dbDelete(db, 'master')
     return true
   } finally {

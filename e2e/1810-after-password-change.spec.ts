@@ -12,6 +12,8 @@ import {
   expectDrive,
   downloadText,
   uploadAndSettle,
+  plantPasskeyVault,
+  hasPasskeyVault,
 } from './helpers/after-password-change'
 
 /**
@@ -78,7 +80,7 @@ test('2FA account, email reset in the browser that holds the vault: recovery phr
   await shot(page, 't1-02-signed-in-again.png')
 })
 
-test('"Unlock with recovery phrase" on the locked-vault screen never opens the password reset', async ({ page }) => {
+test('"Unlock with recovery phrase" on the locked-vault screen: no password reset, no sign-out, a passkey vault survives', async ({ page }) => {
   test.setTimeout(300_000)
   const { email, recoveryPhrase } = await makeAccount(page, '1810-t1b', false)
   await uploadAndSettle(page, FILE, BODY)
@@ -86,7 +88,11 @@ test('"Unlock with recovery phrase" on the locked-vault screen never opens the p
   const token = await requestResetLink(page, email)
   await setNewPassword(page, token)
   await page.getByRole('button', { name: /set new password/i }).click()
-  await expect(page.getByRole('heading', { name: /password set/i }).or(page.getByLabel('Recovery word 1', { exact: true }))).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByLabel('Recovery word 1', { exact: true })).toBeVisible({ timeout: 30_000 })
+
+  // Round 2 (P2-3): a device that also holds a passkey-sealed vault.
+  await plantPasskeyVault(page)
+  expect(await hasPasskeyVault(page)).toBe(true)
 
   // Land on the locked-vault screen the way a reload does (marker kept, tab session alive).
   await page.goto('/')
@@ -94,21 +100,45 @@ test('"Unlock with recovery phrase" on the locked-vault screen never opens the p
   await expect(unlock).toBeVisible({ timeout: 30_000 })
   await shot(page, 't1b-01-vault-locked.png')
   await unlock.click()
-  await page.waitForTimeout(1500)
-  await shot(page, 't1b-02-after-unlock-click.png')
 
-  // The click must not land on the password-recovery page ("Recover with phrase": email + phrase, then a NEW password).
-  expect(new URL(page.url()).pathname).not.toBe('/recover-with-phrase')
+  // The phrase screen opens IN PLACE: still signed in (no /login), not the password reset.
+  await expect(page.getByLabel('Recovery word 1', { exact: true })).toBeVisible({ timeout: 30_000 })
+  await shot(page, 't1b-02-after-unlock-click.png')
+  expect(new URL(page.url()).pathname).toBe('/')
   await expect(page.getByRole('heading', { name: /recover with phrase/i })).toHaveCount(0)
   await expect(page.getByText(/set a new password/i)).toHaveCount(0)
+  // Nothing was wiped: the passkey vault is still there; only the stale password entry is gone.
+  expect(await hasPasskeyVault(page)).toBe(true)
+  expect((await probeVault(page, { OLD_PW: PW, NEW_PW })).entry).toBe(false)
 
-  // It leads to signing in with the NEW password and then the 12 words; the file decrypts.
-  if (new URL(page.url()).pathname.startsWith('/login')) {
-    await submitSignIn(page, email, NEW_PW)
-  }
   await restoreWithPhrase(page, recoveryPhrase)
   await expectDrive(page)
   expect(await downloadText(page, FILE)).toBe(BODY)
+  expect(await hasPasskeyVault(page)).toBe(true)
+})
+
+test('P2-1: signing in as a second account does not delete the first account\'s vault from this browser', async ({ page, browser }) => {
+  test.setTimeout(300_000)
+  // Account A lives in this browser (its vault is tagged with A's id).
+  const a = await makeAccount(page, '1810-t5a', false)
+  const aFile = 'a-only.txt'
+  await uploadAndSettle(page, aFile, 'account A data')
+  await dropSessionKeepVault(page)
+  const before = await probeVault(page, { PW })
+  expect(before).toEqual({ entry: true, unwrapsWith: { PW: true } })
+
+  // Account B is created elsewhere (a different browser), same password on purpose.
+  const other = await guestPage(browser)
+  const b = await makeAccount(other, '1810-t5b', false)
+  expect(b.email).not.toBe(a.email)
+
+  // B signs in HERE. A's entry is not B's stale copy: it must be kept, and the
+  // "we removed your old vault" notice must not be shown.
+  await submitSignIn(page, b.email, PW)
+  await expect(page.getByLabel('Recovery word 1', { exact: true })).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByText(/previous password, so it was removed/i)).toHaveCount(0)
+  await shot(page, 't5-01-second-account-phrase-prompt.png')
+  expect(await probeVault(page, { PW })).toEqual({ entry: true, unwrapsWith: { PW: true } })
 })
 
 test('2FA account, blank browser: sign in with the new password + code, enter the phrase, files decrypt', async ({ page, browser }) => {

@@ -265,7 +265,9 @@ describe('task 1704 SLICE 2: ProtectedRoute routes the fresh-password/no-key cas
     const { text } = await renderProtectedRoute({ marker: true })
     expect(text).toContain('Unlock with recovery phrase')
     expect(text).not.toContain('/recover-with-phrase')
-    expect(text).toContain('sign in with your new password first')
+    // Task 1810 round 2 (P2-3): no sign-out any more; the phrase opens in place.
+    expect(text).toContain('this session only')
+    expect(text).not.toContain('sign in with your new password first')
   })
 
   test('no marker + locked vault → VaultUnlock, UNTOUCHED (normal users keep their password form)', async () => {
@@ -383,6 +385,13 @@ describe('task 1704 SLICE 2: VaultLockedNoKey copy + explicit confirmation gates
         user: { user_id: TARGET, email: 'target@example.com', email_verified: true, created_at: '2026-01-01T00:00:00Z', totp_enabled: false },
         loading: false, refreshUser: async () => {}, logout: async () => {},
         login: async () => ({}), verify2fa: async () => ({}),
+      }),
+    }))
+    await mockModuleScoped('../src/lib/key-context.tsx', import.meta.dir, (real: Record<string, unknown>) => ({
+      ...real,
+      useKeys: (): unknown => ({
+        setMasterKey: async () => {}, setMasterKeyDirect: () => {},
+        discardStalePasswordVault: async () => false,
       }),
     }))
     await mockModuleScoped('../src/lib/api.ts', import.meta.dir, (real: Record<string, unknown>) => ({

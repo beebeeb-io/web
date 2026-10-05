@@ -153,8 +153,9 @@ interface KeyState {
    *  from before the password change is ever used again. The caller then routes
    *  to the recovery-phrase screen, which re-seals the key under the new
    *  password. NEVER call this on an unproven password (a typo) — the entry
-   *  would be destroyed for nothing. */
-  discardStalePasswordVault: () => Promise<void>
+   *  would be destroyed for nothing. Only an entry that belongs to `userId`
+   *  (or is untagged) is removed; resolves true if one was. */
+  discardStalePasswordVault: (userId: string) => Promise<boolean>
   /** Zero in-memory key. Vault stays in IndexedDB for re-unlock. */
   lock: () => void
   /** Full logout: zero in-memory key AND clear IndexedDB vault. */
@@ -634,10 +635,12 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     setKeyPresent(false)
   }, [clearCachedKey])
 
-  const discardStalePasswordVault = useCallback(async () => {
+  const discardStalePasswordVault = useCallback(async (userId: string): Promise<boolean> => {
     lock()
     try {
-      await clearPasswordVault()
+      // Scoped to `userId` (task 1810 round 2, P2-1): the slot may hold
+      // another account's key, which is never this account's stale copy.
+      return await clearPasswordVault(userId)
     } finally {
       // A passkey vault may still exist; re-read rather than assume.
       try { setVaultExists(await hasVault()) } catch { setVaultExists(false) }

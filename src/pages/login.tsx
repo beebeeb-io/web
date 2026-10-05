@@ -130,8 +130,11 @@ export function Login() {
     const step = resolveSignInUnlock(await unlockVault(proven, userId))
     if (step === 'proceed') return 'unlocked'
     if (step === 'discard_then_provision') {
-      await discardStalePasswordVault()
-      return 'provision_stale'
+      // true only if an entry of THIS account was actually removed (task 1810
+      // round 2, P2-1): another account's entry is left alone, and the "we
+      // removed your old vault" notice is shown only when that is what happened.
+      const removed = await discardStalePasswordVault(userId)
+      return removed ? 'provision_stale' : 'provision'
     }
     return 'provision'
   }

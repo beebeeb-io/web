@@ -151,3 +151,38 @@ export async function uploadAndSettle(page: Page, filename: string, body: string
   await page.reload()
   await expect(page.getByText(filename, { exact: false }).first()).toBeVisible({ timeout: 45_000 })
 }
+
+/** Plant a passkey-sealed vault entry ('master-passkey') as a stand-in for a device that has one. */
+export async function plantPasskeyVault(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((res, rej) => {
+      const r = indexedDB.open('beebeeb_vault')
+      r.onsuccess = () => res(r.result)
+      r.onerror = () => rej(r.error)
+    })
+    await new Promise<void>((res, rej) => {
+      const r = db.transaction('keys', 'readwrite').objectStore('keys').put({ id: 'master-passkey', marker: 'e2e-1810-passkey-vault' })
+      r.onsuccess = () => res()
+      r.onerror = () => rej(r.error)
+    })
+    db.close()
+  })
+}
+
+/** Is the (planted) passkey vault entry still in this browser's vault store? */
+export async function hasPasskeyVault(page: Page): Promise<boolean> {
+  return page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((res, rej) => {
+      const r = indexedDB.open('beebeeb_vault')
+      r.onsuccess = () => res(r.result)
+      r.onerror = () => rej(r.error)
+    })
+    if (!db.objectStoreNames.contains('keys')) { db.close(); return false }
+    const entry = await new Promise<unknown>((res) => {
+      const r = db.transaction('keys').objectStore('keys').get('master-passkey')
+      r.onsuccess = () => res(r.result)
+    })
+    db.close()
+    return entry !== undefined
+  })
+}
