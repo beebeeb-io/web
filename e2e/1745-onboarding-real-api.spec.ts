@@ -28,10 +28,32 @@ const PASSWORD = 'Correct-Horse-Battery-9'
 
 test.use({ storageState: { cookies: [], origins: [] } })
 test.setTimeout(300_000)
-test.skip(
-  process.env.BB_REQUIRE_PLAN_AT_SIGNUP !== '1' || !process.env.MOLLIE_API_BASE,
-  'needs BB_REQUIRE_PLAN_AT_SIGNUP=1 + MOLLIE_API_BASE → the debug mock Mollie',
-)
+/**
+ * Every prerequisite, checked up front. A missing one skips with a message that
+ * names it (a skip is NOT a pass) instead of letting the tests time out.
+ * The server-side flags (plan gate, emailed code, mock Mollie) are read from the
+ * env the harness inherits; the renderer flag is baked into the web build, so
+ * VITE_FEATURE_ONBOARDING_DOCUMENT must be set for the build web-e2e.sh starts.
+ */
+async function missingPrerequisites(): Promise<string[]> {
+  const missing: string[] = []
+  if (process.env.BB_REQUIRE_PLAN_AT_SIGNUP !== '1') missing.push('BB_REQUIRE_PLAN_AT_SIGNUP=1')
+  if (!process.env.MOLLIE_API_BASE) missing.push('MOLLIE_API_BASE -> the debug mock Mollie')
+  if (process.env.VITE_FEATURE_ONBOARDING_DOCUMENT !== 'true') missing.push('VITE_FEATURE_ONBOARDING_DOCUMENT=true')
+  if (process.env.BB_SIGNUP_EMAIL_CODE !== '1') missing.push('BB_SIGNUP_EMAIL_CODE=1')
+  try {
+    const res = await fetch(`${MAILPIT}/api/v1/info`, { signal: AbortSignal.timeout(3_000) })
+    if (!res.ok) missing.push(`Mailpit at ${MAILPIT} (HTTP ${res.status})`)
+  } catch {
+    missing.push(`Mailpit reachable at ${MAILPIT} (E2E_MAILPIT_URL)`)
+  }
+  return missing
+}
+
+test.beforeAll(async () => {
+  const missing = await missingPrerequisites()
+  test.skip(missing.length > 0, `1745 real-API spec needs: ${missing.join('; ')}`)
+})
 
 function sql(statement: string): void {
   try {
