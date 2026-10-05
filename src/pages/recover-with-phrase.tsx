@@ -8,6 +8,12 @@
  *                    POST recover-with-phrase-finalize
  *  Step 3 (success): show confirmation → navigate to drive
  *
+ * Task 1803 (server 1730): an account with 2FA does not get a session from the
+ * finalize call. The server answers `{requires_2fa, partial_token}`, and the
+ * flow adds a step 2b (2FA code, the same prompt as sign-in) before the vault
+ * is re-wrapped and the success screen shows. The derived master key and the
+ * new password stay in component state across that step.
+ *
  * Server endpoints are not yet live (rust-engineer task 0034). If start
  * returns null (404 / unavailable), show a friendly "try later" message
  * rather than an error.
@@ -38,8 +44,10 @@ import {
 } from '../lib/crypto'
 import { useKeys } from '../lib/key-context'
 import { useAuth } from '../lib/auth-context'
+import { ResetSignInRequired, ResetTwoFactorStep } from '../components/reset-two-factor-step'
+import { isPasswordSetSignInRequired } from '../lib/reset-2fa'
 
-type Step = 'phrase' | 'password' | 'success' | 'unavailable'
+type Step = 'phrase' | 'password' | 'two-factor' | 'sign-in-required' | 'success' | 'unavailable'
 
 const WORD_COUNT = 12
 
@@ -82,6 +90,60 @@ export function RecoverWithPhrase() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [passwordError, setPasswordError] = useState('')
   const [passwordSubmitting, setPasswordSubmitting] = useState(false)
+
+  // Task 1803 — the 2FA challenge handed back by finalize, and why the code
+  // step closed (sign-in-required screen detail).
+  const [partialToken, setPartialToken] = useState<string | null>(null)
+  const [closedDetail, setClosedDetail] = useState<string | undefined>(undefined)
+
+  // Everything after the server opened a session for this device: shared by the
+  // direct path (no 2FA) and the 2FA path (after /auth/2fa/verify).
+  // `userId` is the account the server just proved (task 1531/1534, P0).
+  const finishWithSession = useCallback(
+    async (userId: string | undefined) => {
+      if (!derivedMasterKey) {
+        // Cannot happen (the key lives in state until here), but a re-wrap with
+        // no key must fail loudly, not silently sign in with a locked vault.
+        throw new Error('Recovery session lost. Please start over.')
+      }
+      if (!userId) {
+        throw new Error('Could not confirm which account was recovered. Sign in with your new password.')
+      }
+
+      // Task 1553 — the fresh session also set the bb_session cookie
+      // server-side (setToken() wrote the same value to localStorage). Drop it
+      // here, same as every other auth-completing flow, so it can't outlive the
+      // cookie and silently re-authenticate this account later.
+      //
+      // clearLegacyBearer(), NOT clearToken() (PR #109 review round 2,
+      // Codex P2): clearToken() also fires the registered onTokenCleared
+      // callback (src/lib/api.ts → clearEmail()), which would wipe bb_email
+      // even though this recovery just succeeded and the account is not
+      // logging out. clearLegacyBearer() drops only the redundant
+      // localStorage token.
+      //
+      // The finalize call only calls setToken() — never setEmail() — so a
+      // phrase recovery on a device that never had bb_email set (the common
+      // case: this IS the "I lost my password and this device" flow) would
+      // leave bb_email unset and VaultUnlock.handlePasskeyUnlock() would fail
+      // with "Could not determine account email for passkey lookup" the next
+      // time the vault locks. `email` is the exact address this recovery was
+      // started and proved against (step 1) — stamp it like every other
+      // auth-completing flow does.
+      setStoredEmail(email.trim().toLowerCase())
+      clearLegacyBearer()
+
+      // Re-wrap master key under the new password and store in vault.
+      await setMasterKey(derivedMasterKey, newPassword, userId)
+
+      // Clear sensitive data from component state
+      setDerivedMasterKey(null)
+
+      setStep('success')
+      await refreshUser()
+    },
+    [derivedMasterKey, email, newPassword, setMasterKey, refreshUser],
+  )
 
   // ── Step 1: Verify phrase + call server ─────────────────────────────
   const handlePhraseSubmit = useCallback(async (e: FormEvent) => {
@@ -180,46 +242,23 @@ export function RecoverWithPhrase() {
         toBase64(newX25519Pub),
       )
 
-      // Task 1553 — recover-with-phrase-finalize already set the fresh
-      // bb_session cookie server-side (recoverWithPhraseFinalize's internal
-      // setToken() call wrote the same value to localStorage). Drop it here,
-      // same as every other auth-completing flow, so it can't outlive the
-      // cookie and silently re-authenticate this account later.
-      //
-      // clearLegacyBearer(), NOT clearToken() (PR #109 review round 2,
-      // Codex P2): clearToken() also fires the registered onTokenCleared
-      // callback (src/lib/api.ts → clearEmail()), which would wipe bb_email
-      // even though this recovery just succeeded and the account is not
-      // logging out. clearLegacyBearer() drops only the redundant
-      // localStorage token.
-      //
-      // Separate finding from the same review pass: unlike
-      // opaqueRegisterFinish/opaqueLoginFinish, recoverWithPhraseFinalize()
-      // (unlike those two) only calls setToken() internally — it never
-      // calls setEmail(), so a phrase recovery on a device that never had
-      // bb_email set (the common case: this IS the "I lost my password and
-      // this device" flow) would leave bb_email unset even after the fix
-      // above, and VaultUnlock.handlePasskeyUnlock() would still fail with
-      // "Could not determine account email for passkey lookup" the next
-      // time the vault locks. `email` here is the exact address this
-      // recovery was started and proved against (recoverWithPhraseStart,
-      // step 1) — stamp it the same way every other auth-completing flow
-      // does.
-      setStoredEmail(email.trim().toLowerCase())
-      clearLegacyBearer()
+      if (finalizeResult.requires_2fa) {
+        // Task 1803 — 2FA is on: no session yet. Keep the derived key and the
+        // new password in state; the vault re-wrap happens after the code.
+        setPartialToken(finalizeResult.partial_token)
+        setStep('two-factor')
+        return
+      }
 
-      // 6. Re-wrap master key under the new password and store in vault.
-      // finalizeResult.user_id (task 1531/1534, P0) is the account recovery
-      // just proved server-side — bound explicitly.
-      await setMasterKey(derivedMasterKey, newPassword, finalizeResult.user_id)
-
-      // Clear sensitive data from component state
-      setDerivedMasterKey(null)
-
-      setStep('success')
-      await refreshUser()
+      await finishWithSession(finalizeResult.user_id)
     } catch (err) {
-      if (err instanceof ApiError && err.status === 404) {
+      if (isPasswordSetSignInRequired(err)) {
+        // The credential WAS rotated; this page just could not finish the 2FA
+        // step. Say so, and drop the key material from state.
+        setDerivedMasterKey(null)
+        setClosedDetail(undefined)
+        setStep('sign-in-required')
+      } else if (err instanceof ApiError && err.status === 404) {
         setStep('unavailable')
       } else if (err instanceof ApiError && err.status === 400) {
         setPasswordError('Recovery token expired. Please start the process again.')
@@ -230,9 +269,28 @@ export function RecoverWithPhrase() {
     } finally {
       setPasswordSubmitting(false)
     }
-  }, [newPassword, confirmPassword, derivedMasterKey, recoveryToken, email, setMasterKey, refreshUser])
+  }, [newPassword, confirmPassword, derivedMasterKey, recoveryToken, finishWithSession])
 
   // ── Renders ──────────────────────────────────────────────────────────
+
+  if (step === 'two-factor' && partialToken) {
+    return (
+      <ResetTwoFactorStep
+        partialToken={partialToken}
+        onVerified={(result) => finishWithSession(result.user_id)}
+        onClosed={(reason) => {
+          setPartialToken(null)
+          setDerivedMasterKey(null)
+          setClosedDetail(reason)
+          setStep('sign-in-required')
+        }}
+      />
+    )
+  }
+
+  if (step === 'sign-in-required') {
+    return <ResetSignInRequired detail={closedDetail} />
+  }
 
   if (step === 'unavailable') {
     return (
