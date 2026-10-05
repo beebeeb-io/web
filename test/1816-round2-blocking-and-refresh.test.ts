@@ -6,6 +6,7 @@ import {
   effectiveAccountState,
   planGateRedirect,
   ACCOUNT_STATUS_PATH,
+  postSignupLanding,
 } from '../src/lib/account-state'
 import {
   initialAccountDoc,
@@ -94,5 +95,18 @@ describe('1816 round 2 P2: a billing refresh invalidates the cached document', (
     const s = invalidateAccountDoc(initialAccountDoc(false), false)
     expect(s.settled).toBe(true)
     expect(s.doc).toBeNull()
+  })
+})
+
+describe('1816 post-signup landing', () => {
+  test('a usable allowance account lands on the drive; anything else keeps the chooser', () => {
+    const chooser = '/choose-plan'
+    expect(postSignupLanding(doc('account.allowance.web.json'), chooser, false)).toBe('/')
+    // an explicit plan intent still goes to the chooser
+    expect(postSignupLanding(doc('account.allowance.web.json'), '/choose-plan?plan=basic&cycle=yearly', true)).toBe('/choose-plan?plan=basic&cycle=yearly')
+    expect(postSignupLanding(doc('account.needs_plan.ios.json'), chooser, false)).toBe(chooser)
+    expect(postSignupLanding(blockingAllowance('billing_profile'), chooser, false)).toBe(chooser)
+    expect(postSignupLanding(null, chooser, false)).toBe(chooser)
+    expect(postSignupLanding(doc('pre_account.web.json'), chooser, false)).toBe(chooser)
   })
 })

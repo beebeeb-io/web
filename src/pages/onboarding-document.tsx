@@ -5,6 +5,7 @@ import { OnboardingFrame, Spinner } from '../components/onboarding/frame'
 import { UnsupportedSchema } from '../components/onboarding/blocking-screens'
 import {
   accountStateFromError,
+  postSignupLanding,
   resolveAccountState,
 } from '../lib/account-state'
 import { getSubscription, setEmail } from '../lib/api'
@@ -14,6 +15,7 @@ import { useKeys } from '../lib/key-context'
 import { clearLegacyBearer } from '@beebeeb/shared'
 import { parsePlanIntent, postSignupDestination, readPlanIntent, savePlanIntent } from '../lib/plan-intent'
 import { unsupportedSchemaScreen } from '../lib/onboarding/plan'
+import { fetchOnboardingDocument } from '../lib/onboarding/client'
 import { coreCeremonyPorts, fetchBreachBody, httpActions, type OnboardingPorts } from '../lib/onboarding/ports'
 import { useOnboardingDocument } from '../lib/onboarding/use-document'
 import { markWelcomeFilePending, uploadWelcomeFile } from '../lib/welcome-file-upload'
@@ -113,7 +115,14 @@ export function SignupFromDocument() {
           }
         }
         await refreshUser()
-        navigate(postSignupDestination(readPlanIntent()), { replace: true })
+        // Task 1816: a usable allowance account goes straight to the drive. The
+        // server's account document decides; unavailable -> the chooser as before.
+        const intent = readPlanIntent()
+        const landed = await fetchOnboardingDocument().catch(() => null)
+        navigate(
+          postSignupLanding(landed?.kind === 'document' ? landed.doc : null, postSignupDestination(intent), intent !== null),
+          { replace: true },
+        )
       },
     }),
     [refresh, navigate, refreshUser, setMasterKey],

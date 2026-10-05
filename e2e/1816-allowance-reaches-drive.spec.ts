@@ -10,13 +10,11 @@
  * inside the allowance succeeds, an upload over it is refused, and the sidebar
  * meter measures the allowance.
  */
-import { execFileSync } from 'node:child_process'
 import { test, expect, type Page } from '@playwright/test'
 import { uniqueEmail } from './helpers/signup'
 const API_URL = process.env.E2E_API_URL ?? 'http://localhost:3001'
 const MAILPIT = process.env.E2E_MAILPIT_URL ?? 'http://localhost:8025'
 const SHOTS = process.env.E2E_EVIDENCE_DIR ?? 'e2e/screenshots'
-const PG_URL = `postgres://beebeeb:beebeeb_dev@localhost:${process.env.E2E_PG_PORT ?? '5434'}/${process.env.E2E_DB_NAME ?? 'beebeeb_web_e2e_3003'}`
 const PASSWORD = 'Correct-Horse-Battery-9'
 
 test.use({ storageState: { cookies: [], origins: [] } })
@@ -47,17 +45,6 @@ test.beforeAll(async () => {
   const missing = await missingPrerequisites()
   test.skip(missing.length > 0, `1816 real-API spec needs: ${missing.join('; ')}`)
 })
-
-function sql(statement: string): void {
-  try {
-    execFileSync('psql', [PG_URL, '-v', 'ON_ERROR_STOP=1', '-c', statement], { stdio: 'pipe' })
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
-    const container = process.env.E2E_PG_CONTAINER ?? 'beebeebio-postgres-1'
-    const db = process.env.E2E_DB_NAME ?? 'beebeeb_web_e2e_3003'
-    execFileSync('docker', ['exec', '-e', 'PGPASSWORD=beebeeb_dev', container, 'psql', '-U', 'beebeeb', '-d', db, '-v', 'ON_ERROR_STOP=1', '-c', statement], { stdio: 'pipe' })
-  }
-}
 
 /** The 8-digit code in the newest mail to `email` that is not in `exclude`. */
 async function codeFromMailpit(email: string, exclude: string[] = [], timeoutMs = 30_000): Promise<string> {
@@ -162,19 +149,14 @@ test('ALLOWANCE — a verified never-paid account lands on the drive, uploads wi
   await acceptTerms(page)
   await passwordAndPhrase(page)
 
-  // create_account runs. The server creates a ticket-signup account with
-  // email_verified = false (see the task notes), so it starts as needs_plan.
-  await page.waitForURL(/\/choose-plan/, { timeout: 90_000 })
-  expect((await onboardingState(page)).state).toBe('needs_plan')
-  // The person clicks the verification link in their mail; here: the same
-  // column the link sets.
-  sql(`UPDATE users SET email_verified = TRUE WHERE email = '${email}'`)
-  await page.goto('/')
-  // Let the plan gate settle (it waits for the subscription + document), then
-  // require that it did NOT send the account to the plan chooser.
+  // create_account runs. Server PR #166 (task 1818): a ticketed signup is already
+  // email-verified, so the account is a usable allowance account straight away —
+  // no SQL shim, no verification-link step. It must land on the drive, never on
+  // /choose-plan.
+  await page.waitForURL((u) => u.pathname === '/' || u.pathname === '/choose-plan', { timeout: 90_000 })
   await page.locator('[data-testid="choose-plan"], input[type="file"]').first().waitFor({ state: 'attached', timeout: 30_000 })
-  await shot(page, '1816-00-after-signup-goto-root')
-  expect(new URL(page.url()).pathname, 'allowance account must not be redirected to /choose-plan').not.toBe('/choose-plan')
+  await shot(page, '1816-00-after-signup-landing')
+  expect(new URL(page.url()).pathname, 'a usable allowance account lands on the drive straight after signup, not /choose-plan').toBe('/')
   await skipTours(page)
   await expect(page.locator('input[type="file"]').first()).toBeAttached({ timeout: 30_000 })
   expect(new URL(page.url()).pathname).toBe('/')

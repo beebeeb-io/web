@@ -97,6 +97,24 @@ export const BLOCKING_ALLOWED_PATHS: readonly string[] = [
   '/settings/delete-account',
 ]
 
+/**
+ * Task 1816 — where a freshly created account lands. A usable (non-blocking)
+ * ALLOWANCE account goes straight to the drive: there is nothing to choose
+ * before it can use its allowance. An explicit plan intent (the person picked a
+ * plan on the pricing page) or any other / unavailable document keeps the
+ * existing chooser destination.
+ */
+export function postSignupLanding(
+  doc: Pick<OnboardingDocument, 'stage' | 'account' | 'blocking' | 'client' | 'steps' | 'fallback' | 'signup'> | null | undefined,
+  chooserDestination: string,
+  hasPlanIntent: boolean,
+): string {
+  if (hasPlanIntent || !doc || doc.stage !== 'account' || doc.account?.state !== 'allowance') {
+    return chooserDestination
+  }
+  return accountDocumentBlocks(doc as OnboardingDocument) ? chooserDestination : '/'
+}
+
 /** Document state when there is one, else the legacy subscription field. */
 export function effectiveAccountState(
   doc: Pick<OnboardingDocument, 'stage' | 'account'> | null | undefined,
