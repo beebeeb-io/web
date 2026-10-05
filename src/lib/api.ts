@@ -3409,11 +3409,26 @@ export async function getInvitePreview(
   return res.json() as Promise<InvitePreview>
 }
 
-export async function listVersions(fileId: string): Promise<{
+/**
+ * One row of the version list. `is_current` / `deletable` / `source` are the
+ * server's task-1809 flags (absent on an older server; the UI falls back to
+ * "not the current version", see `canDeleteVersion`).
+ */
+export interface VersionListItem extends FileVersion {
+  is_current?: boolean
+  deletable?: boolean
+  source?: 'object_version' | 'file_version'
+}
+
+export interface VersionList {
   file_id: string
   current_version: number
-  versions: FileVersion[]
-}> {
+  /** True while the account has no plan: only then do kept versions count against its storage. */
+  versions_count_toward_quota?: boolean
+  versions: VersionListItem[]
+}
+
+export async function listVersions(fileId: string): Promise<VersionList> {
   return request(`/api/v1/files/${fileId}/versions`)
 }
 
@@ -3435,8 +3450,15 @@ export async function restoreVersion(fileId: string, versionId: string): Promise
   return request(`/api/v1/files/${fileId}/versions/${versionId}/restore`, { method: 'POST' })
 }
 
-export async function deleteVersion(fileId: string, versionId: string): Promise<void> {
-  await request(`/api/v1/files/${fileId}/versions/${versionId}`, { method: 'DELETE' })
+/**
+ * Delete one kept version (task 1809). 404 = not yours / already gone, 409
+ * `cannot_delete_current_version` = the file's current content (trash the file).
+ */
+export async function deleteVersion(
+  fileId: string,
+  versionId: string,
+): Promise<{ version_number: number; size_bytes: number; source: 'object_version' | 'file_version' }> {
+  return request(`/api/v1/files/${fileId}/versions/${versionId}`, { method: 'DELETE' })
 }
 
 export async function getVersionSettings(): Promise<{ settings: VersionSetting[] }> {
