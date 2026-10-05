@@ -8,7 +8,7 @@ implemented yet (task 1739, T2).** This directory defines what it must emit.
 |---|---|
 | `schema.v1.json` | JSON Schema 2020-12 for schema major 1, as the SERVER emits it |
 | `fixtures/*.json` | Golden documents, each validates against the schema |
-| `invalid/*.json` | Hand-made breaking documents, each MUST be rejected by the schema (one per closed hole: unknown required step without fallback, `update_required` without an `update_app` fallback, unknown capability name, verified email with an `email_unverified` denial). The workspace guard does not assert these yet; run `bunx ajv-cli@5 validate ... -d invalid/<file>` and expect exit 1 |
+| `invalid/*.json` | Hand-made breaking documents, each MUST be rejected by the schema (one per closed hole: a required unfinished step with `blocking: false`, unknown required step without fallback, `update_required` without an `update_app` fallback, unknown capability name, verified email with an `email_unverified` denial). The workspace guard does not assert these yet; run `bunx ajv-cli@5 validate ... -d invalid/<file>` and expect exit 1 |
 
 ## Fixtures
 

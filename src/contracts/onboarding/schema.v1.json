@@ -188,6 +188,44 @@
       }
     },
     {
+      "$comment": "5.3 inverse of 4b.8 (task 1740 round 2, security review P2): a document with a required step that is not done MUST be blocking:true, in every account state. Without this a server bug or a hand-built document could carry an outstanding accept_terms (or any required step) with blocking:false and a client would let the person through.",
+      "if": {
+        "required": [
+          "steps"
+        ],
+        "properties": {
+          "steps": {
+            "contains": {
+              "required": [
+                "required",
+                "status"
+              ],
+              "properties": {
+                "required": {
+                  "const": true
+                },
+                "status": {
+                  "not": {
+                    "const": "done"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "blocking"
+        ],
+        "properties": {
+          "blocking": {
+            "const": true
+          }
+        }
+      }
+    },
+    {
       "if": {
         "required": [
           "account"
