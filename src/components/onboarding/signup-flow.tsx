@@ -4,6 +4,7 @@ import { runBreachCheck } from '../../lib/onboarding/breach-step'
 import { CeremonyError, type BreachCheckProxy, type CeremonyProxy, type PasswordEvaluation } from '../../lib/crypto'
 import { planScreen, type Screen, type StepScreen } from '../../lib/onboarding/plan'
 import { runCreateAccount } from '../../lib/onboarding/create-account'
+import { formatCountdown, resendRemainingSeconds } from '../../lib/onboarding/resend'
 import { ActionError, type OnboardingPorts } from '../../lib/onboarding/ports'
 import type { OnboardingDocument, SignupPolicy } from '../../lib/onboarding/types'
 import {
@@ -37,7 +38,7 @@ interface Session {
   ticket: string
   /** Held only until the device vault is wrapped (create_account), then dropped. */
   password: string
-  /** When email-start last succeeded, for the "ask for a new email at HH:MM" line. */
+  /** When email-start last succeeded, for the "send a new code in m:ss" countdown. */
   emailSentAt: number | null
 }
 
@@ -196,10 +197,6 @@ function PilotKeyStep({ ctx }: { ctx: Ctx }) {
 
 // ── verify_email_code ────────────────────────────────────────────────────────
 
-function formatClock(ms: number): string {
-  return new Date(ms).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
-}
-
 function VerifyEmailCodeStep({ ctx }: { ctx: Ctx }) {
   const { policy, session, ports, screen } = ctx
   const length = typeof screen.step.params.length === 'number' ? screen.step.params.length : policy.emailCode.length
@@ -208,8 +205,22 @@ function VerifyEmailCodeStep({ ctx }: { ctx: Ctx }) {
   const [error, setError] = useState('')
   const [resent, setResent] = useState(false)
 
-  const askAgainAt =
-    session.current.emailSentAt !== null ? session.current.emailSentAt + policy.emailCode.resendAfterSeconds * 1000 : null
+  // A resend sends a fresh code, but only `resend_after_seconds` after the last
+  // one (the server enforces the same window); count it down live.
+  const [now, setNow] = useState(() => Date.now())
+  const remaining = resendRemainingSeconds(session.current.emailSentAt, policy.emailCode.resendAfterSeconds, now)
+  useEffect(() => {
+    if (resendRemainingSeconds(session.current.emailSentAt, policy.emailCode.resendAfterSeconds, Date.now()) <= 0) return
+    setNow(Date.now())
+    const timer = setInterval(() => {
+      const t = Date.now()
+      setNow(t)
+      if (resendRemainingSeconds(session.current.emailSentAt, policy.emailCode.resendAfterSeconds, t) <= 0) {
+        clearInterval(timer)
+      }
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [resent, session, policy.emailCode.resendAfterSeconds])
 
   async function submit(e: FormEvent) {
     e.preventDefault()
@@ -242,6 +253,7 @@ function VerifyEmailCodeStep({ ctx }: { ctx: Ctx }) {
     try {
       await ports.actions.emailStart(session.current.email, session.current.pilotKey)
       session.current.emailSentAt = Date.now()
+      setNow(session.current.emailSentAt)
       setResent(true)
     } catch {
       setError('We could not send another email. Try again later.')
@@ -250,7 +262,7 @@ function VerifyEmailCodeStep({ ctx }: { ctx: Ctx }) {
     }
   }
 
-  const canAskAgain = askAgainAt === null || Date.now() >= askAgainAt
+  const canAskAgain = remaining <= 0
 
   return (
     <OnboardingFrame
@@ -293,11 +305,11 @@ function VerifyEmailCodeStep({ ctx }: { ctx: Ctx }) {
           </button>
           {canAskAgain ? (
             <button type="button" className="underline hover:text-ink-2" onClick={askAgain} disabled={busy}>
-              Send a new email
+              Send a new code
             </button>
           ) : (
             <span data-testid="ask-again-at">
-              You can ask for a new email at <span className="font-mono">{formatClock(askAgainAt!)}</span>
+              You can ask for a new code in <span className="font-mono">{formatCountdown(remaining)}</span>
             </span>
           )}
         </div>

@@ -177,7 +177,7 @@ function parsePolicy(v: unknown): SignupPolicy | null {
     emailCode: {
       length: int(ec.length) ?? 8,
       ttlSeconds: int(ec.ttl_seconds) ?? 900,
-      resendAfterSeconds: int(ec.resend_after_seconds) ?? 900,
+      resendAfterSeconds: int(ec.resend_after_seconds) ?? 60,
       ticketTtlSeconds: int(ec.ticket_ttl_seconds) ?? 1800,
     },
     pilotKeyRequired: isObj(v.pilot_key) && v.pilot_key.required === true,

@@ -86,7 +86,12 @@ test.describe('1745 onboarding renderer', () => {
     // verify_email_code: anti-enumeration copy, identical for every address
     await expect(screen(page)).toHaveAttribute('data-screen', 'step:verify_email_code')
     await expect(page.getByText('If this address can be used, we sent an email.')).toBeVisible()
-    await expect(page.getByTestId('ask-again-at')).toContainText('You can ask for a new email at')
+    await expect(page.getByTestId('ask-again-at')).toContainText('You can ask for a new code in')
+    // The wait is the document's resend_after_seconds (60 in the fixture) and it ticks (task 1738).
+    await expect(page.getByTestId('ask-again-at')).toContainText(/0:[0-5]\d|1:00/)
+    const countdownBefore = await page.getByTestId('ask-again-at').innerText()
+    await page.waitForTimeout(2200)
+    expect(await page.getByTestId('ask-again-at').innerText()).not.toBe(countdownBefore)
     await page.getByTestId('onboarding-code').fill('00000000')
     await page.getByRole('button', { name: /^verify$/i }).click()
     await expect(page.getByTestId('onboarding-error')).toContainText('not right')
