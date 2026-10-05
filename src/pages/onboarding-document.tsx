@@ -158,7 +158,7 @@ export function AccountStatusFromDocument() {
 
   useEffect(() => {
     // Legacy outcome: the document is unavailable, so this page has nothing to
-    // say. Send the person to the app, whose own gate (planGateRedirect) decides.
+    // say. Send the person to the app, whose own gate (PlanGate, app.tsx) decides.
     if (state.kind === 'legacy') navigate('/', { replace: true })
   }, [state.kind, navigate])
 

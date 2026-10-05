@@ -6,7 +6,7 @@ import { AuthProvider, useAuth } from './lib/auth-context'
 import { KeyProvider, useKeys } from './lib/key-context'
 import { sanitizeRedirect } from './lib/safe-redirect'
 import { readPlanIntent, guestRouteFallback } from './lib/plan-intent'
-import { planGateRedirect, resolveAccountState } from './lib/account-state'
+import { planGateRedirect } from './lib/account-state'
 import { flushDeferredWelcomeFile } from './lib/welcome-file-upload'
 import { WsProvider } from './lib/ws-context'
 import { SyncProvider } from './lib/sync-context'
@@ -231,13 +231,16 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
  * account never flashes the drive; the shared cache in DriveDataProvider is
  * refreshed on `billing_updated` / plan-changed, so the gate lifts itself the
  * moment the trial is live. A missing `account_state` (older server) is "ok".
+ *
+ * Task 1816: `accountState` is the onboarding document's when it is available
+ * (an allowance account is `ok` and reaches the drive; only `needs_plan` WITHOUT
+ * an allowance goes to the chooser), else the legacy subscription's.
  */
 function PlanGate({ children }: { children: ReactNode }) {
-  const { planDetails, subscriptionSettled } = useDriveData()
+  const { accountState, subscriptionSettled } = useDriveData()
   const location = useLocation()
   const { user } = useAuth()
   const { getMasterKey } = useKeys()
-  const accountState = resolveAccountState(planDetails.subscription)
   // A welcome file onboarding deferred while the account had no plan is
   // uploaded once the account is entitled — here for every later page (another
   // tab, a later visit); /choose-plan's success path does it inline. Deduped +

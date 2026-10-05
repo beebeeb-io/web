@@ -15,6 +15,11 @@ import {
 import { useAuth } from './auth-context'
 import { useKeys } from './key-context'
 import { useWsEvent } from './ws-context'
+import { FEATURE_ONBOARDING_DOCUMENT } from './flags'
+import { fetchOnboardingDocument } from './onboarding/client'
+import type { OnboardingDocument } from './onboarding/types'
+import { accountStateFromDocument, effectiveAccountState } from './account-state'
+import type { AccountState } from '@beebeeb/shared'
 
 const USAGE_DEBOUNCE_MS = 500
 /**
@@ -65,6 +70,16 @@ interface DriveDataState {
    * gate sees the new state before it navigates to the drive).
    */
   applySubscription: (subscription: Subscription) => void
+  /**
+   * What the route gate, lapsed banner and upload entry points act on (task
+   * 1816): the onboarding document's account state when the document is
+   * available (flag on, signed in, drawable), else the legacy subscription's.
+   * `source` says which one answered.
+   */
+  accountState: AccountState
+  accountStateSource: 'document' | 'legacy'
+  /** The document's raw `account.state` label (e.g. `allowance`), or null without a document. */
+  accountStateLabel: string | null
 
   incomingCount: number
   refreshIncoming: () => void
@@ -89,7 +104,14 @@ export function DriveDataProvider({ children }: { children: ReactNode }) {
   const [pinnedFolderIds, setPinnedFolderIds] = useState<string[]>([])
   const [usage, setUsage] = useState<StorageUsage | null>(null)
   const [planDetails, setPlanDetails] = useState<PlanDetails>({ plan: null, subscription: null })
-  const [subscriptionSettled, setSubscriptionSettled] = useState(false)
+  const [subSettled, setSubSettled] = useState(false)
+  // Task 1816: the account-stage onboarding document, when the flag is on and the
+  // server serves a drawable one. Null = unavailable -> the legacy subscription
+  // state decides (spec 5.8 rule 6). Settled is vacuously true with the flag off.
+  const [accountDoc, setAccountDoc] = useState<OnboardingDocument | null>(null)
+  const [docSettled, setDocSettled] = useState(!FEATURE_ONBOARDING_DOCUMENT)
+  const docRequestSeq = useRef(0)
+  const subscriptionSettled = subSettled && docSettled
   const [incomingCount, setIncomingCount] = useState(0)
   const [isOffline, setIsOffline] = useState(false)
 
@@ -168,7 +190,22 @@ export function DriveDataProvider({ children }: { children: ReactNode }) {
 
   // ── Plan + subscription ───────────────────────────────────────────────────
 
+  const refreshAccountDocument = useCallback(() => {
+    if (!FEATURE_ONBOARDING_DOCUMENT) return
+    const seq = ++docRequestSeq.current
+    void fetchOnboardingDocument()
+      .then((outcome) => (outcome.kind === 'document' ? outcome.doc : null))
+      .catch(() => null)
+      .then((doc) => {
+        // A newer request (or an applySubscription reset) supersedes this one.
+        if (seq !== docRequestSeq.current) return
+        setAccountDoc(doc)
+        setDocSettled(true)
+      })
+  }, [])
+
   const refreshPlanDetails = useCallback(() => {
+    refreshAccountDocument()
     // The subscription lands on its own (task 1037) — the route gate reads
     // `account_state` from it and must not wait on, or fail with, the plans
     // catalogue. The plan match follows once both are in.
@@ -181,36 +218,52 @@ export function DriveDataProvider({ children }: { children: ReactNode }) {
         }))
       })
       .catch(() => {})
-      .finally(() => setSubscriptionSettled(true))
+      .finally(() => setSubSettled(true))
     Promise.all([getPlans(), subPromise])
       .then(([plans, subscription]) => {
         const plan = plans.find((p) => p.id === subscription.plan) ?? null
         setPlanDetails({ plan, subscription })
       })
       .catch(() => {})
-  }, [])
+  }, [refreshAccountDocument])
 
-  const applySubscription = useCallback((subscription: Subscription) => {
-    setPlanDetails((prev) => ({
-      plan: prev.plan && prev.plan.id === subscription.plan ? prev.plan : null,
-      subscription,
-    }))
-    setSubscriptionSettled(true)
-  }, [])
+  const applySubscription = useCallback(
+    (subscription: Subscription) => {
+      setPlanDetails((prev) => ({
+        plan: prev.plan && prev.plan.id === subscription.plan ? prev.plan : null,
+        subscription,
+      }))
+      setSubSettled(true)
+      if (FEATURE_ONBOARDING_DOCUMENT) {
+        // The cached document predates this change (e.g. the trial just started):
+        // drop it so the fresh subscription decides until a new document lands.
+        docRequestSeq.current += 1
+        setAccountDoc(null)
+        refreshAccountDocument()
+      }
+    },
+    [refreshAccountDocument],
+  )
 
   // Signed out (or a different account signs in): drop the previous account's
   // subscription so the route gate never decides on someone else's state.
   const userId = user?.user_id ?? null
   useEffect(() => {
     setPlanDetails({ plan: null, subscription: null })
-    setSubscriptionSettled(false)
+    setSubSettled(false)
+    docRequestSeq.current += 1
+    setAccountDoc(null)
+    setDocSettled(!FEATURE_ONBOARDING_DOCUMENT)
   }, [userId])
 
   // Safety net: a subscription request that never answers must not hold every
   // protected route on a blank screen. After 8s the gate proceeds as "ok".
   useEffect(() => {
     if (subscriptionSettled || !isUnlocked || !user) return
-    const t = setTimeout(() => setSubscriptionSettled(true), 8_000)
+    const t = setTimeout(() => {
+      setSubSettled(true)
+      setDocSettled(true)
+    }, 8_000)
     return () => clearTimeout(t)
   }, [subscriptionSettled, isUnlocked, user])
 
@@ -297,6 +350,9 @@ export function DriveDataProvider({ children }: { children: ReactNode }) {
         refreshPlanDetails,
         subscriptionSettled,
         applySubscription,
+        accountState: effectiveAccountState(accountDoc, planDetails.subscription),
+        accountStateSource: accountStateFromDocument(accountDoc) ? 'document' : 'legacy',
+        accountStateLabel: accountStateFromDocument(accountDoc) ? (accountDoc?.account?.state ?? null) : null,
         incomingCount,
         refreshIncoming,
         isOffline,

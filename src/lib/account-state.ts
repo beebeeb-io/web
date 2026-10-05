@@ -14,6 +14,7 @@
  */
 
 import type { AccountState, Subscription } from '@beebeeb/shared'
+import type { OnboardingDocument } from './onboarding/types'
 
 export type { AccountState }
 
@@ -32,6 +33,46 @@ export function resolveAccountState(
 ): AccountState {
   const s = sub?.account_state
   return s === 'needs_plan' || s === 'lapsed' ? s : 'ok'
+}
+
+/**
+ * Task 1816 (1745 acceptance 2/3) — the account state the ROUTE GATE, the lapsed
+ * banner and the upload entry points act on, read from the onboarding document
+ * when there is an account-stage one. The legacy `/billing/subscription`
+ * `account_state` cannot tell an allowance account from a plan-less one (the
+ * contract maps both to `needs_plan`), so reading it sent a verified account
+ * with a working allowance to /choose-plan and the drive never opened.
+ *
+ *   - `needs_plan`              -> needs_plan (no allowance: the chooser)
+ *   - `lapsed`, `trial_ended`   -> lapsed (read-only over the allowance)
+ *   - everything else, incl. `allowance` and states this build does not know
+ *     (the state is only a label, spec 5.8 rule 4)  -> ok; the capabilities and
+ *     the server's own refusals (409/413) stay the authority on what is allowed.
+ *
+ * Null when the document is unavailable or not an account-stage one: the caller
+ * then falls back to the legacy field (spec 5.8 rule 6).
+ */
+export function accountStateFromDocument(
+  doc: Pick<OnboardingDocument, 'stage' | 'account'> | null | undefined,
+): AccountState | null {
+  if (!doc || doc.stage !== 'account' || !doc.account) return null
+  switch (doc.account.state) {
+    case 'needs_plan':
+      return 'needs_plan'
+    case 'lapsed':
+    case 'trial_ended':
+      return 'lapsed'
+    default:
+      return 'ok'
+  }
+}
+
+/** Document state when there is one, else the legacy subscription field. */
+export function effectiveAccountState(
+  doc: Pick<OnboardingDocument, 'stage' | 'account'> | null | undefined,
+  sub: Pick<Subscription, 'account_state'> | null | undefined,
+): AccountState {
+  return accountStateFromDocument(doc) ?? resolveAccountState(sub)
 }
 
 /**
