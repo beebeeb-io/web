@@ -55,6 +55,8 @@ const EXPECTED: Record<string, string> = {
   'account.lapsed.ios.json': 'account:lapsed',
   'account.legacy_free.web.json': 'account:legacy_free',
   'account.needs_plan.ios.json': 'step:verify_email',
+  // Task 1814: the optional `redeem_coupon` step is unknown to this renderer and skipped (rule 4).
+  'account.needs_plan.web.coupon.json': 'step:choose_plan',
   'account.past_due.web.json': 'account:past_due',
   'account.read_only.web.json': 'account:read_only',
   'account.trial_cancelling.web.json': 'account:trial_cancelling',
@@ -70,8 +72,8 @@ const EXPECTED: Record<string, string> = {
 
 describe('every fixture renders', () => {
   const files = fixtureFiles()
-  test('the expectation table covers exactly the 19 vendored fixtures', () => {
-    expect(files.length).toBe(19)
+  test('the expectation table covers exactly the 20 vendored fixtures', () => {
+    expect(files.length).toBe(20)
     expect(Object.keys(EXPECTED).sort()).toEqual(files)
   })
 

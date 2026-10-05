@@ -39,6 +39,8 @@ import { SessionTimeoutWarning } from './components/session-timeout-warning'
 import { Signup } from './pages/signup'
 import { Login } from './pages/login'
 import { Onboarding } from './pages/onboarding'
+import { Coupon } from './pages/coupon'
+import { heldCouponRedirect, readHeldCoupon } from './lib/coupon'
 
 // ── Lazy: split into separate chunks, loaded on demand ───────────────────────
 // Named-export helper: React.lazy requires a default export
@@ -237,7 +239,7 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
  * an allowance goes to the chooser), else the legacy subscription's.
  */
 function PlanGate({ children }: { children: ReactNode }) {
-  const { accountState, accountBlocking, subscriptionSettled } = useDriveData()
+  const { accountState, accountBlocking, subscriptionSettled, planDetails } = useDriveData()
   const location = useLocation()
   // A billing refresh re-opens `subscriptionSettled` while the document is
   // re-fetched (1816 round 2). Once the gate has decided for this account, keep
@@ -273,6 +275,13 @@ function PlanGate({ children }: { children: ReactNode }) {
       </div>
     )
   }
+  // Task 1814: an account that arrived through a coupon link and holds no plan claims it
+  // before anything else (including the chooser, and including an allowance account, which
+  // 1816 counts as `ok`). The hold ends on any final answer (see pages/coupon.tsx).
+  // An unreadable subscription is "unknown", never "no plan": it redirects nobody.
+  const sub = planDetails.subscription
+  const couponTo = sub ? heldCouponRedirect(accountState, sub.plan, readHeldCoupon()) : null
+  if (couponTo && location.pathname !== couponTo.split('?')[0]) return <Navigate to={couponTo} replace />
   const to = planGateRedirect(location.pathname, accountState, accountBlocking)
   if (to) return <Navigate to={to} replace />
   return <>{children}</>
@@ -796,6 +805,8 @@ export function App() {
           {/* Public user profile — no auth required */}
           <Route path="/p/:username" element={<PublicProfilePage />} />
           <Route path="/join/:code" element={<JoinPage />} />
+          {/* Task 1814: coupon links. Public; the page routes to signup / login / claim. */}
+          <Route path="/c/:code" element={<Coupon />} />
           <Route path="/cookies" element={<Cookies />} />
           <Route path="/receive" element={<Receive />} />
           {/* E2EE File Requests — creation page (auth required) */}

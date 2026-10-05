@@ -74,6 +74,7 @@ import {
 } from '../lib/cycle-switch-copy'
 import { InvoiceList } from '../components/billing/InvoiceList'
 import { TransactionList } from '../components/billing/TransactionList'
+import { CouponCard } from '../components/billing/coupon-card'
 import { PLAN_META, PLAN_RANK } from '../lib/plan-constants'
 import {
   type PendingCheckout,
@@ -2392,6 +2393,10 @@ function openUpgrade(plan: string) {
                 </div>
               )}
             </Card>
+
+            {/* Task 1814: redeem a coupon link or code. Only for an account that holds no plan
+                (the server refuses one that does, so the card is not offered there). */}
+            {(hasNoPlan || effectivePlan === 'free') && <CouponCard />}
 
             {/* Payment Method card (#7) — restyled. Binds ONLY to real
                 PaymentMethod fields (type/brand/last4/iban_last4/is_default);

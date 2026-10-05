@@ -98,6 +98,8 @@ import type {
   Workspace,
   WorkspaceMembersResponse,
 } from '@beebeeb/shared'
+import { parsePitch } from './coupon'
+import type { CouponPitch, CouponRedeemed } from './coupon'
 
 export const API_URL = import.meta.env.VITE_API_URL || 'https://api.beebeeb.io'
 const STATUS_URL = import.meta.env.VITE_STATUS_URL || 'https://status.beebeeb.io'
@@ -1991,6 +1993,30 @@ export async function validatePromo(params: {
   return request<PromoValidation>('/api/v1/billing/promo/validate', {
     method: 'POST',
     body: JSON.stringify(params),
+  })
+}
+
+// ── Coupon links (task 1814, slice A: free grants) ──────────────────────────
+
+/**
+ * `GET /api/v1/coupons/{code}` — public, per-IP limited. A usable coupon returns the
+ * pitch; EVERY other case (unknown, revoked, expired, used up, garbage) is
+ * `200 {valid: false}`, so the caller cannot and must not tell them apart.
+ */
+export async function getCoupon(code: string): Promise<CouponPitch | null> {
+  return parsePitch(await request<unknown>(`/api/v1/coupons/${encodeURIComponent(code)}`))
+}
+
+/**
+ * `POST /api/v1/billing/coupon/redeem` — signed in. Typed refusals arrive as
+ * `ApiError.code`: `coupon_not_applicable` (409), `coupon_already_used` (409),
+ * `coupon_unavailable` (410), `email_unverified` (403). A replay by the same account
+ * is a 200 with `already_redeemed: true`.
+ */
+export async function redeemCoupon(code: string): Promise<CouponRedeemed> {
+  return request<CouponRedeemed>('/api/v1/billing/coupon/redeem', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
   })
 }
 
