@@ -7,9 +7,8 @@ import { Icon } from '@beebeeb/shared'
 import { ApiError } from '@beebeeb/shared'
 import type { LoginResult } from '@beebeeb/shared'
 import { TwoFactorPrompt } from '../components/two-factor-prompt'
-import { DeviceProvision } from '../components/device-provision'
-import { VaultLockedNoKey } from '../components/vault-locked-no-key'
-import { isPostResetLockedDevice } from '../lib/post-reset-lock'
+import { LoginProvisionBranch } from '../components/login-provision-branch'
+import { resolveSignInUnlock } from '../lib/sign-in-unlock'
 import type { ProvisionAuthMethod } from '../lib/device-provision-logic'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
@@ -24,59 +23,16 @@ import { accountDeletedMessage } from '../lib/user-friendly-error'
 import { consumeAccountDeletedNotice } from '../lib/account-deleted-notice'
 import { classifyTwoFactorFailure } from '../lib/two-factor-login'
 
-/**
- * Task 1713 FIX B — the Login page's needs-provision branch as its own
- * component, exported so the routing pin can render it directly
- * (test/1713-post-reset-provisioning-routing.test.tsx; this repo has no
- * jsdom/@testing-library — see test/1471's header note).
- *
- * When the /set-password completion marker is stamped in this tab's
- * sessionStorage (isPostResetLockedDevice — src/lib/post-reset-lock.ts),
- * this device just completed the 1704-slice-1 email password reset: the
- * account credential is fresh, any pre-existing vault wrap on this device
- * cannot open under it, and a device with no vault has no key at all. The
- * bare 'Set up this device' screen offers no way forward for a user who
- * lost their phrase and none of the 1704 slice-2 self-service exits — so
- * render VaultLockedNoKey instead. Its phrase CTA targets the canonical
- * /recover-with-phrase route: the same re-wrap ceremony DeviceProvision's
- * phrase entry provides (verify the phrase → re-wrap the vault under the
- * new password).
- *
- * WITHOUT the marker this stays DeviceProvision, byte-for-byte unchanged
- * (a fresh device on a normal login). Impersonation needs no handling here:
- * this branch is only reachable after a fresh OPAQUE sign-in on the login
- * form; the impersonated-session locked surface lives in ProtectedRoute and
- * keeps its 1693 priority there (resolveLockedVaultSurface — untouched).
- */
-export function LoginProvisionBranch({ password, authMethod, email, onProvisioned, onTryPreviousPassword }: {
-  password: string
-  authMethod: ProvisionAuthMethod
-  email?: string
-  onProvisioned: () => void
-  /** Escape hatch from VaultLockedNoKey ("Remember your previous password?"):
-   *  back to the sign-in form. VaultLockedNoKey's own handler clears the
-   *  post-reset marker first; this then returns the user to where passwords
-   *  are actually typed. */
-  onTryPreviousPassword?: () => void
-}) {
-  if (isPostResetLockedDevice()) {
-    return <VaultLockedNoKey onTryPreviousPassword={onTryPreviousPassword} />
-  }
-  return (
-    <DeviceProvision
-      password={password}
-      authMethod={authMethod}
-      email={email}
-      onProvisioned={onProvisioned}
-    />
-  )
-}
+// Task 1713 FIX B / task 1810: the needs-provision branch lives in
+// components/login-provision-branch.tsx (also used by /set-password); re-exported
+// so existing imports and the routing pin keep working.
+export { LoginProvisionBranch }
 
 export function Login() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { refreshUser, verify2fa } = useAuth()
-  const { unlockVault, unlockVaultWithPasskey, vaultExists, cryptoReady, cryptoError, isUnlocked, isUnlockedFor, setMasterKeyFromPasskey, getMasterKey, lock } = useKeys()
+  const { unlockVault, unlockVaultWithPasskey, vaultExists, cryptoReady, cryptoError, isUnlocked, isUnlockedFor, setMasterKeyFromPasskey, getMasterKey, discardStalePasswordVault, lock } = useKeys()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -139,6 +95,8 @@ export function Login() {
   // OPAQUE attempt can leave `password` holding a stale, unproven value —
   // see shouldWrapWithPassword's doc comment in device-provision-logic.ts).
   const [provisionAuthMethod, setProvisionAuthMethod] = useState<ProvisionAuthMethod>('opaque')
+  // Task 1810: the sign-in just discarded a vault sealed under the previous password.
+  const [provisionStaleVault, setProvisionStaleVault] = useState(false)
 
   // OPAQUE KSF migration prompt (task 0548) — the server returned
   // `opaque_ksf_outdated`, meaning this account's password file was written
@@ -154,6 +112,32 @@ export function Login() {
   const [passkeyFallbackShowPw, setPasskeyFallbackShowPw] = useState(false)
   const [passkeyFallbackSubmitting, setPasskeyFallbackSubmitting] = useState(false)
   const [passkeyFallbackError, setPasskeyFallbackError] = useState('')
+
+  /**
+   * Task 1810 (P0): unlock this device's local vault with a password the SERVER
+   * has just proven (OPAQUE finished). Nothing resident from before is carried
+   * over: any key in memory or in the tab/persisted caches is cleared first, so
+   * the only key used after this sign-in is the one this password opens. If it
+   * cannot open the local vault, that vault was sealed under a password the
+   * account no longer has (a reset or change made elsewhere): it is deleted and
+   * the person re-enters the recovery phrase instead of hitting a dead end.
+   */
+  async function unlockProvenVault(
+    proven: string,
+    userId: string,
+  ): Promise<'unlocked' | 'provision' | 'provision_stale'> {
+    lock()
+    const step = resolveSignInUnlock(await unlockVault(proven, userId))
+    if (step === 'proceed') return 'unlocked'
+    if (step === 'discard_then_provision') {
+      // true only if an entry of THIS account was actually removed (task 1810
+      // round 2, P2-1): another account's entry is left alone, and the "we
+      // removed your old vault" notice is shown only when that is what happened.
+      const removed = await discardStalePasswordVault(userId)
+      return removed ? 'provision_stale' : 'provision'
+    }
+    return 'provision'
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -215,22 +199,17 @@ export function Login() {
         // just proved `password` correct) — task 1531/1534 (P0) binds the
         // unlocked key to it explicitly rather than trusting whatever key
         // may already be resident from a prior account in this same tab.
-        const outcome = await unlockVault(password, loginResult.user_id)
-        if (outcome === 'needs_provisioning') {
-          // P0 continuation (web #85): password was RIGHT, but this
-          // device's saved vault entry could not be proven server-side to
-          // belong to this account (an untagged pre-1531/1534 entry that
-          // failed the recovery_check check — the two-accounts-same-
-          // password case). Route to device provisioning instead of the
-          // generic wrong-password dead end — OPAQUE already proved
-          // `password` correct, above.
+        const outcome = await unlockProvenVault(password, loginResult.user_id)
+        if (outcome !== 'unlocked') {
+          // 'provision': password was RIGHT (OPAQUE proved it) but this device's
+          // saved vault entry could not be proven to be this account's (P0
+          // continuation, web #85). 'provision_stale' (task 1810): the entry was
+          // sealed under a previous password and has been deleted. Either way
+          // the phrase screen re-seals the key under this password — never the
+          // generic wrong-password dead end.
+          setProvisionStaleVault(outcome === 'provision_stale')
           setProvisionAuthMethod('opaque')
           setNeedsProvision(true)
-          setSubmitting(false)
-          return
-        }
-        if (outcome !== 'unlocked') {
-          setError('Wrong password — could not unlock vault on this device.')
           setSubmitting(false)
           return
         }
@@ -332,17 +311,12 @@ export function Login() {
 
       // 2FA verified — now unlock the vault with the password from the first step
       if (vaultExists) {
-        const outcome = await unlockVault(password, verifyResult.user_id)
-        if (outcome === 'needs_provisioning') {
-          // See handleSubmit's identical branch — password was right, the
-          // local entry just could not be proven to be this account's.
+        const outcome = await unlockProvenVault(password, verifyResult.user_id)
+        if (outcome !== 'unlocked') {
+          // See handleSubmit's identical branch.
+          setProvisionStaleVault(outcome === 'provision_stale')
           setProvisionAuthMethod('opaque')
           setNeedsProvision(true)
-          setPartialToken(null)
-          return
-        }
-        if (outcome !== 'unlocked') {
-          setError('Could not unlock vault. Try logging in again.')
           setPartialToken(null)
           return
         }
@@ -401,19 +375,14 @@ export function Login() {
       if (vaultExists) {
         // task 1531/1534 (P0): bind to the account this OPAQUE finish
         // response just proved, not whatever key may already be resident.
-        const outcome = await unlockVault(passkeyFallbackPassword, fallbackLoginResult.user_id)
-        if (outcome === 'needs_provisioning') {
-          // See handleSubmit's identical branch — password was right, the
-          // local entry just could not be proven to be this account's.
+        const outcome = await unlockProvenVault(passkeyFallbackPassword, fallbackLoginResult.user_id)
+        if (outcome !== 'unlocked') {
+          // See handleSubmit's identical branch.
           setPassword(passkeyFallbackPassword)
+          setProvisionStaleVault(outcome === 'provision_stale')
           setProvisionAuthMethod('opaque')
           setPasskeyNeedsPassword(false)
           setNeedsProvision(true)
-          setPasskeyFallbackSubmitting(false)
-          return
-        }
-        if (outcome !== 'unlocked') {
-          setPasskeyFallbackError('Password accepted, but could not unlock the local vault. Try your recovery phrase instead.')
           setPasskeyFallbackSubmitting(false)
           return
         }
@@ -754,7 +723,7 @@ export function Login() {
         authMethod={provisionAuthMethod}
         email={email}
         onProvisioned={navigateAfterLogin}
-        onTryPreviousPassword={() => setNeedsProvision(false)}
+        staleVault={provisionStaleVault}
       />
     )
   }

@@ -15,7 +15,12 @@ import { ApiError } from '@beebeeb/shared'
 export const TWO_FACTOR_CHALLENGE_TTL_MS = 5 * 60 * 1000
 export const TWO_FACTOR_MAX_ATTEMPTS = 10
 
-export const TWO_FACTOR_INCORRECT_MESSAGE = 'Incorrect code. Try again, or use a backup code.'
+// Task 1810: the server refuses a code it already accepted for the same 30-second
+// step (task 1728) exactly like a wrong one, so a person who just used their code
+// (a password reset ends in this same prompt) and types it again would be told only
+// "incorrect". Say that a code works once, without revealing that it was right.
+export const TWO_FACTOR_INCORRECT_MESSAGE =
+  'Incorrect code. A code works only once: if you just used this one, wait for the next. Or use a backup code.'
 export const TWO_FACTOR_TIMED_OUT_MESSAGE = 'Your sign-in timed out. Enter your password again.'
 export const TWO_FACTOR_TOO_MANY_MESSAGE = 'Too many incorrect codes. Enter your password again.'
 export const TWO_FACTOR_UNREACHABLE_MESSAGE =

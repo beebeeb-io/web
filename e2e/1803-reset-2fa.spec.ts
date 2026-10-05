@@ -68,7 +68,7 @@ test('TOTP account: set-password ends at the 2FA code step, then signs in', asyn
   const good = g.waitForResponse((r) => r.url().includes('/api/v1/auth/2fa/verify'))
   await codeInput.fill(totp(secret))
   expect((await good).status()).toBe(200)
-  await expect(g.getByRole('heading', { name: /password set/i })).toBeVisible({ timeout: 30_000 })
+  await expect(g.getByRole('heading', { name: /set up this device/i })).toBeVisible({ timeout: 30_000 })
   expect(await meStatus(g)).toBe(200)
   await shot(g, '04-signed-in-after-code.png')
 })
@@ -87,7 +87,7 @@ test('account without TOTP: set-password signs in directly, no code step', async
   expect(body.requires_2fa).toBeUndefined()
   expect(typeof body.session_token).toBe('string')
 
-  await expect(g.getByRole('heading', { name: /password set/i })).toBeVisible({ timeout: 30_000 })
+  await expect(g.getByRole('heading', { name: /set up this device/i })).toBeVisible({ timeout: 30_000 })
   await expect(g.getByLabel('6-digit verification code')).toHaveCount(0)
   expect(await meStatus(g)).toBe(200)
   await shot(g, '05-no-totp-signed-in.png')

@@ -23,19 +23,16 @@
  *
  * HONEST COPY (the governing amendment, decisions/2026-10-02-…-policy.md):
  * setting a new password restores ACCOUNT access; the VAULT stays locked
- * until the user re-enters their recovery phrase or vault key — which then
- * re-wraps the key under the new password via /recover-with-phrase (the
- * re-wrap ceremony is SLICE 3; this page deliberately does not touch
- * key-context or the vault).
- *
- * After success the app lands on the drive with a fresh session; the vault
- * is still wrapped under the old password, so unlockVault reports
- * wrong_password. Task 1704 SLICE 2 completes the loop: this page stamps a
- * post-reset marker (src/lib/post-reset-lock.ts — sessionStorage, no vault
- * touch), and ProtectedRoute routes that state to the honest
- * "Vault locked (no key)" surface — re-entry via the recovery phrase plus
- * the self-service exits — instead of the dead-end password form.
- * That is the designed outcome, not a bug.
+ * until the user re-enters their recovery phrase. Task 1810: that phrase step
+ * is the next screen of THIS page (LoginProvisionBranch), not a detour through
+ * /recover-with-phrase (a password reset). The new password is already proven
+ * (the server just replaced the OPAQUE record and opened a session), so the
+ * phrase re-seals the key on this device under it. The vault sealed under the
+ * previous password is not touched here; it is deleted at the next sign-in that
+ * cannot open it (src/lib/sign-in-unlock.ts), or overwritten by the phrase step.
+ * The page stamps the post-reset marker (src/lib/post-reset-lock.ts) so a
+ * person who lost the phrase can reach the self-service exits ("I've lost my
+ * recovery phrase") and so a reload lands on the honest locked-state surface.
  */
 
 import { type FormEvent, useCallback, useState } from 'react'
@@ -43,6 +40,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { AuthShell } from '../components/auth-shell'
 import { BBButton, BBInput, Icon } from '@beebeeb/shared'
 import { ResetSignInRequired, ResetTwoFactorStep } from '../components/reset-two-factor-step'
+import { LoginProvisionBranch } from '../components/login-provision-branch'
 import {
   setPasswordOpaqueRegister,
   setPasswordFinalize,
@@ -52,6 +50,8 @@ import {
 import { isPasswordSetSignInRequired } from '../lib/reset-2fa'
 import { opaqueRegistrationStart, opaqueRegistrationFinish, toBase64 } from '../lib/crypto'
 import { markPasswordResetCompleted } from '../lib/post-reset-lock'
+import { completeResetSession } from '../lib/reset-session'
+import { useKeys } from '../lib/key-context'
 import { useAuth } from '../lib/auth-context'
 
 type Step = 'form' | 'two-factor' | 'sign-in-required' | 'success'
@@ -88,6 +88,7 @@ export function SetPassword() {
   const { token } = useParams<{ token: string }>()
   const navigate = useNavigate()
   const { refreshUser } = useAuth()
+  const { lock } = useKeys()
 
   const [step, setStep] = useState<Step>('form')
   const [newPassword, setNewPassword] = useState('')
@@ -102,27 +103,30 @@ export function SetPassword() {
   // Everything after the server opened a session for this device — shared by
   // the direct path (no 2FA) and the 2FA path (after /auth/2fa/verify).
   const finishWithSession = useCallback(async () => {
-    // The fresh session also arrived as the bb_session cookie; drop the
-    // redundant legacy bearer slot like every other auth-completing flow.
-    clearLegacyBearer()
-
-    // Task 1704 SLICE 2 — stamp the post-reset marker for THIS tab: the
-    // credential was just replaced, so the device's wrapped vault (if
-    // any) can no longer open under anything the user knows here. The
-    // wrapped vault itself is NEVER cleared — the old password may still
-    // be remembered, and destroying the only local wrap would be a
-    // data-loss bug. ProtectedRoute reads this marker to route to the
-    // honest locked-state surface (VaultLockedNoKey) instead of the
-    // dead-end password form. No key-context / vault touch (slice scope).
-    markPasswordResetCompleted()
-
-    // The vault is still wrapped under the OLD password — do NOT touch
-    // key-context or setMasterKey here. Re-wrapping is the
-    // /recover-with-phrase ceremony (SLICE 3), reached from the honest
-    // locked-state surface this marker routes to.
+    // Task 1704 SLICE 2 — the post-reset marker is stamped for THIS tab: the
+    // credential was just replaced, so the device's wrapped vault (if any) can
+    // no longer open under anything the user knows here. ProtectedRoute reads
+    // it to route a reload to the honest locked-state surface. The wrapped
+    // vault itself is not cleared here (the phrase step overwrites it; the
+    // next sign-in that cannot open it deletes it).
+    //
+    // Task 1810 round 2 (P2-2): lock() any key still resident from before and
+    // load the session's user BEFORE the phrase screen renders, so the
+    // recovered key can never be tagged under a previous account's id. See
+    // src/lib/reset-session.ts.
+    const outcome = await completeResetSession({
+      clearLegacyBearer,
+      lock,
+      markPasswordResetCompleted,
+      refreshUser,
+    })
+    if (outcome === 'failed') {
+      setClosedDetail('Your password was set, but this device could not open the session.')
+      setStep('sign-in-required')
+      return
+    }
     setStep('success')
-    await refreshUser()
-  }, [refreshUser])
+  }, [refreshUser, lock])
 
   const handleSubmit = useCallback(
     async (e: FormEvent) => {
@@ -225,34 +229,18 @@ export function SetPassword() {
   }
 
   if (step === 'success') {
+    // Task 1810: the password is set and the session is open. The key on this
+    // device (if any) is sealed under the PREVIOUS password, so the next step is
+    // the recovery phrase right here — the new password is already proven, so it
+    // seals the vault. This used to be a "Continue" button into a "Vault locked"
+    // screen whose phrase button opened the password-reset page again.
     return (
-      <AuthShell
-        title="Password set"
-        subtitle="Sign in with your new password from now on."
-        hideTrust
-      >
-        <div className="flex items-start gap-2.5 p-3 mb-5 bg-amber-bg border border-amber/20 rounded-md">
-          <Icon name="shield" size={14} className="text-amber-deep shrink-0 mt-0.5" />
-          <p className="text-[12.5px] text-ink-2 leading-relaxed">
-            Your vault stays locked until you re-enter your recovery phrase or
-            vault key. Existing files remain encrypted — unlock the vault with
-            your phrase to re-secure it under the new password.
-          </p>
-        </div>
-        <BBButton
-          variant="amber"
-          size="lg"
-          className="w-full justify-center"
-          onClick={() => navigate('/', { replace: true })}
-        >
-          Continue
-        </BBButton>
-        <div className="text-center mt-4">
-          <Link to="/recover-with-phrase" className="text-[12px] text-ink-3 hover:text-ink-2 transition-colors">
-            Unlock your vault with your recovery phrase
-          </Link>
-        </div>
-      </AuthShell>
+      <LoginProvisionBranch
+        password={newPassword}
+        authMethod="opaque"
+        notice="Your new password is set. Enter your recovery phrase to unlock your vault on this device and seal it under the new password."
+        onProvisioned={() => navigate('/', { replace: true })}
+      />
     )
   }
 

@@ -1,9 +1,12 @@
 import { useCallback, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { AuthShell } from './auth-shell'
 import { BBButton, BBCheckbox, BBInput, Icon } from '@beebeeb/shared'
 import { StepUpAuth } from './step-up-auth'
 import { useAuth } from '../lib/auth-context'
+import { useKeys } from '../lib/key-context'
+import { DeviceProvision } from './device-provision'
+import { prepareInPlacePhraseUnlock } from '../lib/locked-phrase-unlock'
 import {
   ApiError,
   bulkPermanentDelete,
@@ -53,11 +56,35 @@ interface VaultLockedNoKeyProps {
   /** Escape hatch: show the normal password form (the old password may still
    *  be remembered). Clears the post-reset marker, then calls this. */
   onTryPreviousPassword?: () => void
+  /** Show the phrase screen in place (the sign-in / set-password steps, which
+   *  already hold the proven password). Without it — a session with no password
+   *  in hand — the button drops only this account's stale password-sealed entry
+   *  and shows the phrase screen in place (session-only key, nothing persisted,
+   *  no sign-out, a passkey vault is untouched). Task 1810: it must never open
+   *  /recover-with-phrase, which is a password RESET. */
+  onUnlockWithPhrase?: () => void
 }
 
-export function VaultLockedNoKey({ onTryPreviousPassword }: VaultLockedNoKeyProps) {
-  const { logout } = useAuth()
+export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: VaultLockedNoKeyProps) {
+  const { logout, user } = useAuth()
+  const { discardStalePasswordVault } = useKeys()
   const navigate = useNavigate()
+  // Task 1810 round 2 (P2-3): with no password in hand the phrase screen is
+  // shown IN PLACE. The button no longer signs out: logout() wipes the whole
+  // local vault store (a passkey-sealed vault included), which a button labelled
+  // as an unlock must never do silently.
+  const [phraseInPlace, setPhraseInPlace] = useState(false)
+  const handleUnlockWithPhrase = useCallback(async () => {
+    if (onUnlockWithPhrase) {
+      onUnlockWithPhrase()
+      return
+    }
+    await prepareInPlacePhraseUnlock({
+      userId: user?.user_id ?? null,
+      discardStalePasswordVault,
+    })
+    setPhraseInPlace(true)
+  }, [onUnlockWithPhrase, user, discardStalePasswordVault])
 
   // ── exit 1: cancel subscription ──
   const [cancelGate, setCancelGate] = useState(false)
@@ -187,6 +214,17 @@ export function VaultLockedNoKey({ onTryPreviousPassword }: VaultLockedNoKeyProp
 
   const canDeleteAccount = accountGate && accountConfirm === 'DELETE' && accountState !== 'working'
 
+  if (phraseInPlace) {
+    return (
+      <DeviceProvision
+        password=""
+        authMethod="passkey"
+        notice="Your new password is set. Enter your recovery phrase to open your vault for this session. To keep it on this device, sign in again with your new password afterwards."
+        onProvisioned={() => navigate('/', { replace: true })}
+      />
+    )
+  }
+
   return (
     <AuthShell
       title="Vault locked"
@@ -211,23 +249,23 @@ export function VaultLockedNoKey({ onTryPreviousPassword }: VaultLockedNoKeyProp
 
       {/* Primary re-entry — the canonical route; amber = the encryption CTA. */}
       <div className="mt-5">
-        <Link to="/recover-with-phrase" className="block">
-          <BBButton variant="amber" size="lg" className="w-full">
-            Unlock with recovery phrase
-          </BBButton>
-        </Link>
+        <BBButton variant="amber" size="lg" className="w-full" onClick={() => void handleUnlockWithPhrase()}>
+          Unlock with recovery phrase
+        </BBButton>
         <p className="text-[12px] text-ink-3 leading-relaxed mt-2.5">
-          Your 12-word recovery phrase is the vault key. Entering it unlocks
-          this device and re-secures the vault under your new password.
+          Your 12-word recovery phrase is the vault key.{' '}
+          {onUnlockWithPhrase
+            ? 'Entering it unlocks this device and re-secures the vault under your new password.'
+            : 'Entering it opens the vault for this session only; sign in again with your new password to keep it on this device.'}
         </p>
         <p className="text-[11px] text-ink-4 leading-relaxed mt-1.5">
-          You only ever enter the phrase on{' '}
-          <span className="font-mono">beebeeb.io/recover-with-phrase</span> —
+          Only ever enter the phrase on <span className="font-mono">beebeeb.io</span> —
           never in an email, never on another site.
         </p>
       </div>
 
       {/* Escape hatch — honest: the old password may still be remembered. */}
+      {onTryPreviousPassword && (
       <button
         type="button"
         onClick={handleTryPreviousPassword}
@@ -235,6 +273,7 @@ export function VaultLockedNoKey({ onTryPreviousPassword }: VaultLockedNoKeyProp
       >
         Remember your previous password? Try it here
       </button>
+      )}
 
       {/* ── Self-service exits ──────────────────────────────────────────── */}
       <div className="mt-6 pt-5 border-t border-line">

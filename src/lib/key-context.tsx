@@ -25,6 +25,7 @@ import {
   unwrap,
   hasVault,
   clearVault,
+  clearPasswordVault,
   wrapAndStoreWithPasskey,
   unwrapWithPasskey,
   tagVaultEntry,
@@ -144,6 +145,17 @@ interface KeyState {
    *  `expectedUserId` — see `getFileKey`; throws if the resident key is not
    *  bound to the resolved target (task 1531/1534 P0 continuation). */
   getMasterKey: (expectedUserId?: string) => Uint8Array
+  /** Task 1810 (P0): the server just PROVED the account password (OPAQUE) and
+   *  `unlockVault` could not open this device's password vault with it, so that
+   *  copy of the master key is sealed under a password the account no longer
+   *  has. Zero any resident key, clear the tab/persisted key caches and DELETE
+   *  the password vault entry (a passkey-wrapped vault is left alone), so no key
+   *  from before the password change is ever used again. The caller then routes
+   *  to the recovery-phrase screen, which re-seals the key under the new
+   *  password. NEVER call this on an unproven password (a typo) — the entry
+   *  would be destroyed for nothing. Only an entry that belongs to `userId`
+   *  (or is untagged) is removed; resolves true if one was. */
+  discardStalePasswordVault: (userId: string) => Promise<boolean>
   /** Zero in-memory key. Vault stays in IndexedDB for re-unlock. */
   lock: () => void
   /** Full logout: zero in-memory key AND clear IndexedDB vault. */
@@ -623,6 +635,18 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     setKeyPresent(false)
   }, [clearCachedKey])
 
+  const discardStalePasswordVault = useCallback(async (userId: string): Promise<boolean> => {
+    lock()
+    try {
+      // Scoped to `userId` (task 1810 round 2, P2-1): the slot may hold
+      // another account's key, which is never this account's stale copy.
+      return await clearPasswordVault(userId)
+    } finally {
+      // A passkey vault may still exist; re-read rather than assume.
+      try { setVaultExists(await hasVault()) } catch { setVaultExists(false) }
+    }
+  }, [lock])
+
   // Task 1531/1534 (P0): cross-account master-key confusion. The cached/
   // persisted key stores (session-vault-cache, session-persist, the
   // password/passkey vault in IndexedDB) are single, per-ORIGIN slots — not
@@ -789,10 +813,11 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       getFileKey,
       getFileKeyForFile,
       getMasterKey,
+      discardStalePasswordVault,
       lock,
       fullLogout,
     }),
-    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, vaultExists, vaultChecked, setMasterKey, setMasterKeyDirect, setMasterKeyFromPasskey, unlockVault, unlockVaultWithPasskey, unlock, isUnlockedFor, getResidentUserId, getFileKey, getFileKeyForFile, getMasterKey, lock, fullLogout],
+    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, vaultExists, vaultChecked, setMasterKey, setMasterKeyDirect, setMasterKeyFromPasskey, unlockVault, unlockVaultWithPasskey, unlock, isUnlockedFor, getResidentUserId, getFileKey, getFileKeyForFile, getMasterKey, discardStalePasswordVault, lock, fullLogout],
   )
 
   return <KeyContext.Provider value={value}>{children}</KeyContext.Provider>
