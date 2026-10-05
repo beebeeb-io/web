@@ -307,7 +307,7 @@ test.describe('1745 onboarding renderer', () => {
 
     await expect(screen(page)).toHaveAttribute('data-screen', 'fallback')
     await expect(page.getByTestId('fallback-step-id')).toHaveText('confirm_phone_number')
-    await expect(page.getByTestId('step-fallback-action')).toHaveAttribute('href', 'https://beebeeb.io/signup')
+    await expect(page.getByTestId('step-fallback-action')).toHaveAttribute('href', 'https://app.beebeeb.io/signup')
     // the unknown OPTIONAL step never showed
     await expect(page.getByText('future_nice_to_have')).toHaveCount(0)
     await shot(page, join(EVIDENCE, '12-unknown-required-step-fallback.png'))
