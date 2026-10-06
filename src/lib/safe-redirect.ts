@@ -24,8 +24,11 @@
  *    own root → no open-redirect risk; only the query varies, never the path.
  *  - `/cli-auth`        — CLI device-auth round-trip.
  *  - `/settings/privacy`— data-export resume (`DATA_EXPORT_ROUTE`, task 0720);
- *    a same-origin protected route, so no open-redirect risk in allowlisting it. */
-export const REDIRECT_ALLOWLIST = ['/', '/cli-auth', '/settings/privacy'] as const
+ *    a same-origin protected route, so no open-redirect risk in allowlisting it.
+ *  - `/settings/billing`— the public "return to the app" page links here (task 1743);
+ *    a person with no web session signs in and lands on Billing instead of the Drive
+ *    root. Same-origin protected route, exact path match, so no open-redirect risk. */
+export const REDIRECT_ALLOWLIST = ['/', '/cli-auth', '/settings/privacy', '/settings/billing'] as const
 
 /** `/c/<code>`, exactly: no further segment, only the code alphabet (task 1814). */
 const COUPON_PATH = /^\/c\/[A-Za-z0-9_-]{3,64}$/

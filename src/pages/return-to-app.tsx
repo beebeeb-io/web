@@ -35,7 +35,7 @@ export function ReturnToApp() {
           </p>
         </div>
         <Link
-          to="/billing"
+          to="/settings/billing"
           data-testid="return-to-app-billing"
           className="text-[13px] text-amber-deep font-medium hover:underline self-start"
         >

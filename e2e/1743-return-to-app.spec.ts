@@ -59,7 +59,7 @@ test('the return page is public: no login bounce, no horizontal scroll, light an
   // The one link goes to Billing on the web (a real anchor, not a button).
   const link = page.getByTestId('return-to-app-billing')
   expect(await link.evaluate((el) => el.tagName)).toBe('A')
-  await expect(link).toHaveAttribute('href', '/billing')
+  await expect(link).toHaveAttribute('href', '/settings/billing')
 })
 
 test('a stale session token (expired session) does not bounce the return page to /login', async ({ page }) => {
@@ -75,6 +75,25 @@ test('a stale session token (expired session) does not bounce the return page to
   await page.waitForTimeout(1500)
   expect(new URL(page.url()).pathname, 'the session-expired handler must not navigate away').toBe('/return-to-app')
   await expect(page.getByRole('heading', { name: 'Return to the Beebeeb app' })).toBeVisible()
+})
+
+test('signed out, the Billing link goes to sign-in carrying /settings/billing as the destination', async ({ page }) => {
+  // Task 1743 round 2 (P2-6): the allowlist must keep the destination, or the link is lost
+  // and the person lands on the Drive root after signing in.
+  await page.route('**/api/v1/**', (route) =>
+    route.fulfill({ status: 401, contentType: 'application/json', body: '{"error":"unauthorized"}' }),
+  )
+  await page.goto('/return-to-app')
+  await page.getByTestId('return-to-app-billing').click()
+  await page.waitForURL(/\/login\?next=/, { timeout: 15_000 })
+  const next = new URL(page.url()).searchParams.get('next')
+  expect(next).toBe('/settings/billing')
+  // And the login page's own check accepts it (same function the page calls).
+  const accepted = await page.evaluate(async () => {
+    const mod = await import('/src/lib/safe-redirect.ts')
+    return mod.sanitizeRedirect(new URL(location.href).searchParams.get('next'))
+  })
+  expect(accepted).toBe('/settings/billing')
 })
 
 const API = process.env.E2E_API_URL
