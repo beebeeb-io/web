@@ -221,6 +221,10 @@ When opening the ShareDialog, ALWAYS pass `isFolder={file.is_folder}`. Folder sh
 
 For full component reference: use `/beebeeb:components` skill.
 
+## Checkout return page for native apps (task 1743)
+
+`/return-to-app` (`src/pages/return-to-app.tsx`) is where a native app's Mollie checkout returns the SYSTEM browser: the server sends `redirectUrl = {APP_URL}/return-to-app` when the app asks `POST /billing/checkout` for `return_kind: "app"` (server `checkout_return::APP_RETURN_PATH`; the client never supplies a URL). The path is a contract with the server: do not rename it. The page is public (it is in `PUBLIC_ROUTE_PATTERNS`, so a stale session's 401 cannot bounce it to `/login`), makes no API call, and does not claim the payment succeeded, because Mollie redirects here after a cancel or a failure too; the app learns the real state by polling `GET /onboarding`. Proof: `e2e/1743-return-to-app.spec.ts` (`--config=e2e/1743-return-to-app.config.ts`; test 1 needs only a dev server, the opt-in real rung needs a local API with the mock Mollie and a seeded session, see the spec header).
+
 ## How we work (evidence, design, done, parallel agents)
 
 The full rules live in the workspace `CLAUDE.md` → "How we work" (also summarised in the workspace `AGENTS.md`). Read them; they apply here. The repo-specific instantiation:

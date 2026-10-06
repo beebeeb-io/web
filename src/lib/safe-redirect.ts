@@ -24,8 +24,11 @@
  *    own root → no open-redirect risk; only the query varies, never the path.
  *  - `/cli-auth`        — CLI device-auth round-trip.
  *  - `/settings/privacy`— data-export resume (`DATA_EXPORT_ROUTE`, task 0720);
- *    a same-origin protected route, so no open-redirect risk in allowlisting it. */
-export const REDIRECT_ALLOWLIST = ['/', '/cli-auth', '/settings/privacy'] as const
+ *    a same-origin protected route, so no open-redirect risk in allowlisting it.
+ *  - `/settings/billing`— the public "return to the app" page links here (task 1743);
+ *    a person with no web session signs in and lands on Billing instead of the Drive
+ *    root. Same-origin protected route, exact path match, so no open-redirect risk. */
+export const REDIRECT_ALLOWLIST = ['/', '/cli-auth', '/settings/privacy', '/settings/billing'] as const
 
 /** `/c/<code>`, exactly: no further segment, only the code alphabet (task 1814). */
 const COUPON_PATH = /^\/c\/[A-Za-z0-9_-]{3,64}$/
@@ -65,6 +68,11 @@ export function sanitizeRedirect(raw: string | null | undefined): string | null 
   // someone who opens a link while signed out can sign in and land back on it. The code
   // alphabet is fixed, so no traversal or host can ride along.
   if (!(REDIRECT_ALLOWLIST as readonly string[]).includes(pathname) && !COUPON_PATH.test(pathname)) return null
+
+  // `/settings/billing` is the one allowlisted path whose query is NOT preserved: that page
+  // reads `?success=true` / `?upgraded=true` as "a checkout just completed", so a crafted
+  // `/login?next=/settings/billing?success=true` must not be able to forge it (task 1743, round 3).
+  if (pathname === '/settings/billing') return pathname
 
   return raw
 }
