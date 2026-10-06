@@ -6,6 +6,8 @@ import type { AccountScreen, PlannedStep, StepScreen } from '../../lib/onboardin
 import type { OnboardingDocument } from '../../lib/onboarding/types'
 import { ActionError, type OnboardingPorts } from '../../lib/onboarding/ports'
 import { ErrorLine, OnboardingFrame, Spinner } from './frame'
+import { TrialStartCard } from '../no-card-trial'
+import { trialOfferView } from '../../lib/no-card-trial'
 
 const TONE_CLASS: Record<Tone, string> = {
   neutral: 'border-line bg-paper-2',
@@ -119,54 +121,23 @@ export function VerifyEmailStep({
   )
 }
 
-const TRIAL_UNAVAILABLE: Record<string, string> = {
-  already_used: 'You have already used your trial.',
-  email_unverified: 'Confirm your email first.',
-  temporarily_unavailable: 'Trials are paused right now. Try again later.',
-  not_offered_here: 'Trials are not offered here.',
-}
-
 function StartTrialCard({ doc, ports }: { doc: OnboardingDocument; ports: OnboardingPorts }) {
-  const offer = doc.trialOffer
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  // Money fails closed: no offer, no purchase permission, no card.
-  if (!offer || !doc.purchase?.ctaAllowed) return null
-
-  async function start() {
-    if (!offer) return
-    setBusy(true)
-    setError('')
-    try {
-      await ports.actions.startTrial(offer.startEndpoint)
-      await ports.actions.refresh()
-    } catch (err) {
-      setError(
-        err instanceof ActionError && err.code === 'trial_already_used'
-          ? TRIAL_UNAVAILABLE.already_used
-          : 'We could not start the trial. Nothing was charged.',
-      )
-    } finally {
-      setBusy(false)
-    }
-  }
-
+  // Money fails closed: no offer, no purchase permission, no card (`trialOfferView` is null).
+  const offer = trialOfferView(doc)
+  if (!offer) return null
   return (
     <div className="border border-line rounded-md p-3.5" data-testid="step-start_trial">
-      <p className="text-[13px] font-semibold text-ink">Start a {offer.lengthDays}-day trial</p>
-      <p className="text-xs text-ink-3 mt-0.5 mb-3">
-        No card needed. Up to <span className="font-mono">{formatSize(offer.capBytes)}</span> while it runs.
-      </p>
-      {offer.available ? (
-        <>
-          {error && <ErrorLine>{error}</ErrorLine>}
-          <BBButton variant="amber" className="w-full" onClick={start} disabled={busy} data-testid="start-trial">
-            {busy ? 'Starting' : 'Start the trial'}
-          </BBButton>
-        </>
+      {offer.kind === 'available' ? (
+        <TrialStartCard
+          offer={offer}
+          onStart={async (choice) => {
+            await ports.actions.startTrial(offer.startEndpoint, { plan: choice.plan, billingCycle: choice.cycle })
+            await ports.actions.refresh()
+          }}
+        />
       ) : (
         <p className="text-xs text-ink-3" data-testid="start-trial-unavailable">
-          {TRIAL_UNAVAILABLE[offer.unavailableReason ?? ''] ?? 'The trial is not available right now.'}
+          {offer.message}
         </p>
       )}
     </div>

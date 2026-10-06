@@ -36,6 +36,7 @@ import {
 } from '../lib/folder-share-crypto'
 import { useKeys } from '../lib/key-context'
 import { userFriendlyError } from '../lib/user-friendly-error'
+import { isTypedRefusal } from '../lib/no-card-trial'
 import { buildFullShareLink } from '../lib/share-full-link'
 
 interface ShareDialogProps {
@@ -597,7 +598,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
           bundleResult = await createBundleShare(await buildRequest())
         } catch (e) {
           // 409 = token collision (≈ never at 20 random bytes) → regenerate once.
-          if (e instanceof ApiError && e.status === 409) {
+          if (e instanceof ApiError && e.status === 409 && !isTypedRefusal(e)) {
             bundleResult = await createBundleShare(await buildRequest())
           } else {
             throw e
@@ -654,7 +655,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
         result = await createShare(fileId, options)
       } catch (e) {
         // 409 = token collision (≈ never at 20 random bytes) → regenerate once.
-        if (e instanceof ApiError && e.status === 409) {
+        if (e instanceof ApiError && e.status === 409 && !isTypedRefusal(e)) {
           await attachFreshToken()
           result = await createShare(fileId, options)
         } else {

@@ -89,6 +89,12 @@ interface DriveDataState {
   accountBlocking: boolean
   /** The document's raw `account.state` label (e.g. `allowance`), or null without a document. */
   accountStateLabel: string | null
+  /**
+   * The account-stage onboarding document the gate decided on (task 1757: the trial
+   * offer, the running trial and the trial-ended screens read it), or null when the flag
+   * is off or the server serves none. Refreshed with `refreshPlanDetails`.
+   */
+  accountDocument: OnboardingDocument | null
 
   incomingCount: number
   refreshIncoming: () => void
@@ -385,6 +391,7 @@ export function DriveDataProvider({ children }: { children: ReactNode }) {
         accountBlocking: accountDocumentBlocks(accountDoc),
         accountStateSource: accountStateFromDocument(accountDoc) ? 'document' : 'legacy',
         accountStateLabel: accountStateFromDocument(accountDoc) ? (accountDoc?.account?.state ?? null) : null,
+        accountDocument: accountDoc,
         incomingCount,
         refreshIncoming,
         isOffline,

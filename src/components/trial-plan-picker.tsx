@@ -77,6 +77,7 @@ export function TrialPlanPicker({
   onPlanChange,
   onCycleChange,
   label = 'Plan',
+  noCard = false,
 }: {
   options: TrialPlanOption[]
   plan: TrialPlanSlug
@@ -84,6 +85,11 @@ export function TrialPlanPicker({
   onPlanChange: (plan: TrialPlanSlug) => void
   onCycleChange: (cycle: BillingCycle) => void
   label?: string
+  /**
+   * The no-card trial (task 1757): the price is what a subscription would cost, not
+   * something the trial charges, so the line under the name says so instead of "then billed".
+   */
+  noCard?: boolean
 }) {
   return (
     <div data-testid="trial-plan-picker">
@@ -122,7 +128,9 @@ export function TrialPlanPicker({
                   </span>
                 </span>
                 <span className="block text-[11px] text-ink-3 mt-0.5">
-                  {o.trialDays} days free, then billed {cycle === 'yearly' ? 'yearly' : 'monthly'}
+                  {noCard
+                    ? `Try it for ${o.trialDays} days. Nothing is billed.`
+                    : `${o.trialDays} days free, then billed ${cycle === 'yearly' ? 'yearly' : 'monthly'}`}
                   {cycle === 'yearly' && saved > 0 && (
                     <span className="text-amber-deep font-medium"> · save {formatEur(saved)}/year</span>
                   )}
@@ -132,6 +140,7 @@ export function TrialPlanPicker({
                 <span className="block font-mono text-[14px] font-semibold text-ink">{formatEur(price)}</span>
                 <span className="block font-mono text-[10.5px] text-ink-3">
                   / {cycle === 'yearly' ? 'year' : 'month'}
+                  {noCard ? ' if you subscribe' : ''}
                 </span>
               </span>
             </button>

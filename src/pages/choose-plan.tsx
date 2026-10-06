@@ -29,6 +29,10 @@ import { BBButton, Icon } from '@beebeeb/shared'
 import { AuthShell } from '../components/auth-shell'
 import { BillingInfoStep } from '../components/billing/BillingInfoStep'
 import { TrialMethodPicker, TrialPlanPicker } from '../components/trial-plan-picker'
+import { TrialStartCard, TrialUnavailableNote } from '../components/no-card-trial'
+import { useStartNoCardTrial } from '../hooks/use-start-no-card-trial'
+import { trialOfferView } from '../lib/no-card-trial'
+import { formatSize } from '../lib/onboarding/account-summary'
 import { useToast } from '../components/toast'
 import { useAuth } from '../lib/auth-context'
 import { useDriveData } from '../lib/drive-data-context'
@@ -104,8 +108,13 @@ export function ChoosePlan() {
   const { showToast } = useToast()
   const { user } = useAuth()
   const { getMasterKey } = useKeys()
-  const { planDetails, applySubscription, refreshPlanDetails } = useDriveData()
+  const { planDetails, applySubscription, refreshPlanDetails, accountDocument } = useDriveData()
   const sub = planDetails.subscription
+  // Task 1757: when the onboarding document carries a trial offer (the no-card trial is
+  // switched on), IT decides what this page offers; the card-mandate flow below is the
+  // fallback for a server that sends no offer (switch off, document unavailable).
+  const trialOffer = trialOfferView(accountDocument)
+  const startNoCardTrial = useStartNoCardTrial()
 
   const returned = searchParams.get('returned') === '1'
   const fromBilling = searchParams.get('from') === 'billing'
@@ -622,6 +631,46 @@ export function ChoosePlan() {
               : 'Next: your card at Mollie. It is authorized for €0 — nothing is charged today.'
           }
         />
+        {footer}
+      </AuthShell>
+    )
+  }
+
+  // step === 'pick', the document offers (or explains why it cannot offer) the no-card trial.
+  if (trialOffer) {
+    const allowance =
+      trialOffer.kind === 'available' && trialOffer.allowanceBytes !== null ? formatSize(trialOffer.allowanceBytes) : null
+    return (
+      <AuthShell
+        wide
+        title={trialOffer.kind === 'available' ? 'Try a plan, no card' : 'Choose your plan'}
+        subtitle={
+          trialOffer.kind === 'available'
+            ? allowance
+              ? `Your encrypted vault is ready with ${allowance} included. Try a paid plan free for ${trialOffer.lengthDays} days.`
+              : `Your encrypted vault is ready. Try a paid plan free for ${trialOffer.lengthDays} days.`
+            : 'Your encrypted vault is ready.'
+        }
+        hideTrust
+      >
+        <div className="flex flex-col gap-[18px]" data-testid="choose-plan-no-card">
+          {trialOffer.kind === 'available' ? (
+            <TrialStartCard
+              offer={trialOffer}
+              initialPlan={initialIntent?.plan}
+              initialCycle={initialIntent?.cycle}
+              onStart={(choice) => startNoCardTrial(trialOffer, choice)}
+            />
+          ) : (
+            <TrialUnavailableNote offer={trialOffer} showPlansLink={false} />
+          )}
+          <div className="border-t border-line pt-3.5 flex items-center justify-between gap-3 text-[12.5px] text-ink-3">
+            <span>Ready to pay instead? Plans start with a normal checkout.</span>
+            <Link to={PAID_CHECKOUT_PATH} className="font-medium text-amber-deep hover:underline" data-testid="choose-plan-subscribe-now">
+              Subscribe now
+            </Link>
+          </div>
+        </div>
         {footer}
       </AuthShell>
     )
