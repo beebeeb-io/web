@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react'
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom'
+import { isCheckoutReturn } from '../lib/checkout-return'
 import { SettingsShell, SettingsHeader } from '../components/settings-shell'
 import { BBButton } from '@beebeeb/shared'
 import { BBChip } from '@beebeeb/shared'
@@ -416,7 +417,7 @@ export function Billing() {
   // expired, so `?upgraded=true` alone cannot assert success. We poll the
   // subscription and only claim "Upgrade complete" once it actually reflects the
   // change; otherwise we show an honest neutral "still processing" state. (0865)
-  const showUpgraded = searchParams.get('upgraded') === 'true' || Boolean(searchParams.get('session_id'))
+  const showUpgraded = isCheckoutReturn(searchParams)
   const upgradedDismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   // 'finalizing' = polling; 'complete' = subscription reflects the upgrade;
   // 'unconfirmed' = poll window elapsed without a change (payment may still be
@@ -632,8 +633,6 @@ export function Billing() {
   const [pmLoaded, setPmLoaded] = useState(false)
   // CSV export of the payment history (#7 "Export all", task 0942).
   const [exportingTransactions, setExportingTransactions] = useState(false)
-
-  const showSuccess = searchParams.get('success') === 'true'
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -998,10 +997,6 @@ function openUpgrade(plan: string) {
       return
     }
     openUpgrade(plan)
-  }
-
-  function dismissSuccess() {
-    setSearchParams({}, { replace: true })
   }
 
   async function handleCancelSubscription() {
@@ -1933,20 +1928,6 @@ function openUpgrade(plan: string) {
                 <Icon name="x" size={16} />
               </button>
             </div>
-          </div>
-        )}
-
-        {/* Success banner after Stripe checkout (legacy ?success=true) */}
-        {showSuccess && (
-          <div className="flex items-center gap-3 p-3.5 bg-green/10 border border-green/30 rounded-lg text-sm">
-            <Icon name="check" size={14} className="text-green shrink-0" />
-            <span className="flex-1">Your subscription is now active. Welcome aboard.</span>
-            <button
-              onClick={dismissSuccess}
-              className="text-ink-3 hover:text-ink transition-colors"
-            >
-              <Icon name="x" size={14} />
-            </button>
           </div>
         )}
 
