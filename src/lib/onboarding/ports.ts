@@ -17,7 +17,7 @@
  */
 
 import { ApiError, request } from '@beebeeb/shared'
-import { API_URL } from '../api'
+import { API_URL, startNoCardTrial } from '../api'
 import {
   createBreachCheck,
   createSignupCeremony,
@@ -71,8 +71,12 @@ export interface OnboardingActions {
   registerFinish(input: RegisterFinishInput & { clientMessage: Uint8Array }): Promise<{ userId: string }>
   /** Account stage: confirm the email with the code mailed to the account. */
   verifyEmail(code: string): Promise<void>
-  /** Account stage: `offers.trial.start_endpoint` (a validated same-origin path). */
-  startTrial(endpoint: string): Promise<void>
+  /**
+   * Account stage: start the no-card trial at `offers.trial.start_endpoint` (a validated
+   * same-origin path). The server wants the plan whose features the trial shows and the
+   * cycle it would be billed on if the person subscribes later; nothing about payment.
+   */
+  startTrial(endpoint: string, choice: { plan: string; billingCycle: 'monthly' | 'yearly' }): Promise<void>
   /** Fetch the document again (after any step that changes it). */
   refresh(): Promise<void>
 }
@@ -247,13 +251,14 @@ export function httpActions(refresh: () => Promise<void>): OnboardingActions {
         throw toActionError(err, 'wrong_code')
       }
     },
-    async startTrial(endpoint) {
+    async startTrial(endpoint, choice) {
       const path = sameOriginApiPath(endpoint)
       if (!path) throw new ActionError('bad_endpoint', 'The trial endpoint was not a same-origin API path.')
       try {
-        await request(path, { method: 'POST', body: JSON.stringify({}) })
+        await startNoCardTrial({ endpoint: path, plan: choice.plan, billing_cycle: choice.billingCycle })
       } catch (err) {
-        throw toActionError(err, 'trial_start_failed')
+        // Keep the typed error: the screen words it (`startTrialErrorCopy`) from its code and status.
+        throw err instanceof ApiError ? err : toActionError(err, 'trial_start_failed')
       }
     },
     refresh,

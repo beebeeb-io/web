@@ -61,6 +61,7 @@ import {
 } from '../lib/api'
 import { userFriendlyError } from '../lib/user-friendly-error'
 import { usePlanBlock } from '../hooks/use-plan-block'
+import { noCardTrialStatus, trialCapShortfallNotice } from '../lib/no-card-trial'
 import type { FileActivityEntry } from '../components/file-details-panel'
 import { timeAgo } from '../components/file-list'
 import { getRemainingBytes } from '../components/quota-warning'
@@ -142,7 +143,8 @@ export function Drive() {
   const { isFrozen } = useFrozen()
   const { user } = useAuth()
   const { getFileKey, getMasterKey, getFileKeyForFile, isUnlocked, cryptoReady, cryptoError } = useKeys()
-  const { usage: driveUsage, planDetails: drivePlanDetails, incomingCount: driveIncomingCount, refreshUsage: refreshDriveUsage, setOffline: setDriveOffline, unpinFolders } = useDriveData()
+  const { usage: driveUsage, planDetails: drivePlanDetails, incomingCount: driveIncomingCount, refreshUsage: refreshDriveUsage, setOffline: setDriveOffline, unpinFolders, accountDocument: driveAccountDocument } = useDriveData()
+  const noCardTrial = noCardTrialStatus(driveAccountDocument)
   const { indexFile, reindexFields, unindexFile } = useSearchIndex()
   const sync = useSync()
   const { refresh: refreshOnboarding } = useOnboarding()
@@ -1226,13 +1228,20 @@ export function Drive() {
     if (quotaLedgerRef.current.wouldExceed(quotaItems, remaining)) {
       const needed = requiredQuotaBytes(quotaItems)
       const effectiveRemaining = Math.max(0, (remaining ?? 0) - quotaLedgerRef.current.reservedBytes)
-      showToast({
-        icon: 'shield',
-        title: 'Not enough storage',
-        description: `This upload needs ${formatBytes(needed)} but you only have ${formatBytes(effectiveRemaining)} remaining.`,
-        href: '/billing',
-        danger: true,
-      })
+      // Task 1757: inside a no-card trial the limit is the trial's cap, and the way past it is
+      // to subscribe, so say that instead of the allowance-flavoured generic line.
+      const trialNotice = trialCapShortfallNotice(noCardTrial, needed, effectiveRemaining, 'upload')
+      showToast(
+        trialNotice
+          ? { icon: 'shield', ...trialNotice, danger: true }
+          : {
+              icon: 'shield',
+              title: 'Not enough storage',
+              description: `This upload needs ${formatBytes(needed)} but you only have ${formatBytes(effectiveRemaining)} remaining.`,
+              href: '/billing',
+              danger: true,
+            },
+      )
       return
     }
 
@@ -1601,13 +1610,18 @@ export function Drive() {
     if (remaining !== null) {
       const totalSize = folderFiles.reduce((sum, ff) => sum + ff.file.size, 0)
       if (totalSize > remaining) {
-        showToast({
-          icon: 'shield',
-          title: 'Not enough storage',
-          description: `This folder needs ${formatBytes(totalSize)} but you only have ${formatBytes(remaining)} remaining.`,
-          href: '/billing',
-          danger: true,
-        })
+        const trialNotice = trialCapShortfallNotice(noCardTrial, totalSize, remaining, 'folder')
+        showToast(
+          trialNotice
+            ? { icon: 'shield', ...trialNotice, danger: true }
+            : {
+                icon: 'shield',
+                title: 'Not enough storage',
+                description: `This folder needs ${formatBytes(totalSize)} but you only have ${formatBytes(remaining)} remaining.`,
+                href: '/billing',
+                danger: true,
+              },
+        )
         return
       }
     }
@@ -2819,9 +2833,13 @@ export function Drive() {
         )}
 
         {/* Storage-full banner — always visible when quota is hit */}
+        {/* Task 1757: not after a trial that ended over the allowance: the account banner at the top
+            already says what is read-only, until when, and how to trim; "Storage full, upgrade"
+            beside it would be a second, vaguer answer to the same question. */}
         {storageUsage &&
           storageUsage.plan_limit_bytes > 0 &&
-          storageUsage.used_bytes >= storageUsage.plan_limit_bytes && (
+          storageUsage.used_bytes >= storageUsage.plan_limit_bytes &&
+          driveAccountDocument?.account?.state !== 'trial_ended' && (
           <StorageFullBanner
             currentPlan={storageUsage.plan_name}
             onUpgrade={() => setShowUpgradeNudge(true)}

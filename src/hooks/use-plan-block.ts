@@ -21,12 +21,14 @@ import {
   CHOOSE_PLAN_PATH,
   accountStateFromError,
   uploadBlockedNotice,
+  trialEndedUploadNotice,
   uploadRefusalNotice,
   type UploadBlockedNotice,
 } from '../lib/account-state'
+import { trialEndedStatus } from '../lib/no-card-trial'
 
 export function usePlanBlock() {
-  const { accountState, refreshPlanDetails } = useDriveData()
+  const { accountState, refreshPlanDetails, accountDocument, accountStateLabel } = useDriveData()
   const { showToast } = useToast()
   const navigate = useNavigate()
 
@@ -41,17 +43,23 @@ export function usePlanBlock() {
   )
 
   const blockUpload = useCallback((): boolean => {
-    const n = uploadBlockedNotice(accountState)
+    // Task 1757 — over the allowance after a trial: its own words, with the deletion date.
+    const n =
+      accountStateLabel === 'trial_ended'
+        ? trialEndedUploadNotice(trialEndedStatus(accountDocument))
+        : uploadBlockedNotice(accountState)
     if (!n) return false
     show(n)
     return true
-  }, [accountState, show])
+  }, [accountState, accountStateLabel, accountDocument, show])
 
   const handlePlanError = useCallback(
     (err: unknown): boolean => {
       const state = accountStateFromError(err)
       if (state) {
-        const n = uploadBlockedNotice(state)
+        const code = (err as { code?: unknown } | null)?.code
+        const n =
+          code === 'trial_ended' ? trialEndedUploadNotice(trialEndedStatus(accountDocument)) : uploadBlockedNotice(state)
         if (n) show(n)
         refreshPlanDetails()
         if (state === 'needs_plan') navigate(CHOOSE_PLAN_PATH, { replace: true })
@@ -61,7 +69,7 @@ export function usePlanBlock() {
       // quota_exceeded (413). Neither is an `account_state` value, so this
       // is a separate branch, but the same "notice + refresh, no crash into
       // the generic Upload failed toast" contract.
-      const refusal = uploadRefusalNotice(err)
+      const refusal = uploadRefusalNotice(err, { noCardTrial: accountDocument?.account?.trial?.kind === 'no_card' })
       if (refusal) {
         show(refusal)
         refreshPlanDetails()
@@ -69,7 +77,7 @@ export function usePlanBlock() {
       }
       return false
     },
-    [show, refreshPlanDetails, navigate],
+    [show, refreshPlanDetails, navigate, accountDocument],
   )
 
   return { accountState, blockUpload, handlePlanError }

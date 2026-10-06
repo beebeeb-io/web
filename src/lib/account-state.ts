@@ -16,6 +16,8 @@
 import type { AccountState, Subscription } from '@beebeeb/shared'
 import type { OnboardingDocument } from './onboarding/types'
 import { planScreen } from './onboarding/plan'
+import { formatSize } from './onboarding/account-summary'
+import type { TrialEndedStatus } from './no-card-trial'
 
 export type { AccountState }
 
@@ -222,7 +224,9 @@ export function accountStateFromError(err: unknown): Exclude<AccountState, 'ok'>
   if (!err || typeof err !== 'object') return null
   const code = (err as { code?: unknown }).code
   if (code === 'plan_required') return 'needs_plan'
-  if (code === 'account_lapsed') return 'lapsed'
+  // `trial_ended` (task 1755): the no-card trial ended with files above the allowance; the
+  // same read-only treatment as a lapsed account, with its own words (`trialEndedUploadNotice`).
+  if (code === 'account_lapsed' || code === 'trial_ended') return 'lapsed'
   return null
 }
 
@@ -242,7 +246,10 @@ export function accountStateFromError(err: unknown): Exclude<AccountState, 'ok'>
  * Both route to `/billing`, where the trial card's own "pay now"/"resume
  * trial" actions live — no separate CTA wiring needed here.
  */
-export function uploadRefusalNotice(err: unknown): UploadBlockedNotice | null {
+export function uploadRefusalNotice(
+  err: unknown,
+  opts: { noCardTrial?: boolean } = {},
+): UploadBlockedNotice | null {
   if (!err || typeof err !== 'object') return null
   const code = (err as { code?: unknown }).code
   if (code === 'trial_cancelled_read_only') {
@@ -256,13 +263,42 @@ export function uploadRefusalNotice(err: unknown): UploadBlockedNotice | null {
   if (code === 'quota_exceeded') {
     const details = (err as { details?: Record<string, unknown> }).details
     if (details?.is_trial_cap === true) {
+      // Task 1757: the cap is 25 GB for a card-mandated trial and 10 GB (an operator setting)
+      // for a no-card one, so the number comes from the refusal, never from the client. A trial
+      // without a card has no mandate to charge ("pay now"): it subscribes at checkout.
+      const limit = typeof details.limit_bytes === 'number' ? details.limit_bytes : null
+      const noCard = opts.noCardTrial === true || details.no_card_trial === true
       const rawMessage = (err as { message?: unknown }).message
       const description =
         typeof rawMessage === 'string' && rawMessage.length > 0 && rawMessage.length <= 200
           ? rawMessage
-          : "You've reached the 25 GB trial storage cap. Pay now to unlock your full plan storage."
-      return { title: '25 GB trial cap reached', description, href: '/billing' }
+          : noCard
+            ? "You've reached your trial storage cap. Subscribe to unlock your full plan storage."
+            : "You've reached the 25 GB trial storage cap. Pay now to unlock your full plan storage."
+      return {
+        title: limit !== null ? `${formatSize(limit)} trial cap reached` : 'Trial cap reached',
+        description,
+        href: noCard ? PAID_CHECKOUT_PATH : '/billing',
+      }
     }
   }
   return null
+}
+
+/**
+ * What an upload entry point says for the trial that ended over the allowance
+ * (`trial_ended`, task 1757): files above the allowance are read-only until the deletion
+ * date, and the way back is to free space (the trash counts) or subscribe. Falls back to
+ * numberless wording when the document is not at hand (a refusal that outran it).
+ */
+export function trialEndedUploadNotice(status: TrialEndedStatus | null): UploadBlockedNotice {
+  return {
+    title: 'Your trial has ended',
+    description: status
+      ? `${status.trimGuidance} Uploads resume once you are within your ${
+          status.allowanceBytes !== null ? formatSize(status.allowanceBytes) : 'allowance'
+        } or subscribe.`
+      : 'Uploads are paused until you free up space (the trash counts) or subscribe. Your files are still here to download.',
+    href: PAID_CHECKOUT_PATH,
+  }
 }

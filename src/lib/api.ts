@@ -2533,32 +2533,41 @@ export async function startTrialCheckout(params: {
   })
 }
 
-/**
- * DEPRECATED (task 1037) — the no-card trial start. The server now refuses it
- * with `409 trial_requires_payment_method` while `BB_REQUIRE_PLAN_AT_SIGNUP` is
- * on (the release default). The web no longer calls it; use
- * `startTrialCheckout` via `/choose-plan`. Kept for older-server parity only.
- *
- * Start a 14-day free trial (task 0905, Pattern B — no card required).
- *
- * `POST /api/v1/billing/trial/start` sets the subscription to `status:'trialing'`
- * + `trial_ends_at = now()+14d` and grants the chosen plan's quota immediately —
- * NO Mollie call, NO payment method. Returns the new trialing subscription row.
- *
- * The server enforces one-trial-per-account. On a 409 the thrown ApiError carries
- * a machine-readable `.code` the caller branches on:
- *   - `trial_already_used`             → user already had a trial; fall back to
- *                                        the normal paid checkout (hide the CTA).
- *   - `trial_has_active_subscription`  → user already has an active paid sub.
- * A 400 means the plan or billing_cycle is invalid.
- */
-export async function startTrial(params: {
+/** `201` body of `POST /billing/trial/start` for a no-card trial (server task 1755). */
+export interface NoCardTrialStarted {
+  id: string
   plan: string
   billing_cycle: string
-}): Promise<Subscription> {
-  return request<Subscription>('/api/v1/billing/trial/start', {
+  region: string
+  status: 'trialing'
+  trial_ends_at: string
+  plan_version: number | null
+  trial_kind: 'no_card'
+  /** The limit uploads will actually stop at: min(plan quota, the trial cap). */
+  cap_bytes: number
+}
+
+/**
+ * Start the no-card trial (task 1757, server task 1755; spec 4b.3).
+ *
+ * `POST <start_endpoint>` where `start_endpoint` is the onboarding document's
+ * `offers.trial.start_endpoint` (a same-origin `/api/v1/...` path). The server
+ * wants a plan and a billing cycle (the plan whose features the trial shows) and
+ * NOTHING about payment: no card, no mandate, no billing profile. The document is
+ * the authority on whether a start will be accepted; a refusal is a typed 409/403
+ * (`trial_temporarily_unavailable`, `trial_already_used`, `trial_previously_subscribed`,
+ * `trial_has_active_subscription`, `email_unverified`) or a 429 when too many
+ * trials were started from the same network — see `startTrialErrorCopy`.
+ */
+export async function startNoCardTrial(params: {
+  plan: string
+  billing_cycle: 'monthly' | 'yearly'
+  endpoint?: string
+}): Promise<NoCardTrialStarted> {
+  const { endpoint, ...body } = params
+  return request<NoCardTrialStarted>(endpoint ?? '/api/v1/billing/trial/start', {
     method: 'POST',
-    body: JSON.stringify(params),
+    body: JSON.stringify(body),
   })
 }
 

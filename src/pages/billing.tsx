@@ -48,6 +48,9 @@ import {
   cancelDowngrade,
 } from '../lib/api'
 import { useDriveData } from '../lib/drive-data-context'
+import { NoCardTrialStatusCard, TrialEndedCard, TrialStartCard, TrialUnavailableNote } from '../components/no-card-trial'
+import { useStartNoCardTrial } from '../hooks/use-start-no-card-trial'
+import { noCardTrialStatus, trialBillingRefusalCopy, trialEndedStatus, trialOfferView } from '../lib/no-card-trial'
 import { useWsEvent } from '../lib/ws-context'
 import { userFriendlyError } from '../lib/user-friendly-error'
 import { handleBillingResetTestMode, type BillingResetNavigationState } from '../lib/billing-reset'
@@ -325,7 +328,13 @@ export function Billing() {
       { replace: true },
     )
   }, [setSearchParams])
-  const { usage: contextUsage, planDetails: contextPlanDetails, refreshPlanDetails, refreshUsage } = useDriveData()
+  const { usage: contextUsage, planDetails: contextPlanDetails, refreshPlanDetails, refreshUsage, accountDocument, accountStateLabel } = useDriveData()
+  // Task 1757: the onboarding document is the authority on the no-card trial (offer, running
+  // status, ended status); `null` for each when the document is unavailable (legacy fallback).
+  const trialOffer = trialOfferView(accountDocument)
+  const noCardTrial = noCardTrialStatus(accountDocument, Date.now(), undefined, contextUsage?.used_bytes)
+  const trialEnded = trialEndedStatus(accountDocument)
+  const startNoCardTrial = useStartNoCardTrial()
 
   // Task 1706 review #132-A — clear the transient add-on authority override on
   // the next successful contextUsage refresh: every delivery is a new object
@@ -806,7 +815,9 @@ export function Billing() {
   // trial CTA below gates on this, not on `trialUsed` alone, so a user who
   // already used their trial — even in a PAST session, before this page ever
   // loaded — never sees "Start trial" and instead goes straight to checkout.
-  const hasUsedTrial = resolveHasUsedTrial(sub?.has_used_trial, trialUsed)
+  // Task 1757: with a document, the SERVER'S offer decides (`offers.trial`), not a guess from
+  // `has_used_trial` (the 1517 guess stays only as the fallback when no document is served).
+  const hasUsedTrial = trialOffer ? trialOffer.kind === 'unavailable' : resolveHasUsedTrial(sub?.has_used_trial, trialUsed)
   // Task 1037 — `needs_plan` (never started a trial) / `lapsed` (trial or plan
   // ended unpaid: read-only, deletion at data_deletion_at). Missing = ok.
   const accountState = resolveAccountState(sub)
@@ -1008,8 +1019,10 @@ function openUpgrade(plan: string) {
     } catch (err) {
       showToast({
         icon: 'x',
-        title: 'Could not cancel plan',
-        description: err instanceof Error ? err.message : 'Please try again.',
+        // Task 1757: a trial without a card has no subscription (409 no_subscription_to_cancel):
+        // say so plainly rather than "could not cancel".
+        title: err instanceof ApiError && err.code === 'no_subscription_to_cancel' ? 'Nothing to cancel' : 'Could not cancel plan',
+        description: trialBillingRefusalCopy(err) ?? (err instanceof Error ? err.message : 'Please try again.'),
         danger: true,
       })
     } finally {
@@ -1625,6 +1638,17 @@ function openUpgrade(plan: string) {
       )
       window.location.href = res.url
     } catch (err) {
+      if (err instanceof ApiError && err.code === 'trial_convert_unavailable') {
+        // Task 1757: a trial without a card has nothing to convert: it subscribes at checkout.
+        showToast({
+          icon: 'clock',
+          title: 'Subscribe to keep your plan',
+          description: trialBillingRefusalCopy(err) ?? 'Choose a plan and pay at checkout.',
+        })
+        setView('change')
+        setConvertLoading(false)
+        return
+      }
       if (err instanceof ApiError && err.code === 'trial_not_active') {
         showToast({
           icon: 'clock',
@@ -2064,7 +2088,20 @@ function openUpgrade(plan: string) {
         {/* Task 1037 — a trial that ended unpaid: the vault is read-only and is
             deleted at data_deletion_at unless the user subscribes. Normal paid
             checkout (the trial is used), so the CTA opens the change view. */}
-        {accountState === 'lapsed' && (
+        {/* Task 1757 — the no-card trial, drawn from the onboarding document: running,
+            ended over the allowance, or on offer. */}
+        {noCardTrial && view === 'summary' && (
+          <NoCardTrialStatusCard status={noCardTrial} canSubscribe={accountDocument?.purchase?.ctaAllowed === true} variant="panel" />
+        )}
+        {trialEnded && view === 'summary' && <TrialEndedCard status={trialEnded} variant="panel" />}
+        {view === 'summary' && trialOffer?.kind === 'available' && (
+          <div className="rounded-xl border border-line bg-paper-2 px-6 py-5" data-testid="billing-trial-offer">
+            <TrialStartCard offer={trialOffer} onStart={(choice) => startNoCardTrial(trialOffer, choice)} />
+          </div>
+        )}
+        {view === 'summary' && trialOffer?.kind === 'unavailable' && !trialEnded && <TrialUnavailableNote offer={trialOffer} showPlansLink={false} />}
+
+        {accountState === 'lapsed' && !trialEnded && (
           <div className="rounded-xl border border-red/30 bg-red/5 px-6 py-5" data-testid="billing-lapsed">
             <div className="flex items-start gap-3">
               <Icon name="lock" size={16} className="text-red shrink-0 mt-0.5" />
@@ -2142,7 +2179,7 @@ function openUpgrade(plan: string) {
           </div>
         )}
 
-        {sub?.status === 'trialing' && sub.trial_auto_converts !== true && sub.trial_ends_at && remainingDays(sub.trial_ends_at) > 0 && (
+        {sub?.status === 'trialing' && sub.trial_auto_converts !== true && !noCardTrial && sub.trial_ends_at && remainingDays(sub.trial_ends_at) > 0 && (
           <div className="rounded-xl border border-amber/60 bg-amber-bg px-6 py-5">
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1">
@@ -2206,7 +2243,7 @@ function openUpgrade(plan: string) {
                   <SectionLabel className="mb-2">Current plan</SectionLabel>
                   <div className="flex items-center gap-3 mb-1">
                     <span className="text-[28px] font-bold tracking-tight leading-none">
-                      {hasNoPlan ? 'No plan' : meta.label}
+                      {accountStateLabel === 'allowance' ? 'Allowance' : hasNoPlan ? 'No plan' : meta.label}
                     </span>
                     {effectivePlan !== 'free' && !hasNoPlan && statusBadge()}
                   </div>
@@ -2233,7 +2270,12 @@ function openUpgrade(plan: string) {
                   {accountState === 'lapsed' && (
                     <div className="text-[13px] text-ink-3">Read-only — uploads are paused</div>
                   )}
-                  {accountState === 'needs_plan' && (
+                  {accountState === 'needs_plan' && accountStateLabel === 'allowance' && (
+                    <div className="text-[13px] text-ink-3" data-testid="billing-allowance-line">
+                      Included with your account. A plan adds storage and sharing.
+                    </div>
+                  )}
+                  {accountState === 'needs_plan' && accountStateLabel !== 'allowance' && (
                     <div className="text-[13px] text-ink-3">Start a free trial to begin uploading</div>
                   )}
                   {/* Task 1605 — a never-paid trial cancelled before its first
@@ -2362,7 +2404,7 @@ function openUpgrade(plan: string) {
                   cap. Guus, 2026-09-29: "we need to make sure the user is
                   not limited to 25gb for 2 weeks" — pay now ends the trial
                   early and unlocks the full plan quota. */}
-              {trialCapped && sub?.trial_storage_cap_bytes != null && (
+              {trialCapped && !noCardTrial && sub?.trial_storage_cap_bytes != null && (
                 <div data-testid="trial-cap-card" className="flex items-center gap-3 px-5 py-3 border-t border-line bg-paper-2 text-xs">
                   <Icon name="lock" size={13} className="text-ink-3 shrink-0" />
                   <span className="flex-1 text-ink-2" data-testid="trial-cap-explainer">
@@ -2877,7 +2919,7 @@ function openUpgrade(plan: string) {
                 successful charge). Guus, 2026-09-29: "we need to make sure
                 the user is not limited to 25gb for 2 weeks" — pay now ends
                 the trial early and unlocks the full plan quota. */}
-            {trialCapped && sub?.trial_storage_cap_bytes != null && (
+            {trialCapped && !noCardTrial && sub?.trial_storage_cap_bytes != null && (
               <div data-testid="trial-cap-card" className="rounded-lg border border-line-2 bg-paper-2 p-4 space-y-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 space-y-1.5">
@@ -3010,6 +3052,14 @@ function openUpgrade(plan: string) {
                    own; nothing to add. The trial panel above carries the
                    charge date + amount and the cancel action. */
                 null
+              ) : sub?.status === 'trialing' && noCardTrial ? (
+                /* Task 1757 — a trial without a card has no mandate to charge ("pay now") and
+                   nothing to convert (server 409 trial_convert_unavailable): it subscribes at
+                   checkout, like anyone else, and the first charge lifts the cap. */
+                <BBButton variant="amber" size="md" onClick={() => openUpgrade(effectivePlan)} data-testid="trial-subscribe-plan">
+                  Subscribe to {meta.label}
+                  <Icon name="chevron-right" size={13} className="ml-1.5" />
+                </BBButton>
               ) : sub?.status === 'trialing' ? (
                 /* Trialing on a paid plan (task 0905). The user has no Mollie
                    customer yet, so "Manage billing" would dead-end — the primary
