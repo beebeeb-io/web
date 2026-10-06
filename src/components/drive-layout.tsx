@@ -26,6 +26,7 @@ import { QuotaWarning } from './quota-warning'
 import { QuickAccess } from './quick-access'
 import { EmailVerifyBanner } from './email-verify-banner'
 import { TrialBanner } from './trial-banner'
+import { TrialEndedAllowanceNotice } from './trial-ended-notice'
 import { AnnouncementBanner } from './announcement-banner'
 import { IosAppBanner } from './ios-app-banner'
 import { NotificationInbox, useNotifications } from './notification-inbox'
@@ -445,7 +446,13 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   // Task 1816: an allowance account has no plan but a working vault; say what
   // the meter measures instead of "No plan".
   const planLabel =
-    accountStateLabel === 'allowance' ? 'Allowance' : planName === 'none' ? 'No plan' : `${planName} plan`
+    accountStateLabel === 'allowance'
+      ? 'Allowance'
+      : accountStateLabel === 'trialing_no_card'
+        ? 'Trial'
+        : planName === 'none'
+          ? 'No plan'
+          : `${planName} plan`
 
   return (
     <div className="h-screen flex overflow-hidden bg-paper">
@@ -659,6 +666,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
         <AnnouncementBanner />
         <EmailVerifyBanner />
         <TrialBanner />
+        <TrialEndedAllowanceNotice />
         {isFrozen && (
           <div className="bg-amber/10 border-b border-amber/20 px-4 py-2.5 text-center text-[13px] text-ink-2">
             Your account is frozen. You can view and download files but cannot upload, delete, or share.{' '}
@@ -667,7 +675,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
             </Link>
           </div>
         )}
-        {usage && (
+        {usage && accountStateLabel !== 'trial_ended' && (
           <QuotaWarning
             usedBytes={usage.used_bytes}
             limitBytes={usage.plan_limit_bytes}

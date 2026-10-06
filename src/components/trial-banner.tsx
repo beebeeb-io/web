@@ -43,6 +43,9 @@ import { convertTrial, ApiError } from '../lib/api'
 import { persistTrialConvertIntent } from '../lib/pending-checkout'
 import { trialAutoConvertCopy, trialRenewalAmount } from '../lib/trial-checkout'
 import { userFriendlyError } from '../lib/user-friendly-error'
+import { noCardTrialStatus, trialBillingRefusalCopy } from '../lib/no-card-trial'
+import { PAID_CHECKOUT_PATH } from '../lib/account-state'
+import { NoCardTrialStatusCard } from './no-card-trial'
 
 /** Whole days remaining until an RFC3339 instant (ceil; never negative). */
 function daysLeft(iso: string): number {
@@ -51,12 +54,20 @@ function daysLeft(iso: string): number {
 }
 
 export function TrialBanner() {
-  const { planDetails } = useDriveData()
+  const { planDetails, accountDocument, usage } = useDriveData()
   const { showToast } = useToast()
   const navigate = useNavigate()
   const [converting, setConverting] = useState(false)
 
   const sub = planDetails.subscription
+
+  // Task 1757 — a trial without a card. The onboarding document says so; the legacy
+  // banner below would offer "Add payment method", which the server now refuses for
+  // this kind of trial (409 trial_convert_unavailable): it converts by subscribing.
+  const noCard = noCardTrialStatus(accountDocument, Date.now(), undefined, usage?.used_bytes)
+  if (noCard) {
+    return <NoCardTrialStatusCard status={noCard} canSubscribe={accountDocument?.purchase?.ctaAllowed === true} variant="banner" />
+  }
 
   // Only show for an ACTIVE trial with a future end date. A lapsed trial has
   // status back to a non-trialing value (free/cancelled), so this is also the
@@ -129,6 +140,17 @@ export function TrialBanner() {
     } catch (err) {
       // Surface the typed 409s and route the user to the right place.
       if (err instanceof ApiError) {
+        if (err.code === 'trial_convert_unavailable') {
+          // A trial without a card has nothing to convert: subscribe at checkout.
+          showToast({
+            icon: 'clock',
+            title: 'Subscribe to keep your plan',
+            description: trialBillingRefusalCopy(err) ?? 'Choose a plan and pay at checkout.',
+          })
+          navigate(PAID_CHECKOUT_PATH)
+          setConverting(false)
+          return
+        }
         if (err.code === 'trial_not_active') {
           showToast({
             icon: 'clock',

@@ -4,15 +4,24 @@ import { useAuth } from '../lib/auth-context'
 import { useDriveData } from '../lib/drive-data-context'
 import { useNavigate } from 'react-router-dom'
 import { lapsedBannerCopy, PAID_CHECKOUT_PATH } from '../lib/account-state'
+import { trialEndedStatus } from '../lib/no-card-trial'
+import { TrialEndedCard } from './no-card-trial'
 
 export function BillingBanner() {
   const { user } = useAuth()
-  const { planDetails, accountState } = useDriveData()
+  const { planDetails, accountState, accountDocument } = useDriveData()
   const navigate = useNavigate()
   const sub = planDetails.subscription
   const state = sub?.billing_state
 
   if (!user) return null
+
+  // Task 1757 — a no-card trial that ended with files above the allowance: read-only
+  // above it, a deletion date from the document, how to trim (the trash counts), Subscribe.
+  // The document's numbers and dates, not the legacy subscription's, so an account that
+  // never paid says "files above 2 GB", not "your vault".
+  const trialEnded = trialEndedStatus(accountDocument)
+  if (trialEnded) return <TrialEndedCard status={trialEnded} variant="banner" />
 
   // Task 1037 — a trial/plan that ended unpaid: the vault is read-only and the
   // data is deleted at `data_deletion_at`. Persistent and NOT dismissable —

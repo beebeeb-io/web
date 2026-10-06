@@ -119,7 +119,7 @@ describe('what the screens say (fixtures B to E, spec 5.4)', () => {
     expect(m).toContain('data-testid="step-choose_plan"')
     expect(m).toContain('data-testid="step-start_trial"')
     expect(m).toContain('data-testid="start-trial"')
-    expect(m).toContain('Start a 14-day trial')
+    expect(m).toContain('Start 14-day trial, no card')
   })
 
   test('trialing_no_card draws the server-supplied over-allowance sentence verbatim and the usage line', () => {

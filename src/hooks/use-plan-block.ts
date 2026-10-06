@@ -21,12 +21,14 @@ import {
   CHOOSE_PLAN_PATH,
   accountStateFromError,
   uploadBlockedNotice,
+  trialEndedUploadNotice,
   uploadRefusalNotice,
   type UploadBlockedNotice,
 } from '../lib/account-state'
+import { trialEndedStatus } from '../lib/no-card-trial'
 
 export function usePlanBlock() {
-  const { accountState, refreshPlanDetails, planDetails } = useDriveData()
+  const { accountState, refreshPlanDetails, accountDocument, accountStateLabel, planDetails } = useDriveData()
   const lapseKind = planDetails.subscription?.lapse_kind
   const { showToast } = useToast()
   const navigate = useNavigate()
@@ -42,17 +44,25 @@ export function usePlanBlock() {
   )
 
   const blockUpload = useCallback((): boolean => {
-    const n = uploadBlockedNotice(accountState, lapseKind)
+    // Task 1757 — over the allowance after a trial: its own words, with the deletion date.
+    const n =
+      accountStateLabel === 'trial_ended'
+        ? trialEndedUploadNotice(trialEndedStatus(accountDocument))
+        : uploadBlockedNotice(accountState, lapseKind)
     if (!n) return false
     show(n)
     return true
-  }, [accountState, lapseKind, show])
+  }, [accountState, accountStateLabel, accountDocument, lapseKind, show])
 
   const handlePlanError = useCallback(
     (err: unknown): boolean => {
       const state = accountStateFromError(err)
       if (state) {
-        const n = uploadBlockedNotice(state, lapseKind)
+        const code = (err as { code?: unknown } | null)?.code
+        const n =
+          code === 'trial_ended'
+            ? trialEndedUploadNotice(trialEndedStatus(accountDocument))
+            : uploadBlockedNotice(state, lapseKind)
         if (n) show(n)
         refreshPlanDetails()
         if (state === 'needs_plan') navigate(CHOOSE_PLAN_PATH, { replace: true })
@@ -62,7 +72,7 @@ export function usePlanBlock() {
       // quota_exceeded (413). Neither is an `account_state` value, so this
       // is a separate branch, but the same "notice + refresh, no crash into
       // the generic Upload failed toast" contract.
-      const refusal = uploadRefusalNotice(err)
+      const refusal = uploadRefusalNotice(err, { noCardTrial: accountDocument?.account?.trial?.kind === 'no_card' })
       if (refusal) {
         show(refusal)
         refreshPlanDetails()
@@ -70,7 +80,7 @@ export function usePlanBlock() {
       }
       return false
     },
-    [show, refreshPlanDetails, navigate, lapseKind],
+    [show, refreshPlanDetails, navigate, accountDocument, lapseKind],
   )
 
   return { accountState, blockUpload, handlePlanError }

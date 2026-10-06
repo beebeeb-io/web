@@ -350,7 +350,7 @@ test.describe('1745 onboarding renderer', () => {
     await open(page, 'account.allowance.web')
     await expect(page.getByRole('heading', { name: 'You have 2 GB to start with' })).toBeVisible()
     await expect(page.getByTestId('step-choose_plan')).toBeVisible()
-    await expect(page.getByText('Start a 14-day trial')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Start 14-day trial, no card' })).toBeVisible()
     await page.getByTestId('start-trial').click()
     await expect.poll(() => events(page)).toContain('start_trial:/api/v1/billing/trial/start')
     await shot(page, join(EVIDENCE, '14-allowance-web.png'), true)

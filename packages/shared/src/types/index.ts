@@ -449,6 +449,14 @@ export interface PlanUpdateResponse {
   note?: string
 }
 
+export interface LastTrial {
+  kind: 'no_card' | 'mandated' | 'promo' | 'grant'
+  /** RFC 3339: when the trial ended unpaid. */
+  ended_at: string
+  /** A real payment settled since the trial started. */
+  charged: boolean
+}
+
 export interface Subscription {
   plan: string
   billing_cycle: string
@@ -485,6 +493,13 @@ export interface Subscription {
    * attempt `startTrial()`.
    */
   has_used_trial?: boolean
+  /**
+   * The account's most recent trial that ENDED unpaid (task 1757 round 2), or null.
+   * `has_used_trial` is a lifetime flag and says nothing about HOW a trial ended; this
+   * does: `kind` (no_card | mandated | promo), `ended_at`, and whether a real charge
+   * settled since it started. The "nothing was charged" notice is gated on it.
+   */
+  last_trial?: LastTrial | null
   /**
    * Whether the active billing provider supports subscription pause/resume
    * (task 0924). True only under Stripe; false under Mollie (no native pause).

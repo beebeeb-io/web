@@ -11,6 +11,7 @@
 import { ApiError } from './api'
 import { consumeAccountDeletedNotice, type NoticeStorage } from './account-deleted-notice'
 import { UploadRestartFailedError } from './upload-session-reinit'
+import { shareRefusalCopy, startTrialErrorCopy, trialBillingRefusalCopy } from './no-card-trial'
 
 /** Maximum length below which we trust the existing message as user-facing. */
 const SHORT_MESSAGE_MAX = 80
@@ -166,6 +167,24 @@ export function userFriendlyError(err: unknown): string {
       // is not a trial (task 1814). The banner and billing page say which one it was.
       return 'Your vault is read-only. Subscribe to upload or share again.'
     }
+    // Task 1757 (server task 1755) — the typed refusals of the no-card trial. Each has its
+    // own sentence; none may fall through to a vague conflict.
+    if (err.code === 'trial_ended') {
+      return 'Your trial has ended and your account holds more than its included storage, so it is read-only. Subscribe, or free up space (the trash counts), to upload again.'
+    }
+    const sharing = shareRefusalCopy(err)
+    if (sharing) return sharing
+    const billing = trialBillingRefusalCopy(err)
+    if (billing) return billing
+    if (
+      err.code === 'trial_temporarily_unavailable' ||
+      err.code === 'trial_already_used' ||
+      err.code === 'trial_previously_subscribed' ||
+      err.code === 'trial_has_active_subscription' ||
+      err.code === 'trial_requires_payment_method'
+    ) {
+      return startTrialErrorCopy(err)
+    }
     // Task 1605 (server PR #129) — a never-paid trial cancelled before its
     // first charge: uploads + new shares are refused immediately, even
     // though the account is still `cancelling` (view/download keep working
@@ -179,7 +198,11 @@ export function userFriendlyError(err: unknown): string {
       // carries its own actionable server message ("...Pay now to unlock
       // your full plan storage.") via the additive `is_trial_cap` flag. An
       // ordinary plan-quota hit keeps the existing generic copy.
-      if (err.details?.is_trial_cap === true && looksUserFriendly(err.message)) {
+      // The no-card trial's sentence ("You've reached the 6 MB trial storage cap. Subscribe to
+      // unlock your full plan storage.", task 1755) is longer than the 80-character cutoff
+      // `looksUserFriendly` applies to unknown messages, but it is the server's own sentence for
+      // exactly this case, so it is trusted up to a sane bound.
+      if (err.details?.is_trial_cap === true && err.message.length > 0 && err.message.length <= 200) {
         return err.message
       }
       return 'Storage full. Free up space or upgrade your plan to keep uploading.'
