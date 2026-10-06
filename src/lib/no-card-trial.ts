@@ -17,7 +17,7 @@
  *    the allowance are read-only and then deleted, which we say.
  */
 
-import { ApiError } from '@beebeeb/shared'
+import { ApiError, type LastTrial } from '@beebeeb/shared'
 import type { OnboardingDocument } from './onboarding/types'
 import { formatDay, formatSize } from './onboarding/account-summary'
 import { PAID_CHECKOUT_PATH } from './account-state'
@@ -278,24 +278,37 @@ export function trialEndedStatus(
   }
 }
 
+/** How long after it ended the "your allowance stays" notice may still appear. */
+export const TRIAL_ENDED_NOTICE_DAYS = 30
+
 /**
  * A trial that ended with the files within the allowance leaves an ordinary
  * allowance account, and the document says nothing about the trial any more. This is
- * the one-time "your allowance stays" notice, shown only when the account really had
- * a trial (`hasUsedTrial` is the account's own server flag) and holds an allowance
- * with no trial running and none on offer for the reason `already_used`.
+ * the one-time "your allowance stays" notice. It says "Nothing was charged", a
+ * financial statement, so it needs evidence about THIS trial and not the lifetime
+ * `has_used_trial` flag: the server's `last_trial` must be a no-card trial, uncharged,
+ * that ended within the last {@link TRIAL_ENDED_NOTICE_DAYS} days, on an account that
+ * now holds an allowance with no trial running. A converted mandated trial, a promo
+ * trial and an old trial never qualify.
  */
 export function trialEndedAllowanceNotice(
   doc: OnboardingDocument | null | undefined,
-  hasUsedTrial: boolean | undefined,
-): { title: string; body: string } | null {
+  lastTrial: LastTrial | null | undefined,
+  now: Date = new Date(),
+): { title: string; body: string; endedAt: string } | null {
   if (!doc || doc.stage !== 'account' || !doc.account) return null
-  if (doc.account.state !== 'allowance' || hasUsedTrial !== true) return null
+  if (doc.account.state !== 'allowance') return null
+  if (!lastTrial || lastTrial.kind !== 'no_card' || lastTrial.charged !== false) return null
+  const ended = Date.parse(lastTrial.ended_at)
+  if (!Number.isFinite(ended)) return null
+  const ageMs = now.getTime() - ended
+  if (ageMs < -5 * 60_000 || ageMs > TRIAL_ENDED_NOTICE_DAYS * 86_400_000) return null
   const allowanceBytes = doc.account.storage?.allowanceBytes ?? null
   if (allowanceBytes === null) return null
   return {
     title: 'Your trial has ended',
     body: `${staysLine(allowanceBytes)} Nothing was charged and nothing is lost. A plan adds storage and sharing.`,
+    endedAt: lastTrial.ended_at,
   }
 }
 

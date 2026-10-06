@@ -73,7 +73,10 @@ export function TrialStartCard({
   title?: string
 }) {
   const intent = useMemo(() => readPlanIntent(), [])
-  const options = usePlanOptions()
+  const planOptions = usePlanOptions()
+  // The offer is the authority for the length (heading, terms, button AND every row):
+  // a plan's own `trial_days` or the 14-day fallback must never contradict it.
+  const options = useMemo(() => planOptions.map((o) => ({ ...o, trialDays: offer.lengthDays })), [planOptions, offer.lengthDays])
   const [plan, setPlan] = useState<TrialPlanSlug>(
     isTrialPlanSlug(initialPlan) ? initialPlan : isTrialPlanSlug(intent?.plan) ? intent.plan : DEFAULT_TRIAL_PLAN,
   )

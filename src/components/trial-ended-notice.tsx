@@ -3,9 +3,12 @@
  *
  * A trial that ends with the files within the allowance leaves an ordinary allowance
  * account; the document then says nothing about the trial. The person still deserves
- * one plain sentence, once: nothing was charged, nothing is lost. It is dismissible, and
- * the dismissal is a per-browser convenience (storage may be unavailable: the notice then
- * simply shows again, which is the safe direction).
+ * one plain sentence, once: nothing was charged, nothing is lost. It shows only on the
+ * server's evidence that THIS account's latest trial was a no-card trial that ended
+ * uncharged (`last_trial`), never on the lifetime `has_used_trial` flag. It is
+ * dismissible, and the dismissal is a per-browser convenience keyed by the trial's end
+ * (storage may be unavailable: the notice then simply shows again, which is the safe
+ * direction).
  */
 
 import { useState } from 'react'
@@ -27,10 +30,10 @@ function readDismissed(key: string): boolean {
 export function TrialEndedAllowanceNotice() {
   const { user } = useAuth()
   const { accountDocument, planDetails } = useDriveData()
-  const key = `${KEY_PREFIX}${user?.user_id ?? ''}`
-  const [dismissed, setDismissed] = useState(() => readDismissed(key))
-
-  const notice = trialEndedAllowanceNotice(accountDocument, planDetails.subscription?.has_used_trial)
+  const notice = trialEndedAllowanceNotice(accountDocument, planDetails.subscription?.last_trial)
+  const key = `${KEY_PREFIX}${user?.user_id ?? ''}:${notice?.endedAt ?? ''}`
+  const [dismissedKey, setDismissedKey] = useState<string | null>(null)
+  const dismissed = dismissedKey === key || readDismissed(key)
   if (!user || !notice || dismissed) return null
 
   return (
@@ -53,7 +56,7 @@ export function TrialEndedAllowanceNotice() {
           } catch {
             /* storage blocked: it shows again next time */
           }
-          setDismissed(true)
+          setDismissedKey(key)
         }}
       >
         Dismiss

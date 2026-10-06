@@ -234,13 +234,26 @@ describe('the trial that ended', () => {
     expect(trialEndedStatus(doc('account.lapsed.ios.json'))).toBeNull()
   })
 
-  test('under the allowance the document says allowance; the one-time notice needs the account\'s own used-trial flag', () => {
+  test('the one-time notice needs the server\'s evidence that THIS trial was a no-card trial that ended uncharged', () => {
     const allowance = doc('account.allowance.web.json')
-    expect(trialEndedAllowanceNotice(allowance, true)?.body).toContain('Your 2 GB stays.')
-    expect(trialEndedAllowanceNotice(allowance, true)?.body).toContain('Nothing was charged')
-    expect(trialEndedAllowanceNotice(allowance, false)).toBeNull()
-    expect(trialEndedAllowanceNotice(allowance, undefined)).toBeNull()
-    expect(trialEndedAllowanceNotice(doc('account.trialing_no_card.desktop.json'), true)).toBeNull()
+    const now = new Date('2026-10-10T12:00:00Z')
+    const ended = (daysAgo: number) => new Date(now.getTime() - daysAgo * 86_400_000).toISOString()
+    const noCard = { kind: 'no_card', ended_at: ended(2), charged: false } as const
+    expect(trialEndedAllowanceNotice(allowance, noCard, now)?.body).toContain('Your 2 GB stays.')
+    expect(trialEndedAllowanceNotice(allowance, noCard, now)?.body).toContain('Nothing was charged')
+    // The lifetime flag is gone as evidence: no `last_trial`, no notice.
+    expect(trialEndedAllowanceNotice(allowance, undefined, now)).toBeNull()
+    expect(trialEndedAllowanceNotice(allowance, null, now)).toBeNull()
+    // A converted mandated trial, a promo trial and a charged trial never say "nothing was charged".
+    expect(trialEndedAllowanceNotice(allowance, { ...noCard, kind: 'mandated' }, now)).toBeNull()
+    expect(trialEndedAllowanceNotice(allowance, { ...noCard, kind: 'promo' }, now)).toBeNull()
+    expect(trialEndedAllowanceNotice(allowance, { ...noCard, charged: true }, now)).toBeNull()
+    // An old trial (31 days) never does; 29 days still does.
+    expect(trialEndedAllowanceNotice(allowance, { ...noCard, ended_at: ended(31) }, now)).toBeNull()
+    expect(trialEndedAllowanceNotice(allowance, { ...noCard, ended_at: ended(29) }, now)).not.toBeNull()
+    expect(trialEndedAllowanceNotice(allowance, { ...noCard, ended_at: 'garbage' }, now)).toBeNull()
+    // Only on an allowance account.
+    expect(trialEndedAllowanceNotice(doc('account.trialing_no_card.desktop.json'), noCard, now)).toBeNull()
   })
 
   test('the upload notice carries the guidance and the way out', () => {
@@ -337,6 +350,16 @@ describe('the drawn components', () => {
     expect(html).toContain('Nothing is billed.')
     expect(html).toContain('if you subscribe')
     expect(html).not.toMatch(/iDEAL|authoriz|Mollie|payment method|trial-method-picker|then billed/i)
+  })
+
+  test('every row, the heading, the terms and the button use the offer\'s length, never a plan\'s own trial_days or the 14-day fallback', () => {
+    const seven = { ...available, lengthDays: 7 }
+    const html = render(createElement(TrialStartCard, { offer: seven, onStart: async () => {} }))
+    expect(html).toContain('Try a plan for 7 days')
+    expect(html).toContain('for 7 days. No card')
+    expect(html).toContain('Start 7-day trial, no card')
+    expect((html.match(/Try it for 7 days\. Nothing is billed\./g) ?? []).length).toBeGreaterThanOrEqual(2)
+    expect(html).not.toContain('14 days')
   })
 
   test('unavailable note: the reason in words, with a way forward except when the email is unconfirmed', () => {
