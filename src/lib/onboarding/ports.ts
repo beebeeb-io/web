@@ -77,6 +77,12 @@ export interface OnboardingActions {
    * cycle it would be billed on if the person subscribes later; nothing about payment.
    */
   startTrial(endpoint: string, choice: { plan: string; billingCycle: 'monthly' | 'yearly' }): Promise<void>
+  /**
+   * Account stage: record the person's acceptance of the Terms version the document named
+   * (`POST /api/v1/account/terms-acceptance`, task 1740). Rejects `terms_version_stale` when the
+   * version in force moved while the person was reading (the screen refreshes and asks again).
+   */
+  acceptTerms(version: string): Promise<void>
   /** Fetch the document again (after any step that changes it). */
   refresh(): Promise<void>
 }
@@ -249,6 +255,16 @@ export function httpActions(refresh: () => Promise<void>): OnboardingActions {
         await request('/api/v1/auth/verify-email', { method: 'POST', body: JSON.stringify({ code }) })
       } catch (err) {
         throw toActionError(err, 'wrong_code')
+      }
+    },
+    async acceptTerms(version) {
+      try {
+        await request('/api/v1/account/terms-acceptance', {
+          method: 'POST',
+          body: JSON.stringify({ version }),
+        })
+      } catch (err) {
+        throw toActionError(err, 'terms_accept_failed')
       }
     },
     async startTrial(endpoint, choice) {

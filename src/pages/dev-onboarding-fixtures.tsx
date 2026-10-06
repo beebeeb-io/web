@@ -82,6 +82,9 @@ function fixturePorts(breachDown: boolean, withSignOut: boolean): OnboardingPort
       async verifyEmail() {
         events.push('verify_email')
       },
+      async acceptTerms(version) {
+        events.push(`accept_terms:${version}`)
+      },
       async startTrial(endpoint) {
         events.push(`start_trial:${endpoint}`)
       },

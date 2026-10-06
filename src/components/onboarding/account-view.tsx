@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { BBButton, BBInput, Icon } from '@beebeeb/shared'
 import { summarizeAccount, formatSize, type AccountSummary, type Tone } from '../../lib/onboarding/account-summary'
 import type { AccountScreen, PlannedStep, StepScreen } from '../../lib/onboarding/plan'
+import { TERMS_URL, PRIVACY_URL, unsupportedStepNotice } from '../../lib/onboarding/terms-copy'
 import type { OnboardingDocument } from '../../lib/onboarding/types'
 import { ActionError, type OnboardingPorts } from '../../lib/onboarding/ports'
 import { ErrorLine, OnboardingFrame, Spinner } from './frame'
@@ -121,6 +122,105 @@ export function VerifyEmailStep({
   )
 }
 
+/** The version a step names, or null when the document did not carry one (then there is nothing to accept). */
+function termsVersionOf(step: PlannedStep['step']): string | null {
+  const v = step.params.version
+  return typeof v === 'string' && v.length > 0 ? v : null
+}
+
+/**
+ * Accept the Terms version in force (`accept_terms`, account stage). Shared by the
+ * account page card (advisory: the account keeps its files either way, decision
+ * 1812 Q2) and the full step screen (a server that makes it required).
+ */
+function AcceptTermsControls({
+  version,
+  ports,
+  testId,
+}: {
+  version: string
+  ports: OnboardingPorts
+  testId: string
+}) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  async function accept() {
+    setBusy(true)
+    setError('')
+    try {
+      await ports.actions.acceptTerms(version)
+      await ports.actions.refresh()
+    } catch (err) {
+      if (err instanceof ActionError && err.code === 'terms_version_stale') {
+        // The version in force moved while the person was reading: show the new one.
+        setError('The Terms changed while you were reading. The new version is on screen now; read it and accept again.')
+        await ports.actions.refresh().catch(() => {})
+      } else if (err instanceof ActionError && err.code === 'impersonated_session_blocked') {
+        setError('Support sessions cannot accept the Terms for an account. Only the account holder can.')
+      } else {
+        setError('We could not record this. Nothing was changed; try again in a moment.')
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <p className="text-xs text-ink-3 mb-3" data-testid="terms-links">
+        Read the{' '}
+        <a href={TERMS_URL} target="_blank" rel="noopener noreferrer" className="text-amber-deep hover:underline">
+          Terms of Service
+        </a>{' '}
+        and the{' '}
+        <a href={PRIVACY_URL} target="_blank" rel="noopener noreferrer" className="text-amber-deep hover:underline">
+          Privacy Policy
+        </a>
+        . Version <span className="font-mono" data-testid="terms-version">{version}</span>.
+      </p>
+      {error && <ErrorLine testId="accept-terms-error">{error}</ErrorLine>}
+      <BBButton variant="amber" size="lg" className="w-full" disabled={busy} onClick={accept} data-testid={testId}>
+        {busy ? <Spinner label="Recording" /> : 'I accept the Terms of Service and the Privacy Policy'}
+      </BBButton>
+    </>
+  )
+}
+
+/** The `accept_terms` step as a full screen (a required one: the document is blocking until it is accepted). */
+export function AcceptTermsStep({ screen, ports }: { screen: StepScreen; ports: OnboardingPorts }) {
+  const version = termsVersionOf(screen.step)
+  return (
+    <OnboardingFrame
+      screen="step:accept_terms"
+      title="Accept the Terms of Service"
+      subtitle="Accepting records this version and the date against your account. Your files are untouched either way."
+      position={screen.position}
+      total={screen.total}
+    >
+      {version ? (
+        <AcceptTermsControls version={version} ports={ports} testId="accept-terms-accept" />
+      ) : (
+        <p className="text-xs text-ink-3" data-testid="accept-terms-no-version">
+          The server did not say which version to accept. Refresh to try again.
+        </p>
+      )}
+    </OnboardingFrame>
+  )
+}
+
+function AcceptTermsCard({ item, ports }: { item: PlannedStep; ports: OnboardingPorts }) {
+  const version = termsVersionOf(item.step)
+  if (!version) return null
+  return (
+    <div className="border border-line rounded-md p-3.5" data-testid="step-accept_terms">
+      <p className="text-[13px] font-semibold text-ink mb-1">Terms of Service</p>
+      <p className="text-xs text-ink-3 mb-3">You have not accepted the current version. Your files stay available either way.</p>
+      <AcceptTermsControls version={version} ports={ports} testId="accept-terms-accept" />
+    </div>
+  )
+}
+
 function StartTrialCard({ doc, ports }: { doc: OnboardingDocument; ports: OnboardingPorts }) {
   // Money fails closed: no offer, no purchase permission, no card (`trialOfferView` is null).
   const offer = trialOfferView(doc)
@@ -147,6 +247,8 @@ function StartTrialCard({ doc, ports }: { doc: OnboardingDocument; ports: Onboar
 function ActionCard({ item, doc, ports }: { item: PlannedStep; doc: OnboardingDocument; ports: OnboardingPorts }) {
   const cta = doc.purchase?.ctaAllowed === true
   switch (item.step.id) {
+    case 'accept_terms':
+      return <AcceptTermsCard item={item} ports={ports} />
     case 'start_trial':
       return <StartTrialCard doc={doc} ports={ports} />
     case 'choose_plan':
@@ -218,9 +320,22 @@ export function AccountView({
         </p>
       )}
 
+      {screen.unsupported.length > 0 && (
+        <p className="text-xs text-ink-3 mb-4" data-testid="unsupported-steps-note">
+          {unsupportedStepNotice(screen.unsupported)}
+        </p>
+      )}
+
       <div className="flex flex-col gap-2.5" data-testid="account-actions">{cards}</div>
 
-      <div className="mt-4 flex justify-end">
+      <div className="mt-4 flex items-center justify-between">
+        {summary.state === 'needs_plan' ? (
+          <span />
+        ) : (
+          <Link to="/" data-testid="account-open-files" className="text-[13px] font-medium text-amber-deep hover:underline">
+            Open your files
+          </Link>
+        )}
         <BBButton
           variant="ghost"
           size="sm"
