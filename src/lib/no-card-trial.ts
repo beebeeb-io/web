@@ -15,6 +15,10 @@
  *  - Honest voice. A trial has no card, so nothing is ever "charged" or
  *    "authorized"; when it ends the allowance stays, and over it the files above
  *    the allowance are read-only and then deleted, which we say.
+ *  - Task 1837: there may be NO allowance (prod switched it off on 2026-10-06: a free
+ *    account was never wanted). Then nothing "stays": the end of an unpaid trial is
+ *    read-only, then deleted {@link NEVER_PAID_RETENTION_DAYS} days later, and every
+ *    sentence here says exactly that. `allowanceBytes` of null or 0 means no allowance.
  */
 
 import { ApiError, type LastTrial } from '@beebeeb/shared'
@@ -23,6 +27,19 @@ import { formatDay, formatSize } from './onboarding/account-summary'
 import { PAID_CHECKOUT_PATH } from './account-state'
 
 const MS_PER_DAY = 86_400_000
+
+/**
+ * Days a never-paid account stays read-only before its files are deleted
+ * (server `signup_plan::LAPSE_RETENTION_DAYS_NEVER_PAID`, D15). The document carries the
+ * actual date once the trial has ended; BEFORE it starts, this is the number the person
+ * is told, so it must match the server constant.
+ */
+export const NEVER_PAID_RETENTION_DAYS = 14
+
+/** True when the document carries an entry allowance worth naming (null / 0 = none). */
+export function hasAllowance(allowanceBytes: number | null | undefined): allowanceBytes is number {
+  return typeof allowanceBytes === 'number' && allowanceBytes > 0
+}
 
 // ── The offer ────────────────────────────────────────────────────────────────
 
@@ -42,14 +59,17 @@ export type TrialOfferView =
     }
   | { kind: 'unavailable'; reason: string; message: string }
 
-/** The allowance in words ("2 GB"), or a plain noun when the document carries none. */
-function allowanceWords(allowanceBytes: number | null | undefined): string {
-  return typeof allowanceBytes === 'number' && allowanceBytes > 0 ? formatSize(allowanceBytes) : 'allowance'
+/**
+ * "Your 2 GB stays." with an allowance, the empty string without one: with no allowance
+ * nothing stays, and a sentence that says otherwise is a promise we cannot keep.
+ */
+function staysLine(allowanceBytes: number | null | undefined): string {
+  return hasAllowance(allowanceBytes) ? `Your ${formatSize(allowanceBytes)} stays.` : ''
 }
 
-/** "Your 2 GB stays." / "Your allowance stays." */
-function staysLine(allowanceBytes: number | null | undefined): string {
-  return `Your ${allowanceWords(allowanceBytes)} stays.`
+/** Join sentences with single spaces, dropping empty ones. */
+function sentences(...parts: string[]): string {
+  return parts.filter((p) => p.length > 0).join(' ')
 }
 
 /** Why no trial can start, in the voice of the product. `reason` is the document's `unavailable_reason`. */
@@ -60,7 +80,7 @@ export function trialUnavailableCopy(reason: string | null | undefined, allowanc
     case 'email_unverified':
       return 'Confirm your email address first. A trial can start once it is confirmed.'
     case 'temporarily_unavailable':
-      return `We are not starting new trials right now. ${staysLine(allowanceBytes)}`
+      return sentences('We are not starting new trials right now.', staysLine(allowanceBytes) || 'You can still subscribe to a plan.')
     case 'not_offered_here':
       return 'Trials are not offered here.'
     default:
@@ -95,6 +115,35 @@ export function trialOfferView(doc: OnboardingDocument | null | undefined): Tria
   }
 }
 
+// ── The card / iDEAL trial, beside the no-card one (task 1837) ───────────────
+
+export interface CardTrialView {
+  lengthDays: number
+  /** Mandate methods the server accepts, in the server's order. */
+  methods: Array<'creditcard' | 'ideal'>
+}
+
+/**
+ * The card / iDEAL trial the server advertises on the `choose_plan` step
+ * (`params.card_trial`), present only while it is open beside the no-card trial. Null
+ * when it is absent or malformed, and always null without a purchase call to action
+ * (money fails closed). A client with NO trial offer in the document keeps showing the
+ * card flow as before; this is only how the server tells it that BOTH are open.
+ */
+export function cardTrialView(doc: OnboardingDocument | null | undefined): CardTrialView | null {
+  if (!doc || doc.stage !== 'account' || !doc.account) return null
+  if (doc.purchase?.ctaAllowed !== true) return null
+  const raw = doc.steps.find((st) => st.id === 'choose_plan')?.params?.card_trial
+  if (!raw || typeof raw !== 'object') return null
+  const { length_days: lengthDays, methods } = raw as { length_days?: unknown; methods?: unknown }
+  if (typeof lengthDays !== 'number' || !Number.isFinite(lengthDays) || lengthDays < 1) return null
+  const known = Array.isArray(methods)
+    ? methods.filter((m): m is 'creditcard' | 'ideal' => m === 'creditcard' || m === 'ideal')
+    : []
+  if (known.length === 0) return null
+  return { lengthDays, methods: known }
+}
+
 // ── Starting a trial: what can go wrong ─────────────────────────────────────
 
 /**
@@ -111,7 +160,7 @@ export function startTrialErrorCopy(err: unknown, allowanceBytes?: number | null
   switch (code) {
     case 'trial_temporarily_unavailable':
     case 'trial_requires_payment_method':
-      return `We are not starting new trials right now. ${staysLine(allowanceBytes)}`
+      return sentences('We are not starting new trials right now.', staysLine(allowanceBytes) || 'You can still subscribe to a plan.')
     case 'trial_already_used':
       return 'You have already had your trial on this account.'
     case 'trial_previously_subscribed':
@@ -128,9 +177,11 @@ export function startTrialErrorCopy(err: unknown, allowanceBytes?: number | null
     // dropped), so the code is gone; the status is enough to be honest.
     const message = typeof e?.message === 'string' ? e.message : ''
     const wait = /try again in (.+)$/i.exec(message)?.[1]?.trim()
-    return `Too many trials were started from your network today. ${staysLine(allowanceBytes)} Try again ${
-      wait ? `in ${wait}` : 'later'
-    }.`
+    return sentences(
+      'Too many trials were started from your network today.',
+      staysLine(allowanceBytes),
+      `Try again ${wait ? `in ${wait}` : 'later'}.`,
+    )
   }
   if (status === 400) return 'That plan cannot be tried. Pick another one.'
   return 'We could not start the trial. Nothing was charged and your files are unchanged.'
@@ -198,20 +249,26 @@ export function noCardTrialStatus(
   const usedBytes = typeof liveUsedBytes === 'number' && liveUsedBytes >= 0 ? liveUsedBytes : (storage?.usedBytes ?? 0)
   const endsMs = trial?.endsAt ? new Date(trial.endsAt).getTime() : NaN
   const daysLeft = Number.isNaN(endsMs) ? 0 : Math.max(0, Math.ceil((endsMs - now) / MS_PER_DAY))
-  const allowanceBytes = storage?.allowanceBytes ?? null
+  const rawAllowance = storage?.allowanceBytes ?? null
+  const allowanceBytes = hasAllowance(rawAllowance) ? rawAllowance : null
   const docOver = storage?.overAllowance === true
   const overAllowance = allowanceBytes !== null ? usedBytes > allowanceBytes : docOver
-  const serverSentence = overAllowance === docOver ? doc.copy.trial_end_over_allowance : undefined
+  const serverSentence =
+    allowanceBytes === null
+      ? doc.copy.trial_end_no_allowance
+      : overAllowance === docOver
+        ? doc.copy.trial_end_over_allowance
+        : undefined
 
   let consequence: string
   if (serverSentence) {
     consequence = serverSentence
-  } else if (overAllowance && allowanceBytes !== null) {
+  } else if (allowanceBytes === null) {
+    consequence = `When it ends, your files become read-only and are deleted ${NEVER_PAID_RETENTION_DAYS} days later unless you choose a plan. Nothing is charged.`
+  } else if (overAllowance) {
     consequence = `When it ends, files above ${formatSize(allowanceBytes)} become read-only. Nothing is charged.`
-  } else if (allowanceBytes !== null) {
-    consequence = `When it ends, your ${formatSize(allowanceBytes)} stays. Nothing is charged.`
   } else {
-    consequence = 'No card is on file, so nothing is charged.'
+    consequence = `When it ends, your ${formatSize(allowanceBytes)} stays. Nothing is charged.`
   }
 
   return {
@@ -255,17 +312,37 @@ export function trialEndedStatus(
   if (!doc || doc.stage !== 'account' || !doc.account) return null
   if (doc.account.state !== 'trial_ended') return null
   const storage = doc.account.storage
-  const allowanceBytes = storage?.allowanceBytes ?? null
+  const rawAllowance = storage?.allowanceBytes ?? null
+  const allowanceBytes = hasAllowance(rawAllowance) ? rawAllowance : null
   const usedBytes = storage?.usedBytes ?? 0
   const deletionDay = formatDay(doc.account.lifecycle?.dataDeletionAt, timeZone)
-  const allowance = allowanceBytes !== null ? formatSize(allowanceBytes) : 'your allowance'
-  const overByBytes = allowanceBytes !== null ? Math.max(0, usedBytes - allowanceBytes) : null
+  const canSubscribe = doc.purchase?.ctaAllowed === true
+  if (allowanceBytes === null) {
+    // Task 1837: no allowance, so everything is read-only and then deleted, not trimmed.
+    const plan = canSubscribe ? ' unless you choose a plan' : ''
+    return {
+      headline: 'Your trial has ended',
+      body:
+        doc.copy.trial_ended_no_allowance ??
+        (deletionDay
+          ? `Your trial ended. Your files are read-only and will be deleted on ${deletionDay}${plan}.`
+          : `Your trial ended. Your files are read-only.`),
+      trimGuidance: 'Download and delete still work. Download what you want to keep before the date above.',
+      deletionDay,
+      allowanceBytes: null,
+      usedBytes,
+      overByBytes: null,
+      canSubscribe,
+    }
+  }
+  const allowance = formatSize(allowanceBytes)
+  const overByBytes = Math.max(0, usedBytes - allowanceBytes)
   const body =
     doc.copy.trial_ended_over_allowance ??
     (deletionDay
       ? `Your trial ended. Files above ${allowance} are read-only and will be deleted on ${deletionDay} unless you free up space.`
       : `Your trial ended. Files above ${allowance} are read-only.`)
-  const free = overByBytes !== null && overByBytes > 0 ? `Free up ${formatSize(overByBytes)}` : 'Free up space'
+  const free = overByBytes > 0 ? `Free up ${formatSize(overByBytes)}` : 'Free up space'
   return {
     headline: 'Your trial has ended',
     body,
@@ -274,7 +351,7 @@ export function trialEndedStatus(
     allowanceBytes,
     usedBytes,
     overByBytes,
-    canSubscribe: doc.purchase?.ctaAllowed === true,
+    canSubscribe,
   }
 }
 
@@ -304,7 +381,7 @@ export function trialEndedAllowanceNotice(
   const ageMs = now.getTime() - ended
   if (ageMs < -5 * 60_000 || ageMs > TRIAL_ENDED_NOTICE_DAYS * 86_400_000) return null
   const allowanceBytes = doc.account.storage?.allowanceBytes ?? null
-  if (allowanceBytes === null) return null
+  if (!hasAllowance(allowanceBytes)) return null
   return {
     title: 'Your trial has ended',
     body: `${staysLine(allowanceBytes)} Nothing was charged and nothing is lost. A plan adds storage and sharing.`,

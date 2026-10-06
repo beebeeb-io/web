@@ -19,6 +19,8 @@ import { getPlans, type Plan } from '../lib/api'
 import { PAID_CHECKOUT_PATH } from '../lib/account-state'
 import { formatSize } from '../lib/onboarding/account-summary'
 import {
+  NEVER_PAID_RETENTION_DAYS,
+  hasAllowance,
   startTrialErrorCopy,
   type NoCardTrialStatus,
   type TrialEndedStatus,
@@ -31,11 +33,16 @@ import { TrialPlanPicker } from './trial-plan-picker'
 type AvailableOffer = Extract<TrialOfferView, { kind: 'available' }>
 type UnavailableOffer = Extract<TrialOfferView, { kind: 'unavailable' }>
 
-/** "Up to 10 GB for 14 days. No card, nothing to cancel. When it ends, your 2 GB stays." */
+/**
+ * "Up to 10 GB for 14 days. No card, nothing to cancel. When it ends, your 2 GB stays."
+ * With no allowance (task 1837) nothing stays, and the line says what does happen: the
+ * files go read-only and are deleted {@link NEVER_PAID_RETENTION_DAYS} days later unless
+ * a plan is chosen.
+ */
 export function trialTermsLine(offer: AvailableOffer): string {
-  const stays =
-    offer.allowanceBytes !== null ? `When it ends, your ${formatSize(offer.allowanceBytes)} stays.` : 'When it ends, nothing is charged.'
-  return `Up to ${formatSize(offer.capBytes)} for ${offer.lengthDays} days. No card, nothing to cancel. ${stays}`
+  const head = `Up to ${formatSize(offer.capBytes)} for ${offer.lengthDays} days. No card, nothing to cancel.`
+  if (hasAllowance(offer.allowanceBytes)) return `${head} When it ends, your ${formatSize(offer.allowanceBytes)} stays.`
+  return `${head} If you do not choose a plan by then, your files become read-only and are deleted ${NEVER_PAID_RETENTION_DAYS} days after it ends.`
 }
 
 /** Plan options from the API when it answers, the constants otherwise. */
@@ -251,7 +258,7 @@ export function NoCardTrialStatusCard({
   )
 }
 
-/** The trial ended with files above the allowance: read-only, a deletion date, how to trim, and Subscribe. */
+/** The trial ended with files above the allowance (or with no allowance at all): read-only, a deletion date, how to trim, and Subscribe. */
 export function TrialEndedCard({
   status,
   variant,
@@ -283,7 +290,7 @@ export function TrialEndedCard({
       <div className="flex items-start gap-3">
         <Icon name="lock" size={16} className="text-red shrink-0 mt-0.5" />
         <div className="flex-1">
-          <div className="text-[11px] font-semibold uppercase tracking-wider text-red mb-1">Read-only above your allowance</div>
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-red mb-1">{status.allowanceBytes === null ? 'Read-only' : 'Read-only above your allowance'}</div>
           <h2 className="text-lg font-bold text-ink leading-snug mb-1.5">{status.headline}</h2>
           <p className="text-[13.5px] text-ink-2 leading-relaxed mb-1" data-testid="trial-ended-body">
             {status.body}

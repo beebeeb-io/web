@@ -154,15 +154,18 @@ export function TrialPlanPicker({
 export function TrialMethodPicker({
   method,
   onChange,
+  methods = ['creditcard', 'ideal'],
 }: {
   method: TrialMethod
   onChange: (method: TrialMethod) => void
+  /** The methods the server accepts (task 1837); both when the server did not say. */
+  methods?: readonly TrialMethod[]
 }) {
   return (
     <div data-testid="trial-method-picker">
       <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-3 mb-2">Payment method</div>
       <div role="radiogroup" aria-label="Payment method" className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        {(['creditcard', 'ideal'] as const).map((m) => {
+        {(['creditcard', 'ideal'] as const).filter((m) => methods.includes(m)).map((m) => {
           const active = method === m
           const copy = TRIAL_METHOD_COPY[m]
           return (
