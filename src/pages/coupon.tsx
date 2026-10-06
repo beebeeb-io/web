@@ -12,7 +12,9 @@ import {
   normalizeCouponCode,
   pitchHeadline,
   pitchTerms,
+  readHeldCoupon,
   refusalCopy,
+  shouldAutoClaim,
   type CouponPitch,
   type CouponRedeemed,
   type RefusalCopy,
@@ -57,6 +59,9 @@ export function Coupon() {
   const [view, setView] = useState<View>({ kind: 'loading' })
   const autoClaimed = useRef(false)
 
+  // Bumped by "Try again" when the PITCH itself could not be loaded: it re-runs the lookup.
+  const [lookupTry, setLookupTry] = useState(0)
+
   // The pitch: public, so it loads for a signed-out visitor too.
   useEffect(() => {
     if (!code) {
@@ -76,7 +81,7 @@ export function Coupon() {
     return () => {
       cancelled = true
     }
-  }, [code])
+  }, [code, lookupTry])
 
   // A link that no longer works must also end the hold, or PlanGate would keep sending a
   // new account back here instead of to the plan chooser.
@@ -106,13 +111,16 @@ export function Coupon() {
     [code],
   )
 
-  // A new account that came here from signup claims once, without another click.
+  // A new account that came here from signup claims once, without another click, but ONLY
+  // if this tab held the code (the visitor pressed "Create your account" on this page).
+  // `?from=signup` on its own is just a query string anybody can append to a link.
   useEffect(() => {
-    if (!fromSignup || !user || authLoading || autoClaimed.current) return
+    if (!user || authLoading || autoClaimed.current) return
+    if (!shouldAutoClaim(fromSignup, readHeldCoupon(), code)) return
     if (view.kind !== 'pitch') return
     autoClaimed.current = true
     void claim(view.pitch)
-  }, [fromSignup, user, authLoading, view, claim])
+  }, [fromSignup, code, user, authLoading, view, claim])
 
   const here = code ? couponPath(code) : '/'
 
@@ -187,7 +195,15 @@ export function Coupon() {
             </BBButton>
           )}
           {refusal.action === 'retry' && (
-            <BBButton variant="default" size="lg" className="w-full" onClick={() => void claim(view.pitch)}>
+            <BBButton
+              variant="default"
+              size="lg"
+              className="w-full"
+              // No pitch means the LOOKUP failed (nothing was claimed): look it up again.
+              // With a pitch, the claim itself failed and is retried.
+              onClick={() => (view.pitch ? void claim(view.pitch) : setLookupTry((n) => n + 1))}
+              data-testid="coupon-retry"
+            >
               Try again
             </BBButton>
           )}

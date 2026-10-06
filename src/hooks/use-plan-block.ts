@@ -26,7 +26,8 @@ import {
 } from '../lib/account-state'
 
 export function usePlanBlock() {
-  const { accountState, refreshPlanDetails } = useDriveData()
+  const { accountState, refreshPlanDetails, planDetails } = useDriveData()
+  const lapseKind = planDetails.subscription?.lapse_kind
   const { showToast } = useToast()
   const navigate = useNavigate()
 
@@ -41,17 +42,17 @@ export function usePlanBlock() {
   )
 
   const blockUpload = useCallback((): boolean => {
-    const n = uploadBlockedNotice(accountState)
+    const n = uploadBlockedNotice(accountState, lapseKind)
     if (!n) return false
     show(n)
     return true
-  }, [accountState, show])
+  }, [accountState, lapseKind, show])
 
   const handlePlanError = useCallback(
     (err: unknown): boolean => {
       const state = accountStateFromError(err)
       if (state) {
-        const n = uploadBlockedNotice(state)
+        const n = uploadBlockedNotice(state, lapseKind)
         if (n) show(n)
         refreshPlanDetails()
         if (state === 'needs_plan') navigate(CHOOSE_PLAN_PATH, { replace: true })
@@ -69,7 +70,7 @@ export function usePlanBlock() {
       }
       return false
     },
-    [show, refreshPlanDetails, navigate],
+    [show, refreshPlanDetails, navigate, lapseKind],
   )
 
   return { accountState, blockUpload, handlePlanError }

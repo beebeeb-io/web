@@ -589,6 +589,13 @@ export interface Subscription {
    */
   data_deletion_at?: string | null
   /**
+   * Task 1814 — what ended, while `account_state` is `lapsed`: `"gift"` for the end of a
+   * free coupon period (never a trial, never asked for a payment), `"trial"` otherwise,
+   * null when the account is not lapsed. Additive; absent on older servers (treat as
+   * `"trial"`, the only lapse they had).
+   */
+  lapse_kind?: 'gift' | 'trial' | null
+  /**
    * True when a `trialing` row already has a Mollie mandate + subscription, so
    * it is charged automatically at `trial_ends_at` (task 1037). False/absent
    * for legacy no-card trials, which still use `POST /billing/trial/convert`.

@@ -254,6 +254,17 @@ export function heldCouponRedirect(
 }
 
 /**
+ * `/c/<code>?from=signup` claims by itself only when this very tab HELD the code, which
+ * only happens after the visitor pressed "Create your account" on this coupon's page.
+ * `from=signup` alone is a query string anybody can put on a link: a signed-in person
+ * who is merely sent such a link must still click, because a claim spends their email
+ * address's one use of the coupon (security review P2.7).
+ */
+export function shouldAutoClaim(fromSignup: boolean, held: string | null, code: string | null): boolean {
+  return fromSignup && code !== null && held === code
+}
+
+/**
  * What the Settings field accepts: the bare code, the grouped form, or the whole link
  * pasted from a message. Returns the normalised code, or null when nothing in the
  * input looks like one.

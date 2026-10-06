@@ -174,11 +174,19 @@ export function formatDeletionDate(iso: string | null | undefined): string | nul
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
 }
 
+/** What ended, for a `lapsed` account (task 1814). Absent means a trial: the only lapse older servers had. */
+export type LapseKind = 'gift' | 'trial' | null | undefined
+
+/** The headline of a lapsed account: a free coupon period was never a trial. */
+export function lapsedHeading(kind: LapseKind): string {
+  return kind === 'gift' ? 'Your free period has ended' : 'Your trial has ended'
+}
+
 /** The non-dismissable banner copy for a `lapsed` account. */
-export function lapsedBannerCopy(dataDeletionAt: string | null | undefined): string {
+export function lapsedBannerCopy(dataDeletionAt: string | null | undefined, kind?: LapseKind): string {
   const date = formatDeletionDate(dataDeletionAt)
   const when = date ? `on ${date}` : 'unless you subscribe'
-  return `Your trial has ended and your vault is read-only. Your files will be permanently deleted ${when}. Subscribe to keep them.`
+  return `${lapsedHeading(kind)} and your vault is read-only. Your files will be permanently deleted ${when}. Subscribe to keep them.`
 }
 
 export interface UploadBlockedNotice {
@@ -192,12 +200,11 @@ export interface UploadBlockedNotice {
  * quota toast when the account cannot upload at all (quota 0 by design).
  * Null when uploads are allowed.
  */
-export function uploadBlockedNotice(state: AccountState): UploadBlockedNotice | null {
+export function uploadBlockedNotice(state: AccountState, kind?: LapseKind): UploadBlockedNotice | null {
   if (state === 'lapsed') {
     return {
       title: 'Your vault is read-only',
-      description:
-        'Your trial has ended, so uploads are paused. Your files are still here to browse and download — subscribe to upload again.',
+      description: `${lapsedHeading(kind)}, so uploads are paused. Your files are still here to browse and download — subscribe to upload again.`,
       href: PAID_CHECKOUT_PATH,
     }
   }

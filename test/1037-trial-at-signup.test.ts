@@ -307,7 +307,7 @@ describe('plan_required / account_lapsed (409 from upload init + share creation 
       'Choose a plan and start your free trial to upload or share files.',
     )
     expect(userFriendlyError(new ApiError('x', 409, 'account_lapsed'))).toBe(
-      'Your trial has ended and your vault is read-only. Subscribe to upload or share again.',
+      'Your vault is read-only. Subscribe to upload or share again.',
     )
   })
 })

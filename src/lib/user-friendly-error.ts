@@ -162,7 +162,9 @@ export function userFriendlyError(err: unknown): string {
       return 'Choose a plan and start your free trial to upload or share files.'
     }
     if (err.code === 'account_lapsed') {
-      return 'Your trial has ended and your vault is read-only. Subscribe to upload or share again.'
+      // Neutral on purpose: this refusal carries no reason, and a free coupon period ending
+      // is not a trial (task 1814). The banner and billing page say which one it was.
+      return 'Your vault is read-only. Subscribe to upload or share again.'
     }
     // Task 1605 (server PR #129) — a never-paid trial cancelled before its
     // first charge: uploads + new shares are refused immediately, even

@@ -15,8 +15,13 @@ import {
   pitchTerms,
   readHeldCoupon,
   refusalCopy,
+  shouldAutoClaim,
   storageLabel,
 } from '../src/lib/coupon'
+import { lapsedBannerCopy, lapsedHeading, uploadBlockedNotice } from '../src/lib/account-state'
+import { userFriendlyError } from '../src/lib/user-friendly-error'
+import { readFileSync } from 'node:fs'
+import { ApiError } from '@beebeeb/shared'
 import { sanitizeRedirect } from '../src/lib/safe-redirect'
 
 function fakeStore(): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> & { data: Map<string, string> } {
@@ -196,5 +201,93 @@ describe('claimed', () => {
     expect(claimedCopy({ plan_label: 'Pro', duration_months: 1, ends_at: '2027-01-03T10:00:00Z', already_redeemed: true }).title).toBe(
       'You already have Pro',
     )
+  })
+})
+
+// ── Round 2: security review P2.7, Codex threads, the gift copy gaps ─────────
+
+describe('?from=signup never claims by itself (security review P2.7)', () => {
+  const CODE = 'K7M2-QX9T-4HD3'
+  test('only a code THIS tab held, on the page of that code, is claimed without a click', () => {
+    expect(shouldAutoClaim(true, CODE, CODE)).toBe(true)
+    // a link someone sent, query string appended: nothing was held
+    expect(shouldAutoClaim(true, null, CODE)).toBe(false)
+    // a different coupon was held
+    expect(shouldAutoClaim(true, 'OTHER-CODE-123', CODE)).toBe(false)
+    // no query string
+    expect(shouldAutoClaim(false, CODE, CODE)).toBe(false)
+    expect(shouldAutoClaim(true, CODE, null)).toBe(false)
+  })
+  test('the page uses that rule, not the query string alone', () => {
+    const page = readFileSync(new URL('../src/pages/coupon.tsx', import.meta.url), 'utf8')
+    expect(page).toContain('shouldAutoClaim(fromSignup, readHeldCoupon(), code)')
+    expect(page).not.toMatch(/if \(!fromSignup \|\| !user/)
+  })
+})
+
+describe('a held coupon never follows a person into another account', () => {
+  const auth = readFileSync(new URL('../src/lib/auth-context.tsx', import.meta.url), 'utf8')
+  function body(start: string): string {
+    const from = auth.indexOf(start)
+    expect(from).toBeGreaterThan(-1)
+    const next = auth.indexOf('useCallback', from + start.length)
+    return auth.slice(from, next === -1 ? undefined : next)
+  }
+  test('signing in, finishing 2FA and signing out clear the hold', () => {
+    expect(body('const login = useCallback')).toContain('clearHeldCoupon()')
+    expect(body('const verify2fa = useCallback')).toContain('clearHeldCoupon()')
+    expect(body('const logout = useCallback')).toContain('clearHeldCoupon()')
+  })
+  test('so does another tab signing out', () => {
+    const handler = auth.slice(auth.indexOf('const onMessage'), auth.indexOf("channel.addEventListener('message'"))
+    expect(handler).toMatch(/type === 'logout'\) \{[^}]*clearHeldCoupon\(\)/s)
+  })
+  test('a signup is not a sign-in: the signup page never clears the hold', () => {
+    const signup = readFileSync(new URL('../src/pages/signup.tsx', import.meta.url), 'utf8')
+    expect(signup).not.toContain('clearHeldCoupon')
+  })
+})
+
+describe('"Try again" on a failed lookup looks the coupon up again (Codex)', () => {
+  const page = readFileSync(new URL('../src/pages/coupon.tsx', import.meta.url), 'utf8')
+  test('with no pitch it re-runs the lookup; with a pitch it retries the claim', () => {
+    expect(page).toContain('view.pitch ? void claim(view.pitch) : setLookupTry((n) => n + 1)')
+    expect(page).toContain('}, [code, lookupTry])')
+  })
+})
+
+describe('the end of a free coupon period is never called a trial', () => {
+  test('the lapsed banner and heading follow lapse_kind', () => {
+    expect(lapsedHeading('gift')).toBe('Your free period has ended')
+    expect(lapsedHeading('trial')).toBe('Your trial has ended')
+    expect(lapsedHeading(undefined)).toBe('Your trial has ended') // an older server
+    const gift = lapsedBannerCopy('2026-12-01T12:00:00Z', 'gift')
+    expect(gift).toBe(
+      'Your free period has ended and your vault is read-only. Your files will be permanently deleted on 1 December 2026. Subscribe to keep them.',
+    )
+    expect(gift).not.toMatch(/trial/i)
+    expect(lapsedBannerCopy(null, 'gift')).not.toMatch(/trial/i)
+    // unchanged for a trial
+    expect(lapsedBannerCopy('2026-12-01T12:00:00Z', 'trial')).toContain('Your trial has ended')
+    expect(lapsedBannerCopy('2026-12-01T12:00:00Z')).toContain('Your trial has ended')
+  })
+  test('the upload notice and the refusal toast agree', () => {
+    expect(uploadBlockedNotice('lapsed', 'gift')?.description).toContain('Your free period has ended')
+    expect(uploadBlockedNotice('lapsed', 'gift')?.description).not.toMatch(/trial/i)
+    expect(uploadBlockedNotice('lapsed', 'trial')?.description).toContain('Your trial has ended')
+    expect(uploadBlockedNotice('lapsed')?.description).toContain('Your trial has ended')
+    // The refusal carries no reason, so it names none.
+    const msg = userFriendlyError(new ApiError('x', 409, 'account_lapsed'))
+    expect(msg).toBe('Your vault is read-only. Subscribe to upload or share again.')
+    expect(msg).not.toMatch(/trial/i)
+  })
+  test('the billing page and the banner pass the kind through', () => {
+    const banner = readFileSync(new URL('../src/components/billing-banner.tsx', import.meta.url), 'utf8')
+    expect(banner).toContain('lapsedBannerCopy(sub?.data_deletion_at, sub?.lapse_kind)')
+    const billing = readFileSync(new URL('../src/pages/billing.tsx', import.meta.url), 'utf8')
+    expect(billing).toContain('lapsedHeading(sub?.lapse_kind)')
+    expect(billing).toContain('lapsedBannerCopy(sub?.data_deletion_at, sub?.lapse_kind)')
+    const block = readFileSync(new URL('../src/hooks/use-plan-block.ts', import.meta.url), 'utf8')
+    expect(block).toContain('uploadBlockedNotice(accountState, lapseKind)')
   })
 })

@@ -189,6 +189,13 @@ test('admin creates a free coupon; a new user signs up through the link and land
   await admin.getByLabel('Coupon duration in months').fill('1')
   await admin.getByLabel('Coupon max redemptions').fill('5')
   await admin.getByLabel('Coupon note').fill('1814 e2e')
+  // Round 2 (accountant review): a purpose and a reason are required, and the barter warning is shown.
+  await expect(admin.getByTestId('coupon-barter-warning')).toContainText('Not for founders, staff, family')
+  await expect(admin.getByTestId('coupon-create-submit')).toBeDisabled()
+  await admin.getByLabel('Coupon purpose').selectOption('marketing')
+  await expect(admin.getByTestId('coupon-create-submit')).toBeDisabled()
+  await admin.getByLabel('Coupon reason').fill('Launch giveaway to newsletter readers (1814 e2e)')
+  await expect(admin.getByTestId('coupon-create-submit')).toBeEnabled()
   const capacity = admin.getByTestId('coupon-capacity-line')
   await expect(capacity).toContainText('Worst case: 5 redemptions x Pro')
   await shot(admin, '01-admin-create-form-capacity-line')
@@ -243,6 +250,17 @@ test('admin creates a free coupon; a new user signs up through the link and land
   await exist.goto('/settings/billing')
   await expect(exist.getByTestId('coupon-card')).toBeVisible({ timeout: 30_000 })
   await shot(exist, '06-settings-billing-coupon-card')
+  // Round 2 (security review P2.7): a link with ?from=signup does NOT claim for a signed-in
+  // account that never held it. It shows the pitch and waits for a click.
+  await exist.goto(`${link.replace(/^https?:\/\/[^/]+/, '')}?from=signup&nodev=1`)
+  await expect(exist.getByTestId('coupon-pitch')).toBeVisible({ timeout: 30_000 })
+  await expect(exist.getByTestId('coupon-claim')).toBeVisible()
+  await expect(exist.getByTestId('coupon-claimed')).toHaveCount(0)
+  await shot(exist, '06b-from-signup-without-a-hold-does-not-claim')
+  expect((await subscription(exist)).account_state).toBe('needs_plan')
+  expect(sql(`SELECT COUNT(*) FROM promo_redemptions WHERE user_id = (SELECT id FROM users WHERE email = '${EMAILS.existing}')`)).toBe('0')
+  await exist.goto('/settings/billing')
+  await expect(exist.getByTestId('coupon-card')).toBeVisible({ timeout: 30_000 })
   // A wrong code is refused with the one honest answer; nothing changes.
   await exist.getByTestId('coupon-input').fill('ZZZZ-ZZZZ-ZZZZ')
   await exist.getByTestId('coupon-redeem').click()
@@ -309,6 +327,23 @@ test('admin creates a free coupon; a new user signs up through the link and land
   await shot(late, '11-revoked-link-is-dead')
   // The grant that was already running is untouched.
   expect(await subscription(fresh)).toMatchObject({ plan: 'pro', status: 'trialing', account_state: 'ok' })
+
+  // ── ADMIN ends the existing user's grant: the lapsed banner says "free period", not "trial" ──
+  const [couponId, redemptionId] = sql(
+    `SELECT promo_code_id || ' ' || id FROM promo_redemptions WHERE user_id = (SELECT id FROM users WHERE email = '${EMAILS.existing}')`,
+  ).split(' ')
+  const ended = await fetch(`${API_URL}/api/v1/admin/coupons/${couponId}/redemptions/${redemptionId}/revoke`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  expect(ended.status, 'admin ends the grant').toBe(200)
+  await exist.goto('/')
+  const banner = exist.getByTestId('lapsed-banner')
+  await expect(banner).toBeVisible({ timeout: 30_000 })
+  await expect(banner).toContainText('Your free period has ended')
+  await expect(banner).not.toContainText(/trial/i)
+  await shot(exist, '12-ended-gift-banner-says-free-period')
+  expect(await subscription(exist)).toMatchObject({ account_state: 'lapsed', lapse_kind: 'gift' })
 
   await Promise.all([adminCtx.close(), newCtx.close(), existCtx.close(), aliasCtx.close(), lateCtx.close()])
 })

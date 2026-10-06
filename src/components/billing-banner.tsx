@@ -26,7 +26,7 @@ export function BillingBanner() {
         className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 bg-red/10 border-b border-red/30 text-[12.5px]"
       >
         <Icon name="lock" size={13} className="text-red shrink-0" />
-        <span className="flex-1 min-w-[16rem] text-ink">{lapsedBannerCopy(sub?.data_deletion_at)}</span>
+        <span className="flex-1 min-w-[16rem] text-ink">{lapsedBannerCopy(sub?.data_deletion_at, sub?.lapse_kind)}</span>
         <BBButton size="sm" variant="amber" onClick={() => navigate(PAID_CHECKOUT_PATH)}>
           Subscribe
         </BBButton>
