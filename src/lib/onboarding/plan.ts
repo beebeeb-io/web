@@ -41,6 +41,7 @@ export const PRE_ACCOUNT_STEP_IDS = [
 
 export const ACCOUNT_STEP_IDS = [
   'verify_email',
+  'accept_terms',
   'billing_profile',
   'choose_plan',
   'start_trial',
@@ -50,6 +51,19 @@ export const ACCOUNT_STEP_IDS = [
 export type PreAccountStepId = (typeof PRE_ACCOUNT_STEP_IDS)[number]
 export type AccountStepId = (typeof ACCOUNT_STEP_IDS)[number]
 export type KnownStepId = PreAccountStepId | AccountStepId
+
+/**
+ * Account-stage steps this build draws a screen for, and so may stop the
+ * account on. Every other account-stage step, unknown to this build or known
+ * but undrawable here (`billing_profile`, `choose_plan`, ...), is NEVER allowed
+ * to hold the account out of its files: task 1822 (P0, 2026-10-06) — a server
+ * `accept_terms` step this build could not draw locked every existing account
+ * out of the web drive behind a "We cannot do this step here yet" card whose
+ * only exit, "Continue on the web", led back to the page the person was on.
+ * Spec 5.8 rule 3 (an unknown REQUIRED step stops the client) still holds for
+ * the pre-account stage, where the person has no account to be locked out of.
+ */
+export const DRAWABLE_ACCOUNT_STEP_IDS = ['verify_email', 'accept_terms'] as const
 
 /** `done` is a known terminal marker in both stages; it renders nothing. */
 const TERMINAL_STEP_ID = 'done'
@@ -120,6 +134,12 @@ export interface AccountScreen {
   kind: 'account'
   /** Known, not-done steps offered as actions (choose_plan, start_trial, ...). */
   actions: PlannedStep[]
+  /**
+   * Ids of required, not-done account steps this build cannot do (unknown, or
+   * known but without a screen). They never block (task 1822): the account view
+   * and the drive tell the person once, dismissibly, and carry on.
+   */
+  unsupported: string[]
 }
 
 /** Every pre-account step is done: refetch the document with the new session. */
@@ -156,7 +176,9 @@ function railSteps(doc: OnboardingDocument, completed: ReadonlySet<string>, curr
   const out: PlannedStep[] = []
   for (const step of doc.steps) {
     const known = isKnownStep(doc.stage, step.id)
-    if (!known && !step.required) continue // unknown optional: invisible
+    // Unknown optional: invisible. Unknown required: a stop in the pre-account
+    // stage only; at the account stage it never blocks, so it is not a rail step (task 1822).
+    if (!known && (!step.required || doc.stage === 'account')) continue
     if (step.id === TERMINAL_STEP_ID) continue
     let state: StepDisplayState
     if (isDone(step, completed)) state = 'done'
@@ -202,24 +224,34 @@ function firstActionable(
 }
 
 /**
- * Account stage: optional actions (choose_plan, start_trial) may be listed
- * BEFORE a required step this build cannot do, and must not hide it. Scan every
- * step for a required one that is unknown or blocked.
+ * Account stage: a known required step the server reports `blocked` (or with a
+ * status we do not know) stops the account on a "not available right now"
+ * screen. An unknown or undrawable required step does NOT (task 1822): it is
+ * reported through `unsupportedSteps` and the account carries on.
  */
-function requiredStop(
-  doc: OnboardingDocument,
-  completed: ReadonlySet<string>,
-): FallbackScreen | BlockedScreen | null {
+function requiredStop(doc: OnboardingDocument, completed: ReadonlySet<string>): BlockedScreen | null {
   for (const step of doc.steps) {
     if (step.id === TERMINAL_STEP_ID || isDone(step, completed) || !step.required) continue
-    if (!isKnownStep(doc.stage, step.id)) {
-      return { kind: 'fallback', stepId: step.id, fallback: pickFallback(step, doc) }
-    }
-    if (step.status === 'blocked') {
+    if (isDrawableAccountStep(step.id) && step.status === 'blocked') {
       return { kind: 'blocked', stepId: step.id, fallback: step.fallback ?? doc.fallback }
     }
   }
   return null
+}
+
+function isDrawableAccountStep(id: string): boolean {
+  return (DRAWABLE_ACCOUNT_STEP_IDS as readonly string[]).includes(id)
+}
+
+/** Required, not-done account-stage steps this build cannot draw (task 1822). */
+export function unsupportedAccountSteps(doc: OnboardingDocument, completed: ReadonlySet<string> = new Set()): string[] {
+  if (doc.stage !== 'account') return []
+  const out: string[] = []
+  for (const step of doc.steps) {
+    if (step.id === TERMINAL_STEP_ID || isDone(step, completed) || !step.required) continue
+    if (!isDrawableAccountStep(step.id) && !out.includes(step.id)) out.push(step.id)
+  }
+  return out
 }
 
 export function planScreen(doc: OnboardingDocument, completed: ReadonlySet<string> = new Set()): Screen {
@@ -251,16 +283,20 @@ export function planScreen(doc: OnboardingDocument, completed: ReadonlySet<strin
   // stage = account
   const stop = requiredStop(doc, completed)
   if (stop) return stop // a required step this build cannot do
-  const next = firstActionable(doc, completed)
-  if (next && !('kind' in next) && doc.blocking && next.step.required) {
-    return stepScreen(doc, completed, next.step)
+  // A blocking document stops the account only on a step this build can draw.
+  // An unknown required step listed ahead of it must not hide it (task 1822).
+  if (doc.blocking) {
+    const current = doc.steps.find(
+      (st) => st.required && !isDone(st, completed) && isDrawableAccountStep(st.id) && st.status !== 'blocked',
+    )
+    if (current) return stepScreen(doc, completed, current)
   }
 
   // `done` has nothing left to do; `blocked` is the server saying "not available
   // to this account right now", so an optional blocked action draws no
   // affordance at all (a required blocked one already stopped above).
   const actions = railSteps(doc, completed, null).filter((p) => p.known && p.state !== 'done' && p.state !== 'blocked')
-  return { kind: 'account', actions }
+  return { kind: 'account', actions, unsupported: unsupportedAccountSteps(doc, completed) }
 }
 
 function stepScreen(doc: OnboardingDocument, completed: ReadonlySet<string>, step: OnboardingStep): StepScreen {

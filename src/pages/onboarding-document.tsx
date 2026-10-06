@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { OnboardingRenderer } from '../components/onboarding/renderer'
 import { OnboardingFrame, Spinner } from '../components/onboarding/frame'
 import { UnsupportedSchema } from '../components/onboarding/blocking-screens'
 import {
+  accountDocumentBlocks,
   accountStateFromError,
   postSignupLanding,
   resolveAccountState,
@@ -179,6 +180,16 @@ export function AccountStatusFromDocument() {
     // say. Send the person to the app, whose own gate (PlanGate, app.tsx) decides.
     if (state.kind === 'legacy') navigate('/', { replace: true })
   }, [state.kind, navigate])
+
+  // Task 1822: the person finished the step that was holding the account here
+  // (confirmed the email, accepted the Terms): the document stopped blocking, so
+  // carry on to the files instead of leaving them on a status page.
+  const wasBlocking = useRef(false)
+  useEffect(() => {
+    if (state.kind !== 'document') return
+    if (accountDocumentBlocks(state.doc)) wasBlocking.current = true
+    else if (wasBlocking.current) navigate('/', { replace: true })
+  }, [state, navigate])
 
   switch (state.kind) {
     case 'loading':

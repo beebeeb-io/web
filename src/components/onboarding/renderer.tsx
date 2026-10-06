@@ -2,8 +2,7 @@ import { useMemo } from 'react'
 import { planScreen } from '../../lib/onboarding/plan'
 import type { OnboardingPorts } from '../../lib/onboarding/ports'
 import type { OnboardingDocument } from '../../lib/onboarding/types'
-import { AccountView, VerifyEmailStep } from './account-view'
-import { OnboardingFrame } from './frame'
+import { AccountView, AcceptTermsStep, VerifyEmailStep } from './account-view'
 import { PreAccountFlow, renderTerminalScreen } from './signup-flow'
 
 /**
@@ -39,26 +38,11 @@ function AccountFlow({ doc, ports }: { doc: OnboardingDocument; ports: Onboardin
   switch (screen.kind) {
     case 'step':
       if (screen.stepId === 'verify_email') return <VerifyEmailStep screen={screen} ports={ports} />
-      // A required step this build knows by name but cannot draw (billing_profile,
-      // accept_terms in the account stage): the planner already routed unknown
-      // ids to the fallback; this one is a known id we have no screen for yet.
-      return (
-        <OnboardingFrame
-          screen={`step:${screen.stepId}`}
-          title="One more step"
-          subtitle="This step is finished on the web."
-          position={screen.position}
-          total={screen.total}
-        >
-          <a
-            className="inline-flex w-full items-center justify-center rounded-lg bg-amber px-lg py-md text-base font-medium text-[oklch(0.22_0.01_70)]"
-            href={doc.fallback?.url ?? 'https://beebeeb.io'}
-            rel="noopener noreferrer"
-          >
-            Continue on the web
-          </a>
-        </OnboardingFrame>
-      )
+      if (screen.stepId === 'accept_terms') return <AcceptTermsStep screen={screen} ports={ports} />
+      // The planner only stops the account on a step this build draws (task 1822), so
+      // this is unreachable; if it ever is reached it must not strand the account on a
+      // card that says "Continue on the web" while the person is already on the web.
+      return <AccountView doc={doc} screen={{ kind: 'account', actions: [], unsupported: [screen.stepId] }} ports={ports} />
     case 'account':
       return <AccountView doc={doc} screen={screen} ports={ports} />
     default:

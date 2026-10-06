@@ -23,6 +23,7 @@ const ports: OnboardingPorts = {
     registerFinish: async () => ({ userId: 'u' }),
     verifyEmail: async () => {},
     startTrial: async () => {},
+    acceptTerms: async () => {},
     refresh: async () => {},
   },
   ceremony: coreCeremonyPorts,
@@ -191,5 +192,45 @@ describe('round 2 (Codex P2 + nits on web#134)', () => {
       expect(m, f).not.toMatch(/text-green|bg-green/)
     }
     expect(html('account.active.web.json')).toContain('text-amber-deep')
+  })
+})
+
+describe('task 1822: account-stage accept_terms and steps this build cannot draw', () => {
+  const advisoryTerms = (d: Record<string, any>) => {
+    d.steps.unshift({ id: 'accept_terms', status: 'todo', required: false, ui: 'action', params: { version: '2026-10-01' } })
+  }
+
+  test('an advisory accept_terms is a real Accept card on the account view, not a blocked step', () => {
+    const m = html('account.allowance.web.json', undefined, advisoryTerms)
+    expect(screenOf(m)).toBe('account:allowance')
+    expect(m).toContain('data-testid="step-accept_terms"')
+    expect(m).toContain('data-testid="accept-terms-accept"')
+    expect(m).toContain('2026-10-01')
+    expect(m).toContain('https://beebeeb.io/terms')
+    expect(m).not.toContain('Continue on the web')
+    expect(m).not.toContain('We cannot do this step here yet')
+  })
+
+  test('a REQUIRED blocking accept_terms is drawn as its own step screen with the Accept button', () => {
+    const m = html('account.allowance.web.json', undefined, (d) => {
+      advisoryTerms(d)
+      d.steps[0].required = true
+      d.blocking = true
+    })
+    expect(screenOf(m)).toBe('step:accept_terms')
+    expect(m).toContain('data-testid="accept-terms-accept"')
+    expect(m).not.toContain('Continue on the web')
+  })
+
+  test('an unknown required account step never strands the account: status view + an honest note, never "Continue on the web"', () => {
+    const m = html('account.allowance.web.json', undefined, (d) => {
+      d.blocking = true
+      d.steps.unshift({ id: 'verify_identity', status: 'todo', required: true, ui: 'action' })
+    })
+    expect(screenOf(m)).toBe('account:allowance')
+    expect(m).toContain('data-testid="unsupported-steps-note"')
+    expect(m).toContain('verify_identity')
+    expect(m).not.toContain('Continue on the web')
+    expect(m).not.toContain('We cannot do this step here yet')
   })
 })

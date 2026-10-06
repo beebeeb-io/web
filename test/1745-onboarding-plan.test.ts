@@ -226,11 +226,26 @@ describe('account stage', () => {
     for (const f of files) expect(kindOf(f)).toBe('account')
   })
 
-  test('a blocking document with an unknown required account step falls back (rule 3)', () => {
+  // Task 1822 (P0, 2026-10-06) overrides spec 5.8 rule 3 for the ACCOUNT stage on the
+  // web: an unknown required step used to stop the account on the fallback card, whose
+  // only exit ("Continue on the web") led back to the same page. It is reported through
+  // `unsupported`, never blocks, and the pre-account stage keeps rule 3 (above).
+  test('a document with an unknown required account step stays on the account view and reports it (1822)', () => {
     const doc = load('account.allowance.web.json', (d) => {
       d.steps.push({ id: 'verify_identity', status: 'todo', required: true, ui: 'action' })
     })
-    expect(planScreen(doc).kind).toBe('fallback')
+    const s = planScreen(doc)
+    expect(s.kind).toBe('account')
+    if (s.kind === 'account') expect(s.unsupported).toEqual(['verify_identity'])
+  })
+
+  test('an unknown OPTIONAL account step is skipped silently (rule 3)', () => {
+    const doc = load('account.allowance.web.json', (d) => {
+      d.steps.push({ id: 'verify_identity', status: 'todo', required: false, ui: 'action' })
+    })
+    const s = planScreen(doc)
+    expect(s.kind).toBe('account')
+    if (s.kind === 'account') expect(s.unsupported).toEqual([])
   })
 })
 

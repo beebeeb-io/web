@@ -134,6 +134,7 @@ const UploadRequestPage     = lazyNamed(() => import('./pages/upload-request'), 
 import { ThemeProvider } from './lib/theme-context'
 import { DisplayProvider } from './lib/display-context'
 import { BillingBanner } from './components/billing-banner'
+import { AccountNoticeBanner } from './components/account-notice-banner'
 import { IncidentBanner } from './components/incident-banner'
 import { BillingSuspendedOverlay } from './components/billing-suspended-overlay'
 import { CookieBanner } from './components/cookie-banner'
@@ -521,6 +522,7 @@ export function App() {
         <ImpersonationBanner />
         <OfflineBanner />
         <BillingBanner />
+        <AccountNoticeBanner />
         <BillingSuspendedOverlay />
         <GlobalShortcuts />
         <CookieBanner />
