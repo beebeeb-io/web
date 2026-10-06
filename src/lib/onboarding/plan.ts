@@ -65,6 +65,19 @@ export type KnownStepId = PreAccountStepId | AccountStepId
  */
 export const DRAWABLE_ACCOUNT_STEP_IDS = ['verify_email', 'accept_terms'] as const
 
+/**
+ * Account-stage steps this build draws on a ROUTE of their own rather than in the
+ * onboarding renderer (task 1837): `choose_plan` IS the /choose-plan page, which the
+ * needs_plan gate sends the account to. They are not "unsupported" (no "cannot show yet"
+ * banner), they never stop the account on a renderer screen, and the account page
+ * links to them.
+ */
+export const ROUTED_ACCOUNT_STEP_IDS = ['choose_plan'] as const
+
+function isRoutedAccountStep(step: OnboardingStep): boolean {
+  return (ROUTED_ACCOUNT_STEP_IDS as readonly string[]).includes(step.id)
+}
+
 /** `done` is a known terminal marker in both stages; it renders nothing. */
 const TERMINAL_STEP_ID = 'done'
 
@@ -259,7 +272,7 @@ export function unsupportedAccountSteps(doc: OnboardingDocument, completed: Read
   const out: string[] = []
   for (const step of doc.steps) {
     if (step.id === TERMINAL_STEP_ID || isDone(step, completed) || !step.required) continue
-    if (!isDrawableAccountStep(step) && !out.includes(step.id)) out.push(step.id)
+    if (!isDrawableAccountStep(step) && !isRoutedAccountStep(step) && !out.includes(step.id)) out.push(step.id)
   }
   return out
 }
@@ -305,7 +318,7 @@ export function planScreen(doc: OnboardingDocument, completed: ReadonlySet<strin
   // `done` has nothing left to do; `blocked` is the server saying "not available
   // to this account right now", so an optional blocked action draws no
   // affordance at all (a required blocked one already stopped above).
-  const actions = railSteps(doc, completed, null).filter((p) => p.known && p.state !== 'done' && p.state !== 'blocked' && !(p.step.required && !isDrawableAccountStep(p.step)))
+  const actions = railSteps(doc, completed, null).filter((p) => p.known && p.state !== 'done' && p.state !== 'blocked' && !(p.step.required && !isDrawableAccountStep(p.step) && !isRoutedAccountStep(p.step)))
   return { kind: 'account', actions, unsupported: unsupportedAccountSteps(doc, completed) }
 }
 

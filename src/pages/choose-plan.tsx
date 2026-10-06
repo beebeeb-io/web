@@ -1,5 +1,14 @@
 /**
- * /choose-plan — start the trial with a payment mandate (task 1037).
+ * /choose-plan — pick a plan, then start a trial (task 1037, 1757, 1837).
+ *
+ * Task 1837 (Guus, 2026-10-06): the plan is chosen UP FRONT, once, and the trial that
+ * follows is the person's choice. With the card / iDEAL trial open the primary action
+ * is "Start 14-day trial" (a payment mandate, nothing charged today); "Continue without
+ * card" is the secondary one, only while `offers.trial.available`. The server says which
+ * are open (`offers.trial` and `choose_plan.params.card_trial`); with no trial offer in
+ * the document the card flow below is the only flow, as before.
+ *
+ * Task 1037 flow (card):
  *
  * Every new account lands here after onboarding (there are no free accounts),
  * and the needs_plan route gate sends such an account back here from every
@@ -29,10 +38,9 @@ import { BBButton, Icon } from '@beebeeb/shared'
 import { AuthShell } from '../components/auth-shell'
 import { BillingInfoStep } from '../components/billing/BillingInfoStep'
 import { TrialMethodPicker, TrialPlanPicker } from '../components/trial-plan-picker'
-import { TrialStartCard, TrialUnavailableNote } from '../components/no-card-trial'
+import { TrialUnavailableNote, trialTermsLine } from '../components/no-card-trial'
 import { useStartNoCardTrial } from '../hooks/use-start-no-card-trial'
-import { trialOfferView } from '../lib/no-card-trial'
-import { formatSize } from '../lib/onboarding/account-summary'
+import { cardTrialMethodsPhrase, cardTrialView, effectiveCardMethod, effectiveTrialDays, startTrialErrorCopy, trialOfferView } from '../lib/no-card-trial'
 import { useToast } from '../components/toast'
 import { useAuth } from '../lib/auth-context'
 import { useDriveData } from '../lib/drive-data-context'
@@ -114,7 +122,11 @@ export function ChoosePlan() {
   // switched on), IT decides what this page offers; the card-mandate flow below is the
   // fallback for a server that sends no offer (switch off, document unavailable).
   const trialOffer = trialOfferView(accountDocument)
+  // Task 1837: the server says when the card / iDEAL trial is open BESIDE the no-card one.
+  const cardTrial = cardTrialView(accountDocument)
   const startNoCardTrial = useStartNoCardTrial()
+  const [noCardBusy, setNoCardBusy] = useState(false)
+  const [noCardError, setNoCardError] = useState('')
 
   const returned = searchParams.get('returned') === '1'
   const fromBilling = searchParams.get('from') === 'billing'
@@ -128,7 +140,11 @@ export function ChoosePlan() {
   )
   const [plan, setPlan] = useState<TrialPlanSlug>(toTrialPlan(initialIntent?.plan) ?? DEFAULT_TRIAL_PLAN)
   const [cycle, setCycle] = useState<BillingCycle>(initialIntent?.cycle ?? 'monthly')
-  const [method, setMethod] = useState<TrialMethod>('creditcard')
+  const [pickedMethod, setMethod] = useState<TrialMethod>('creditcard')
+  // Task 1840 round 2: the server's advertised methods are authoritative. An iDEAL-only
+  // card trial must submit `ideal` even though the local default is `creditcard`; derived
+  // (not an effect) so the first paint and the checkout call can never disagree.
+  const method: TrialMethod = effectiveCardMethod(cardTrial, pickedMethod)
   // Task 1702 — the €0 direct-activation click guard (the pick step calls the
   // checkout itself; there is no BillingInfoStep submitting state here).
   const [activating, setActivating] = useState(false)
@@ -138,7 +154,11 @@ export function ChoosePlan() {
   }, [])
   const options = useMemo(() => buildTrialPlanOptions(apiPlans), [apiPlans])
   const selected = options.find((o) => o.id === plan) ?? options[0]
-  const trialDays = selected.trialDays
+  // Task 1840 round 2: when the server advertises a card trial, ITS length is the trial
+  // the person is starting, through every step (chooser, billing subtitle, proceed label,
+  // first-charge date, summary). The plan's own `trialDays` is only the fallback for a
+  // document that advertises none.
+  const trialDays = effectiveTrialDays(cardTrial, selected.trialDays)
   const price = cycle === 'yearly' ? selected.priceYearly : selected.priceMonthly
   // Task 1702 — a €0 plan (for the chosen cycle) activates directly: no
   // payment method, no billing details, no trial. The whole mandate flow is
@@ -365,7 +385,7 @@ export function ChoosePlan() {
 
   const startCheckout = useCallback(async () => {
     try {
-      const res = await startTrialCheckout({ plan, billing_cycle: cycle, method })
+      const res = await startTrialCheckout({ plan, billing_cycle: cycle, method }, cardTrial?.checkoutEndpoint ?? undefined)
       if (res.activated) {
         await finishZeroActivation(res)
         return
@@ -397,7 +417,7 @@ export function ChoosePlan() {
       // Re-throw so BillingInfoStep shows it inline and resets its button.
       throw new Error(userFriendlyError(err))
     }
-  }, [plan, cycle, method, sub, showToast, navigate, refreshPlanDetails, finishZeroActivation])
+  }, [plan, cycle, method, cardTrial?.checkoutEndpoint, sub, showToast, navigate, refreshPlanDetails, finishZeroActivation])
 
   // Paid checkout for the selected plan + cycle — the path for a card / bank
   // account that already had a trial. Same request + pending intent as every
@@ -419,6 +439,41 @@ export function ChoosePlan() {
       throw new Error(userFriendlyError(err))
     }
   }, [plan, cycle, sub, finishZeroActivation])
+
+  /** The card path of the chooser: a €0 plan activates directly, anything else goes on to billing details. */
+  function continueWithCard() {
+    if (zeroPrice) {
+      if (activating) return
+      setActivating(true)
+      void startCheckout()
+        .catch((err) => {
+          showToast({
+            icon: 'x',
+            title: 'Could not activate the plan',
+            description: err instanceof Error ? err.message : 'Please try again.',
+            danger: true,
+          })
+        })
+        .finally(() => setActivating(false))
+      return
+    }
+    savePlanIntent({ plan, cycle })
+    setPurpose('trial')
+    setStep('billing')
+  }
+
+  /** The no-card path of the chooser: the trial starts on the plan chosen above. */
+  async function continueWithoutCard() {
+    if (trialOffer?.kind !== 'available' || noCardBusy) return
+    setNoCardBusy(true)
+    setNoCardError('')
+    try {
+      await startNoCardTrial(trialOffer, { plan, cycle })
+    } catch (err) {
+      setNoCardError(startTrialErrorCopy(err, trialOffer.allowanceBytes))
+      setNoCardBusy(false)
+    }
+  }
 
   const chargeDate = trialChargeDate(trialDays)
   const todayLabel = zeroPrice ? '€0.00' : method === 'ideal' ? '€0.01' : '€0.00'
@@ -636,34 +691,92 @@ export function ChoosePlan() {
     )
   }
 
-  // step === 'pick', the document offers (or explains why it cannot offer) the no-card trial.
+  // step === 'pick', the document offers (or explains why it cannot offer) a no-card trial.
   if (trialOffer) {
-    const allowance =
-      trialOffer.kind === 'available' && trialOffer.allowanceBytes !== null ? formatSize(trialOffer.allowanceBytes) : null
+    const noCardAvailable = trialOffer.kind === 'available'
+    const days = cardTrial?.lengthDays ?? (noCardAvailable ? trialOffer.lengthDays : trialDays)
+    const subtitle = cardTrial
+      ? `Your encrypted vault is ready. Pick a plan and start your ${days}-day trial.`
+      : noCardAvailable
+        ? `Your encrypted vault is ready. Pick a plan to try for ${days} days, no card needed.`
+        : 'Your encrypted vault is ready.'
+    const cardLabel = zeroPrice ? 'Activate plan' : `Start ${days}-day trial`
     return (
-      <AuthShell
-        wide
-        title={trialOffer.kind === 'available' ? 'Try a plan, no card' : 'Choose your plan'}
-        subtitle={
-          trialOffer.kind === 'available'
-            ? allowance
-              ? `Your encrypted vault is ready with ${allowance} included. Try a paid plan free for ${trialOffer.lengthDays} days.`
-              : `Your encrypted vault is ready. Try a paid plan free for ${trialOffer.lengthDays} days.`
-            : 'Your encrypted vault is ready.'
-        }
-        hideTrust
-      >
-        <div className="flex flex-col gap-[18px]" data-testid="choose-plan-no-card">
-          {trialOffer.kind === 'available' ? (
-            <TrialStartCard
-              offer={trialOffer}
-              initialPlan={initialIntent?.plan}
-              initialCycle={initialIntent?.cycle}
-              onStart={(choice) => startNoCardTrial(trialOffer, choice)}
+      <AuthShell wide title="Choose your plan" subtitle={subtitle} hideTrust>
+        <div className="flex flex-col gap-[18px]" data-testid="choose-plan-chooser">
+          {(cardTrial || noCardAvailable) && (
+            <TrialPlanPicker
+              noCard={!cardTrial}
+              label="Plan"
+              options={options.map((o) => ({ ...o, trialDays: days }))}
+              plan={plan}
+              cycle={cycle}
+              onPlanChange={choosePlan}
+              onCycleChange={chooseCycle}
             />
+          )}
+
+          {cardTrial && (
+            <div className="flex flex-col gap-3.5" data-testid="choose-plan-card-trial">
+              {!zeroPrice && <TrialMethodPicker method={method} onChange={setMethod} methods={cardTrial.methods} />}
+              <p className="text-[11.5px] text-ink-2 leading-relaxed" data-testid="card-trial-terms">
+                {zeroPrice
+                  ? `${selected.name} costs €0 right now. It activates immediately, with no payment method and no trial period.`
+                  : `${days}-day free trial with ${cardTrialMethodsPhrase(cardTrial.methods)}. Nothing is charged today. From ${trialChargeDate(days)} it is ${trialPriceLabel(price, cycle)}, unless you cancel before then.`}
+              </p>
+              <BBButton
+                variant="amber"
+                size="lg"
+                className="w-full justify-center"
+                data-testid="choose-plan-continue"
+                disabled={activating}
+                onClick={continueWithCard}
+              >
+                {cardLabel}
+                <Icon name="chevron-right" size={13} className="ml-1" />
+              </BBButton>
+              {!zeroPrice && (
+                <p className="text-[11px] text-ink-4 text-center -mt-2">
+                  Next: billing details, then {method === 'ideal' ? 'iDEAL' : 'your card'} at Mollie.
+                </p>
+              )}
+            </div>
+          )}
+
+          {noCardAvailable ? (
+            <div
+              className={cardTrial ? 'border-t border-line pt-3.5 flex flex-col gap-2.5' : 'flex flex-col gap-3.5'}
+              data-testid="choose-plan-no-card"
+            >
+              <p className="text-xs text-ink-3 leading-relaxed" data-testid="trial-terms">
+                {trialTermsLine(trialOffer)}
+              </p>
+              {noCardError && (
+                <p role="alert" className="text-xs text-red leading-relaxed" data-testid="trial-start-error">
+                  {noCardError}
+                </p>
+              )}
+              <BBButton
+                variant={cardTrial ? 'default' : 'amber'}
+                size="lg"
+                className="w-full justify-center"
+                onClick={() => void continueWithoutCard()}
+                disabled={noCardBusy}
+                data-testid="start-trial"
+              >
+                {noCardBusy ? 'Starting' : cardTrial ? 'Continue without card' : `Start ${days}-day trial, no card`}
+              </BBButton>
+            </div>
+          ) : cardTrial ? (
+            trialOffer.reason === 'temporarily_unavailable' && (
+              <p className="text-xs text-ink-3" data-testid="no-card-unavailable-quiet">
+                Trials without a card are not available right now.
+              </p>
+            )
           ) : (
             <TrialUnavailableNote offer={trialOffer} showPlansLink={false} />
           )}
+
           <div className="border-t border-line pt-3.5 flex items-center justify-between gap-3 text-[12.5px] text-ink-3">
             <span>Ready to pay instead? Plans start with a normal checkout.</span>
             <Link to={PAID_CHECKOUT_PATH} className="font-medium text-amber-deep hover:underline" data-testid="choose-plan-subscribe-now">
@@ -759,26 +872,7 @@ export function ChoosePlan() {
           className="w-full justify-center"
           data-testid="choose-plan-continue"
           disabled={activating}
-          onClick={() => {
-            if (zeroPrice) {
-              if (activating) return
-              setActivating(true)
-              void startCheckout()
-                .catch((err) => {
-                  showToast({
-                    icon: 'x',
-                    title: 'Could not activate the plan',
-                    description: err instanceof Error ? err.message : 'Please try again.',
-                    danger: true,
-                  })
-                })
-                .finally(() => setActivating(false))
-              return
-            }
-            savePlanIntent({ plan, cycle })
-            setPurpose('trial')
-            setStep('billing')
-          }}
+          onClick={continueWithCard}
         >
           {zeroPrice ? 'Activate plan' : 'Continue'}
           <Icon name="chevron-right" size={13} className="ml-1" />

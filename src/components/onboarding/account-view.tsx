@@ -257,7 +257,9 @@ function ActionCard({ item, doc, ports }: { item: PlannedStep; doc: OnboardingDo
       if (!cta) return null
       return (
         <Link
-          to="/billing?view=change"
+          // A plan-less account chooses on /choose-plan (plan up front, then the trial);
+          // everyone else changes plan on the billing page.
+          to={item.step.id === 'choose_plan' && item.step.required ? '/choose-plan' : '/billing?view=change'}
           data-testid={`step-${item.step.id}`}
           className="flex items-center justify-between border border-line rounded-md p-3.5 hover:bg-paper-2"
         >
