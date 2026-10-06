@@ -232,15 +232,25 @@ function firstActionable(
 function requiredStop(doc: OnboardingDocument, completed: ReadonlySet<string>): BlockedScreen | null {
   for (const step of doc.steps) {
     if (step.id === TERMINAL_STEP_ID || isDone(step, completed) || !step.required) continue
-    if (isDrawableAccountStep(step.id) && step.status === 'blocked') {
+    if (isDrawableAccountStep(step) && step.status === 'blocked') {
       return { kind: 'blocked', stepId: step.id, fallback: step.fallback ?? doc.fallback }
     }
   }
   return null
 }
 
-function isDrawableAccountStep(id: string): boolean {
-  return (DRAWABLE_ACCOUNT_STEP_IDS as readonly string[]).includes(id)
+/**
+ * Drawable = this build has a screen AND the step carries what that screen needs.
+ * An `accept_terms` without a non-empty `params.version` has nothing to accept, so
+ * it is undrawable: it never blocks and is reported as unsupported (task 1822, P1).
+ */
+function isDrawableAccountStep(step: OnboardingStep): boolean {
+  if (!(DRAWABLE_ACCOUNT_STEP_IDS as readonly string[]).includes(step.id)) return false
+  if (step.id === 'accept_terms') {
+    const v = step.params?.version
+    return typeof v === 'string' && v.length > 0
+  }
+  return true
 }
 
 /** Required, not-done account-stage steps this build cannot draw (task 1822). */
@@ -249,7 +259,7 @@ export function unsupportedAccountSteps(doc: OnboardingDocument, completed: Read
   const out: string[] = []
   for (const step of doc.steps) {
     if (step.id === TERMINAL_STEP_ID || isDone(step, completed) || !step.required) continue
-    if (!isDrawableAccountStep(step.id) && !out.includes(step.id)) out.push(step.id)
+    if (!isDrawableAccountStep(step) && !out.includes(step.id)) out.push(step.id)
   }
   return out
 }
@@ -287,7 +297,7 @@ export function planScreen(doc: OnboardingDocument, completed: ReadonlySet<strin
   // An unknown required step listed ahead of it must not hide it (task 1822).
   if (doc.blocking) {
     const current = doc.steps.find(
-      (st) => st.required && !isDone(st, completed) && isDrawableAccountStep(st.id) && st.status !== 'blocked',
+      (st) => st.required && !isDone(st, completed) && isDrawableAccountStep(st) && st.status !== 'blocked',
     )
     if (current) return stepScreen(doc, completed, current)
   }
@@ -295,7 +305,7 @@ export function planScreen(doc: OnboardingDocument, completed: ReadonlySet<strin
   // `done` has nothing left to do; `blocked` is the server saying "not available
   // to this account right now", so an optional blocked action draws no
   // affordance at all (a required blocked one already stopped above).
-  const actions = railSteps(doc, completed, null).filter((p) => p.known && p.state !== 'done' && p.state !== 'blocked')
+  const actions = railSteps(doc, completed, null).filter((p) => p.known && p.state !== 'done' && p.state !== 'blocked' && !(p.step.required && !isDrawableAccountStep(p.step)))
   return { kind: 'account', actions, unsupported: unsupportedAccountSteps(doc, completed) }
 }
 

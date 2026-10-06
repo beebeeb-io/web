@@ -3,17 +3,8 @@ import { Icon } from '@beebeeb/shared'
 import { useAuth } from '../lib/auth-context'
 import { useDriveData } from '../lib/drive-data-context'
 import { unsupportedAccountSteps } from '../lib/onboarding/plan'
+import { readDismissed, writeDismissed } from '../lib/onboarding/notice-dismissal'
 import { unsupportedStepNotice } from '../lib/onboarding/terms-copy'
-
-const DISMISS_KEY = 'bb_unsupported_step_notice_dismissed'
-
-function readDismissed(): string {
-  try {
-    return sessionStorage.getItem(DISMISS_KEY) ?? ''
-  } catch {
-    return ''
-  }
-}
 
 /**
  * Task 1822 — the account document lists a required step this build cannot draw.
@@ -24,7 +15,13 @@ function readDismissed(): string {
 export function AccountNoticeBanner() {
   const { user } = useAuth()
   const { accountDocument } = useDriveData()
-  const [dismissed, setDismissed] = useState(readDismissed)
+  const uid = user?.user_id ?? null
+  // Dismissal belongs to the account (key carries the user id): re-read when the account changes.
+  const [dismissed, setDismissed] = useState<{ uid: string | null; value: string }>(() => ({
+    uid,
+    value: uid ? readDismissed(uid) : '',
+  }))
+  const dismissedValue = dismissed.uid === uid ? dismissed.value : uid ? readDismissed(uid) : ''
   // The shared document is dropped while every billing refresh re-fetches it: keep
   // the last answer through that window so the notice does not flicker on and off.
   const lastIds = useRef<string[]>([])
@@ -36,7 +33,7 @@ export function AccountNoticeBanner() {
   const ids = lastIds.current
   if (ids.length === 0) return null
   const key = ids.join(',')
-  if (dismissed === key) return null
+  if (dismissedValue === key) return null
   return (
     <div
       role="status"
@@ -50,12 +47,8 @@ export function AccountNoticeBanner() {
         data-testid="unsupported-step-dismiss"
         className="text-ink-3 hover:text-ink underline underline-offset-2"
         onClick={() => {
-          try {
-            sessionStorage.setItem(DISMISS_KEY, key)
-          } catch {
-            /* storage blocked: the dismissal lasts until this page unmounts */
-          }
-          setDismissed(key)
+          if (user) writeDismissed(user.user_id, key)
+          setDismissed({ uid, value: key })
         }}
       >
         Dismiss

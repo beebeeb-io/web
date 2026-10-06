@@ -32,7 +32,7 @@ function doc(name: string, patch?: (raw: any) => void): OnboardingDocument {
 const blockingAllowance = (stepId: string) =>
   doc('account.allowance.web.json', (raw) => {
     raw.blocking = true
-    raw.steps.unshift({ id: stepId, status: 'todo', required: true, ui: 'action' })
+    raw.steps.unshift({ id: stepId, status: 'todo', required: true, ui: 'action', ...(stepId === 'accept_terms' ? { params: { version: '2026-10' } } : {}) })
   })
 
 describe('1816 round 2 P1: a blocking account document never reaches the protected route', () => {
