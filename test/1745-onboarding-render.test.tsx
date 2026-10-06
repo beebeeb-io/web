@@ -57,7 +57,7 @@ const EXPECTED: Record<string, string> = {
   'account.legacy_free.web.json': 'account:legacy_free',
   'account.needs_plan.ios.json': 'step:verify_email',
   // Task 1814: the optional `redeem_coupon` step is unknown to this renderer and skipped (rule 4).
-  'account.needs_plan.web.coupon.json': 'step:choose_plan',
+  'account.needs_plan.web.coupon.json': 'account:needs_plan', // 1822: a known step without a screen (choose_plan) no longer draws the "Continue on the web" card; the account view carries its "See plans" action
   'account.past_due.web.json': 'account:past_due',
   'account.read_only.web.json': 'account:read_only',
   'account.trial_cancelling.web.json': 'account:trial_cancelling',
