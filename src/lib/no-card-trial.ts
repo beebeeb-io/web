@@ -322,11 +322,9 @@ export function trialEndedStatus(
     const plan = canSubscribe ? ' unless you choose a plan' : ''
     return {
       headline: 'Your trial has ended',
-      body:
-        doc.copy.trial_ended_no_allowance ??
-        (deletionDay
-          ? `Your trial ended. Your files are read-only and will be deleted on ${deletionDay}${plan}.`
-          : `Your trial ended. Your files are read-only.`),
+      body: deletionDay
+        ? `Your trial ended. Your files are read-only and will be deleted on ${deletionDay}${plan}.`
+        : `Your trial ended. Your files are read-only.`,
       trimGuidance: 'Download and delete still work. Download what you want to keep before the date above.',
       deletionDay,
       allowanceBytes: null,
