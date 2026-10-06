@@ -1,3 +1,4 @@
+import { ALLOWANCE_LINE, currentPlanName } from '../lib/current-plan-display'
 import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react'
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom'
 import { isCheckoutReturn } from '../lib/checkout-return'
@@ -2225,7 +2226,7 @@ function openUpgrade(plan: string) {
                   <SectionLabel className="mb-2">Current plan</SectionLabel>
                   <div className="flex items-center gap-3 mb-1">
                     <span className="text-[28px] font-bold tracking-tight leading-none">
-                      {accountStateLabel === 'allowance' ? 'Allowance' : hasNoPlan ? 'No plan' : meta.label}
+                      {currentPlanName({ accountStateLabel, hasNoPlan, planLabel: meta.label })}
                     </span>
                     {effectivePlan !== 'free' && !hasNoPlan && statusBadge()}
                   </div>
@@ -2254,7 +2255,7 @@ function openUpgrade(plan: string) {
                   )}
                   {accountState === 'needs_plan' && accountStateLabel === 'allowance' && (
                     <div className="text-[13px] text-ink-3" data-testid="billing-allowance-line">
-                      Included with your account. A plan adds storage and sharing.
+                      {ALLOWANCE_LINE}
                     </div>
                   )}
                   {accountState === 'needs_plan' && accountStateLabel !== 'allowance' && (
@@ -2692,8 +2693,8 @@ function openUpgrade(plan: string) {
                   Current plan
                 </div>
                 <div className="flex items-baseline gap-3">
-                  <span className="text-[28px] font-bold tracking-tight leading-none">
-                    {meta.label}
+                  <span className="text-[28px] font-bold tracking-tight leading-none" data-testid="chooser-current-plan-name">
+                    {currentPlanName({ accountStateLabel, hasNoPlan, planLabel: meta.label })}
                   </span>
                   {sub?.billing_cycle === 'yearly' && effectivePlan !== 'free' && (
                     <BBChip variant="amber">Yearly</BBChip>
@@ -2702,6 +2703,11 @@ function openUpgrade(plan: string) {
                     <BBChip>Monthly</BBChip>
                   )}
                 </div>
+                {accountState === 'needs_plan' && accountStateLabel === 'allowance' && (
+                  <div className="mt-1.5 text-[13px] text-ink-3" data-testid="chooser-allowance-line">
+                    {ALLOWANCE_LINE}
+                  </div>
+                )}
                 {effectivePlan !== 'free' && (
                   <div className="mt-1.5 space-y-0.5">
                     {currentExtraTB > 0 ? (
