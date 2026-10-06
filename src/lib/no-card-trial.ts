@@ -23,6 +23,7 @@
 
 import { ApiError, type LastTrial } from '@beebeeb/shared'
 import type { OnboardingDocument } from './onboarding/types'
+import { sameOriginApiPath } from './onboarding/parse'
 import { formatDay, formatSize } from './onboarding/account-summary'
 import { PAID_CHECKOUT_PATH } from './account-state'
 
@@ -121,6 +122,16 @@ export interface CardTrialView {
   lengthDays: number
   /** Mandate methods the server accepts, in the server's order. */
   methods: Array<'creditcard' | 'ideal'>
+  /** The server's same-origin `/api/v1/...` checkout path; null falls back to the legacy route. */
+  checkoutEndpoint: string | null
+}
+
+/** "a card", "iDEAL" or "a card or iDEAL", from the methods the server accepts. */
+export function cardTrialMethodsPhrase(methods: Array<'creditcard' | 'ideal'>): string {
+  const card = methods.includes('creditcard')
+  const ideal = methods.includes('ideal')
+  if (card && ideal) return 'a card or iDEAL'
+  return ideal ? 'iDEAL' : 'a card'
 }
 
 /**
@@ -135,13 +146,17 @@ export function cardTrialView(doc: OnboardingDocument | null | undefined): CardT
   if (doc.purchase?.ctaAllowed !== true) return null
   const raw = doc.steps.find((st) => st.id === 'choose_plan')?.params?.card_trial
   if (!raw || typeof raw !== 'object') return null
-  const { length_days: lengthDays, methods } = raw as { length_days?: unknown; methods?: unknown }
+  const { length_days: lengthDays, methods, checkout_endpoint: endpoint } = raw as {
+    length_days?: unknown
+    methods?: unknown
+    checkout_endpoint?: unknown
+  }
   if (typeof lengthDays !== 'number' || !Number.isFinite(lengthDays) || lengthDays < 1) return null
   const known = Array.isArray(methods)
     ? methods.filter((m): m is 'creditcard' | 'ideal' => m === 'creditcard' || m === 'ideal')
     : []
   if (known.length === 0) return null
-  return { lengthDays, methods: known }
+  return { lengthDays, methods: known, checkoutEndpoint: sameOriginApiPath(endpoint) }
 }
 
 /** The method to submit: the picked one while the server advertises it, else the first advertised. */
@@ -335,7 +350,9 @@ export function trialEndedStatus(
       body: deletionDay
         ? `Your trial ended. Your files are read-only and will be deleted on ${deletionDay}${plan}.`
         : `Your trial ended. Your files are read-only.`,
-      trimGuidance: 'Download and delete still work. Download what you want to keep before the date above.',
+      trimGuidance: deletionDay
+        ? 'Download and delete still work. Download what you want to keep before the date above.'
+        : 'Download and delete still work. Download what you want to keep.',
       deletionDay,
       allowanceBytes: null,
       usedBytes,

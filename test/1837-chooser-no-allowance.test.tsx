@@ -10,6 +10,7 @@ import { ApiError } from '@beebeeb/shared'
 import { TrialEndedCard, TrialStartCard, trialTermsLine } from '../src/components/no-card-trial'
 import {
   NEVER_PAID_RETENTION_DAYS,
+  cardTrialMethodsPhrase,
   cardTrialView,
   effectiveCardMethod,
   effectiveTrialDays,
@@ -94,7 +95,46 @@ describe('1837 the card trial the server advertises', () => {
     expect(cardTrialView(NO_PLAN({ noCard: true, card: true }))).toEqual({
       lengthDays: 14,
       methods: ['creditcard', 'ideal'],
+      checkoutEndpoint: '/api/v1/billing/trial/checkout',
     })
+  })
+
+  test('the checkout endpoint is kept when same-origin, else dropped to the legacy route', () => {
+    const ep = (checkout_endpoint: unknown) =>
+      cardTrialView(NO_PLAN({ noCard: true, card: { length_days: 14, methods: ['ideal'], checkout_endpoint } }))?.checkoutEndpoint
+    expect(ep('/api/v1/billing/trial/checkout-v2')).toBe('/api/v1/billing/trial/checkout-v2')
+    expect(ep('https://evil.example/api/v1/x')).toBeNull()
+    expect(ep('//evil.example/api/v1/x')).toBeNull()
+    expect(ep('/other/path')).toBeNull()
+    expect(ep(undefined)).toBeNull()
+  })
+
+  test('startTrialCheckout posts to the given endpoint, the legacy one by default', async () => {
+    const { startTrialCheckout } = await import('../src/lib/api')
+    const urls: string[] = []
+    const real = globalThis.fetch
+    globalThis.fetch = (async (u: any) => {
+      urls.push(String(u))
+      return new Response(JSON.stringify({ url: 'https://pay.example/x', payment_id: 'p', activated: false }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }) as any
+    try {
+      const body = { plan: 'personal', billing_cycle: 'monthly' as const, method: 'ideal' as const }
+      await startTrialCheckout(body, '/api/v1/billing/trial/checkout-v2')
+      await startTrialCheckout(body)
+    } finally {
+      globalThis.fetch = real
+    }
+    expect(urls[0]).toMatch(/\/api\/v1\/billing\/trial\/checkout-v2$/)
+    expect(urls[1]).toMatch(/\/api\/v1\/billing\/trial\/checkout$/)
+  })
+
+  test('the terms line names the methods the server accepts', () => {
+    expect(cardTrialMethodsPhrase(['creditcard', 'ideal'])).toBe('a card or iDEAL')
+    expect(cardTrialMethodsPhrase(['ideal'])).toBe('iDEAL')
+    expect(cardTrialMethodsPhrase(['creditcard'])).toBe('a card')
   })
 
   test('absent, malformed or unknown methods draw nothing; so does a document without a purchase surface', () => {
@@ -206,6 +246,23 @@ describe('1837 no allowance, no promise that anything stays', () => {
       d.copy = {}
     }), 'UTC')!
     expect(ios.body).not.toMatch(/plan/)
+  })
+
+  test('without a deletion date the guidance does not point at "the date above"', () => {
+    const undated = trialEndedStatus(doc('account.trial_ended.ios.json', (d) => {
+      delete d.account.storage.allowance_bytes
+      d.account.lifecycle = { ...(d.account.lifecycle ?? {}), data_deletion_at: null }
+      d.copy = {}
+    }), 'UTC')!
+    expect(undated.deletionDay).toBeNull()
+    expect(undated.trimGuidance).not.toMatch(/date above/)
+    expect(undated.trimGuidance).toContain('Download what you want to keep.')
+    const dated = trialEndedStatus(doc('account.trial_ended.ios.json', (d) => {
+      delete d.account.storage.allowance_bytes
+      d.account.lifecycle = { ...(d.account.lifecycle ?? {}), data_deletion_at: '2026-11-01T00:00:00Z' }
+      d.copy = {}
+    }), 'UTC')!
+    expect(dated.trimGuidance).toContain('before the date above')
   })
 })
 

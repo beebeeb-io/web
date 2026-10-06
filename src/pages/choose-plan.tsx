@@ -40,7 +40,7 @@ import { BillingInfoStep } from '../components/billing/BillingInfoStep'
 import { TrialMethodPicker, TrialPlanPicker } from '../components/trial-plan-picker'
 import { TrialUnavailableNote, trialTermsLine } from '../components/no-card-trial'
 import { useStartNoCardTrial } from '../hooks/use-start-no-card-trial'
-import { cardTrialView, effectiveCardMethod, effectiveTrialDays, startTrialErrorCopy, trialOfferView } from '../lib/no-card-trial'
+import { cardTrialMethodsPhrase, cardTrialView, effectiveCardMethod, effectiveTrialDays, startTrialErrorCopy, trialOfferView } from '../lib/no-card-trial'
 import { useToast } from '../components/toast'
 import { useAuth } from '../lib/auth-context'
 import { useDriveData } from '../lib/drive-data-context'
@@ -385,7 +385,7 @@ export function ChoosePlan() {
 
   const startCheckout = useCallback(async () => {
     try {
-      const res = await startTrialCheckout({ plan, billing_cycle: cycle, method })
+      const res = await startTrialCheckout({ plan, billing_cycle: cycle, method }, cardTrial?.checkoutEndpoint ?? undefined)
       if (res.activated) {
         await finishZeroActivation(res)
         return
@@ -417,7 +417,7 @@ export function ChoosePlan() {
       // Re-throw so BillingInfoStep shows it inline and resets its button.
       throw new Error(userFriendlyError(err))
     }
-  }, [plan, cycle, method, sub, showToast, navigate, refreshPlanDetails, finishZeroActivation])
+  }, [plan, cycle, method, cardTrial?.checkoutEndpoint, sub, showToast, navigate, refreshPlanDetails, finishZeroActivation])
 
   // Paid checkout for the selected plan + cycle — the path for a card / bank
   // account that already had a trial. Same request + pending intent as every
@@ -722,7 +722,7 @@ export function ChoosePlan() {
               <p className="text-[11.5px] text-ink-2 leading-relaxed" data-testid="card-trial-terms">
                 {zeroPrice
                   ? `${selected.name} costs €0 right now. It activates immediately, with no payment method and no trial period.`
-                  : `${days}-day free trial with a card or iDEAL. Nothing is charged today. From ${trialChargeDate(days)} it is ${trialPriceLabel(price, cycle)}, unless you cancel before then.`}
+                  : `${days}-day free trial with ${cardTrialMethodsPhrase(cardTrial.methods)}. Nothing is charged today. From ${trialChargeDate(days)} it is ${trialPriceLabel(price, cycle)}, unless you cancel before then.`}
               </p>
               <BBButton
                 variant="amber"

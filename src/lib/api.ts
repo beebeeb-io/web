@@ -2552,8 +2552,8 @@ export async function startTrialCheckout(params: {
   plan: string
   billing_cycle: 'monthly' | 'yearly'
   method: TrialCheckoutMethod
-}): Promise<TrialCheckoutResult> {
-  return request<TrialCheckoutResult>('/api/v1/billing/trial/checkout', {
+}, endpoint: string = '/api/v1/billing/trial/checkout'): Promise<TrialCheckoutResult> {
+  return request<TrialCheckoutResult>(endpoint, {
     method: 'POST',
     body: JSON.stringify(params),
   })
