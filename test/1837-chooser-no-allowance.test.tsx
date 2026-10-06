@@ -11,6 +11,8 @@ import { TrialEndedCard, TrialStartCard, trialTermsLine } from '../src/component
 import {
   NEVER_PAID_RETENTION_DAYS,
   cardTrialView,
+  effectiveCardMethod,
+  effectiveTrialDays,
   noCardTrialStatus,
   startTrialErrorCopy,
   trialEndedStatus,
@@ -104,6 +106,25 @@ describe('1837 the card trial the server advertises', () => {
     const noCta = NO_PLAN({ noCard: true, card: true })
     expect(cardTrialView({ ...noCta, purchase: { ...noCta.purchase!, ctaAllowed: false } })).toBeNull()
     expect(cardTrialView(null)).toBeNull()
+  })
+})
+
+describe('1840 round 2: the advertised card trial is authoritative', () => {
+  const ideal7 = cardTrialView(NO_PLAN({ noCard: true, card: { length_days: 7, methods: ['ideal'] } }))
+  const both14 = cardTrialView(NO_PLAN({ noCard: true, card: true }))
+
+  test('a method the server does not advertise is repaired to one it does', () => {
+    expect(effectiveCardMethod(ideal7, 'creditcard')).toBe('ideal')
+    expect(effectiveCardMethod(both14, 'creditcard')).toBe('creditcard')
+    expect(effectiveCardMethod(both14, 'ideal')).toBe('ideal')
+    // No card trial advertised: the picker owns the choice, untouched.
+    expect(effectiveCardMethod(null, 'creditcard')).toBe('creditcard')
+  })
+
+  test('the card trial length beats the plan trial_days; without one the plan decides', () => {
+    expect(effectiveTrialDays(ideal7, 14)).toBe(7)
+    expect(effectiveTrialDays(both14, 30)).toBe(14)
+    expect(effectiveTrialDays(null, 14)).toBe(14)
   })
 })
 

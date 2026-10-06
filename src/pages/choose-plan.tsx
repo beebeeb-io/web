@@ -40,7 +40,7 @@ import { BillingInfoStep } from '../components/billing/BillingInfoStep'
 import { TrialMethodPicker, TrialPlanPicker } from '../components/trial-plan-picker'
 import { TrialUnavailableNote, trialTermsLine } from '../components/no-card-trial'
 import { useStartNoCardTrial } from '../hooks/use-start-no-card-trial'
-import { cardTrialView, startTrialErrorCopy, trialOfferView } from '../lib/no-card-trial'
+import { cardTrialView, effectiveCardMethod, effectiveTrialDays, startTrialErrorCopy, trialOfferView } from '../lib/no-card-trial'
 import { useToast } from '../components/toast'
 import { useAuth } from '../lib/auth-context'
 import { useDriveData } from '../lib/drive-data-context'
@@ -140,7 +140,11 @@ export function ChoosePlan() {
   )
   const [plan, setPlan] = useState<TrialPlanSlug>(toTrialPlan(initialIntent?.plan) ?? DEFAULT_TRIAL_PLAN)
   const [cycle, setCycle] = useState<BillingCycle>(initialIntent?.cycle ?? 'monthly')
-  const [method, setMethod] = useState<TrialMethod>('creditcard')
+  const [pickedMethod, setMethod] = useState<TrialMethod>('creditcard')
+  // Task 1840 round 2: the server's advertised methods are authoritative. An iDEAL-only
+  // card trial must submit `ideal` even though the local default is `creditcard`; derived
+  // (not an effect) so the first paint and the checkout call can never disagree.
+  const method: TrialMethod = effectiveCardMethod(cardTrial, pickedMethod)
   // Task 1702 — the €0 direct-activation click guard (the pick step calls the
   // checkout itself; there is no BillingInfoStep submitting state here).
   const [activating, setActivating] = useState(false)
@@ -150,7 +154,11 @@ export function ChoosePlan() {
   }, [])
   const options = useMemo(() => buildTrialPlanOptions(apiPlans), [apiPlans])
   const selected = options.find((o) => o.id === plan) ?? options[0]
-  const trialDays = selected.trialDays
+  // Task 1840 round 2: when the server advertises a card trial, ITS length is the trial
+  // the person is starting, through every step (chooser, billing subtitle, proceed label,
+  // first-charge date, summary). The plan's own `trialDays` is only the fallback for a
+  // document that advertises none.
+  const trialDays = effectiveTrialDays(cardTrial, selected.trialDays)
   const price = cycle === 'yearly' ? selected.priceYearly : selected.priceMonthly
   // Task 1702 — a €0 plan (for the chosen cycle) activates directly: no
   // payment method, no billing details, no trial. The whole mandate flow is

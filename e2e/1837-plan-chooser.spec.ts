@@ -63,13 +63,15 @@ interface Scenario {
   /** `true` available, a string = the unavailable reason, `null` no `offers.trial` at all. */
   noCard: true | string | null
   card: boolean
+  /** Round 2: replace the advertised card trial (length / methods). */
+  cardTrial?: Json
 }
 
 function documentFor(sc: Scenario): Json {
   const d = JSON.parse(readFileSync(FIXTURE, 'utf8')) as Json
   delete d.offers.coupon
   d.steps = d.steps.filter((s: Json) => s.id !== 'redeem_coupon')
-  if (sc.card) d.steps.find((s: Json) => s.id === 'choose_plan').params = { card_trial: CARD }
+  if (sc.card) d.steps.find((s: Json) => s.id === 'choose_plan').params = { card_trial: sc.cardTrial ?? CARD }
   if (sc.noCard !== null) {
     d.offers.trial = {
       available: sc.noCard === true,
@@ -202,6 +204,31 @@ test.describe('1837 — plan chooser: card trial first, continue without card se
     await card.click()
     await expect(page.getByText('Billing details', { exact: true }).first()).toBeVisible({ timeout: 15_000 })
     await expect(page.getByTestId('choose-plan-billing-summary')).toContainText('Pro')
+  })
+
+  test('CASE 6 (round 2) — an iDEAL-only, 7-day card trial: iDEAL is submitted and 7 days is the number everywhere', async ({ page }) => {
+    await installMocks(page, {
+      noCard: true,
+      card: true,
+      cardTrial: { length_days: 7, methods: ['ideal'], checkout_endpoint: '/api/v1/billing/trial/checkout' },
+    })
+    await boot(page)
+    await expect(page.getByTestId('choose-plan-chooser')).toBeVisible({ timeout: 30_000 })
+    // The plans advertise 14 days; the server's card trial says 7 and wins.
+    await expect(page.getByTestId('choose-plan-continue')).toHaveText(/Start 7-day trial/)
+    await page.getByTestId('choose-plan-continue').click()
+    await expect(page.getByText('Billing details', { exact: true }).first()).toBeVisible({ timeout: 15_000 })
+    // Method repaired to the only advertised one (default state is creditcard).
+    await expect(page.getByTestId('choose-plan-billing-summary')).toContainText('iDEAL')
+    await expect(page.getByTestId('choose-plan-billing-summary')).not.toContainText('Card')
+    const body = page.locator('body')
+    await expect(body).toContainText('Nothing is charged until day 8')
+    await expect(body).toContainText('after your 7-day trial')
+    await expect(body).toContainText('Start 7-day free trial')
+    await expect(body).not.toContainText('14-day')
+    await expect(body).not.toContainText('day 15')
+    await expect(body).toContainText('Next: iDEAL at Mollie')
+    await page.screenshot({ path: `${SHOTS}/1837-r2-ideal-7day-billing.png`, fullPage: true })
   })
 
   test('CASE 2 — only the card trial (no-card trial not available right now)', async ({ page }) => {

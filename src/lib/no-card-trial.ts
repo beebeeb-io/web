@@ -144,6 +144,16 @@ export function cardTrialView(doc: OnboardingDocument | null | undefined): CardT
   return { lengthDays, methods: known }
 }
 
+/** The method to submit: the picked one while the server advertises it, else the first advertised. */
+export function effectiveCardMethod<M extends 'creditcard' | 'ideal'>(card: CardTrialView | null, picked: M): M | 'creditcard' | 'ideal' {
+  return card && !card.methods.includes(picked) ? card.methods[0] : picked
+}
+
+/** The trial length the person is starting: the advertised card trial's, else the plan's own. */
+export function effectiveTrialDays(card: CardTrialView | null, planTrialDays: number): number {
+  return card ? card.lengthDays : planTrialDays
+}
+
 // ── Starting a trial: what can go wrong ─────────────────────────────────────
 
 /**
