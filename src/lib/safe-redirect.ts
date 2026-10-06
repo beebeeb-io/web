@@ -69,5 +69,10 @@ export function sanitizeRedirect(raw: string | null | undefined): string | null 
   // alphabet is fixed, so no traversal or host can ride along.
   if (!(REDIRECT_ALLOWLIST as readonly string[]).includes(pathname) && !COUPON_PATH.test(pathname)) return null
 
+  // `/settings/billing` is the one allowlisted path whose query is NOT preserved: that page
+  // reads `?success=true` / `?upgraded=true` as "a checkout just completed", so a crafted
+  // `/login?next=/settings/billing?success=true` must not be able to forge it (task 1743, round 3).
+  if (pathname === '/settings/billing') return pathname
+
   return raw
 }

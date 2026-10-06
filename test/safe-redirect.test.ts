@@ -52,7 +52,8 @@ describe('sanitizeRedirect', () => {
   // Billing link survives a sign-in bounce instead of dropping the person on the Drive root.
   test('accepts /settings/billing exactly, and nothing that merely starts with it', () => {
     expect(sanitizeRedirect('/settings/billing')).toBe('/settings/billing')
-    expect(sanitizeRedirect('/settings/billing?upgraded=true')).toBe('/settings/billing?upgraded=true')
+    // Round 3: the query is stripped, so a forged ?success=true / ?upgraded=true cannot ride along.
+    expect(sanitizeRedirect('/settings/billing?upgraded=true')).toBe('/settings/billing')
     expect(sanitizeRedirect('/settings/billing/')).toBeNull()
     expect(sanitizeRedirect('/settings/billing/../admin')).toBeNull()
     expect(sanitizeRedirect('/settings/billing-evil')).toBeNull()
