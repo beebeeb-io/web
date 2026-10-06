@@ -34,7 +34,7 @@ describe('formatSize / formatDay', () => {
 
 describe('summarizeAccount over every account fixture', () => {
   const files = fixtureFiles().filter((f) => f.startsWith('account.'))
-  test('14 account fixtures', () => expect(files.length).toBe(14))
+  test('15 account fixtures', () => expect(files.length).toBe(15))
   for (const f of files) {
     test(`${f} summarises without throwing and names its state`, () => {
       const doc = load(f)

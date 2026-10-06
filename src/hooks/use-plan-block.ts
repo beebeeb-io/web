@@ -28,7 +28,8 @@ import {
 import { trialEndedStatus } from '../lib/no-card-trial'
 
 export function usePlanBlock() {
-  const { accountState, refreshPlanDetails, accountDocument, accountStateLabel } = useDriveData()
+  const { accountState, refreshPlanDetails, accountDocument, accountStateLabel, planDetails } = useDriveData()
+  const lapseKind = planDetails.subscription?.lapse_kind
   const { showToast } = useToast()
   const navigate = useNavigate()
 
@@ -47,11 +48,11 @@ export function usePlanBlock() {
     const n =
       accountStateLabel === 'trial_ended'
         ? trialEndedUploadNotice(trialEndedStatus(accountDocument))
-        : uploadBlockedNotice(accountState)
+        : uploadBlockedNotice(accountState, lapseKind)
     if (!n) return false
     show(n)
     return true
-  }, [accountState, accountStateLabel, accountDocument, show])
+  }, [accountState, accountStateLabel, accountDocument, lapseKind, show])
 
   const handlePlanError = useCallback(
     (err: unknown): boolean => {
@@ -59,7 +60,9 @@ export function usePlanBlock() {
       if (state) {
         const code = (err as { code?: unknown } | null)?.code
         const n =
-          code === 'trial_ended' ? trialEndedUploadNotice(trialEndedStatus(accountDocument)) : uploadBlockedNotice(state)
+          code === 'trial_ended'
+            ? trialEndedUploadNotice(trialEndedStatus(accountDocument))
+            : uploadBlockedNotice(state, lapseKind)
         if (n) show(n)
         refreshPlanDetails()
         if (state === 'needs_plan') navigate(CHOOSE_PLAN_PATH, { replace: true })
@@ -77,7 +80,7 @@ export function usePlanBlock() {
       }
       return false
     },
-    [show, refreshPlanDetails, navigate, accountDocument],
+    [show, refreshPlanDetails, navigate, accountDocument, lapseKind],
   )
 
   return { accountState, blockUpload, handlePlanError }

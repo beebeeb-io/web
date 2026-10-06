@@ -77,6 +77,7 @@ import {
 } from '../lib/cycle-switch-copy'
 import { InvoiceList } from '../components/billing/InvoiceList'
 import { TransactionList } from '../components/billing/TransactionList'
+import { CouponCard } from '../components/billing/coupon-card'
 import { PLAN_META, PLAN_RANK } from '../lib/plan-constants'
 import {
   type PendingCheckout,
@@ -94,7 +95,7 @@ import {
 import { resolveHasUsedTrial, isTrialEligible } from '../lib/trial-eligibility'
 import { parsePlanIntent, clearPlanIntent } from '../lib/plan-intent'
 import { choosePlanPath, trialAutoConvertCopy, trialRenewalAmount, trialTermsCopy } from '../lib/trial-checkout'
-import { lapsedBannerCopy, resolveAccountState } from '../lib/account-state'
+import { lapsedBannerCopy, lapsedHeading, resolveAccountState } from '../lib/account-state'
 import { billingPeriodLine } from '../lib/billing-period-line'
 import {
   cancelledCardCopy,
@@ -2109,9 +2110,9 @@ function openUpgrade(plan: string) {
                 <div className="text-[11px] font-semibold uppercase tracking-wider text-red mb-1">
                   Read-only
                 </div>
-                <h2 className="text-lg font-bold text-ink leading-snug mb-1.5">Your trial has ended</h2>
+                <h2 className="text-lg font-bold text-ink leading-snug mb-1.5">{lapsedHeading(sub?.lapse_kind)}</h2>
                 <p className="text-[13.5px] text-ink-2 leading-relaxed mb-4">
-                  {lapsedBannerCopy(sub?.data_deletion_at)} You can still browse and download everything until then.
+                  {lapsedBannerCopy(sub?.data_deletion_at, sub?.lapse_kind)} You can still browse and download everything until then.
                 </p>
                 {view !== 'change' && (
                   <BBButton variant="amber" size="md" onClick={() => setView('change')}>
@@ -2434,6 +2435,10 @@ function openUpgrade(plan: string) {
                 </div>
               )}
             </Card>
+
+            {/* Task 1814: redeem a coupon link or code. Only for an account that holds no plan
+                (the server refuses one that does, so the card is not offered there). */}
+            {(hasNoPlan || effectivePlan === 'free') && <CouponCard />}
 
             {/* Payment Method card (#7) — restyled. Binds ONLY to real
                 PaymentMethod fields (type/brand/last4/iban_last4/is_default);

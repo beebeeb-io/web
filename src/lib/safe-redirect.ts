@@ -27,6 +27,9 @@
  *    a same-origin protected route, so no open-redirect risk in allowlisting it. */
 export const REDIRECT_ALLOWLIST = ['/', '/cli-auth', '/settings/privacy'] as const
 
+/** `/c/<code>`, exactly: no further segment, only the code alphabet (task 1814). */
+const COUPON_PATH = /^\/c\/[A-Za-z0-9_-]{3,64}$/
+
 /** Control characters (C0 range + DEL) — illegal in a path and a classic
  *  redirect/header-smuggling vector. */
 // eslint-disable-next-line no-control-regex
@@ -58,7 +61,10 @@ export function sanitizeRedirect(raw: string | null | undefined): string | null 
   // allowlisted route EXACTLY — so "/cli-auth/../admin" and "/cli-auth-evil"
   // are rejected while "/cli-auth?x=1" is accepted.
   const pathname = raw.split(/[?#]/)[0]
-  if (!(REDIRECT_ALLOWLIST as readonly string[]).includes(pathname)) return null
+  // Task 1814: a coupon link (`/c/<code>`) is the one allowlisted shape that varies, so
+  // someone who opens a link while signed out can sign in and land back on it. The code
+  // alphabet is fixed, so no traversal or host can ride along.
+  if (!(REDIRECT_ALLOWLIST as readonly string[]).includes(pathname) && !COUPON_PATH.test(pathname)) return null
 
   return raw
 }

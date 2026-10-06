@@ -10,8 +10,8 @@ import { fixtureFiles, fixtureJson, readInvalid } from './helpers/onboarding-fix
 
 describe('every vendored fixture parses', () => {
   const files = fixtureFiles()
-  test('there are 19 fixtures (count is the truth line, not the absence of failure)', () => {
-    expect(files.length).toBe(19)
+  test('there are 20 fixtures (count is the truth line, not the absence of failure)', () => {
+    expect(files.length).toBe(20)
   })
   for (const f of files) {
     test(`${f}`, () => {

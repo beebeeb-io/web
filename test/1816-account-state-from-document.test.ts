@@ -49,6 +49,8 @@ describe('1816 account state from the onboarding document', () => {
   test('every other account fixture is ok', () => {
     const gated = new Set([
       'account.needs_plan.ios.json',
+      // Task 1814: a needs_plan account on the web that arrived through a coupon link.
+      'account.needs_plan.web.coupon.json',
       'account.lapsed.ios.json',
       'account.trial_ended.ios.json',
     ])

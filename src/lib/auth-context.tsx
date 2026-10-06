@@ -19,6 +19,7 @@ import {
   logout as apiLogout,
   verify2fa as apiVerify2fa,
 } from './api'
+import { clearHeldCoupon } from './coupon'
 
 /** Same-origin pub/sub channel used to sync logout — and, since task 1531/
  *  1534's continuation (web PR #85), login — across tabs. */
@@ -149,6 +150,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const channel = new BroadcastChannel(AUTH_CHANNEL_NAME)
     channelRef.current = channel
     const onMessage = (event: MessageEvent<AuthBroadcastMessage>) => {
+      if (event.data?.type === 'logout') {
+        // Task 1814: another tab signed the account out; a coupon held here goes with it.
+        clearHeldCoupon()
+      }
       if (event.data?.type === 'login') {
         // Task 1531/1534 (P0 continuation): a DIFFERENT tab just
         // authenticated as `userId` — let KeyProvider's registered handler
@@ -198,6 +203,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
     const result = await apiLogin(email, password)
     if (!result.requires_2fa) {
+      // Signing in to an EXISTING account is not the signup the coupon was held for
+      // (task 1814, security review P2.7): the hold must not follow the person into it.
+      clearHeldCoupon()
       // Full login — fetch user profile
       const u = await getMe()
       setUser(u)
@@ -208,6 +216,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const verify2fa = useCallback(async (partialToken: string, code: string): Promise<LoginResult> => {
     const result = await apiVerify2fa(partialToken, code)
+    clearHeldCoupon() // an existing account, not the signup the coupon was held for (1814)
     const u = await getMe()
     setUser(u)
     broadcastLogin(u.user_id)
@@ -226,6 +235,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       channelRef.current?.postMessage({ type: 'logout' } satisfies AuthBroadcastMessage)
     } catch { /* channel may already be closed during teardown */ }
+    clearHeldCoupon() // a coupon held in this tab belongs to nobody once the account leaves (1814)
     await onLogoutCallback?.()
     // Best-effort server-side logout — the session may already be gone (e.g.
     // account deletion invalidates ALL of the user's sessions server-side
