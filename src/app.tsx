@@ -59,6 +59,7 @@ const Photos         = lazyNamed(() => import('./pages/photos'),         'Photos
 const Pricing        = lazyNamed(() => import('./pages/pricing'),        'Pricing')
 const Billing        = lazyNamed(() => import('./pages/billing'),        'Billing')
 const ChoosePlan     = lazyNamed(() => import('./pages/choose-plan'),    'ChoosePlan')
+const ReturnToApp    = lazyNamed(() => import('./pages/return-to-app'),  'ReturnToApp')
 const ShareViewPage  = lazyNamed(() => import('./pages/share-view'),     'ShareViewPage')
 const ForgotPassword = lazyNamed(() => import('./pages/forgot-password'),'ForgotPassword')
 const ResetPassword  = lazyNamed(() => import('./pages/reset-password'), 'ResetPassword')
@@ -401,6 +402,7 @@ const PUBLIC_ROUTE_PATTERNS: RegExp[] = [
   /^\/invite\//,
   /^\/auth\/impersonate(\/|$)/,
   /^\/cookies(\/|$)/,
+  /^\/return-to-app(\/|$)/, // checkout return page for native apps (task 1743)
 ]
 function isPublicPath(pathname: string): boolean {
   return PUBLIC_ROUTE_PATTERNS.some((re) => re.test(pathname))
@@ -810,6 +812,9 @@ export function App() {
           {/* Task 1814: coupon links. Public; the page routes to signup / login / claim. */}
           <Route path="/c/:code" element={<Coupon />} />
           <Route path="/cookies" element={<Cookies />} />
+          {/* Task 1743: where a native app's Mollie checkout returns the system browser. Public;
+              the path is fixed server-side (checkout_return::APP_RETURN_PATH). */}
+          <Route path="/return-to-app" element={<ReturnToApp />} />
           <Route path="/receive" element={<Receive />} />
           {/* E2EE File Requests — creation page (auth required) */}
           <Route
