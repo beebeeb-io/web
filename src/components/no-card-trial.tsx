@@ -258,6 +258,30 @@ export function NoCardTrialStatusCard({
   )
 }
 
+/**
+ * The trial lines of a "Current plan" card (task 1842): when it ends, and what happens then.
+ * No price, no billing cycle, no plan name: a trial without a card is none of those. The
+ * usage against the cap sits in the card's own storage meter, which is fed the trial cap.
+ */
+export function NoCardTrialPlanLines({ status, testIdPrefix }: { status: NoCardTrialStatus; testIdPrefix: string }) {
+  return (
+    <div className="mt-1.5 space-y-1.5">
+      <div className="font-mono text-[13px] text-ink-2" data-testid={`${testIdPrefix}-trial-ends`}>
+        {status.endsOn ? `Ends ${status.endsOn}` : 'Trial running'}
+        <span className="text-ink-3">{' · '}{status.daysLeftLabel}</span>
+      </div>
+      <p className="text-[13px] text-ink-3 leading-relaxed max-w-md" data-testid={`${testIdPrefix}-trial-consequence`}>
+        {status.consequence}
+      </p>
+      {status.sharingNote && (
+        <p className="text-[13px] text-ink-3 leading-relaxed max-w-md" data-testid={`${testIdPrefix}-trial-sharing-note`}>
+          {status.sharingNote}
+        </p>
+      )}
+    </div>
+  )
+}
+
 /** The trial ended with files above the allowance (or with no allowance at all): read-only, a deletion date, how to trim, and Subscribe. */
 export function TrialEndedCard({
   status,

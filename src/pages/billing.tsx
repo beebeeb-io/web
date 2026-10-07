@@ -50,7 +50,7 @@ import {
   cancelDowngrade,
 } from '../lib/api'
 import { useDriveData } from '../lib/drive-data-context'
-import { NoCardTrialStatusCard, TrialEndedCard, TrialStartCard, TrialUnavailableNote } from '../components/no-card-trial'
+import { NoCardTrialPlanLines, TrialEndedCard, TrialStartCard, TrialUnavailableNote } from '../components/no-card-trial'
 import { useStartNoCardTrial } from '../hooks/use-start-no-card-trial'
 import { noCardTrialStatus, trialBillingRefusalCopy, trialEndedStatus, trialOfferView } from '../lib/no-card-trial'
 import { useWsEvent } from '../lib/ws-context'
@@ -251,9 +251,9 @@ function AnimatedProgress({ percent, className = '' }: { percent: number; classN
    non-accent) add-on bar alongside the amber primary bar. */
 
 /** A hairline-bordered card matching the mockups' radii + padding. */
-function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
+function Card({ children, className = '', 'data-testid': testId }: { children: ReactNode; className?: string; 'data-testid'?: string }) {
   return (
-    <div className={`border border-line rounded-xl bg-paper ${className}`}>{children}</div>
+    <div className={`border border-line rounded-xl bg-paper ${className}`} data-testid={testId}>{children}</div>
   )
 }
 
@@ -891,7 +891,11 @@ export function Billing() {
     meta.storageGB * 1_000_000_000,
   )
   // Guard against NaN/undefined — show 0 rather than NaN in the UI
-  const totalStorageBytes = trialCapBytes != null
+  // Task 1842: a no-card trial's ceiling is the trial cap from the onboarding document (10 GB),
+  // not the plan the trial would convert to.
+  const totalStorageBytes = noCardTrial != null && noCardTrial.capBytes > 0
+    ? noCardTrial.capBytes
+    : trialCapBytes != null
     ? trialCapBytes
     : Number.isFinite(rawTotalStorageBytes) && rawTotalStorageBytes > 0
       ? rawTotalStorageBytes
@@ -915,7 +919,9 @@ export function Billing() {
   const trialCapped = isTrialCapped(sub)
 
   // Storage slider derived values
-  const canAddStorage = planCanAddStorage(effectivePlan)
+  // Task 1842: a no-card trial has no subscription, so there is no add-on to buy; the Manage
+  // storage section is hidden for it and the near-cap line must not point at it.
+  const canAddStorage = planCanAddStorage(effectivePlan) && !noCardTrial
   const baseTB = addonState?.base_storage_tb || planBaseTB(effectivePlan)
   const rawMaxExtraTB = addonState
     ? addonState.max_storage_tb - addonState.base_storage_tb
@@ -1818,7 +1824,7 @@ function openUpgrade(plan: string) {
       ) : (
         <SettingsHeader
           title="Plan & billing"
-          subtitle={meta.tagline}
+          subtitle={noCardTrial ? 'Choose the plan you want to keep when the trial ends.' : meta.tagline}
         />
       )}
 
@@ -2073,9 +2079,9 @@ function openUpgrade(plan: string) {
             checkout (the trial is used), so the CTA opens the change view. */}
         {/* Task 1757 — the no-card trial, drawn from the onboarding document: running,
             ended over the allowance, or on offer. */}
-        {noCardTrial && view === 'summary' && (
-          <NoCardTrialStatusCard status={noCardTrial} canSubscribe={accountDocument?.purchase?.ctaAllowed === true} variant="panel" />
-        )}
+        {/* Task 1842: the running no-card trial is drawn by the Current plan card below (end date,
+            usage against the cap, what happens at the end, sharing) and by the global banner — the
+            former standalone panel said the same three things a third time. */}
         {trialEnded && view === 'summary' && <TrialEndedCard status={trialEnded} variant="panel" />}
         {view === 'summary' && trialOffer?.kind === 'available' && (
           <div className="rounded-xl border border-line bg-paper-2 px-6 py-5" data-testid="billing-trial-offer">
@@ -2219,18 +2225,19 @@ function openUpgrade(plan: string) {
         {view === 'summary' && (
           <div className="space-y-4">
             {/* Current Plan card */}
-            <Card className="overflow-hidden">
+            <Card className="overflow-hidden" data-testid="billing-current-plan-card">
               <div className="p-5 grid gap-6 md:grid-cols-2">
                 {/* Left: plan + price + actions */}
                 <div>
                   <SectionLabel className="mb-2">Current plan</SectionLabel>
                   <div className="flex items-center gap-3 mb-1">
-                    <span className="text-[28px] font-bold tracking-tight leading-none">
-                      {currentPlanName({ accountStateLabel, hasNoPlan, planLabel: meta.label })}
+                    <span className="text-[28px] font-bold tracking-tight leading-none" data-testid="billing-current-plan-name">
+                      {currentPlanName({ accountStateLabel, hasNoPlan, planLabel: meta.label, noCardTrial: noCardTrial !== null })}
                     </span>
-                    {effectivePlan !== 'free' && !hasNoPlan && statusBadge()}
+                    {effectivePlan !== 'free' && !hasNoPlan && !noCardTrial && statusBadge()}
                   </div>
-                  {effectivePlan !== 'free' && (
+                  {noCardTrial && <NoCardTrialPlanLines status={noCardTrial} testIdPrefix="billing-current-plan" />}
+                  {effectivePlan !== 'free' && !noCardTrial && (
                     <div className="font-mono text-[13px] text-ink-2">
                       EUR {formatCentsAsEur(basePriceCents)} / {billingInterval}
                       <span className="text-ink-3">
@@ -2270,9 +2277,9 @@ function openUpgrade(plan: string) {
                   )}
 
                   <div className="mt-5 flex items-center gap-3">
-                    <BBButton variant="amber" size="md" onClick={() => setView('change')}>
+                    <BBButton variant="amber" size="md" onClick={() => setView('change')} data-testid="billing-choose-plan">
                       <Icon name="arrow-up" size={13} className="mr-1.5" />
-                      {effectivePlan === 'free' ? 'Choose a plan' : 'Change plan'}
+                      {effectivePlan === 'free' || noCardTrial ? 'Choose a plan' : 'Change plan'}
                     </BBButton>
                     {effectivePlan !== 'free' &&
                       sub?.status !== 'cancelling' &&
@@ -2353,7 +2360,7 @@ function openUpgrade(plan: string) {
                   </span>
                 </div>
               ) : (
-                periodLine && (
+                periodLine && !noCardTrial && (
                   <div
                     className="flex items-center gap-3 px-5 py-3 border-t border-line bg-paper-2 text-xs"
                     data-testid={cancelCopy?.kind === 'paid_cancelling' ? 'cancelling-card' : undefined}
@@ -2607,7 +2614,7 @@ function openUpgrade(plan: string) {
               Task 1604 (c): a trial cancelled before its first charge has no
               cycle left to switch — the prompt (and its switch UI) is not
               offered at all for that row. */}
-          {sub?.billing_cycle === 'monthly' && effectivePlan !== 'free' && !isCancelledTrial(sub) && (
+          {sub?.billing_cycle === 'monthly' && effectivePlan !== 'free' && !isCancelledTrial(sub) && !noCardTrial && (
             <div className="border border-amber/30 bg-amber-bg/30 rounded-xl p-5">
               <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep mb-1">
                 Save on your plan
@@ -2685,7 +2692,7 @@ function openUpgrade(plan: string) {
           )}
 
           {/* Current plan card */}
-          <div className="border border-line rounded-xl p-5 bg-paper relative">
+          <div className="border border-line rounded-xl p-5 bg-paper relative" data-testid="chooser-current-plan-card">
             {/* Plan badge */}
             <div className="flex items-start justify-between mb-4">
               <div>
@@ -2694,12 +2701,12 @@ function openUpgrade(plan: string) {
                 </div>
                 <div className="flex items-baseline gap-3">
                   <span className="text-[28px] font-bold tracking-tight leading-none" data-testid="chooser-current-plan-name">
-                    {currentPlanName({ accountStateLabel, hasNoPlan, planLabel: meta.label })}
+                    {currentPlanName({ accountStateLabel, hasNoPlan, planLabel: meta.label, noCardTrial: noCardTrial !== null })}
                   </span>
-                  {sub?.billing_cycle === 'yearly' && effectivePlan !== 'free' && (
+                  {sub?.billing_cycle === 'yearly' && effectivePlan !== 'free' && !noCardTrial && (
                     <BBChip variant="amber">Yearly</BBChip>
                   )}
-                  {sub?.billing_cycle === 'monthly' && effectivePlan !== 'free' && (
+                  {sub?.billing_cycle === 'monthly' && effectivePlan !== 'free' && !noCardTrial && (
                     <BBChip>Monthly</BBChip>
                   )}
                 </div>
@@ -2708,7 +2715,8 @@ function openUpgrade(plan: string) {
                     {ALLOWANCE_LINE}
                   </div>
                 )}
-                {effectivePlan !== 'free' && (
+                {noCardTrial && <NoCardTrialPlanLines status={noCardTrial} testIdPrefix="chooser-current-plan" />}
+                {effectivePlan !== 'free' && !noCardTrial && (
                   <div className="mt-1.5 space-y-0.5">
                     {currentExtraTB > 0 ? (
                       <>
@@ -2727,7 +2735,7 @@ function openUpgrade(plan: string) {
                   </div>
                 )}
               </div>
-              {statusBadge()}
+              {!noCardTrial && statusBadge()}
             </div>
 
             {/* Storage usage */}
@@ -2747,7 +2755,9 @@ function openUpgrade(plan: string) {
               <AnimatedProgress percent={usedPercent} />
               {usedPercent > 90 && (
                 <div className="text-[11px] text-red mt-1.5">
-                  {canAddStorage
+                  {noCardTrial
+                    ? 'Your trial is almost full. Choose a plan to store more.'
+                    : canAddStorage
                     ? 'Storage almost full. Add more storage below.'
                     : 'Storage almost full. Consider upgrading your plan.'}
                 </div>
@@ -2756,7 +2766,7 @@ function openUpgrade(plan: string) {
 
             {/* Next billing / trial ends (flow-money #5). Cancelling is
                 excluded here: the cancelling panel below owns that date. */}
-            {periodLine && periodLine.label !== 'Access until' && (
+            {periodLine && !noCardTrial && periodLine.label !== 'Access until' && (
               <div className="flex items-center gap-3 p-3 bg-paper-2 border border-line rounded-lg text-xs">
                 <Icon name="clock" size={13} className="text-ink-3 shrink-0" />
                 <span className="flex-1">
@@ -3047,9 +3057,18 @@ function openUpgrade(plan: string) {
               ) : sub?.status === 'trialing' && noCardTrial ? (
                 /* Task 1757 — a trial without a card has no mandate to charge ("pay now") and
                    nothing to convert (server 409 trial_convert_unavailable): it subscribes at
-                   checkout, like anyone else, and the first charge lifts the cap. */
-                <BBButton variant="amber" size="md" onClick={() => openUpgrade(effectivePlan)} data-testid="trial-subscribe-plan">
-                  Subscribe to {meta.label}
+                   checkout, like anyone else, and the first charge lifts the cap.
+                   Task 1842 — it is not a Pro subscription either, so the action is "Choose a
+                   plan", which takes the user to the plan table below, never "Subscribe to Pro". */
+                <BBButton
+                  variant="amber"
+                  size="md"
+                  onClick={() =>
+                    document.querySelector('[data-testid="plan-comparison"]')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                  }
+                  data-testid="chooser-choose-plan"
+                >
+                  Choose a plan
                   <Icon name="chevron-right" size={13} className="ml-1.5" />
                 </BBButton>
               ) : sub?.status === 'trialing' ? (
@@ -3306,7 +3325,7 @@ function openUpgrade(plan: string) {
           </div>
 
           {/* Monthly switch prompt — shown to yearly paid subscribers */}
-          {sub?.billing_cycle === 'yearly' && effectivePlan !== 'free' && sub.status !== 'cancelling' && (
+          {sub?.billing_cycle === 'yearly' && effectivePlan !== 'free' && sub.status !== 'cancelling' && !noCardTrial && (
             <div className="border border-line rounded-xl p-5 bg-paper">
               <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-4 mb-1">
                 Billing cycle
@@ -3392,19 +3411,22 @@ function openUpgrade(plan: string) {
         <Card className="overflow-hidden">
           <div className="px-5 py-4 border-b border-line">
             <SectionLabel className="mb-1">Compare plans</SectionLabel>
-            <div className="text-sm text-ink-2">
-              {effectivePlan === 'free'
+            <div className="text-sm text-ink-2" data-testid="compare-plans-copy">
+              {effectivePlan === 'free' || noCardTrial
                 ? 'All paid plans include encrypted storage, photo library, and EU data residency.'
                 : 'Move to a different tier. Upgrades apply immediately; downgrades apply at your next renewal.'}
             </div>
           </div>
           <div className="p-5">
             <PlanComparisonTable
-              currentPlan={effectivePlan}
-              onUpgrade={handleUpgradeOrTrial}
+              // Task 1842: a no-card trial holds no plan, so no column is "Current", nothing is a
+              // downgrade, and the upgrade rate limit (a subscription rule) does not apply.
+              currentPlan={noCardTrial ? 'none' : effectivePlan}
+              onUpgrade={noCardTrial ? openUpgrade : handleUpgradeOrTrial}
               onDowngrade={openDowngrade}
-              canUpgrade={sub?.can_upgrade}
-              upgradeNextAvailableLabel={upgradeNextAvailableLabel}
+              canUpgrade={noCardTrial ? undefined : sub?.can_upgrade}
+              upgradeNextAvailableLabel={noCardTrial ? null : upgradeNextAvailableLabel}
+              ctaLabel={noCardTrial ? 'Choose' : undefined}
             />
           </div>
         </Card>
@@ -3503,14 +3525,14 @@ function openUpgrade(plan: string) {
             <StorageBreakdown
               usageBytes={usedBytes}
               quotaBytes={totalStorageBytes}
-              planName={effectivePlan}
+              planName={noCardTrial ? 'trial' : effectivePlan}
               files={files ?? undefined}
             />
           </div>
         )}
 
         {/* ── Manage Storage slider ───────────────────── */}
-        {canAddStorage && effectivePlan !== 'free' && (
+        {canAddStorage && effectivePlan !== 'free' && !noCardTrial && (
           <div className="border border-line rounded-xl overflow-hidden bg-paper">
             <div className="px-5 py-4 border-b border-line">
               <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-4 mb-1">

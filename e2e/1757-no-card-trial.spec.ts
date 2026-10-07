@@ -364,7 +364,9 @@ test('SUBSCRIBE — a trial without a card subscribes at checkout (mock Mollie):
   // No mandate to charge, nothing to convert: neither legacy trial control is drawn.
   await expect(page.getByTestId('pay-now-button')).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Add payment method' })).toHaveCount(0)
-  await page.getByTestId('trial-subscribe-plan').click()
+  // 1842: no "Subscribe to Pro" any more — "Choose a plan" leads to the plan table, and Pro's button opens checkout.
+  await page.getByTestId('chooser-choose-plan').click()
+  await page.getByTestId('plan-comparison').getByRole('button', { name: 'Choose', exact: true }).last().click()
   await page.waitForTimeout(1500)
   await shot(page, '1757-12a-upgrade-dialog')
   await page.getByRole('button', { name: /^Continue/ }).click()
