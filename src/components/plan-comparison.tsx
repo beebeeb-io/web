@@ -21,6 +21,11 @@ interface PlanComparisonProps {
   canUpgrade?: boolean
   /** Human next-available date for the disabled-Upgrade tooltip (never raw ISO). */
   upgradeNextAvailableLabel?: string | null
+  /**
+   * Label of the buy button. "Upgrade" by default; an account on a trial without a card has
+   * no plan to upgrade from, so the billing page says "Choose" (task 1842).
+   */
+  ctaLabel?: string
 }
 
 // The marketed tiers (pricing v2: Starter, Basic, Pro, Teams). Free is removed.
@@ -48,9 +53,10 @@ export function PlanComparisonTable({
   onDowngrade,
   canUpgrade,
   upgradeNextAvailableLabel,
+  ctaLabel = 'Upgrade',
 }: PlanComparisonProps) {
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto" data-testid="plan-comparison">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-line">
@@ -138,7 +144,7 @@ export function PlanComparisonTable({
                   >
                     {upgradeBlocked && upgradeNextAvailableLabel
                       ? `Available ${upgradeNextAvailableLabel}`
-                      : 'Upgrade'}
+                      : ctaLabel}
                   </BBButton>
                 </td>
               )
