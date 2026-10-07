@@ -66,8 +66,9 @@ const EXPECTED: Record<string, string> = {
   'account.trialing_no_card.desktop.json': 'account:trialing_no_card',
   'client.update_required.ios.json': 'update_required',
   'forward_compat.unknown_step.ios.json': 'step:enter_email',
-  'pre_account.desktop.json': 'step:enter_email',
-  'pre_account.ios.json': 'step:enter_email',
+  // Signup is web-only (1834/1836): iOS and desktop documents are not allowed.
+  'pre_account.desktop.json': 'signup_unavailable',
+  'pre_account.ios.json': 'signup_unavailable',
   'pre_account.web.json': 'step:enter_email',
 }
 
