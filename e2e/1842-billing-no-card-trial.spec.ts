@@ -79,7 +79,7 @@ function json(route: Route, body: unknown, status = 200) {
   return route.fulfill({ status, contentType: 'application/json', headers: CORS, body: JSON.stringify(body) })
 }
 
-function installMocks(page: Page, sub: unknown, doc: unknown = null) {
+function installMocks(page: Page, sub: unknown, doc: unknown = null, usedBytes = 440) {
   return page.route('**/*', async (route) => {
     const url = route.request().url()
     const method = route.request().method()
@@ -103,7 +103,7 @@ function installMocks(page: Page, sub: unknown, doc: unknown = null) {
     if (url.includes('/billing/plans')) return json(route, { plans: PLANS })
     if (url.includes('/billing/invoices')) return json(route, { invoices: [] })
     if (url.includes('/billing/transactions')) return json(route, { transactions: [] })
-    if (url.includes('/billing/usage')) return json(route, { used_bytes: 440, file_count: 1 })
+    if (url.includes('/billing/usage')) return json(route, { used_bytes: usedBytes, file_count: 1 })
     if (url.includes('/billing/storage-addons')) {
       return json(route, { extra_storage_tb: 0, base_storage_tb: 1, max_storage_tb: 5, effective_storage_bytes: 1_000_000_000_000 })
     }
@@ -130,6 +130,18 @@ const SUMMARY = '/settings/billing'
 const CHANGE = '/settings/billing?view=change'
 
 test.describe('1842 no-card trial on the billing pages', () => {
+  test('near-cap no-card trial: points at choosing a plan, never at add-on storage', async ({ page }) => {
+    const doc = noCardDoc()
+    doc.account.storage.used_bytes = 9_500_000_000
+    await installMocks(page, NO_CARD_SUB, doc, 9_500_000_000)
+    await bootApp(page, CHANGE)
+    await expect(page.getByText('Your trial is almost full. Choose a plan to store more.')).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByText(/Add more storage/i)).toHaveCount(0)
+    await expect(page.getByText(/Manage storage/i)).toHaveCount(0)
+    await page.screenshot({ path: `${SHOTS}/chooser-no-card-near-cap-light.png`, fullPage: true })
+  })
+
+
   test('summary: the current-plan card is the trial, not a Pro subscription', async ({ page }) => {
     await installMocks(page, NO_CARD_SUB, noCardDoc())
     await bootApp(page, SUMMARY)

@@ -919,7 +919,9 @@ export function Billing() {
   const trialCapped = isTrialCapped(sub)
 
   // Storage slider derived values
-  const canAddStorage = planCanAddStorage(effectivePlan)
+  // Task 1842: a no-card trial has no subscription, so there is no add-on to buy; the Manage
+  // storage section is hidden for it and the near-cap line must not point at it.
+  const canAddStorage = planCanAddStorage(effectivePlan) && !noCardTrial
   const baseTB = addonState?.base_storage_tb || planBaseTB(effectivePlan)
   const rawMaxExtraTB = addonState
     ? addonState.max_storage_tb - addonState.base_storage_tb
@@ -2753,7 +2755,9 @@ function openUpgrade(plan: string) {
               <AnimatedProgress percent={usedPercent} />
               {usedPercent > 90 && (
                 <div className="text-[11px] text-red mt-1.5">
-                  {canAddStorage
+                  {noCardTrial
+                    ? 'Your trial is almost full. Choose a plan to store more.'
+                    : canAddStorage
                     ? 'Storage almost full. Add more storage below.'
                     : 'Storage almost full. Consider upgrading your plan.'}
                 </div>
