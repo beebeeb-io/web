@@ -14,7 +14,7 @@
  *
  * Two inputs from the document are links or request paths and are therefore
  * checked here once, so no component ever has to remember to: external URLs
- * must be `https:` (`safeHttpsUrl`), and the breach-check and trial-start
+ * must be `https:` on beebeeb.io (`ownHttpsUrl`), and the breach-check and trial-start
  * endpoints must be same-origin `/api/v1/...` paths (`sameOriginApiPath`,
  * contract README rule 8). A value that fails is dropped (null), not repaired.
  */
@@ -76,6 +76,25 @@ export function safeHttpsUrl(v: unknown): string | null {
   }
 }
 
+/**
+ * Our own https links: `https:` on `beebeeb.io` or a subdomain, default port, no credentials.
+ * The onboarding document is data from the network; a link it carries ends up in an `<a href>`
+ * on a screen that looks like ours, so a tampered document must not be able to point it
+ * elsewhere (task 1753-P3-02; mobile pins the same way). Anything else is dropped to null and
+ * the caller's built-in default applies.
+ */
+export function ownHttpsUrl(v: unknown): string | null {
+  if (typeof v !== 'string') return null
+  try {
+    const u = new URL(v)
+    if (u.protocol !== 'https:' || u.username || u.password || u.port) return null
+    const host = u.hostname.toLowerCase()
+    return host === 'beebeeb.io' || host.endsWith('.beebeeb.io') ? u.href : null
+  } catch {
+    return null
+  }
+}
+
 const API_PATH_RE = /^\/api\/v1\/[A-Za-z0-9._~\-/{}]*$/
 
 /**
@@ -103,7 +122,7 @@ const FALLBACK_KINDS: readonly FallbackKind[] = ['update_app', 'use_web', 'conta
 function parseFallback(v: unknown): Fallback | null {
   if (!isObj(v)) return null
   const kind = FALLBACK_KINDS.find((k) => k === v.kind) ?? 'unknown'
-  return { kind, url: safeHttpsUrl(v.url) }
+  return { kind, url: ownHttpsUrl(v.url) }
 }
 
 const STEP_STATUSES: readonly StepStatus[] = ['todo', 'in_progress', 'done', 'blocked']
@@ -140,7 +159,7 @@ function parseSignup(v: unknown): SignupInfo | null {
     allowed: v.allowed === true,
     mode,
     reason: str(v.reason),
-    webUrl: safeHttpsUrl(v.web_url),
+    webUrl: ownHttpsUrl(v.web_url),
   }
 }
 
@@ -173,7 +192,7 @@ function parsePolicy(v: unknown): SignupPolicy | null {
       wordCount: int(rp.word_count) ?? 12,
       verifyWordCount: int(rp.verify_word_count) ?? 3,
     },
-    terms: { version: termsVersion, url: safeHttpsUrl(terms.url), privacyUrl: safeHttpsUrl(terms.privacy_url) },
+    terms: { version: termsVersion, url: ownHttpsUrl(terms.url), privacyUrl: ownHttpsUrl(terms.privacy_url) },
     emailCode: {
       length: int(ec.length) ?? 8,
       ttlSeconds: int(ec.ttl_seconds) ?? 900,

@@ -23,7 +23,7 @@ function FallbackAction({ fallback, testId }: { fallback: Fallback; testId: stri
   if (fallback.kind === 'contact_support') {
     return (
       <a
-        href={fallback.url ?? 'mailto:support@beebeeb.io'}
+        href="mailto:support@beebeeb.io"
         data-testid={testId}
         className="inline-flex w-full items-center justify-center rounded-lg bg-amber px-lg py-md text-base font-medium text-[oklch(0.22_0.01_70)] hover:brightness-95"
       >

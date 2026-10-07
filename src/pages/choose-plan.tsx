@@ -78,6 +78,7 @@ import {
   choosePlanEntry,
   classifyTrialCheckoutError,
   formatEur,
+  hasTrialReturnIntent,
   isTrialPlanSlug,
   isZeroPriceForCycle,
   startTrialLabel,
@@ -183,6 +184,7 @@ export function ChoosePlan() {
       subStatus: sub?.status,
       effectivePlan: sub?.status === 'cancelled' ? 'free' : sub?.plan ?? 'free',
       hasUsedTrial: resolveHasUsedTrial(sub?.has_used_trial, false),
+      hasTrialIntent: hasTrialReturnIntent(getPendingCheckout()),
     })
     if (entry.kind === 'redirect') {
       navigate(entry.to, { replace: true })
