@@ -31,13 +31,10 @@ import {
   setToken,
 } from '@beebeeb/shared'
 import type {
-  AbuseReport,
-  AbuseReportStatus,
   AcceptInviteResponse,
   AccountActivity,
   AccountSession,
   ActivityResponse,
-  AdminStats,
   AuditEvent,
   AuthUser,
   BillingUsage,
@@ -50,7 +47,6 @@ import type {
   DriveFile,
   FileVersion,
   HealthResponse,
-  ImpersonateResponse,
   InviteActivity,
   InviteInfo,
   InvitePreview,
@@ -3546,13 +3542,6 @@ export async function revokeSession(id: string): Promise<void> {
   await request(`/api/v1/auth/sessions/${id}`, { method: 'DELETE' })
 }
 
-export async function adminImpersonate(userId: string): Promise<ImpersonateResponse> {
-  const data = await request<ImpersonateResponse>(`/api/v1/admin/impersonate/${userId}`, {
-    method: 'POST',
-  })
-  return data
-}
-
 /**
  * Token-based impersonation redemption (task 0161). Public endpoint — the
  * single-use 15-minute token in the body is itself the credential. On success
@@ -3580,15 +3569,6 @@ export async function redeemImpersonationToken(
     setToken(data.session_token)
   }
   return data
-}
-
-/**
- * Used by drive-layout to gate the sidebar Admin link. The actual
- * admin portal lives at admin.beebeeb.io — this just answers the
- * question "is the current user allowed to see the link at all".
- */
-export async function getAdminStats(): Promise<AdminStats> {
-  return request<AdminStats>('/api/v1/admin/stats')
 }
 
 /**
@@ -3699,30 +3679,6 @@ export async function reportShareLink(
   }
 
   return res.json() as Promise<{ id: string }>
-}
-
-export async function listAbuseReports(params?: {
-  status?: AbuseReportStatus
-  limit?: number
-}): Promise<AbuseReport[]> {
-  const qs = new URLSearchParams()
-  if (params?.status) qs.set('status', params.status)
-  if (params?.limit != null) qs.set('limit', String(params.limit))
-  const q = qs.toString()
-  const data = await request<{ reports: AbuseReport[]; count: number }>(
-    `/api/v1/admin/reports${q ? `?${q}` : ''}`,
-  )
-  return data.reports
-}
-
-export async function updateAbuseReport(
-  id: string,
-  updates: { status: AbuseReportStatus; admin_notes?: string },
-): Promise<{ id: string; status: AbuseReportStatus; resolved_at: string | null; message: string }> {
-  return request(`/api/v1/admin/reports/${id}`, {
-    method: 'PATCH',
-    body: JSON.stringify(updates),
-  })
 }
 
 /**

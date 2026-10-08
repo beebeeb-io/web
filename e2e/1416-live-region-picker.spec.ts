@@ -12,7 +12,9 @@ const API_URL = process.env.E2E_API_URL ?? 'http://localhost:3001'
  * restart to pick up (`StorageRegistry` only gets a live `BlobStore` client
  * for a pool after restart — see the comment block below).
  *
- * Recipe to run this spec for real (the 1416 step-3 rung):
+ * Recipe to run this spec for real (the 1416 step-3 rung). The admin API calls take an
+ * ADMIN JWT (task 1785: an ordinary session token is a 401) — POST /dev/auto-login on the
+ * isolated API returns one as `admin_token`:
  *   1. Through the real admin API, seed:
  *        POST /api/v1/admin/regions        (a region row)
  *        POST /api/v1/admin/datacenters     (a datacenter row bound to it)
