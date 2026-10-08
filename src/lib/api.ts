@@ -2963,7 +2963,9 @@ export async function createToken(
   return request<CreateTokenResponse>('/api/v1/tokens', {
     method: 'POST',
     headers: confirmToken ? { 'X-Confirm-Token': confirmToken } : undefined,
-    body: JSON.stringify(params),
+    // Task 1789: scopes are not enforced and server PR #188 answers 400 to a
+    // non-empty list, so only the two supported fields are ever sent.
+    body: JSON.stringify({ name: params.name, expires_in_days: params.expires_in_days }),
   })
 }
 

@@ -69,20 +69,9 @@ import {
 } from '../../lib/api'
 import { useOnboarding } from '../../lib/onboarding-context'
 import { useAuth } from '../../lib/auth-context'
-
-const SCOPES = [
-  { id: 'files:read',    label: 'Files · read',    description: 'List and download files' },
-  { id: 'files:write',   label: 'Files · write',   description: 'Upload, rename, and delete files' },
-  { id: 'shares:create', label: 'Shares · create', description: 'Create and revoke share links' },
-  { id: 'account:read',  label: 'Account · read',  description: 'Read account info and usage' },
-]
-
-const EXPIRY_OPTIONS: { label: string; days: number | null }[] = [
-  { label: 'Never',   days: null },
-  { label: '30 days', days: 30 },
-  { label: '90 days', days: 90 },
-  { label: '1 year',  days: 365 },
-]
+import { PAT_ACCESS_NOTICE, PAT_EXPIRY_OPTIONS, buildCreateTokenBody } from '../../lib/pat'
+// Task 1789: no scope picker, no scope column. A token has full account access;
+// render PAT_ACCESS_NOTICE next to the form and PAT_EXPIRY_OPTIONS for expiry.
 
 function formatRelative(iso: string | null): string {
   if (!iso) return 'Never'
@@ -102,15 +91,6 @@ function formatExpiry(iso: string | null): string {
   const now = Date.now()
   if (d.getTime() < now) return 'Expired'
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-}
-
-function ScopeChip({ scope }: { scope: string }) {
-  const color =
-    scope.startsWith('files:write') ? 'amber'
-    : scope.startsWith('files:') ? 'default'
-    : scope.startsWith('shares:') ? 'green'
-    : 'default'
-  return <BBChip variant={color as 'amber' | 'default' | 'green'}>{scope}</BBChip>
 }
 
 function NewTokenBox({ result, onDismiss }: { result: CreateTokenResponse; onDismiss: () => void }) {
@@ -312,7 +292,6 @@ function _SettingsDeveloperFull() {
 
   const [formOpen, setFormOpen] = useState(false)
   const [name, setName] = useState('')
-  const [selectedScopes, setSelectedScopes] = useState<Set<string>>(new Set(['files:read', 'files:write']))
   const [expiryDays, setExpiryDays] = useState<number | null>(90)
   const [creating, setCreating] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
@@ -345,19 +324,9 @@ function _SettingsDeveloperFull() {
 
   useEffect(() => { void load() }, [load])
 
-  function toggleScope(scope: string) {
-    setSelectedScopes(prev => {
-      const next = new Set(prev)
-      if (next.has(scope)) next.delete(scope)
-      else next.add(scope)
-      return next
-    })
-  }
-
   function handleCreate(e: React.FormEvent) {
     e.preventDefault()
     if (!name.trim()) { setFormError('Name is required.'); return }
-    if (selectedScopes.size === 0) { setFormError('Select at least one scope.'); return }
     setFormError(null)
     // Validation passed — obtain step-up confirmation before the actual
     // create call. The request only fires from performCreate's onConfirmed.
@@ -376,24 +345,18 @@ function _SettingsDeveloperFull() {
     setCreating(true)
     try {
       const result = await createToken(
-        {
-          name: name.trim(),
-          scopes: Array.from(selectedScopes),
-          expires_in_days: expiryDays,
-        },
+        buildCreateTokenBody(name, expiryDays),
         confirmToken,
       )
       setNewToken(result)
       setTokens(prev => [{
         id: result.id,
         name: result.name,
-        scopes: result.scopes,
         created_at: new Date().toISOString(),
         last_used_at: null,
         expires_at: result.expires_at,
       }, ...prev])
       setName('')
-      setSelectedScopes(new Set(['files:read', 'files:write']))
       setExpiryDays(90)
       setFormOpen(false)
     } catch (err) {
@@ -401,7 +364,7 @@ function _SettingsDeveloperFull() {
     } finally {
       setCreating(false)
     }
-  }, [name, selectedScopes, expiryDays])
+  }, [name, expiryDays])
 
   async function handleRevoke(id: string) {
     setRevokingId(id)
