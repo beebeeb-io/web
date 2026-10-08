@@ -10,7 +10,7 @@ import type {
 } from '../../lib/onboarding/plan'
 import { OnboardingFrame } from './frame'
 
-function FallbackAction({ fallback, testId }: { fallback: Fallback; testId: string }) {
+export function FallbackAction({ fallback, testId }: { fallback: Fallback; testId: string }) {
   // `update_app` on the web means the page itself is out of date: a reload
   // fetches the current build. It never links anywhere (the web has no store).
   if (fallback.kind === 'update_app') {
@@ -23,7 +23,7 @@ function FallbackAction({ fallback, testId }: { fallback: Fallback; testId: stri
   if (fallback.kind === 'contact_support') {
     return (
       <a
-        href="mailto:support@beebeeb.io"
+        href={fallback.url ?? 'mailto:support@beebeeb.io'}
         data-testid={testId}
         className="inline-flex w-full items-center justify-center rounded-lg bg-amber px-lg py-md text-base font-medium text-[oklch(0.22_0.01_70)] hover:brightness-95"
       >

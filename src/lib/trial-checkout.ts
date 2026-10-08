@@ -166,6 +166,18 @@ export function hasTrialReturnIntent(pending: { kind?: string } | null | undefin
   return pending?.kind === 'trial'
 }
 
+/**
+ * Server-side evidence that a mandate checkout happened for this account, for a return whose
+ * local pending-checkout marker is missing (localStorage blocked or cleared). Only a
+ * mandate-backed trial (`trial_auto_converts`) or a refused-trial reason counts: a no-card trial
+ * or a plain account never does, so a crafted `?returned=1` there stays a normal arrival.
+ */
+export function hasServerTrialEvidence(sub: Subscription | null | undefined): boolean {
+  if (!sub) return false
+  if (sub.trial_block_reason) return true
+  return sub.status === 'trialing' && sub.trial_auto_converts === true
+}
+
 export type ChoosePlanEntry =
   | { kind: 'reconcile' }
   | { kind: 'pick' }

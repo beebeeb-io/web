@@ -198,4 +198,19 @@ test.describe('1753 crafted return URLs', () => {
     await expect(page.getByText(/Your free trial has started/i)).toHaveCount(0)
     expect(await page.evaluate(() => localStorage.getItem('bb_pending_checkout'))).not.toBeNull()
   })
+
+  test('P2 round 2: a real mandate return with localStorage blocked still reconciles', async ({ page }) => {
+    await installMocks(page, { ...TRIALING_SUB, trial_auto_converts: true })
+    await page.addInitScript(() => {
+      // Storage that refuses the pending-checkout key only (as a blocked/cleared marker would),
+      // so the rest of the app keeps working.
+      const get = Storage.prototype.getItem
+      Storage.prototype.getItem = function (k: string) {
+        if (k === 'bb_pending_checkout') throw new Error('blocked')
+        return get.call(this, k)
+      }
+    })
+    await page.goto(`${WEB}/choose-plan?returned=1`)
+    await expect(page.getByText(/Your free trial has started/i)).toBeVisible({ timeout: 40_000 })
+  })
 })
