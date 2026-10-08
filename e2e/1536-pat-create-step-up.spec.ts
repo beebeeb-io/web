@@ -89,7 +89,7 @@ test.describe('task 1536: creating a PAT from a session requires a step-up confi
     await devLogin(page, uniqueDevEmail('noheader'))
 
     const res = await page.request.post(`${API_URL}/api/v1/tokens`, {
-      data: { name: 'e2e-1536-no-header', scopes: [], expires_in_days: null },
+      data: { name: 'e2e-1536-no-header', expires_in_days: null },
     })
     await expectConfirmationRequired(res, 'with no header')
 
@@ -101,7 +101,7 @@ test.describe('task 1536: creating a PAT from a session requires a step-up confi
 
     const res = await page.request.post(`${API_URL}/api/v1/tokens`, {
       headers: { 'X-Confirm-Token': 'not-a-real-confirmation-token-at-all' },
-      data: { name: 'e2e-1536-forged', scopes: [], expires_in_days: null },
+      data: { name: 'e2e-1536-forged', expires_in_days: null },
     })
     await expectConfirmationRequired(res, 'with a forged X-Confirm-Token')
 
@@ -115,7 +115,7 @@ test.describe('task 1536: creating a PAT from a session requires a step-up confi
 
     const res = await page.request.post(`${API_URL}/api/v1/tokens`, {
       headers: { 'X-Confirm-Token': confirmToken },
-      data: { name: 'e2e-1536-step-up', scopes: [], expires_in_days: null },
+      data: { name: 'e2e-1536-step-up', expires_in_days: null },
     })
     expect(res.status(), `POST /api/v1/tokens with a valid X-Confirm-Token: ${res.status()} ${await res.text()}`).toBe(
       201,
@@ -127,7 +127,7 @@ test.describe('task 1536: creating a PAT from a session requires a step-up confi
     // Single-use: replaying the consumed confirmation must be refused.
     const replay = await page.request.post(`${API_URL}/api/v1/tokens`, {
       headers: { 'X-Confirm-Token': confirmToken },
-      data: { name: 'e2e-1536-replay', scopes: [], expires_in_days: null },
+      data: { name: 'e2e-1536-replay', expires_in_days: null },
     })
     await expectConfirmationRequired(replay, 'replaying a spent X-Confirm-Token')
 
