@@ -153,6 +153,29 @@ export interface ChoosePlanEntryInput {
   /** The plan the account is on right now ('free' for grandfathered Free). */
   effectivePlan: string
   hasUsedTrial: boolean
+  /**
+   * True when this browser holds a trial-kind pending-checkout record (see
+   * {@link hasTrialReturnIntent}). `?returned=1` alone is just a URL anyone can type
+   * (task 1753-P3-01): without the intent it is a normal arrival.
+   */
+  hasTrialIntent: boolean
+}
+
+/** Did THIS browser start a trial checkout that a Mollie return could be coming back from? */
+export function hasTrialReturnIntent(pending: { kind?: string } | null | undefined): boolean {
+  return pending?.kind === 'trial'
+}
+
+/**
+ * Server-side evidence that a mandate checkout happened for this account, for a return whose
+ * local pending-checkout marker is missing (localStorage blocked or cleared). Only a
+ * mandate-backed trial (`trial_auto_converts`) or a refused-trial reason counts: a no-card trial
+ * or a plain account never does, so a crafted `?returned=1` there stays a normal arrival.
+ */
+export function hasServerTrialEvidence(sub: Subscription | null | undefined): boolean {
+  if (!sub) return false
+  if (sub.trial_block_reason) return true
+  return sub.status === 'trialing' && sub.trial_auto_converts === true
 }
 
 export type ChoosePlanEntry =
@@ -163,7 +186,8 @@ export type ChoosePlanEntry =
 /**
  * What `/choose-plan` does on arrival.
  *
- * - A Mollie return always reconciles first.
+ * - A Mollie return reconciles first, but only when this browser holds the trial intent
+ *   that started it (1753-P3-01); a bare `?returned=1` is a normal arrival.
  * - `needs_plan` picks a plan (this is the gate's destination).
  * - `lapsed` already used its trial → normal paid checkout.
  * - `ok` has nothing to choose here (entitled, grandfathered Free, or a server
@@ -173,7 +197,7 @@ export type ChoosePlanEntry =
  *   checkout is the right place.
  */
 export function choosePlanEntry(input: ChoosePlanEntryInput): ChoosePlanEntry {
-  if (input.returned) return { kind: 'reconcile' }
+  if (input.returned && input.hasTrialIntent) return { kind: 'reconcile' }
   if (input.accountState === 'needs_plan') return { kind: 'pick' }
   if (input.accountState === 'lapsed') return { kind: 'redirect', to: PAID_CHECKOUT_PATH }
   if (input.fromBilling) {

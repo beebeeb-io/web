@@ -71,14 +71,18 @@ export function reflectsUpgrade(intent: PendingCheckout | null, s: Subscription)
 
 /**
  * The no-intent fallback: a legacy/direct visit to `?upgraded=true` with no
- * persisted pre-state. Accepts any active paid subscription as the
+ * persisted pre-state. Accepts an active paid subscription (never a trial) as the
  * best-effort signal (the historical 0865 behaviour). Used by billing.tsx's
  * `confirmed()` when `intent` is null; kept here alongside `reflectsUpgrade`
  * so the whole state machine — precise path AND fallback — is covered by one
  * test file.
  */
 export function reflectsUpgradeNoIntent(s: Subscription): boolean {
-  return s.plan !== 'free' && ACTIVE_STATUSES.has(s.status)
+  // Task 1753-P2-01: `trialing` is NOT an upgrade. A no-card trial (or a card trial still in
+  // its trial) is exactly the state a crafted `?upgraded=true` link lands on; with no
+  // pre-checkout record there is nothing to say the person paid, so only a real paid
+  // `active` subscription may show "Upgrade complete".
+  return s.plan !== 'free' && s.status === 'active'
 }
 
 /** What `upgradeConfirm` (billing.tsx's own banner state) may hold. */

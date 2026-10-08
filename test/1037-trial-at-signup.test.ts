@@ -199,10 +199,12 @@ describe('trial copy', () => {
 })
 
 describe('choosePlanEntry — what /choose-plan does on arrival', () => {
-  const base = { returned: false, fromBilling: false, subStatus: 'active', effectivePlan: 'free', hasUsedTrial: false }
-  test('a Mollie return always reconciles first, whatever the state', () => {
-    expect(choosePlanEntry({ ...base, accountState: 'needs_plan', returned: true })).toEqual({ kind: 'reconcile' })
-    expect(choosePlanEntry({ ...base, accountState: 'ok', returned: true })).toEqual({ kind: 'reconcile' })
+  const base = { returned: false, fromBilling: false, subStatus: 'active', effectivePlan: 'free', hasUsedTrial: false, hasTrialIntent: false }
+  // Task 1753-P3-01 amended this (was: 'a Mollie return always reconciles first, whatever the state'):
+  // a return reconciles only when this browser holds the trial intent that started it.
+  test('a Mollie return with this browser\'s trial intent reconciles first, whatever the state', () => {
+    expect(choosePlanEntry({ ...base, accountState: 'needs_plan', returned: true, hasTrialIntent: true })).toEqual({ kind: 'reconcile' })
+    expect(choosePlanEntry({ ...base, accountState: 'ok', returned: true, hasTrialIntent: true })).toEqual({ kind: 'reconcile' })
   })
   test('needs_plan → the picker', () => {
     expect(choosePlanEntry({ ...base, accountState: 'needs_plan' })).toEqual({ kind: 'pick' })

@@ -78,6 +78,8 @@ import {
   choosePlanEntry,
   classifyTrialCheckoutError,
   formatEur,
+  hasTrialReturnIntent,
+  hasServerTrialEvidence,
   isTrialPlanSlug,
   isZeroPriceForCycle,
   startTrialLabel,
@@ -176,19 +178,33 @@ export function ChoosePlan() {
   useEffect(() => {
     if (decidedRef.current) return
     decidedRef.current = true
-    const entry = choosePlanEntry({
-      accountState: resolveAccountState(sub),
-      returned,
-      fromBilling,
-      subStatus: sub?.status,
-      effectivePlan: sub?.status === 'cancelled' ? 'free' : sub?.plan ?? 'free',
-      hasUsedTrial: resolveHasUsedTrial(sub?.has_used_trial, false),
-    })
-    if (entry.kind === 'redirect') {
-      navigate(entry.to, { replace: true })
+    const decide = (hasTrialIntent: boolean) => {
+      const entry = choosePlanEntry({
+        accountState: resolveAccountState(sub),
+        returned,
+        fromBilling,
+        subStatus: sub?.status,
+        effectivePlan: sub?.status === 'cancelled' ? 'free' : sub?.plan ?? 'free',
+        hasUsedTrial: resolveHasUsedTrial(sub?.has_used_trial, false),
+        hasTrialIntent,
+      })
+      if (entry.kind === 'redirect') {
+        navigate(entry.to, { replace: true })
+        return
+      }
+      setStep(entry.kind === 'reconcile' ? 'reconcile' : 'pick')
+    }
+    const local = hasTrialReturnIntent(getPendingCheckout())
+    if (local || !returned) {
+      decide(local)
       return
     }
-    setStep(entry.kind === 'reconcile' ? 'reconcile' : 'pick')
+    // A return with no local marker (storage blocked / cleared): ask the server. Only
+    // server-confirmed mandate evidence reconciles; anything else is a normal arrival.
+    void getSubscription().then(
+      (fresh) => decide(hasServerTrialEvidence(fresh)),
+      () => decide(false),
+    )
   }, [sub, returned, fromBilling, navigate])
 
   // ── Return reconcile ───────────────────────────────────────────────────
