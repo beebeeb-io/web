@@ -21,6 +21,7 @@ import {
   getVaultWrapKey,
   decryptVaultBlob,
 } from '../lib/passkey-vault'
+import { passkeyLoginErrorMessage } from '../lib/passkey-errors'
 
 export function VaultUnlock() {
   const { unlockVault, unlockVaultWithPasskey, vaultExists, setMasterKeyFromPasskey } = useKeys()
@@ -173,7 +174,7 @@ export function VaultUnlock() {
 
       await setMasterKeyFromPasskey(masterKey, wrapKey, authedUserId)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Passkey unlock failed.')
+      setError(passkeyLoginErrorMessage(err))
     } finally {
       setPasskeyLoading(false)
     }

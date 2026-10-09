@@ -16,6 +16,7 @@ import { devAutoAuth } from '../lib/dev-auth'
 import { startPasskeyLogin, finishPasskeyLogin, setToken, clearLegacyBearer, opaqueLoginStart as apiOpaqueLoginStart, opaqueLoginFinish as apiOpaqueLoginFinish, serverOptsToGetOptions, credentialToAuthenticationJSON, getVaultKeyEscrow } from '../lib/api'
 import { opaqueLoginStart, opaqueLoginFinish, toBase64, fromBase64 } from '../lib/crypto'
 import { autoUpgradeToV1 } from '../lib/auto-upgrade'
+import { passkeyLoginErrorMessage } from '../lib/passkey-errors'
 import { prfExtensionInputs, extractPrfOutput, getVaultWrapKey, decryptVaultBlob } from '../lib/passkey-vault'
 import { sanitizeRedirect } from '../lib/safe-redirect'
 import { consumePendingExport, DATA_EXPORT_ROUTE } from '../lib/export-intent'
@@ -576,7 +577,7 @@ export function Login() {
     } catch (err) {
       // task 1404 — soft-deleted account on the passkey path.
       const deletedMsg = accountDeletedMessage(err)
-      setError(deletedMsg ?? (err instanceof Error ? err.message : 'Passkey authentication failed'))
+      setError(deletedMsg ?? passkeyLoginErrorMessage(err))
     } finally {
       setPasskeyLoading(false)
     }
