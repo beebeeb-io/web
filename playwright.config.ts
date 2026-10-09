@@ -113,7 +113,11 @@ export default defineConfig({
       // (PR #128 review, Codex P1: left unignored, this project's shared
       // :5173 webServer answers the spec's port-5205 navigation with a
       // connection error, failing all 4 tests before any assertion runs).
-      testIgnore: /(checkout-redirect-0865|trial-0905|storage-addon-confirm-0943|checkout-confirmation-resilience-0957|forgot-password-recovery|1474-devices-sse|1605-trial-limits-ui)\.spec\.ts$/,
+      // 1865-passkey-login-wording.spec.ts: drives the /login page, which is
+      // wrapped in <GuestRoute> — with this project's saved signed-in state it
+      // redirects away before the form renders (PR #162, Codex P2). It runs in
+      // the unauthenticated project below, through this root config.
+      testIgnore: /(checkout-redirect-0865|trial-0905|storage-addon-confirm-0943|checkout-confirmation-resilience-0957|forgot-password-recovery|1474-devices-sse|1605-trial-limits-ui|1865-passkey-login-wording)\.spec\.ts$/,
       dependencies: ['setup'],
       use: {
         storageState: STORAGE_STATE,
@@ -123,7 +127,7 @@ export default defineConfig({
     // ── Step 2b: tests that must run unauthenticated (login page, etc.) ───────
     {
       name: 'unauthenticated',
-      testMatch: /auth\.spec\.ts|login\.spec\.ts|forgot-password-recovery\.spec\.ts/,
+      testMatch: /auth\.spec\.ts|login\.spec\.ts|forgot-password-recovery\.spec\.ts|1865-passkey-login-wording\.spec\.ts/,
       // No storageState — fresh context
     },
   ],

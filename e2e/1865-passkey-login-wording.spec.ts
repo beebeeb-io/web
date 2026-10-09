@@ -15,6 +15,9 @@ const OUT = process.env.E2E_SHOT_DIR ?? '.'
 for (const scheme of ['light', 'dark'] as const) {
   test(`login passkey cancel -> neutral sentence (${scheme})`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: scheme })
+    // DevAuthGate auto-logs in on every dev page load and GuestRoute then
+    // redirects /login away; block it as auth.spec.ts / forgot-password-recovery do.
+    await page.route('**/dev/auto-login', (route) => route.fulfill({ status: 404 }))
     const client = await page.context().newCDPSession(page)
     await client.send('WebAuthn.enable')
     await client.send('WebAuthn.addVirtualAuthenticator', {
