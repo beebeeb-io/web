@@ -39,3 +39,30 @@ describe('scrubFrames', () => {
     expect(scrubFrames(undefined)).toEqual([])
   })
 })
+
+// Task 1884 part 3 — parity with repos/server/beebeeb-api/src/sentry_scrub.rs
+// (IPs, bearer tokens). Added red-first: scrubText previously let both through.
+describe('scrubText: server-parity categories (1884)', () => {
+  it('removes IPv4 addresses', () => {
+    const out = scrubText('connect ECONNREFUSED 203.0.113.42 via 10.200.200.10')
+    expect(out).not.toContain('203.0.113.42')
+    expect(out).not.toContain('10.200.200.10')
+  })
+
+  it('removes IPv6 addresses (full and ::-compressed)', () => {
+    const out = scrubText('peer 2001:db8:85a3:0:0:8a2e:370:7334 and 2001:db8::ff00:42:8329')
+    expect(out).not.toContain('2001:db8')
+    expect(out).not.toContain('8a2e')
+    expect(out).not.toContain('ff00:42')
+  })
+
+  it('removes Bearer tokens, including non-url-safe base64', () => {
+    const out = scrubText('401 Authorization: Bearer abc+secret/foo== rejected')
+    expect(out).not.toContain('secret')
+    expect(out).not.toContain('abc+')
+  })
+
+  it('keeps frame-like line:col positions readable', () => {
+    expect(scrubText('failed at api.ts:1346:12')).toContain('1346')
+  })
+})

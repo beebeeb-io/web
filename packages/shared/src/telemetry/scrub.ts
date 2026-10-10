@@ -20,6 +20,11 @@ const URL_QUERY_OR_FRAGMENT = /((?:https?:\/\/|\/)[^\s"'`]*?)[?#][^\s"'`]*/g
 const SESSION_TOKEN = /bb_sess_[A-Za-z0-9_-]+/g
 const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi
 const EMAIL = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g
+/** Mirrors repos/server/beebeeb-api/src/sentry_scrub.rs (task 1884): a client address must never ride in a message. */
+const BEARER = /\bBearer\s+[A-Za-z0-9\-._~+/]+=*/gi
+const IPV4 = /\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b/g
+const IPV6 =
+  /\b(?:[0-9A-Fa-f]{1,4}:){2,7}[0-9A-Fa-f]{1,4}\b|\b(?:[0-9A-Fa-f]{1,4}:){1,7}:(?:[0-9A-Fa-f]{1,4}:){0,6}[0-9A-Fa-f]{0,4}\b/g
 const LONG_HEX = /\b[0-9a-f]{32,}\b/gi
 /**
  * A QUOTED file name, possibly multi-word (a real folder/file name almost
@@ -51,7 +56,10 @@ export function scrubText(input: string): string {
   try {
     s = s.replace(URL_QUERY_OR_FRAGMENT, '$1')
     s = s.replace(SESSION_TOKEN, '<session>')
+    s = s.replace(BEARER, 'Bearer <token>')
     s = s.replace(EMAIL, '<email>')
+    s = s.replace(IPV6, '<ip>')
+    s = s.replace(IPV4, '<ip>')
     s = s.replace(UUID, '<id>')
     s = s.replace(QUOTED_FILE_NAME, (_m, quote: string, _stem: string, ext: string) => `${quote}<name>.${ext}${quote}`)
     s = s.replace(QUOTED_LONG, (_m, _quote, body: string) => `<str:${body.length}>`)
