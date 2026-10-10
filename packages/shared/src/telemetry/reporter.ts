@@ -24,12 +24,18 @@ export interface TelemetryInit {
   client: 'web' | 'admin'
   release: string
   environment: string
+  /**
+   * Consent granted without an opt-in step (an explicit revoke still wins).
+   * ONLY for the operator admin panel, whose users are our own staff — never
+   * for the end-user web app, whose Settings card promises "Off by default".
+   */
+  defaultConsent?: boolean
   storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
   fetchImpl?: typeof fetch
   now?: () => number
 }
 
-interface State extends Required<Omit<TelemetryInit, 'storage'>> {
+interface State extends Required<Omit<TelemetryInit, 'storage' | 'defaultConsent'>> {
   storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
   endpoint: string
   key: string
@@ -52,6 +58,7 @@ let state: State | null = null
  * task 1369).
  */
 let consentStorage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null = null
+let defaultConsent = false
 
 /** `https://<key>@errors.beebeeb.io/<project>` → endpoint + public key. */
 function parseDsn(dsn: string): { endpoint: string; key: string } {
@@ -83,6 +90,7 @@ export function initTelemetry(opts: TelemetryInit): void {
   } catch {
     consentStorage = null
   }
+  defaultConsent = opts.defaultConsent === true
 
   state = null
   if (!opts.dsn) return
@@ -125,17 +133,25 @@ export function isTelemetryConfigured(): boolean {
 }
 
 export function getTelemetryConsent(): boolean {
+  let stored: string | null = null
   try {
-    return consentStorage?.getItem(CONSENT_KEY) === 'on'
+    stored = consentStorage?.getItem(CONSENT_KEY) ?? null
   } catch {
-    return false
+    /* storage unavailable — fall through to the default */
   }
+  if (stored === 'on') return true
+  if (stored === 'off') return false
+  return defaultConsent
 }
 
 export function setTelemetryConsent(on: boolean): void {
   if (!consentStorage) return
   try {
-    if (on) {
+    if (!on && defaultConsent) {
+      // Default-on apps record the revoke explicitly; removing the key would fall back to "on".
+      consentStorage.setItem(CONSENT_KEY, 'off')
+      consentStorage.removeItem(INSTALL_KEY)
+    } else if (on) {
       consentStorage.setItem(CONSENT_KEY, 'on')
       if (!consentStorage.getItem(INSTALL_KEY)) consentStorage.setItem(INSTALL_KEY, randomHex(16))
     } else {
@@ -214,6 +230,10 @@ export function reportError(err: unknown, extra?: Record<string, string | number
         },
         body,
         keepalive: true,
+        // Nothing ambient may ride along: the page URL (a share link path) as
+        // Referer, or any cookie. The envelope is the only thing we send.
+        referrerPolicy: 'no-referrer',
+        credentials: 'omit',
         signal: controller.signal,
       })
       .catch(() => undefined)
@@ -226,4 +246,5 @@ export function reportError(err: unknown, extra?: Record<string, string | number
 export function __resetTelemetryForTests(): void {
   state = null
   consentStorage = null
+  defaultConsent = false
 }

@@ -459,8 +459,19 @@ function ApiErrorWiring() {
       // Do NOT call ev.preventDefault() — keep the browser's native
       // "Uncaught (in promise)" warning visible in DevTools.
     }
+    // Uncaught synchronous errors (event handlers, timers) — neither the React
+    // boundary nor the rejection handler sees these. Cross-origin "Script
+    // error." events carry no Error object and nothing diagnosable: skipped.
+    function handleWindowError(ev: ErrorEvent) {
+      if (!ev.error) return
+      reportError(ev.error, { boundary: 'window.onerror' })
+    }
     window.addEventListener('unhandledrejection', handleUnhandledRejection)
-    return () => window.removeEventListener('unhandledrejection', handleUnhandledRejection)
+    window.addEventListener('error', handleWindowError)
+    return () => {
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection)
+      window.removeEventListener('error', handleWindowError)
+    }
   }, [])
 
   return null

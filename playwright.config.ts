@@ -117,7 +117,7 @@ export default defineConfig({
       // wrapped in <GuestRoute> — with this project's saved signed-in state it
       // redirects away before the form renders (PR #162, Codex P2). It runs in
       // the unauthenticated project below, through this root config.
-      testIgnore: /(checkout-redirect-0865|trial-0905|storage-addon-confirm-0943|checkout-confirmation-resilience-0957|forgot-password-recovery|1474-devices-sse|1605-trial-limits-ui|1865-passkey-login-wording)\.spec\.ts$/,
+      testIgnore: /(checkout-redirect-0865|trial-0905|storage-addon-confirm-0943|checkout-confirmation-resilience-0957|forgot-password-recovery|1474-devices-sse|1605-trial-limits-ui|1865-passkey-login-wording|1884-error-reporting)\.spec\.ts$/,
       dependencies: ['setup'],
       use: {
         storageState: STORAGE_STATE,

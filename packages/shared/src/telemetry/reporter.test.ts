@@ -250,3 +250,70 @@ describe('isTelemetryConfigured', () => {
     expect(isTelemetryConfigured()).toBe(false)
   })
 })
+
+// Task 1884 part 3.
+describe('transport leaks nothing ambient (1884)', () => {
+  it('sends no referrer and no credentials (a share link in location must not ride along)', async () => {
+    const inits: RequestInit[] = []
+    initTelemetry({
+      dsn: 'https://pub1234567890@errors.beebeeb.io/1',
+      client: 'web', release: 'web@1.0.0', environment: 'test', storage: memStorage(),
+      fetchImpl: (async (_u: string, init: RequestInit) => { inits.push(init); return new Response('') }) as unknown as typeof fetch,
+    })
+    setTelemetryConsent(true)
+    reportError(new Error('boom'))
+    await Bun.sleep(1)
+    expect(inits[0].referrerPolicy).toBe('no-referrer')
+    expect(inits[0].credentials).toBe('omit')
+  })
+
+  it('end to end: email, IPs, share URL with #fragment, token query never reach the wire', async () => {
+    const { calls } = setup()
+    setTelemetryConsent(true)
+    const err = new Error(
+      'load https://app.beebeeb.io/s/Tk9QRQ#k=Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5 failed for guus@beebeeb.io ' +
+      'from 203.0.113.42 / 2001:db8::ff00:42:8329 via /api/v1/x?token=hunter2secret&a=b',
+    )
+    reportError(err, { where: 'user guus@beebeeb.io at 198.51.100.7' })
+    await Bun.sleep(1)
+    const body = calls[0].body
+    for (const forbidden of ['guus@', 'beebeeb.io/s/Tk9QRQ#', 'Zm9vYmFy', '#k=', '203.0.113.42', '2001:db8', 'hunter2', 'token=', '198.51.100.7']) {
+      expect(body).not.toContain(forbidden)
+    }
+  })
+})
+
+describe('operator default consent (admin panel, 1884)', () => {
+  function adminSetup() {
+    const calls: string[] = []
+    const storage = memStorage()
+    initTelemetry({
+      dsn: 'https://pub1234567890@errors.beebeeb.io/2',
+      client: 'admin', release: 'admin@1.0.0', environment: 'test', storage, defaultConsent: true,
+      fetchImpl: (async (_u: string, init: RequestInit) => { calls.push(String(init.body)); return new Response('') }) as unknown as typeof fetch,
+    })
+    return { calls, storage }
+  }
+
+  it('reports without an opt-in step when defaultConsent is set', async () => {
+    const { calls } = adminSetup()
+    expect(getTelemetryConsent()).toBe(true)
+    reportError(new Error('boom'))
+    await Bun.sleep(1)
+    expect(calls).toHaveLength(1)
+  })
+
+  it('an explicit revoke still wins over the default', async () => {
+    const { calls } = adminSetup()
+    setTelemetryConsent(false)
+    expect(getTelemetryConsent()).toBe(false)
+    reportError(new Error('boom'))
+    await Bun.sleep(1)
+    expect(calls).toHaveLength(0)
+  })
+
+  it('web without defaultConsent stays opt-in (regression guard for the "Off by default" promise)', () => {
+    setup()
+    expect(getTelemetryConsent()).toBe(false)
+  })
+})
