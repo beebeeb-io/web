@@ -1,18 +1,12 @@
 import { useState, useCallback } from 'react'
 import { BBButton, BBChip, Icon } from '@beebeeb/shared'
 import { downloadCreditNotePdf, type BillingCreditNote } from '../../lib/api'
+import { formatDocumentDate } from '../../lib/format'
 
 interface CreditNoteListProps {
   creditNotes: BillingCreditNote[]
   /** Surface a download failure to the user (toast in the page that hosts this). */
   onError?: (message: string) => void
-}
-
-function formatDate(iso: string): string {
-  if (!iso) return '-'
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
 /** A credit note is money going back to the customer: shown with a leading minus,
@@ -118,7 +112,7 @@ export function CreditNoteList({ creditNotes, onError }: CreditNoteListProps) {
                 style={{ gridTemplateColumns: '1.4fr 1fr 1.2fr 120px 100px 40px' }}
               >
                 <span className="font-mono text-xs font-medium break-all">{cn.credit_note_number}</span>
-                <span className="text-[12.5px] text-ink-2">{formatDate(cn.credit_note_date)}</span>
+                <span className="text-[12.5px] text-ink-2">{formatDocumentDate(cn.credit_note_date)}</span>
                 <span className="font-mono text-xs text-ink-3 break-all">{cn.original_invoice_number}</span>
                 {amount}
                 <span>
@@ -132,7 +126,7 @@ export function CreditNoteList({ creditNotes, onError }: CreditNoteListProps) {
                   <div className="min-w-0">
                     <div className="font-mono text-xs font-medium break-all text-ink">{cn.credit_note_number}</div>
                     <div className="text-[12px] text-ink-3 mt-0.5">
-                      {formatDate(cn.credit_note_date)} · corrects{' '}
+                      {formatDocumentDate(cn.credit_note_date)} · corrects{' '}
                       <span className="font-mono">{cn.original_invoice_number}</span>
                     </div>
                   </div>

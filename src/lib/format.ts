@@ -10,3 +10,23 @@ export function formatStorageSI(bytes: number): string {
 export function formatBytes(bytes: number): string {
   return formatStorageSI(bytes)
 }
+
+/**
+ * Format a document date for display ("12 Oct 2026").
+ * A date-only value (`2026-10-12`, as invoices and credit notes carry) names a
+ * calendar day, not an instant: it is formatted in UTC so it never shifts a day
+ * for viewers west of UTC. A full timestamp is an instant and shows in local time.
+ */
+export function formatDocumentDate(iso: string): string {
+  if (!iso) return '-'
+  const opts: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short', year: 'numeric' }
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso)
+  if (dateOnly) {
+    const d = new Date(Date.UTC(+dateOnly[1], +dateOnly[2] - 1, +dateOnly[3]))
+    if (Number.isNaN(d.getTime())) return iso
+    return d.toLocaleDateString('en-GB', { ...opts, timeZone: 'UTC' })
+  }
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleDateString('en-GB', opts)
+}
