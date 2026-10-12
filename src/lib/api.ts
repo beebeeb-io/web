@@ -96,6 +96,7 @@ import type {
 } from '@beebeeb/shared'
 import { parsePitch } from './coupon'
 import type { CouponPitch, CouponRedeemed } from './coupon'
+import { withServerBusyRetry } from './server-busy-retry'
 
 export const API_URL = import.meta.env.VITE_API_URL || 'https://api.beebeeb.io'
 const STATUS_URL = import.meta.env.VITE_STATUS_URL || 'https://status.beebeeb.io'
@@ -4206,10 +4207,15 @@ export async function uploadToFileRequest(
   token: string,
   formData: FormData,
 ): Promise<{ file_id: string; files_received: number; total_bytes_received: number; message: string }> {
-  const res = await fetch(`${getApiUrl()}/api/v1/r/${encodeURIComponent(token)}/upload`, {
-    method: 'POST',
-    body: formData,
-  })
+  // Task 1870: a `429 server_busy` is retried after Retry-After; the per-link
+  // `upload_rate_limited` 429 is not (see server-busy-retry.ts). The FormData
+  // is a reusable body, so the same instance is re-sent.
+  const res = await withServerBusyRetry(() =>
+    fetch(`${getApiUrl()}/api/v1/r/${encodeURIComponent(token)}/upload`, {
+      method: 'POST',
+      body: formData,
+    }),
+  )
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: 'Upload failed' })) as Record<string, unknown>
     throw new ApiError(
