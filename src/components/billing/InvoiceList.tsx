@@ -3,18 +3,12 @@ import { BBButton } from '@beebeeb/shared'
 import { BBChip } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { downloadInvoicePdf, type BillingInvoice } from '../../lib/api'
+import { formatDocumentDate } from '../../lib/format'
 
 interface InvoiceListProps {
   invoices: BillingInvoice[]
   /** Surface a download failure to the user (toast in the page that hosts this). */
   onError?: (message: string) => void
-}
-
-function formatDate(iso: string): string {
-  if (!iso) return '-'
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
 /** Format integer cents as a EUR amount, e.g. 3995 → "EUR 39.95". */
@@ -149,7 +143,7 @@ export function InvoiceList({ invoices, onError }: InvoiceListProps) {
                   style={{ gridTemplateColumns: '1.4fr 1fr 120px 100px 40px' }}
                 >
                   <span className="font-mono text-xs font-medium break-all">{inv.invoice_number}</span>
-                  <span className="text-[12.5px] text-ink-2">{formatDate(inv.invoice_date)}</span>
+                  <span className="text-[12.5px] text-ink-2">{formatDocumentDate(inv.invoice_date)}</span>
                   <div className="min-w-0">
                     <div className="font-mono text-xs font-semibold">
                       {formatCents(inv.amount_gross_cents)}
@@ -175,7 +169,7 @@ export function InvoiceList({ invoices, onError }: InvoiceListProps) {
                         {inv.invoice_number}
                       </div>
                       <div className="text-[12px] text-ink-3 mt-0.5">
-                        {formatDate(inv.invoice_date)}
+                        {formatDocumentDate(inv.invoice_date)}
                       </div>
                     </div>
                     <div className="shrink-0 -mr-1.5 -mt-1">{downloadButton}</div>

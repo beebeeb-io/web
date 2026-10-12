@@ -15,6 +15,8 @@ import {
   getSubscription,
   getPaymentStatus,
   getBillingInvoices,
+  getBillingCreditNotes,
+  type BillingCreditNote,
   getBillingTransactions,
   getPlans,
   listFiles,
@@ -78,6 +80,7 @@ import {
   type BillingCycle,
 } from '../lib/cycle-switch-copy'
 import { InvoiceList } from '../components/billing/InvoiceList'
+import { CreditNoteList } from '../components/billing/CreditNoteList'
 import { TransactionList } from '../components/billing/TransactionList'
 import { CouponCard } from '../components/billing/coupon-card'
 import { PLAN_META, PLAN_RANK } from '../lib/plan-constants'
@@ -351,6 +354,7 @@ export function Billing() {
   // sub comes from context; re-synced after cancel/reactivate via loadData
   const [sub, setSub] = useState<Subscription | null>(contextPlanDetails.subscription)
   const [invoices, setInvoices] = useState<BillingInvoice[]>([])
+  const [creditNotes, setCreditNotes] = useState<BillingCreditNote[]>([])
   const [transactions, setTransactions] = useState<BillingTransaction[]>([])
   const [plans, setPlans] = useState<Plan[] | null>(null)
   const [files, setFiles] = useState<DriveFile[] | null>(null)
@@ -642,9 +646,10 @@ export function Billing() {
       // getSubscription is fetched fresh here so cancel/reactivate flows see
       // the updated status immediately. getPlans is needed for the upgrade
       // cards section (context only stores the matched current-user plan).
-      const [subData, invData, txnData, invoicePref, plansData, filesData, addonsData, pmData] = await Promise.all([
+      const [subData, invData, cnData, txnData, invoicePref, plansData, filesData, addonsData, pmData] = await Promise.all([
         getSubscription(),
         getBillingInvoices().catch(() => [] as BillingInvoice[]),
+        getBillingCreditNotes().catch(() => [] as BillingCreditNote[]),
         getBillingTransactions().catch(() => [] as BillingTransaction[]),
         getPreference<{ send_email: boolean; invoice_email: string }>('invoice_settings').catch(() => null),
         getPlans().catch(() => null),
@@ -656,6 +661,7 @@ export function Billing() {
       ])
       setSub(subData)
       setInvoices(invData ?? [])
+      setCreditNotes(cnData ?? [])
       setTransactions(txnData ?? [])
       setPlans(plansData)
       setFiles(filesData)
@@ -2525,6 +2531,14 @@ function openUpgrade(plan: string) {
               invoices={invoices}
               onError={(message) =>
                 showToast({ icon: 'download', title: 'Could not download invoice', description: message, danger: true })
+              }
+            />
+
+            {/* Credit notes (task 1899) — only when there are any. */}
+            <CreditNoteList
+              creditNotes={creditNotes}
+              onError={(message) =>
+                showToast({ icon: 'download', title: 'Could not download credit note', description: message, danger: true })
               }
             />
 

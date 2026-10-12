@@ -2348,6 +2348,63 @@ export async function getBillingInvoices(): Promise<BillingInvoice[]> {
   }))
 }
 
+/** A row from GET /api/v1/billing/credit-notes (task 1899). Amounts are NEGATIVE
+ *  cents: the server surfaces the credit-note sign, the table stores them positive. */
+export interface BillingCreditNote {
+  id: string
+  credit_note_number: string
+  credit_note_date: string
+  original_invoice_number: string
+  reason: string
+  currency: string
+  amount_gross_cents: number
+  amount_net_cents: number
+  vat_amount_cents: number
+  vat_rate_bps: number
+  vat_treatment: VatTreatment
+  status: string
+}
+
+/** Raw credit-note row as the server sends it (`number`, plus a `pdf_url` we do
+ *  not use: the download goes through `downloadCreditNotePdf(id)`). */
+export interface RawBillingCreditNote extends Omit<BillingCreditNote, 'credit_note_number'> {
+  number: string
+  pdf_url?: string
+}
+
+/** Normalise the server's credit-note rows (`number` -> `credit_note_number`). */
+export function mapBillingCreditNotes(
+  raw: { credit_notes?: RawBillingCreditNote[] } | null | undefined,
+): BillingCreditNote[] {
+  return (raw?.credit_notes ?? []).map(({ number, pdf_url: _pdfUrl, ...rest }) => ({
+    ...rest,
+    credit_note_number: number,
+  }))
+}
+
+/** GET /api/v1/billing/credit-notes: the caller's credit notes, newest first. */
+export async function getBillingCreditNotes(): Promise<BillingCreditNote[]> {
+  return mapBillingCreditNotes(
+    await request<{ credit_notes: RawBillingCreditNote[] }>('/api/v1/billing/credit-notes'),
+  )
+}
+
+/** Download a credit-note PDF. Same authenticated blob pattern as the invoice PDF:
+ *  bearer header + cookie, never a token in the URL. */
+export async function downloadCreditNotePdf(creditNoteId: string): Promise<Blob> {
+  const token = getToken()
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const res = await fetch(
+    `${API_URL}/api/v1/billing/credit-notes/${creditNoteId}/pdf`,
+    { headers, credentials: 'include' },
+  )
+  if (!res.ok) {
+    throw new ApiError(res.statusText, res.status)
+  }
+  return res.blob()
+}
+
 /**
  * Download an invoice PDF (GET /api/v1/billing/invoices/{id}/pdf). The endpoint
  * is authenticated, so we fetch with the bearer token + cookie and hand back a
