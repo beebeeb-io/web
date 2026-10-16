@@ -57,6 +57,12 @@ export interface IndexFileEntry {
 export class CoreSearchIndex {
   #proxy: SearchIndexProxy
   readonly numShards: number
+  #pending = new Set<number>()
+  #fullPending = false
+  #publication: Promise<unknown> = Promise.resolve()
+  #lifetime = new AbortController()
+
+  get hasPendingPublication(): boolean { return this.#fullPending || this.#pending.size > 0 }
 
   private constructor(proxy: SearchIndexProxy, numShards: number) {
     this.#proxy = proxy
@@ -124,40 +130,51 @@ export class CoreSearchIndex {
    * record their post-PUT versions if it diffed the manifest).
    */
   async pushAllShards(masterKey: Uint8Array): Promise<CoreEncryptedShard[]> {
-    const shards = await this.#proxy.encryptShards(masterKey)
-    await putShards(shards as EncryptedShard[])
-    return shards
+    this.#fullPending = true
+    return this.pushBuckets(masterKey, [])
   }
 
-  /**
-   * Encrypt ONLY the given dirty buckets and PUT them (incremental sync, the
-   * steady-state write path). Buckets that produced NO page (emptied) have their
-   * page-0 shard DELETEd so a stale page can't linger. Returns the pushed shards.
-   *
-   * `dirty` is the union of bucket sets returned by `upsert`/`remove`.
-   */
-  async pushBuckets(masterKey: Uint8Array, dirty: number[]): Promise<CoreEncryptedShard[]> {
-    if (dirty.length === 0) return []
-    const shards = await this.#proxy.encryptBuckets(masterKey, dirty)
-    await putShards(shards as EncryptedShard[])
-
-    // A dirty bucket that yielded no shard page emptied — delete its page 0 so a
-    // previously-written page for that bucket doesn't survive as a phantom. Core
-    // pages a bucket from page 0 upward, so for the common single-page bucket
-    // this is exactly the page that needs clearing. (A multi-page hot bucket that
-    // shrinks is reconciled on the next full rebuild — bounded, rare.)
-    const wrote = new Set(shards.map((s) => s.bucket))
-    const emptied = dirty.filter((b) => !wrote.has(b))
-    for (const bucket of emptied) {
-      await deleteShard(bucket, 0).catch(() => {
-        /* best-effort: index is a derived cache; a stale page self-heals on rebuild */
-      })
-    }
-    return shards
+  /** Coalesce dirty buckets, then encrypt current state and publish serially.
+   * Failures retain their dirty set for the next reconcile/publication. */
+  pushBuckets(masterKey: Uint8Array, dirty: number[]): Promise<CoreEncryptedShard[]> {
+    for (const bucket of dirty) this.#pending.add(bucket)
+    const publish = this.#publication.then(async () => {
+      this.#lifetime.signal.throwIfAborted()
+      const buckets = [...this.#pending]
+      const full = this.#fullPending
+      if (!full && buckets.length === 0) return []
+      this.#pending.clear()
+      this.#fullPending = false
+      try {
+        const shards = full
+          ? await this.#proxy.encryptShards(masterKey)
+          : await this.#proxy.encryptBuckets(masterKey, buckets)
+        this.#lifetime.signal.throwIfAborted()
+        await putShards(shards as EncryptedShard[], this.#lifetime.signal)
+        if (!full) {
+          const wrote = new Set(shards.map(s => s.bucket))
+          for (const bucket of buckets.filter(b => !wrote.has(b))) {
+            await deleteShard(bucket, 0, this.#lifetime.signal)
+          }
+        }
+        return shards
+      } catch (error) {
+        for (const bucket of buckets) this.#pending.add(bucket)
+        this.#fullPending ||= full
+        throw error
+      }
+    })
+    this.#publication = publish.catch(() => {})
+    return publish
   }
 
   /** Free the worker-side WASM instance. Idempotent. */
   async dispose(): Promise<void> {
+    if (this.#lifetime.signal.aborted) return
+    this.#lifetime.abort()
+    await this.#publication
+    this.#pending.clear()
+    this.#fullPending = false
     await this.#proxy.dispose()
   }
 }

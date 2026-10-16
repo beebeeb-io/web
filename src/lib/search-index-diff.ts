@@ -59,6 +59,7 @@ export function planIndexDiff(input: IndexReconcileInput): IndexReconcilePlan {
 
 /** The subset of `CoreSearchIndex` the diff application needs (fake-able). */
 export interface IndexDiffTarget {
+  readonly hasPendingPublication?: boolean
   upsert(id: string, name: string): Promise<number[]>
   remove(id: string): Promise<number[]>
   pushBuckets(masterKey: Uint8Array, dirty: number[]): Promise<unknown>
@@ -92,7 +93,7 @@ export async function applyIndexDiff(
   for (const id of plan.prunes) {
     for (const b of await index.remove(id)) dirty.add(b)
   }
-  if (dirty.size === 0) return { dirtyCount: 0, pushed: true }
+  if (dirty.size === 0 && !index.hasPendingPublication) return { dirtyCount: 0, pushed: true }
   try {
     await index.pushBuckets(masterKey, [...dirty])
     return { dirtyCount: dirty.size, pushed: true }

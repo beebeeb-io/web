@@ -1,3 +1,4 @@
+import { provenanceHeaders } from '@beebeeb/shared'
 import { getToken, getApiUrl, uploadThumbnail, uploadThumbnailLarge } from './api'
 
 const THUMB_SIZE = 768
@@ -233,7 +234,7 @@ export async function fetchAndDecryptLargeThumbnail(
 ): Promise<string | null> {
   try {
     const token = getToken()
-    const headers: Record<string, string> = {}
+    const headers: Record<string, string> = { ...provenanceHeaders() }
     if (token) headers['Authorization'] = `Bearer ${token}`
 
     const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/thumbnail/large`, {
@@ -297,7 +298,7 @@ export async function fetchAndDecryptThumbnail(
 
   try {
     const token = getToken()
-    const headers: Record<string, string> = {}
+    const headers: Record<string, string> = { ...provenanceHeaders() }
     if (token) headers['Authorization'] = `Bearer ${token}`
 
     const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/thumbnail`, {
