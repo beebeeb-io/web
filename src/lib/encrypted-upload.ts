@@ -1,4 +1,5 @@
 import { WorkQueue } from './work-queue'
+import { expectedUserHeaders } from '@beebeeb/shared'
 // ─── Encrypted chunked upload ──────────────────────
 // Encrypts and uploads one chunk at a time. That keeps browser memory bounded
 // to one plaintext chunk plus one encrypted chunk, even when the server returns
@@ -72,7 +73,15 @@ const uploadAdmission = new WorkQueue(2)
 
 /** All upload entry points share admission, including retries and folder uploads. */
 export function encryptedUpload(...args: Parameters<typeof uploadFile>): ReturnType<typeof uploadFile> {
-  return uploadAdmission.run(() => uploadFile(...args), args[8])
+  const owner = expectedUserHeaders()['X-Beebeeb-Expected-User']
+  return uploadAdmission.run(() => {
+    // Folder uploads may have no signal. Never let queued keys/file bytes adopt
+    // another account's session, or start after the resident vault key is cleared.
+    if (expectedUserHeaders()['X-Beebeeb-Expected-User'] !== owner) {
+      throw new DOMException('Upload account changed while queued', 'AbortError')
+    }
+    return uploadFile(...args)
+  }, args[8])
 }
 
 async function uploadFile(
