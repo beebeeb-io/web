@@ -1,3 +1,4 @@
+import { WorkQueue } from './work-queue'
 // ─── Encrypted chunked upload ──────────────────────
 // Encrypts and uploads one chunk at a time. That keeps browser memory bounded
 // to one plaintext chunk plus one encrypted chunk, even when the server returns
@@ -67,7 +68,14 @@ interface EncryptedUploadOptions {
   conflictCreated?: boolean
 }
 
-export async function encryptedUpload(
+const uploadAdmission = new WorkQueue(2)
+
+/** All upload entry points share admission, including retries and folder uploads. */
+export function encryptedUpload(...args: Parameters<typeof uploadFile>): ReturnType<typeof uploadFile> {
+  return uploadAdmission.run(() => uploadFile(...args), args[8])
+}
+
+async function uploadFile(
   file: File,
   fileId: string,
   fileKey: Uint8Array,
