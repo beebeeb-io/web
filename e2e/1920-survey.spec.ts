@@ -81,9 +81,10 @@ async function noHorizontalScroll(page: Page) {
   expect(overflow, 'no horizontal scroll').toBeLessThanOrEqual(0)
 }
 
-// A first-time visitor sees the app-wide cookie notice, a fixed bar that sits over the bottom of the
-// form on a phone until it is answered. Every test records that choice up front so the survey itself
-// is what is under test (the notice is not part of this task).
+// The app-wide cookie notice is a fixed bar that would sit over the bottom of a phone-sized form. The
+// survey renders outside the providers and sets no cookies, so it never mounts (proved by the test
+// "a first-time visitor sees no cookie notice over the form"); every OTHER test records a choice up
+// front anyway so a future change to that cannot make them flaky.
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     try {
@@ -256,6 +257,22 @@ test('another tab answers first: sending here ends on "already answered", nothin
   await expect(page.getByTestId('survey-already-answered')).toBeVisible()
   expect(JSON.parse(storedAnswers(inv.id)).reason, 'the first answer stands').toBe('trust')
   expect(psql(`SELECT COUNT(*) FROM survey_responses WHERE invitation_id = '${inv.id}'`)).toBe('1')
+})
+
+test('a first-time visitor sees no cookie notice over the form (the page sets no cookies)', async ({ page }) => {
+  const inv = seedInvitation()
+  await page.addInitScript(() => localStorage.removeItem('bb_cookie_consent'))
+  await page.setViewportSize({ width: 390, height: 780 })
+  await page.goto(link(inv))
+  await expect(page.getByTestId('survey-form')).toBeVisible()
+  await page.getByTestId('survey-submit').scrollIntoViewIfNeeded()
+  await expect(page.getByRole('dialog', { name: 'Cookie notice' })).toHaveCount(0)
+  expect(await page.evaluate(() => localStorage.getItem('bb_cookie_consent'))).toBeNull()
+  expect(await page.evaluate(() => document.cookie)).toBe('')
+  // The submit button is reachable by a plain click (nothing fixed sits over it).
+  await page.getByRole('radio', { name: 'Something else' }).check()
+  await page.getByTestId('survey-submit').click()
+  await expect(page.getByTestId('survey-thanks')).toBeVisible()
 })
 
 test('a stale session does not bounce the survey to /login', async ({ page }) => {
