@@ -255,15 +255,22 @@ The full rules live in the workspace `CLAUDE.md` → "How we work" (also summari
   middleware — several sign-up specs can run back-to-back against one dev API without hitting `429`.
 - **UI tasks are verified in a browser** (Playwright screenshots in the task's evidence path), never
   by curl. A new spec is trusted only after it has been seen to fail against a deliberate mutation.
-- **Live-region rung is opt-in (task 1416 step 3, `e2e/1416-live-region-picker.spec.ts`):** the
-  default e2e run has no Helsinki pool seeded, so the spec is gated behind
-  `test.skip(!process.env.E2E_LIVE_REGION, ...)`. To run it for real: seed a region +
-  datacenter + a `provider:"local"` storage pool with `continent:"helsinki"` and
-  `is_active:true` through the admin API, restart the API (new pools need one restart;
-  `is_active` toggles apply live), then
-  `E2E_LIVE_REGION=1 bunx playwright test e2e/1416-live-region-picker.spec.ts`. Screenshots land
-  under `E2E_EVIDENCE_DIR` (default `test-results/1416-step3/`, override to point at the
-  workspace's tracked `docs/_qa-evidence/1416/step3/` for the real evidence capture).
+- **Region choice (task 1919, `/settings/data-residency`):** "Europe" is the DEFAULT (no country, any
+  of our European datacenters); below it the person pins new uploads to one datacenter, and a datacenter
+  that is not live is listed "Coming soon", not selectable. The list is the SERVER'S: `choices` of
+  `GET /api/v1/me/region` (same array as the public `GET /api/v1/storage-regions`), parsed by
+  `src/lib/storage-regions.ts` (pure) and held in `src/lib/use-region-choices.ts` (one store for the page,
+  the sidebar's region row and nothing else). No source file keeps a city, country, id or provider
+  (`test/1919-storage-regions.test.ts` greps for it). `PUT /me/region` sends a choice's `id` verbatim
+  (`null` clears); a failed list fetch is an honest error with Retry, never an invented list. A file's
+  city on the drive row and in the encryption-details panel is the server's `storage_location.city`
+  (`fileStorageCity`), never a default. The upload init only says `region: "europe"`, so the upload card
+  names no city. Opt-in e2e (`e2e/1919-region-choice.spec.ts`, replaces the 1416 live-region spec): needs an
+  API built from the server 1919 branch with pools fsn1/hel1/nbg1 and a scratch Postgres it may edit;
+  `E2E_API_BIN=<server-1919 beebeeb-api> e2e/scripts/region-stack.sh up` builds that and prints the env
+  (`E2E_1919=1 ...`, plus `E2E_1919_PGPASSWORD`). It proves upload placement by counting files under each
+  pool's blob directory and by the file's own `storage_location`, and proves the list is the API's by
+  editing the API's rows. Screenshots land in `E2E_EVIDENCE_DIR` (default `test-results/1919/`).
 - **Design before code:** `../../design/hifi/*.jsx` wins over the code; deviations are recorded in
   the task file before the code changes.
 - **`@beebeeb/shared` edits happen in `packages/shared/src/` here, then `make sync-shared`** — the

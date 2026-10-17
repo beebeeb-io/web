@@ -95,6 +95,8 @@ import { decideSyncRows, EMPTY_CONFIRM_MS } from '../lib/sync-rows'
 import { createScopedTimer } from '../lib/scoped-timer'
 import { hashFile, checkDuplicate, recordUpload } from '../lib/upload-dedup'
 import { isBackupsRoot as isBackupsRootPure } from '../lib/backups-root'
+import { fileStorageCity } from '../lib/storage-regions'
+import { knownPoolLocation, learnPoolLocations } from '../lib/sync-storage-locations'
 
 // ─── Drive component ────────────────────────────────
 // Folders are always grouped before files; the chosen key only orders
@@ -421,23 +423,34 @@ export function Drive() {
     return out
   }, [])
 
+  // Sync nodes carry a storage_pool_id but no storage_location; GET /files
+  // carries the location. Learn pool -> location from API rows so a
+  // sync-derived refresh keeps each row's real city (task 1919; see
+  // lib/sync-storage-locations.ts). A pool never seen stays unknown.
+  const poolLocationsRef = useRef(new Map<string, unknown>())
+
   // Stable mapper — deps never change after mount.
-  const syncNodeToDriveFile = useCallback((n: SyncNode): DriveFile => ({
-    id: n.id,
-    name_encrypted: n.name_encrypted,
-    mime_type: n.mime_type ?? '',
-    size_bytes: n.size_bytes,
-    is_folder: n.is_folder,
-    is_trashed: n.is_trashed,
-    parent_id: n.parent_id,
-    chunk_count: n.chunk_count ?? 1,
-    is_starred: n.is_starred,
-    has_thumbnail: n.has_thumbnail,
-    has_large_thumbnail: n.has_large_thumbnail,
-    version_number: n.version_number,
-    created_at: n.created_at,
-    updated_at: n.updated_at,
-  }), [])
+  const syncNodeToDriveFile = useCallback((n: SyncNode): DriveFile => {
+    // Folders hold no chunks, so the API sends them no location either.
+    const location = n.is_folder ? undefined : knownPoolLocation(poolLocationsRef.current, n)
+    return {
+      id: n.id,
+      name_encrypted: n.name_encrypted,
+      mime_type: n.mime_type ?? '',
+      size_bytes: n.size_bytes,
+      is_folder: n.is_folder,
+      is_trashed: n.is_trashed,
+      parent_id: n.parent_id,
+      chunk_count: n.chunk_count ?? 1,
+      is_starred: n.is_starred,
+      has_thumbnail: n.has_thumbnail,
+      has_large_thumbnail: n.has_large_thumbnail,
+      version_number: n.version_number,
+      created_at: n.created_at,
+      updated_at: n.updated_at,
+      ...(location === undefined ? {} : { storage_location: location }),
+    }
+  }, [])
 
   // refreshFromSync — reads sync.children() without an API call.
   // Used by the treeVersion effect so SSE-pushed updates don't hit the server
@@ -450,10 +463,13 @@ export function Drive() {
   const refreshFromSync = useCallback(() => {
     if (!isUnlocked || !syncReadyRef.current) return
     const trashed = location.pathname === '/trash'
-    const syncNodes = sync
+    const rawNodes = sync
       .children(currentParentId ?? null)
       .filter((n) => Boolean(n.is_trashed) === trashed)
-      .map(syncNodeToDriveFile)
+    // The rows on screen may still be API rows: learn their pools' cities
+    // before they are replaced by sync-derived ones.
+    learnPoolLocations(poolLocationsRef.current, rawNodes, filesRef.current)
+    const syncNodes = rawNodes.map(syncNodeToDriveFile)
     const nodes = withKnownLargeThumbs(syncNodes)
     const coverageComplete = syncTreeCompleteRef.current
 
@@ -520,6 +536,9 @@ export function Drive() {
 
     try {
       const data = withKnownLargeThumbs(await listAllFiles(currentParentId ?? undefined, { trashed }))
+      if (syncReadyRef.current) {
+        learnPoolLocations(poolLocationsRef.current, sync.children(currentParentId ?? null), data)
+      }
       setFiles(data)
       setDriveOffline(false)
       setLoadError(null)
@@ -3190,7 +3209,7 @@ export function Drive() {
             createdAt: f.created_at,
             cipher: 'AES-256-GCM',
             region: 'Europe',
-            city: 'Falkenstein',
+            city: fileStorageCity(f) ?? undefined,
           }
           return trust
         })()}

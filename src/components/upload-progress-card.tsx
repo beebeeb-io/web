@@ -63,6 +63,11 @@ function regionLabel(region?: string | null): string | null {
     .join(' ')
 }
 
+/**
+ * The card never names a city: the upload init only says "europe" (the pool's
+ * public region), not which datacenter took the bytes. The file's own
+ * `storage_location` names the city once it is stored (task 1919).
+ */
 function phaseLabel(item: UploadItem): string {
   if (item.stage === 'Done') return 'done'
   if (item.stage === 'Error') return 'failed'
@@ -72,7 +77,7 @@ function phaseLabel(item: UploadItem): string {
     if (item.totalChunks) {
       return `Uploading ${item.uploadedChunks ?? 0} / ${item.totalChunks} chunks`
     }
-    return `uploading to ${item.storageCity ?? 'Falkenstein'}`
+    return 'uploading'
   }
   return 'encrypting on this device'
 }

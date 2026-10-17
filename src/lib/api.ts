@@ -3995,18 +3995,29 @@ export async function unfreezeAccount(): Promise<{ frozen: boolean }> {
   return request<{ frozen: boolean }>('/api/v1/me/unfreeze', { method: 'POST' })
 }
 
-/** GET /api/v1/me/region — current user's preferred region + available list */
-export async function getUserRegion(): Promise<UserRegionResponse> {
-  return request<UserRegionResponse>('/api/v1/me/region')
+/**
+ * GET /api/v1/me/region — the stored preference plus the server's list of
+ * choices (task 1919). `choices` is the same array as the public
+ * `GET /api/v1/storage-regions`; it is absent on a server older than 1919, so
+ * it is typed `unknown` and validated by `parseChoices()`.
+ */
+export type UserRegionData = UserRegionResponse & { choices?: unknown }
+
+export async function getUserRegion(): Promise<UserRegionData> {
+  return request<UserRegionData>('/api/v1/me/region')
 }
 
-/** PUT /api/v1/me/region — set preferred region.
+/** PUT /api/v1/me/region — set where new uploads go.
+ * Send the `id` of a choice from the list verbatim (the default row's id, or a
+ * live datacenter's id), or `null` to clear the preference. The server answers
+ * 400 `region_unavailable` for anything it does not offer as live (coming soon,
+ * unknown), and the stored value stays unchanged.
  * Server (regions.rs `SetRegionBody`) deserializes ONLY `preferred_region`;
  * sending `{continent}` silently dropped the value and cleared the preference. */
-export async function setUserRegion(continent: string): Promise<{ preferred_region: string | null }> {
+export async function setUserRegion(id: string | null): Promise<{ preferred_region: string | null }> {
   return request<{ preferred_region: string | null }>('/api/v1/me/region', {
     method: 'PUT',
-    body: JSON.stringify({ preferred_region: continent }),
+    body: JSON.stringify({ preferred_region: id }),
   })
 }
 

@@ -21,6 +21,7 @@ import {
 } from './api'
 import { clearHeldCoupon } from './coupon'
 import { clearAllDismissed } from './onboarding/notice-dismissal'
+import { resetRegionStore } from './use-region-choices'
 
 /** Same-origin pub/sub channel used to sync logout — and, since task 1531/
  *  1534's continuation (web PR #85), login — across tabs. */
@@ -155,6 +156,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Task 1814: another tab signed the account out; a coupon held here goes with it.
         clearHeldCoupon()
         clearAllDismissed() // 1822: dismissed account notices go with the session
+        resetRegionStore() // 1919: the region list + preference were this session's
       }
       if (event.data?.type === 'login') {
         // Task 1531/1534 (P0 continuation): a DIFFERENT tab just
@@ -239,6 +241,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch { /* channel may already be closed during teardown */ }
     clearHeldCoupon() // a coupon held in this tab belongs to nobody once the account leaves (1814)
     clearAllDismissed() // 1822: so does a dismissed account notice
+    resetRegionStore() // 1919: and the region list + preference (sign-out is a soft transition)
     await onLogoutCallback?.()
     // Best-effort server-side logout — the session may already be gone (e.g.
     // account deletion invalidates ALL of the user's sessions server-side

@@ -28,6 +28,7 @@ import { FolderViewerBadge } from './presence-avatars'
 import { useToast } from './toast'
 import { getFolderColorDot, FOLDER_COLORS } from '../lib/folder-colors'
 import type { DriveFile, MyShare } from '../lib/api'
+import { fileStorageCity } from '../lib/storage-regions'
 
 // ─── Sort types ─────────────────────────────────────
 
@@ -155,9 +156,7 @@ export interface FileListProps {
   externalDecryptedNames?: Record<string, string>
 
   // Trust details: clicking the lock icon opens this callback's panel.
-  // City defaults to "Falkenstein" — use whatever the file's storage pool returns when wired.
   onShowTrustDetails?: (file: DriveFile) => void
-  encryptionCity?: string
 
   /** Active shares owned by the current user, used to flag rows that have at
    *  least one non-revoked share when `share_count` may not be populated yet
@@ -200,7 +199,6 @@ export function FileList({
   recentlyUploadedIds = new Set<string>(),
   externalDecryptedNames,
   onShowTrustDetails,
-  encryptionCity = 'Falkenstein',
   uploadCards,
   myShares,
   folderViewerCounts,
@@ -1335,7 +1333,7 @@ export function FileList({
           </div>
           {!file.is_folder && (
             <div className="font-mono text-[10.5px] text-ink-3 mt-0.5 truncate tabular-nums">
-              AES-256-GCM · Europe · {encryptionCity}
+              AES-256-GCM · Europe{fileStorageCity(file) ? ` · ${fileStorageCity(file)}` : ''}
             </div>
           )}
         </div>
