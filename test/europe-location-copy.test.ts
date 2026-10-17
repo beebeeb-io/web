@@ -10,16 +10,17 @@ import { PRICING_PAGE_PLANS } from '../src/lib/plan-constants'
  * task 1545#5's opposite rule ("name the city") for these surfaces.
  *
  * Deliberately NOT covered (they show where a file or pool ACTUALLY is, from
- * storage-pool data, with 'Falkenstein' only as the fallback): the trust
- * details panel, upload progress, file-list encryption city, drive-layout's
- * region map, upload-error region and settings/data-residency's pool list —
- * though data-residency's static note is a transparency surface and says
- * "the EU (currently Falkenstein, Germany)". The
- * settings/privacy error-report disclosure also keeps its specific location:
- * it states where one server processes crash reports, not where files live.
+ * the server): the trust details panel, upload progress, file-list encryption
+ * city, the sidebar region row and settings/data-residency. Since task 1919
+ * (Guus, 2026-10-17: Falkenstein, Helsinki and Nuremberg are live and
+ * choosable, Ede coming soon) those surfaces take every city and country from
+ * `GET /api/v1/storage-regions` and keep NO static list; that is pinned in
+ * `test/1919-storage-regions.test.ts`. The settings/privacy error-report
+ * disclosure keeps its specific location: it states where one server
+ * processes crash reports, not where files live.
  *
- * Honesty guard: no unlaunched regions (the claims guard's PHANTOM_REGIONS)
- * and no choose-your-region claims in this copy.
+ * Honesty guard for THIS static copy (marketing-style lines): it names no
+ * city and makes no choose-your-region claim; the choice lives in Settings.
  */
 
 function read(relPath: string): string {
@@ -73,10 +74,11 @@ describe('static location copy says the EU / Europe, not Falkenstein', () => {
     expect(pricing).toContain('All data is stored in the EU, under EU jurisdiction and GDPR. More EU locations are coming.')
   })
 
-  test('data-residency (a transparency surface): the EU first, the current location named as current', () => {
+  test('data-residency (a transparency surface): the list is the server\'s, the note says Europe and keeps no city of its own', () => {
     const src = read('src/pages/settings/data-residency.tsx')
-    expect(src).toContain('All data is stored in the EU (currently Falkenstein, Germany), under EU law.')
-    expect(src).not.toContain('All data is stored in Falkenstein, Germany, under EU law.')
+    expect(src).toContain('Everything is stored in Europe, under EU law.')
+    expect(src).not.toMatch(/falkenstein|helsinki|nuremberg/i)
+    expect(src).not.toContain('currently Falkenstein')
   })
 
   test('receive relay + empty drive', () => {

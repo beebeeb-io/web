@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Icon } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
 import { formatBytes } from '../lib/format'
+import { fileStorageCity } from '../lib/storage-regions'
 import { EncryptionProof } from './encryption-proof'
 
 export interface TrustFile {
@@ -58,9 +59,30 @@ export function TrustDetailsPanel({
     if (!open) setShowProof(false)
   }, [open])
 
+  // Where this file REALLY is (task 1919): the city the server reports for its
+  // pool. A drive row built from the sync stream carries none, so ask the file.
+  const [fetched, setFetched] = useState<{ id: string; city: string | null } | null>(null)
+  const fileId = file?.id
+  const knownCity = file?.city
+  useEffect(() => {
+    if (!open || !fileId || knownCity) return
+    let cancelled = false
+    void import('../lib/api')
+      .then(({ getFile }) => getFile(fileId))
+      .then((f) => {
+        if (!cancelled) setFetched({ id: fileId, city: fileStorageCity(f) })
+      })
+      .catch(() => {
+        if (!cancelled) setFetched({ id: fileId, city: null })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, fileId, knownCity])
+
   if (!open || !file) return null
 
-  const city = file.city ?? 'Falkenstein'
+  const city = file.city ?? (fetched?.id === file.id ? fetched.city : null)
   const region = file.region ?? 'Europe'
   const cipher = file.cipher ?? 'AES-256-GCM'
 
@@ -88,7 +110,7 @@ export function TrustDetailsPanel({
     { label: 'Key source', value: 'Derived from file ID' },
     { label: 'Encrypted at', value: formatTimestamp(file.createdAt) },
     { label: 'Encrypted by', value: 'This browser' },
-    { label: 'Stored in', value: `${region} · ${city}` },
+    { label: 'Stored in', value: city ? `${region} · ${city}` : region },
     { label: 'File size', value: formatBytes(file.sizeBytes), mono: true },
   ]
 

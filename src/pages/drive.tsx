@@ -95,6 +95,7 @@ import { decideSyncRows, EMPTY_CONFIRM_MS } from '../lib/sync-rows'
 import { createScopedTimer } from '../lib/scoped-timer'
 import { hashFile, checkDuplicate, recordUpload } from '../lib/upload-dedup'
 import { isBackupsRoot as isBackupsRootPure } from '../lib/backups-root'
+import { fileStorageCity } from '../lib/storage-regions'
 
 // ─── Drive component ────────────────────────────────
 // Folders are always grouped before files; the chosen key only orders
@@ -3190,7 +3191,7 @@ export function Drive() {
             createdAt: f.created_at,
             cipher: 'AES-256-GCM',
             region: 'Europe',
-            city: 'Falkenstein',
+            city: fileStorageCity(f) ?? undefined,
           }
           return trust
         })()}

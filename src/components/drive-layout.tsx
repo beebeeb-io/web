@@ -6,11 +6,12 @@ import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBLogo } from '@beebeeb/shared'
 import { Icon, type IconName } from './icons'
 import { useAuth } from '../lib/auth-context'
+import { useRegionChoices } from '../lib/use-region-choices'
+import { sidebarRegionLabel } from '../lib/storage-regions'
 import { useKeys } from '../lib/key-context'
 import {
   getIncomingInvites,
   getFolderKeys,
-  getPreference,
   setPreference,
   requestAdminHandoff,
   type ShareInvite,
@@ -302,7 +303,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   const adminUrl = import.meta.env.VITE_ADMIN_URL ?? 'https://admin.beebeeb.io'
   const { usage, planDetails: contextPlanDetails, pinnedFolderIds, isOffline, accountStateLabel } = useDriveData()
   const [sharedFolders, setSharedFolders] = useState<(ShareInvite & { decryptedName?: string })[]>([])
-  const [storageRegion, setStorageRegion] = useState<string>('auto')
+  const regions = useRegionChoices(user?.user_id)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const sidebarTrapRef = useFocusTrap<HTMLElement>(sidebarOpen)
   const [quickAccessDragOver, setQuickAccessDragOver] = useState(false)
@@ -347,24 +348,6 @@ export function DriveLayout({ children }: { children: ReactNode }) {
     return () => { if (backfillTimerRef.current) clearTimeout(backfillTimerRef.current) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isUnlocked, cryptoReady, sync.ready, sync.treeVersion, reconcileFromTree])
-
-  useEffect(() => {
-    getPreference<{ pool_name: string }>('storage_region')
-      .then(pref => { if (pref?.pool_name) setStorageRegion(pref.pool_name) })
-      .catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    function onRegionChanged() {
-      getPreference<{ pool_name: string }>('storage_region')
-        .then(pref => { if (pref?.pool_name) setStorageRegion(pref.pool_name) })
-        .catch(() => {})
-    }
-    window.addEventListener('beebeeb:region-changed', onRegionChanged)
-    return () => {
-      window.removeEventListener('beebeeb:region-changed', onRegionChanged)
-    }
-  }, [])
 
   function handleQuickAccessDragOver(e: DragEvent<HTMLDivElement>) {
     if (e.dataTransfer.types.includes('application/beebeeb-folder')) {
@@ -577,7 +560,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
           usedBytes={resolvedUsedBytes}
           quotaBytes={resolvedQuotaBytes}
           planLabel={planLabel}
-          storageRegion={storageRegion}
+          regionLabel={sidebarRegionLabel(regions.preferred, regions.choices)}
         />
 
         {isAdmin && (

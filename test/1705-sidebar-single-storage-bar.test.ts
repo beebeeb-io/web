@@ -49,7 +49,7 @@ function renderSection(pct: number): string {
         usedBytes: used,
         quotaBytes: QUOTA,
         planLabel: 'pro plan',
-        storageRegion: 'auto',
+        regionLabel: 'Europe',
       }),
     ),
   )
