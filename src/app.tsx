@@ -41,6 +41,7 @@ import { Login } from './pages/login'
 import { Onboarding } from './pages/onboarding'
 import { Coupon } from './pages/coupon'
 import { heldCouponRedirect, readHeldCoupon } from './lib/coupon'
+import { isVaultFreePath } from './lib/vault-free-paths'
 
 // ── Lazy: split into separate chunks, loaded on demand ───────────────────────
 // Named-export helper: React.lazy requires a default export
@@ -60,6 +61,7 @@ const Pricing        = lazyNamed(() => import('./pages/pricing'),        'Pricin
 const Billing        = lazyNamed(() => import('./pages/billing'),        'Billing')
 const ChoosePlan     = lazyNamed(() => import('./pages/choose-plan'),    'ChoosePlan')
 const ReturnToApp    = lazyNamed(() => import('./pages/return-to-app'),  'ReturnToApp')
+const SurveyPage     = lazyNamed(() => import('./pages/survey'),         'SurveyPage')
 const ShareViewPage  = lazyNamed(() => import('./pages/share-view'),     'ShareViewPage')
 const ForgotPassword = lazyNamed(() => import('./pages/forgot-password'),'ForgotPassword')
 const ResetPassword  = lazyNamed(() => import('./pages/reset-password'), 'ResetPassword')
@@ -403,6 +405,7 @@ const PUBLIC_ROUTE_PATTERNS: RegExp[] = [
   /^\/auth\/impersonate(\/|$)/,
   /^\/cookies(\/|$)/,
   /^\/return-to-app(\/|$)/, // checkout return page for native apps (task 1743)
+  /^\/surveys\//, // exit survey: the emailed link is the credential (task 1920)
 ]
 function isPublicPath(pathname: string): boolean {
   return PUBLIC_ROUTE_PATTERNS.some((re) => re.test(pathname))
@@ -509,11 +512,36 @@ function GlobalShortcuts() {
   )
 }
 
+/**
+ * Task 1920: pages a person reaches from an email link with no account in sight. They render
+ * OUTSIDE the auth/key/sync providers, so KeyProvider never starts the crypto worker, WASM or the
+ * local vault for them (see `lib/vault-free-paths.ts`). The invitation id + token in the link are the
+ * credential. Any other path mounts the full app exactly as before.
+ */
+function VaultFreePages({ children }: { children: ReactNode }) {
+  const { pathname } = useLocation()
+  if (!isVaultFreePath(pathname)) return <>{children}</>
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center min-h-screen">
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-amber" />
+        </div>
+      }
+    >
+      <Routes>
+        <Route path="/surveys/:id" element={<SurveyPage />} />
+      </Routes>
+    </Suspense>
+  )
+}
+
 export function App() {
   return (
     <ErrorBoundary>
     <ThemeProvider>
     <BrowserRouter>
+      <VaultFreePages>
       <ImpersonationProvider>
       <DevAuthGate>
       <AuthProvider>
@@ -868,6 +896,7 @@ export function App() {
       </AuthProvider>
       </DevAuthGate>
       </ImpersonationProvider>
+      </VaultFreePages>
     </BrowserRouter>
     </ThemeProvider>
     </ErrorBoundary>
