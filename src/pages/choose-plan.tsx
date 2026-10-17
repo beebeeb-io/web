@@ -40,7 +40,7 @@ import { BillingInfoStep } from '../components/billing/BillingInfoStep'
 import { TrialMethodPicker, TrialPlanPicker } from '../components/trial-plan-picker'
 import { TrialUnavailableNote, trialTermsLine } from '../components/no-card-trial'
 import { useStartNoCardTrial } from '../hooks/use-start-no-card-trial'
-import { cardTrialMethodsPhrase, cardTrialView, effectiveCardMethod, effectiveTrialDays, startTrialErrorCopy, trialOfferView } from '../lib/no-card-trial'
+import { TRIAL_ALREADY_USED_COPY, cardTrialMethodsPhrase, cardTrialView, effectiveCardMethod, effectiveTrialDays, startTrialErrorCopy, trialOfferView } from '../lib/no-card-trial'
 import { useToast } from '../components/toast'
 import { useAuth } from '../lib/auth-context'
 import { useDriveData } from '../lib/drive-data-context'
@@ -412,10 +412,12 @@ export function ChoosePlan() {
     } catch (err) {
       const kind = classifyTrialCheckoutError(err)
       if (kind === 'trial_used') {
+        // Task 1948 (2): the inbox, not necessarily this account, had the trial (one per
+        // inbox, task 1756); the server's answer does not say which, so neither do we.
         showToast({
           icon: 'clock',
-          title: 'You have already used your free trial',
-          description: 'Choose a plan to subscribe — your files stay encrypted either way.',
+          title: 'No free trial for this account',
+          description: TRIAL_ALREADY_USED_COPY,
         })
         navigate(PAID_CHECKOUT_PATH, { replace: true })
         return

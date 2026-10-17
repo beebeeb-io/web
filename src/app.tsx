@@ -31,6 +31,8 @@ import { DevAuthGate } from './components/dev-auth-gate'
 import { registerAccountDeletedHandler, registerErrorNotifier, registerSessionExpiredHandler } from './lib/api'
 import { formatAccountDeletedMessage } from './lib/user-friendly-error'
 import { stashAccountDeletedNotice } from './lib/account-deleted-notice'
+import { signedOutDestination, useSignedOutInactive } from './lib/account-inactive'
+import { AccountInactiveScreen } from './components/account-inactive'
 import { CommandPalette } from './components/command-palette'
 import { ShortcutsCheatsheet } from './components/shortcuts-cheatsheet'
 import { useKeyboardShortcuts } from './hooks/use-keyboard-shortcuts'
@@ -154,6 +156,7 @@ import { SearchIndexProvider } from './lib/search-index-context'
  */
 export function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
+  const signedOutInactive = useSignedOutInactive()
   const { isUnlocked, vaultExists, vaultChecked } = useKeys()
   const location = useLocation()
   // Task 1704 SLICE 2 — the escape hatch out of the no-key surface: once the
@@ -180,7 +183,13 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
   // path simply falls back to "/" — safe to set for every protected route.
   const loginTo = `/login?next=${encodeURIComponent(location.pathname + location.search)}`
 
-  if (!user) return <Navigate to={loginTo} replace />
+  if (!user) {
+    // Task 1948 (1c): this page load signed out a login whose account is no longer
+    // active. Say so here, with Sign out and the support address, instead of a
+    // silent bounce to the sign-in page.
+    if (signedOutDestination(signedOutInactive) === 'account_inactive') return <AccountInactiveScreen />
+    return <Navigate to={loginTo} replace />
+  }
   if (!isUnlocked) {
     if (!vaultExists) return <Navigate to={loginTo} replace />
     // Task 1693 (Part B, ruling D-2026-10-02 — option A, "net zoals in iOS

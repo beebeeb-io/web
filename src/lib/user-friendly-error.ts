@@ -10,6 +10,7 @@
 
 import { ApiError } from './api'
 import { consumeAccountDeletedNotice, type NoticeStorage } from './account-deleted-notice'
+import { ACCOUNT_INACTIVE_NOTICE } from './account-inactive'
 import { UploadRestartFailedError } from './upload-session-reinit'
 import { shareRefusalCopy, startTrialErrorCopy, trialBillingRefusalCopy } from './no-card-trial'
 
@@ -156,6 +157,10 @@ export function userFriendlyError(err: unknown): string {
     // Task 1037 — signup is web-only; mobile/CLI get this 403. The web IS the
     // signup surface so it should never see it, but never let it fall
     // through to the generic 403 "permission" line.
+    // Task 1948 (1c): the session belonged to an account that is no longer
+    // active. `request()` has already signed it out on this device; say that,
+    // never the generic 403 line, and never why.
+    if (err.code === 'account_suspended') return ACCOUNT_INACTIVE_NOTICE
     if (err.code === 'signup_web_only') {
       return 'Accounts can only be created at app.beebeeb.io/signup. Open that page in your browser to continue.'
     }
