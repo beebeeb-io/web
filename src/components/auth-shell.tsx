@@ -1,78 +1,16 @@
-import type { ReactNode } from 'react'
-import { BBLogo } from '@beebeeb/shared'
-import { Icon } from '@beebeeb/shared'
+import { AuthShellFrame, type AuthShellFrameProps } from './auth-shell-frame'
 import { AnnouncementBanner } from './announcement-banner'
 
-interface AuthShellProps {
-  title: string
-  subtitle?: string
-  step?: number
-  totalSteps?: number
-  children: ReactNode
-  /** Hide the trust footer (default: shown) */
-  hideTrust?: boolean
-  /** A wider card for plan choice (task 1037: /choose-plan). */
-  wide?: boolean
-}
+type AuthShellProps = Omit<AuthShellFrameProps, 'banner'>
 
-export function AuthShell({
-  title,
-  subtitle,
-  step,
-  totalSteps,
-  children,
-  hideTrust,
-  wide,
-}: AuthShellProps) {
-  return (
-    <div className="auth-bg min-h-screen flex flex-col items-center justify-center bg-paper px-4 py-6 sm:p-xl">
-      {/* Pinned to the top of the auth screen so admin-broadcast notices
-          (maintenance windows, status updates) are visible even before
-          the user signs in. */}
-      <div className="fixed top-0 inset-x-0 z-30">
-        <AnnouncementBanner />
-      </div>
-      <div className={`auth-card w-full ${wide ? 'max-w-[34rem]' : 'max-w-[28rem]'} bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden`}>
-        {/* Header */}
-        <div className="px-5 py-4 sm:px-xl sm:py-lg border-b border-line">
-          <BBLogo size={16} />
-          {totalSteps != null && step != null && (
-            <div className="flex gap-1 mt-3.5">
-              {Array.from({ length: totalSteps }).map((_, i) => (
-                <div
-                  key={i}
-                  className={`flex-1 h-[3px] rounded-full transition-colors duration-300 ${
-                    i < step ? 'bg-amber' : 'bg-paper-3'
-                  }`}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Content */}
-        <div className="px-5 py-4 sm:px-xl sm:py-lg">
-          <h2 className="text-lg font-semibold text-ink mb-1">{title}</h2>
-          {subtitle && (
-            <p className="text-[13px] text-ink-3 leading-relaxed mb-5">
-              {subtitle}
-            </p>
-          )}
-          {children}
-        </div>
-      </div>
-
-      {/* Trust indicator — outside the card, below */}
-      {!hideTrust && (
-        <div className="auth-trust mt-6 flex items-center gap-1.5 text-[11px] text-ink-4">
-          <Icon name="shield" size={12} className="text-amber-deep" />
-          <span>End-to-end encrypted</span>
-          <span className="mx-0.5 text-line-2">·</span>
-          <span>EU servers</span>
-          <span className="mx-0.5 text-line-2">·</span>
-          <span>Zero-knowledge</span>
-        </div>
-      )}
-    </div>
-  )
+/**
+ * The sign-in / onboarding card. Admin-broadcast notices (maintenance windows, status updates)
+ * are pinned to the top so they are visible even before the user signs in.
+ *
+ * The banner fetches `/api/v1/announcements` through the shared request client, WITH
+ * credentials. A page that must make no credentialed request (the exit survey, task 1920) uses
+ * `AuthShellFrame` instead.
+ */
+export function AuthShell(props: AuthShellProps) {
+  return <AuthShellFrame {...props} banner={<AnnouncementBanner />} />
 }

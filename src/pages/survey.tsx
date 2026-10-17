@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { BBButton, Icon } from '@beebeeb/shared'
-import { AuthShell } from '../components/auth-shell'
+import { AuthShellFrame as SurveyShell } from '../components/auth-shell-frame'
 import {
   SURVEY_SUPPORT_EMAIL,
   buildAnswers,
@@ -26,6 +26,15 @@ import {
  * deliberately imports nothing from the vault, key or crypto modules (`../lib/survey` talks
  * to the API with a plain `fetch`, no cookies). The questions, the intro, the privacy note and
  * the thank-you all come from the server's answer, never from this file.
+ *
+ * It makes NO credentialed request (web#168 review): the survey promises an answer is not linked
+ * to the person unless they tick the box, so a signed-in visitor's bearer token or session cookie
+ * must never travel from here. That is why it draws `AuthShellFrame`, not `AuthShell` (whose
+ * announcement banner fetches through the shared request client with credentials). Proof:
+ * `test/1920-survey-review.test.tsx` (import graph) and `e2e/1920-survey.spec.ts` (every request).
+ *
+ * Text fields carry no `maxLength`: HTML counts UTF-16 units, the server counts code points, so
+ * 500 emoji would stop at 250. `firstProblem` (code points, like the server) is the one limit.
  *
  * The token is read once into component state and then removed from the address bar
  * (`navigate(..., { replace: true })`, i.e. `history.replaceState`), so it does not linger in
@@ -148,7 +157,6 @@ function ChoiceQuestion({
                     type="text"
                     id={fieldId(detail.id)}
                     value={detailValue}
-                    maxLength={detail.max_length}
                     onChange={(e) => onDetail(detail.id, e.target.value)}
                     autoComplete="off"
                     aria-invalid={detailProblem ? true : undefined}
@@ -193,7 +201,6 @@ function TextQuestion({
           id={fieldId(q.id)}
           rows={4}
           value={value}
-          maxLength={q.max_length ?? undefined}
           onChange={(e) => onText(q.id, e.target.value)}
           aria-invalid={mine ? true : undefined}
           aria-describedby={mine ? errId : undefined}
@@ -205,7 +212,6 @@ function TextQuestion({
           type="text"
           id={fieldId(q.id)}
           value={value}
-          maxLength={q.max_length ?? undefined}
           onChange={(e) => onText(q.id, e.target.value)}
           autoComplete="off"
           aria-invalid={mine ? true : undefined}
@@ -220,7 +226,7 @@ function TextQuestion({
   )
 }
 
-function SurveyForm({
+export function SurveyForm({
   survey,
   onSent,
   onAlreadyAnswered,
@@ -432,29 +438,29 @@ export function SurveyPage() {
   switch (view.kind) {
     case 'loading':
       return (
-        <AuthShell title="One question" hideTrust>
+        <SurveyShell title="One question" hideTrust>
           <div role="status" data-testid="survey-loading" className="flex items-center gap-2.5 text-[13px] text-ink-3">
             <Spinner />
             <span>Loading</span>
           </div>
-        </AuthShell>
+        </SurveyShell>
       )
 
     case 'invalid':
       return (
-        <AuthShell title="This link does not work" hideTrust>
+        <SurveyShell title="This link does not work" hideTrust>
           <div data-testid="survey-invalid" className="flex flex-col gap-3 text-[13px] leading-relaxed text-ink-2">
             <p>This survey link is not valid or has expired.</p>
             <p>
               If you came from our email, try the link in that email again. You can also write to <Support />.
             </p>
           </div>
-        </AuthShell>
+        </SurveyShell>
       )
 
     case 'unavailable':
       return (
-        <AuthShell title="We could not load this" hideTrust>
+        <SurveyShell title="We could not load this" hideTrust>
           <div data-testid="survey-unavailable" className="flex flex-col gap-4 text-[13px] leading-relaxed text-ink-2">
             <p>
               {view.rateLimited
@@ -467,12 +473,12 @@ export function SurveyPage() {
               </BBButton>
             </div>
           </div>
-        </AuthShell>
+        </SurveyShell>
       )
 
     case 'answered':
       return (
-        <AuthShell title="You already answered this" hideTrust>
+        <SurveyShell title="You already answered this" hideTrust>
           <div role="status" data-testid="survey-already-answered" className="flex flex-col gap-3 text-[13px] leading-relaxed text-ink-2">
             <p>This link has been used, so there is nothing more to send.</p>
             {view.survey && <p>{view.survey.thanks.body}</p>}
@@ -480,12 +486,12 @@ export function SurveyPage() {
               Go to Beebeeb
             </Link>
           </div>
-        </AuthShell>
+        </SurveyShell>
       )
 
     case 'thanks':
       return (
-        <AuthShell title={view.survey.thanks.title} hideTrust>
+        <SurveyShell title={view.survey.thanks.title} hideTrust>
           <div role="status" data-testid="survey-thanks" className="flex flex-col gap-3 text-[13px] leading-relaxed text-ink-2">
             <div
               aria-hidden
@@ -498,12 +504,12 @@ export function SurveyPage() {
               Go to Beebeeb
             </Link>
           </div>
-        </AuthShell>
+        </SurveyShell>
       )
 
     case 'form':
       return (
-        <AuthShell title={view.survey.title} subtitle={view.survey.intro} hideTrust>
+        <SurveyShell title={view.survey.title} subtitle={view.survey.intro} hideTrust>
           <SurveyForm
             survey={view.survey}
             id={id}
@@ -521,7 +527,7 @@ export function SurveyPage() {
               toTop()
             }}
           />
-        </AuthShell>
+        </SurveyShell>
       )
   }
 }

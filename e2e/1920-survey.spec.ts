@@ -15,6 +15,8 @@
  *   a11y       every control has an accessible name; the radio group works from the keyboard
  *   outage     an unreachable API -> "We could not load this" and "Try again" recovers (mocked)
  *   refused    a server 400 names its field inline and keeps the answers (mocked 400)
+ *   no-creds   signed in elsewhere (bearer in storage + API cookie): no request carries either
+ *   emoji      500 emoji fit a 500-character answer, 501 are refused inline (code points, not UTF-16)
  *
  * E2E_PROD_BUILD=1 runs it against `vite preview` of a production build (see the task notes).
  *
@@ -359,4 +361,92 @@ test('a server 400 names its field inline and keeps what was typed (mocked 400)'
   await expect(page.getByRole('textbox', { name: /Anything else/ })).toHaveValue('keep me')
   await page.screenshot({ path: shot('survey-server-refusal-390-light.png'), fullPage: true })
   expect(psql(`SELECT COUNT(*) FROM survey_responses WHERE invitation_id = '${inv.id}'`), 'nothing stored on a mocked refusal').toBe('0')
+})
+
+// web#168 review (Codex, survey.tsx:5): a signed-in visitor must not tie the survey visit to the
+// account. The old page drew AuthShell, whose announcement banner fetched through the shared
+// request() client with the legacy bearer token and `credentials: 'include'`. Here the browser
+// holds BOTH kinds of credential the app knows: a bearer token in localStorage (`bb_session`) and
+// a session cookie for the API host. Every request the page makes, from load to thank-you, is
+// checked for an Authorization or Cookie header. The cookie is scoped to `/api` on the API host so
+// the document and asset requests of the dev server never carry it; a positive control at the end
+// proves a credentialed fetch from this page WOULD carry it (so 0 offenders is not a blind spot).
+test('signed in elsewhere: no request from the survey carries a bearer token or a cookie', async ({ page, context }) => {
+  const inv = seedInvitation()
+  const api = new URL(API_URL)
+  await page.addInitScript(() => localStorage.setItem('bb_session', 'e2e-signed-in-bearer-token'))
+  await context.addCookies([
+    { name: 'bb_session', value: 'e2e-signed-in-cookie', domain: api.hostname, path: '/api', httpOnly: true, sameSite: 'Lax' },
+  ])
+
+  const seen: { url: string; method: string; headers: Record<string, string> }[] = []
+  const pending: Promise<void>[] = []
+  context.on('request', (r) => {
+    pending.push(r.allHeaders().then((headers) => void seen.push({ url: r.url(), method: r.method(), headers })))
+  })
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto(link(inv))
+  await expect(page.getByTestId('survey-form')).toBeVisible()
+  await page.getByRole('radio', { name: 'Something else' }).check()
+  await page.getByTestId('survey-submit').click()
+  await expect(page.getByTestId('survey-thanks')).toBeVisible()
+  await page.waitForLoadState('networkidle')
+  await Promise.all(pending)
+
+  const toApi = seen.filter((s) => s.url.startsWith(`${api.origin}/`))
+  const offenders = seen.filter((s) => 'authorization' in s.headers || 'cookie' in s.headers)
+  const summary = `${seen.length} requests checked, ${toApi.length} to the API, ${offenders.length} offenders`
+  console.log(`[1920 no-credentials] ${summary}`)
+  expect(seen.length, summary).toBeGreaterThan(0)
+  expect(
+    offenders.map((s) => `${s.method} ${s.url} [${Object.keys(s.headers).filter((k) => k === 'authorization' || k === 'cookie').join(',')}]`),
+    summary,
+  ).toEqual([])
+  // Only the survey GET and POST go to the API: no banner, no telemetry. (Distinct calls: the dev
+  // build's StrictMode runs the load effect twice, so the GET may appear twice.)
+  expect([...new Set(toApi.map((s) => `${s.method} ${new URL(s.url).pathname}`))].sort(), summary).toEqual(
+    [`GET /api/v1/surveys/${inv.id}`, `POST /api/v1/surveys/${inv.id}`].sort(),
+  )
+  expect(seen.filter((s) => s.url.includes('/announcements')), 'no announcement fetch on this page').toEqual([])
+  // The answer was stored, and the visitor is still "signed in" (nothing was cleared to pass this test).
+  expect(JSON.parse(storedAnswers(inv.id)).reason).toBe('other')
+  expect(await page.evaluate(() => localStorage.getItem('bb_session'))).toBe('e2e-signed-in-bearer-token')
+
+  // Positive control: the same page, a credentialed fetch to the API path, DOES carry the cookie.
+  const control = page.waitForRequest((r) => r.url().endsWith('/api/v1/e2e-credentials-control'))
+  await page.evaluate((u) => fetch(u, { credentials: 'include' }).catch(() => null), `${api.origin}/api/v1/e2e-credentials-control`)
+  const controlHeaders = await (await control).allHeaders()
+  expect(controlHeaders.cookie ?? '', 'control: a credentialed request from this page carries the cookie').toContain('bb_session=e2e-signed-in-cookie')
+})
+
+// web#168 review (Codex, survey.tsx:196): the limits are code points, like the server's. HTML
+// maxLength counted UTF-16 units and stopped 500 emoji at 250.
+test('a 500-character answer may be 500 emoji; 501 are refused inline and nothing is sent', async ({ page }) => {
+  const EMOJI = '\u{1F600}'
+  const codePoints = (s: string) => [...s].length
+  await page.setViewportSize({ width: 390, height: 844 })
+
+  const ok = seedInvitation()
+  await page.goto(link(ok))
+  await page.getByRole('radio', { name: 'Something else' }).check()
+  const box = page.getByRole('textbox', { name: /What would make you come back/ })
+  await box.fill(EMOJI.repeat(500))
+  expect(codePoints(await box.inputValue()), 'the field holds all 500 emoji').toBe(500)
+  await page.getByTestId('survey-submit').click()
+  await expect(page.getByTestId('survey-thanks')).toBeVisible()
+  expect(codePoints(JSON.parse(storedAnswers(ok.id)).come_back), 'the server stored 500 code points').toBe(500)
+
+  const over = seedInvitation()
+  const posts: string[] = []
+  page.on('request', (r) => r.method() === 'POST' && r.url().includes('/surveys/') && posts.push(r.url()))
+  await page.goto(link(over))
+  await page.getByRole('radio', { name: 'Something else' }).check()
+  await box.fill(EMOJI.repeat(501))
+  expect(codePoints(await box.inputValue())).toBe(501)
+  await page.getByTestId('survey-submit').click()
+  await expect(page.getByTestId('survey-field-error')).toHaveText('Please keep this to 500 characters or fewer.')
+  await expect(box).toBeFocused()
+  expect(posts, '501 emoji are refused before sending').toEqual([])
+  await page.screenshot({ path: shot('survey-501-emoji-refused-390-light.png'), fullPage: true })
 })
