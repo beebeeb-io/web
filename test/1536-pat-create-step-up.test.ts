@@ -51,11 +51,11 @@ describe('createToken carries X-Confirm-Token when given one (task 1536)', () =>
     const calls: CapturedCall[] = []
     globalThis.fetch = capturingFetch(calls, () => ({
       status: 201,
-      body: { id: 'tok-1', token: 'bb_pat_xyz', name: 'CI', scopes: ['files:read'], expires_at: null },
+      body: { id: 'tok-1', token: 'bb_pat_xyz', name: 'CI', expires_at: null },
     }))
 
     const res = await createToken(
-      { name: 'CI', scopes: ['files:read'], expires_in_days: null },
+      { name: 'CI', expires_in_days: null },
       'confirm-token-abc',
     )
 
@@ -70,10 +70,10 @@ describe('createToken carries X-Confirm-Token when given one (task 1536)', () =>
     const calls: CapturedCall[] = []
     globalThis.fetch = capturingFetch(calls, () => ({
       status: 201,
-      body: { id: 'tok-2', token: 'bb_pat_abc', name: 'no-token-case', scopes: [], expires_at: null },
+      body: { id: 'tok-2', token: 'bb_pat_abc', name: 'no-token-case', expires_at: null },
     }))
 
-    await createToken({ name: 'no-token-case', scopes: [], expires_in_days: null })
+    await createToken({ name: 'no-token-case', expires_in_days: null })
 
     expect(calls.length).toBe(1)
     expect('X-Confirm-Token' in calls[0].headers).toBe(false)
@@ -88,7 +88,7 @@ describe('createToken carries X-Confirm-Token when given one (task 1536)', () =>
 
     let caught: unknown
     try {
-      await createToken({ name: 'x', scopes: [], expires_in_days: null }, 'stale-or-reused-token')
+      await createToken({ name: 'x', expires_in_days: null }, 'stale-or-reused-token')
     } catch (err) {
       caught = err
     }

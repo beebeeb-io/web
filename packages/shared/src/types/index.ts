@@ -716,7 +716,8 @@ export interface ReferralEntry {
 export interface PersonalAccessToken {
   id: string
   name: string
-  scopes: string[]
+  /** Always [] from the server since task 1789: no scope is enforced, so none is claimed. */
+  scopes?: string[]
   created_at: string
   last_used_at: string | null
   expires_at: string | null
@@ -727,14 +728,14 @@ export interface CreateTokenResponse {
   /** Raw token — shown exactly once. Server never returns it again. */
   token: string
   name: string
-  scopes: string[]
+  /** Always [] from the server since task 1789. */
+  scopes?: string[]
   expires_at: string | null
 }
 
 export interface CreateTokenParams {
   name: string
-  scopes: string[]
-  /** ISO duration string or null for no expiry — e.g. "P30D" */
+  /** Whole days, 1..=366, or null for a non-expiring token. Scopes are not sent (task 1789). */
   expires_in_days: number | null
 }
 
