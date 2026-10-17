@@ -18,13 +18,17 @@
  *               403 on any signup endpoint.
  *   SIGNED-IN — the same stale login on a signed-in page: the "not active" screen with
  *               Sign out and support@beebeeb.io, no reason given; Sign out opens /login.
+ *               With the server's cookie expiry (server#216 6d01f177) the 403 also expires
+ *               the dead login's httpOnly cookie: after the notice no request carries a
+ *               bb_session cookie (a reload of /signup is anonymous, no second notice), and
+ *               the dead login's cookie value is never sent again during the new signup.
  *   TRIAL     — a second account on the same inbox (+tag) reaches the trial step and
  *               reads the honest copy. With BB_ENTRY_ALLOWANCE_BYTES > 0 the document already
  *               refuses it (unavailable_reason "already_used", the allowance is one per inbox);
  *               with BB_ENTRY_ALLOWANCE_BYTES=0 the start button is drawn and the start is
  *               refused (409 trial_already_used). Run both: E2E_GREP / two harness runs.
  */
-import { test, expect, type Page, type Response } from '@playwright/test'
+import { test, expect, type Page, type Request, type Response } from '@playwright/test'
 import {
   API_URL,
   missingPrerequisites,
@@ -116,12 +120,18 @@ test('ADMIN — disabling through the admin API removes the login: the next visi
 test('STALE — a login of a disabled account that predates the fix: notice on /signup, then a new account with no 403 on signup', async ({ page }) => {
   const stale = email('stale')
   await signUpAllowanceAccount(page, stale)
+  const staleCookie = (await page.context().cookies(API_URL)).find((c) => c.name === 'bb_session')?.value
+  expect(staleCookie, 'the stale account has a bb_session cookie before the notice').toBeTruthy()
   // Prod on 2026-10-17: the account was disabled, its session row was NOT removed.
   psql(`UPDATE users SET disabled_at = NOW() WHERE email = '${stale}'`)
   expect(psql(`SELECT count(*) FROM sessions s JOIN users u ON u.id = s.user_id WHERE u.email = '${stale}'`)).not.toBe('0')
-  const me = await page.request.get(`${API_URL}/api/v1/auth/me`)
-  expect(me.status()).toBe(403)
-  expect((await me.json()).error).toBe('account_suspended')
+  // Probe OUTSIDE the browser's cookie jar: the server now expires the cookie on this
+  // 403 (server#216 6d01f177), so a probe through `page.request` would itself sign the
+  // browser out before the page ever saw the dead login.
+  const me = await fetch(`${API_URL}/api/v1/auth/me`, { headers: { Cookie: `bb_session=${staleCookie}` } })
+  expect(me.status).toBe(403)
+  expect(((await me.json()) as { error?: string }).error).toBe('account_suspended')
+  expect(me.headers.get('set-cookie') ?? '', 'the 403 expires the dead login cookie').toMatch(/bb_session=;.*Max-Age=0/i)
 
   const forbidden = record403s(page)
   await page.goto('/signup')
@@ -137,13 +147,53 @@ test('STALE — a login of a disabled account that predates the fix: notice on /
   await shot(page, '1948-02-stale-login-signup-notice-phone')
   await page.setViewportSize({ width: 1280, height: 720 })
 
-  // The server still receives the httpOnly cookie (JS cannot remove it; the expiring
-  // Set-Cookie is the server's half, task 1948 scope addition). Recorded, not asserted.
-  let withCookie = 0
-  page.on('request', async (r) => {
+  // The server's half (task 1948 scope addition, server#216 6d01f177): the 403 expired the
+  // httpOnly cookie, which JS cannot remove. From the notice on, until the new account's
+  // own login exists, NO request may carry a bb_session cookie: a reload of /signup is
+  // anonymous and does not show the notice a second time.
+  expect(
+    (await page.context().cookies(API_URL)).filter((c) => c.name === 'bb_session').map((c) => c.value),
+    'the 403 expired the dead login cookie',
+  ).toEqual([])
+  let afterNoticeOpen = true
+  let afterNoticeChecked = 0
+  const afterNoticeOffenders: string[] = []
+  const afterNoticePending: Promise<void>[] = []
+  const afterNotice = (r: Request) => {
+    if (!afterNoticeOpen || !r.url().startsWith(API_URL)) return
+    afterNoticeChecked++
+    afterNoticePending.push(
+      // `headers()` omits Cookie; `allHeaders()` has what went on the wire.
+      r.allHeaders().then((h) => {
+        if ((h['cookie'] ?? '').includes('bb_session=')) afterNoticeOffenders.push(`${r.method()} ${new URL(r.url()).pathname}`)
+      }),
+    )
+  }
+  page.on('request', afterNotice)
+  await page.reload()
+  await expect(page.getByTestId('onboarding-screen')).toHaveAttribute('data-screen', 'step:enter_email', { timeout: 30_000 })
+  await page.waitForLoadState('networkidle')
+  afterNoticeOpen = false
+  page.off('request', afterNotice)
+  await Promise.all(afterNoticePending)
+  console.log(`[1948] after the notice: API requests checked ${afterNoticeChecked}, carrying a bb_session cookie ${afterNoticeOffenders.length}`)
+  expect(afterNoticeChecked, 'requests checked after the notice').toBeGreaterThan(0)
+  expect(afterNoticeOffenders, 'requests carrying a bb_session cookie after the notice').toEqual([])
+  await expect(page.getByTestId('account-inactive-notice')).toHaveCount(0)
+
+  // During the whole new signup the dead login's cookie value is never sent again
+  // (the new account's own cookie is, once it exists).
+  let duringSignup = 0
+  const staleSent: string[] = []
+  const signupPending: Promise<void>[] = []
+  page.on('request', (r) => {
     if (!r.url().startsWith(API_URL)) return
-    // `headers()` omits Cookie; `allHeaders()` has what went on the wire.
-    if ((await r.allHeaders())['cookie']?.includes('bb_session=')) withCookie++
+    duringSignup++
+    signupPending.push(
+      r.allHeaders().then((h) => {
+        if ((h['cookie'] ?? '').includes(`bb_session=${staleCookie}`)) staleSent.push(new URL(r.url()).pathname)
+      }),
+    )
   })
 
   const next = email('stale-next')
@@ -156,7 +206,10 @@ test('STALE — a login of a disabled account that predates the fix: notice on /
   expect(forbidden.filter((f) => SIGNUP_PATHS.test(f.path)), 'no 403 on a signup endpoint').toEqual([])
   // Only the boot check (and requests made while the dead login was loaded) may 403, and only with this code.
   for (const f of forbidden) expect(f.code, `${f.path}`).toBe('account_suspended')
-  console.log(`[1948] 403s during STALE: ${JSON.stringify(forbidden)}; API requests carrying a bb_session cookie during signup: ${withCookie}`)
+  await Promise.all(signupPending)
+  console.log(`[1948] 403s during STALE: ${JSON.stringify(forbidden)}; API requests during signup ${duringSignup}, carrying the dead login's cookie ${staleSent.length}`)
+  expect(duringSignup, 'requests checked during the new signup').toBeGreaterThan(0)
+  expect(staleSent, "requests carrying the dead login's cookie during the new signup").toEqual([])
   await shot(page, '1948-03-stale-login-new-account-created')
 })
 

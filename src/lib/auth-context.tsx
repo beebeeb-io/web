@@ -19,8 +19,18 @@ import {
   logout as apiLogout,
   verify2fa as apiVerify2fa,
 } from './api'
-import { clearSessionConfirmed, registerAccountSuspendedHandler } from '@beebeeb/shared'
-import { clearSignedOutInactive, signOutInactiveLocally } from './account-inactive'
+import {
+  bumpAuthGeneration,
+  clearSessionConfirmed,
+  getAuthStamp,
+  registerAccountSuspendedHandler,
+  setAuthIdentity,
+} from '@beebeeb/shared'
+import {
+  type AccountInactiveBroadcast,
+  clearSignedOutInactive,
+  createInactiveLoginGuard,
+} from './account-inactive'
 import { clearHeldCoupon } from './coupon'
 import { clearAllDismissed } from './onboarding/notice-dismissal'
 import { resetRegionStore } from './use-region-choices'
@@ -31,11 +41,13 @@ const AUTH_CHANNEL_NAME = 'beebeeb-auth'
 
 type AuthBroadcastMessage =
   | { type: 'logout' }
-  /** Task 1948 (1c): this tab's login turned out to belong to an account that is
-   *  no longer active. Other tabs share the same login, so they sign it out
-   *  locally too, WITHOUT the server logout a plain 'logout' receiver attempts
-   *  (it would answer 403) and without a hard navigation. */
-  | { type: 'account_inactive' }
+  /** Task 1948 (1c): this tab's login of account `userId` turned out to belong to
+   *  an account that is no longer active. A tab whose CURRENT login is that same
+   *  account signs it out locally too, WITHOUT the server logout a plain 'logout'
+   *  receiver attempts (it would answer 403) and without a hard navigation. Any
+   *  other tab ignores it (web#169 review: never sign out, or delete the vault of,
+   *  a login the refusal was not about). See createInactiveLoginGuard. */
+  | AccountInactiveBroadcast
   /** Task 1531/1534 (P0 continuation, crypto-security-reviewer P1): fired
    *  after EVERY successful signup/login/2FA-verify so other tabs can tell
    *  whether the shared session cookie just switched to a DIFFERENT
@@ -70,8 +82,16 @@ interface AuthState {
 const AuthContext = createContext<AuthState | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null)
+  const [user, setUserState] = useState<AuthUser | null>(null)
   const [loading, setLoading] = useState(true)
+
+  // Task 1948 (web#169 review): every change of this tab's signed-in account also
+  // moves the shared login stamp, so a request issued under the previous login can
+  // no longer sign the new one out when its 403 arrives late.
+  const setUser = useCallback((u: AuthUser | null) => {
+    setAuthIdentity(u?.user_id ?? null)
+    setUserState(u)
+  }, [])
 
   // BroadcastChannel for multi-tab logout sync. Guard against environments
   // without support (Safari < 15.4, SSR) — the feature degrades to no-op.
@@ -83,31 +103,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Same local cleanup as `logout()`, minus `/auth/logout`, which needs a working
   // session and would answer the same 403. `account-inactive.ts` holds the flag
   // the notice and ProtectedRoute's screen read.
-  const signOutInactive = useCallback(async (broadcast: boolean) => {
-    if (broadcast) {
-      try {
-        channelRef.current?.postMessage({ type: 'account_inactive' } satisfies AuthBroadcastMessage)
-      } catch { /* channel may already be closed during teardown */ }
-    }
-    await signOutInactiveLocally({
-      clearToken,
-      clearSessionConfirmed,
-      clearAccountLocalState: () => {
-        clearHeldCoupon()
-        clearAllDismissed()
-        resetRegionStore()
-      },
-      logoutCleanup: () => onLogoutCallback?.(),
-      clearUser: () => setUser(null),
-    })
-  }, [])
+  //
+  // web#169 review (Codex P1): only for the login the refusal was about. The guard
+  // ignores a 403 of a request issued under an earlier login (its stamp is stale)
+  // and a broadcast about any account other than this tab's current one.
+  const inactiveGuard = useMemo(
+    () =>
+      createInactiveLoginGuard({
+        currentUserId: () => getAuthStamp().userId,
+        broadcast: (msg) => {
+          try {
+            channelRef.current?.postMessage(msg satisfies AuthBroadcastMessage)
+          } catch { /* channel may already be closed during teardown */ }
+        },
+        signOutDeps: {
+          clearToken,
+          clearSessionConfirmed,
+          clearAccountLocalState: () => {
+            clearHeldCoupon()
+            clearAllDismissed()
+            resetRegionStore()
+          },
+          logoutCleanup: () => onLogoutCallback?.(),
+          clearUser: () => setUser(null),
+        },
+      }),
+    [setUser],
+  )
 
   useEffect(() => {
-    registerAccountSuspendedHandler(() => {
-      void signOutInactive(true)
+    registerAccountSuspendedHandler((stamp) => {
+      void inactiveGuard.onSuspended(stamp)
     })
     return () => registerAccountSuspendedHandler(null)
-  }, [signOutInactive])
+  }, [inactiveGuard])
 
   useEffect(() => {
     // task 0447 — session-cookie migration.
@@ -181,7 +210,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
     void boot()
-  }, [])
+  }, [setUser])
 
   // Open the BroadcastChannel for multi-tab logout sync. When another tab
   // posts { type: 'logout' }, this tab runs the local logout cleanup and
@@ -194,6 +223,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const channel = new BroadcastChannel(AUTH_CHANNEL_NAME)
     channelRef.current = channel
     const onMessage = (event: MessageEvent<AuthBroadcastMessage>) => {
+      if (event.data?.type === 'logout' || event.data?.type === 'login') {
+        // 1948 (web#169 review): the shared cookie jar now holds another login (or
+        // none); anything this tab still has in flight belongs to the old one.
+        bumpAuthGeneration()
+      }
       if (event.data?.type === 'logout') {
         // Task 1814: another tab signed the account out; a coupon held here goes with it.
         clearHeldCoupon()
@@ -201,8 +235,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         resetRegionStore() // 1919: the region list + preference were this session's
       }
       if (event.data?.type === 'account_inactive') {
-        // Task 1948 (1c): local only, no re-broadcast, no server call.
-        void signOutInactive(false)
+        // Task 1948 (1c): local only, no re-broadcast, no server call; and only
+        // when the message names this tab's CURRENT account (web#169 review).
+        void inactiveGuard.onBroadcast(event.data)
         return
       }
       if (event.data?.type === 'login') {
@@ -240,7 +275,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       channel.close()
       channelRef.current = null
     }
-  }, [signOutInactive])
+  }, [inactiveGuard, setUser])
 
   // Task 1531/1534 (P0 continuation, web PR #85): best-effort — a channel
   // that failed to open (Safari < 15.4, SSR) just means no cross-tab signal,
@@ -252,6 +287,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
+    // 1948 (web#169 review): a new login starts; a refusal of anything issued
+    // before it is about the previous login.
+    bumpAuthGeneration()
     const result = await apiLogin(email, password)
     if (!result.requires_2fa) {
       clearSignedOutInactive() // 1948: a working login replaces the dead one
@@ -264,9 +302,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       broadcastLogin(u.user_id)
     }
     return result
-  }, [broadcastLogin])
+  }, [broadcastLogin, setUser])
 
   const verify2fa = useCallback(async (partialToken: string, code: string): Promise<LoginResult> => {
+    bumpAuthGeneration() // 1948: see login()
     const result = await apiVerify2fa(partialToken, code)
     clearSignedOutInactive() // 1948: a working login replaces the dead one
     clearHeldCoupon() // an existing account, not the signup the coupon was held for (1814)
@@ -274,7 +313,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(u)
     broadcastLogin(u.user_id)
     return result
-  }, [broadcastLogin])
+  }, [broadcastLogin, setUser])
 
   const refreshUser = useCallback(async () => {
     const u = await getMe()
@@ -282,9 +321,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // notice about the earlier, dead login has done its job.
     clearSignedOutInactive()
     setUser(u)
-  }, [])
+  }, [setUser])
 
   const logout = useCallback(async () => {
+    bumpAuthGeneration() // 1948: nothing issued before the sign-out may act after it
     // Notify other tabs first so they can clear their master key in parallel
     // with this tab's local cleanup. Receivers run the same local logout
     // path but do NOT re-broadcast (see the channel onMessage handler).
@@ -306,7 +346,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await apiLogout()
     } catch { /* ignore — local cleanup is what matters here */ }
     setUser(null)
-  }, [])
+  }, [setUser])
 
   const value = useMemo<AuthState>(
     () => ({ user, loading, login, refreshUser, verify2fa, logout }),

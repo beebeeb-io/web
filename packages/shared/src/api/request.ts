@@ -37,6 +37,8 @@ import {
   fireSessionExpired,
   wasSessionConfirmed,
   clearSessionConfirmed,
+  getAuthStamp,
+  isCurrentAuthStamp,
 } from './notifiers'
 
 const CONNECTION_FAILURE_THRESHOLD = 2
@@ -100,6 +102,9 @@ export async function request<T>(
   options: RequestInit = {},
 ): Promise<T> {
   const token = getToken()
+  // Task 1948 (web#169 review): which login this request is issued under. A
+  // 403 account_suspended only applies to THAT login (see the handler below).
+  const authStamp = getAuthStamp()
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string> | undefined),
@@ -218,10 +223,17 @@ export async function request<T>(
       // and let the app do the rest (local key/vault cleanup and the notice).
       // The httpOnly `bb_session` cookie cannot be removed from here; the
       // server has to expire it.
+      //
+      // Only for the login this request was issued under (web#169 review, Codex
+      // P1): when a newer login became current while it waited for its answer,
+      // the token and the confirmed session are that newer login's and stay. The
+      // handler gets the stamp and makes the same check before it signs out.
       if (code === 'account_suspended') {
-        if (token) clearToken()
-        clearSessionConfirmed()
-        fireAccountSuspended()
+        if (isCurrentAuthStamp(authStamp)) {
+          if (token) clearToken()
+          clearSessionConfirmed()
+        }
+        fireAccountSuspended(authStamp)
       }
 
       // Task 1531 (web #85 round 2) / server task 1554: the server refused a

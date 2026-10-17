@@ -21,10 +21,13 @@
  *   Sign out, support@beebeeb.io).
  * Neither ever says WHY the account is not active.
  *
- * Known limit: the `bb_session` cookie is httpOnly (task 0447), so JavaScript
- * cannot remove it. Until the server also expires it on this 403 (the scope
- * addition in task 1948's notes), a reload sends it again, the server answers
- * the same 403, and this handler runs again.
+ * The `bb_session` cookie is httpOnly (task 0447), so JavaScript cannot remove
+ * it; the server expires it on this 403 (server#216, 6d01f177). Against a
+ * server without that, a reload sends it again, the server answers the same
+ * 403, and this handler runs again.
+ *
+ * A refusal only signs out the login it was about (web#169 review, Codex P1):
+ * see {@link createInactiveLoginGuard}.
  *
  * The flag is a tiny module-level store (not React context) so `AuthShell`
  * can read it on every page without a provider, and so it is scoped to this
@@ -32,7 +35,7 @@
  */
 
 import { useSyncExternalStore } from 'react'
-import { ApiError } from '@beebeeb/shared'
+import { ApiError, bumpAuthGeneration, isCurrentAuthStamp, type AuthStamp } from '@beebeeb/shared'
 
 /** Exact copy, Guus's ruling 1c. Pinned by test/1948-account-inactive.test.ts. */
 export const ACCOUNT_INACTIVE_NOTICE =
@@ -122,4 +125,64 @@ export async function signOutInactiveLocally(deps: SignOutInactiveDeps): Promise
  */
 export function signedOutDestination(inactive: boolean): 'account_inactive' | 'login' {
   return inactive ? 'account_inactive' : 'login'
+}
+
+// ── which login a refusal belongs to (web#169 review, Codex P1) ─────────────
+
+/**
+ * Cross-tab message: the login of account `userId` turned out to be dead. Only a
+ * tab whose CURRENT login is that same account acts on it. A message without a
+ * `userId` (the sender did not know which account it was signed in as, or an
+ * older bundle sent it) is ignored: its own next request finds out instead.
+ */
+export interface AccountInactiveBroadcast {
+  type: 'account_inactive'
+  userId?: string | null
+}
+
+export interface InactiveLoginGuardDeps {
+  /** The account this tab is signed in as right now (null = none or not known). */
+  currentUserId: () => string | null
+  /** Posts to the other tabs (AuthProvider's BroadcastChannel). */
+  broadcast: (msg: AccountInactiveBroadcast) => void
+  /** The local sign-out, see {@link signOutInactiveLocally}. */
+  signOutDeps: SignOutInactiveDeps
+}
+
+export type InactiveLoginOutcome = 'signed_out' | 'ignored'
+
+/**
+ * The one place that decides whether a 403 `account_suspended` (from this tab's
+ * `request()`) or an `account_inactive` broadcast (from another tab) signs THIS
+ * tab's login out. The sign-out clears the key and the local vault, so it must
+ * only ever run for the login the refusal was about:
+ * - `onSuspended(stamp)`: `stamp` is what `request()` captured when the refused
+ *   request was ISSUED. A later login (here or in another tab) makes it stale.
+ * - `onBroadcast(msg)`: only when `msg.userId` is this tab's current account.
+ */
+export function createInactiveLoginGuard(deps: InactiveLoginGuardDeps) {
+  const signOut = async (): Promise<void> => {
+    // Requests still in flight from the same dead login are now stale: one
+    // sign-out per login, and none later over a login that replaced it.
+    bumpAuthGeneration()
+    await signOutInactiveLocally(deps.signOutDeps)
+  }
+  return {
+    async onSuspended(stamp: AuthStamp): Promise<InactiveLoginOutcome> {
+      // Issued under an earlier login than the current one: the refusal is about
+      // a login this tab no longer has. Never touch the current one or its vault.
+      if (!isCurrentAuthStamp(stamp)) return 'ignored'
+      // Other tabs can only compare an account id with their own login; without
+      // one there is nothing they could safely act on.
+      if (stamp.userId) deps.broadcast({ type: 'account_inactive', userId: stamp.userId })
+      await signOut()
+      return 'signed_out'
+    },
+    async onBroadcast(msg: AccountInactiveBroadcast): Promise<InactiveLoginOutcome> {
+      const current = deps.currentUserId()
+      if (!msg?.userId || current === null || msg.userId !== current) return 'ignored'
+      await signOut()
+      return 'signed_out'
+    },
+  }
 }
