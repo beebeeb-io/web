@@ -322,3 +322,49 @@ test('5. an API failure shows an honest error with Retry and no invented list; a
   await expect(page.getByTestId('region-error')).toContainText('needs the latest server update', { timeout: 30_000 })
   await expect(page.getByTestId('region-hel1')).toHaveCount(0)
 })
+
+test('6. a sync-derived refresh keeps every row\'s real city (review on web#167)', async ({ page }) => {
+  // Files from test 2 sit in three pools. The drive first shows the API rows,
+  // which carry `storage_location`; sync nodes carry only a pool id.
+  await bootApp(page)
+  const files = await listFileIds(page)
+  const cities = new Set([...files.values()].map((f) => f.city))
+  for (const city of ['Helsinki', 'Nuremberg', 'Falkenstein']) {
+    expect(cities.has(city), `a file stored in ${city} exists (from test 2)`).toBe(true)
+    await expect(page.getByText(`AES-256-GCM · Europe · ${city}`).first()).toBeVisible({ timeout: 20_000 })
+  }
+
+  // Another device stars the Helsinki file. The page hears it over the sync
+  // stream (`file.starred`), which re-derives the rows from the sync tree and
+  // triggers no API refetch: the rows on screen are now sync-derived.
+  const pressed = page.locator('button[aria-label="Unstar"][aria-pressed="true"]')
+  const starredBefore = await pressed.count()
+  const helId = [...files.entries()].find(([, f]) => f.city === 'Helsinki')?.[0]
+  expect(helId).toBeTruthy()
+  const toggle = async () => {
+    const res = await page.request.patch(`${API_URL}/api/v1/files/${helId}/star`, { headers: await sessionHeaders(page) })
+    expect(res.ok(), `PATCH star -> ${res.status()}`).toBe(true)
+    return ((await res.json()) as { is_starred: boolean }).is_starred
+  }
+  const nowStarred = await toggle()
+  try {
+    // The star (or its removal) reached the page: the rows are sync-derived now.
+    await expect(pressed).toHaveCount(starredBefore + (nowStarred ? 1 : -1), { timeout: 20_000 })
+
+    // Every row still names its own city; none fell back to plain "Europe".
+    // Sampled without retries: a later API refetch could hide a lost city
+    // behind an auto-retrying assertion.
+    const bare = page.getByText('AES-256-GCM · Europe', { exact: true })
+    for (let i = 0; i < 10; i++) {
+      expect(await bare.count(), `rows without a city, sample ${i}`).toBe(0)
+      for (const city of ['Helsinki', 'Nuremberg', 'Falkenstein']) {
+        expect(await page.getByText(`AES-256-GCM · Europe · ${city}`).count(), `${city} rows, sample ${i}`).toBeGreaterThan(0)
+      }
+      await page.waitForTimeout(300)
+    }
+    await page.screenshot({ path: path.join(EVIDENCE_DIR, '6-sync-refresh-keeps-cities.png'), fullPage: true })
+  } finally {
+    // Leave the file as it was.
+    await toggle()
+  }
+})

@@ -120,6 +120,22 @@ export async function saveRegionChoice(id: string | null): Promise<void> {
   }
 }
 
+/**
+ * The signed-in person seen by a consumer changed (or is gone). A known person
+ * loads (once per page load). No person means signed out: the store forgets
+ * what it held, so signing back in as the same person fetches again instead
+ * of reusing a list and preference from before the sign-out (sign-out is a
+ * soft SPA transition, not a page load). `logout()` in auth-context resets the
+ * store as well, for a consumer that unmounts before it ever sees `null`.
+ */
+export function regionOwnerChanged(owner: string | null): void {
+  if (!owner) {
+    if (state.owner !== null || inflight) resetRegionStore()
+    return
+  }
+  void loadRegionChoices(owner)
+}
+
 export function useRegionChoices(owner: string | null | undefined) {
   const raw = useSyncExternalStore(subscribe, snapshot, snapshot)
   const key = owner ?? null
@@ -127,8 +143,7 @@ export function useRegionChoices(owner: string | null | undefined) {
   const s = raw.owner === key ? raw : INITIAL
 
   useEffect(() => {
-    if (!key) return
-    void loadRegionChoices(key)
+    regionOwnerChanged(key)
   }, [key])
 
   const reload = useCallback(() => loadRegionChoices(key, { force: true }), [key])
