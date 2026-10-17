@@ -29,6 +29,7 @@ export {
   registerErrorNotifier,
   registerSessionExpiredHandler,
   registerAccountDeletedHandler,
+  registerAccountSuspendedHandler,
   registerConnectionStatusHandler,
   registerAccountMismatchHandler,
   markSessionConfirmed,

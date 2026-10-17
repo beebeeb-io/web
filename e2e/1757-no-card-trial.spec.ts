@@ -267,7 +267,7 @@ test('ENDED, within the allowance — the trial ends: back to the allowance, no 
   await expect(page.getByText('after-end.bin').first()).toBeVisible({ timeout: 60_000 })
   expect((await onboardingDoc(page)).offers.trial).toMatchObject({ available: false, unavailable_reason: 'already_used' })
   await page.goto('/choose-plan')
-  await expect(page.getByTestId('trial-unavailable')).toContainText('already had your trial')
+  await expect(page.getByTestId('trial-unavailable')).toContainText('This email inbox has already had a free trial')
   await expect(page.getByTestId('start-trial')).toHaveCount(0)
   await shot(page, '1757-07-chooser-trial-used')
 })

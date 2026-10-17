@@ -19,6 +19,8 @@ import {
   logout as apiLogout,
   verify2fa as apiVerify2fa,
 } from './api'
+import { clearSessionConfirmed, registerAccountSuspendedHandler } from '@beebeeb/shared'
+import { clearSignedOutInactive, signOutInactiveLocally } from './account-inactive'
 import { clearHeldCoupon } from './coupon'
 import { clearAllDismissed } from './onboarding/notice-dismissal'
 import { resetRegionStore } from './use-region-choices'
@@ -29,6 +31,11 @@ const AUTH_CHANNEL_NAME = 'beebeeb-auth'
 
 type AuthBroadcastMessage =
   | { type: 'logout' }
+  /** Task 1948 (1c): this tab's login turned out to belong to an account that is
+   *  no longer active. Other tabs share the same login, so they sign it out
+   *  locally too, WITHOUT the server logout a plain 'logout' receiver attempts
+   *  (it would answer 403) and without a hard navigation. */
+  | { type: 'account_inactive' }
   /** Task 1531/1534 (P0 continuation, crypto-security-reviewer P1): fired
    *  after EVERY successful signup/login/2FA-verify so other tabs can tell
    *  whether the shared session cookie just switched to a DIFFERENT
@@ -69,6 +76,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // BroadcastChannel for multi-tab logout sync. Guard against environments
   // without support (Safari < 15.4, SSR) — the feature degrades to no-op.
   const channelRef = useRef<BroadcastChannel | null>(null)
+
+  // Task 1948 (1c): a 403 `account_suspended` from ANY request (`request()` fires
+  // this centrally, and also on the boot getMe() below, so it is registered first:
+  // effects run in declaration order) signs the dead login out on this device.
+  // Same local cleanup as `logout()`, minus `/auth/logout`, which needs a working
+  // session and would answer the same 403. `account-inactive.ts` holds the flag
+  // the notice and ProtectedRoute's screen read.
+  const signOutInactive = useCallback(async (broadcast: boolean) => {
+    if (broadcast) {
+      try {
+        channelRef.current?.postMessage({ type: 'account_inactive' } satisfies AuthBroadcastMessage)
+      } catch { /* channel may already be closed during teardown */ }
+    }
+    await signOutInactiveLocally({
+      clearToken,
+      clearSessionConfirmed,
+      clearAccountLocalState: () => {
+        clearHeldCoupon()
+        clearAllDismissed()
+        resetRegionStore()
+      },
+      logoutCleanup: () => onLogoutCallback?.(),
+      clearUser: () => setUser(null),
+    })
+  }, [])
+
+  useEffect(() => {
+    registerAccountSuspendedHandler(() => {
+      void signOutInactive(true)
+    })
+    return () => registerAccountSuspendedHandler(null)
+  }, [signOutInactive])
 
   useEffect(() => {
     // task 0447 — session-cookie migration.
@@ -126,6 +165,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (err instanceof ApiError && err.status === 401) {
           clearToken()
         }
+        // Task 1948 (1c) — a 403 account_suspended needs no handling here either:
+        // `request()` already fired the handler registered above, which cleared
+        // the login on this device and set `user` to null.
         // Task 1404 — a soft-deleted account (task 1403's account_deleted
         // 403) needs NO special handling here: `request()` (shared) already
         // clears the token and fires the central `registerAccountDeletedHandler`
@@ -157,6 +199,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         clearHeldCoupon()
         clearAllDismissed() // 1822: dismissed account notices go with the session
         resetRegionStore() // 1919: the region list + preference were this session's
+      }
+      if (event.data?.type === 'account_inactive') {
+        // Task 1948 (1c): local only, no re-broadcast, no server call.
+        void signOutInactive(false)
+        return
       }
       if (event.data?.type === 'login') {
         // Task 1531/1534 (P0 continuation): a DIFFERENT tab just
@@ -193,7 +240,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       channel.close()
       channelRef.current = null
     }
-  }, [])
+  }, [signOutInactive])
 
   // Task 1531/1534 (P0 continuation, web PR #85): best-effort — a channel
   // that failed to open (Safari < 15.4, SSR) just means no cross-tab signal,
@@ -207,6 +254,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
     const result = await apiLogin(email, password)
     if (!result.requires_2fa) {
+      clearSignedOutInactive() // 1948: a working login replaces the dead one
       // Signing in to an EXISTING account is not the signup the coupon was held for
       // (task 1814, security review P2.7): the hold must not follow the person into it.
       clearHeldCoupon()
@@ -220,6 +268,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const verify2fa = useCallback(async (partialToken: string, code: string): Promise<LoginResult> => {
     const result = await apiVerify2fa(partialToken, code)
+    clearSignedOutInactive() // 1948: a working login replaces the dead one
     clearHeldCoupon() // an existing account, not the signup the coupon was held for (1814)
     const u = await getMe()
     setUser(u)
@@ -229,6 +278,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const refreshUser = useCallback(async () => {
     const u = await getMe()
+    // 1948: a signed-in user again (e.g. the account a signup just created): the
+    // notice about the earlier, dead login has done its job.
+    clearSignedOutInactive()
     setUser(u)
   }, [])
 

@@ -322,7 +322,7 @@ test.describe('1037 — trial with a payment mandate at signup', () => {
     await expect(page.getByTestId('billing-info-step')).toBeVisible({ timeout: 15_000 })
     await page.getByRole('button', { name: 'Start 14-day free trial' }).click()
     await page.waitForURL(/\/settings\/billing\?view=change/, { timeout: 15_000 })
-    await expect(page.getByText(/already used your free trial/i)).toBeVisible()
+    await expect(page.getByText(/This email inbox has already had a free trial/i)).toBeVisible()
     expect(m.calls.trialCheckout).toBe(1)
   })
 

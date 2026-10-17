@@ -31,6 +31,7 @@ import { clearToken, getToken } from './token'
 import {
   fireAccountDeleted,
   fireAccountMismatch,
+  fireAccountSuspended,
   fireConnectionStatus,
   fireErrorNotifier,
   fireSessionExpired,
@@ -207,6 +208,20 @@ export async function request<T>(
       if (code === 'account_deleted') {
         if (token) clearToken()
         fireAccountDeleted(body)
+      }
+
+      // Task 1948 (1c): the session belongs to an account that is suspended or
+      // disabled. Every later request would carry the same dead login, so it is
+      // signed out on this device from WHICHEVER call surfaced it, like
+      // account_deleted above: drop the legacy bearer, forget that a session was
+      // confirmed this page load (so a later anonymous 401 is not "expired"),
+      // and let the app do the rest (local key/vault cleanup and the notice).
+      // The httpOnly `bb_session` cookie cannot be removed from here; the
+      // server has to expire it.
+      if (code === 'account_suspended') {
+        if (token) clearToken()
+        clearSessionConfirmed()
+        fireAccountSuspended()
       }
 
       // Task 1531 (web #85 round 2) / server task 1554: the server refused a
