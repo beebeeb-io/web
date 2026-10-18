@@ -196,12 +196,21 @@ describe('applyRequest / applyCancelled: the POST answer is applied as is', () =
     expect(applyRequest(null, PENDING)).toBeNull()
   })
 
+  /** The body of `if (outcome.kind === '<kind>') {` up to its `} else`. */
+  function branch(src: string, kind: string): string {
+    const start = src.indexOf(`if (outcome.kind === '${kind}') {`)
+    expect(start).toBeGreaterThan(-1)
+    return src.slice(start, src.indexOf('} else', start))
+  }
+
   test('the screen applies them before (not instead of) refreshing', () => {
     const screen = readFileSync(path.join(SRC, 'components/vault-locked-no-key.tsx'), 'utf8')
-    expect(screen).toContain('setEraseStatus((s) => applyRequest(s, outcome.request))')
-    expect(screen).toContain('setEraseStatus(applyCancelled)')
-    // The old "refresh and hope" after a successful create is gone.
-    expect(screen).not.toMatch(/kind === 'requested'\) \{\s*setEraseTyped\(''\)\s*await loadEraseStatus\(\)/)
+    const created = branch(screen, 'requested')
+    expect(created).toContain('applyRequest(s, outcome.request)')
+    expect(created.indexOf('applyRequest(')).toBeLessThan(created.indexOf('loadEraseStatus()'))
+    expect(created).not.toContain('await loadEraseStatus()')
+    const cancelled = branch(screen, 'cancelled')
+    expect(cancelled).toContain('setEraseStatus(applyCancelled)')
   })
 })
 
