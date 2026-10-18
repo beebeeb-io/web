@@ -78,6 +78,12 @@ class FakeServer {
    * fail: never reaches the server (the fetch rejects, nothing committed).
    */
   submitMode: 'normal' | 'hold' | 'lose' | 'fail' = 'normal'
+  /**
+   * r3: the POST lands on a node that predates server#233 during a rolling
+   * deploy (or after a rollback): the database still numbers the op (the
+   * trigger), but the `applied[]` answer carries no `user_seq`.
+   */
+  oldNodeAnswers = false
   private held: { result: SubmitResult; resolve: (r: SubmitResult) => void }[] = []
   /** Serve this snapshot once instead of the current state (fetched earlier). */
   staleSnapshot: WireSnapshot | null = null
@@ -163,7 +169,7 @@ class FakeServer {
     if (this.submitMode === 'fail') return Promise.reject(new Error('network down'))
     const applied = ops.map((o) => {
       const rec = this.record(o.op_type, o.payload, o.client_op_id)
-      return this.numbered
+      return this.numbered && !this.oldNodeAnswers
         ? { client_op_id: o.client_op_id, seq_id: rec.seq_id, user_seq: rec.user_seq as number }
         : { client_op_id: o.client_op_id, seq_id: rec.seq_id }
     })
@@ -199,8 +205,26 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, {
   submitSyncOps: (ops: SubmittedOp[]) => server.submit(ops),
 })
 
-const { SyncClient } = await import('../src/lib/sync-client')
+const { SyncClient, pendingCoveredBy, hasRecordedPosition } = await import('../src/lib/sync-client')
 type Client = InstanceType<typeof SyncClient>
+type Pending = Parameters<typeof pendingCoveredBy>[0]
+
+/**
+ * Round 3 invariant, checked after EVERY test in this file (r2 and r3): an
+ * entry with a recorded position is cleared by a far-enough numbered snapshot
+ * AND by a far-enough unnumbered one; one without is what flushPending sends.
+ */
+function assertEveryPendingClearable(entries: Pending[], where: string): void {
+  const far = Number.MAX_SAFE_INTEGER
+  for (const p of entries) {
+    if (!hasRecordedPosition(p)) continue
+    const numbered = pendingCoveredBy(p, far, far)
+    const unnumbered = pendingCoveredBy(p, far, null)
+    if (!numbered || !unnumbered) {
+      throw new Error(`invariant (${where}): ${JSON.stringify(p)} numbered=${numbered} unnumbered=${unnumbered}`)
+    }
+  }
+}
 
 const storage = (globalThis as { localStorage: MemoryStorage }).localStorage
 
@@ -285,7 +309,11 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  const inMemory = liveClients.flatMap((c) => [...(c as unknown as { pendingOps: Pending[] }).pendingOps])
   for (const c of liveClients.splice(0)) c.stop()
+  assertEveryPendingClearable(inMemory, 'memory')
+  const raw = storage.getItem('bb_sync_pending_ops')
+  assertEveryPendingClearable(raw ? (JSON.parse(raw) as Pending[]) : [], 'storage')
 })
 
 for (const mode of ['user_seq', 'legacy seq_id'] as const) {
@@ -472,4 +500,118 @@ describe('1973 r2 (d): a pending op that is NOT confirmed stays pending', () => 
     expect(memPending(client)).toEqual([])
     expect(name(client)).toBe('mine')
   })
+})
+
+/**
+ * Round 3 (Codex P2 at 04ad1c89): in user_seq mode a POST `applied[]` entry
+ * from a node that predates server#233 carries no `user_seq`. The entry got a
+ * recorded `applied_seq_id` and a null `applied_user_seq`. With the echo
+ * missed, every numbered snapshot ignored the global position, and
+ * `flushPending` never resubmits an entry with a position: it stayed pending
+ * for good and was re-applied over every snapshot. Coverage now falls back to
+ * the snapshot's global `seq_id` when the entry has no `user_seq`.
+ */
+describe('1973 r3 (a)/(b): user_seq mode, applied[] without user_seq, echo missed', () => {
+  test('(a) a numbered snapshot past its seq_id clears it; it is not re-applied or resubmitted', async () => {
+    server.record('file_create', { id: FILE, name_encrypted: 'start' })
+    const client = await boot()
+
+    server.oldNodeAnswers = true
+    server.otherUsersWrite(5)
+    await client.submitOp(...rename('mine'))
+    const [ours] = storedPending()
+    expect(ours).toBeDefined()
+    expect(name(client)).toBe('mine')
+    // The echo is missed (a dropped connection). Another device renames
+    // afterwards; its frame is missed too, a snapshot brings it.
+    server.oldNodeAnswers = false
+    server.otherUsersWrite(3)
+    server.record(...rename('theirs'))
+    await resync(client)
+
+    expect(memPending(client)).toEqual([])
+    expect(storedPending()).toEqual([])
+    expect(name(client)).toBe('theirs')
+
+    const before = server.submitCalls.length
+    const next = await reload(client)
+    expect(server.submitCalls.length).toBe(before)
+    expect(name(next)).toBe('theirs')
+    expect(server.nodes.get(FILE)?.name_encrypted).toBe('theirs')
+  })
+
+  test('(b) a numbered snapshot NOT yet past its seq_id keeps it pending', async () => {
+    server.record('file_create', { id: FILE, name_encrypted: 'start' })
+    const client = await boot()
+    const older = server.snapshotNow() // numbered, fetched before our commit
+    expect(typeof older.user_seq).toBe('number')
+
+    server.oldNodeAnswers = true
+    server.otherUsersWrite(5)
+    await client.submitOp(...rename('mine'))
+    const [ours] = storedPending()
+    expect(ours).toBeDefined()
+
+    server.staleSnapshot = older
+    await resync(client)
+    expect(memPending(client)).toEqual([ours])
+    expect(storedPending()).toEqual([ours])
+    expect(name(client)).toBe('mine')
+  })
+})
+
+/**
+ * Round 3 (c), the invariant: every pending entry is either resubmitted (no
+ * recorded position) or cleared by a snapshot that is far enough ahead,
+ * numbered OR unnumbered (the client cannot choose which node answers). No
+ * entry shape may sit in neither class. Driven through the real client: the
+ * entry is persisted, the tab boots, then one more snapshot merges.
+ */
+describe('1973 r3 (c): no pending entry shape is uncleareable', () => {
+  const shapes: { label: string; pos: Record<string, unknown>; recorded: boolean }[] = [
+    { label: 'no position', pos: {}, recorded: false },
+    { label: 'applied_seq_id null', pos: { applied_seq_id: null }, recorded: false },
+    { label: 'both null', pos: { applied_seq_id: null, applied_user_seq: null }, recorded: false },
+    { label: 'applied_user_seq only', pos: { applied_user_seq: 3 }, recorded: false },
+    { label: 'applied_seq_id only', pos: { applied_seq_id: 5 }, recorded: true },
+    { label: 'applied_seq_id + user_seq null', pos: { applied_seq_id: 5, applied_user_seq: null }, recorded: true },
+    { label: 'applied_seq_id + user_seq', pos: { applied_seq_id: 5, applied_user_seq: 3 }, recorded: true },
+  ]
+  for (const numbered of [true, false]) {
+    for (const s of shapes) {
+      test(`${numbered ? 'numbered' : 'unnumbered'} snapshot, entry: ${s.label}`, async () => {
+        server.numbered = numbered
+        server.record('file_create', { id: FILE, name_encrypted: 'start' })
+        for (let i = 2; i <= 6; i++) {
+          server.otherUsersWrite(1)
+          server.record('file_create', { id: `00000000-0000-4000-8000-00000000000${i}`, name_encrypted: `f${i}` })
+        }
+        // The snapshot is past every position in the table (seq 5, user_seq 3).
+        expect(server.snapshotNow().seq_id).toBeGreaterThan(5)
+        if (numbered) expect(server.snapshotNow().user_seq).toBeGreaterThan(3)
+        const id = `r3-${numbered ? 'n' : 'u'}-${s.label.replace(/\W+/g, '-')}`
+        storage.setItem(
+          'bb_sync_pending_ops',
+          JSON.stringify([
+            {
+              client_op_id: id,
+              op_type: 'file_rename',
+              payload: { id: FILE, new_name_encrypted: 'mine' },
+              target_id: FILE,
+              ...s.pos,
+            },
+          ]),
+        )
+
+        const client = await boot()
+        await resync(client)
+
+        expect(memPending(client)).toEqual([])
+        expect(storedPending()).toEqual([])
+        const sent = server.submitCalls.flat().filter((x) => x === id).length
+        // A recorded op was applied: resubmitting it would execute it twice.
+        expect(sent).toBe(s.recorded ? 0 : 1)
+      })
+    }
+  }
 })

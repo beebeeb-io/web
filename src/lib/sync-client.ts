@@ -134,16 +134,39 @@ function userSeqOf(op: { user_seq?: number | null }): number | null {
 }
 
 /**
- * Task 1973 r2: true when a snapshot already holds a pending op the server
- * recorded. Compared on `user_seq` when the snapshot is numbered (a user's ops
- * commit in user_seq order), on the global `seq_id` otherwise (the legacy
- * coverage rule). An op without a recorded position is never covered.
+ * Task 1973 r3: true when the server recorded this pending op, i.e. it has a
+ * finite `applied_seq_id`. ONE predicate decides both sides of the invariant:
+ * `flushPending` resubmits exactly the entries without a recorded position, and
+ * `pendingCoveredBy` can clear every entry with one (the `seq_id` comparison
+ * needs nothing else, and every snapshot carries `seq_id`).
  */
-function pendingCoveredBy(p: PendingOp, snapSeq: number, snapUserSeq: number | null): boolean {
-  if (snapUserSeq !== null) {
-    return typeof p.applied_user_seq === 'number' && p.applied_user_seq <= snapUserSeq
+export function hasRecordedPosition(p: Pick<PendingOp, 'applied_seq_id'>): boolean {
+  return typeof p.applied_seq_id === 'number' && Number.isFinite(p.applied_seq_id)
+}
+
+/**
+ * Task 1973 r2/r3: true when a snapshot already holds a pending op the server
+ * recorded. Compared on `user_seq` when BOTH the snapshot and the entry carry
+ * one (a user's ops commit in user_seq order). Otherwise on the global
+ * `seq_id`, which every snapshot carries: the legacy coverage rule, and the
+ * fallback for an entry whose POST `applied[]` came from a node that predates
+ * server#233 (no `user_seq`) while the client is in user_seq mode (Codex P2 on
+ * web#173 at 04ad1c89). Without that fallback such an entry was cleared by no
+ * snapshot, and `flushPending` never resubmits it: if its echo was missed it
+ * stayed pending for good and was re-applied over every snapshot.
+ *
+ * Invariant (test/1973-sync-pending-confirm.test.ts, "r3"): an entry with a recorded
+ * position is cleared by a numbered AND by an unnumbered snapshot once that
+ * snapshot is far enough ahead; an entry without one is resubmitted. No shape
+ * is neither.
+ */
+export function pendingCoveredBy(p: PendingOp, snapSeq: number, snapUserSeq: number | null): boolean {
+  if (!hasRecordedPosition(p)) return false
+  const userSeq = p.applied_user_seq
+  if (snapUserSeq !== null && typeof userSeq === 'number' && Number.isFinite(userSeq)) {
+    return userSeq <= snapUserSeq
   }
-  return typeof p.applied_seq_id === 'number' && p.applied_seq_id <= snapSeq
+  return (p.applied_seq_id as number) <= snapSeq
 }
 
 /** Outcome of one user_seq catch-up (task 1973). */
@@ -216,7 +239,7 @@ export class SyncClient {
    * looks them up in the op log by `client_op_id` before merging.
    */
   private orphanedPending = new Set<string>(
-    this.pendingOps.filter((p) => typeof p.applied_seq_id !== 'number').map((p) => p.client_op_id),
+    this.pendingOps.filter((p) => !hasRecordedPosition(p)).map((p) => p.client_op_id),
   )
   /** The global cursor this tab booted with: the lookup floor for old entries. */
   private readonly bootLastSeq = this.lastSeq
@@ -1462,7 +1485,7 @@ export class SyncClient {
     // Task 1973 r2: an op with a recorded server position was applied; it
     // waits for its echo or a covering snapshot and is never resubmitted (the
     // server would execute it a second time).
-    const unsent = this.pendingOps.filter((p) => typeof p.applied_seq_id !== 'number')
+    const unsent = this.pendingOps.filter((p) => !hasRecordedPosition(p))
     if (unsent.length === 0) return
     const batch = unsent.map((p) => ({
       client_op_id: p.client_op_id,
