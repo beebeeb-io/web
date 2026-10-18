@@ -27,7 +27,11 @@ import { uploadTextFile } from './helpers/drive'
  *      /files/permanent or /files/trash from the locked screen.
  *   2. a second account: request, confirm by the link, the due time is moved into the past in
  *      the scratch DB, the API's own worker runs, every file is in the TRASH, not one row is
- *      deleted, and the owner gets the "moved to the trash" email exactly once.
+ *      deleted, and the owner gets the "moved to the trash" email exactly once. Round 4: the
+ *      locked screen's "Restore everything from the erase on <date>" brings every row back.
+ *
+ * Round 4 also proves: the cancel link waits for a click (no API call on load), and a reload of
+ * either link page after it read the token says "Open the link from your email again".
  *
  * Environment (the lane ran it this way; nothing here touches prod):
  *   - API: built from the server 1918 branch (debug), console email provider, workers ON,
@@ -260,6 +264,26 @@ test('locked screen: request, confirm by the email link, see the due time, cance
     'account.erase_request|console|sent',
   )
 
+  // ── Round 4: the cancel link waits for a click (a mail scanner opening it cancels nothing),
+  //    and a reload after the page read the token asks for the email link again ──
+  {
+    const { guest, requests: guestRequests } = await freshGuest(browser)
+    await guest.goto(cancel1)
+    await expect(guest.getByTestId('erase-link-ready')).toBeVisible({ timeout: 20_000 })
+    await dismissCookies(guest)
+    expect(new URL(guest.url()).hash).toBe('')
+    await guest.waitForTimeout(2_000)
+    expect(apiCalls(guestRequests)).toEqual([])
+    expect(sql(`SELECT status FROM account_erase_requests WHERE user_id = '${userId}' AND status = 'pending'`)).toBe('pending')
+    await shot(guest, '03b-cancel-link-waits-for-a-click')
+    await guest.reload()
+    await expect(guest.getByTestId('erase-link-reopen')).toContainText('Open the cancel link in the email once more')
+    await expect(guest.getByText('Open the link from your email again')).toBeVisible()
+    expect(apiCalls(guestRequests)).toEqual([])
+    await shot(guest, '03c-cancel-link-reloaded')
+    await guest.context().close()
+  }
+
   // ── The confirmation link: nothing on load, one click confirms ──
   offset = mailLog().length
   const guest1 = await confirmByLink(browser, verify1, userId, { ready: '04-verify-page-ready', verified: '05-verify-page-confirmed' })
@@ -295,11 +319,16 @@ test('locked screen: request, confirm by the email link, see the due time, cance
   expect(sql(`SELECT status, cancelled_via FROM account_erase_requests WHERE user_id = '${userId}'`)).toBe('cancelled|session')
   await shot(page, '09-cancelled-on-the-locked-screen')
 
-  // The notice's cancel link is spent now.
+  // The notice's cancel link is spent now: one click, and the page says it can't cancel anything.
   {
-    const { guest } = await freshGuest(browser)
+    const { guest, requests: guestRequests } = await freshGuest(browser)
     await guest.goto(cancel1)
+    await expect(guest.getByTestId('erase-link-ready')).toBeVisible({ timeout: 20_000 })
+    const answered = guest.waitForResponse((r) => r.url().endsWith('/api/v1/account/erase-request/cancel-by-token'))
+    await guest.getByTestId('erase-link-cancel').click()
+    expect((await answered).status()).toBe(404)
     await expect(guest.getByTestId('erase-link-invalid')).toBeVisible({ timeout: 20_000 })
+    expect(apiCalls(guestRequests)).toEqual(['POST /api/v1/account/erase-request/cancel-by-token'])
     await guest.context().close()
   }
 
@@ -327,6 +356,21 @@ test('locked screen: request, confirm by the email link, see the due time, cance
   const verify3 = linkIn(notice3, 'verify', origin)
   const third = sql(`SELECT id FROM account_erase_requests WHERE user_id = '${userId}' AND status = 'pending'`)
   expect(third).toMatch(/^[0-9a-f-]{36}$/)
+  // Round 4: the confirmation page reloaded after it read the token asks for the email link again
+  // and confirms nothing.
+  {
+    const { guest, requests: guestRequests } = await freshGuest(browser)
+    await guest.goto(verify3)
+    await expect(guest.getByTestId('erase-verify-ready')).toBeVisible({ timeout: 20_000 })
+    await dismissCookies(guest)
+    await guest.reload()
+    await expect(guest.getByTestId('erase-verify-reopen')).toBeVisible({ timeout: 20_000 })
+    await expect(guest.getByText('Open the link from your email again')).toBeVisible()
+    expect(apiCalls(guestRequests)).toEqual([])
+    expect(sql(`SELECT verified_at IS NULL FROM account_erase_requests WHERE id = '${third}'`)).toBe('t')
+    await shot(guest, '11b-verify-link-reloaded')
+    await guest.context().close()
+  }
   sql(
     `UPDATE account_erase_requests SET requested_at = now() - interval '25 hours', notice_sent_at = now() - interval '25 hours' WHERE id = '${third}'`,
   )
@@ -409,7 +453,7 @@ test('a second account: confirmed, the due time passes, every file moves to the 
   expect(done).toContain('Nothing has been deleted yet.')
   expect(done).toContain(`(${rowsBefore} items)`)
   expect(done).toContain('/trash')
-  expect(done).toContain('Restore')
+  expect(done).toContain('Restore everything from the erase')
   // Give the worker two more passes to (wrongly) send it again.
   await page.waitForTimeout(125_000)
   expect(mailsSince(offset).filter((m) => m.includes(`Subject: ${COMPLETED_SUBJECT}`))).toHaveLength(1)
@@ -423,9 +467,26 @@ test('a second account: confirmed, the due time passes, every file moves to the 
     timeout: 30_000,
   })
   await shot(page, '15-done-in-the-trash')
+
+  // ── Round 4: "Restore everything from the erase on <date>", in one action ──
+  const restore = page.getByTestId('erase-restore-button')
+  await expect(restore).toContainText('Restore everything from the erase on')
+  await shot(page, '16-restore-offer')
+  const restoreAnswer = page.waitForResponse(
+    (r) => /\/api\/v1\/account\/erase-request\/[0-9a-f-]+\/restore$/.test(r.url()) && r.request().method() === 'POST',
+  )
+  await restore.click()
+  expect([200, 202]).toContain((await restoreAnswer).status())
+  await expect(page.getByTestId('erase-restore-status')).toContainText('Everything from the erase is back.', { timeout: 150_000 })
+  const back = sql(
+    `SELECT count(*), count(*) FILTER (WHERE NOT is_trashed), count(*) FILTER (WHERE is_trashed) FROM files WHERE user_id = '${userId}'`,
+  )
+  expect(back).toBe(`${rowsBefore}|${rowsBefore}|0`)
+  await shot(page, '17-restore-done')
+
   expect(requests.filter((r) => r.includes('/files/permanent') || r.includes('/files/trash'))).toEqual([])
   fs.writeFileSync(
-    path.join(SHOTS, '16-db-before-after.txt'),
-    `user ${userId}\nfile rows before: ${rowsBefore}\nafter (rows|trashed|live): ${after}\n`,
+    path.join(SHOTS, '18-db-before-after.txt'),
+    `user ${userId}\nfile rows before: ${rowsBefore}\nafter the erase (rows|trashed|live): ${after}\nafter restore everything (rows|live|trashed): ${back}\n`,
   )
 })
