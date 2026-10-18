@@ -14,6 +14,7 @@ import { useWsEvent } from '../lib/ws-context'
 import { EmptyTrash } from '../components/empty-states/empty-trash'
 import { RestoreFromEraseOffer } from '../components/restore-from-erase'
 import { restoreToast, splitRestored } from '../lib/trash-restore-summary'
+import { sharedEraseStatus } from '../lib/erase-status-store'
 import { ConfirmPasswordModal } from '../components/confirm-password-modal'
 import { formatBytes } from '../lib/format'
 import { FileDetailsPanel, type FileDetailsMeta } from '../components/file-details-panel'
@@ -229,6 +230,15 @@ export function Trash() {
     })
   }
 
+  /**
+   * Task 1918 round 4c: an own action changed the trash (restore, delete forever, empty trash),
+   * so the app's cached erase status (what is left in the trash) is out of date. Called in each
+   * handler's `finally`: whatever happened, the next read goes to the server.
+   */
+  const trashChanged = () => {
+    sharedEraseStatus.invalidate()
+  }
+
   const handleRestore = async (id: string) => {
     setLoading(true)
     try {
@@ -255,6 +265,7 @@ export function Trash() {
     } catch (err) {
       showToast({ icon: 'x', title: 'Restore failed', description: err instanceof Error ? err.message : 'Could not restore file', danger: true })
     } finally {
+      trashChanged()
       setLoading(false)
     }
   }
@@ -351,6 +362,7 @@ export function Trash() {
       })
       fetchTrash()
     } finally {
+      trashChanged()
       setDeleteProgress(null)
       setLoading(false)
     }
@@ -395,6 +407,7 @@ export function Trash() {
       showToast({ icon: 'x', title: 'Restore failed', description: err instanceof Error ? err.message : 'Some files could not be restored', danger: true })
       fetchTrash()
     } finally {
+      trashChanged()
       setLoading(false)
     }
   }
@@ -409,6 +422,7 @@ export function Trash() {
       showToast({ icon: 'x', title: 'Restore all failed', description: err instanceof Error ? err.message : 'Some files could not be restored', danger: true })
       fetchTrash()
     } finally {
+      trashChanged()
       setLoading(false)
     }
   }

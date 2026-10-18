@@ -526,6 +526,11 @@ export interface RefreshHooks {
   /** `document`: `visibilitychange` to visible refreshes. */
   doc: Pick<EventTarget, 'addEventListener' | 'removeEventListener'> & { visibilityState?: string }
   refresh: () => void
+  /**
+   * Called by the due-time timer instead of `refresh` (round 4c: the banner reads FRESH then,
+   * never from its cache). Defaults to `refresh`.
+   */
+  refreshDue?: () => void
   plan: EraseRefreshPlan
   setTimeoutFn?: (fn: () => void, ms: number) => unknown
   clearTimeoutFn?: (id: unknown) => void
@@ -545,7 +550,7 @@ export function attachEraseRefresh(h: RefreshHooks): () => void {
   }
   h.win.addEventListener('focus', onFocus)
   h.doc.addEventListener('visibilitychange', onVisibility)
-  const due = h.plan.dueInMs === null ? null : setT(h.refresh, h.plan.dueInMs)
+  const due = h.plan.dueInMs === null ? null : setT(h.refreshDue ?? h.refresh, h.plan.dueInMs)
   const poll = h.plan.pollMs === null ? null : setI(h.refresh, h.plan.pollMs)
   return () => {
     h.win.removeEventListener('focus', onFocus)
@@ -606,15 +611,33 @@ export function inTrashText(inTrash: number | null): string | null {
 /**
  * What a fresh status means for a restore block following erase `shownId` (round 4b): `lost`
  * when the status no longer carries that erase as its last one (stop polling, say so); else the
- * newer state, and whether an earlier error is stale now (the restore runs or is done).
+ * newer state. (Round 4c: what happens to an earlier error is `restoreErrorAfterRead`.)
  */
-export type RestoreUpdate = { kind: 'lost' } | { kind: 'update'; executed: EraseExecuted; clearError: boolean }
+export type RestoreUpdate = { kind: 'lost' } | { kind: 'update'; executed: EraseExecuted }
 
 export function restoreUpdate(shownId: string, status: EraseStatus): RestoreUpdate {
   const next = status.last_executed
   if (!next || next.id !== shownId) return { kind: 'lost' }
-  const offer = restoreOffer(next)
-  return { kind: 'update', executed: next, clearError: offer === 'running' || offer === 'done' }
+  return { kind: 'update', executed: next }
+}
+
+/** The error the block shows came from a definite refusal, or from an outcome we could not learn. */
+export type RestoreErrorKind = 'refused' | 'unknown' | null
+
+export const RESTORE_DID_NOT_START_TEXT = 'The restore did not start.'
+
+/**
+ * Round 4c (web#174 review): after an UNKNOWN outcome any fresh status replaces the error with the
+ * truth: it runs or is done (the error goes), or it never started (the error goes, the offer is
+ * back, and the block says the restore did not start). A definite refusal's error stays until the
+ * next click.
+ */
+export function restoreErrorAfterRead(kind: RestoreErrorKind, executed: EraseExecuted | null): { clear: boolean; notice: string | null } {
+  if (kind !== 'unknown') return { clear: false, notice: null }
+  if (!executed) return { clear: true, notice: null }
+  const offer = restoreOffer(executed)
+  if (offer === 'running' || offer === 'done') return { clear: true, notice: null }
+  return { clear: true, notice: RESTORE_DID_NOT_START_TEXT }
 }
 
 export type RestoreOutcome =
@@ -708,4 +731,20 @@ export function keepCheckAgain(mode: CheckAgainMode, status: EraseStatus, follow
   if (mode === null || followUp) return null
   if (mode === 'request') return status.request ? null : 'request'
   return status.request ? 'cancel' : null
+}
+
+/**
+ * Round 4c: the banner's "Check again" after an unknown CANCEL follows the screen's rule, and the
+ * note says what the read showed: no request pending (the cancel worked, or nothing was pending),
+ * or, after a click on "Check again", that the request is still pending.
+ */
+export function checkAgainAfterRead(
+  mode: CheckAgainMode,
+  status: EraseStatus,
+  followUp: boolean,
+): { mode: CheckAgainMode; note: string | null } {
+  const next = keepCheckAgain(mode, status, followUp)
+  if (mode !== 'cancel') return { mode: next, note: null }
+  if (status.request === null) return { mode: next, note: 'There is no erase request pending now.' }
+  return { mode: next, note: followUp ? 'The request is still pending.' : null }
 }

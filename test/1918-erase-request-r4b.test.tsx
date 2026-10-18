@@ -125,7 +125,8 @@ describe('1. the locked screen reads the status again when a restore finishes', 
 
   test('the block calls onDone once when nothing of the erase is left in the trash', () => {
     const block = read('components/restore-from-erase.tsx')
-    expect(block).toMatch(/if \(offer === 'done' && !doneReported\.current\) \{\s*doneReported\.current = true\s*onDone\?\.\(\)/)
+    // Round 4c: the shared cache is invalidated before the parent re-reads.
+    expect(block).toMatch(/if \(offer === 'done' && !doneReported\.current\) \{\s*doneReported\.current = true\s*sharedEraseStatus\.invalidate\(\)\s*onDone\?\.\(\)/)
   })
 })
 
@@ -198,7 +199,8 @@ describe('4. a status without this erase stops the polling; a frozen refusal sho
   test('the block stops polling once lost (polling runs only while the view is running)', () => {
     const block = code('components/restore-from-erase.tsx')
     expect(block).toContain("const offer: RestoreView = lost ? 'lost' : restoreOffer(shown)")
-    expect(block).toMatch(/if \(update\.kind === 'lost'\) \{\s*setLost\(true\)\s*return/)
+    // Round 4c: the status still goes to the parent when lost.
+    expect(block).toMatch(/if \(update\.kind === 'lost'\) \{\s*setLost\(true\)\s*onStatus\?\.\(status\)\s*return/)
   })
 
   test('403 account_frozen: refused in the server words; the view shows it with no background line', async () => {
@@ -268,14 +270,16 @@ describe('6. counts, not "everything"', () => {
 // ── 7 ──────────────────────────────────────────────────────────────────────────────────────
 
 describe('7. a stale error clears on progress; unknown outcomes get a real "Check again"', () => {
-  test('restoreUpdate clears the error once the restore runs or is done, not before', async () => {
+  // Round 4c changed this rule (test/1918-erase-request-r4c.test.tsx has the full table): an
+  // UNKNOWN outcome's error is replaced by any fresh status; a refusal's error stays until the next
+  // click. `restoreUpdate` no longer decides it; `restoreErrorAfterRead` does.
+  test('after an unknown outcome the error clears once the restore runs or is done', async () => {
     const m = await lib()
-    const update = m.restoreUpdate as Fn
+    const after = m.restoreErrorAfterRead as Fn
     const running = { ...EXECUTED, in_trash: 100, restore: { state: 'running', requested_at: null, rows_restored: 50, finished_at: null } }
     const done = { ...EXECUTED, in_trash: 0, restore: { state: 'done', requested_at: null, rows_restored: 150, finished_at: 'x' } }
-    expect((update(REQ, status({ last_executed: running })) as Mod).clearError).toBe(true)
-    expect((update(REQ, status({ last_executed: done })) as Mod).clearError).toBe(true)
-    expect((update(REQ, status({ last_executed: EXECUTED })) as Mod).clearError).toBe(false)
+    expect((after('unknown', running) as Mod).clear).toBe(true)
+    expect((after('unknown', done) as Mod).clear).toBe(true)
   })
 
   test('the restore block and the banner draw "Check again" after an unknown outcome', async () => {
@@ -302,10 +306,12 @@ describe('7. a stale error clears on progress; unknown outcomes get a real "Chec
   test('the stateful parts set it on unknown and clear it on the next read', () => {
     const block = code('components/restore-from-erase.tsx')
     expect(block).toContain("if (outcome.kind === 'unknown') setCheckAgain(true)")
-    expect(block).toContain('if (update.clearError) setError(\'\')')
+    // Round 4c: the error after a read follows restoreErrorAfterRead.
+    expect(block).toContain('const after = restoreErrorAfterRead(errorKind.current,')
     const banner = code('components/erase-request-banner.tsx')
-    expect(banner).toContain("else if (outcome.kind === 'unknown') setCheckAgain(true)")
-    expect(banner).toContain('if (opts.force) setCheckAgain(false)')
+    // Round 4c: the banner waits like the screen ('cancel' mode) and lets checkAgainAfterRead decide.
+    expect(banner).toContain("setCheckAgain('cancel')")
+    expect(banner).toContain('const after = checkAgainAfterRead(checkMode.current, status, opts.followUp === true)')
   })
 })
 
@@ -465,10 +471,12 @@ describe('11. one cached status read for the unlocked app', () => {
 
   test('the banner and both restore offers read through it; focus and visibility respect it', () => {
     const banner = code('components/erase-request-banner.tsx')
-    expect(banner).toContain('sharedEraseStatus.read(key, { force: opts.force === true })')
+    // Round 4c: a "Check again" click (followUp) reads fresh too.
+    expect(banner).toContain('sharedEraseStatus.read(key, { force: opts.force === true || opts.followUp === true })')
     expect(banner).toContain('refresh: () => void load()')
     const offer = code('components/restore-from-erase.tsx')
-    expect(offer).toContain('sharedEraseStatus.read(key).then(')
+    // Round 4c: the offers read fresh on mount (the count must not predate an own action).
+    expect(offer).toContain('sharedEraseStatus.read(key, { force: true }).then(')
     expect(offer).toContain('status: () => sharedEraseStatus.read(key, { force: true })')
   })
 })

@@ -4,6 +4,7 @@ import { AuthShell } from './auth-shell'
 import { BBButton, BBCheckbox, BBInput, Icon } from '@beebeeb/shared'
 import { EraseRequestCard } from './erase-request-card'
 import { RestoreFromErase } from './restore-from-erase'
+import { sharedEraseStatus } from '../lib/erase-status-store'
 import { StepUpAuth } from './step-up-auth'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
@@ -253,6 +254,8 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
     const outcome = await requestErase(ERASE_DEPS, count, token)
     if (!alive.current) return
     setEraseBusy(false)
+    // Round 4c: the app's cached status predates this action.
+    sharedEraseStatus.invalidate()
     setEraseFocusTick((n) => n + 1)
     if (outcome.kind === 'requested') {
       setEraseTyped('')
@@ -285,6 +288,8 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
     const outcome = await cancelErase(ERASE_DEPS, shownId)
     if (!alive.current) return
     setEraseBusy(false)
+    // Round 4c: the app's cached status predates this action.
+    sharedEraseStatus.invalidate()
     setEraseFocusTick((n) => n + 1)
     // Whatever the outcome says is newer than any read still in flight (round 4).
     eraseGate.current.supersede()
@@ -310,11 +315,18 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
   }, [eraseStatus, loadEraseStatus, scheduleFollowUp])
 
   // Round 4: "Restore everything from the erase". Round 4b: the block reads through THIS
-  // screen's gate (one sequencing authority), so what it hands back started after every action
-  // and is applied as is; when nothing of the erase is left in the trash the screen reads the
-  // status again, so the card stops saying the files are in the trash.
+  // screen's gate (one sequencing authority), so what it hands back started after every action;
+  // when nothing of the erase is left in the trash the screen reads the status again, so the card
+  // stops saying the files are in the trash.
+  //
+  // Round 4c: a block-read status is applied exactly like a screen read (it clears a load error
+  // and takes part in "Check again"). It is not a follow-up read: a screen follow-up that a block
+  // poll superseded reschedules itself (`loadEraseStatus`), so "Check again" still gets its own
+  // follow-up.
   const applyRestoreStatus = useCallback((status: EraseStatus) => {
     setEraseStatus(status)
+    setEraseLoadError('')
+    setEraseCheckAgain((mode) => keepCheckAgain(mode, status, false))
   }, [])
   const reloadAfterRestore = useCallback(() => {
     void loadEraseStatus()

@@ -7,11 +7,12 @@ import {
   attachEraseRefresh,
   cancelErase,
   cancelNote,
+  checkAgainAfterRead,
   createLatestGate,
   eraseCard,
   eraseRefreshPlan,
   formatDue,
-  itemsLabel,
+  type CheckAgainMode,
   type EraseCard,
   type EraseDeps,
   type EraseStatus,
@@ -31,6 +32,11 @@ import {
  * reused for 30 s, so a navigation does not cost a request): on mount, on focus, when the tab
  * becomes visible and every minute while a request is pending; after a cancel it reads fresh. It
  * draws nothing when there is no request.
+ *
+ * Round 4c (web#174 review): the banner shows no counts (only what the cache may serve: that a
+ * request is waiting or confirmed, and its due time); the due-time timer reads FRESH; and
+ * "Check again" after an unknown cancel follows the locked screen's rule (`keepCheckAgain`
+ * 'cancel'): a read only hides it once it shows no request pending, and then the note says so.
  */
 const ERASE_DEPS: EraseDeps = { create: createEraseRequest, cancel: cancelEraseRequest, status: getEraseRequest }
 
@@ -66,7 +72,7 @@ export function EraseRequestBannerView({
   if (!card && !note && !error) return null
   let text = ''
   if (card?.kind === 'awaiting') {
-    text = `You asked to erase all files in this account (${itemsLabel(card.request.item_count)}). Nothing happens unless you confirm it with the link we emailed you.`
+    text = 'You asked to erase all files in this account. Nothing happens unless you confirm it with the link we emailed you.'
   } else if (card?.kind === 'pending' && card.request.due_at) {
     text =
       Date.parse(card.request.due_at) <= nowMs
@@ -118,7 +124,9 @@ export function EraseRequestBanner() {
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
   const [error, setError] = useState('')
-  const [checkAgain, setCheckAgain] = useState(false)
+  // Round 4c: what "Check again" waits for (after an unknown cancel: the request to be gone).
+  const [checkAgain, setCheckAgain] = useState<CheckAgainMode>(null)
+  const checkMode = useRef<CheckAgainMode>(null)
   const [focusTick, setFocusTick] = useState(0)
   const noteRef = useRef<HTMLParagraphElement>(null)
   const errorRef = useRef<HTMLParagraphElement>(null)
@@ -138,14 +146,17 @@ export function EraseRequestBanner() {
   }, [])
 
   const load = useCallback(
-    async (opts: { force?: boolean } = {}) => {
+    async (opts: { force?: boolean; followUp?: boolean } = {}) => {
       if (!key) return
       const seq = gate.current.begin()
       try {
-        const status = await sharedEraseStatus.read(key, { force: opts.force === true })
+        const status = await sharedEraseStatus.read(key, { force: opts.force === true || opts.followUp === true })
         if (!alive.current || !gate.current.isLatest(seq) || !status) return
         show(status)
-        if (opts.force) setCheckAgain(false)
+        const after = checkAgainAfterRead(checkMode.current, status, opts.followUp === true)
+        checkMode.current = after.mode
+        setCheckAgain(after.mode)
+        if (after.note) setNote(after.note)
       } catch {
         // No banner without a status; the next refresh tries again.
       }
@@ -160,8 +171,15 @@ export function EraseRequestBanner() {
   const refreshKey = card ? `${card.kind}:${card.request.due_at}` : 'none'
   useEffect(() => {
     if (typeof window === 'undefined' || typeof document === 'undefined') return
-    // Focus and visibility go through the cache (a fresh answer is reused for 30 s).
-    return attachEraseRefresh({ win: window, doc: document, refresh: () => void load(), plan: eraseRefreshPlan(card, Date.now()) })
+    // Focus and visibility go through the cache (a fresh answer is reused for 30 s); the due-time
+    // timer reads fresh (round 4c).
+    return attachEraseRefresh({
+      win: window,
+      doc: document,
+      refresh: () => void load(),
+      refreshDue: () => void load({ force: true }),
+      plan: eraseRefreshPlan(card, Date.now()),
+    })
     // The plan only changes with the card's kind and due time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey, load])
@@ -175,7 +193,8 @@ export function EraseRequestBanner() {
     setBusy(true)
     setError('')
     setNote('')
-    setCheckAgain(false)
+    checkMode.current = null
+    setCheckAgain(null)
     const outcome = await cancelErase(ERASE_DEPS, card.request.id)
     if (!alive.current) return
     setBusy(false)
@@ -186,7 +205,10 @@ export function EraseRequestBanner() {
     } else {
       setNote(cancelNote(outcome) ?? '')
       if (outcome.kind === 'replaced') show(outcome.status)
-      else if (outcome.kind === 'unknown') setCheckAgain(true)
+      else if (outcome.kind === 'unknown') {
+        checkMode.current = 'cancel'
+        setCheckAgain('cancel')
+      }
       else if (outcome.kind !== 'already_started') setCard(null)
     }
     setFocusTick((n) => n + 1)
@@ -202,8 +224,8 @@ export function EraseRequestBanner() {
       onCancel={() => void cancel()}
       noteRef={noteRef}
       errorRef={errorRef}
-      checkAgain={checkAgain}
-      onCheckAgain={() => void load({ force: true })}
+      checkAgain={checkAgain !== null}
+      onCheckAgain={() => void load({ followUp: true })}
     />
   )
 }

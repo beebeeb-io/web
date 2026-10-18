@@ -10,6 +10,15 @@
  *
  * Cached per account (`key` = the user id), so a different sign-in in the same tab never sees
  * another account's request.
+ *
+ * Round 4c (web#174 review):
+ * - newer read wins: every read is numbered, and an answer is cached only if no newer read has
+ *   been cached (or invalidated) since it started. `invalidate()` also drops the read in flight:
+ *   its late answer is never cached, and the next read does not join it.
+ * - counts the person sees (what is left in the trash) never come from a cache older than their
+ *   own action: the restore offers read with `force`, and every own action that changes the trash
+ *   or the erase state calls `invalidate()`. Within the TTL the cache serves the banner's
+ *   pending / awaiting state only.
  */
 import { getEraseRequest } from './api'
 import { parseEraseStatus, type EraseStatus } from './erase-request'
@@ -29,16 +38,22 @@ export function createEraseStatusCache(
 ): EraseStatusCache {
   const ttl = opts.ttlMs ?? ERASE_STATUS_TTL_MS
   const now = opts.now ?? (() => Date.now())
-  let cached: { key: string; at: number; status: EraseStatus } | null = null
+  let cached: { key: string; at: number; seq: number; status: EraseStatus } | null = null
   let inflight: { key: string; promise: Promise<EraseStatus | null> } | null = null
+  /** Numbers each read; `floor` = no answer of a read numbered at or below it may be cached. */
+  let seq = 0
+  let floor = 0
 
   return {
     read(key, { force = false } = {}) {
       if (!force && cached && cached.key === key && now() - cached.at < ttl) return Promise.resolve(cached.status)
       if (!force && inflight && inflight.key === key) return inflight.promise
+      const mySeq = ++seq
       const promise = (async () => {
         const status = parseEraseStatus(await fetcher())
-        if (status) cached = { key, at: now(), status }
+        // Newer read wins: an older answer never replaces a newer cached one, and an answer to a
+        // read that `invalidate()` superseded is not cached at all.
+        if (status && mySeq > floor && (!cached || mySeq > cached.seq)) cached = { key, at: now(), seq: mySeq, status }
         return status
       })()
       const mine = { key, promise }
@@ -51,6 +66,8 @@ export function createEraseStatusCache(
     },
     invalidate() {
       cached = null
+      inflight = null
+      floor = seq
     },
   }
 }

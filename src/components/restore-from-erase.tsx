@@ -13,11 +13,13 @@ import {
   restoreEverything,
   restoreLabel,
   restoreOffer,
+  restoreErrorAfterRead,
   restoreProgressText,
   restoreUpdate,
   type EraseExecuted,
   type EraseStatus,
   type LatestGate,
+  type RestoreErrorKind,
   type RestoreDeps,
   type RestoreOffer,
 } from '../lib/erase-request'
@@ -41,6 +43,14 @@ import {
  *   "Check again" button;
  * - after an action the error (if any) takes the focus, else the result line. The result line is
  *   one `role="status"` live region; an error is `role="alert"`.
+ *
+ * Round 4c (web#174 review):
+ * - the counts never come from a cache older than the person's own action: the offers read fresh
+ *   on mount, and starting or finishing a restore invalidates the shared status cache;
+ * - after a refused or unknown outcome the block reads once, so the true state shows; after an
+ *   UNKNOWN outcome any fresh status replaces the error with the truth ("The restore did not
+ *   start." when it shows none), while a definite refusal's error stays until the next click;
+ * - a status that no longer carries this erase still goes to the parent (`onStatus`).
  */
 export const RESTORE_DEPS: RestoreDeps = { restore: restoreEraseRequest, status: getEraseRequest }
 
@@ -60,6 +70,8 @@ export interface RestoreFromEraseViewProps {
   /** The last outcome is unknown: draw "Check again" (round 4b). */
   checkAgain?: boolean
   onCheckAgain?: () => void
+  /** A plain line next to the offer, e.g. "The restore did not start." (round 4c). */
+  notice?: string
   resultRef?: Ref<HTMLParagraphElement>
   errorRef?: Ref<HTMLParagraphElement>
 }
@@ -75,7 +87,7 @@ export function RestoreFromEraseView(props: RestoreFromEraseViewProps) {
         ? RESTORE_DONE_TEXT
         : offer === 'lost'
           ? RESTORE_LOST_TEXT
-          : ''
+          : (props.notice ?? '')
   const left = inTrashText(props.inTrash)
   return (
     <div className="rounded-lg border border-line bg-paper px-3.5 py-3 mb-2.5 text-left" data-testid="erase-restore">
@@ -147,6 +159,10 @@ export function RestoreFromErase({ executed, deps = RESTORE_DEPS, gate, onStatus
   const [lost, setLost] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  // Round 4c: a definite refusal's error stays until the next click; an unknown one is replaced
+  // by the next fresh status.
+  const errorKind = useRef<RestoreErrorKind>(null)
+  const [notice, setNotice] = useState('')
   const [checkAgain, setCheckAgain] = useState(false)
   const resultRef = useRef<HTMLParagraphElement>(null)
   const errorRef = useRef<HTMLParagraphElement>(null)
@@ -174,14 +190,21 @@ export function RestoreFromErase({ executed, deps = RESTORE_DEPS, gate, onStatus
   const applyStatus = useCallback(
     (status: EraseStatus) => {
       const update = restoreUpdate(shown.id, status)
+      const after = restoreErrorAfterRead(errorKind.current, update.kind === 'lost' ? null : update.executed)
+      if (after.clear) {
+        setError('')
+        errorKind.current = null
+      }
+      if (after.notice) setNotice(after.notice)
+      setCheckAgain(false)
       if (update.kind === 'lost') {
-        // This erase is no longer the account's last one (or it aged out): stop following it.
+        // This erase is no longer the account's last one (or it aged out): stop following it,
+        // and still hand the status to the parent (its card follows it).
         setLost(true)
+        onStatus?.(status)
         return
       }
       setShown(update.executed)
-      setCheckAgain(false)
-      if (update.clearError) setError('')
       onStatus?.(status)
     },
     [shown.id, onStatus],
@@ -207,6 +230,7 @@ export function RestoreFromErase({ executed, deps = RESTORE_DEPS, gate, onStatus
   useEffect(() => {
     if (offer === 'done' && !doneReported.current) {
       doneReported.current = true
+      sharedEraseStatus.invalidate()
       onDone?.()
     }
   }, [offer, onDone])
@@ -218,12 +242,16 @@ export function RestoreFromErase({ executed, deps = RESTORE_DEPS, gate, onStatus
   const start = useCallback(async () => {
     setBusy(true)
     setError('')
+    errorKind.current = null
+    setNotice('')
     setCheckAgain(false)
     const outcome = await restoreEverything(deps, shown.id)
     if (!alive.current) return
     setBusy(false)
-    // The answer is newer than any read still in flight, on either side.
+    // The answer is newer than any read still in flight, on either side, and newer than any
+    // cached status (round 4c).
     seqGate.supersede()
+    sharedEraseStatus.invalidate()
     if (outcome.kind === 'done') {
       setShown((s) => ({
         ...s,
@@ -238,10 +266,13 @@ export function RestoreFromErase({ executed, deps = RESTORE_DEPS, gate, onStatus
       }))
     } else {
       setError(outcome.message)
+      errorKind.current = outcome.kind
       if (outcome.kind === 'unknown') setCheckAgain(true)
+      // Round 4c: read once, so the true state (or 'lost') shows.
+      void poll()
     }
     setFocusTick((n) => n + 1)
-  }, [deps, shown.id, seqGate])
+  }, [deps, shown.id, seqGate, poll])
 
   return (
     <RestoreFromEraseView
@@ -254,6 +285,7 @@ export function RestoreFromErase({ executed, deps = RESTORE_DEPS, gate, onStatus
       onRestore={() => void start()}
       checkAgain={checkAgain}
       onCheckAgain={() => void poll()}
+      notice={notice}
       resultRef={resultRef}
       errorRef={errorRef}
     />
@@ -262,8 +294,9 @@ export function RestoreFromErase({ executed, deps = RESTORE_DEPS, gate, onStatus
 
 /**
  * For pages that do not hold the erase status themselves (Trash, the empty drive): reads the
- * shared, cached status (round 4b: no read per navigation) and draws the block while something of
- * the last erase is in the trash or a restore runs.
+ * status through the shared cache, FRESH on mount (round 4c: the count it shows must not predate
+ * the person's own action), and draws the block while something of the last erase is in the
+ * trash or a restore runs.
  */
 export function RestoreFromEraseOffer({
   onDone,
@@ -279,7 +312,8 @@ export function RestoreFromEraseOffer({
   useEffect(() => {
     if (!key) return
     let live = true
-    sharedEraseStatus.read(key).then(
+    // Round 4c: fresh, never a cached count from before the person's own action.
+    sharedEraseStatus.read(key, { force: true }).then(
       (status) => {
         if (live && status) setExecuted(status.last_executed)
       },
