@@ -119,7 +119,7 @@ afterEach(() => {
 
 /** Counting API spies — prove the surface renders WITHOUT firing any
  *  destructive call (every exit is behind an explicit confirmation gate). */
-function makeApiSpies() {
+function makeApiSpies(statusGate?: Promise<void>) {
   return {
     cancelSubscription: mock(async () => ({ message: 'nope' })),
     deleteAccountPermanently: mock(async () => ({ message: 'nope', shred_after: 'nope' })),
@@ -128,13 +128,17 @@ function makeApiSpies() {
     bulkPermanentDelete: mock(async (_ids: string[], _t: string) => {}),
     confirmAction: mock(async () => ({ confirmation_token: 'nope', expires_at: 'nope' })),
     // Task 1918: the erase exit only ever talks to these (a read on mount, nothing destructive).
-    getEraseRequest: mock(async () => ({ request: null, live_items: 3, cooldown_hours: 72, trash_retention_days: 30, last_executed: null })),
+    getEraseRequest: mock(async () => {
+      // Task 1918 r2: a test can hold the status read open past the unmount.
+      if (statusGate) await statusGate
+      return { request: null, live_items: 3, cooldown_hours: 72, trash_retention_days: 30, last_executed: null }
+    }),
     createEraseRequest: mock(async (_c: number, _t: string) => ({})),
     cancelEraseRequest: mock(async () => ({})),
   }
 }
 
-async function renderProtectedRoute(opts: { marker?: boolean; impersonating?: boolean; email?: string } = {}): Promise<{ text: string; spies: ReturnType<typeof makeApiSpies> }> {
+async function renderProtectedRoute(opts: { marker?: boolean; impersonating?: boolean; email?: string; statusGate?: Promise<void> } = {}): Promise<{ text: string; spies: ReturnType<typeof makeApiSpies> }> {
   const { doc, win, container, created } = makeDom()
   const storage = new PersistentSessionStorage()
   if (opts.marker) {
@@ -150,7 +154,7 @@ async function renderProtectedRoute(opts: { marker?: boolean; impersonating?: bo
   g.window = win
   g.document = doc
 
-  const spies = makeApiSpies()
+  const spies = makeApiSpies(opts.statusGate)
   await mockModuleScoped('../src/components/toast.tsx', import.meta.dir, (real: Record<string, unknown>) => ({
     ...real,
     useToast: (): unknown => ({ showToast: () => {} }),
@@ -231,6 +235,36 @@ async function renderProtectedRoute(opts: { marker?: boolean; impersonating?: bo
   restoreDom = null
   return { text, spies }
 }
+
+describe('task 1918 round 2: async results never land on a screen that is gone', () => {
+  // Found by the web order guard in round 2: the locked screen's status read (added in round 1)
+  // could settle after its test had unmounted it and removed the DOM stub; the late setState then
+  // threw in React ("window is not defined") or, when the read hit another file's fetch stub,
+  // broke that file's timing tests (seeds 38666749, 125203929, 1013277509). The screen now drops
+  // results that arrive after unmount.
+  test('a status read that fails after unmount applies nothing (no update, no unhandled error)', async () => {
+    let fail: (e: unknown) => void = () => {}
+    const gate = new Promise<void>((_, reject) => {
+      fail = reject
+    })
+    gate.catch(() => {})
+    const seen: unknown[] = []
+    const onUnhandled = (e: unknown) => {
+      seen.push(e)
+    }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      const { spies } = await renderProtectedRoute({ marker: true, statusGate: gate })
+      expect(spies.getEraseRequest).toHaveBeenCalledTimes(1)
+      // The screen is unmounted and the DOM stub removed; now the read fails.
+      fail(new TypeError('Could not reach the server'))
+      await new Promise((r) => setTimeout(r, 100))
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+    expect(seen.map(String)).toEqual([])
+  })
+})
 
 describe('task 1704 SLICE 2: ProtectedRoute routes the fresh-password/no-key case to the honest locked-state surface', () => {
   test('post-reset marker + locked vault → VaultLockedNoKey with re-entry + exits, NOT the password form', async () => {

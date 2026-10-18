@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AuthShell } from './auth-shell'
 import { BBButton, BBCheckbox, BBInput, Icon } from '@beebeeb/shared'
@@ -148,16 +148,28 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
     }
   }, [cancelGate, cancelState])
 
+  // Async results (a status read, a POST) can land after the screen is gone; they are dropped
+  // then instead of being applied to an unmounted component.
+  const alive = useRef(true)
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+    }
+  }, [])
+
   // A failed read keeps the last status on screen AND says so (round 2, web#174 review): the
   // card shows the error with a retry next to whatever it was showing.
   const loadEraseStatus = useCallback(async () => {
     try {
       const status = parseEraseStatus(await getEraseRequest())
       if (!status) throw new Error('unexpected answer')
+      if (!alive.current) return
       setEraseStatus(status)
       setEraseLoadError('')
       setEraseCheckAgain(false)
     } catch {
+      if (!alive.current) return
       setEraseLoadError('We could not check what this account holds. Try again.')
     }
   }, [])
@@ -192,6 +204,7 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
     setEraseError('')
     setEraseNote('')
     const outcome = await requestErase(ERASE_DEPS, count, token)
+    if (!alive.current) return
     setEraseBusy(false)
     if (outcome.kind === 'requested') {
       setEraseTyped('')
@@ -216,6 +229,7 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
     setEraseError('')
     setEraseNote('')
     const outcome = await cancelErase(ERASE_DEPS)
+    if (!alive.current) return
     setEraseBusy(false)
     if (outcome.kind === 'cancelled') {
       setEraseStatus(applyCancelled)
