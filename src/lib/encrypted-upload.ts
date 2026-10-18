@@ -7,7 +7,10 @@ import { expectedUserHeaders } from '@beebeeb/shared'
 //
 // Supports resumable uploads: v1 uploads reconcile uploaded chunks through
 // server status, while v2 uploads reuse the stored upload session and rely on
-// idempotent chunk PUTs.
+// idempotent chunk PUTs. Since task 1943 a resume first asks core's resume
+// rule (`resumePolicy`): only a v1 session resumed by a v1 writer continues;
+// anything else abandons the old session and uploads from chunk 0 into a
+// fresh one (a v2 writer's frames bind a new version id).
 
 import {
   CHUNK_SIZE,
@@ -17,10 +20,11 @@ import {
   encryptFilename,
   serializeEncryptedBlob,
   readFileMetadata,
+  toContentPin,
   UnverifiedFileMetadataError,
   type ContentPin,
 } from './crypto'
-import { initUpload, uploadChunk, completeUpload, getUploadStatus, updateFile } from './api'
+import { initUpload, uploadChunk, completeUpload, getUploadStatus, updateFile, abandonUpload } from './api'
 import { withNetworkRetry } from './net-retry'
 import type { DriveFile } from './api'
 import {
@@ -85,6 +89,17 @@ interface EncryptedUploadOptions {
    * test/1943-writer-pin.test.ts holds both rules.
    */
   replaceOf?: { nameEncrypted: string }
+}
+
+/**
+ * Core said the stored session must not be continued (task 1943): the caller
+ * abandons it and uploads from chunk 0 into a fresh session. Internal signal.
+ */
+class SessionRestartRequired extends Error {
+  constructor() {
+    super('resume refused by the core resume rule; restarting in a fresh session')
+    this.name = 'SessionRestartRequired'
+  }
 }
 
 /** Shown when a replace is refused because the existing file's pin cannot be read. */
@@ -172,6 +187,12 @@ async function uploadFile(
   let chunkBytes = fallbackPlan.chunk_size_bytes
   let totalChunks = fallbackChunkCount
   let region: string | null = null
+  // Core 1908 resume rule (checklist item 7): the chunk format of the frames
+  // the current session already holds (from the resume record; undefined when
+  // it does not say), and whether this call resumes STORED frames rather than
+  // a session it opened itself.
+  let sessionFormat: number | undefined
+  let resumingStoredFrames = false
 
   async function encryptMetadata(key: Uint8Array): Promise<string> {
     // Encrypt metadata as JSON so we can store MIME type zero-knowledge.
@@ -203,6 +224,9 @@ async function uploadFile(
 
     serverFileId = init.file_id
     totalChunks = init.chunk_count
+    // A fresh session holds no frames: nothing to resume, nothing recorded yet.
+    sessionFormat = undefined
+    resumingStoredFrames = false
     if (init.protocol !== 'v2') return
 
     uploadSessionId = init.upload_session_id
@@ -227,21 +251,27 @@ async function uploadFile(
     serverFileId = resumeFileId
     fingerprint = await computeFingerprint(file)
     const existing = await findByFingerprint(fingerprint)
-    if (existing?.fileId === resumeFileId && existing.upload_session_id) {
-      uploadSessionId = existing.upload_session_id
-      objectVersionId = existing.object_version_id ?? null
-      chunkBytes = existing.chunk_size_bytes ?? LEGACY_FALLBACK_CHUNK_SIZE_BYTES
-      totalChunks = existing.chunk_count ?? existing.totalChunks
-      region = existing.region ?? null
+    const record = existing?.fileId === resumeFileId ? existing : null
+    adoptRecordedReplacePin(record)
+    if (record?.upload_session_id) {
+      uploadSessionId = record.upload_session_id
+      objectVersionId = record.object_version_id ?? null
+      chunkBytes = record.chunk_size_bytes ?? LEGACY_FALLBACK_CHUNK_SIZE_BYTES
+      totalChunks = record.chunk_count ?? record.totalChunks
+      region = record.region ?? null
+      resumingStoredFrames = true
+      sessionFormat = record.chunk_format
     } else {
-      if (existing?.fileId === resumeFileId) {
-        chunkBytes = existing.chunk_size_bytes ?? LEGACY_FALLBACK_CHUNK_SIZE_BYTES
-        totalChunks = existing.chunk_count ?? existing.totalChunks
-        region = existing.region ?? null
+      if (record) {
+        chunkBytes = record.chunk_size_bytes ?? LEGACY_FALLBACK_CHUNK_SIZE_BYTES
+        totalChunks = record.chunk_count ?? record.totalChunks
+        region = record.region ?? null
       }
       try {
         const status = await getUploadStatus(resumeFileId)
         skipChunks = new Set(status.uploaded_chunks)
+        resumingStoredFrames = true
+        sessionFormat = record?.chunk_format
       } catch {
         // Status check failed — server record may be gone, start fresh
         skipChunks = new Set()
@@ -263,13 +293,18 @@ async function uploadFile(
       chunkBytes = existing.chunk_size_bytes ?? LEGACY_FALLBACK_CHUNK_SIZE_BYTES
       totalChunks = existing.chunk_count ?? existing.totalChunks
       region = existing.region ?? null
+      adoptRecordedReplacePin(existing)
       if (existing.upload_session_id) {
         uploadSessionId = existing.upload_session_id
         objectVersionId = existing.object_version_id ?? null
+        resumingStoredFrames = true
+        sessionFormat = existing.chunk_format
       } else {
         try {
           const status = await getUploadStatus(existing.fileId)
           skipChunks = new Set(status.uploaded_chunks)
+          resumingStoredFrames = true
+          sessionFormat = existing.chunk_format
         } catch {
           // Server doesn't know about it anymore — start fresh
           await removeUploadState(existing.fileId)
@@ -300,9 +335,47 @@ async function uploadFile(
       chunk_size_bytes: chunkBytes,
       chunk_count: totalChunks,
       region,
+      chunk_format: sessionFormat,
+      replace_pin: replacePin ?? undefined,
       parentId: parentId ?? null,
       createdAt: Date.now(),
     })
+  }
+
+  /**
+   * A resumed REPLACE writes with the pin it applied before (recorded from the
+   * replaced file's authenticated metadata). A caller's fresh `replaceOf` read
+   * wins; a record without a pin is a new file, which never pins.
+   */
+  function adoptRecordedReplacePin(record: { replace_pin?: number } | null | undefined): void {
+    if (replacePin !== null || record?.replace_pin === undefined) return
+    replacePin = toContentPin(record.replace_pin)
+  }
+
+  /**
+   * Core said restart: never PUT into the old session again. Abandon it (a
+   * replace reverts to the previous version, a never-completed first upload
+   * is deleted), drop its resume record, init a fresh session for the same
+   * file id and record it. If the old lease is still live elsewhere the init
+   * answers 409 and the upload fails here, untouched.
+   */
+  async function restartInFreshSession(): Promise<void> {
+    const id = serverFileId
+    try {
+      await abandonUpload(id)
+    } catch {
+      // Nothing to abandon (the lease expired and the session was swept, or
+      // there is no upload in progress): the init below decides.
+    }
+    await removeUploadState(id).catch(() => {})
+    skipChunks = new Set()
+    uploadSessionId = null
+    objectVersionId = null
+    chunkBytes = fallbackPlan.chunk_size_bytes
+    totalChunks = fallbackChunkCount
+    region = null
+    await startUpload(id)
+    await persistResumeState()
   }
 
   // Transfers every chunk against the CURRENT session and completes it. Run
@@ -372,6 +445,17 @@ async function uploadFile(
         await enc.applyRecordedPin(replacePin)
       }
 
+      // Core's resume rule decides whether stored frames may be continued.
+      const writing = await enc.format()
+      if (resumingStoredFrames && (await enc.resumePolicy(sessionFormat)) !== 'continue') {
+        throw new SessionRestartRequired()
+      }
+      // Record which frames this session holds BEFORE the first PUT.
+      if (sessionFormat !== writing) {
+        sessionFormat = writing
+        await persistResumeState()
+      }
+
       // Upload chunks sequentially so large web chunks never overlap in memory:
       // only one plaintext slice + one ciphertext frame are alive per iteration.
       //
@@ -416,8 +500,19 @@ async function uploadFile(
   // closed / the laptop slept) answers 404 (or 400 "not writable: expired").
   // runWithSessionReinit then drops the dead resume entry, re-inits ONCE for
   // the same file id and runs transferAndComplete again from chunk 0.
+  // A resume refused by core's rule restarts ONCE in a fresh session.
+  async function transferObeyingResumeRule(): Promise<DriveFile> {
+    try {
+      return await transferAndComplete()
+    } catch (err) {
+      if (!(err instanceof SessionRestartRequired)) throw err
+    }
+    await restartInFreshSession()
+    return transferAndComplete()
+  }
+
   const fileMeta = await runWithSessionReinit({
-    attempt: transferAndComplete,
+    attempt: transferObeyingResumeRule,
     hasSession: () => uploadSessionId !== null,
     dropResumeEntry: () => removeUploadState(serverFileId),
     reinit: async () => {

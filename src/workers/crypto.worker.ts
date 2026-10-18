@@ -523,6 +523,22 @@ const cryptoWorker = {
     return applyRecordedPinInRegistry(liveEncryptors, handle, pin)
   },
 
+  /** The chunk format the encryptor writes (1 = v1, 2 = v2). */
+  encryptorFormat(handle: number): number {
+    const enc = liveEncryptors.get(handle)
+    if (!enc) throw new Error(`No live encryptor for handle ${handle}`)
+    return enc.format
+  },
+
+  /** Core's resume rule for this encryptor and the stored session's format (`undefined` = not recorded). */
+  encryptorResumePolicy(handle: number, storedFormat: number | undefined): 'continue' | 'restart' {
+    const enc = liveEncryptors.get(handle)
+    if (!enc) throw new Error(`No live encryptor for handle ${handle}`)
+    const answer = enc.resumePolicy(storedFormat ?? null)
+    if (answer !== 'continue' && answer !== 'restart') throw new Error(`unexpected resume policy ${answer}`)
+    return answer
+  },
+
   /**
    * Consume the encryptor, run the core integrity guard (all planned chunks
    * emitted + ciphertext total matches), return the summary, and drop it from

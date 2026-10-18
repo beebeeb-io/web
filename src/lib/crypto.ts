@@ -121,30 +121,39 @@ async function withProxy<T>(
 }
 
 /**
+ * True while the worker owns a stateful instance that a recycle would orphan:
+ * each is a pointer into THIS worker's WASM memory, addressed from the main
+ * thread by handle. A streaming encryptor (an upload; terminating mid-upload
+ * would break finish()'s integrity guard), a content decryptor (a download,
+ * task 1943), the search index (B4; long-lived, tiny) or a signup ceremony
+ * (password, phrase and master key, task 1745). Direct proxy calls: they do
+ * not count as in-flight ops.
+ */
+async function hasLiveWorkerInstances(proxy: Comlink.Remote<CryptoWorker>): Promise<boolean> {
+  return (
+    (await proxy.liveEncryptorCount()) > 0 ||
+    (await proxy.liveDecryptorCount()) > 0 ||
+    (await proxy.liveSearchIndexCount()) > 0 ||
+    (await proxy.liveCeremonyCount()) > 0
+  )
+}
+
+/**
  * Check WASM memory usage; if above the threshold, terminate the worker
  * and spawn a fresh one. Safe to call concurrently — `restartPromise`
  * serializes the actual swap.
  */
 async function maybeRestart(): Promise<void> {
   if (restartPromise || !workerProxy) return
-  // LIVE-ENCRYPTOR GUARD: never recycle the worker while a streaming upload
-  // owns an encryptor. A `WasmChunkEncryptor` is a pointer into THIS worker's
-  // linear memory; terminating the worker mid-upload would orphan it and break
-  // finish()'s integrity guard. Check before taking the restart lock.
-  // The same guard applies to a live `WasmSearchIndex` (B4): it is a long-lived
-  // worker-owned struct the search hook keeps for the whole unlocked session, so
-  // recycling the worker would orphan its handle. The index is name-only (tiny),
-  // so blocking the recycle while one is live costs nothing — the memory cap is
-  // only ever hit by a large streaming upload, which the encryptor guard covers.
+  // LIVE-INSTANCE GUARD (hasLiveWorkerInstances): never recycle the worker
+  // while it owns an encryptor, a content decryptor, the search index or a
+  // signup ceremony. Checked here, before taking the restart lock, and again
+  // under the lock once in-flight ops have drained. The index is name-only
+  // (tiny), so blocking the recycle while one is live costs nothing: the
+  // memory cap is only ever hit by a large upload or download, which the
+  // encryptor and decryptor guards cover.
   try {
-    if ((await workerProxy.liveEncryptorCount()) > 0) return
-    // A content decryptor (task 1943) is the same kind of worker-owned pointer:
-    // recycling mid-download would orphan it between two frames.
-    if ((await workerProxy.liveDecryptorCount()) > 0) return
-    if ((await workerProxy.liveSearchIndexCount()) > 0) return
-    // A live signup ceremony holds the password / phrase / master key in this
-    // worker's WASM memory (task 1745); recycling would silently lose them.
-    if ((await workerProxy.liveCeremonyCount()) > 0) return
+    if (await hasLiveWorkerInstances(workerProxy)) return
   } catch (err) {
     // Worker went away (terminate raced us) — bail; the next op lazily re-inits.
     console.warn('[crypto] live-instance count failed', err)
@@ -173,6 +182,13 @@ async function maybeRestart(): Promise<void> {
   restartPromise = (async () => {
     try {
       await waitForIdle()
+      // Re-check under the lock (Codex P2 on web#170): an op admitted between
+      // the check above and taking the lock (a download creating its
+      // decryptor, an upload its encryptor) has now finished and may own a
+      // live instance in this worker. Recycling now would orphan its handle.
+      // New ops stay blocked until this promise settles.
+      const current = workerProxy
+      if (!current || (await hasLiveWorkerInstances(current))) return
       const oldWorker = currentWorker
       currentWorker = null
       workerProxy = null
@@ -210,6 +226,17 @@ export const __cryptoRestartInternals = {
   getInFlight: () => inFlight,
   getMemoryThresholdBytes: () => MEMORY_THRESHOLD_BYTES,
   isRestarting: () => restartPromise !== null,
+  /** Test-only: the memory check every 16th completed op triggers, run now. */
+  checkMemoryNow: () => maybeRestart(),
+  /** Test-only: forget a test's fake worker (terminates nothing). */
+  forgetWorkerForTests: () => {
+    currentWorker = null
+    workerProxy = null
+    initPromise = null
+    restartPromise = null
+    inFlight = 0
+    opsSinceMemCheck = 0
+  },
 }
 
 // ─── Key derivation ─────────────────────────────────
@@ -280,6 +307,7 @@ export async function decryptChunk(
 export {
   PIN_UNRECORDED,
   PIN_V2,
+  toContentPin,
   UnverifiedFileMetadataError,
   type ContentPin,
   type DecryptSummary,
@@ -678,6 +706,23 @@ export class StreamingEncryptor {
    */
   async applyRecordedPin(pin: ContentPin): Promise<number> {
     return withProxy((p) => p.encryptorApplyRecordedPin(this.#handle, pin))
+  }
+
+  /** The chunk format this encryptor writes: 1 = v1, 2 = v2. Record it with the session. */
+  async format(): Promise<number> {
+    return withProxy((p) => p.encryptorFormat(this.#handle))
+  }
+
+  /**
+   * Core's resume rule (1908 checklist item 7): may this NEW encryptor
+   * continue an interrupted session whose frames are in `storedFormat`
+   * (undefined when the resume record does not say)? `'continue'` only for a
+   * v1 session resumed by a v1 writer; otherwise `'restart'`: abandon the old
+   * session, init a fresh one and upload from chunk 0, never PUT to the old
+   * session again (a v2 writer's version id differs from the stored frames').
+   */
+  async resumePolicy(storedFormat: number | undefined): Promise<'continue' | 'restart'> {
+    return withProxy((p) => p.encryptorResumePolicy(this.#handle, storedFormat))
   }
 
   /**

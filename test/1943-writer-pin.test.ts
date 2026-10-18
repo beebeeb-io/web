@@ -40,11 +40,15 @@ const cap = {
 let serverFileId: ((requested: string) => string) = (requested) => requested
 
 function capturingEncryptor() {
+  let format = 1
   return {
     applyRecordedPin: async (pin: number) => {
       cap.events.push(`pin:${pin}`)
-      return pin === 2 ? 2 : 1
+      format = pin === 2 ? 2 : 1
+      return format
     },
+    format: async () => format,
+    resumePolicy: async () => 'restart' as const,
     pushChunk: async () => {
       cap.events.push('push')
       return new Uint8Array([7])
