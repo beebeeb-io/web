@@ -76,6 +76,13 @@ export interface UploadState {
    * same pin. Absent for a new file, which never applies a pin.
    */
   replace_pin?: number
+  /**
+   * The file id `replace_pin` belongs to (the replaced file). Written with
+   * every pin; a resume applies the pin only when this equals `fileId` and
+   * the id being resumed. A replace the server answered with another id is a
+   * new file: its record carries neither field.
+   */
+  replace_pin_file_id?: string
   parentId: string | null
   createdAt: number // Date.now()
 }

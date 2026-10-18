@@ -166,6 +166,7 @@ describe('the resume record says which frames the session holds', () => {
     const withFormat = cap.saved.filter((s) => s.chunk_format !== undefined)
     expect(withFormat.at(-1)?.chunk_format).toBe(1)
     expect(withFormat.at(-1)?.replace_pin).toBeUndefined()
+    expect(withFormat.at(-1)?.replace_pin_file_id).toBeUndefined()
     // recorded before the first chunk went out
     const firstPut = cap.events.indexOf('put:fresh-session')
     expect(firstPut).toBeGreaterThan(-1)
@@ -177,6 +178,7 @@ describe('the resume record says which frames the session holds', () => {
     const last = cap.saved.filter((s) => s.chunk_format !== undefined).at(-1)
     expect(last?.chunk_format).toBe(2)
     expect(last?.replace_pin).toBe(2)
+    expect(last?.replace_pin_file_id).toBe(V2_FILE_ID)
   })
 })
 
@@ -202,7 +204,9 @@ describe('resuming obeys core’s resume rule', () => {
   })
 
   test('a v2 session (a pinned replace) resumes as a restart, and the restarted writer applies the recorded pin', async () => {
-    stored = record({ chunk_format: 2, replace_pin: 2 })
+    // The pin names the file it belongs to (Codex P2: a pin is never applied
+    // to another file id; test/1943-remap-pin.test.ts).
+    stored = record({ chunk_format: 2, replace_pin: 2, replace_pin_file_id: V2_FILE_ID })
     await upload(V2_FILE_ID, V2_KEY, undefined, V2_FILE_ID)
     expect(cap.events.filter((e) => e.startsWith('policy'))).toEqual(['policy(2)=restart'])
     expect(cap.abandons).toEqual([V2_FILE_ID])

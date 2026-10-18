@@ -32,6 +32,7 @@ import {
   findByFingerprint,
   saveUploadState,
   removeUploadState,
+  type UploadState,
 } from './upload-resume'
 import { isLikelyAlbumArtOrIcon } from './photo-library'
 import { runWithSessionReinit } from './upload-session-reinit'
@@ -154,13 +155,29 @@ async function uploadFile(
 
   // Replace only: the existing file's recorded pin, read BEFORE anything
   // reaches the server. A new file stays `null` and never applies a pin.
+  // A pin belongs to ONE file id (`replacePinFileId`, the replaced file):
+  // it is applied and recorded only while the upload targets that id
+  // (`pinForCurrentFile`, the single gate), and resumed only from a record
+  // that names that id (`adoptRecordedReplacePin`). An init answered with
+  // another id is a brand-new file, which never pins (Codex P2 on web#170).
   let replacePin: ContentPin | null = null
+  let replacePinFileId: string | null = null
   if (options.replaceOf) {
     try {
       replacePin = (await readFileMetadata(fileKey, options.replaceOf.nameEncrypted)).pin
+      replacePinFileId = fileId
     } catch (err) {
       throw new UnverifiedFileMetadataError(UNVERIFIED_REPLACE_COPY, { cause: err })
     }
+  }
+
+  /**
+   * The pin, only when it belongs to the file this upload now writes
+   * (`serverFileId`, which every init may change). The ONLY way the encryptor
+   * and the resume record get a pin.
+   */
+  function pinForCurrentFile(): ContentPin | null {
+    return replacePin !== null && replacePinFileId === serverFileId ? replacePin : null
   }
 
   // A replace sends the replaced file's OWN name, byte for byte (crypto review
@@ -236,6 +253,11 @@ async function uploadFile(
     // A fresh session holds no frames: nothing to resume, nothing recorded yet.
     sessionFormat = undefined
     resumingStoredFrames = false
+    // Every init (the first, a swept-session re-init, a resume-rule restart)
+    // can be answered with a server-generated id: a brand-new file with a
+    // fresh, unpinned name. From here on `pinForCurrentFile()` is null for
+    // it, so the replaced file's pin reaches neither the encryptor nor the
+    // resume record (Codex P2, web#170).
     if (init.protocol !== 'v2') return
 
     uploadSessionId = init.upload_session_id
@@ -261,7 +283,7 @@ async function uploadFile(
     fingerprint = await computeFingerprint(file)
     const existing = await findByFingerprint(fingerprint)
     const record = existing?.fileId === resumeFileId ? existing : null
-    adoptRecordedReplacePin(record)
+    adoptRecordedReplacePin(record, resumeFileId)
     if (record?.upload_session_id) {
       uploadSessionId = record.upload_session_id
       objectVersionId = record.object_version_id ?? null
@@ -302,7 +324,7 @@ async function uploadFile(
       chunkBytes = existing.chunk_size_bytes ?? LEGACY_FALLBACK_CHUNK_SIZE_BYTES
       totalChunks = existing.chunk_count ?? existing.totalChunks
       region = existing.region ?? null
-      adoptRecordedReplacePin(existing)
+      adoptRecordedReplacePin(existing, fileId)
       if (existing.upload_session_id) {
         uploadSessionId = existing.upload_session_id
         objectVersionId = existing.object_version_id ?? null
@@ -333,6 +355,7 @@ async function uploadFile(
   }
 
   async function persistResumeState(): Promise<void> {
+    const pin = pinForCurrentFile()
     await saveUploadState({
       fingerprint,
       fileId: serverFileId,
@@ -345,7 +368,8 @@ async function uploadFile(
       chunk_count: totalChunks,
       region,
       chunk_format: sessionFormat,
-      replace_pin: replacePin ?? undefined,
+      // Recorded only under the file it belongs to, with that file's id.
+      ...(pin !== null ? { replace_pin: pin, replace_pin_file_id: serverFileId } : {}),
       parentId: parentId ?? null,
       createdAt: Date.now(),
     })
@@ -355,10 +379,22 @@ async function uploadFile(
    * A resumed REPLACE writes with the pin it applied before (recorded from the
    * replaced file's authenticated metadata). A caller's fresh `replaceOf` read
    * wins; a record without a pin is a new file, which never pins.
+   *
+   * The pin is adopted ONLY when the record says it belongs to the very file
+   * being resumed (`replace_pin_file_id === record.fileId === resumedId`). A
+   * pin recorded for another file, or with no owning id (written before this
+   * rule, by unmerged web#170 builds only), is never applied: applied to a
+   * remapped new file it would restart a v1 session and write v2 content
+   * under an unpinned name.
    */
-  function adoptRecordedReplacePin(record: { replace_pin?: number } | null | undefined): void {
-    if (replacePin !== null || record?.replace_pin === undefined) return
+  function adoptRecordedReplacePin(
+    record: Pick<UploadState, 'fileId' | 'replace_pin' | 'replace_pin_file_id'> | null | undefined,
+    resumedId: string,
+  ): void {
+    if (pinForCurrentFile() !== null || !record || record.replace_pin === undefined) return
+    if (record.fileId !== resumedId || record.replace_pin_file_id !== resumedId) return
     replacePin = toContentPin(record.replace_pin)
+    replacePinFileId = resumedId
   }
 
   /**
@@ -448,10 +484,11 @@ async function uploadFile(
 
     try {
       // Replace of an existing file: write in the format its recorded pin
-      // requires, before the first chunk. Only when the server kept OUR file
-      // id: an answer with another id is a brand-new file, which never pins.
-      if (replacePin !== null && serverFileId === fileId) {
-        await enc.applyRecordedPin(replacePin)
+      // requires, before the first chunk. Only for the file the pin belongs
+      // to: an answer with another id is a brand-new file, which never pins.
+      const pin = pinForCurrentFile()
+      if (pin !== null) {
+        await enc.applyRecordedPin(pin)
       }
 
       // Core's resume rule decides whether stored frames may be continued.
