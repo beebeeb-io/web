@@ -446,19 +446,19 @@ describe('11. one cached status read for the unlocked app', () => {
   test('reads while one is in flight share it', async () => {
     const m = await store()
     let fetches = 0
-    let resolve!: (v: unknown) => void
+    const pending: Array<(v: unknown) => void> = []
     const cache = (m.createEraseStatusCache as Fn)(
       () => {
         fetches++
         return new Promise((r) => {
-          resolve = r
+          pending.push(r)
         })
       },
       { ttlMs: 30_000, now: () => 0 },
     ) as Cache
     const a = cache.read('u1')
     const b = cache.read('u1')
-    resolve(status())
+    for (const r of pending) r(status())
     await Promise.all([a, b])
     expect(fetches).toBe(1)
   })
