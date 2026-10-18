@@ -8,10 +8,11 @@ import {
   getApiUrl,
   getSnapshot,
   getSyncOps,
+  getSyncOpsSinceUserSeq,
   submitSyncOps,
   getStreamToken,
 } from './api'
-import type { SyncOp, SyncNode, SyncSnapshot } from './api'
+import type { SyncOp, SyncNode, SyncSnapshot, UserSeqSyncOp, UserSeqSyncSnapshot } from './api'
 
 const LAST_SEQ_KEY = 'bb_sync_last_seq'
 const PENDING_OPS_KEY = 'bb_sync_pending_ops'
@@ -35,12 +36,22 @@ const MISSING_NODE_RESYNC_DEBOUNCE_MS = 100
 /** Upper bound on out-of-order ops held while a gap is filled. */
 const REORDER_BUFFER_MAX = 500
 /**
+ * Task 1973: most `?since_user_seq=` pages one catch-up walks (server page =
+ * 1,000 ops) before a snapshot is the cheaper way to cover the backlog.
+ */
+const USER_SEQ_CATCHUP_MAX_PAGES = 20
+/**
  * Upper bound on stream frames held while a snapshot fetch is in flight. A
  * fetch is time-bounded, so this only guards against pathological storms.
  */
 const DEFERRED_FRAMES_MAX = 10_000
 /** Bound on a full-snapshot fetch: a hung request must never stall coverage. */
 const SNAPSHOT_TIMEOUT_MS = 10_000
+/**
+ * Task 1973 r2: most `GET /sync/ops?since=` pages one orphan lookup reads
+ * (server page = 1,000 ops). Past that the op is resubmitted, as before.
+ */
+const ORPHAN_SCAN_MAX_PAGES = 5
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
 
@@ -52,6 +63,19 @@ export interface PendingOp {
   rollback?: SyncNode | null
   /** Logical id the op affects, used to look up the node. */
   target_id?: string
+  /**
+   * Task 1973 r2: where the server recorded this op, from POST `applied[]` or
+   * found in the op log. Persisted: a snapshot (also the first one after a
+   * reload) that covers this position already holds the op, so the entry is
+   * confirmed then instead of being re-applied over the snapshot and resubmitted.
+   */
+  applied_seq_id?: number
+  applied_user_seq?: number | null
+  /**
+   * Task 1973 r2: the global cursor when the op was submitted. The server
+   * numbers the op above it, so an orphan lookup in the op log starts here.
+   */
+  submitted_after_seq?: number
 }
 
 interface SyncEvent {
@@ -99,6 +123,63 @@ function saveLastSeq(seq: number): void {
   localStorage.setItem(LAST_SEQ_KEY, String(seq))
 }
 
+/**
+ * Task 1973: the op's number in its user's own gap-free sequence, or null when
+ * the server did not number it (an op recorded before server#233, or a frame
+ * from an older node during a rolling deploy).
+ */
+function userSeqOf(op: { user_seq?: number | null }): number | null {
+  const n = op.user_seq
+  return typeof n === 'number' && Number.isFinite(n) ? n : null
+}
+
+/**
+ * Task 1973 r3: true when the server recorded this pending op, i.e. it has a
+ * finite `applied_seq_id`. ONE predicate decides both sides of the invariant:
+ * `flushPending` resubmits exactly the entries without a recorded position, and
+ * `pendingCoveredBy` can clear every entry with one (the `seq_id` comparison
+ * needs nothing else, and every snapshot carries `seq_id`).
+ */
+export function hasRecordedPosition(p: Pick<PendingOp, 'applied_seq_id'>): boolean {
+  return typeof p.applied_seq_id === 'number' && Number.isFinite(p.applied_seq_id)
+}
+
+/**
+ * Task 1973 r2/r3: true when a snapshot already holds a pending op the server
+ * recorded. Compared on `user_seq` when BOTH the snapshot and the entry carry
+ * one (a user's ops commit in user_seq order). Otherwise on the global
+ * `seq_id`, which every snapshot carries: the legacy coverage rule, and the
+ * fallback for an entry whose POST `applied[]` came from a node that predates
+ * server#233 (no `user_seq`) while the client is in user_seq mode (Codex P2 on
+ * web#173 at 04ad1c89). Without that fallback such an entry was cleared by no
+ * snapshot, and `flushPending` never resubmits it: if its echo was missed it
+ * stayed pending for good and was re-applied over every snapshot.
+ *
+ * Invariant (test/1973-sync-pending-confirm.test.ts, "r3"): an entry with a recorded
+ * position is cleared by a numbered AND by an unnumbered snapshot once that
+ * snapshot is far enough ahead; an entry without one is resubmitted. No shape
+ * is neither.
+ */
+export function pendingCoveredBy(p: PendingOp, snapSeq: number, snapUserSeq: number | null): boolean {
+  if (!hasRecordedPosition(p)) return false
+  const userSeq = p.applied_user_seq
+  if (snapUserSeq !== null && typeof userSeq === 'number' && Number.isFinite(userSeq)) {
+    return userSeq <= snapUserSeq
+  }
+  return (p.applied_seq_id as number) <= snapSeq
+}
+
+/** Outcome of one user_seq catch-up (task 1973). */
+type UserSeqCatchUp =
+  /** The cursor reached the server head and no held op is left. */
+  | 'complete'
+  /** The page contradicts what this tab saw, or made no progress below head. */
+  | 'contradiction'
+  /** Walked USER_SEQ_CATCHUP_MAX_PAGES and is still behind. */
+  | 'truncated'
+  /** A snapshot fetch or mode switch started meanwhile; it owns coverage now. */
+  | 'aborted'
+
 function loadPendingOps(): PendingOp[] {
   try {
     const raw = localStorage.getItem(PENDING_OPS_KEY)
@@ -126,8 +207,42 @@ function savePendingOps(ops: PendingOp[]): void {
  */
 export class SyncClient {
   private tree = new Map<string, SyncNode>()
+  /**
+   * Global `seq_id` cursor. It orders ops while the server does not number
+   * them per user (an older server). In user_seq mode it is only kept as a
+   * forward-only floor (persisted, so a rollback to an older server resumes
+   * correctly); contiguity is never checked on it there.
+   */
   private lastSeq = loadLastSeq()
+  /**
+   * Task 1973 (scale audit R3): true once a snapshot carried a numeric
+   * `user_seq`, i.e. the server numbers this user's ops 1, 2, 3, ... with no
+   * gaps. Ops are then ordered and checked for holes on `user_seq`: another
+   * user's op consumes a global `seq_id`, never one of ours, so it can no
+   * longer look like a missed op. Decided per snapshot, so a server upgrade or
+   * rollback switches mode only through one snapshot merge.
+   */
+  private userSeqMode = false
+  /**
+   * Task 1973: last applied `user_seq`. In memory only and seeded ONLY from a
+   * snapshot: the persisted `bb_sync_last_seq` is a global cursor and is never
+   * read as a user_seq, and every boot merges a snapshot first anyway (task
+   * 1700), so a persisted per-user value would add nothing but a stale floor
+   * (the storage key is not per account).
+   */
+  private lastUserSeq = 0
   private pendingOps: PendingOp[] = loadPendingOps()
+  /**
+   * Task 1973 r2: pending ops the server may have recorded although this tab
+   * never heard back: loaded from storage without a recorded position (the
+   * page went away mid-POST), or whose POST failed. The next snapshot fetch
+   * looks them up in the op log by `client_op_id` before merging.
+   */
+  private orphanedPending = new Set<string>(
+    this.pendingOps.filter((p) => !hasRecordedPosition(p)).map((p) => p.client_op_id),
+  )
+  /** The global cursor this tab booted with: the lookup floor for old entries. */
+  private readonly bootLastSeq = this.lastSeq
   private deviceId = getDeviceId()
   private eventSource: EventSource | null = null
   private status: ConnectionStatus = 'idle'
@@ -196,6 +311,16 @@ export class SyncClient {
 
   getLastSeq(): number {
     return this.lastSeq
+  }
+
+  /** Task 1973: the user_seq cursor, or null against a server without user_seq. */
+  getLastUserSeq(): number | null {
+    return this.userSeqMode ? this.lastUserSeq : null
+  }
+
+  /** The cursor contiguity is checked against: user_seq, or the global seq. */
+  private cursor(): number {
+    return this.userSeqMode ? this.lastUserSeq : this.lastSeq
   }
 
   getNode(id: string): SyncNode | undefined {
@@ -324,8 +449,12 @@ export class SyncClient {
     this.refreshCoverageFlag()
   }
 
-  /** Apply the op tail after `lastSeq`; report a server-truncated backlog. */
+  /** Apply the op tail after the cursor; report a server-truncated backlog. */
   private async catchUpOps(): Promise<{ truncated: boolean }> {
+    if (this.userSeqMode) {
+      const outcome = await this.catchUpByUserSeq()
+      return { truncated: outcome === 'contradiction' || outcome === 'truncated' }
+    }
     const ops = await getSyncOps(this.lastSeq)
     for (const op of ops) {
       this.applyRemoteOp(op)
@@ -347,8 +476,13 @@ export class SyncClient {
    * - Persisted pending ops whose optimistic state is not in the tree are
    *   re-applied over the snapshot so the echo stays a pure confirmation.
    *   PR #130 review.
+   * - Task 1973 r2: FIRST, every pending op this snapshot already holds (its
+   *   recorded server position is at or below the snapshot's) is confirmed.
+   *   Its target then takes the snapshot's node, and the op is neither
+   *   re-applied over it nor resubmitted.
    */
-  private mergeSnapshot(snap: { seq_id: number; nodes: SyncNode[] }): void {
+  private mergeSnapshot(snap: SyncSnapshot): void {
+    this.confirmPendingCoveredBy(snap)
     const pendingTargets = new Set<string>()
     for (const p of this.pendingOps) {
       if (p.target_id) pendingTargets.add(p.target_id)
@@ -372,9 +506,95 @@ export class SyncClient {
   }
 
   private dropBufferedThrough(seq: number): void {
-    for (const [buffered] of this.reorderBuffer) {
-      if (buffered <= seq) this.reorderBuffer.delete(buffered)
+    for (const [buffered, op] of this.reorderBuffer) {
+      if (buffered > seq) continue
+      this.reorderBuffer.delete(buffered)
+      // Covered by the snapshot: a server-applied op of ours is confirmed.
+      this.confirmPending(op.client_op_id)
     }
+  }
+
+  /**
+   * Task 1973 r2: confirmation is by IDENTITY, never by sequence. A
+   * server-applied op carrying this `client_op_id` (a stream echo, a catch-up
+   * page, a POST `applied[]` entry, an op found in the op log) confirms and
+   * clears its pending entry whatever its number is relative to the cursor;
+   * only the TREE application of an op at or below the cursor is skipped.
+   * Returns true when an entry was cleared.
+   */
+  private confirmPending(clientOpId: string | null | undefined): boolean {
+    if (!clientOpId) return false
+    const idx = this.pendingOps.findIndex((p) => p.client_op_id === clientOpId)
+    if (idx === -1) return false
+    this.pendingOps.splice(idx, 1)
+    savePendingOps(this.pendingOps)
+    this.orphanedPending.delete(clientOpId)
+    return true
+  }
+
+  /** Task 1973 r2: confirm every pending op whose recorded position `snap` covers. */
+  private confirmPendingCoveredBy(snap: SyncSnapshot): void {
+    const snapUserSeq = userSeqOf(snap as UserSeqSyncSnapshot)
+    const covered = this.pendingOps.filter((p) => pendingCoveredBy(p, snap.seq_id, snapUserSeq))
+    for (const p of covered) this.confirmPending(p.client_op_id)
+  }
+
+  /** Task 1973 r2: record the server's position for a pending op (persisted). */
+  private recordPendingPosition(clientOpId: string, seqId: number, userSeq: number | null): boolean {
+    const p = this.pendingOps.find((x) => x.client_op_id === clientOpId)
+    if (!p || typeof seqId !== 'number' || !Number.isFinite(seqId)) return false
+    p.applied_seq_id = seqId
+    p.applied_user_seq = userSeq
+    this.orphanedPending.delete(clientOpId)
+    return true
+  }
+
+  /**
+   * Task 1973 r2: look orphaned pending ops up in the op log by
+   * `client_op_id`, from the global cursor at their submission up to the
+   * snapshot about to merge. One found there was recorded by the server, so it
+   * gets its position and the merge confirms it: it is neither re-applied over
+   * the snapshot nor resubmitted. The server does not deduplicate a
+   * resubmitted `client_op_id` (it re-executes the op and records a new one),
+   * so a resubmission would also re-write a value another device has replaced
+   * since. Bounded: past ORPHAN_SCAN_MAX_PAGES, or on an error, the op stays
+   * pending and is resubmitted, as before. Never applies anything to the tree.
+   */
+  private async locateOrphanedPending(snap: SyncSnapshot): Promise<void> {
+    if (this.orphanedPending.size === 0) return
+    const orphans = this.pendingOps.filter((p) => this.orphanedPending.has(p.client_op_id))
+    if (orphans.length === 0) {
+      this.orphanedPending.clear()
+      return
+    }
+    let since = Math.min(...orphans.map((p) => p.submitted_after_seq ?? this.bootLastSeq))
+    let found = false
+    let complete = false
+    try {
+      for (let page = 0; page < ORPHAN_SCAN_MAX_PAGES; page++) {
+        const ops = await this.withTimeout(getSyncOps(since), GAP_FILL_TIMEOUT_MS)
+        for (const op of ops) {
+          if (op.client_op_id && this.orphanedPending.has(op.client_op_id)) {
+            found = this.recordPendingPosition(op.client_op_id, op.seq_id, userSeqOf(op as UserSeqSyncOp)) || found
+          }
+        }
+        const last = ops.length > 0 ? ops[ops.length - 1].seq_id : since
+        if (ops.length < SYNC_OPS_PAGE_CAP || last >= snap.seq_id || this.orphanedPending.size === 0) {
+          complete = true
+          break
+        }
+        since = last
+      }
+    } catch (err) {
+      console.warn('[SyncClient] orphaned pending-op lookup failed; they will be resubmitted', err)
+    }
+    if (found) savePendingOps(this.pendingOps)
+    if (!complete && this.orphanedPending.size > 0) {
+      console.warn('[SyncClient] orphaned pending-op lookup stopped early; the rest will be resubmitted')
+    }
+    // One lookup per orphan: what is left was not found and stays a plain
+    // pending op (optimistic state kept, resubmitted on the next boot).
+    this.orphanedPending.clear()
   }
 
   /** Tear down. Stream closed, last_seq persisted, pending ops kept. */
@@ -611,9 +831,28 @@ export class SyncClient {
    * (echo), the optimistic update is already in place — we just confirm it.
    */
   private applyRemoteOp(op: SyncOp): void {
-    if (op.seq_id <= this.lastSeq) return // already applied
+    // Task 1973: against a server that numbers ops per user, order and detect
+    // holes on `user_seq`; otherwise on the global `seq_id` exactly as before.
+    let key: number
+    if (this.userSeqMode) {
+      const userSeq = userSeqOf(op as UserSeqSyncOp)
+      if (userSeq === null) {
+        this.applyUnnumberedOp(op)
+        return
+      }
+      key = userSeq
+    } else {
+      key = op.seq_id
+    }
+    const cursor = this.cursor()
+    if (key <= cursor) {
+      // Already in the tree (a duplicate, an old op, or one a snapshot holds).
+      // An op of ours is still confirmed by identity (task 1973 r2).
+      this.confirmPending(op.client_op_id)
+      return
+    }
 
-    if (op.seq_id === this.lastSeq + 1) {
+    if (key === cursor + 1) {
       this.applyOpNow(op)
       this.drainReorderBuffer()
       if (this.reorderBuffer.size > 0) {
@@ -626,10 +865,12 @@ export class SyncClient {
     }
 
     // Future op: hold it until the hole below it is filled.
-    this.reorderBuffer.set(op.seq_id, op)
+    this.reorderBuffer.set(key, op)
     if (this.reorderBuffer.size > REORDER_BUFFER_MAX) {
       // Buffer exhausted — a snapshot merge is the bounded fallback, routed
-      // through the single-flight/retry path (review S1).
+      // through the single-flight/retry path (review S1). The held ops were
+      // all applied server-side, so ours among them are confirmed (1973 r2).
+      for (const held of this.reorderBuffer.values()) this.confirmPending(held.client_op_id)
       this.reorderBuffer.clear()
       this.coverageSnapshotMerged = false
       this.setTreeComplete(false)
@@ -640,14 +881,47 @@ export class SyncClient {
     this.scheduleGapFill()
   }
 
-  /** Apply every buffered op that is now contiguous with `lastSeq`. */
+  /** Apply every buffered op that is now contiguous with the cursor. */
   private drainReorderBuffer(): void {
     for (;;) {
-      const next = this.reorderBuffer.get(this.lastSeq + 1)
+      const key = this.cursor() + 1
+      const next = this.reorderBuffer.get(key)
       if (!next) break
-      this.reorderBuffer.delete(next.seq_id)
+      this.reorderBuffer.delete(key)
       this.applyOpNow(next)
     }
+  }
+
+  /**
+   * Task 1973: an op without a `user_seq` while in user_seq mode. The server
+   * only sends one from a node that predates server#233 (a rolling deploy):
+   * the database numbered it, the frame just does not say so. Apply it now
+   * (deduplicated on the global seq, as before) so the change shows; the user
+   * cursor does not move, so the next numbered op shows a hole and one
+   * `?since_user_seq=` page re-delivers this op with its number, in order.
+   */
+  private applyUnnumberedOp(op: SyncOp): void {
+    if (op.seq_id <= this.lastSeq) {
+      this.confirmPending(op.client_op_id) // by identity (task 1973 r2)
+      return
+    }
+    this.applyOpNow(op)
+  }
+
+  /** Record `op` as applied: move the cursor(s) and persist the global one. */
+  private advanceCursor(op: SyncOp): void {
+    if (this.userSeqMode) {
+      const userSeq = userSeqOf(op as UserSeqSyncOp)
+      if (userSeq !== null && userSeq > this.lastUserSeq) this.lastUserSeq = userSeq
+      // The global seq stays a forward-only floor; it never gates anything here.
+      if (op.seq_id > this.lastSeq) {
+        this.lastSeq = op.seq_id
+        saveLastSeq(this.lastSeq)
+      }
+      return
+    }
+    this.lastSeq = op.seq_id
+    saveLastSeq(this.lastSeq)
   }
 
   /**
@@ -658,22 +932,15 @@ export class SyncClient {
    */
   private applyOpNow(op: SyncOp): void {
     // Echo suppression.
-    if (op.client_op_id) {
-      const idx = this.pendingOps.findIndex((p) => p.client_op_id === op.client_op_id)
-      if (idx !== -1) {
-        this.pendingOps.splice(idx, 1)
-        savePendingOps(this.pendingOps)
-        // Tree already reflects the change locally — only update seq.
-        this.lastSeq = op.seq_id
-        saveLastSeq(this.lastSeq)
-        this.emit({ type: 'op', op })
-        return
-      }
+    if (this.confirmPending(op.client_op_id)) {
+      // Tree already reflects the change locally — only update seq.
+      this.advanceCursor(op)
+      this.emit({ type: 'op', op })
+      return
     }
 
     const applied = this.applyOpToTree(op.op_type, op.payload)
-    this.lastSeq = op.seq_id
-    saveLastSeq(this.lastSeq)
+    this.advanceCursor(op)
     this.emit({ type: 'op', op })
 
     if (applied === 'missing-node') {
@@ -821,6 +1088,16 @@ export class SyncClient {
     }
     const run = (async () => {
       try {
+        if (this.userSeqMode) {
+          // Task 1973: a hole in the user's own sequence is a real missed op.
+          // Page it in by user_seq; only a failed or contradictory catch-up
+          // costs a snapshot.
+          const outcome = await this.catchUpByUserSeq()
+          if (outcome !== 'complete' && outcome !== 'aborted') {
+            await this.resyncSnapshot()
+          }
+          return
+        }
         const ops = await this.withTimeout(getSyncOps(this.lastSeq), GAP_FILL_TIMEOUT_MS)
         if (this.snapshotFetchInFlight) {
           // A coverage resync started while the op page was in flight: the
@@ -924,15 +1201,15 @@ export class SyncClient {
       let snap: SyncSnapshot
       try {
         snap = await this.withTimeout(getSnapshot(), this.snapshotTimeoutMs)
+        // Task 1973 r2: still holding stream frames, find orphaned pending ops
+        // the server recorded, so the merge confirms them instead of
+        // re-applying them over the snapshot.
+        await this.locateOrphanedPending(snap)
       } finally {
         this.snapshotFetchInFlight = false
       }
       this.mergeSnapshot(snap)
-      if (snap.seq_id > this.lastSeq) {
-        this.lastSeq = snap.seq_id
-        saveLastSeq(this.lastSeq)
-        this.dropBufferedThrough(this.lastSeq)
-      }
+      this.adoptSnapshotCursors(snap)
       // Snapshot is authoritative for the missing ids that scheduled it: a
       // node that is still absent is genuinely gone — never resync for it
       // again until a reconnect or a create brings it back (task 1700).
@@ -963,6 +1240,92 @@ export class SyncClient {
     })()
     this.snapshotInFlight = wrapped
     return wrapped
+  }
+
+  /**
+   * Move the cursors to a merged snapshot (task 1973 feature detection).
+   *
+   * - A numeric `user_seq` means the server numbers this user's ops. The first
+   *   such snapshot switches to user_seq mode and starts the user cursor AT
+   *   that snapshot (never from the global cursor); later ones only move it
+   *   forward.
+   * - No numeric `user_seq` (an older server, or a rollback to one) means
+   *   today's global-seq ordering.
+   * - The global cursor moves forward to the snapshot's `seq_id` either way.
+   *
+   * Held ops are re-keyed on a mode switch, and every op at or below the new
+   * cursor is dropped: the snapshot already contains it.
+   */
+  private adoptSnapshotCursors(snap: SyncSnapshot): void {
+    if (snap.seq_id > this.lastSeq) {
+      this.lastSeq = snap.seq_id
+      saveLastSeq(this.lastSeq)
+    }
+    const snapUserSeq = userSeqOf(snap as UserSeqSyncSnapshot)
+    if (snapUserSeq !== null) {
+      if (!this.userSeqMode) {
+        this.userSeqMode = true
+        this.lastUserSeq = snapUserSeq
+        this.rekeyReorderBuffer()
+      } else if (snapUserSeq > this.lastUserSeq) {
+        this.lastUserSeq = snapUserSeq
+      }
+    } else if (this.userSeqMode) {
+      this.userSeqMode = false
+      this.lastUserSeq = 0
+      this.rekeyReorderBuffer()
+    }
+    this.dropBufferedThrough(this.cursor())
+  }
+
+  /** Re-key held ops after a mode switch; an op the new mode cannot order is dropped. */
+  private rekeyReorderBuffer(): void {
+    if (this.reorderBuffer.size === 0) return
+    const held = Array.from(this.reorderBuffer.values())
+    this.reorderBuffer.clear()
+    for (const op of held) {
+      const key = this.userSeqMode ? userSeqOf(op as UserSeqSyncOp) : op.seq_id
+      if (key !== null) this.reorderBuffer.set(key, op)
+      // Held before this snapshot was fetched, so the snapshot holds it.
+      else this.confirmPending(op.client_op_id)
+    }
+  }
+
+  /**
+   * Task 1973: page this user's ops in by `user_seq` until the cursor reaches
+   * the server's `head_user_seq` (each page reports it from the same database
+   * snapshot as its ops). The cost is the number of missed ops, never the size
+   * of the vault.
+   *
+   * Contradiction, for which the caller merges a snapshot instead:
+   * - the page has no numeric `head_user_seq` (an older node answered and
+   *   ignored `since_user_seq`);
+   * - `head_user_seq` is below the cursor, or below an op this tab already
+   *   held when the request went out (the server publishes an op only after
+   *   it committed, so the head must include it);
+   * - the page leaves the cursor where it was although the head is above it.
+   * Ops that arrive on the stream during the request may sit above the head;
+   * the next page fetches them.
+   */
+  private async catchUpByUserSeq(): Promise<UserSeqCatchUp> {
+    for (let page = 0; page < USER_SEQ_CATCHUP_MAX_PAGES; page++) {
+      const since = this.lastUserSeq
+      let heldBefore = 0
+      for (const key of this.reorderBuffer.keys()) if (key > heldBefore) heldBefore = key
+      const res = await this.withTimeout(getSyncOpsSinceUserSeq(since), GAP_FILL_TIMEOUT_MS)
+      if (this.destroyed || !this.userSeqMode || this.snapshotFetchInFlight) return 'aborted'
+      const head = res.head_user_seq
+      if (typeof head !== 'number' || !Number.isFinite(head) || head < since) return 'contradiction'
+      for (const op of res.ops) this.applyRemoteOp(op)
+      if (!this.userSeqMode) return 'aborted'
+      if (heldBefore > head) return 'contradiction'
+      if (this.lastUserSeq >= head) {
+        if (this.reorderBuffer.size === 0) return 'complete'
+        continue // newer ops arrived on the stream meanwhile: fetch them too
+      }
+      if (this.lastUserSeq === since) return 'contradiction'
+    }
+    return 'truncated'
   }
 
   /** Bound a sync request so coverage recovery can never hang indefinitely. */
@@ -1005,6 +1368,7 @@ export class SyncClient {
       payload,
       rollback,
       target_id: targetId ?? undefined,
+      submitted_after_seq: this.lastSeq,
     }
     this.pendingOps.push(pending)
     savePendingOps(this.pendingOps)
@@ -1039,19 +1403,91 @@ export class SyncClient {
         this.emit({ type: 'op' })
         return { accepted: false, reason: rejected.reason ?? 'rejected' }
       }
-      // Accepted ops stay in pending until echoed via SSE — that confirms
-      // the server's seq_id assignment.
+      // Accepted ops stay in pending until the tree is known to hold them:
+      // the stream echo, a covering snapshot, or (task 1973) the response's
+      // `user_seq` in order. See adoptApplied.
+      this.adoptApplied(result.applied, [pending])
       return { accepted: true }
     } catch (err) {
-      // Network error — leave it in pending; we'll flush on reconnect.
+      // Network error — leave it in pending; we'll flush on reconnect. The
+      // server may still have recorded it (the answer was lost), so the next
+      // snapshot looks it up first (task 1973 r2).
+      if (this.pendingOps.includes(pending)) this.orphanedPending.add(clientOpId)
       this.emit({ type: 'error', error: err instanceof Error ? err : new Error(String(err)) })
       return { accepted: true } // optimistic state stays
     }
   }
 
+  /**
+   * `POST /sync/ops` answered these ops as applied.
+   *
+   * Task 1973 r2, both modes: the answer records each op's server position on
+   * its pending entry (persisted), so a snapshot that covers it confirms it,
+   * also the first snapshot after a reload.
+   *
+   * Task 1973, user_seq mode: feed the op through the same ordered path its
+   * stream echo takes, so the cursor advances without waiting for the echo: a
+   * contiguous one is confirmed now (echo suppression drops it from pending;
+   * the later echo is an old user_seq and only confirms by identity), a future
+   * one is held until the hole below it fills, and one at or below the cursor
+   * (a snapshot overtook the answer) is confirmed by identity. A held stream
+   * echo is never replaced (it carries the server's own payload).
+   *
+   * Legacy (global seq) mode: an op above the cursor waits for its echo, as
+   * before. One at or below it is already in the tree (a snapshot or the
+   * ordered stream passed it, and its echo may have been dropped as old), so
+   * it is confirmed now (task 1973 r2).
+   */
+  private adoptApplied(
+    applied: ReadonlyArray<{ client_op_id: string; seq_id: number; user_seq?: number | null }> | undefined,
+    submitted: ReadonlyArray<{ client_op_id: string; op_type: string; payload: Record<string, unknown> }>,
+  ): void {
+    if (!applied) return
+    let recorded = false
+    for (const entry of applied) {
+      recorded = this.recordPendingPosition(entry.client_op_id, entry.seq_id, userSeqOf(entry)) || recorded
+    }
+    if (recorded) savePendingOps(this.pendingOps)
+    if (!this.userSeqMode) {
+      // While a snapshot fetch is in flight the cursor is about to move; the
+      // merge confirms the covered ones from the recorded positions.
+      if (this.snapshotFetchInFlight) return
+      for (const entry of applied) {
+        if (entry.seq_id <= this.lastSeq) this.confirmPending(entry.client_op_id)
+      }
+      return
+    }
+    for (const entry of applied) {
+      const userSeq = userSeqOf(entry)
+      if (userSeq === null || this.reorderBuffer.has(userSeq)) continue
+      const sent = submitted.find((s) => s.client_op_id === entry.client_op_id)
+      if (!sent) continue
+      const op: UserSeqSyncOp = {
+        seq_id: entry.seq_id,
+        user_seq: userSeq,
+        op_type: sent.op_type,
+        client_op_id: entry.client_op_id,
+        payload: sent.payload,
+        device_id: this.deviceId,
+        created_at: new Date().toISOString(),
+      }
+      if (this.snapshotFetchInFlight) {
+        // Same hold as a stream frame: a snapshot fetched before this op must
+        // not overwrite it, so it is replayed right after the merge.
+        this.deferredStreamFrames.push({ kind: 'op', op })
+        continue
+      }
+      this.applyRemoteOp(op)
+    }
+  }
+
   private async flushPending(): Promise<void> {
-    if (this.pendingOps.length === 0) return
-    const batch = this.pendingOps.map((p) => ({
+    // Task 1973 r2: an op with a recorded server position was applied; it
+    // waits for its echo or a covering snapshot and is never resubmitted (the
+    // server would execute it a second time).
+    const unsent = this.pendingOps.filter((p) => !hasRecordedPosition(p))
+    if (unsent.length === 0) return
+    const batch = unsent.map((p) => ({
       client_op_id: p.client_op_id,
       op_type: p.op_type,
       payload: p.payload,
@@ -1072,8 +1508,15 @@ export class SyncClient {
         }
       }
       savePendingOps(this.pendingOps)
+      this.adoptApplied(result.applied, batch)
       this.emit({ type: 'op' })
     } catch (err) {
+      // The answer may be lost after the server recorded them (task 1973 r2).
+      for (const op of batch) {
+        if (this.pendingOps.some((p) => p.client_op_id === op.client_op_id)) {
+          this.orphanedPending.add(op.client_op_id)
+        }
+      }
       console.warn('[SyncClient] Failed to flush pending ops', err)
     }
   }
