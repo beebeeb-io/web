@@ -34,7 +34,8 @@ const V2_NAME = V.metadata_v2_name.name_encrypted as string
 
 const cap = {
   events: [] as string[],
-  initCalls: [] as Array<{ file_id: string }>,
+  initCalls: [] as Array<{ file_id: string; name_encrypted: string }>,
+  nameUpdates: [] as Array<{ id: string; name_encrypted?: string }>,
   metadataReads: [] as string[],
 }
 let serverFileId: ((requested: string) => string) = (requested) => requested
@@ -83,7 +84,7 @@ await mockModuleScoped('../src/lib/net-retry', import.meta.dir, {
   withNetworkRetry: <T>(fn: () => Promise<T>) => fn(),
 })
 await mockModuleScoped('../src/lib/api', import.meta.dir, {
-  initUpload: async (metadata: { file_id: string }) => {
+  initUpload: async (metadata: { file_id: string; name_encrypted: string }) => {
     cap.initCalls.push(metadata)
     return {
       protocol: 'v2', file_id: serverFileId(metadata.file_id), tenant_id: 't',
@@ -100,7 +101,10 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, {
     is_folder: false, is_uploading: false, created_at: '2026-10-18T00:00:00Z', updated_at: '2026-10-18T00:00:00Z',
   }),
   getUploadStatus: async () => ({ uploaded_chunks: [] }),
-  updateFile: async (fileId: string) => ({ id: fileId }),
+  updateFile: async (fileId: string, patch: { name_encrypted?: string }) => {
+    cap.nameUpdates.push({ id: fileId, name_encrypted: patch.name_encrypted })
+    return { id: fileId }
+  },
 })
 await mockModuleScoped('../src/lib/upload-resume', import.meta.dir, {
   computeFingerprint: async () => 'fp',
@@ -115,6 +119,7 @@ beforeEach(() => {
   cap.events.length = 0
   cap.initCalls.length = 0
   cap.metadataReads.length = 0
+  cap.nameUpdates.length = 0
   serverFileId = (requested) => requested
 })
 
@@ -230,5 +235,47 @@ describe('the worker’s pin helper over real core encryptors', () => {
     registry.get(1)!.pushChunk(new Uint8Array([1, 2, 3, 4]))
     expect(() => applyRecordedPinInRegistry(registry, 1, 2)).toThrow()
     expect(registry.has(1)).toBe(false)
+  })
+})
+
+/**
+ * Crypto review of web#170, Minor 2. A replace used to send a FRESHLY sealed
+ * name on init (`encryptFilename`, so no recorded pin). The server keeps the
+ * row's `name_encrypted` on a replace of an existing id (routes/uploads.rs:
+ * the UPDATE does not touch it), but when the row is gone it INSERTs the body's
+ * name: a v2 file would then come back with an unpinned name, which re-enables
+ * frame-0 detection for it. A replace now sends the replaced file's own
+ * authenticated name, byte for byte.
+ */
+describe('replace init sends the replaced file’s name_encrypted unchanged', () => {
+  test('a v2-pinned file: the init body carries its v2 name, which still records pin 2', async () => {
+    await upload(V2_FILE_ID, V2_KEY, { replaceOf: { nameEncrypted: V2_NAME } })
+    expect(cap.initCalls.map((c) => c.name_encrypted)).toEqual([V2_NAME])
+    expect(ops.readFileMetadata(V2_KEY, cap.initCalls[0].name_encrypted).pin).toBe(2)
+    expect(cap.nameUpdates).toEqual([])
+  })
+
+  test('a file with no recorded pin: its own name, unchanged', async () => {
+    const key = new Uint8Array(32).fill(4)
+    const name = v1Name(key, 'a.txt')
+    await upload('1943cafe-0000-4000-8000-000000000002', key, { replaceOf: { nameEncrypted: name } })
+    expect(cap.initCalls.map((c) => c.name_encrypted)).toEqual([name])
+  })
+
+  test('a NEW file still sends a freshly sealed name of its own (and never the pinned writer)', async () => {
+    await upload('1943cafe-0000-4000-8000-000000000003', V2_KEY)
+    expect(cap.initCalls).toHaveLength(1)
+    const sent = JSON.parse(cap.initCalls[0].name_encrypted) as { ciphertext: number[] }
+    const meta = JSON.parse(new TextDecoder().decode(new Uint8Array(sent.ciphertext))) as { name: string; mime_type: string }
+    expect(meta.name).toBe('report.txt')
+    expect(meta.mime_type).toStartWith('text/plain')
+  })
+
+  test('a replace answered with ANOTHER id is a new file: that id gets a fresh name of its own', async () => {
+    serverFileId = () => '1943cafe-0000-4000-8000-0000000000ff'
+    await upload(V2_FILE_ID, V2_KEY, { replaceOf: { nameEncrypted: V2_NAME } })
+    expect(cap.nameUpdates).toHaveLength(1)
+    expect(cap.nameUpdates[0].id).toBe('1943cafe-0000-4000-8000-0000000000ff')
+    expect(cap.nameUpdates[0].name_encrypted).not.toBe(V2_NAME)
   })
 })

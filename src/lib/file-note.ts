@@ -13,16 +13,15 @@
 //     read from its authenticated metadata. A v2-pinned file's note is always
 //     sealed under the note subkey; an unrecorded file's note follows core's
 //     current write rule (the raw key until the gated v2 switch, so web tabs
-//     not yet on this core keep opening it).
+//     not yet on this core keep opening it). The pin is read with core's FILE
+//     reader for folders too: never chosen by the server's `is_folder` flag.
 
-import { decryptNote, encryptNoteFor, readFileMetadata, readNameMetadata } from './crypto'
+import { decryptNote, encryptNoteFor, readFileMetadata, UnverifiedFileMetadataError } from './crypto'
 
 /** The file or folder a note belongs to, as the details panel knows it. */
 export interface NoteOwner {
-  /** Its current `name_encrypted`: where its pin is read. */
+  /** Its current `name_encrypted`: where its pin is read (core's FILE reader, for files AND folders). */
   nameEncrypted: string
-  /** Folders read their pin with the folder reader (a plaintext legacy folder name is allowed). */
-  isFolder: boolean
 }
 
 /** Open a stored note. Throws when it does not open under this key (the panel then shows no note). */
@@ -32,14 +31,28 @@ export async function openFileNote(fileKey: Uint8Array, noteEncrypted: string): 
 
 /**
  * Seal a note for an EXISTING file or folder and return the value to store in
- * `note_encrypted`. The pin comes from core's FILE reader for a file (it
- * refuses a plaintext or foreign name: then no note is written) and from the
- * folder reader for a folder (folders have no content, and core keeps
- * `decrypt_name_metadata` for them).
+ * `note_encrypted`. The pin comes from core's FILE reader for every owner.
+ *
+ * Folders included: `is_folder` is a server field, and the folder reader reads
+ * a plaintext name as pin 0. With it, a server could flag a v2 file as a folder
+ * with a plaintext name and get its note sealed under the RAW file key, which
+ * it could later serve as that file's name (core round 5,
+ * `raw_key_note_served_as_name_downgrades_v2_file`; crypto review of web#170,
+ * Minor 1). Every client writes folder names encrypted (web, mobile, cli,
+ * desktop), and those read the same through the file reader. A plaintext name
+ * (a legacy folder) carries no authenticated pin, so no note is written for it:
+ * `UnverifiedFileMetadataError`, and the panel says so.
  */
 export async function sealFileNote(fileKey: Uint8Array, text: string, owner: NoteOwner): Promise<string> {
-  const { pin } = owner.isFolder
-    ? await readNameMetadata(fileKey, owner.nameEncrypted)
-    : await readFileMetadata(fileKey, owner.nameEncrypted)
+  const pin = await readFileMetadata(fileKey, owner.nameEncrypted).then(
+    (meta) => meta.pin,
+    (err: unknown) => {
+      throw new UnverifiedFileMetadataError(UNVERIFIED_NOTE_OWNER_COPY, { cause: err })
+    },
+  )
   return encryptNoteFor(fileKey, text, pin)
 }
+
+/** What the details panel shows when a note cannot be sealed for this item. */
+export const UNVERIFIED_NOTE_OWNER_COPY =
+  "Note not saved. This item's name could not be verified, so the note's encryption key cannot be chosen safely."

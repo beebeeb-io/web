@@ -9,7 +9,8 @@ import { useVersionDelete, VersionDeleteConfirm } from './version-delete'
 import { useKeys } from '../lib/key-context'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { isPreviewable } from '../lib/preview'
-import { openFileNote, sealFileNote } from '../lib/file-note'
+import { openFileNote, sealFileNote, UNVERIFIED_NOTE_OWNER_COPY } from '../lib/file-note'
+import { UnverifiedFileMetadataError } from '../lib/crypto'
 
 // ─── Versions tab (inline, inside the detail panel) ─────────────────────────
 
@@ -193,7 +194,6 @@ function VersionsTab({
 function EncryptedNoteSection({
   fileId,
   nameEncrypted,
-  isFolder,
   noteEncrypted,
   getFileKey,
   onNoteUpdated,
@@ -201,7 +201,6 @@ function EncryptedNoteSection({
   fileId: string
   /** The file's current `name_encrypted`: its pin decides how the note is sealed (task 1943). */
   nameEncrypted: string
-  isFolder: boolean
   noteEncrypted: string | null | undefined
   getFileKey: (id: string) => Promise<Uint8Array>
   onNoteUpdated?: (fileId: string, noteEncrypted: string | null) => void
@@ -209,12 +208,14 @@ function EncryptedNoteSection({
   const [text, setText] = useState('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [refused, setRefused] = useState(false)
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Decrypt the note on mount / when the file changes
   useEffect(() => {
     setText('')
     setSaved(false)
+    setRefused(false)
     if (!noteEncrypted) return
     let cancelled = false
     getFileKey(fileId)
@@ -242,6 +243,7 @@ function EncryptedNoteSection({
   const handleBlur = useCallback(async () => {
     if (saving) return
     setSaving(true)
+    setRefused(false)
     try {
       if (text.trim() === '') {
         // Send empty string to clear — JSON null is deserialized as "absent"
@@ -250,22 +252,25 @@ function EncryptedNoteSection({
         onNoteUpdated?.(fileId, null)
       } else {
         const fileKey = await getFileKey(fileId)
-        // Sealed by core under the rule of THIS file's recorded pin, read from
-        // its authenticated metadata; an unreadable pin throws and nothing is
-        // written (task 1943, core 1908 round 5).
-        const stored = await sealFileNote(fileKey, text, { nameEncrypted, isFolder })
+        // Sealed by core under the rule of THIS item's recorded pin, read from
+        // its authenticated metadata (files and folders alike: the server's
+        // folder flag never picks the key); an unreadable pin throws and
+        // nothing is written (task 1943, core 1908 round 5).
+        const stored = await sealFileNote(fileKey, text, { nameEncrypted })
         await updateFile(fileId, { note_encrypted: stored })
         onNoteUpdated?.(fileId, stored)
       }
       setSaved(true)
       if (savedTimerRef.current) clearTimeout(savedTimerRef.current)
       savedTimerRef.current = setTimeout(() => setSaved(false), 1500)
-    } catch {
-      // Save failed silently — user can retry by blurring again
+    } catch (err) {
+      // A refused owner is permanent: say so. Anything else (network) fails
+      // silently and the user can retry by blurring again.
+      if (err instanceof UnverifiedFileMetadataError) setRefused(true)
     } finally {
       setSaving(false)
     }
-  }, [fileId, nameEncrypted, isFolder, text, saving, getFileKey, onNoteUpdated])
+  }, [fileId, nameEncrypted, text, saving, getFileKey, onNoteUpdated])
 
   return (
     <div className="px-xl pt-lg pb-lg border-b border-line">
@@ -295,6 +300,11 @@ function EncryptedNoteSection({
         <Icon name="lock" size={9} />
         {saving ? 'Saving...' : 'Encrypted · synced across devices'}
       </div>
+      {refused && (
+        <div role="alert" className="mt-1.5 text-[10px] text-red">
+          {UNVERIFIED_NOTE_OWNER_COPY}
+        </div>
+      )}
     </div>
   )
 }
@@ -766,7 +776,6 @@ export function FileDetailsPanel({
               <EncryptedNoteSection
                 fileId={file.id}
                 nameEncrypted={file.nameEncrypted}
-                isFolder={file.isFolder}
                 noteEncrypted={file.noteEncrypted}
                 getFileKey={getFileKey}
                 onNoteUpdated={onNoteUpdated}

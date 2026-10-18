@@ -70,4 +70,11 @@ describe('names and notes are opened by core’s readers only', () => {
     expect(panel.text).not.toMatch(/\bencryptFilename\b/)
     expect(panel.text).not.toMatch(/\bserializeEncryptedBlob\b/)
   })
+
+  test('the note writer takes the pin from core’s FILE reader only, never the display/folder reader (web#170 review, Minor 1)', () => {
+    const note = files.find((f) => f.path === 'src/lib/file-note.ts')!
+    expect(note.text).toMatch(/\breadFileMetadata\(/)
+    expect(note.text).not.toMatch(/\breadNameMetadata\b/)
+    expect(note.text).not.toMatch(/\bisFolder\b/)
+  })
 })

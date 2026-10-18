@@ -163,7 +163,16 @@ async function uploadFile(
     }
   }
 
-  let nameEncrypted = await encryptMetadata(activeFileKey)
+  // A replace sends the replaced file's OWN name, byte for byte (crypto review
+  // of web#170, Minor 2): it is authenticated (read above) and records the pin
+  // this content is written with. The server keeps a live row's name on
+  // replace (routes/uploads.rs: the UPDATE leaves `name_encrypted` alone), but
+  // when the row is gone it INSERTs the body's name, and a freshly sealed
+  // `encryptFilename` name records no pin: a v2 file would come back unpinned.
+  // A new file seals a name of its own (no pin, core's write rule).
+  let nameEncrypted = options.replaceOf
+    ? options.replaceOf.nameEncrypted
+    : await encryptMetadata(activeFileKey)
 
   // Use the core adaptive chunk-size ladder for the initial client proposal.
   // The server may override this during v2 init — the client proposes, server decides.
