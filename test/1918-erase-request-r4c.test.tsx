@@ -97,8 +97,10 @@ describe('1. no count from a cache older than the person\'s own action', () => {
   test('every own action that changes the trash invalidates the shared cache', () => {
     const trash = code('pages/trash.tsx')
     expect(trash).toMatch(/const trashChanged = \(\) => \{\s*sharedEraseStatus\.invalidate\(\)/)
+    // Defined once (a handler cannot shadow it with a no-op) and called in each handler's finally.
+    expect(trash.match(/const trashChanged = /g)?.length ?? 0).toBe(1)
     for (const name of ['handleRestore', 'performPermanentDelete', 'handleRestoreSelected', 'handleRestoreAll']) {
-      expect(`${name}: ${handlerBody(trash, name).includes('trashChanged()')}`).toBe(`${name}: true`)
+      expect(`${name}: ${/\} finally \{\s*trashChanged\(\)/.test(handlerBody(trash, name))}`).toBe(`${name}: true`)
     }
   })
 
