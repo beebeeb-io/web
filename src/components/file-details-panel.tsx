@@ -9,7 +9,7 @@ import { useVersionDelete, VersionDeleteConfirm } from './version-delete'
 import { useKeys } from '../lib/key-context'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { isPreviewable } from '../lib/preview'
-import { encryptFilename, decryptFilename, parseEncryptedBlob, serializeEncryptedBlob } from '../lib/crypto'
+import { openFileNote, sealFileNote } from '../lib/file-note'
 
 // ─── Versions tab (inline, inside the detail panel) ─────────────────────────
 
@@ -192,11 +192,16 @@ function VersionsTab({
 
 function EncryptedNoteSection({
   fileId,
+  nameEncrypted,
+  isFolder,
   noteEncrypted,
   getFileKey,
   onNoteUpdated,
 }: {
   fileId: string
+  /** The file's current `name_encrypted`: its pin decides how the note is sealed (task 1943). */
+  nameEncrypted: string
+  isFolder: boolean
   noteEncrypted: string | null | undefined
   getFileKey: (id: string) => Promise<Uint8Array>
   onNoteUpdated?: (fileId: string, noteEncrypted: string | null) => void
@@ -215,8 +220,9 @@ function EncryptedNoteSection({
     getFileKey(fileId)
       .then(async (fileKey) => {
         try {
-          const { nonce, ciphertext } = parseEncryptedBlob(noteEncrypted)
-          const plain = await decryptFilename(fileKey, nonce, ciphertext)
+          // Core's note reader: the note subkey, then the legacy raw key, so
+          // notes stored before task 1943 keep opening.
+          const plain = await openFileNote(fileKey, noteEncrypted)
           if (!cancelled) setText(plain)
         } catch {
           // Decryption failed — leave blank
@@ -244,8 +250,10 @@ function EncryptedNoteSection({
         onNoteUpdated?.(fileId, null)
       } else {
         const fileKey = await getFileKey(fileId)
-        const enc = await encryptFilename(fileKey, text)
-        const stored = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
+        // Sealed by core under the rule of THIS file's recorded pin, read from
+        // its authenticated metadata; an unreadable pin throws and nothing is
+        // written (task 1943, core 1908 round 5).
+        const stored = await sealFileNote(fileKey, text, { nameEncrypted, isFolder })
         await updateFile(fileId, { note_encrypted: stored })
         onNoteUpdated?.(fileId, stored)
       }
@@ -257,7 +265,7 @@ function EncryptedNoteSection({
     } finally {
       setSaving(false)
     }
-  }, [fileId, text, saving, getFileKey, onNoteUpdated])
+  }, [fileId, nameEncrypted, isFolder, text, saving, getFileKey, onNoteUpdated])
 
   return (
     <div className="px-xl pt-lg pb-lg border-b border-line">
@@ -306,6 +314,8 @@ export interface FileDetailsMeta {
   cipher?: string
   keyId?: string
   region?: string
+  /** The file's (or folder's) current `name_encrypted`; the note writer reads its pin from it. */
+  nameEncrypted: string
   noteEncrypted?: string | null
 }
 
@@ -755,6 +765,8 @@ export function FileDetailsPanel({
               {/* Encrypted note — synced server-side, decrypted with file key */}
               <EncryptedNoteSection
                 fileId={file.id}
+                nameEncrypted={file.nameEncrypted}
+                isFolder={file.isFolder}
                 noteEncrypted={file.noteEncrypted}
                 getFileKey={getFileKey}
                 onNoteUpdated={onNoteUpdated}

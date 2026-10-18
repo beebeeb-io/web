@@ -231,6 +231,18 @@ guard) before `completeUpload`. Memory stays bounded to one slice + one frame.
   (plaintext) and `chunk_count` from the core plan — the server recomputes from
   chunks. Do NOT switch the init total to the ciphertext size.
 
+## File content, names and notes: core 1908 readers (task 1943)
+
+Core chunk format v2 (core#28) binds every content frame to its file id, its upload and its position, and records the file's format INSIDE its encrypted name ("the pin": `chunk_format` 0 = unrecorded, 2 = v2). Web reads every file through core (WASM from core dd7bd76; `WRITE_FORMAT` is still v1, so web writes v1 for new files):
+
+- `src/lib/content-crypto.ts` (`createContentOps`) is the one place content and notes are opened; the crypto worker runs it, and unit tests run the same functions over the committed WASM (`test/helpers/wasm-crypto-mirror.ts`).
+- Content: `encrypted-download.ts` reads the metadata FIRST with `readFileMetadata` (core `decrypt_file_metadata_with_key`: name, MIME, pin; it refuses a plaintext or foreign name, and then nothing is fetched: `UnverifiedFileMetadataError`), then opens the frames with a `StreamingDecryptor` (`startDecryptStream(fileKey, fileId, pin)`) and calls `finish()` (v2 truncation). Any error discards the plaintext; the streaming download is aborted. `decryptEncryptedBytes` / `pipeDecryptedChunks` take `{ fileId, pin }`; `decryptVersionToBlob` takes the file's `name_encrypted` (versions share the file's pin).
+- The generic `decryptChunk` is for key unwrapping only; `test/1943-no-generic-content-decrypt.test.ts` lists the files allowed to call it and fails on any new content or raw-key name use.
+- Names for display: `decryptFileMetadata`, `decryptManyNames` (listing), trash, shares and activity use core's `readNameMetadata` (name subkey first, then the legacy raw key).
+- Notes: `src/lib/file-note.ts` (`openFileNote` = core `decrypt_note`; `sealFileNote` = core `encrypt_note_for` with the pin of THIS file, the folder reader for a folder). Notes of unrecorded files are still raw-key sealed until the gated switch, so older tabs open them.
+- Replace (a new version of an existing file id): pass `{ replaceOf: { nameEncrypted } }` to `encryptedUpload`; it reads the pin and calls `applyRecordedPin` before the first chunk. A NEW file never passes it and never applies a pin (`test/1943-writer-pin.test.ts`).
+- Not yet on core (before the v2 write switch): thumbnails (`thumbnail.ts`, WebCrypto raw key), new-file names (`encryptFilename`), renames (drop the pin), the file-request uploader (`encryptChunk`), upload resume (no `resumePolicy`), and the single-file share link (the server's share view carries no `file_id`, so a v2-pinned file is refused there with an honest message).
+
 ## Critical prop chains
 
 When opening the ShareDialog, ALWAYS pass `isFolder={file.is_folder}`. Folder sharing generates a folder_key and encrypts all children — without this prop, folder shares silently create regular file shares that don't work.

@@ -4,6 +4,11 @@ import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
 import {
   initSync,
+  WasmChunkDecryptor,
+  decrypt_chunk_frame,
+  decrypt_file_metadata,
+  decrypt_file_metadata_with_key,
+  decrypt_name_metadata_with_key,
   derive_master_key,
   derive_file_key,
   encrypt_chunk,
@@ -31,7 +36,7 @@ import { decryptThumbnailBlob } from '../src/lib/thumbnail'
 // relate to this one).
 //
 // ── Vendoring + refresh procedure ───────────────────────────────────────────
-// The vendored copy lives at test/vectors/core-vectors.v4.json and MUST be a
+// The vendored copy lives at test/vectors/core-vectors.v5.json and MUST be a
 // byte-for-byte copy of repos/core/test-vectors/vectors.json (so the drift
 // check below is a real sha256 comparison, not a comparison against a
 // modified copy). To refresh after core bumps the vector file:
@@ -74,14 +79,16 @@ import { decryptThumbnailBlob } from '../src/lib/thumbnail'
 // never touch the worker — so those ARE called directly, exactly as the app
 // calls them.
 
-const VENDORED_PATH = fileURLToPath(new URL('./vectors/core-vectors.v4.json', import.meta.url))
+const VENDORED_PATH = fileURLToPath(new URL('./vectors/core-vectors.v5.json', import.meta.url))
 // Sibling core checkout (present on developer machines / worktrees that keep
 // `core` next to `web`; absent in a bare CI checkout of web alone).
 const CORE_SIBLING_PATH = fileURLToPath(new URL('../../core/test-vectors/vectors.json', import.meta.url))
 
-// Pin from: shasum -a 256 test/vectors/core-vectors.v4.json
-const PINNED_SHA256 = 'a8f5320a0dbd06fa3a26ede7109f3c24295197061f13f81519c010b30157f6e5'
-const EXPECTED_VERSION = 4
+// Pin from: shasum -a 256 test/vectors/core-vectors.v5.json
+// v5 = core dd7bd76 (core#29, task 1943): adds chunk_v2_stream,
+// chunk_v2_single_frame and metadata_v2_name (core#28, task 1908).
+const PINNED_SHA256 = 'fa996d0e8a55063d62370b82e4eca7ed86cff0ce74938d675f4762c29863777c'
+const EXPECTED_VERSION = 5
 
 function hexToBytes(hex: string): Uint8Array {
   const out = new Uint8Array(hex.length / 2)
@@ -114,7 +121,7 @@ beforeAll(() => {
 // ─── 1. Vendored-file checksum guard ────────────────────────────────────────
 
 describe('vendored vector checksum guard', () => {
-  test('test/vectors/core-vectors.v4.json matches the pinned sha256', () => {
+  test('test/vectors/core-vectors.v5.json matches the pinned sha256', () => {
     const buf = readFileSync(VENDORED_PATH)
     expect(sha256Hex(buf)).toBe(PINNED_SHA256)
   })
@@ -150,6 +157,9 @@ const IMPLEMENTED_FAMILIES = new Set([
   'file_request_seal_open',
   'share_key_wrap',
   'thumbnail_encrypt',
+  'chunk_v2_stream',
+  'chunk_v2_single_frame',
+  'metadata_v2_name',
 ])
 
 const SKIPPED_FAMILIES: Record<string, string> = {
@@ -271,13 +281,33 @@ describe('core vectors KAT (production code paths)', () => {
     expect(toHex(masterKey)).toBe(v.expected_master_key_hex)
   })
 
-  test('metadata_encrypt_decrypt — decryptFilename (src/lib/crypto.ts:289) via WASM decrypt_metadata', () => {
+  test('metadata_encrypt_decrypt — the legacy raw-key open (WASM decrypt_metadata) that core’s name readers fall back to', () => {
     const v = vectors.metadata_encrypt_decrypt
     const fileKey = hexToBytes(v.file_key_hex)
     const nonce = hexToBytes(v.nonce_hex)
     const ciphertext = hexToBytes(v.ciphertext_hex)
     const decrypted = decrypt_metadata(fileKey, nonce, ciphertext) as string
     expect(decrypted).toBe(v.metadata)
+  })
+
+  test('metadata_encrypt_decrypt — readNameMetadata / readFileMetadata (src/lib/content-crypto.ts) open the same blob as a stored envelope, pin 0', () => {
+    // Web no longer opens names with decrypt_metadata itself (task 1943): every
+    // name goes through core's subkey-aware readers, whose legacy raw-key
+    // fallback must keep opening every envelope stored before 1908.
+    const v = vectors.metadata_encrypt_decrypt
+    const fileKey = hexToBytes(v.file_key_hex)
+    const envelope = JSON.stringify({
+      cipher_suite: 'V1Aes256Gcm',
+      nonce: Array.from(hexToBytes(v.nonce_hex)),
+      ciphertext: Array.from(hexToBytes(v.ciphertext_hex)),
+    })
+    for (const read of [decrypt_name_metadata_with_key, decrypt_file_metadata_with_key]) {
+      const meta = read(fileKey, envelope) as { name: string; mime_type?: string; chunk_format: number }
+      // A bare-filename (legacy) plaintext: no MIME, which WASM returns as `undefined`.
+      expect(meta.name).toBe(v.metadata)
+      expect(meta.mime_type).toBeUndefined()
+      expect(meta.chunk_format).toBe(0)
+    }
   })
 
   test('file_request_seal_open — unwrapRequestPrivate/openRequestUpload (src/lib/crypto.ts:796,817) + WASM derive_request_wrap_key/derive_x25519_public', () => {
@@ -353,5 +383,103 @@ describe('core vectors KAT (production code paths)', () => {
     const encrypted = hexToBytes((v.nonce_hex as string) + (v.ciphertext_hex as string))
     encrypted[20] ^= 0x01
     await expect(decryptThumbnailBlob(encrypted, fileKey)).rejects.toThrow()
+  })
+})
+
+// ─── 4. Chunk format v2 + v2 name metadata (vectors v5, core#28/#29, task 1943) ─
+//
+// Web's production readers for these families are `createDecryptor` /
+// `decryptorPushFrame` / `decryptorFinish` and `readFileMetadata` in
+// src/lib/content-crypto.ts, which the crypto worker runs as 1:1 calls into
+// WASM `WasmChunkDecryptor.fromFileKey` / `pushFrame` / `finish` and
+// `decrypt_file_metadata_with_key`. Same precedent as the families above: the
+// WASM export is driven directly, because the worker cannot load under bun.
+// web's end-to-end consumer tests over these same vectors (download, stream,
+// version, share link, hostile server) are test/1943-content-reader.test.ts.
+
+describe('core vectors KAT — chunk format v2 and v2 name metadata', () => {
+  interface V2Frame { index: number; is_last: boolean; nonce_hex: string; frame_hex: string; plaintext_hex: string }
+
+  for (const family of ['chunk_v2_stream', 'chunk_v2_single_frame'] as const) {
+    test(`${family} — the streaming reader opens every frame in order under pin 2 (fromFileKey, as share recipients do)`, () => {
+      const v = vectors[family]
+      expect(v.chunk_format).toBe(2)
+      const dec = WasmChunkDecryptor.fromFileKey(hexToBytes(v.file_key_hex), v.file_id, 2)
+      const parts: string[] = []
+      for (const f of v.frames as V2Frame[]) {
+        const pt = dec.pushFrame(hexToBytes(f.frame_hex))
+        expect(toHex(pt)).toBe(f.plaintext_hex)
+        parts.push(toHex(pt))
+        expect(toHex(dec.versionId as Uint8Array)).toBe(v.version_id_hex)
+      }
+      expect(dec.format).toBe(2)
+      expect(dec.chunksDecrypted).toBe(v.chunk_count)
+      expect(dec.finish()).toEqual({ chunk_count: v.chunk_count, format: 2 })
+      expect(parts.join('')).toBe(v.plaintext_hex)
+    })
+
+    test(`${family} — the owner's reader derives the same file key from master_key + file_id`, () => {
+      const v = vectors[family]
+      const fileKey = derive_file_key(hexToBytes(v.master_key_hex), new TextEncoder().encode(v.file_id)) as Uint8Array
+      expect(toHex(fileKey)).toBe(v.file_key_hex)
+      const dec = new WasmChunkDecryptor(hexToBytes(v.master_key_hex), v.file_id, 2)
+      const out = (v.frames as V2Frame[]).map((f) => toHex(dec.pushFrame(hexToBytes(f.frame_hex)))).join('')
+      dec.finish()
+      expect(out).toBe(v.plaintext_hex)
+    })
+
+    test(`${family} — random access (decrypt_chunk_frame) opens each frame at its index with the version id`, () => {
+      const v = vectors[family]
+      for (const f of v.frames as V2Frame[]) {
+        const pt = decrypt_chunk_frame(
+          hexToBytes(v.file_key_hex), v.file_id, hexToBytes(v.version_id_hex),
+          f.index, f.is_last, 2, hexToBytes(f.frame_hex),
+        )
+        expect(toHex(pt)).toBe(f.plaintext_hex)
+      }
+    })
+
+    test(`${family} — the generic decrypt_chunk (the old web content path) can NOT open a v2 frame`, () => {
+      const v = vectors[family]
+      const f = (v.frames as V2Frame[])[0]
+      const frame = hexToBytes(f.frame_hex)
+      expect(() => decrypt_chunk(hexToBytes(v.file_key_hex), frame.slice(0, 12), frame.slice(12))).toThrow()
+    })
+  }
+
+  test('chunk_v2_stream — a pin-0 (unrecorded) reader detects v2 at chunk 0 and still opens the file', () => {
+    const v = vectors.chunk_v2_stream
+    const dec = WasmChunkDecryptor.fromFileKey(hexToBytes(v.file_key_hex), v.file_id, 0)
+    const out = (v.frames as V2Frame[]).map((f) => toHex(dec.pushFrame(hexToBytes(f.frame_hex)))).join('')
+    expect(dec.finish()).toEqual({ chunk_count: 3, format: 2 })
+    expect(out).toBe(v.plaintext_hex)
+  })
+
+  test('chunk_v2_stream — dropping the last frame fails finish() (truncation is detected)', () => {
+    const v = vectors.chunk_v2_stream
+    const dec = WasmChunkDecryptor.fromFileKey(hexToBytes(v.file_key_hex), v.file_id, 2)
+    for (const f of (v.frames as V2Frame[]).slice(0, 2)) dec.pushFrame(hexToBytes(f.frame_hex))
+    expect(() => dec.finish()).toThrow()
+  })
+
+  test('metadata_v2_name — decrypt_file_metadata (owner) returns the name, MIME and pin 2', () => {
+    const v = vectors.metadata_v2_name
+    const meta = decrypt_file_metadata(hexToBytes(v.master_key_hex), v.file_id, v.name_encrypted)
+    expect(meta).toEqual({ name: v.expected_name, mime_type: v.expected_mime_type, chunk_format: v.expected_chunk_format })
+  })
+
+  test('metadata_v2_name — decrypt_file_metadata_with_key (readFileMetadata, src/lib/content-crypto.ts) returns the same', () => {
+    const v = vectors.metadata_v2_name
+    const meta = decrypt_file_metadata_with_key(hexToBytes(v.file_key_hex), v.name_encrypted)
+    expect(meta).toEqual({ name: v.expected_name, mime_type: v.expected_mime_type, chunk_format: 2 })
+  })
+
+  test('metadata_v2_name — it is sealed under the name subkey: the raw-key decrypt_metadata (the old web name path) cannot open it', () => {
+    const v = vectors.metadata_v2_name
+    const env = JSON.parse(v.name_encrypted) as { nonce: number[]; ciphertext: number[] }
+    expect(toHex(new Uint8Array(env.nonce))).toBe(v.nonce_hex)
+    expect(() =>
+      decrypt_metadata(hexToBytes(v.file_key_hex), new Uint8Array(env.nonce), new Uint8Array(env.ciphertext)),
+    ).toThrow()
   })
 })

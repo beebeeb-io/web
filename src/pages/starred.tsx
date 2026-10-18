@@ -198,6 +198,7 @@ export function Starred() {
       location: 'Starred',
       cipher: isUnlocked ? 'AES-256-GCM' : undefined,
       keyId: isUnlocked ? file.id : undefined,
+      nameEncrypted: file.name_encrypted,
       noteEncrypted: file.note_encrypted ?? null,
     }
   }

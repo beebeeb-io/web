@@ -13,6 +13,7 @@
 
 import * as Comlink from 'comlink'
 import type { CryptoWorker, CeremonyOps, CeremonyResult } from '../workers/crypto.worker'
+import type { ContentPin, DecryptSummary, PinnedMetadata } from './content-crypto'
 
 /** Soft cap on WASM linear-memory bytes before we recycle the worker. */
 const MEMORY_THRESHOLD_BYTES = 256 * 1024 * 1024
@@ -137,6 +138,9 @@ async function maybeRestart(): Promise<void> {
   // only ever hit by a large streaming upload, which the encryptor guard covers.
   try {
     if ((await workerProxy.liveEncryptorCount()) > 0) return
+    // A content decryptor (task 1943) is the same kind of worker-owned pointer:
+    // recycling mid-download would orphan it between two frames.
+    if ((await workerProxy.liveDecryptorCount()) > 0) return
     if ((await workerProxy.liveSearchIndexCount()) > 0) return
     // A live signup ceremony holds the password / phrase / master key in this
     // worker's WASM memory (task 1745); recycling would silently lose them.
@@ -246,13 +250,145 @@ export async function encryptChunk(
   }
 }
 
-/** Decrypt a chunk that was encrypted with encryptChunk. */
+/**
+ * Open a blob sealed with `encryptChunk`: generic AES-256-GCM, NO associated
+ * data. For KEY UNWRAPPING only (folder keys, user-to-user share keys).
+ *
+ * Never for file content (task 1908 / 1943): it has no position, opens only
+ * v1 frames and cannot be told the file's pin. File content goes through
+ * `startDecryptStream` with the pin from `readFileMetadata`. Never for names
+ * or notes either (core's readers: `readFileMetadata`, `readNameMetadata`,
+ * `decryptNote`). test/1943-no-generic-content-decrypt.test.ts holds the list
+ * of files allowed to call this.
+ */
 export async function decryptChunk(
   fileKey: Uint8Array,
   nonce: Uint8Array,
   ciphertext: Uint8Array,
 ): Promise<Uint8Array> {
   return withProxy((p) => p.decryptChunk(fileKey, nonce, ciphertext))
+}
+
+// ─── File content, metadata pins and notes (core 1908, task 1943) ───────────
+//
+// Core chunk format v2 binds every content frame to its file, its upload and
+// its position. Which format a file's content is in is recorded INSIDE its
+// encrypted metadata ("the pin"); every content reader, note writer and
+// replace upload reads it with core's FILE reader, never from a server field.
+// The crypto runs in the worker (`createContentOps`, src/lib/content-crypto.ts).
+
+export {
+  PIN_UNRECORDED,
+  PIN_V2,
+  UnverifiedFileMetadataError,
+  type ContentPin,
+  type DecryptSummary,
+  type PinnedMetadata,
+} from './content-crypto'
+
+/**
+ * Core's metadata reader for FILES: name, MIME type and the content pin.
+ * Throws when the name is plaintext, does not open under `fileKey`, or records
+ * a format this core does not know. Use its `pin` for every content read, note
+ * write and replace of that file.
+ */
+export async function readFileMetadata(fileKey: Uint8Array, nameEncrypted: string): Promise<PinnedMetadata> {
+  return withProxy((p) => p.readFileMetadata(fileKey, nameEncrypted))
+}
+
+/**
+ * Core's display / folder reader: like `readFileMetadata`, but a plaintext
+ * legacy name reads as itself (pin 0). For showing names and for folders;
+ * never the source of a FILE's content pin.
+ */
+export async function readNameMetadata(fileKey: Uint8Array, nameEncrypted: string): Promise<PinnedMetadata> {
+  return withProxy((p) => p.readNameMetadata(fileKey, nameEncrypted))
+}
+
+/** Seal a note of an EXISTING file or folder under the rule of its recorded pin (see src/lib/file-note.ts). */
+export async function encryptNoteFor(fileKey: Uint8Array, text: string, pin: ContentPin): Promise<string> {
+  return withProxy((p) => p.encryptNoteFor(fileKey, text, pin))
+}
+
+/** Open a note: the note subkey first, then the legacy raw key. Throws on plaintext or a wrong key. */
+export async function decryptNote(fileKey: Uint8Array, noteEncrypted: string): Promise<string> {
+  return withProxy((p) => p.decryptNote(fileKey, noteEncrypted))
+}
+
+/** The worker calls a content decryptor needs. Production: the crypto worker over Comlink. */
+export interface DecryptorPort {
+  decryptorPushFrame(handle: number, frame: Uint8Array): Promise<Uint8Array>
+  decryptorFinish(handle: number): Promise<DecryptSummary>
+  decryptorDispose(handle: number): Promise<void>
+}
+
+const workerDecryptorPort: DecryptorPort = {
+  decryptorPushFrame: (handle, frame) =>
+    withProxy((p) => p.decryptorPushFrame(handle, Comlink.transfer(frame, [frame.buffer]))),
+  decryptorFinish: (handle) => withProxy((p) => p.decryptorFinish(handle)),
+  decryptorDispose: (handle) => withProxy((p) => p.decryptorDispose(handle)),
+}
+
+/**
+ * Main-thread proxy over a worker-owned `WasmChunkDecryptor`: one file's
+ * content, single consumer, frames pushed in order from chunk 0.
+ *
+ * Contract (core 1908 checklist item 3): call `finish()` after the last frame;
+ * when `pushFrame` or `finish` throws, the file is truncated, reordered,
+ * spliced or downgraded, and the caller must DISCARD every plaintext byte it
+ * already got. `dispose()` frees a decryptor that will not be finished; it is
+ * a no-op after `finish()`.
+ */
+export class StreamingDecryptor {
+  #handle: number
+  #port: DecryptorPort
+  #consumed = false
+
+  constructor(handle: number, port: DecryptorPort = workerDecryptorPort) {
+    this.#handle = handle
+    this.#port = port
+  }
+
+  /**
+   * Open the next wire frame (`nonce || ciphertext || tag`). The frame's
+   * buffer is transferred to the worker: pass a frame that owns its buffer and
+   * do not reuse it.
+   */
+  async pushFrame(frame: Uint8Array): Promise<Uint8Array> {
+    if (this.#consumed) throw new Error('decryptor already finished or disposed')
+    return this.#port.decryptorPushFrame(this.#handle, frame)
+  }
+
+  /** End-of-stream check; consumes the handle whatever it returns. */
+  async finish(): Promise<DecryptSummary> {
+    if (this.#consumed) throw new Error('decryptor already finished or disposed')
+    this.#consumed = true
+    return this.#port.decryptorFinish(this.#handle)
+  }
+
+  /** Best-effort release for failed or aborted reads. Never throws. */
+  async dispose(): Promise<void> {
+    if (this.#consumed) return
+    this.#consumed = true
+    try {
+      await this.#port.decryptorDispose(this.#handle)
+    } catch (err) {
+      console.warn('[crypto] decryptor dispose failed', err)
+    }
+  }
+}
+
+/**
+ * Start reading one file's content. `fileId` is the id the file was uploaded
+ * under (v2 frames bind it); `pin` comes from `readFileMetadata` of that file.
+ */
+export async function startDecryptStream(
+  fileKey: Uint8Array,
+  fileId: string,
+  pin: ContentPin,
+): Promise<StreamingDecryptor> {
+  const handle = await withProxy((p) => p.createDecryptor(fileKey, fileId, pin))
+  return new StreamingDecryptor(handle)
 }
 
 // ─── Metadata (filename) encryption ─────────────────
@@ -288,69 +424,51 @@ export async function encryptFileMetadata(
   return encryptFilename(fileKey, metadataJson)
 }
 
-/** Decrypt a filename / metadata string. */
-export async function decryptFilename(
-  fileKey: Uint8Array,
-  nonce: Uint8Array,
-  ciphertext: Uint8Array,
-): Promise<string> {
-  return withProxy((p) => p.decryptFilename(fileKey, nonce, ciphertext))
-}
-
 /**
- * Batched decryption of many `(fileKey, nonce, ciphertext)` triples in one
- * Comlink round-trip. Errors are reported per item — one failure does not
- * abort the batch. See `decryptManyNames` in the worker for plaintext parsing
- * details (JSON `{name, mime_type}` vs legacy bare string).
+ * Batched name decryption of many `(fileKey, name_encrypted)` pairs in one
+ * Comlink round-trip, through core's display reader (name subkey first, then
+ * the legacy raw key; see `decryptManyNames` in the worker). Errors are
+ * reported per item; one failure does not abort the batch.
  */
 export async function decryptManyNames(
-  items: Array<{ id: string; fileKey: Uint8Array; nonce: Uint8Array; ciphertext: Uint8Array }>,
+  items: Array<{ id: string; fileKey: Uint8Array; nameEncrypted: string }>,
 ): Promise<Array<{ id: string; name?: string; mimeType?: string; error?: string }>> {
   if (items.length === 0) return []
   return withProxy((p) => p.decryptManyNames(items))
 }
 
 /**
- * Decrypt and parse the `name_encrypted` field from a DriveFile.
+ * Decrypt a DriveFile's `name_encrypted` FOR DISPLAY: `{ name, mimeType }`.
  *
- * Supports two formats:
- *   New (ZK-safe): the decrypted plaintext is `{"name":"report.pdf","mime_type":"application/pdf"}`
- *   Legacy:        the decrypted plaintext is just `"report.pdf"` (a bare filename string)
+ * Core's display reader does the work (task 1943): the name subkey first (names
+ * sealed since core 1908), then the legacy raw key, both envelope shapes, a
+ * JSON `{"name","mime_type"}` plaintext or a bare legacy filename, and a
+ * plaintext (never encrypted) legacy name as itself. Never throws: an
+ * unreadable name shows as "Encrypted file".
  *
- * Always returns `{ name, mimeType }` regardless of format, so callers
- * are insulated from the migration.
+ * Not the source of a file's content pin: content reads, note writes and
+ * replace uploads use `readFileMetadata`, which refuses what this tolerates.
  */
 export async function decryptFileMetadata(
   fileKey: Uint8Array,
   nameEncrypted: string,
 ): Promise<{ name: string; mimeType: string | null }> {
-  let name = 'Encrypted file'
-  let mimeType: string | null = null
-
-  // Legacy: some folders were stored with plaintext names before encryption
-  // was implemented. If the value doesn't look like JSON, return it as-is.
+  // A plaintext legacy name (folders created before name encryption) is shown
+  // as-is: exactly what core's reader does, without a worker round trip.
   if (!nameEncrypted.startsWith('{')) {
     return { name: nameEncrypted, mimeType: null }
   }
-
   try {
-    const { nonce, ciphertext } = parseEncryptedBlob(nameEncrypted)
-    const plain = await decryptFilename(fileKey, nonce, ciphertext)
-    try {
-      const meta = JSON.parse(plain) as { name?: string; mime_type?: string }
-      name = meta.name ?? plain
-      mimeType = meta.mime_type ?? null
-    } catch {
-      name = plain
-    }
+    const meta = await readNameMetadata(fileKey, nameEncrypted)
+    return { name: meta.name, mimeType: meta.mimeType }
   } catch (err) {
     console.warn('[crypto] decryptFileMetadata failed', {
       nameEncryptedPrefix: nameEncrypted.slice(0, 60),
       keyLength: fileKey.length,
       error: err instanceof Error ? err.message : String(err),
     })
+    return { name: 'Encrypted file', mimeType: null }
   }
-  return { name, mimeType }
 }
 
 // ─── Recovery phrase ────────────────────────────────
@@ -549,6 +667,17 @@ export class StreamingEncryptor {
 
   constructor(handle: number) {
     this.#handle = handle
+  }
+
+  /**
+   * Replace / new version of an EXISTING file only (core 1908 checklist item
+   * 4): write in the format the file's recorded pin requires. `pin` MUST come
+   * from `readFileMetadata` of the file being replaced; a brand-new file never
+   * calls this (it would create a v2 file before the gated switch). Call before
+   * the first `pushChunk`. Returns the format now written (1 = v1, 2 = v2).
+   */
+  async applyRecordedPin(pin: ContentPin): Promise<number> {
+    return withProxy((p) => p.encryptorApplyRecordedPin(this.#handle, pin))
   }
 
   /**

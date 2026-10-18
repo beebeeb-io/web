@@ -104,13 +104,10 @@ export async function hydrateActivityEventDescriptions<T extends ActivityNameEve
 export async function decryptActivitySnapshotName(fileKey: Uint8Array, encryptedName: string): Promise<string | null> {
   if (!encryptedName.startsWith('{')) return null
 
-  const { decryptFilename, parseEncryptedBlob } = await import('./crypto')
-  const { nonce, ciphertext } = parseEncryptedBlob(encryptedName)
-  const plain = await decryptFilename(fileKey, nonce, ciphertext)
-  try {
-    const metadata = JSON.parse(plain) as { name?: string; mime_type?: string }
-    return cleanName(metadata.name ?? plain)
-  } catch {
-    return cleanName(plain)
-  }
+  // Core's display reader (task 1943): the name subkey first (names sealed
+  // since core 1908), then the legacy raw key; the name out of a
+  // {name, mime_type} plaintext, or a bare legacy filename as itself.
+  const { readNameMetadata } = await import('./crypto')
+  const { name } = await readNameMetadata(fileKey, encryptedName)
+  return cleanName(name)
 }

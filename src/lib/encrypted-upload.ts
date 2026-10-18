@@ -16,6 +16,9 @@ import {
   startEncryptedStreamWithChunkSize,
   encryptFilename,
   serializeEncryptedBlob,
+  readFileMetadata,
+  UnverifiedFileMetadataError,
+  type ContentPin,
 } from './crypto'
 import { initUpload, uploadChunk, completeUpload, getUploadStatus, updateFile } from './api'
 import { withNetworkRetry } from './net-retry'
@@ -67,7 +70,26 @@ type FileKeyResolver = (fileId: string) => Promise<Uint8Array>
 
 interface EncryptedUploadOptions {
   conflictCreated?: boolean
+  /**
+   * Set ONLY when this upload is a new version of an EXISTING file (Replace,
+   * a same-file editor save): that file's current `name_encrypted`.
+   *
+   * Core 1908 checklist item 4: the server keeps a file's `name_encrypted` on
+   * replace, and every version of a file id is read with the pin it records.
+   * So a replace reads the pin from it (core's FILE reader) and the encryptor
+   * writes in that format; if the pin cannot be read, nothing is uploaded.
+   *
+   * A brand-new file id never passes this (lead ruling 2026-10-17): the plain
+   * encryptor then writes core's WRITE_FORMAT and no pin is ever applied, so
+   * the web can never create a v2 file before the gated write switch.
+   * test/1943-writer-pin.test.ts holds both rules.
+   */
+  replaceOf?: { nameEncrypted: string }
 }
+
+/** Shown when a replace is refused because the existing file's pin cannot be read. */
+export const UNVERIFIED_REPLACE_COPY =
+  "We couldn't verify this file's encrypted details, so it was not replaced."
 
 const uploadAdmission = new WorkQueue(2)
 
@@ -114,6 +136,18 @@ async function uploadFile(
   // real photos in (see photo-library.ts).
   const isMedia = isMediaMime && !isLikelyAlbumArtOrIcon(file.name, file.size, mimeType)
   let activeFileKey = fileKey
+
+  // Replace only: the existing file's recorded pin, read BEFORE anything
+  // reaches the server. A new file stays `null` and never applies a pin.
+  let replacePin: ContentPin | null = null
+  if (options.replaceOf) {
+    try {
+      replacePin = (await readFileMetadata(fileKey, options.replaceOf.nameEncrypted)).pin
+    } catch (err) {
+      throw new UnverifiedFileMetadataError(UNVERIFIED_REPLACE_COPY, { cause: err })
+    }
+  }
+
   let nameEncrypted = await encryptMetadata(activeFileKey)
 
   // Use the core adaptive chunk-size ladder for the initial client proposal.
@@ -331,6 +365,13 @@ async function uploadFile(
       : await startEncryptedStream(masterKey, serverFileId, file.size, 'web')
 
     try {
+      // Replace of an existing file: write in the format its recorded pin
+      // requires, before the first chunk. Only when the server kept OUR file
+      // id: an answer with another id is a brand-new file, which never pins.
+      if (replacePin !== null && serverFileId === fileId) {
+        await enc.applyRecordedPin(replacePin)
+      }
+
       // Upload chunks sequentially so large web chunks never overlap in memory:
       // only one plaintext slice + one ciphertext frame are alive per iteration.
       //

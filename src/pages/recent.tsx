@@ -214,6 +214,7 @@ export function Recent() {
       location: file.is_trashed ? 'Trash' : 'Recent',
       cipher: isUnlocked ? 'AES-256-GCM' : undefined,
       keyId: isUnlocked ? file.id : undefined,
+      nameEncrypted: file.name_encrypted,
       noteEncrypted: file.note_encrypted ?? null,
     }
   }
