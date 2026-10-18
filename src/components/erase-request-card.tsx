@@ -1,5 +1,12 @@
+import { useEffect, useRef, type ReactNode } from 'react'
 import { BBButton, BBInput, Icon } from '@beebeeb/shared'
 import { formatDue, itemsLabel, typedCountMatches, type EraseCard } from '../lib/erase-request'
+
+/**
+ * Where cancelling really works (round 4, web#174 review): this locked screen, the email link, and
+ * the unlocked web app's banner (`erase-request-banner.tsx`). Never "any device".
+ */
+export const CANCEL_WHERE = "here, with the link in the email, or in Beebeeb on the web while you're signed in"
 
 /**
  * Task 1918 — the "Erase all files" exit of the locked screen, drawn from server state only.
@@ -32,11 +39,25 @@ export interface EraseRequestCardProps {
   error: string
   /** The last action's outcome is unknown: offer "Check again" (calls `onRetryLoad`). */
   checkAgain?: boolean
+  /** "Restore everything from the erase" (round 4), drawn at the top of the card when given. */
+  restore?: ReactNode
+  /** Bumped after each action: the outcome (error, else note) takes the focus (round 4). */
+  focusTick?: number
+  /** For the past-due copy; defaults to now. */
+  nowMs?: number
 }
 
 export function EraseRequestCard(props: EraseRequestCardProps) {
   const { card, email, cooldownHours, retentionDays } = props
   const address = email ? <span className="text-ink-2">{email}</span> : 'the account address'
+  const noteRef = useRef<HTMLParagraphElement>(null)
+  const errorRef = useRef<HTMLParagraphElement>(null)
+  const focusTick = props.focusTick ?? 0
+  useEffect(() => {
+    if (focusTick > 0) (errorRef.current ?? noteRef.current)?.focus()
+  }, [focusTick])
+  const nowMs = props.nowMs ?? Date.now()
+  const pastDue = card?.kind === 'pending' && !!card.request.due_at && Date.parse(card.request.due_at) <= nowMs
 
   return (
     <div className="rounded-lg border border-line bg-paper-2 px-3.5 py-3 mb-2.5" data-testid="erase-request-card">
@@ -45,11 +66,13 @@ export function EraseRequestCard(props: EraseRequestCardProps) {
         <span className="text-[13px] font-medium text-ink">Erase all files</span>
       </div>
 
+      {props.restore}
+
       {card === null && !props.loadError && <p className="text-[12px] text-ink-3">Checking what this account holds…</p>}
 
       {card === null && props.loadError && (
         <div>
-          <p className="text-[12px] text-red mb-2">{props.loadError}</p>
+          <p role="alert" className="text-[12px] text-red mb-2">{props.loadError}</p>
           <BBButton type="button" variant="default" size="sm" onClick={props.onRetryLoad}>
             Try again
           </BBButton>
@@ -118,7 +141,7 @@ export function EraseRequestCard(props: EraseRequestCardProps) {
               </>
             ) : null}
             . Once you do, every file and folder ({itemsLabel(card.request.item_count)}) moves to the trash{' '}
-            {cooldownHours} hours later. Didn't ask for this? Cancel it here or with the link in the email.
+            {cooldownHours} hours later. Didn't ask for this? Cancel it {CANCEL_WHERE}.
           </p>
           <BBButton
             type="button"
@@ -135,13 +158,19 @@ export function EraseRequestCard(props: EraseRequestCardProps) {
 
       {card?.kind === 'pending' && card.request.due_at && (
         <div data-testid="erase-pending">
-          <p className="text-[12px] text-ink-2 leading-relaxed mb-1">
-            Erase confirmed. On <span className="text-ink">{formatDue(card.request.due_at)}</span> every file and
-            folder ({itemsLabel(card.request.item_count)}) moves to the trash.
-          </p>
+          {pastDue ? (
+            <p className="text-[12px] text-ink-2 leading-relaxed mb-1" data-testid="erase-past-due">
+              Erase confirmed. The wait is over: every file and folder ({itemsLabel(card.request.item_count)}) moves to
+              the trash shortly. Nothing has moved yet.
+            </p>
+          ) : (
+            <p className="text-[12px] text-ink-2 leading-relaxed mb-1">
+              Erase confirmed. On <span className="text-ink">{formatDue(card.request.due_at)}</span> every file and
+              folder ({itemsLabel(card.request.item_count)}) moves to the trash.
+            </p>
+          )}
           <p className="text-[12px] text-ink-3 leading-relaxed mb-2.5">
-            You can cancel it here, with the link in the email, or from any device where you are signed in,
-            until then.
+            Until the move starts you can cancel it {CANCEL_WHERE}.
           </p>
           <BBButton
             type="button"
@@ -165,18 +194,34 @@ export function EraseRequestCard(props: EraseRequestCardProps) {
 
       {card?.kind === 'done' && (
         <p className="text-[12px] text-ink-2 leading-relaxed" data-testid="erase-done">
-          {itemsLabel(card.executed.items_trashed)} moved to the trash on {formatDue(card.executed.executed_at)}. They
-          are deleted for good {retentionDays} days after that, unless they are restored.
+          {itemsLabel(card.executed.items_trashed)} moved to the trash on {formatDue(card.executed.executed_at)}.{' '}
+          {card.executed.restorable_until
+            ? `They can be restored until ${formatDue(card.executed.restorable_until)}; after that they are deleted for good.`
+            : `They are deleted for good ${retentionDays} days after that, unless they are restored.`}
         </p>
       )}
 
-      {props.note && <p className="text-[12px] text-ink-2 mt-2" data-testid="erase-note">{props.note}</p>}
-      {props.error && <p className="text-[12px] text-red mt-2" data-testid="erase-error">{props.error}</p>}
+      {/* One live region for the outcome of an action (round 4); it takes the focus after one. */}
+      <p
+        ref={noteRef}
+        tabIndex={-1}
+        role="status"
+        aria-live="polite"
+        className={`text-[12px] text-ink-2 outline-none ${props.note ? 'mt-2' : 'sr-only'}`}
+        data-testid="erase-note"
+      >
+        {props.note}
+      </p>
+      {props.error && (
+        <p ref={errorRef} tabIndex={-1} role="alert" className="text-[12px] text-red mt-2 outline-none" data-testid="erase-error">
+          {props.error}
+        </p>
+      )}
 
       {/* A failed refresh is shown next to the last known state, never hidden behind it. */}
       {card !== null && props.loadError && (
         <div className="mt-2" data-testid="erase-refresh-error">
-          <p className="text-[12px] text-red mb-2">
+          <p role="alert" className="text-[12px] text-red mb-2">
             We could not refresh this, so what you see may be out of date.
           </p>
           <BBButton type="button" variant="default" size="sm" onClick={props.onRetryLoad}>

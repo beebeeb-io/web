@@ -97,6 +97,7 @@ import type {
 import { parsePitch } from './coupon'
 import type { CouponPitch, CouponRedeemed } from './coupon'
 import { withServerBusyRetry } from './server-busy-retry'
+import { postEraseRequestOnce } from './erase-request-transport'
 
 export const API_URL = import.meta.env.VITE_API_URL || 'https://api.beebeeb.io'
 const STATUS_URL = import.meta.env.VITE_STATUS_URL || 'https://status.beebeeb.io'
@@ -1300,8 +1301,20 @@ export async function bulkTrashFiles(
   )
 }
 
-export async function restoreFile(id: string): Promise<void> {
-  await request<void>(`/api/v1/files/${id}/restore`, { method: 'POST' })
+/** What a restore did. `complete: false` (202, task 1918 round 4): the folder's trash group is
+ *  larger than one request may touch; the server restores the rest in the background. */
+export interface RestoreFileResult {
+  complete: boolean
+  remaining: number | null
+}
+
+export async function restoreFile(id: string): Promise<RestoreFileResult> {
+  const body = await request<unknown>(`/api/v1/files/${id}/restore`, { method: 'POST' })
+  const b = body && typeof body === 'object' ? (body as Record<string, unknown>) : {}
+  return {
+    complete: b.complete !== false,
+    remaining: typeof b.remaining === 'number' ? b.remaining : null,
+  }
 }
 
 export async function permanentDeleteFile(
@@ -1573,18 +1586,26 @@ export async function getEraseRequest(): Promise<unknown> {
   return request<unknown>('/api/v1/account/erase-request')
 }
 
-/** `POST /api/v1/account/erase-request`: `confirmCount` must equal the server's live item count. */
+/**
+ * `POST /api/v1/account/erase-request`: `confirmCount` must equal the server's live item count.
+ * Sent exactly once (task 1918 round 4): the step-up token is single-use, so a retry could only
+ * ever be refused, and would hide the real outcome. See `erase-request-transport.ts`.
+ */
 export async function createEraseRequest(confirmCount: number, confirmToken: string): Promise<unknown> {
-  return request<unknown>('/api/v1/account/erase-request', {
-    method: 'POST',
-    headers: { 'X-Confirm-Token': confirmToken },
-    body: JSON.stringify({ confirm_count: confirmCount }),
-  })
+  return postEraseRequestOnce(confirmCount, confirmToken)
 }
 
 /** `POST /api/v1/account/erase-request/cancel`: any signed-in session of the account. */
 export async function cancelEraseRequest(): Promise<unknown> {
   return request<unknown>('/api/v1/account/erase-request/cancel', { method: 'POST' })
+}
+
+/**
+ * `POST /api/v1/account/erase-request/{id}/restore` (task 1918 round 4): restore everything that
+ * erase moved to the trash. 200 = all back; 202 = the server continues in the background.
+ */
+export async function restoreEraseRequest(requestId: string): Promise<unknown> {
+  return request<unknown>(`/api/v1/account/erase-request/${encodeURIComponent(requestId)}/restore`, { method: 'POST' })
 }
 
 export async function changeEmail(

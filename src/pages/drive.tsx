@@ -89,6 +89,7 @@ import {
 import { encryptFilename, encryptFileMetadata, serializeEncryptedBlob, decryptFileMetadata } from '../lib/crypto'
 import { useSearchIndex } from '../hooks/use-search-index'
 import { EmptyDrive } from '../components/empty-states/empty-drive'
+import { RestoreFromEraseOffer } from '../components/restore-from-erase'
 import { formatBytes } from '../lib/format'
 import { cacheFileList, getCachedFileList, invalidateFileListCache } from '../lib/offline-cache'
 import { decideSyncRows, EMPTY_CONFIRM_MS } from '../lib/sync-rows'
@@ -3018,6 +3019,9 @@ export function Drive() {
                 <EmptyDrive
                   onUpload={browse}
                   onCreateFolder={openNewFolderDialog}
+                  // Task 1918 round 4: after an erase the drive is empty and everything is in the
+                  // trash; offer it all back here, where the owner looks first.
+                  notice={<RestoreFromEraseOffer className="mb-6" />}
                   newMenu={
                     <NewMenu
                       officeAvailable={officeAvailable}

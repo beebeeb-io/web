@@ -75,7 +75,8 @@ describe('requestErase(): a lost or unreadable answer is an unknown outcome', ()
     const out = (await requestErase(d as never, 1240, 'tok')) as { kind: string; message?: string }
     expect(out.kind).toBe('unknown')
     expect(out.message ?? '').not.toMatch(NOT_SCHEDULED)
-    expect(out.message ?? '').toMatch(/could not confirm/i)
+    // Round 4 wording: "We couldn't confirm whether it was scheduled" (the lead's text).
+    expect(out.message ?? '').toMatch(/could(n't| not) confirm/i)
   })
 
   test('network failure and the status read fails too: still unknown, not "not scheduled"', async () => {

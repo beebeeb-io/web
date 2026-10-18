@@ -12,6 +12,7 @@ import { TrashRowSkeleton } from '@beebeeb/shared'
 import { readNameMetadata } from '../lib/crypto'
 import { useWsEvent } from '../lib/ws-context'
 import { EmptyTrash } from '../components/empty-states/empty-trash'
+import { RestoreFromEraseOffer } from '../components/restore-from-erase'
 import { ConfirmPasswordModal } from '../components/confirm-password-modal'
 import { formatBytes } from '../lib/format'
 import { FileDetailsPanel, type FileDetailsMeta } from '../components/file-details-panel'
@@ -230,14 +231,26 @@ export function Trash() {
   const handleRestore = async (id: string) => {
     setLoading(true)
     try {
-      await restoreFile(id)
+      const result = await restoreFile(id)
       setFiles((prev) => prev.filter((f) => f.id !== id))
       setSelected((prev) => {
         const next = new Set(prev)
         next.delete(id)
         return next
       })
-      showToast({ icon: 'check', title: 'File restored', description: 'Moved back to your vault' })
+      if (result.complete) {
+        showToast({ icon: 'check', title: 'File restored', description: 'Moved back to your vault' })
+      } else {
+        // Task 1918 round 4: a folder too large for one request (202) comes back in batches.
+        showToast({
+          icon: 'check',
+          title: 'Restoring in the background',
+          description:
+            result.remaining != null
+              ? `${result.remaining} more items come back over the next minutes; the trash updates as they do.`
+              : 'The rest comes back over the next minutes; the trash updates as it does.',
+        })
+      }
     } catch (err) {
       showToast({ icon: 'x', title: 'Restore failed', description: err instanceof Error ? err.message : 'Could not restore file', danger: true })
     } finally {
@@ -350,9 +363,19 @@ export function Trash() {
    */
   const restoreInWaves = async (ids: string[]): Promise<void> => {
     const WAVE_SIZE = 20
+    let background = 0
     for (let i = 0; i < ids.length; i += WAVE_SIZE) {
       const wave = ids.slice(i, i + WAVE_SIZE)
-      await Promise.all(wave.map((id) => restoreFile(id)))
+      const results = await Promise.all(wave.map((id) => restoreFile(id)))
+      background += results.filter((r) => !r.complete).length
+    }
+    // Task 1918 round 4: a folder too large for one request (202) comes back in batches.
+    if (background > 0) {
+      showToast({
+        icon: 'check',
+        title: 'Large folders are restoring in the background',
+        description: 'Their contents come back over the next minutes; the trash updates as they do.',
+      })
     }
   }
 
@@ -456,6 +479,10 @@ export function Trash() {
             </BBButton>
           </div>
         </div>
+
+        {/* Task 1918 round 4: "Restore everything from the erase on <date>", while something of
+            the last erase is still in the trash. */}
+        <RestoreFromEraseOffer className="px-5 pt-3" onDone={fetchTrash} />
 
         {/* Table header */}
         <div

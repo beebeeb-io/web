@@ -22,6 +22,12 @@
  * 24 hours, it expires. The card shows "check your email to confirm", then the due time and
  * Cancel, or that the confirmation link expired.
  *
+ * Round 4 (server#232 / web#174 review): cancel works until the move has STARTED (a request
+ * past its due time on a frozen account stays cancellable); the owner can restore everything one
+ * erase moved in one action ("Restore everything from the erase on <date>", server-side and
+ * batched); a status read never overwrites a newer action's state; the typed number accepts only
+ * real thousands grouping.
+ *
  * Everything here is pure (no React, no `./api` import) so the decisions are unit-tested
  * without a browser; `vault-locked-no-key.tsx` and `erase-request-card.tsx` are thin shells.
  */
@@ -33,7 +39,10 @@ export interface EraseRequestView {
   due_at: string | null
   /** The number the person confirmed. */
   item_count: number
-  /** True until the due time; afterwards the files are moving to the trash. */
+  /**
+   * True until the executor has STARTED moving files (round 4: even past the due time, e.g. while
+   * the account is frozen); afterwards the files are moving to the trash.
+   */
   cancellable: boolean
   /** The owner clicked the emailed verification link (round 3). */
   verified: boolean
@@ -47,10 +56,25 @@ export interface EraseExpired {
   expired_at: string
 }
 
+/** "Restore everything from the erase" (round 4): the server restores it in batches. */
+export interface EraseRestore {
+  state: 'running' | 'done'
+  requested_at: string | null
+  rows_restored: number
+  finished_at: string | null
+}
+
 export interface EraseExecuted {
   id: string
   executed_at: string
   items_trashed: number
+  /** The trash time every row of this erase carries (round 4; `null` from an older server). */
+  trashed_at: string | null
+  /** `trashed_at` + the trash retention: true for every row (round 4). */
+  restorable_until: string | null
+  /** Rows of this erase still in the trash; `null` from an older server (no restore offer then). */
+  in_trash: number | null
+  restore: EraseRestore | null
 }
 
 export interface EraseStatus {
@@ -107,12 +131,34 @@ function parseExpired(raw: unknown): EraseExpired | null {
   return id && at ? { id, expired_at: at } : null
 }
 
+export function parseRestore(raw: unknown): EraseRestore | null {
+  if (!isObj(raw)) return null
+  const state = raw.state === 'running' || raw.state === 'done' ? raw.state : null
+  const rows = int(raw.rows_restored)
+  if (!state || rows === null) return null
+  return {
+    state,
+    requested_at: str(raw.requested_at),
+    rows_restored: rows,
+    finished_at: str(raw.finished_at),
+  }
+}
+
 function parseExecuted(raw: unknown): EraseExecuted | null {
   if (!isObj(raw)) return null
   const id = str(raw.id)
   const at = str(raw.executed_at)
   const n = int(raw.items_trashed)
-  return id && at && n !== null ? { id, executed_at: at, items_trashed: n } : null
+  if (!id || !at || n === null) return null
+  return {
+    id,
+    executed_at: at,
+    items_trashed: n,
+    trashed_at: str(raw.trashed_at),
+    restorable_until: str(raw.restorable_until),
+    in_trash: int(raw.in_trash),
+    restore: parseRestore(raw.restore),
+  }
 }
 
 /** `GET /api/v1/account/erase-request`, read defensively. `null` = not a status we understand. */
@@ -135,13 +181,22 @@ export function parseEraseStatus(raw: unknown): EraseStatus | null {
 }
 
 /**
- * The number as typed: digits, optionally grouped with spaces, commas, dots or apostrophes
- * ("1240", "1,240", "1.240", "1 240"). Anything else (signs, letters, decimals) is `null`.
+ * The number as typed: digits, or digits in real thousands groups with ONE kind of separator
+ * (comma, dot, space, apostrophe, no-break space): "1240", "1,240", "1.240", "1 240", "1'240".
+ * Round 4 (web#174 review): anything else is `null`, including decimals and loose groupings
+ * ("12.40", "1,2,4,0", "1.5", "1,24", "1,240.5", "1.240,000"), so the typed number is the shown
+ * number and nothing else.
  */
+const GROUPED_COUNT = /^\d{1,3}([,. '\u00a0\u202f])\d{3}(?:\1\d{3})*$/
+
 export function parseTypedCount(typed: string): number | null {
-  const compact = typed.trim().replace(/[\s,.'  ]/g, '')
-  if (!/^\d{1,12}$/.test(compact)) return null
-  return Number(compact)
+  const t = typed.trim()
+  let digits: string
+  if (/^\d+$/.test(t)) digits = t
+  else if (GROUPED_COUNT.test(t)) digits = t.replace(/[,. '\u00a0\u202f]/g, '')
+  else return null
+  if (digits.length > 12) return null
+  return Number(digits)
 }
 
 /** The erase button is enabled only when this is true. */
@@ -169,6 +224,24 @@ export function formatDue(iso: string, opts: { locale?: string; timeZone?: strin
   }).format(d)
 }
 
+/**
+ * A day people read, without the time: "Sunday 18 October 2026" (their own time zone), the way the
+ * emails write it.
+ */
+export function formatEraseDate(iso: string, opts: { locale?: string; timeZone?: string } = {}): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  const parts = new Intl.DateTimeFormat(opts.locale ?? 'en-GB', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    timeZone: opts.timeZone,
+  }).formatToParts(d)
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? ''
+  return `${part('weekday')} ${part('day')} ${part('month')} ${part('year')}`
+}
+
 /** What the erase card shows. */
 export type EraseCard =
   /**
@@ -180,7 +253,10 @@ export type EraseCard =
   | { kind: 'empty' }
   /** Asked, waiting for the owner's click on the emailed verification link (round 3). */
   | { kind: 'awaiting'; request: EraseRequestView }
-  /** Confirmed by email; cancellable until `due_at`. */
+  /**
+   * Confirmed by email; cancellable until the move starts (round 4: also past `due_at`, e.g. on a
+   * frozen account, until the executor has begun).
+   */
   | { kind: 'pending'; request: EraseRequestView }
   /** The wait is over: the files are moving to the trash. */
   | { kind: 'moving'; request: EraseRequestView }
@@ -252,9 +328,15 @@ export type RequestOutcome =
   | { kind: 'refused'; message: string }
   /** We could not learn what happened. The request may exist; say so, and check again. */
   | { kind: 'unknown'; message: string }
+  /**
+   * A request was made moments ago and its email is still going out (409
+   * `erase_request_in_progress`): it shows here shortly. Round 4: treated like an unknown
+   * outcome (keep "Check again" up and look again), not as a refusal.
+   */
+  | { kind: 'in_progress'; message: string }
 
 export const UNKNOWN_REQUEST_MESSAGE =
-  'We could not confirm whether the request went through. If it did, the account address gets an email with a link to cancel, and it shows here within a minute. Check again.'
+  "We couldn't confirm whether it was scheduled. If it was, the account address gets an email with a link to confirm and a link to cancel, and the request shows here within a minute. Check again."
 
 export async function requestErase(deps: EraseDeps, confirmCount: number, confirmToken: string): Promise<RequestOutcome> {
   let ambiguous = false
@@ -270,8 +352,16 @@ export async function requestErase(deps: EraseDeps, confirmCount: number, confir
       const live = int(err.details?.live_items)
       if (live !== null) return { kind: 'count_changed', liveItems: live }
     }
+    // Round 4: the POST is sent exactly once (`createEraseRequest` never retries with the spent
+    // step-up token), so this 403 is the server refusing THIS attempt, never a retry's answer.
     if (err.status === 403 && err.code === 'confirmation_required') {
       return { kind: 'refused', message: 'The password confirmation expired. Nothing was scheduled. Try again.' }
+    }
+    if (err.status === 409 && err.code === 'erase_request_in_progress') {
+      return {
+        kind: 'in_progress',
+        message: err.message || 'An erase request was just made and its email is still being sent. Check again in a minute.',
+      }
     }
     if (isDefiniteRefusal(err)) {
       // The server's own message is written for people (rate limit, notice email failed,
@@ -289,37 +379,76 @@ export async function requestErase(deps: EraseDeps, confirmCount: number, confir
 
 export type CancelOutcome =
   | { kind: 'cancelled' }
-  /** The wait was already over; the files are moving to the trash. */
+  /** The move has started; the files are going to the trash. */
   | { kind: 'already_started' }
-  /** There was nothing to cancel (cancelled elsewhere, e.g. by the email link). */
-  | { kind: 'nothing_pending' }
+  /**
+   * Nothing to cancel, CONFIRMED by a fresh status read: no request pending and the one being
+   * cancelled did not run (cancelled elsewhere, e.g. by the email link, or it lapsed).
+   */
+  | { kind: 'nothing_pending'; status: EraseStatus }
+  /** Round 4: the request being cancelled had already run; every file is in the trash. */
+  | { kind: 'already_executed'; status: EraseStatus }
   /** The cancel did not reach the server or failed there, and the request is still pending. */
   | { kind: 'still_pending'; request: EraseRequestView; message: string }
   /** We could not learn what happened. */
   | { kind: 'unknown'; message: string }
 
-export async function cancelErase(deps: EraseDeps): Promise<CancelOutcome> {
+/** The status as the server holds it now, or `undefined` when it could not be read. */
+async function readStatus(deps: EraseDeps): Promise<EraseStatus | undefined> {
+  try {
+    return parseEraseStatus(await deps.status()) ?? undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Round 4 (web#174 review): a cancel that found nothing (404) or whose answer was lost says what
+ * the server holds NOW, never "nothing will be moved" on a guess: the request may have run.
+ */
+function afterCancelMiss(status: EraseStatus | undefined, requestId: string | null): CancelOutcome {
+  if (!status) {
+    return { kind: 'unknown', message: "We couldn't confirm what happened to the request. Check again, or use the link in the email." }
+  }
+  if (status.request) {
+    return {
+      kind: 'still_pending',
+      request: status.request,
+      message: 'Cancelling did not go through: the request is still pending. Try again, or use the link in the email.',
+    }
+  }
+  if (requestId !== null && status.last_executed?.id === requestId) return { kind: 'already_executed', status }
+  return { kind: 'nothing_pending', status }
+}
+
+/** `requestId`: the request the screen showed (so a 404 can tell "it ran" from "it is gone"). */
+export async function cancelErase(deps: EraseDeps, requestId: string | null = null): Promise<CancelOutcome> {
   try {
     await deps.cancel()
     return { kind: 'cancelled' }
   } catch (e) {
     const err = asError(e)
     if (err.status === 409 && err.code === 'erase_already_started') return { kind: 'already_started' }
-    if (err.status === 404 && err.code === 'no_pending_erase_request') return { kind: 'nothing_pending' }
-    // Unknown outcome: ask the server what it holds now instead of guessing.
-    const request = await reconcile(deps)
-    if (request === null) return { kind: 'nothing_pending' }
-    if (request) {
-      return {
-        kind: 'still_pending',
-        request,
-        message: 'Cancelling did not go through: the request is still pending. Try again, or use the link in the email.',
-      }
-    }
-    return {
-      kind: 'unknown',
-      message: 'We could not confirm the cancel. Check again, or use the link in the email.',
-    }
+    // Any other answer (a 404, or none at all): ask the server what it holds now.
+    return afterCancelMiss(await readStatus(deps), requestId)
+  }
+}
+
+/** The note the screen shows for a cancel outcome (`null`: the outcome carries its own text). */
+export function cancelNote(outcome: CancelOutcome): string | null {
+  switch (outcome.kind) {
+    case 'cancelled':
+      return 'Cancelled. Nothing will be moved to the trash.'
+    case 'nothing_pending':
+      return 'There is no erase request any more, and none ran. Nothing will be moved.'
+    case 'already_executed':
+      return 'It had already run: every file is in the trash, where it can still be restored.'
+    case 'already_started':
+      return 'The move to the trash has started, so it can no longer be cancelled. Everything can be restored from the trash.'
+    case 'unknown':
+      return outcome.message
+    default:
+      return null
   }
 }
 
@@ -399,4 +528,126 @@ export function attachEraseRefresh(h: RefreshHooks): () => void {
     if (due !== null) clearT(due)
     if (poll !== null) clearI(poll)
   }
+}
+
+// ── Round 4: "Restore everything from the erase" ────────────────────────────────────────────
+
+export interface RestoreDeps {
+  /** `POST /api/v1/account/erase-request/{id}/restore`. */
+  restore: (requestId: string) => Promise<unknown>
+  /** `GET /api/v1/account/erase-request`: asked when the POST's outcome is unknown. */
+  status: () => Promise<unknown>
+}
+
+/** Poll this often while a restore runs (the server continues about every minute). */
+export const RESTORE_POLL_MS = 5_000
+
+export type RestoreOffer =
+  /** Nothing to offer (no recent erase, nothing of it left in the trash, or an older server). */
+  | 'none'
+  /** Something of the erase is still in the trash: offer "Restore everything". */
+  | 'offer'
+  /** A restore runs: show progress. */
+  | 'running'
+  /** A restore finished and nothing of the erase is left in the trash. */
+  | 'done'
+
+export function restoreOffer(executed: EraseExecuted | null): RestoreOffer {
+  if (!executed || executed.in_trash === null) return 'none'
+  if (executed.in_trash > 0) return executed.restore?.state === 'running' ? 'running' : 'offer'
+  return executed.restore ? 'done' : 'none'
+}
+
+export function restoreLabel(executed: Pick<EraseExecuted, 'executed_at'>): string {
+  return `Restore everything from the erase on ${formatEraseDate(executed.executed_at)}`
+}
+
+export function restoreProgressText(rowsRestored: number, inTrash: number | null): string {
+  return inTrash === null ? `${rowsRestored} restored` : `${rowsRestored} restored, ${inTrash} still in the trash`
+}
+
+export const RESTORE_DONE_TEXT = 'Everything from the erase is back.'
+
+export type RestoreOutcome =
+  /** Everything came back (at once, or the server says so now). */
+  | { kind: 'done'; rowsRestored: number }
+  /** The server continues in the background. */
+  | { kind: 'running'; rowsRestored: number; inTrash: number | null }
+  /** The server answered no (unknown erase, not finished yet, …); nothing was restored. */
+  | { kind: 'refused'; message: string }
+  /** We could not learn whether the restore started. */
+  | { kind: 'unknown'; message: string }
+
+function outcomeFrom(restore: EraseRestore | null, inTrash: number | null): RestoreOutcome {
+  const rows = restore?.rows_restored ?? 0
+  if (inTrash === 0 || (restore?.state === 'done' && inTrash === null)) return { kind: 'done', rowsRestored: rows }
+  return { kind: 'running', rowsRestored: rows, inTrash }
+}
+
+export async function restoreEverything(deps: RestoreDeps, requestId: string): Promise<RestoreOutcome> {
+  try {
+    const body = await deps.restore(requestId)
+    if (isObj(body)) {
+      const restore = parseRestore(body.restore)
+      if (restore) return outcomeFrom(restore, int(body.in_trash))
+    }
+  } catch (e) {
+    const err = asError(e)
+    if (err.status === 404 && err.code === 'erase_request_not_found') {
+      return {
+        kind: 'refused',
+        message: "We couldn't find that erase any more, so nothing was restored. What is still in the trash can be restored from Trash.",
+      }
+    }
+    if (err.status === 409 && err.code === 'erase_not_finished') {
+      return { kind: 'refused', message: 'The erase is still running. Restore everything once it has finished.' }
+    }
+    if (typeof err.status === 'number' && err.status >= 400 && err.status < 500) {
+      return { kind: 'refused', message: err.message || 'The restore was refused. Nothing was restored.' }
+    }
+  }
+  // No answer we could read: ask the server what it holds now.
+  try {
+    const status = parseEraseStatus(await deps.status())
+    const executed = status?.last_executed
+    if (executed && executed.id === requestId && executed.restore) return outcomeFrom(executed.restore, executed.in_trash)
+  } catch {
+    // fall through to unknown
+  }
+  return { kind: 'unknown', message: "We couldn't confirm whether the restore started. Check again." }
+}
+
+// ── Round 4: a status read never overwrites a newer action's state ─────────────────────────
+
+/**
+ * Sequencing for status reads (web#174 review): `begin()` numbers a read, `isLatest(n)` says
+ * whether its answer may still be applied, and `supersede()` marks every read started before a
+ * newer action (a POST whose answer was just applied) as stale.
+ */
+export interface LatestGate {
+  begin(): number
+  isLatest(n: number): boolean
+  supersede(): void
+}
+
+export function createLatestGate(): LatestGate {
+  let seq = 0
+  return {
+    begin: () => ++seq,
+    isLatest: (n) => n === seq,
+    supersede: () => {
+      seq += 1
+    },
+  }
+}
+
+/** After an unknown outcome the screen looks again once, this much later. */
+export const FOLLOW_UP_MS = 10_000
+
+/**
+ * "Check again" stays until the request shows up or the follow-up read ran (round 4): a status
+ * read that finds nothing yet, right after the unknown outcome, must not hide it.
+ */
+export function keepCheckAgain(shown: boolean, status: EraseStatus, followUp: boolean): boolean {
+  return shown && !followUp && status.request === null
 }

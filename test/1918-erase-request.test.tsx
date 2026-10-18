@@ -280,7 +280,10 @@ describe('cancelErase() calls the cancel endpoint', () => {
       status: async () => Promise.reject(new TypeError('offline')),
     })
     expect(await cancelErase(deps({ status: 409, code: 'erase_already_started' }))).toEqual({ kind: 'already_started' })
-    expect(await cancelErase(deps({ status: 404, code: 'no_pending_erase_request' }))).toEqual({ kind: 'nothing_pending' })
+    // Round 4 (web#174 review): a 404 no longer says "nothing pending" on its own: it may mean the
+    // request already RAN. The status is read again; here that read fails, so the outcome is
+    // unknown. (404 + a readable status: test/1918-erase-request-r4.test.tsx.)
+    expect((await cancelErase(deps({ status: 404, code: 'no_pending_erase_request' }))).kind).toBe('unknown')
     expect((await cancelErase(deps(new TypeError('x')))).kind).toBe('unknown')
   })
 })

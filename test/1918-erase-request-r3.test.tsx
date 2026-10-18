@@ -219,7 +219,15 @@ describe('verifyByLink(): token in the body, no credentials, every answer mapped
       )
     }) as unknown as typeof fetch
     const out = await (m.verifyByLink as Fn)(TOKEN, { fetchImpl, apiUrl: 'https://api.example' })
-    expect(out).toEqual({ kind: 'verified', dueAt: CONFIRMED.due_at, itemCount: 1240, retentionDays: 30, cancelToken: TOKEN2 })
+    // Round 4: `confirmationEmailSent` carries the server's `confirmation_email_sent` (absent here: null).
+    expect(out).toEqual({
+      kind: 'verified',
+      dueAt: CONFIRMED.due_at,
+      itemCount: 1240,
+      retentionDays: 30,
+      cancelToken: TOKEN2,
+      confirmationEmailSent: null,
+    })
     expect(calls).toHaveLength(1)
     expect(calls[0].url).toBe('https://api.example/api/v1/account/erase-request/verify-by-token')
     expect(calls[0].url).not.toContain(TOKEN)

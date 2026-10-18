@@ -9,8 +9,9 @@
  * The link is the credential, so the page works without a session (it is vault-free, see
  * `vault-free-paths.ts`) and this module uses a plain `fetch`: no cookies, no bearer token,
  * no global error toasts, and no import of `./api` (which pulls in the crypto worker).
- * Cancelling is the safe direction, so the page cancels on load: a mail scanner that runs it
- * can only ever stop an erase, never start one.
+ * Round 4 (server#232 / web#174 review): the page does NOT cancel on load any more. The cancel
+ * link sits in the same email as the confirmation link, and a mail scanner that runs pages would
+ * cancel every request before the owner could confirm it. It waits for one click.
  */
 import { getApiUrl } from '@beebeeb/shared'
 
@@ -62,8 +63,19 @@ export async function cancelByLink(token: string, deps: LinkDeps = {}): Promise<
 
 /** What the confirmation page learned from the server. */
 export type LinkVerifyResult =
-  /** Confirmed now. `cancelToken` cancels it (the same second token the confirmation email holds). */
-  | { kind: 'verified'; dueAt: string; itemCount: number; retentionDays: number | null; cancelToken: string | null }
+  /**
+   * Confirmed now. `cancelToken` cancels it (the same second token the confirmation email holds).
+   * `confirmationEmailSent`: the server's `confirmation_email_sent` (round 4: `false` means no
+   * confirmation email went out, so the page promises none; `null` when the server did not say).
+   */
+  | {
+      kind: 'verified'
+      dueAt: string
+      itemCount: number
+      retentionDays: number | null
+      cancelToken: string | null
+      confirmationEmailSent: boolean | null
+    }
   /** Confirmed before; nothing changed. */
   | { kind: 'already'; dueAt: string | null; itemCount: number; retentionDays: number | null }
   /** The 24-hour window closed: the request lapsed, nothing will move. */
@@ -109,6 +121,7 @@ export async function verifyByLink(token: string, deps: LinkDeps = {}): Promise<
   if (body.already === true) return { kind: 'already', dueAt, itemCount, retentionDays }
   if (!dueAt) return { kind: 'unavailable', rateLimited: false }
   const cancelToken = typeof body.cancel_token === 'string' && TOKEN_SHAPE.test(body.cancel_token) ? body.cancel_token : null
-  return { kind: 'verified', dueAt, itemCount, retentionDays, cancelToken }
+  const confirmationEmailSent = typeof body.confirmation_email_sent === 'boolean' ? body.confirmation_email_sent : null
+  return { kind: 'verified', dueAt, itemCount, retentionDays, cancelToken, confirmationEmailSent }
 }
 

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { AuthShell } from './auth-shell'
 import { BBButton, BBCheckbox, BBInput, Icon } from '@beebeeb/shared'
 import { EraseRequestCard } from './erase-request-card'
+import { RestoreFromErase } from './restore-from-erase'
 import { StepUpAuth } from './step-up-auth'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
@@ -17,15 +18,20 @@ import {
   getEraseRequest,
 } from '../lib/api'
 import {
+  FOLLOW_UP_MS,
   applyCancelled,
   applyRequest,
   attachEraseRefresh,
   cancelErase,
+  cancelNote,
+  createLatestGate,
   eraseCard,
   eraseRefreshPlan,
+  keepCheckAgain,
   parseEraseStatus,
   parseTypedCount,
   requestErase,
+  restoreOffer,
   type EraseDeps,
   type EraseStatus,
 } from '../lib/erase-request'
@@ -125,6 +131,8 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
   const [eraseError, setEraseError] = useState('')
   // The last POST's outcome is unknown (round 2): offer "Check again".
   const [eraseCheckAgain, setEraseCheckAgain] = useState(false)
+  // Round 4: after each action the outcome takes the focus (the card watches this).
+  const [eraseFocusTick, setEraseFocusTick] = useState(0)
 
   // ── exit 3: delete account ──
   const [accountGate, setAccountGate] = useState(false)
@@ -163,18 +171,40 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
 
   // A failed read keeps the last status on screen AND says so (round 2, web#174 review): the
   // card shows the error with a retry next to whatever it was showing.
-  const loadEraseStatus = useCallback(async () => {
+  //
+  // Round 4 (web#174 review): reads are sequenced. Focus, visibility, the poll and the refresh
+  // after each action can overlap; only the newest read may apply its answer, and an action
+  // whose answer was just applied supersedes every read started before it. "Check again" stays
+  // until the request shows up or the follow-up read (`FOLLOW_UP_MS` after an unknown outcome)
+  // has run.
+  const eraseGate = useRef(createLatestGate())
+  const loadEraseStatus = useCallback(async (opts: { followUp?: boolean } = {}) => {
+    const seq = eraseGate.current.begin()
     try {
       const status = parseEraseStatus(await getEraseRequest())
       if (!status) throw new Error('unexpected answer')
-      if (!alive.current) return
+      if (!alive.current || !eraseGate.current.isLatest(seq)) return
       setEraseStatus(status)
       setEraseLoadError('')
-      setEraseCheckAgain(false)
+      setEraseCheckAgain((shown) => keepCheckAgain(shown, status, opts.followUp === true))
     } catch {
-      if (!alive.current) return
+      if (!alive.current || !eraseGate.current.isLatest(seq)) return
       setEraseLoadError('We could not check what this account holds. Try again.')
+      if (opts.followUp) setEraseCheckAgain(false)
     }
+  }, [])
+
+  // One follow-up read after an unknown outcome (round 4).
+  const followUpTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const scheduleFollowUp = useCallback(() => {
+    if (followUpTimer.current) clearTimeout(followUpTimer.current)
+    followUpTimer.current = setTimeout(() => {
+      followUpTimer.current = null
+      void loadEraseStatus({ followUp: true })
+    }, FOLLOW_UP_MS)
+  }, [loadEraseStatus])
+  useEffect(() => () => {
+    if (followUpTimer.current) clearTimeout(followUpTimer.current)
   }, [])
 
   useEffect(() => {
@@ -209,48 +239,70 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
     const outcome = await requestErase(ERASE_DEPS, count, token)
     if (!alive.current) return
     setEraseBusy(false)
+    setEraseFocusTick((n) => n + 1)
     if (outcome.kind === 'requested') {
       setEraseTyped('')
-      // What the server returned is shown at once; the refresh only confirms it.
+      // What the server returned is shown at once; the refresh only confirms it. Reads started
+      // before this answer are stale now (round 4).
+      eraseGate.current.supersede()
       setEraseStatus((s) => applyRequest(s, outcome.request))
+      setEraseNote('Requested. Check your email to confirm it.')
       void loadEraseStatus()
     } else if (outcome.kind === 'count_changed') {
       setEraseTyped('')
       setEraseStatus((s) => (s ? { ...s, live_items: outcome.liveItems } : s))
       setEraseNote(`The number changed: the account now holds ${outcome.liveItems}. Nothing was scheduled. Type the new number to continue.`)
-    } else if (outcome.kind === 'unknown') {
+    } else if (outcome.kind === 'unknown' || outcome.kind === 'in_progress') {
       setEraseNote(outcome.message)
       setEraseCheckAgain(true)
       void loadEraseStatus()
+      scheduleFollowUp()
     } else {
       setEraseError(outcome.message)
     }
-  }, [eraseTyped, loadEraseStatus])
+  }, [eraseTyped, loadEraseStatus, scheduleFollowUp])
 
   const handleEraseCancel = useCallback(async () => {
     setEraseBusy(true)
     setEraseError('')
     setEraseNote('')
-    const outcome = await cancelErase(ERASE_DEPS)
+    const shownId = eraseStatus?.request?.id ?? null
+    const outcome = await cancelErase(ERASE_DEPS, shownId)
     if (!alive.current) return
     setEraseBusy(false)
+    setEraseFocusTick((n) => n + 1)
+    // Whatever the outcome says is newer than any read still in flight (round 4).
+    eraseGate.current.supersede()
     if (outcome.kind === 'cancelled') {
       setEraseStatus(applyCancelled)
-      setEraseNote('Cancelled. Nothing will be moved to the trash.')
-    } else if (outcome.kind === 'nothing_pending') {
-      setEraseStatus(applyCancelled)
-      setEraseNote('There is no erase request any more. Nothing will be moved.')
+      setEraseNote(cancelNote(outcome) ?? '')
+    } else if (outcome.kind === 'nothing_pending' || outcome.kind === 'already_executed') {
+      // Round 4: a 404 says what the server holds NOW (it may have run), from a fresh read.
+      setEraseStatus(outcome.status)
+      setEraseNote(cancelNote(outcome) ?? '')
     } else if (outcome.kind === 'already_started') {
-      setEraseNote('The wait is over, so it can no longer be cancelled here.')
+      setEraseNote(cancelNote(outcome) ?? '')
     } else if (outcome.kind === 'still_pending') {
       setEraseStatus((s) => applyRequest(s, outcome.request))
       setEraseError(outcome.message)
     } else {
       setEraseNote(outcome.message)
       setEraseCheckAgain(true)
+      scheduleFollowUp()
     }
     void loadEraseStatus()
-  }, [loadEraseStatus])
+  }, [eraseStatus, loadEraseStatus, scheduleFollowUp])
+
+  // Round 4: "Restore everything from the erase" — a fresher status the block read is applied
+  // (and supersedes older reads).
+  const applyRestoreStatus = useCallback((status: EraseStatus) => {
+    eraseGate.current.supersede()
+    setEraseStatus(status)
+  }, [])
+  const lastExecuted = eraseStatus?.last_executed ?? null
+  const restoreSlot = lastExecuted && restoreOffer(lastExecuted) !== 'none'
+    ? <RestoreFromErase executed={lastExecuted} onStatus={applyRestoreStatus} />
+    : null
 
   const runAccountDeletion = useCallback(async (token: string) => {
     setAccountState('working')
@@ -427,6 +479,8 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
           note={eraseNote}
           error={eraseError}
           checkAgain={eraseCheckAgain}
+          restore={restoreSlot}
+          focusTick={eraseFocusTick}
         />
 
         {/* Exit 3 — delete account */}
