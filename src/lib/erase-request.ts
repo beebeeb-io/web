@@ -170,22 +170,53 @@ export interface EraseDeps {
   create: (confirmCount: number, confirmToken: string) => Promise<unknown>
   /** `POST /api/v1/account/erase-request/cancel`. */
   cancel: () => Promise<unknown>
+  /** `GET /api/v1/account/erase-request`: asked when a POST's outcome is unknown. */
+  status: () => Promise<unknown>
+}
+
+/**
+ * Did the server ANSWER with a refusal (so nothing changed)? A 4xx is a decision; so is the
+ * typed 503 `erase_notice_failed` (the server cancelled the request itself). Anything else (no
+ * response at all, a 5xx, a proxy page, a body we could not read) is an UNKNOWN outcome: the
+ * request may have been stored. Round 2, web#174 review: never say "not scheduled" then.
+ */
+function isDefiniteRefusal(err: ErrorLike): boolean {
+  if (typeof err.status !== 'number') return false
+  if (err.status >= 400 && err.status < 500) return true
+  return err.status === 503 && err.code === 'erase_notice_failed'
+}
+
+/** The pending request as the server holds it now, or `undefined` when it could not be read. */
+async function reconcile(deps: EraseDeps): Promise<EraseRequestView | null | undefined> {
+  try {
+    const status = parseEraseStatus(await deps.status())
+    return status ? status.request : undefined
+  } catch {
+    return undefined
+  }
 }
 
 export type RequestOutcome =
-  | { kind: 'requested'; request: EraseRequestView; created: boolean }
+  /** The server holds the request. `created` is `null` when we learned it from a status read. */
+  | { kind: 'requested'; request: EraseRequestView; created: boolean | null }
   /** The number changed since it was shown (an upload elsewhere); show the new one. */
   | { kind: 'count_changed'; liveItems: number }
+  /** The server answered no. Nothing was scheduled. */
   | { kind: 'refused'; message: string }
+  /** We could not learn what happened. The request may exist; say so, and check again. */
+  | { kind: 'unknown'; message: string }
 
-const GENERIC_REQUEST_FAILURE = 'The erase request did not go through. Nothing was scheduled. Try again.'
+export const UNKNOWN_REQUEST_MESSAGE =
+  'We could not confirm whether the request went through. If it did, the account address gets an email with a link to cancel, and it shows here within a minute. Check again.'
 
 export async function requestErase(deps: EraseDeps, confirmCount: number, confirmToken: string): Promise<RequestOutcome> {
+  let ambiguous = false
   try {
     const body = await deps.create(confirmCount, confirmToken)
     const request = isObj(body) ? parseEraseRequest(body.request) : null
-    if (!request) return { kind: 'refused', message: GENERIC_REQUEST_FAILURE }
-    return { kind: 'requested', request, created: isObj(body) && body.created === true }
+    if (request) return { kind: 'requested', request, created: isObj(body) && body.created === true }
+    // A success we could not read: the request may well exist.
+    ambiguous = true
   } catch (e) {
     const err = asError(e)
     if (err.status === 409 && err.code === 'count_mismatch') {
@@ -193,16 +224,20 @@ export async function requestErase(deps: EraseDeps, confirmCount: number, confir
       if (live !== null) return { kind: 'count_changed', liveItems: live }
     }
     if (err.status === 403 && err.code === 'confirmation_required') {
-      return { kind: 'refused', message: 'The password confirmation expired. Try again.' }
+      return { kind: 'refused', message: 'The password confirmation expired. Nothing was scheduled. Try again.' }
     }
-    // The server's own message is written for people (rate limit, notice email failed,
-    // nothing to erase, frozen account); use it when there is one.
-    if (err.status && err.status < 500 && err.message) return { kind: 'refused', message: err.message }
-    if (err.status === 503 && err.code === 'erase_notice_failed' && err.message) {
-      return { kind: 'refused', message: err.message }
+    if (isDefiniteRefusal(err)) {
+      // The server's own message is written for people (rate limit, notice email failed,
+      // nothing to erase, frozen account, a request already in flight).
+      return { kind: 'refused', message: err.message || 'The erase request was refused. Nothing was scheduled.' }
     }
-    return { kind: 'refused', message: GENERIC_REQUEST_FAILURE }
+    ambiguous = true
   }
+  if (ambiguous) {
+    const request = await reconcile(deps)
+    if (request) return { kind: 'requested', request, created: null }
+  }
+  return { kind: 'unknown', message: UNKNOWN_REQUEST_MESSAGE }
 }
 
 export type CancelOutcome =
@@ -211,7 +246,10 @@ export type CancelOutcome =
   | { kind: 'already_started' }
   /** There was nothing to cancel (cancelled elsewhere, e.g. by the email link). */
   | { kind: 'nothing_pending' }
-  | { kind: 'failed'; message: string }
+  /** The cancel did not reach the server or failed there, and the request is still pending. */
+  | { kind: 'still_pending'; request: EraseRequestView; message: string }
+  /** We could not learn what happened. */
+  | { kind: 'unknown'; message: string }
 
 export async function cancelErase(deps: EraseDeps): Promise<CancelOutcome> {
   try {
@@ -221,6 +259,88 @@ export async function cancelErase(deps: EraseDeps): Promise<CancelOutcome> {
     const err = asError(e)
     if (err.status === 409 && err.code === 'erase_already_started') return { kind: 'already_started' }
     if (err.status === 404 && err.code === 'no_pending_erase_request') return { kind: 'nothing_pending' }
-    return { kind: 'failed', message: 'Cancelling did not go through. Try again, or use the link in the email.' }
+    // Unknown outcome: ask the server what it holds now instead of guessing.
+    const request = await reconcile(deps)
+    if (request === null) return { kind: 'nothing_pending' }
+    if (request) {
+      return {
+        kind: 'still_pending',
+        request,
+        message: 'Cancelling did not go through: the request is still pending. Try again, or use the link in the email.',
+      }
+    }
+    return {
+      kind: 'unknown',
+      message: 'We could not confirm the cancel. Check again, or use the link in the email.',
+    }
+  }
+}
+
+/**
+ * Round 2 (web#174 review): what a successful POST returned is applied to the shown status at
+ * once, so the screen never depends on a refresh that may fail. `null` stays `null`.
+ */
+export function applyRequest(status: EraseStatus | null, request: EraseRequestView): EraseStatus | null {
+  return status ? { ...status, request } : null
+}
+
+export function applyCancelled(status: EraseStatus | null): EraseStatus | null {
+  return status ? { ...status, request: null } : null
+}
+
+/** How the screen keeps the shown status in step with the server while it stays open. */
+export interface EraseRefreshPlan {
+  /** Refresh every this many ms (a light poll), or never. */
+  pollMs: number | null
+  /** Refresh once this many ms from now (just after the due time), or never. */
+  dueInMs: number | null
+}
+
+/** setTimeout's ceiling (2^31 - 1 ms, about 24.8 days); 72 h is far below it. */
+const MAX_TIMER_MS = 2_147_483_647
+export const ERASE_POLL_MS = 60_000
+
+export function eraseRefreshPlan(card: EraseCard | null, nowMs: number): EraseRefreshPlan {
+  if (card?.kind === 'pending') {
+    const due = Date.parse(card.request.due_at)
+    const dueInMs = Number.isNaN(due) ? null : Math.min(Math.max(due - nowMs, 0) + 1_000, MAX_TIMER_MS)
+    return { pollMs: ERASE_POLL_MS, dueInMs }
+  }
+  if (card?.kind === 'moving') return { pollMs: ERASE_POLL_MS, dueInMs: null }
+  return { pollMs: null, dueInMs: null }
+}
+
+export interface RefreshHooks {
+  /** `window`: its `focus` event refreshes. */
+  win: Pick<EventTarget, 'addEventListener' | 'removeEventListener'>
+  /** `document`: `visibilitychange` to visible refreshes. */
+  doc: Pick<EventTarget, 'addEventListener' | 'removeEventListener'> & { visibilityState?: string }
+  refresh: () => void
+  plan: EraseRefreshPlan
+  setTimeoutFn?: (fn: () => void, ms: number) => unknown
+  clearTimeoutFn?: (id: unknown) => void
+  setIntervalFn?: (fn: () => void, ms: number) => unknown
+  clearIntervalFn?: (id: unknown) => void
+}
+
+/** Wire the refresh triggers; returns the function that removes them all. */
+export function attachEraseRefresh(h: RefreshHooks): () => void {
+  const setT = h.setTimeoutFn ?? ((fn: () => void, ms: number) => setTimeout(fn, ms))
+  const clearT = h.clearTimeoutFn ?? ((id: unknown) => clearTimeout(id as ReturnType<typeof setTimeout>))
+  const setI = h.setIntervalFn ?? ((fn: () => void, ms: number) => setInterval(fn, ms))
+  const clearI = h.clearIntervalFn ?? ((id: unknown) => clearInterval(id as ReturnType<typeof setInterval>))
+  const onFocus = () => h.refresh()
+  const onVisibility = () => {
+    if (h.doc.visibilityState === undefined || h.doc.visibilityState === 'visible') h.refresh()
+  }
+  h.win.addEventListener('focus', onFocus)
+  h.doc.addEventListener('visibilitychange', onVisibility)
+  const due = h.plan.dueInMs === null ? null : setT(h.refresh, h.plan.dueInMs)
+  const poll = h.plan.pollMs === null ? null : setI(h.refresh, h.plan.pollMs)
+  return () => {
+    h.win.removeEventListener('focus', onFocus)
+    h.doc.removeEventListener('visibilitychange', onVisibility)
+    if (due !== null) clearT(due)
+    if (poll !== null) clearI(poll)
   }
 }

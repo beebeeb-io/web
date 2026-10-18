@@ -236,13 +236,21 @@ describe('requestErase() sends the typed count and the step-up token, nothing el
     })
   })
 
-  test('an expired step-up and a network failure say nothing was scheduled', async () => {
+  // Round 1 pinned "a network failure says nothing was scheduled": that was the bug Codex found
+  // (web#174, erase-request.ts:204). A lost answer is an UNKNOWN outcome; round 2 pins that in
+  // test/1918-erase-request-r2.test.tsx. Only the definite refusal keeps "nothing was scheduled".
+  test('an expired step-up is a definite refusal (nothing scheduled); a network failure is NOT', async () => {
     const expired = { status: 403, code: 'confirmation_required', message: 'confirmation required' }
-    const a = await requestErase({ create: async () => Promise.reject(expired), cancel: async () => ({}) }, 1, 't')
-    expect(a).toEqual({ kind: 'refused', message: 'The password confirmation expired. Try again.' })
-    const b = await requestErase({ create: async () => Promise.reject(new TypeError('Failed to fetch')), cancel: async () => ({}) }, 1, 't')
-    expect(b.kind).toBe('refused')
-    expect((b as { message: string }).message).toContain('Nothing was scheduled')
+    const none = async () => ({ request: null, live_items: 1, cooldown_hours: 72, trash_retention_days: 30, last_executed: null })
+    const a = await requestErase({ create: async () => Promise.reject(expired), cancel: async () => ({}), status: none }, 1, 't')
+    expect(a).toEqual({ kind: 'refused', message: 'The password confirmation expired. Nothing was scheduled. Try again.' })
+    const b = await requestErase(
+      { create: async () => Promise.reject(new TypeError('Failed to fetch')), cancel: async () => ({}), status: none },
+      1,
+      't',
+    )
+    expect(b.kind).toBe('unknown')
+    expect((b as { message: string }).message).not.toContain('Nothing was scheduled')
   })
 })
 
@@ -257,11 +265,17 @@ describe('cancelErase() calls the cancel endpoint', () => {
     expect(create).toHaveBeenCalledTimes(0)
   })
 
-  test('409 already started, 404 nothing pending, anything else failed', async () => {
-    const deps = (err: unknown) => ({ create: async () => ({}), cancel: async () => Promise.reject(err) })
+  // Round 1 said "anything else failed"; round 2: anything else is reconciled with the status
+  // endpoint (test/1918-erase-request-r2.test.tsx), here the status read fails too: unknown.
+  test('409 already started, 404 nothing pending, anything else asks the server (here: unknown)', async () => {
+    const deps = (err: unknown) => ({
+      create: async () => ({}),
+      cancel: async () => Promise.reject(err),
+      status: async () => Promise.reject(new TypeError('offline')),
+    })
     expect(await cancelErase(deps({ status: 409, code: 'erase_already_started' }))).toEqual({ kind: 'already_started' })
     expect(await cancelErase(deps({ status: 404, code: 'no_pending_erase_request' }))).toEqual({ kind: 'nothing_pending' })
-    expect((await cancelErase(deps(new TypeError('x')))).kind).toBe('failed')
+    expect((await cancelErase(deps(new TypeError('x')))).kind).toBe('unknown')
   })
 })
 

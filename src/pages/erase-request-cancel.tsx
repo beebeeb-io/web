@@ -91,12 +91,12 @@ export function EraseRequestCancelPage() {
   }
 
   return (
-    <AuthShellFrame title="We could not cancel it yet" hideTrust>
+    <AuthShellFrame title="We could not confirm the cancel" hideTrust>
       <div className="flex flex-col gap-3 text-[13px] text-ink-3 leading-relaxed" data-testid="erase-link-unavailable">
         <p>
           {view.rateLimited
-            ? 'Too many tries from this network just now. Wait a minute, then try again.'
-            : 'We could not reach Beebeeb. Nothing has changed yet. Try again.'}
+            ? 'Too many tries from this network just now, so this one was not processed. Wait a minute, then try again.'
+            : "We could not reach Beebeeb, so we can't tell whether it was cancelled. Try again: if it already went through, this page will say the link was used."}
         </p>
         <BBButton type="button" variant="amber" size="lg" className="w-full" onClick={() => void run()}>
           Try again

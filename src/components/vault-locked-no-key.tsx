@@ -17,8 +17,12 @@ import {
   getEraseRequest,
 } from '../lib/api'
 import {
+  applyCancelled,
+  applyRequest,
+  attachEraseRefresh,
   cancelErase,
   eraseCard,
+  eraseRefreshPlan,
   parseEraseStatus,
   parseTypedCount,
   requestErase,
@@ -67,7 +71,7 @@ import { clearPostResetLock } from '../lib/post-reset-lock'
 type ExitState = 'idle' | 'working' | 'done' | 'error'
 
 /** The erase request transport (task 1918): the server decides, the browser only asks. */
-const ERASE_DEPS: EraseDeps = { create: createEraseRequest, cancel: cancelEraseRequest }
+const ERASE_DEPS: EraseDeps = { create: createEraseRequest, cancel: cancelEraseRequest, status: getEraseRequest }
 
 interface VaultLockedNoKeyProps {
   /** Escape hatch: show the normal password form (the old password may still
@@ -116,6 +120,8 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
   const [eraseBusy, setEraseBusy] = useState(false)
   const [eraseNote, setEraseNote] = useState('')
   const [eraseError, setEraseError] = useState('')
+  // The last POST's outcome is unknown (round 2): offer "Check again".
+  const [eraseCheckAgain, setEraseCheckAgain] = useState(false)
 
   // ── exit 3: delete account ──
   const [accountGate, setAccountGate] = useState(false)
@@ -142,12 +148,15 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
     }
   }, [cancelGate, cancelState])
 
+  // A failed read keeps the last status on screen AND says so (round 2, web#174 review): the
+  // card shows the error with a retry next to whatever it was showing.
   const loadEraseStatus = useCallback(async () => {
-    setEraseLoadError('')
     try {
       const status = parseEraseStatus(await getEraseRequest())
       if (!status) throw new Error('unexpected answer')
       setEraseStatus(status)
+      setEraseLoadError('')
+      setEraseCheckAgain(false)
     } catch {
       setEraseLoadError('We could not check what this account holds. Try again.')
     }
@@ -156,6 +165,25 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
   useEffect(() => {
     void loadEraseStatus()
   }, [loadEraseStatus])
+
+  // Keep the card in step with the server while the screen stays open (round 2): on focus and
+  // when the tab becomes visible, just after the due time, and every minute while a request is
+  // pending or moving (a cancel by the email link or another session shows up too).
+  const shownCard = eraseStatus ? eraseCard(eraseStatus) : null
+  const refreshKey = shownCard?.kind === 'pending' || shownCard?.kind === 'moving'
+    ? `${shownCard.kind}:${shownCard.request.due_at}`
+    : (shownCard?.kind ?? 'none')
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return
+    return attachEraseRefresh({
+      win: window,
+      doc: document,
+      refresh: () => void loadEraseStatus(),
+      plan: eraseRefreshPlan(shownCard, Date.now()),
+    })
+    // The plan only changes with the card's kind and due time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey, loadEraseStatus])
 
   const runEraseRequest = useCallback(async (token: string) => {
     const count = parseTypedCount(eraseTyped)
@@ -167,11 +195,17 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
     setEraseBusy(false)
     if (outcome.kind === 'requested') {
       setEraseTyped('')
-      await loadEraseStatus()
+      // What the server returned is shown at once; the refresh only confirms it.
+      setEraseStatus((s) => applyRequest(s, outcome.request))
+      void loadEraseStatus()
     } else if (outcome.kind === 'count_changed') {
       setEraseTyped('')
       setEraseStatus((s) => (s ? { ...s, live_items: outcome.liveItems } : s))
       setEraseNote(`The number changed: the account now holds ${outcome.liveItems}. Nothing was scheduled. Type the new number to continue.`)
+    } else if (outcome.kind === 'unknown') {
+      setEraseNote(outcome.message)
+      setEraseCheckAgain(true)
+      void loadEraseStatus()
     } else {
       setEraseError(outcome.message)
     }
@@ -183,11 +217,22 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
     setEraseNote('')
     const outcome = await cancelErase(ERASE_DEPS)
     setEraseBusy(false)
-    if (outcome.kind === 'cancelled') setEraseNote('Cancelled. Nothing will be moved to the trash.')
-    else if (outcome.kind === 'nothing_pending') setEraseNote('There is no erase request any more. Nothing will be moved.')
-    else if (outcome.kind === 'already_started') setEraseNote('The wait is over, so it can no longer be cancelled here.')
-    else setEraseError(outcome.message)
-    await loadEraseStatus()
+    if (outcome.kind === 'cancelled') {
+      setEraseStatus(applyCancelled)
+      setEraseNote('Cancelled. Nothing will be moved to the trash.')
+    } else if (outcome.kind === 'nothing_pending') {
+      setEraseStatus(applyCancelled)
+      setEraseNote('There is no erase request any more. Nothing will be moved.')
+    } else if (outcome.kind === 'already_started') {
+      setEraseNote('The wait is over, so it can no longer be cancelled here.')
+    } else if (outcome.kind === 'still_pending') {
+      setEraseStatus((s) => applyRequest(s, outcome.request))
+      setEraseError(outcome.message)
+    } else {
+      setEraseNote(outcome.message)
+      setEraseCheckAgain(true)
+    }
+    void loadEraseStatus()
   }, [loadEraseStatus])
 
   const runAccountDeletion = useCallback(async (token: string) => {
@@ -351,7 +396,7 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
 
         {/* Exit 2 — erase all files: a server-side request (task 1918) */}
         <EraseRequestCard
-          card={eraseStatus ? eraseCard(eraseStatus) : null}
+          card={shownCard}
           loadError={eraseLoadError}
           email={user?.email ?? null}
           cooldownHours={eraseStatus?.cooldown_hours ?? 72}
@@ -364,6 +409,7 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
           busy={eraseBusy}
           note={eraseNote}
           error={eraseError}
+          checkAgain={eraseCheckAgain}
         />
 
         {/* Exit 3 — delete account */}

@@ -28,6 +28,8 @@ export interface EraseRequestCardProps {
   /** A plain note after an action ("Cancelled. Nothing will move."). */
   note: string
   error: string
+  /** The last action's outcome is unknown: offer "Check again" (calls `onRetryLoad`). */
+  checkAgain?: boolean
 }
 
 export function EraseRequestCard(props: EraseRequestCardProps) {
@@ -134,6 +136,30 @@ export function EraseRequestCard(props: EraseRequestCardProps) {
 
       {props.note && <p className="text-[12px] text-ink-2 mt-2" data-testid="erase-note">{props.note}</p>}
       {props.error && <p className="text-[12px] text-red mt-2" data-testid="erase-error">{props.error}</p>}
+
+      {/* A failed refresh is shown next to the last known state, never hidden behind it. */}
+      {card !== null && props.loadError && (
+        <div className="mt-2" data-testid="erase-refresh-error">
+          <p className="text-[12px] text-red mb-2">
+            We could not refresh this, so what you see may be out of date.
+          </p>
+          <BBButton type="button" variant="default" size="sm" onClick={props.onRetryLoad}>
+            Try again
+          </BBButton>
+        </div>
+      )}
+      {card !== null && !props.loadError && props.checkAgain && (
+        <BBButton
+          type="button"
+          variant="default"
+          size="sm"
+          className="mt-2"
+          onClick={props.onRetryLoad}
+          data-testid="erase-check-again"
+        >
+          Check again
+        </BBButton>
+      )}
     </div>
   )
 }
