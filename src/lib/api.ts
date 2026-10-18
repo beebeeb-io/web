@@ -1395,6 +1395,36 @@ export async function getSyncOps(since: number): Promise<SyncOp[]> {
   return data.ops ?? []
 }
 
+/**
+ * Task 1973 (server#233): a sync op as a server that numbers each user's ops
+ * sends it. `user_seq` is the op's place in its user's own gap-free sequence;
+ * `null` for an op recorded before that deploy, absent on an older server.
+ */
+export type UserSeqSyncOp = SyncOp & { user_seq?: number | null }
+
+/** Task 1973: a snapshot from a server that numbers ops carries a numeric `user_seq`. */
+export type UserSeqSyncSnapshot = SyncSnapshot & { user_seq?: number | null }
+
+/** Task 1973: one `GET /sync/ops?since_user_seq=` page plus the server's heads. */
+export interface UserSeqSyncOpsPage {
+  ops: UserSeqSyncOp[]
+  head_seq?: number
+  /** The user's newest `user_seq`, read in the same statement as the page. */
+  head_user_seq?: number
+}
+
+/**
+ * Task 1973: this user's ops with `user_seq > sinceUserSeq`, ascending by
+ * `user_seq`. An older server ignores the parameter (and has no
+ * `head_user_seq`); the caller treats that as a failed catch-up.
+ */
+export async function getSyncOpsSinceUserSeq(sinceUserSeq: number): Promise<UserSeqSyncOpsPage> {
+  const data = await request<UserSeqSyncOpsPage>(
+    `/api/v1/sync/ops?since_user_seq=${encodeURIComponent(String(sinceUserSeq))}`,
+  )
+  return { ops: data.ops ?? [], head_seq: data.head_seq, head_user_seq: data.head_user_seq }
+}
+
 export async function submitSyncOps(ops: SubmittedSyncOp[]): Promise<SyncOpsResult> {
   return request<SyncOpsResult>('/api/v1/sync/ops', {
     method: 'POST',

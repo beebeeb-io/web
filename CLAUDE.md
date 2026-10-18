@@ -245,6 +245,15 @@ Core chunk format v2 (core#28) binds every content frame to its file id, its upl
 - Proof in a browser: `e2e/1943-v1-compat.spec.ts` (own config; two web origins, origin/main and this code, against one local API; see its header): what the current web wrote downloads byte-identical here (streamed and buffered), previews, opens by share link and keeps its note, and the note and version written here open in the current web.
 - Not yet on core (before the v2 write switch): thumbnails (`thumbnail.ts`, WebCrypto raw key), new-file names (`encryptFilename`), renames (drop the pin; core's name writer takes only the master key, so file-request files need a key-based variant first), the file-request uploader (`encryptChunk`), and the single-file share link (the server's share view carries no `file_id`, so a v2-pinned file is refused there with an honest message).
 
+## Sync ordering: the per-user `user_seq` (task 1973, server#233)
+
+`src/lib/sync-client.ts` orders remote ops and detects missed ones. `seq_id` is ONE global sequence, so another user's op sits between any two of yours; checking `seq_id === lastSeq + 1` made nearly every live op look missed and cost a full `/sync/snapshot` (O(vault)) per op per tab (scale audit R3). A server with server#233 numbers each user's ops 1, 2, 3, ... with no gaps (`user_seq` on every op, snapshot, page and POST `applied[]`; `GET /sync/ops?since_user_seq=N` with `head_user_seq`).
+- **Feature detection:** a snapshot with a numeric `user_seq` switches the client to user_seq mode (`adoptSnapshotCursors`); one without it keeps the global-seq behaviour exactly. The mode only changes inside a snapshot merge, so a server upgrade or rollback costs exactly one snapshot.
+- **Cursor:** in user_seq mode contiguity is `user_seq === lastUserSeq + 1`. A real hole is paged in by `catchUpByUserSeq` (`?since_user_seq=<cursor>` until `head_user_seq`); only a failed, contradictory (no/low `head_user_seq`, no progress) or over-long (20 pages) catch-up falls back to a snapshot. Duplicates and older `user_seq`s are ignored.
+- **Persisted cursor:** `bb_sync_last_seq` stays a GLOBAL cursor (kept as a forward-only floor for a rollback). It is never read as a user_seq: `lastUserSeq` is in memory and seeded only from a snapshot (every boot merges one first, task 1700; the storage key is not per account).
+- **POST `applied[]`** with a `user_seq` goes through the same ordered path as the stream echo, so the cursor moves without waiting for the echo. An op with `user_seq` null/absent in user_seq mode (an old node mid rolling deploy) is applied at once and re-delivered with its number by the next catch-up.
+- **Deploy order:** web AFTER server#233. Proof: `test/1973-sync-user-seq.test.ts` (FakeServer with other users writing in between; red on main, one mutation per test).
+
 ## Critical prop chains
 
 When opening the ShareDialog, ALWAYS pass `isFolder={file.is_folder}`. Folder sharing generates a folder_key and encrypts all children — without this prop, folder shares silently create regular file shares that don't work.

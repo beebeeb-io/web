@@ -8,10 +8,11 @@ import {
   getApiUrl,
   getSnapshot,
   getSyncOps,
+  getSyncOpsSinceUserSeq,
   submitSyncOps,
   getStreamToken,
 } from './api'
-import type { SyncOp, SyncNode, SyncSnapshot } from './api'
+import type { SyncOp, SyncNode, SyncSnapshot, UserSeqSyncOp, UserSeqSyncSnapshot } from './api'
 
 const LAST_SEQ_KEY = 'bb_sync_last_seq'
 const PENDING_OPS_KEY = 'bb_sync_pending_ops'
@@ -34,6 +35,11 @@ const GAP_FILL_TIMEOUT_MS = 10_000
 const MISSING_NODE_RESYNC_DEBOUNCE_MS = 100
 /** Upper bound on out-of-order ops held while a gap is filled. */
 const REORDER_BUFFER_MAX = 500
+/**
+ * Task 1973: most `?since_user_seq=` pages one catch-up walks (server page =
+ * 1,000 ops) before a snapshot is the cheaper way to cover the backlog.
+ */
+const USER_SEQ_CATCHUP_MAX_PAGES = 20
 /**
  * Upper bound on stream frames held while a snapshot fetch is in flight. A
  * fetch is time-bounded, so this only guards against pathological storms.
@@ -99,6 +105,27 @@ function saveLastSeq(seq: number): void {
   localStorage.setItem(LAST_SEQ_KEY, String(seq))
 }
 
+/**
+ * Task 1973: the op's number in its user's own gap-free sequence, or null when
+ * the server did not number it (an op recorded before server#233, or a frame
+ * from an older node during a rolling deploy).
+ */
+function userSeqOf(op: { user_seq?: number | null }): number | null {
+  const n = op.user_seq
+  return typeof n === 'number' && Number.isFinite(n) ? n : null
+}
+
+/** Outcome of one user_seq catch-up (task 1973). */
+type UserSeqCatchUp =
+  /** The cursor reached the server head and no held op is left. */
+  | 'complete'
+  /** The page contradicts what this tab saw, or made no progress below head. */
+  | 'contradiction'
+  /** Walked USER_SEQ_CATCHUP_MAX_PAGES and is still behind. */
+  | 'truncated'
+  /** A snapshot fetch or mode switch started meanwhile; it owns coverage now. */
+  | 'aborted'
+
 function loadPendingOps(): PendingOp[] {
   try {
     const raw = localStorage.getItem(PENDING_OPS_KEY)
@@ -126,7 +153,30 @@ function savePendingOps(ops: PendingOp[]): void {
  */
 export class SyncClient {
   private tree = new Map<string, SyncNode>()
+  /**
+   * Global `seq_id` cursor. It orders ops while the server does not number
+   * them per user (an older server). In user_seq mode it is only kept as a
+   * forward-only floor (persisted, so a rollback to an older server resumes
+   * correctly); contiguity is never checked on it there.
+   */
   private lastSeq = loadLastSeq()
+  /**
+   * Task 1973 (scale audit R3): true once a snapshot carried a numeric
+   * `user_seq`, i.e. the server numbers this user's ops 1, 2, 3, ... with no
+   * gaps. Ops are then ordered and checked for holes on `user_seq`: another
+   * user's op consumes a global `seq_id`, never one of ours, so it can no
+   * longer look like a missed op. Decided per snapshot, so a server upgrade or
+   * rollback switches mode only through one snapshot merge.
+   */
+  private userSeqMode = false
+  /**
+   * Task 1973: last applied `user_seq`. In memory only and seeded ONLY from a
+   * snapshot: the persisted `bb_sync_last_seq` is a global cursor and is never
+   * read as a user_seq, and every boot merges a snapshot first anyway (task
+   * 1700), so a persisted per-user value would add nothing but a stale floor
+   * (the storage key is not per account).
+   */
+  private lastUserSeq = 0
   private pendingOps: PendingOp[] = loadPendingOps()
   private deviceId = getDeviceId()
   private eventSource: EventSource | null = null
@@ -196,6 +246,16 @@ export class SyncClient {
 
   getLastSeq(): number {
     return this.lastSeq
+  }
+
+  /** Task 1973: the user_seq cursor, or null against a server without user_seq. */
+  getLastUserSeq(): number | null {
+    return this.userSeqMode ? this.lastUserSeq : null
+  }
+
+  /** The cursor contiguity is checked against: user_seq, or the global seq. */
+  private cursor(): number {
+    return this.userSeqMode ? this.lastUserSeq : this.lastSeq
   }
 
   getNode(id: string): SyncNode | undefined {
@@ -324,8 +384,12 @@ export class SyncClient {
     this.refreshCoverageFlag()
   }
 
-  /** Apply the op tail after `lastSeq`; report a server-truncated backlog. */
+  /** Apply the op tail after the cursor; report a server-truncated backlog. */
   private async catchUpOps(): Promise<{ truncated: boolean }> {
+    if (this.userSeqMode) {
+      const outcome = await this.catchUpByUserSeq()
+      return { truncated: outcome === 'contradiction' || outcome === 'truncated' }
+    }
     const ops = await getSyncOps(this.lastSeq)
     for (const op of ops) {
       this.applyRemoteOp(op)
@@ -611,9 +675,23 @@ export class SyncClient {
    * (echo), the optimistic update is already in place — we just confirm it.
    */
   private applyRemoteOp(op: SyncOp): void {
-    if (op.seq_id <= this.lastSeq) return // already applied
+    // Task 1973: against a server that numbers ops per user, order and detect
+    // holes on `user_seq`; otherwise on the global `seq_id` exactly as before.
+    let key: number
+    if (this.userSeqMode) {
+      const userSeq = userSeqOf(op as UserSeqSyncOp)
+      if (userSeq === null) {
+        this.applyUnnumberedOp(op)
+        return
+      }
+      key = userSeq
+    } else {
+      key = op.seq_id
+    }
+    const cursor = this.cursor()
+    if (key <= cursor) return // already applied (a duplicate or an old op)
 
-    if (op.seq_id === this.lastSeq + 1) {
+    if (key === cursor + 1) {
       this.applyOpNow(op)
       this.drainReorderBuffer()
       if (this.reorderBuffer.size > 0) {
@@ -626,7 +704,7 @@ export class SyncClient {
     }
 
     // Future op: hold it until the hole below it is filled.
-    this.reorderBuffer.set(op.seq_id, op)
+    this.reorderBuffer.set(key, op)
     if (this.reorderBuffer.size > REORDER_BUFFER_MAX) {
       // Buffer exhausted — a snapshot merge is the bounded fallback, routed
       // through the single-flight/retry path (review S1).
@@ -640,14 +718,44 @@ export class SyncClient {
     this.scheduleGapFill()
   }
 
-  /** Apply every buffered op that is now contiguous with `lastSeq`. */
+  /** Apply every buffered op that is now contiguous with the cursor. */
   private drainReorderBuffer(): void {
     for (;;) {
-      const next = this.reorderBuffer.get(this.lastSeq + 1)
+      const key = this.cursor() + 1
+      const next = this.reorderBuffer.get(key)
       if (!next) break
-      this.reorderBuffer.delete(next.seq_id)
+      this.reorderBuffer.delete(key)
       this.applyOpNow(next)
     }
+  }
+
+  /**
+   * Task 1973: an op without a `user_seq` while in user_seq mode. The server
+   * only sends one from a node that predates server#233 (a rolling deploy):
+   * the database numbered it, the frame just does not say so. Apply it now
+   * (deduplicated on the global seq, as before) so the change shows; the user
+   * cursor does not move, so the next numbered op shows a hole and one
+   * `?since_user_seq=` page re-delivers this op with its number, in order.
+   */
+  private applyUnnumberedOp(op: SyncOp): void {
+    if (op.seq_id <= this.lastSeq) return
+    this.applyOpNow(op)
+  }
+
+  /** Record `op` as applied: move the cursor(s) and persist the global one. */
+  private advanceCursor(op: SyncOp): void {
+    if (this.userSeqMode) {
+      const userSeq = userSeqOf(op as UserSeqSyncOp)
+      if (userSeq !== null && userSeq > this.lastUserSeq) this.lastUserSeq = userSeq
+      // The global seq stays a forward-only floor; it never gates anything here.
+      if (op.seq_id > this.lastSeq) {
+        this.lastSeq = op.seq_id
+        saveLastSeq(this.lastSeq)
+      }
+      return
+    }
+    this.lastSeq = op.seq_id
+    saveLastSeq(this.lastSeq)
   }
 
   /**
@@ -664,16 +772,14 @@ export class SyncClient {
         this.pendingOps.splice(idx, 1)
         savePendingOps(this.pendingOps)
         // Tree already reflects the change locally — only update seq.
-        this.lastSeq = op.seq_id
-        saveLastSeq(this.lastSeq)
+        this.advanceCursor(op)
         this.emit({ type: 'op', op })
         return
       }
     }
 
     const applied = this.applyOpToTree(op.op_type, op.payload)
-    this.lastSeq = op.seq_id
-    saveLastSeq(this.lastSeq)
+    this.advanceCursor(op)
     this.emit({ type: 'op', op })
 
     if (applied === 'missing-node') {
@@ -821,6 +927,16 @@ export class SyncClient {
     }
     const run = (async () => {
       try {
+        if (this.userSeqMode) {
+          // Task 1973: a hole in the user's own sequence is a real missed op.
+          // Page it in by user_seq; only a failed or contradictory catch-up
+          // costs a snapshot.
+          const outcome = await this.catchUpByUserSeq()
+          if (outcome !== 'complete' && outcome !== 'aborted') {
+            await this.resyncSnapshot()
+          }
+          return
+        }
         const ops = await this.withTimeout(getSyncOps(this.lastSeq), GAP_FILL_TIMEOUT_MS)
         if (this.snapshotFetchInFlight) {
           // A coverage resync started while the op page was in flight: the
@@ -928,11 +1044,7 @@ export class SyncClient {
         this.snapshotFetchInFlight = false
       }
       this.mergeSnapshot(snap)
-      if (snap.seq_id > this.lastSeq) {
-        this.lastSeq = snap.seq_id
-        saveLastSeq(this.lastSeq)
-        this.dropBufferedThrough(this.lastSeq)
-      }
+      this.adoptSnapshotCursors(snap)
       // Snapshot is authoritative for the missing ids that scheduled it: a
       // node that is still absent is genuinely gone — never resync for it
       // again until a reconnect or a create brings it back (task 1700).
@@ -963,6 +1075,90 @@ export class SyncClient {
     })()
     this.snapshotInFlight = wrapped
     return wrapped
+  }
+
+  /**
+   * Move the cursors to a merged snapshot (task 1973 feature detection).
+   *
+   * - A numeric `user_seq` means the server numbers this user's ops. The first
+   *   such snapshot switches to user_seq mode and starts the user cursor AT
+   *   that snapshot (never from the global cursor); later ones only move it
+   *   forward.
+   * - No numeric `user_seq` (an older server, or a rollback to one) means
+   *   today's global-seq ordering.
+   * - The global cursor moves forward to the snapshot's `seq_id` either way.
+   *
+   * Held ops are re-keyed on a mode switch, and every op at or below the new
+   * cursor is dropped: the snapshot already contains it.
+   */
+  private adoptSnapshotCursors(snap: SyncSnapshot): void {
+    if (snap.seq_id > this.lastSeq) {
+      this.lastSeq = snap.seq_id
+      saveLastSeq(this.lastSeq)
+    }
+    const snapUserSeq = userSeqOf(snap as UserSeqSyncSnapshot)
+    if (snapUserSeq !== null) {
+      if (!this.userSeqMode) {
+        this.userSeqMode = true
+        this.lastUserSeq = snapUserSeq
+        this.rekeyReorderBuffer()
+      } else if (snapUserSeq > this.lastUserSeq) {
+        this.lastUserSeq = snapUserSeq
+      }
+    } else if (this.userSeqMode) {
+      this.userSeqMode = false
+      this.lastUserSeq = 0
+      this.rekeyReorderBuffer()
+    }
+    this.dropBufferedThrough(this.cursor())
+  }
+
+  /** Re-key held ops after a mode switch; an op the new mode cannot order is dropped. */
+  private rekeyReorderBuffer(): void {
+    if (this.reorderBuffer.size === 0) return
+    const held = Array.from(this.reorderBuffer.values())
+    this.reorderBuffer.clear()
+    for (const op of held) {
+      const key = this.userSeqMode ? userSeqOf(op as UserSeqSyncOp) : op.seq_id
+      if (key !== null) this.reorderBuffer.set(key, op)
+    }
+  }
+
+  /**
+   * Task 1973: page this user's ops in by `user_seq` until the cursor reaches
+   * the server's `head_user_seq` (each page reports it from the same database
+   * snapshot as its ops). The cost is the number of missed ops, never the size
+   * of the vault.
+   *
+   * Contradiction, for which the caller merges a snapshot instead:
+   * - the page has no numeric `head_user_seq` (an older node answered and
+   *   ignored `since_user_seq`);
+   * - `head_user_seq` is below the cursor, or below an op this tab already
+   *   held when the request went out (the server publishes an op only after
+   *   it committed, so the head must include it);
+   * - the page leaves the cursor where it was although the head is above it.
+   * Ops that arrive on the stream during the request may sit above the head;
+   * the next page fetches them.
+   */
+  private async catchUpByUserSeq(): Promise<UserSeqCatchUp> {
+    for (let page = 0; page < USER_SEQ_CATCHUP_MAX_PAGES; page++) {
+      const since = this.lastUserSeq
+      let heldBefore = 0
+      for (const key of this.reorderBuffer.keys()) if (key > heldBefore) heldBefore = key
+      const res = await this.withTimeout(getSyncOpsSinceUserSeq(since), GAP_FILL_TIMEOUT_MS)
+      if (this.destroyed || !this.userSeqMode || this.snapshotFetchInFlight) return 'aborted'
+      const head = res.head_user_seq
+      if (typeof head !== 'number' || !Number.isFinite(head) || head < since) return 'contradiction'
+      for (const op of res.ops) this.applyRemoteOp(op)
+      if (!this.userSeqMode) return 'aborted'
+      if (heldBefore > head) return 'contradiction'
+      if (this.lastUserSeq >= head) {
+        if (this.reorderBuffer.size === 0) return 'complete'
+        continue // newer ops arrived on the stream meanwhile: fetch them too
+      }
+      if (this.lastUserSeq === since) return 'contradiction'
+    }
+    return 'truncated'
   }
 
   /** Bound a sync request so coverage recovery can never hang indefinitely. */
@@ -1040,12 +1236,52 @@ export class SyncClient {
         return { accepted: false, reason: rejected.reason ?? 'rejected' }
       }
       // Accepted ops stay in pending until echoed via SSE — that confirms
-      // the server's seq_id assignment.
+      // the server's seq_id assignment. Against a server that numbers ops per
+      // user, the response's `user_seq` confirms it too (task 1973).
+      this.adoptApplied(result.applied, [pending])
       return { accepted: true }
     } catch (err) {
       // Network error — leave it in pending; we'll flush on reconnect.
       this.emit({ type: 'error', error: err instanceof Error ? err : new Error(String(err)) })
       return { accepted: true } // optimistic state stays
+    }
+  }
+
+  /**
+   * Task 1973: `POST /sync/ops` answers each applied op's `user_seq`. Feed the
+   * op through the same ordered path its stream echo takes, so the cursor
+   * advances without waiting for the echo: a contiguous one is confirmed now
+   * (echo suppression drops it from pending; the later echo is an old
+   * user_seq and is ignored), a future one is held until the hole below it
+   * fills. A held stream echo is never replaced (it carries the server's own
+   * payload). Against an older server nothing changes: the echo confirms.
+   */
+  private adoptApplied(
+    applied: ReadonlyArray<{ client_op_id: string; seq_id: number; user_seq?: number | null }> | undefined,
+    submitted: ReadonlyArray<{ client_op_id: string; op_type: string; payload: Record<string, unknown> }>,
+  ): void {
+    if (!this.userSeqMode || !applied) return
+    for (const entry of applied) {
+      const userSeq = userSeqOf(entry)
+      if (userSeq === null || this.reorderBuffer.has(userSeq)) continue
+      const sent = submitted.find((s) => s.client_op_id === entry.client_op_id)
+      if (!sent) continue
+      const op: UserSeqSyncOp = {
+        seq_id: entry.seq_id,
+        user_seq: userSeq,
+        op_type: sent.op_type,
+        client_op_id: entry.client_op_id,
+        payload: sent.payload,
+        device_id: this.deviceId,
+        created_at: new Date().toISOString(),
+      }
+      if (this.snapshotFetchInFlight) {
+        // Same hold as a stream frame: a snapshot fetched before this op must
+        // not overwrite it, so it is replayed right after the merge.
+        this.deferredStreamFrames.push({ kind: 'op', op })
+        continue
+      }
+      this.applyRemoteOp(op)
     }
   }
 
@@ -1072,6 +1308,7 @@ export class SyncClient {
         }
       }
       savePendingOps(this.pendingOps)
+      this.adoptApplied(result.applied, batch)
       this.emit({ type: 'op' })
     } catch (err) {
       console.warn('[SyncClient] Failed to flush pending ops', err)
