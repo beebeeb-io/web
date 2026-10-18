@@ -1,4 +1,5 @@
 import { defineConfig } from '@playwright/test'
+import path from 'path'
 
 /**
  * Standalone config for 1918-erase-request.spec.ts (task 1918). Real stack only: a local API
@@ -23,9 +24,14 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
   },
+  // Vite binds IPv4 loopback explicitly (on macOS a bare `localhost` bind is [::1] only, which
+  // Playwright's readiness probe does not reach); the browser still opens `localhost`, the
+  // origin the API's CORS and APP_URL name.
   webServer: {
-    command: `NODE_ENV=test VITE_API_URL=${API_URL} bunx vite --mode test --port ${WEB_PORT} --strictPort`,
-    url: WEB_URL,
+    command: `NODE_ENV=test VITE_API_URL=${API_URL} bunx vite --mode test --host 127.0.0.1 --port ${WEB_PORT} --strictPort`,
+    url: `http://127.0.0.1:${WEB_PORT}`,
+    // The command runs in this config's directory unless told otherwise; Vite needs the app root.
+    cwd: path.resolve(__dirname, '..'),
     reuseExistingServer: true,
     timeout: 120_000,
     stdout: 'pipe',

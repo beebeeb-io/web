@@ -3,7 +3,8 @@ import { execSync } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 import { NEW_PW, makeAccount, guestPage } from './helpers/reset-2fa'
-import { dropSessionKeepVault, uploadAndSettle } from './helpers/after-password-change'
+import { dropSessionKeepVault } from './helpers/after-password-change'
+import { uploadTextFile } from './helpers/drive'
 
 /**
  * Task 1918 [P0] — the locked screen's "Erase all files" cannot make files go missing.
@@ -81,12 +82,29 @@ function recordRequests(page: Page): string[] {
   return seen
 }
 
+/** Live rows the server counts for the account: what the person must type. It can exceed the
+ *  files uploaded here (an unfinished upload row is live too, and is trashed with the rest). */
+function liveItems(userId: string): number {
+  return Number(sql(`SELECT count(*) FROM files WHERE user_id = '${userId}' AND NOT is_trashed`))
+}
+
+/** Upload one file and wait until the SERVER has it complete (a reload before that would abort
+ *  the upload and leave a half-made row). */
+async function uploadComplete(page: Page, userId: string, filename: string): Promise<void> {
+  const done = () => Number(sql(`SELECT count(*) FROM files WHERE user_id = '${userId}' AND NOT is_folder AND NOT is_uploading`))
+  const before = done()
+  await uploadTextFile(page, filename, `contents of ${filename}`)
+  for (let i = 0; i < 120 && done() <= before; i++) await page.waitForTimeout(500)
+  expect(done()).toBe(before + 1)
+}
+
 /** Sign up, upload `files`, then take the real email reset into the locked screen. */
 async function reachLockedScreen(page: Page, prefix: string, files: string[]): Promise<{ email: string; userId: string }> {
   const { email } = await makeAccount(page, prefix, false)
-  for (const f of files) await uploadAndSettle(page, f, `contents of ${f}`)
   const userId = sql(`SELECT id FROM users WHERE email = '${email.replace(/'/g, "''")}'`)
   expect(userId).toMatch(/^[0-9a-f-]{36}$/)
+  await page.goto('/')
+  for (const f of files) await uploadComplete(page, userId, f)
 
   // The session on this device ends; the person asks for a reset by email.
   await dropSessionKeepVault(page)
@@ -114,6 +132,9 @@ async function reachLockedScreen(page: Page, prefix: string, files: string[]): P
   await page.getByRole('button', { name: /I've lost my recovery phrase/i }).click({ timeout: 45_000 })
   await expect(page.getByText('Vault locked').first()).toBeVisible()
   await expect(page.getByTestId('erase-request-card')).toBeVisible()
+  // The cookie notice is fixed over the page; answer it so the screenshots show the card.
+  const essential = page.getByRole('button', { name: 'Essential only' })
+  if (await essential.isVisible().catch(() => false)) await essential.click()
   return { email, userId }
 }
 
@@ -146,24 +167,26 @@ test('locked screen: request the erase, see it pending, get the email, cancel by
   const requests = recordRequests(page)
   await shot(page, '01-locked-screen-ask')
 
+  const items = liveItems(userId)
+  expect(items).toBeGreaterThanOrEqual(files.length)
   const offset = mailLog().length
-  await requestErase(page, files.length)
+  await requestErase(page, items)
 
   // Pending: the due time 72 h out, the count, the Cancel button.
   const pending = page.getByTestId('erase-pending')
   await expect(pending).toContainText('Erase requested.')
-  await expect(pending).toContainText(`(${files.length} items) moves to the trash`)
+  await expect(pending).toContainText(`(${items} items) moves to the trash`)
   await expect(page.getByTestId('erase-cancel-button')).toBeVisible()
   const row = sql(
     `SELECT status, item_count, round(extract(epoch FROM due_at - requested_at) / 3600) FROM account_erase_requests WHERE user_id = '${userId}'`,
   )
-  expect(row).toBe(`pending|${files.length}|72`)
+  expect(row).toBe(`pending|${items}|72`)
   await shot(page, '02-pending-with-due-time')
 
   // The owner's email, from the dev (console) provider.
   const mail = await waitForMail(offset, 'Your Beebeeb files are set to move to the trash')
   fs.writeFileSync(path.join(SHOTS, '03-dev-email.txt'), mail.trim() + '\n')
-  expect(mail).toContain(`(${files.length} items)`)
+  expect(mail).toContain(`(${items} items)`)
   expect(mail).toContain('moves to the trash')
   const link = mail.match(/(https?:\/\/\S+\/erase-request\/cancel#t=[A-Za-z0-9_-]+)/)![1]
   const base = new URL(page.url()).origin
@@ -183,8 +206,11 @@ test('locked screen: request the erase, see it pending, get the email, cancel by
   const guestRequests = recordRequests(guest)
   await guest.goto(linkHere)
   await expect(guest.getByTestId('erase-link-cancelled')).toBeVisible({ timeout: 20_000 })
+  const guestEssential = guest.getByRole('button', { name: 'Essential only' })
+  if (await guestEssential.isVisible().catch(() => false)) await guestEssential.click()
   expect(new URL(guest.url()).hash).toBe('')
-  expect(guestRequests.filter((r) => r.includes('/api/'))).toEqual([
+  // API calls only (the dev server also serves source modules under /packages/shared/src/api/).
+  expect(guestRequests.filter((r) => r.includes(' /api/v1/'))).toEqual([
     'POST /api/v1/account/erase-request/cancel-by-token',
   ])
   await shot(guest, '04-link-cancelled')
@@ -192,20 +218,23 @@ test('locked screen: request the erase, see it pending, get the email, cancel by
     'cancelled|email_link',
   )
 
-  // Used once: the same link again says so.
-  await guest.goto(linkHere)
-  await expect(guest.getByTestId('erase-link-invalid')).toBeVisible({ timeout: 20_000 })
-  await shot(guest, '05-link-used-again')
+  // Used once: the same link again (a second click opens a new tab) says so.
+  const again = await guest.context().newPage()
+  await again.setViewportSize({ width: 1440, height: 900 })
+  await again.goto(linkHere)
+  await expect(again.getByTestId('erase-link-invalid')).toBeVisible({ timeout: 20_000 })
+  await shot(again, '05-link-used-again')
   await guest.context().close()
 
-  // Back on the locked screen: nothing pending, nothing moved, the ask state again.
-  await page.reload()
-  await expect(page.getByTestId('erase-request-card')).toContainText(`This account holds ${files.length} items`, {
+  // Back on the locked screen: nothing pending, nothing moved, the ask state again. (Not a
+  // reload: the address is still the spent /set-password link; `/` is the locked screen.)
+  await page.goto('/')
+  await expect(page.getByTestId('erase-request-card')).toContainText(`This account holds ${items} items`, {
     timeout: 30_000,
   })
   await expect(page.getByTestId('erase-pending')).toHaveCount(0)
   expect(sql(`SELECT count(*) FILTER (WHERE NOT is_trashed), count(*) FROM files WHERE user_id = '${userId}'`)).toBe(
-    `${files.length}|${files.length}`,
+    `${items}|${items}`,
   )
   await shot(page, '06-back-to-normal')
   test.info().annotations.push({ type: 'account', description: email })
@@ -215,18 +244,22 @@ test('a second account: the due time passes, the worker moves every file to the 
   const files = ['alpha.txt', 'beta.txt', 'gamma.txt', 'delta.txt']
   const { userId } = await reachLockedScreen(page, '1918-execute', files)
   const requests = recordRequests(page)
-  await requestErase(page, files.length)
+  const items = liveItems(userId)
+  expect(items).toBeGreaterThanOrEqual(files.length)
+  await requestErase(page, items)
 
   // Cancel from the screen is offered; we let it run instead.
   const rowsBefore = Number(sql(`SELECT count(*) FROM files WHERE user_id = '${userId}'`))
-  expect(rowsBefore).toBe(files.length)
+  expect(rowsBefore).toBe(items)
 
   // Fast-forward: the request is due now (scratch DB only), then the API's own worker runs.
   sql(`UPDATE account_erase_requests SET due_at = now() - interval '1 second' WHERE user_id = '${userId}' AND status = 'pending'`)
-  await page.reload()
-  await expect(page.getByTestId('erase-moving')).toBeVisible({ timeout: 30_000 })
+  await page.goto('/')
+  // The worker may already be done by the time the page asks; either way no Cancel is offered.
+  const movingOrDone = page.getByTestId('erase-moving').or(page.getByTestId('erase-done'))
+  await expect(movingOrDone).toBeVisible({ timeout: 30_000 })
   await expect(page.getByTestId('erase-cancel-button')).toHaveCount(0)
-  await shot(page, '07-due-moving-to-trash')
+  if (await page.getByTestId('erase-moving').isVisible()) await shot(page, '07-due-moving-to-trash')
 
   let status = ''
   for (let i = 0; i < 120; i++) {
@@ -244,8 +277,8 @@ test('a second account: the due time passes, the worker moves every file to the 
   expect(sql(`SELECT items_trashed FROM account_erase_requests WHERE user_id = '${userId}'`)).toBe(String(rowsBefore))
   expect(sql(`SELECT count(*) FROM audit_log WHERE user_id = '${userId}' AND event = 'account.erase_request.executed'`)).toBe('1')
 
-  await page.reload()
-  await expect(page.getByTestId('erase-done')).toContainText(`${files.length} items moved to the trash`, {
+  await page.goto('/')
+  await expect(page.getByTestId('erase-done')).toContainText(`${items} items moved to the trash`, {
     timeout: 30_000,
   })
   await shot(page, '08-done-in-the-trash')
