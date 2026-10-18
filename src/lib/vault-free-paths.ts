@@ -14,6 +14,8 @@ const VAULT_FREE: RegExp[] = [
   /^\/surveys\/[^/]+\/?$/,
   // Task 1918: the one-click cancel link of an erase request (the token is in the fragment).
   /^\/erase-request\/cancel\/?$/,
+  // Task 1918 round 3: the confirmation link of an erase request (the token is in the fragment).
+  /^\/erase-request\/verify\/?$/,
 ]
 
 export function isVaultFreePath(pathname: string): boolean {

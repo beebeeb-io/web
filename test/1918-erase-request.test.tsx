@@ -44,6 +44,9 @@ const PENDING = {
   due_at: '2026-10-21T10:00:00Z',
   item_count: 1240,
   cancellable: true,
+  // Round 3: a request with a due time is one the owner confirmed by email.
+  verified: true,
+  verify_expires_at: null,
 }
 
 function status(over: Partial<EraseStatus> = {}): EraseStatus {
@@ -53,6 +56,7 @@ function status(over: Partial<EraseStatus> = {}): EraseStatus {
     cooldown_hours: 72,
     trash_retention_days: 30,
     last_executed: null,
+    last_expired: null,
     ...over,
   }
 }
@@ -132,7 +136,7 @@ describe('what the card shows comes from the server status', () => {
   })
 
   test('no request: ask with the live count; nothing live: empty', () => {
-    expect(eraseCard(status())).toEqual({ kind: 'ask', liveItems: 1240 })
+    expect(eraseCard(status())).toEqual({ kind: 'ask', liveItems: 1240, expiredAt: null })
     expect(eraseCard(status({ live_items: 0 }))).toEqual({ kind: 'empty' })
   })
 
@@ -151,11 +155,13 @@ describe('the card says what happens and when (SSR markup)', () => {
   test('ask: the wait, the email, the trash, the retention, and the number to type', () => {
     const html = renderCard()
     expect(html).toContain('Erase all files')
-    expect(html).toContain('moves to the trash after a 72-hour wait')
+    // Round 3 (Guus 2026-10-18, "Verify link + 72 h"): the wait starts at the email confirmation.
+    expect(html).toContain('moves to the trash 72 hours later')
     expect(html).toContain('We email ')
     expect(html).toContain('owner@example.org')
-    expect(html).toContain('with a link to cancel')
-    expect(html).toContain('stay in the trash for 30 days')
+    expect(html).toContain('a link to confirm and a link to cancel')
+    expect(html).toContain('Nothing happens unless you confirm by email')
+    expect(html).toContain('stays there for 30 days')
     expect(html).toContain('Type <span class="font-mono">1240</span> to confirm')
     expect(html).not.toContain('permanently')
     expect(html).not.toContain('cannot be recovered')
@@ -171,10 +177,10 @@ describe('the card says what happens and when (SSR markup)', () => {
 
   test('pending: the due time, the item count and a Cancel button', () => {
     const html = renderCard({ card: eraseCard(status({ request: PENDING })) })
-    expect(html).toContain('Erase requested.')
+    expect(html).toContain('Erase confirmed.')
     expect(html).toContain(formatDue(PENDING.due_at))
     expect(html).toContain('(1240 items) moves to the trash')
-    expect(html).toContain('We emailed ')
+    expect(html).toContain('with the link in the email')
     expect(buttonTag(html, 'erase-cancel-button')).toContain('Cancel the erase')
     expect(buttonTag(html, 'erase-cancel-button')).not.toContain('disabled')
     expect(html).not.toContain('erase-request-button')

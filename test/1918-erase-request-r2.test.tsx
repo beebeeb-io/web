@@ -31,10 +31,13 @@ const PENDING = {
   due_at: '2026-10-21T10:00:00Z',
   item_count: 1240,
   cancellable: true,
+  // Round 3: a request with a due time is one the owner confirmed by email.
+  verified: true,
+  verify_expires_at: null,
 }
 
 function status(over: Partial<EraseStatus> = {}): EraseStatus {
-  return { request: null, live_items: 1240, cooldown_hours: 72, trash_retention_days: 30, last_executed: null, ...over }
+  return { request: null, live_items: 1240, cooldown_hours: 72, trash_retention_days: 30, last_executed: null, last_expired: null, ...over }
 }
 
 type Mod = Record<string, unknown>

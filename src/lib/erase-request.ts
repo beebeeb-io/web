@@ -16,6 +16,12 @@
  *     the normal retention applies. Nothing in this flow deletes anything;
  *   - until then any signed-in session (and this screen) can cancel it.
  *
+ * Round 3, Guus 2026-10-18: "Mm erase all files then requires email verify", and how:
+ * "Verify link + 72 h". A new request waits for the owner's click on the emailed verification
+ * link (`/erase-request/verify`); only then does the 72-hour countdown start. Unconfirmed after
+ * 24 hours, it expires. The card shows "check your email to confirm", then the due time and
+ * Cancel, or that the confirmation link expired.
+ *
  * Everything here is pure (no React, no `./api` import) so the decisions are unit-tested
  * without a browser; `vault-locked-no-key.tsx` and `erase-request-card.tsx` are thin shells.
  */
@@ -23,11 +29,22 @@
 export interface EraseRequestView {
   id: string
   requested_at: string
-  due_at: string
+  /** `null` until the owner confirmed by email; then the confirmation + 72 h. */
+  due_at: string | null
   /** The number the person confirmed. */
   item_count: number
   /** True until the due time; afterwards the files are moving to the trash. */
   cancellable: boolean
+  /** The owner clicked the emailed verification link (round 3). */
+  verified: boolean
+  /** Until when the verification link works; `null` once verified. */
+  verify_expires_at: string | null
+}
+
+/** A request that expired because nobody confirmed it by email (round 3). */
+export interface EraseExpired {
+  id: string
+  expired_at: string
 }
 
 export interface EraseExecuted {
@@ -43,6 +60,8 @@ export interface EraseStatus {
   cooldown_hours: number
   trash_retention_days: number
   last_executed: EraseExecuted | null
+  /** The last request that expired unconfirmed, within the last day (round 3). */
+  last_expired: EraseExpired | null
 }
 
 function isObj(v: unknown): v is Record<string, unknown> {
@@ -61,10 +80,31 @@ export function parseEraseRequest(raw: unknown): EraseRequestView | null {
   if (!isObj(raw)) return null
   const id = str(raw.id)
   const requested = str(raw.requested_at)
-  const due = str(raw.due_at)
+  const due = raw.due_at === null || raw.due_at === undefined ? null : str(raw.due_at)
   const count = int(raw.item_count)
-  if (!id || !requested || !due || count === null || typeof raw.cancellable !== 'boolean') return null
-  return { id, requested_at: requested, due_at: due, item_count: count, cancellable: raw.cancellable }
+  if (!id || !requested || count === null || typeof raw.cancellable !== 'boolean') return null
+  if (raw.due_at !== null && raw.due_at !== undefined && !due) return null
+  // A server from before round 3 sends no `verified`: its requests had a due time at once.
+  const verified = typeof raw.verified === 'boolean' ? raw.verified : due !== null
+  // A confirmed request always has a due time; an unconfirmed one never does.
+  if (verified !== (due !== null)) return null
+  const verifyUntil = raw.verify_expires_at === null || raw.verify_expires_at === undefined ? null : str(raw.verify_expires_at)
+  return {
+    id,
+    requested_at: requested,
+    due_at: due,
+    item_count: count,
+    cancellable: raw.cancellable,
+    verified,
+    verify_expires_at: verifyUntil,
+  }
+}
+
+function parseExpired(raw: unknown): EraseExpired | null {
+  if (!isObj(raw)) return null
+  const id = str(raw.id)
+  const at = str(raw.expired_at)
+  return id && at ? { id, expired_at: at } : null
 }
 
 function parseExecuted(raw: unknown): EraseExecuted | null {
@@ -90,6 +130,7 @@ export function parseEraseStatus(raw: unknown): EraseStatus | null {
     cooldown_hours: cooldown,
     trash_retention_days: retention,
     last_executed: parseExecuted(raw.last_executed),
+    last_expired: parseExpired(raw.last_expired),
   }
 }
 
@@ -130,11 +171,16 @@ export function formatDue(iso: string, opts: { locale?: string; timeZone?: strin
 
 /** What the erase card shows. */
 export type EraseCard =
-  /** Nothing pending; the account holds `liveItems` (> 0): type the number to ask. */
-  | { kind: 'ask'; liveItems: number }
+  /**
+   * Nothing pending; the account holds `liveItems` (> 0): type the number to ask. `expiredAt`:
+   * the last request lapsed because nobody confirmed it by email (round 3).
+   */
+  | { kind: 'ask'; liveItems: number; expiredAt: string | null }
   /** Nothing to erase. */
   | { kind: 'empty' }
-  /** Asked; cancellable until `due_at`. */
+  /** Asked, waiting for the owner's click on the emailed verification link (round 3). */
+  | { kind: 'awaiting'; request: EraseRequestView }
+  /** Confirmed by email; cancellable until `due_at`. */
   | { kind: 'pending'; request: EraseRequestView }
   /** The wait is over: the files are moving to the trash. */
   | { kind: 'moving'; request: EraseRequestView }
@@ -143,6 +189,7 @@ export type EraseCard =
 
 export function eraseCard(status: EraseStatus): EraseCard {
   if (status.request) {
+    if (!status.request.verified) return { kind: 'awaiting', request: status.request }
     return status.request.cancellable
       ? { kind: 'pending', request: status.request }
       : { kind: 'moving', request: status.request }
@@ -150,7 +197,7 @@ export function eraseCard(status: EraseStatus): EraseCard {
   if (status.live_items === 0) {
     return status.last_executed ? { kind: 'done', executed: status.last_executed } : { kind: 'empty' }
   }
-  return { kind: 'ask', liveItems: status.live_items }
+  return { kind: 'ask', liveItems: status.live_items, expiredAt: status.last_expired?.expired_at ?? null }
 }
 
 /** The error shape the shared `request()` client throws (`ApiError`), read structurally. */
@@ -300,11 +347,20 @@ export interface EraseRefreshPlan {
 const MAX_TIMER_MS = 2_147_483_647
 export const ERASE_POLL_MS = 60_000
 
+function msUntil(iso: string | null, nowMs: number): number | null {
+  if (!iso) return null
+  const at = Date.parse(iso)
+  return Number.isNaN(at) ? null : Math.min(Math.max(at - nowMs, 0) + 1_000, MAX_TIMER_MS)
+}
+
 export function eraseRefreshPlan(card: EraseCard | null, nowMs: number): EraseRefreshPlan {
   if (card?.kind === 'pending') {
-    const due = Date.parse(card.request.due_at)
-    const dueInMs = Number.isNaN(due) ? null : Math.min(Math.max(due - nowMs, 0) + 1_000, MAX_TIMER_MS)
-    return { pollMs: ERASE_POLL_MS, dueInMs }
+    return { pollMs: ERASE_POLL_MS, dueInMs: msUntil(card.request.due_at, nowMs) }
+  }
+  // Waiting for the email click: the poll shows the confirmation (made in another tab or on a
+  // phone), and the timer shows the expiry when the link stops working (round 3).
+  if (card?.kind === 'awaiting') {
+    return { pollMs: ERASE_POLL_MS, dueInMs: msUntil(card.request.verify_expires_at, nowMs) }
   }
   if (card?.kind === 'moving') return { pollMs: ERASE_POLL_MS, dueInMs: null }
   return { pollMs: null, dueInMs: null }

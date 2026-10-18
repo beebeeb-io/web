@@ -5,10 +5,12 @@ import { formatDue, itemsLabel, typedCountMatches, type EraseCard } from '../lib
  * Task 1918 — the "Erase all files" exit of the locked screen, drawn from server state only.
  *
  * What it says is what happens (Guus, 2026-10-17: "Files should NEVER go missing"): nothing is
- * deleted here. A request waits `cooldownHours` (72), the account address gets an email with a
- * cancel link at once, then every file and folder moves to the trash, where it stays for
- * `retentionDays` before it is deleted for good. The person types the number of items the
- * server counted, then confirms with their password (the parent opens the step-up).
+ * deleted here. The person types the number of items the server counted and confirms with their
+ * password (the parent opens the step-up). Round 3 (Guus 2026-10-18, "Verify link + 72 h"): the
+ * account address then gets an email with a confirmation link and a cancel link; nothing counts
+ * down until the owner confirms. After that every file and folder moves to the trash
+ * `cooldownHours` (72) later, where it stays for `retentionDays` before it is deleted for good.
+ * Unconfirmed within a day, the request lapses, and the card says so.
  *
  * Pure presentation: `vault-locked-no-key.tsx` owns the state and the calls.
  */
@@ -60,10 +62,16 @@ export function EraseRequestCard(props: EraseRequestCardProps) {
 
       {card?.kind === 'ask' && (
         <>
+          {card.expiredAt && (
+            <p className="text-[12px] text-ink-2 leading-relaxed mb-2" data-testid="erase-expired">
+              The confirmation link of your last request expired on {formatDue(card.expiredAt)}, so nothing was
+              scheduled and nothing moved. You can ask again.
+            </p>
+          )}
           <p className="text-[12px] text-ink-3 leading-relaxed mb-2">
-            Every file and folder moves to the trash after a {cooldownHours}-hour wait. We email {address}{' '}
-            right away, with a link to cancel. The files then stay in the trash for {retentionDays} days, where
-            they can still be restored, before they are deleted for good.
+            We email {address} a link to confirm and a link to cancel. Nothing happens unless you confirm by
+            email. Once you do, every file and folder moves to the trash {cooldownHours} hours later, and stays
+            there for {retentionDays} days, where it can still be restored, before it is deleted for good.
           </p>
           <p className="text-[12px] text-ink-2 leading-relaxed mb-2">
             This account holds <span className="font-mono">{card.liveItems}</span>{' '}
@@ -97,15 +105,43 @@ export function EraseRequestCard(props: EraseRequestCardProps) {
         </>
       )}
 
-      {card?.kind === 'pending' && (
+      {card?.kind === 'awaiting' && (
+        <div data-testid="erase-awaiting">
+          <p className="text-[12px] text-ink-2 leading-relaxed mb-1">
+            Check your email to confirm. We sent a confirmation link to {address}.
+          </p>
+          <p className="text-[12px] text-ink-3 leading-relaxed mb-2.5">
+            Nothing happens unless you confirm
+            {card.request.verify_expires_at ? (
+              <>
+                , by <span className="text-ink">{formatDue(card.request.verify_expires_at)}</span>
+              </>
+            ) : null}
+            . Once you do, every file and folder ({itemsLabel(card.request.item_count)}) moves to the trash{' '}
+            {cooldownHours} hours later. Didn't ask for this? Cancel it here or with the link in the email.
+          </p>
+          <BBButton
+            type="button"
+            variant="default"
+            size="sm"
+            onClick={props.onCancel}
+            disabled={props.busy}
+            data-testid="erase-cancel-button"
+          >
+            {props.busy ? 'Cancelling…' : 'Cancel the request'}
+          </BBButton>
+        </div>
+      )}
+
+      {card?.kind === 'pending' && card.request.due_at && (
         <div data-testid="erase-pending">
           <p className="text-[12px] text-ink-2 leading-relaxed mb-1">
-            Erase requested. On <span className="text-ink">{formatDue(card.request.due_at)}</span> every file and
+            Erase confirmed. On <span className="text-ink">{formatDue(card.request.due_at)}</span> every file and
             folder ({itemsLabel(card.request.item_count)}) moves to the trash.
           </p>
           <p className="text-[12px] text-ink-3 leading-relaxed mb-2.5">
-            We emailed {address} a link to cancel. You can also cancel here, or from any device where you are
-            signed in, until then.
+            You can cancel it here, with the link in the email, or from any device where you are signed in,
+            until then.
           </p>
           <BBButton
             type="button"

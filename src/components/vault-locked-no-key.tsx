@@ -50,9 +50,12 @@ import { clearPostResetLock } from '../lib/post-reset-lock'
  *        - Cancel subscription  — POST /billing/cancel, no step-up needed.
  *        - Erase all files      — task 1918: a SERVER-side request, never a delete
  *          from the browser. Typed item count + password step-up; the server
- *          emails the account address at once with a cancel link, waits 72 h,
- *          then moves every file to the TRASH (normal retention). This screen
- *          shows the pending request with its due time and a Cancel button.
+ *          emails the account address at once with a confirmation link and a
+ *          cancel link. Nothing counts down until the owner confirms (round 3,
+ *          Guus 2026-10-18: "Verify link + 72 h"); 72 h after the confirmation
+ *          every file moves to the TRASH (normal retention). Unconfirmed for
+ *          24 h, the request lapses. This screen shows "check your email",
+ *          then the due time and a Cancel button, or that the link expired.
  *          Guus, 2026-10-17: "Files should NEVER go missing" / "the code and
  *          all apps should just not delete random stuff" — this supersedes the
  *          1704 open-question #7 default ("explicit confirmation, no time
@@ -473,7 +476,7 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
         description={
           stepUpKind === 'account'
             ? 'Enter your password to delete your account. This cannot be undone.'
-            : `Enter your password to request the erase. Nothing moves for ${eraseStatus?.cooldown_hours ?? 72} hours, and we email you a link to cancel.`
+            : `Enter your password to request the erase. We then email you a link to confirm it: nothing moves unless you do, and then not for ${eraseStatus?.cooldown_hours ?? 72} hours.`
         }
         submitLabel={
           stepUpKind === 'account' ? 'Delete account' : 'Request erase'
