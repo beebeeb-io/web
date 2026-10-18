@@ -9,9 +9,11 @@
  * and never opens. Core decides (`resume_policy(stored, writing)`): continue
  * ONLY a v1 session resumed by a v1 writer, and only when the resume record
  * says the session holds v1 frames; everything else, including a record that
- * does not say (written before this change), restarts: abandon the old
- * session, init a fresh one for the same file id, upload from chunk 0, and
- * never PUT into the old session again.
+ * does not say (written before this change), restarts: init a fresh session
+ * for the same file id, upload from chunk 0, and never PUT into the old
+ * session again. The restart never calls the file-wide abandon (round 4,
+ * test/1943-restart-no-file-abandon.test.ts): the init takes over an expired
+ * lease and answers 409 to a live one.
  *
  * Web's side, driven through the real `encryptedUpload`:
  *   - the resume record carries the format of the frames the session holds
@@ -192,12 +194,12 @@ describe('resuming obeys core’s resume rule', () => {
     expect(cap.puts.map((p) => p.session)).toEqual(['old-session'])
   })
 
-  test('a record from before this change (no chunk_format) RESTARTS: abandon, fresh init, chunk 0, never the old session', async () => {
+  test('a record from before this change (no chunk_format) RESTARTS: fresh init, chunk 0, never the old session, no file-wide abandon', async () => {
     const id = '1943feed-0000-4000-8000-000000000003'
     stored = record({ fileId: id, chunk_format: undefined })
     await upload(id, new Uint8Array(32).fill(3))
     expect(cap.events).toContain('policy(none)=restart')
-    expect(cap.abandons).toEqual([id])
+    expect(cap.abandons).toEqual([])
     expect(cap.inits).toEqual([id])
     expect(cap.puts.map((p) => p.session)).toEqual(['fresh-session'])
     expect(cap.removed).toContain(id)
@@ -209,7 +211,7 @@ describe('resuming obeys core’s resume rule', () => {
     stored = record({ chunk_format: 2, replace_pin: 2, replace_pin_file_id: V2_FILE_ID })
     await upload(V2_FILE_ID, V2_KEY, undefined, V2_FILE_ID)
     expect(cap.events.filter((e) => e.startsWith('policy'))).toEqual(['policy(2)=restart'])
-    expect(cap.abandons).toEqual([V2_FILE_ID])
+    expect(cap.abandons).toEqual([])
     expect(cap.puts.map((p) => p.session)).toEqual(['fresh-session'])
     // both encryptors (the refused one and the restarted one) wrote with pin 2
     expect(cap.events.filter((e) => e === 'pin:2')).toHaveLength(2)
@@ -231,5 +233,8 @@ describe('resuming obeys core’s resume rule', () => {
     }
     await expect(upload('1943feed-0000-4000-8000-000000000004', new Uint8Array(32).fill(4))).rejects.toThrow()
     expect(cap.puts).toEqual([])
+    expect(cap.abandons).toEqual([])
+    // the paused upload's record is kept for a later retry
+    expect(cap.removed).not.toContain('1943feed-0000-4000-8000-000000000004')
   })
 })

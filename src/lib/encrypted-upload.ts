@@ -9,8 +9,9 @@ import { expectedUserHeaders } from '@beebeeb/shared'
 // server status, while v2 uploads reuse the stored upload session and rely on
 // idempotent chunk PUTs. Since task 1943 a resume first asks core's resume
 // rule (`resumePolicy`): only a v1 session resumed by a v1 writer continues;
-// anything else abandons the old session and uploads from chunk 0 into a
-// fresh one (a v2 writer's frames bind a new version id).
+// anything else leaves the old session alone and uploads from chunk 0 into a
+// fresh one (a v2 writer's frames bind a new version id); the server's init
+// takes over the old session once its lease has expired.
 
 import {
   CHUNK_SIZE,
@@ -24,7 +25,7 @@ import {
   UnverifiedFileMetadataError,
   type ContentPin,
 } from './crypto'
-import { initUpload, uploadChunk, completeUpload, getUploadStatus, updateFile, abandonUpload } from './api'
+import { initUpload, uploadChunk, completeUpload, getUploadStatus, updateFile } from './api'
 import { withNetworkRetry } from './net-retry'
 import type { DriveFile } from './api'
 import {
@@ -94,7 +95,8 @@ interface EncryptedUploadOptions {
 
 /**
  * Core said the stored session must not be continued (task 1943): the caller
- * abandons it and uploads from chunk 0 into a fresh session. Internal signal.
+ * never PUTs into it again and uploads from chunk 0 into a fresh session.
+ * Internal signal.
  */
 class SessionRestartRequired extends Error {
   constructor() {
@@ -398,21 +400,25 @@ async function uploadFile(
   }
 
   /**
-   * Core said restart: never PUT into the old session again. Abandon it (a
-   * replace reverts to the previous version, a never-completed first upload
-   * is deleted), drop its resume record, init a fresh session for the same
-   * file id and record it. If the old lease is still live elsewhere the init
-   * answers 409 and the upload fails here, untouched.
+   * Core said restart: never PUT into the old session again. Init a fresh
+   * session for the same file id and record it, then upload from chunk 0.
+   *
+   * The old session is NOT abandoned from here. The only abandon the server
+   * offers is file-wide (`POST /files/{id}/upload/abandon` takes no session
+   * id): it reverts or deletes whatever upload the file holds NOW, which may
+   * be another tab's or device's live upload rather than the session this
+   * stale record names (Codex P1, web#170). The init decides instead: a
+   * session whose lease expired is taken over inside the init (the server's
+   * own abandon core), and a live one answers 409, so the upload fails here
+   * with nothing touched.
+   *
+   * The old resume record is kept until the fresh init has succeeded and its
+   * own record is written (same file id: the write replaces it). If the init
+   * fails (offline, a timeout, the 409 above) the paused upload stays on
+   * offer and can be retried (Codex P2, web#170).
    */
   async function restartInFreshSession(): Promise<void> {
     const id = serverFileId
-    try {
-      await abandonUpload(id)
-    } catch {
-      // Nothing to abandon (the lease expired and the session was swept, or
-      // there is no upload in progress): the init below decides.
-    }
-    await removeUploadState(id).catch(() => {})
     skipChunks = new Set()
     uploadSessionId = null
     objectVersionId = null
@@ -421,6 +427,8 @@ async function uploadFile(
     region = null
     await startUpload(id)
     await persistResumeState()
+    // Answered under another id: the old id's record is a different entry.
+    if (serverFileId !== id) await removeUploadState(id).catch(() => {})
   }
 
   // Transfers every chunk against the CURRENT session and completes it. Run

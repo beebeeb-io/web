@@ -227,7 +227,7 @@ describe('a replace answered with another file id is a new file: its pin stays w
     await upload(V2_FILE_ID, V2_KEY, undefined, V2_FILE_ID)
 
     expect(cap.events).toContain('policy(none)=restart')
-    expect(cap.abandons).toEqual([V2_FILE_ID])
+    expect(cap.abandons).toEqual([])
     // the pin went to the replaced file's (refused) encryptor only
     expect(cap.events.filter((e) => e.startsWith('pin:'))).toEqual([`pin:2@${V2_FILE_ID}`])
     expect(cap.puts).toEqual([{ fileId: NEW_ID, session: 'restart-session' }])
