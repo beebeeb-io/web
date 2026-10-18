@@ -425,8 +425,22 @@ test('a second account: confirmed, the due time passes, every file moves to the 
   offset = mailLog().length
   sql(`UPDATE account_erase_requests SET due_at = now() - interval '1 second' WHERE user_id = '${userId}' AND status = 'pending'`)
   await page.goto('/')
-  // The worker may already be done by the time the page asks; either way no Cancel is offered.
+  // Round 4: past the due time, until the executor STARTS, it is still cancellable (the worker runs
+  // once a minute, and a frozen account would hold it here for as long as it stays frozen).
+  if (sql(`SELECT started_at IS NULL FROM account_erase_requests WHERE user_id = '${userId}'`) === 't') {
+    const pastDue = page.getByTestId('erase-pending')
+    if (await pastDue.isVisible().catch(() => false)) {
+      await expect(pastDue).toContainText('The wait is over')
+      await expect(page.getByTestId('erase-cancel-button')).toBeVisible()
+      await shot(page, '13a-past-due-still-cancellable')
+    }
+  }
+  // Then the worker runs: moving, or already done. Once it started, no Cancel is offered.
   const movingOrDone = page.getByTestId('erase-moving').or(page.getByTestId('erase-done'))
+  for (let i = 0; i < 15 && !(await movingOrDone.isVisible().catch(() => false)); i++) {
+    await page.waitForTimeout(10_000)
+    await page.goto('/')
+  }
   await expect(movingOrDone).toBeVisible({ timeout: 30_000 })
   await expect(page.getByTestId('erase-cancel-button')).toHaveCount(0)
   if (await page.getByTestId('erase-moving').isVisible()) await shot(page, '13-due-moving-to-trash')
@@ -489,4 +503,43 @@ test('a second account: confirmed, the due time passes, every file moves to the 
     path.join(SHOTS, '18-db-before-after.txt'),
     `user ${userId}\nfile rows before: ${rowsBefore}\nafter the erase (rows|trashed|live): ${after}\nafter restore everything (rows|live|trashed): ${back}\n`,
   )
+})
+
+test('a third account: the cancel link cancels a confirmed erase with one click, never on load', async ({ page, browser }) => {
+  const { userId } = await reachLockedScreen(page, '1918-cancel-click', ['solo.txt', 'duo.txt'])
+  const origin = new URL(page.url()).origin
+  const items = liveItems(userId)
+  let offset = mailLog().length
+  await requestErase(page, items)
+  const notice = await waitForMail(offset, NOTICE_SUBJECT)
+  offset = mailLog().length
+  const confirmGuest = await confirmByLink(browser, linkIn(notice, 'verify', origin), userId)
+  await confirmGuest.context().close()
+  // The confirmation email's own cancel link (the second token), opened signed out.
+  const confirmed = await waitForMail(offset, CONFIRMED_SUBJECT)
+  const cancelLink = linkIn(confirmed, 'cancel', origin)
+
+  const { guest, requests } = await freshGuest(browser)
+  await guest.goto(cancelLink)
+  await expect(guest.getByTestId('erase-link-ready')).toBeVisible({ timeout: 20_000 })
+  await dismissCookies(guest)
+  await guest.waitForTimeout(2_000)
+  expect(apiCalls(requests)).toEqual([])
+  expect(sql(`SELECT status FROM account_erase_requests WHERE user_id = '${userId}'`)).toBe('pending')
+  await shot(guest, '19-cancel-link-ready')
+
+  const answered = guest.waitForResponse((r) => r.url().endsWith('/api/v1/account/erase-request/cancel-by-token'))
+  await guest.getByTestId('erase-link-cancel').click()
+  expect((await answered).status()).toBe(200)
+  await expect(guest.getByTestId('erase-link-cancelled')).toBeVisible({ timeout: 20_000 })
+  expect(apiCalls(requests)).toEqual(['POST /api/v1/account/erase-request/cancel-by-token'])
+  expect(sql(`SELECT status, cancelled_via FROM account_erase_requests WHERE user_id = '${userId}'`)).toBe(
+    'cancelled|email_link',
+  )
+  await shot(guest, '20-cancel-link-cancelled')
+  await guest.context().close()
+
+  await page.goto('/')
+  await expect(page.getByTestId('erase-request-card')).toContainText(`This account holds ${items}`, { timeout: 30_000 })
+  expect(sql(`SELECT count(*) FILTER (WHERE NOT is_trashed) FROM files WHERE user_id = '${userId}'`)).toBe(String(items))
 })
