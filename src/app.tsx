@@ -64,6 +64,7 @@ const Billing        = lazyNamed(() => import('./pages/billing'),        'Billin
 const ChoosePlan     = lazyNamed(() => import('./pages/choose-plan'),    'ChoosePlan')
 const ReturnToApp    = lazyNamed(() => import('./pages/return-to-app'),  'ReturnToApp')
 const SurveyPage     = lazyNamed(() => import('./pages/survey'),         'SurveyPage')
+const EraseRequestCancelPage = lazyNamed(() => import('./pages/erase-request-cancel'), 'EraseRequestCancelPage')
 const ShareViewPage  = lazyNamed(() => import('./pages/share-view'),     'ShareViewPage')
 const ForgotPassword = lazyNamed(() => import('./pages/forgot-password'),'ForgotPassword')
 const ResetPassword  = lazyNamed(() => import('./pages/reset-password'), 'ResetPassword')
@@ -415,6 +416,7 @@ const PUBLIC_ROUTE_PATTERNS: RegExp[] = [
   /^\/cookies(\/|$)/,
   /^\/return-to-app(\/|$)/, // checkout return page for native apps (task 1743)
   /^\/surveys\//, // exit survey: the emailed link is the credential (task 1920)
+  /^\/erase-request\/cancel(\/|$)/, // erase-request cancel link (task 1918)
 ]
 function isPublicPath(pathname: string): boolean {
   return PUBLIC_ROUTE_PATTERNS.some((re) => re.test(pathname))
@@ -540,6 +542,7 @@ function VaultFreePages({ children }: { children: ReactNode }) {
     >
       <Routes>
         <Route path="/surveys/:id" element={<SurveyPage />} />
+        <Route path="/erase-request/cancel" element={<EraseRequestCancelPage />} />
       </Routes>
     </Suspense>
   )

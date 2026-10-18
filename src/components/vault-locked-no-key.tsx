@@ -1,7 +1,8 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AuthShell } from './auth-shell'
 import { BBButton, BBCheckbox, BBInput, Icon } from '@beebeeb/shared'
+import { EraseRequestCard } from './erase-request-card'
 import { StepUpAuth } from './step-up-auth'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
@@ -9,13 +10,21 @@ import { DeviceProvision } from './device-provision'
 import { prepareInPlacePhraseUnlock } from '../lib/locked-phrase-unlock'
 import {
   ApiError,
-  bulkPermanentDelete,
-  bulkTrashFiles,
+  cancelEraseRequest,
   cancelSubscription,
+  createEraseRequest,
   deleteAccountPermanently,
-  listAllFiles,
+  getEraseRequest,
 } from '../lib/api'
-import { executeDeleteAllData, type WipeResult } from '../lib/locked-state-exits'
+import {
+  cancelErase,
+  eraseCard,
+  parseEraseStatus,
+  parseTypedCount,
+  requestErase,
+  type EraseDeps,
+  type EraseStatus,
+} from '../lib/erase-request'
 import { clearPostResetLock } from '../lib/post-reset-lock'
 
 /**
@@ -33,12 +42,17 @@ import { clearPostResetLock } from '../lib/post-reset-lock'
  *   1. Primary re-entry: the 12-word recovery phrase via the canonical
  *      /recover-with-phrase route (which re-wraps the vault under the new
  *      password and makes this device normal again).
- *   2. Self-service exits, each behind an explicit inline confirmation gate
- *      (ruling open-question #7 default: explicit confirmation, no time delay
- *      in release 1):
+ *   2. Self-service exits, each behind an explicit inline confirmation gate:
  *        - Cancel subscription  — POST /billing/cancel, no step-up needed.
- *        - Delete all data      — trash + bulk permanent delete, one single-use
- *          step-up token per server batch, verified by re-listing the server.
+ *        - Erase all files      — task 1918: a SERVER-side request, never a delete
+ *          from the browser. Typed item count + password step-up; the server
+ *          emails the account address at once with a cancel link, waits 72 h,
+ *          then moves every file to the TRASH (normal retention). This screen
+ *          shows the pending request with its due time and a Cancel button.
+ *          Guus, 2026-10-17: "Files should NEVER go missing" / "the code and
+ *          all apps should just not delete random stuff" — this supersedes the
+ *          1704 open-question #7 default ("explicit confirmation, no time
+ *          delay"); the screen no longer calls /files/permanent at all.
  *        - Delete account       — existing account deletion step-up (the fresh
  *          password works for it); ends logged out.
  *
@@ -51,6 +65,9 @@ import { clearPostResetLock } from '../lib/post-reset-lock'
  */
 
 type ExitState = 'idle' | 'working' | 'done' | 'error'
+
+/** The erase request transport (task 1918): the server decides, the browser only asks. */
+const ERASE_DEPS: EraseDeps = { create: createEraseRequest, cancel: cancelEraseRequest }
 
 interface VaultLockedNoKeyProps {
   /** Escape hatch: show the normal password form (the old password may still
@@ -92,12 +109,13 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
   const [cancelError, setCancelError] = useState('')
   const [cancelEndsOn, setCancelEndsOn] = useState<string | null>(null)
 
-  // ── exit 2: delete all data ──
-  const [wipeGate, setWipeGate] = useState(false)
-  const [wipeState, setWipeState] = useState<ExitState>('idle')
-  const [wipeProgress, setWipeProgress] = useState('')
-  const [wipeError, setWipeError] = useState('')
-  const [wipeResult, setWipeResult] = useState<WipeResult | null>(null)
+  // ── exit 2: erase all files (task 1918: a server-side request) ──
+  const [eraseStatus, setEraseStatus] = useState<EraseStatus | null>(null)
+  const [eraseLoadError, setEraseLoadError] = useState('')
+  const [eraseTyped, setEraseTyped] = useState('')
+  const [eraseBusy, setEraseBusy] = useState(false)
+  const [eraseNote, setEraseNote] = useState('')
+  const [eraseError, setEraseError] = useState('')
 
   // ── exit 3: delete account ──
   const [accountGate, setAccountGate] = useState(false)
@@ -105,12 +123,10 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
   const [accountState, setAccountState] = useState<ExitState>('idle')
   const [accountError, setAccountError] = useState('')
 
-  // The one step-up dialog (destructive exits share it): 'wipe' opens the
-  // erase flow; 'wipe-continue' is a FRESH single-use token for an erase
-  // batch beyond the first; 'account' opens the account-deletion flow.
-  type StepUpKind = 'wipe' | 'wipe-continue' | 'account'
+  // The one step-up dialog: 'erase' files the erase request; 'account' opens
+  // the account-deletion flow.
+  type StepUpKind = 'erase' | 'account'
   const [stepUpKind, setStepUpKind] = useState<StepUpKind | null>(null)
-  const pendingTokenRef = useRef<{ resolve: (t: string) => void; reject: (e: unknown) => void } | null>(null)
 
   const handleCancelSubscription = useCallback(async () => {
     if (!cancelGate || cancelState === 'working') return
@@ -126,44 +142,53 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
     }
   }, [cancelGate, cancelState])
 
-  /** A fresh single-use step-up token for an erase batch beyond the first.
-   *  Opens the dialog and resolves when the user confirms; rejects if they
-   *  close it, so the orchestration stops honestly instead of hanging. */
-  const nextWipeToken = useCallback((): Promise<string> => {
-    return new Promise<string>((resolve, reject) => {
-      pendingTokenRef.current = { resolve, reject }
-      setStepUpKind('wipe-continue')
-    })
+  const loadEraseStatus = useCallback(async () => {
+    setEraseLoadError('')
+    try {
+      const status = parseEraseStatus(await getEraseRequest())
+      if (!status) throw new Error('unexpected answer')
+      setEraseStatus(status)
+    } catch {
+      setEraseLoadError('We could not check what this account holds. Try again.')
+    }
   }, [])
 
-  const runWipe = useCallback(async (token: string) => {
-    setWipeState('working')
-    setWipeError('')
-    setWipeResult(null)
-    setWipeProgress('Looking up what is on the server…')
-    try {
-      const result = await executeDeleteAllData({
-        listFileIds: async (trashed) => {
-          const files = await listAllFiles(undefined, { trashed })
-          return files.map((f) => f.id)
-        },
-        trashFiles: bulkTrashFiles,
-        permanentDelete: bulkPermanentDelete,
-        initialToken: token,
-        nextToken: nextWipeToken,
-        onProgress: setWipeProgress,
-      })
-      setWipeResult(result)
-      setWipeState('done')
-    } catch (e) {
-      setWipeError(
-        e instanceof Error
-          ? `Erasing failed: ${e.message}. Anything already erased stays erased — try again to finish.`
-          : 'Erasing failed. Anything already erased stays erased — try again to finish.',
-      )
-      setWipeState('error')
+  useEffect(() => {
+    void loadEraseStatus()
+  }, [loadEraseStatus])
+
+  const runEraseRequest = useCallback(async (token: string) => {
+    const count = parseTypedCount(eraseTyped)
+    if (count === null) return
+    setEraseBusy(true)
+    setEraseError('')
+    setEraseNote('')
+    const outcome = await requestErase(ERASE_DEPS, count, token)
+    setEraseBusy(false)
+    if (outcome.kind === 'requested') {
+      setEraseTyped('')
+      await loadEraseStatus()
+    } else if (outcome.kind === 'count_changed') {
+      setEraseTyped('')
+      setEraseStatus((s) => (s ? { ...s, live_items: outcome.liveItems } : s))
+      setEraseNote(`The number changed: the account now holds ${outcome.liveItems}. Nothing was scheduled. Type the new number to continue.`)
+    } else {
+      setEraseError(outcome.message)
     }
-  }, [nextWipeToken])
+  }, [eraseTyped, loadEraseStatus])
+
+  const handleEraseCancel = useCallback(async () => {
+    setEraseBusy(true)
+    setEraseError('')
+    setEraseNote('')
+    const outcome = await cancelErase(ERASE_DEPS)
+    setEraseBusy(false)
+    if (outcome.kind === 'cancelled') setEraseNote('Cancelled. Nothing will be moved to the trash.')
+    else if (outcome.kind === 'nothing_pending') setEraseNote('There is no erase request any more. Nothing will be moved.')
+    else if (outcome.kind === 'already_started') setEraseNote('The wait is over, so it can no longer be cancelled here.')
+    else setEraseError(outcome.message)
+    await loadEraseStatus()
+  }, [loadEraseStatus])
 
   const runAccountDeletion = useCallback(async (token: string) => {
     setAccountState('working')
@@ -187,25 +212,14 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
 
   const handleStepUpConfirmed = useCallback((token: string) => {
     const kind = stepUpKind
-    if (kind === 'wipe-continue') {
-      // Resolve the waiting orchestration; it closes its own bookkeeping.
-      pendingTokenRef.current?.resolve(token)
-      pendingTokenRef.current = null
-      setStepUpKind(null)
-      return
-    }
     setStepUpKind(null)
-    if (kind === 'wipe') void runWipe(token)
+    if (kind === 'erase') void runEraseRequest(token)
     if (kind === 'account') void runAccountDeletion(token)
-  }, [stepUpKind, runWipe, runAccountDeletion])
+  }, [stepUpKind, runEraseRequest, runAccountDeletion])
 
   const handleStepUpClosed = useCallback(() => {
-    if (stepUpKind === 'wipe-continue' && pendingTokenRef.current) {
-      pendingTokenRef.current.reject(new Error('Confirmation cancelled'))
-      pendingTokenRef.current = null
-    }
     setStepUpKind(null)
-  }, [stepUpKind])
+  }, [])
 
   const handleTryPreviousPassword = useCallback(() => {
     clearPostResetLock()
@@ -283,14 +297,14 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
         <p className="text-[12.5px] text-ink-3 leading-relaxed mb-2">
           Without the vault key, the files can never be opened again — by
           anyone. You can still close things out properly: stop the billing,
-          erase the data, or delete the account. Every exit below is final and
-          asks for its confirmation first.
+          erase the files, or delete the account. Each asks for its
+          confirmation first.
         </p>
         <p className="text-[12px] text-ink-4 leading-relaxed mb-4">
           We can't show a readable list of your files here — names are
           encrypted — so per-file deletion isn't offered in this state. Use
-          Delete all data to erase everything, or unlock with your phrase to
-          delete files individually.
+          Erase all files to move everything to the trash, or unlock with your
+          phrase to delete files individually.
         </p>
 
         {/* Exit 1 — cancel subscription */}
@@ -335,61 +349,22 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
           {cancelState === 'error' && <p className="text-[12px] text-red">{cancelError}</p>}
         </div>
 
-        {/* Exit 2 — delete all data */}
-        <div className="rounded-lg border border-line bg-paper-2 px-3.5 py-3 mb-2.5">
-          <div className="flex items-center gap-2 mb-1">
-            <Icon name="trash" size={13} className="text-ink-3 shrink-0" />
-            <span className="text-[13px] font-medium text-ink">Delete all data</span>
-          </div>
-          <p className="text-[12px] text-ink-3 leading-relaxed mb-2.5">
-            Permanently erases every file and folder from the server.
-            Everything is erased — there is no selection here.
-          </p>
-          {wipeState !== 'done' && (
-            <>
-              <BBCheckbox
-                checked={wipeGate}
-                onChange={setWipeGate}
-                label="I understand every file is erased permanently and cannot be recovered."
-                className="mb-2.5"
-              />
-              <BBButton
-                type="button"
-                variant="danger"
-                size="sm"
-                onClick={() => setStepUpKind('wipe')}
-                disabled={!wipeGate || wipeState === 'working'}
-              >
-                {wipeState === 'working' ? 'Erasing…' : 'Erase all files'}
-              </BBButton>
-            </>
-          )}
-          {/* A done state with leftovers (verification failed) must keep the
-              retry affordance — "finished" is only claimed when the server
-              was re-listed empty. */}
-          {wipeState === 'done' && wipeResult && !wipeResult.verifiedEmpty && (
-            <BBButton
-              type="button"
-              variant="danger"
-              size="sm"
-              onClick={() => setStepUpKind('wipe')}
-              disabled={!wipeGate}
-            >
-              Try again
-            </BBButton>
-          )}
-          {wipeState === 'working' && wipeProgress && (
-            <p className="text-[12px] text-ink-3 mt-2">{wipeProgress}</p>
-          )}
-          {wipeState === 'done' && wipeResult && (
-            <p className="text-[12px] text-ink-2 mt-2">
-              {wipeResult.verifiedEmpty
-                ? `Every file is erased — the server holds no data for your account (${wipeResult.erased} erased).`
-                : `Finished, but ${wipeResult.remaining} item(s) are still on the server. Try again to finish.`}
-            </p>
-          )}
-          {wipeState === 'error' && <p className="text-[12px] text-red mt-2">{wipeError}</p>}
-        </div>
+        {/* Exit 2 — erase all files: a server-side request (task 1918) */}
+        <EraseRequestCard
+          card={eraseStatus ? eraseCard(eraseStatus) : null}
+          loadError={eraseLoadError}
+          email={user?.email ?? null}
+          cooldownHours={eraseStatus?.cooldown_hours ?? 72}
+          retentionDays={eraseStatus?.trash_retention_days ?? 30}
+          typed={eraseTyped}
+          onTypedChange={setEraseTyped}
+          onRequest={() => setStepUpKind('erase')}
+          onCancel={() => void handleEraseCancel()}
+          onRetryLoad={() => void loadEraseStatus()}
+          busy={eraseBusy}
+          note={eraseNote}
+          error={eraseError}
+        />
 
         {/* Exit 3 — delete account */}
         <div className="rounded-lg border border-line bg-paper-2 px-3.5 py-3">
@@ -438,16 +413,10 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
         description={
           stepUpKind === 'account'
             ? 'Enter your password to delete your account. This cannot be undone.'
-            : stepUpKind === 'wipe-continue'
-              ? 'Enter your password to continue erasing — each batch needs a fresh confirmation.'
-              : 'Enter your password to erase every file. This cannot be undone.'
+            : `Enter your password to request the erase. Nothing moves for ${eraseStatus?.cooldown_hours ?? 72} hours, and we email you a link to cancel.`
         }
         submitLabel={
-          stepUpKind === 'account'
-            ? 'Delete account'
-            : stepUpKind === 'wipe-continue'
-              ? 'Continue erasing'
-              : 'Erase all files'
+          stepUpKind === 'account' ? 'Delete account' : 'Request erase'
         }
         onConfirmed={handleStepUpConfirmed}
         onClose={handleStepUpClosed}

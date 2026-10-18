@@ -1565,6 +1565,28 @@ export async function deleteAccountPermanently(
   return data
 }
 
+// Task 1918: "Erase all files" from the locked screen is a server-side request with a
+// cooldown that only ever moves files to the trash (pure logic: `./erase-request.ts`).
+
+/** `GET /api/v1/account/erase-request`: the pending request (or null) and the live item count. */
+export async function getEraseRequest(): Promise<unknown> {
+  return request<unknown>('/api/v1/account/erase-request')
+}
+
+/** `POST /api/v1/account/erase-request`: `confirmCount` must equal the server's live item count. */
+export async function createEraseRequest(confirmCount: number, confirmToken: string): Promise<unknown> {
+  return request<unknown>('/api/v1/account/erase-request', {
+    method: 'POST',
+    headers: { 'X-Confirm-Token': confirmToken },
+    body: JSON.stringify({ confirm_count: confirmCount }),
+  })
+}
+
+/** `POST /api/v1/account/erase-request/cancel`: any signed-in session of the account. */
+export async function cancelEraseRequest(): Promise<unknown> {
+  return request<unknown>('/api/v1/account/erase-request/cancel', { method: 'POST' })
+}
+
 export async function changeEmail(
   newEmail: string,
   password: string,

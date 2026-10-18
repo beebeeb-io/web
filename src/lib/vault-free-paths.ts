@@ -10,7 +10,11 @@
  * Only exact shapes are listed; anything near them (`/surveys`, `/surveys/x/y`) falls through to the
  * normal app and its normal 404.
  */
-const VAULT_FREE: RegExp[] = [/^\/surveys\/[^/]+\/?$/]
+const VAULT_FREE: RegExp[] = [
+  /^\/surveys\/[^/]+\/?$/,
+  // Task 1918: the one-click cancel link of an erase request (the token is in the fragment).
+  /^\/erase-request\/cancel\/?$/,
+]
 
 export function isVaultFreePath(pathname: string): boolean {
   return VAULT_FREE.some((re) => re.test(pathname))

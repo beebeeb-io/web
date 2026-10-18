@@ -127,6 +127,10 @@ function makeApiSpies() {
     bulkTrashFiles: mock(async (_ids: string[]) => ({})),
     bulkPermanentDelete: mock(async (_ids: string[], _t: string) => {}),
     confirmAction: mock(async () => ({ confirmation_token: 'nope', expires_at: 'nope' })),
+    // Task 1918: the erase exit only ever talks to these (a read on mount, nothing destructive).
+    getEraseRequest: mock(async () => ({ request: null, live_items: 3, cooldown_hours: 72, trash_retention_days: 30, last_executed: null })),
+    createEraseRequest: mock(async (_c: number, _t: string) => ({})),
+    cancelEraseRequest: mock(async () => ({})),
   }
 }
 
@@ -240,7 +244,7 @@ describe('task 1704 SLICE 2: ProtectedRoute routes the fresh-password/no-key cas
     expect(text).toContain('Unlock with recovery phrase')
     // All three self-service exits are present:
     expect(text).toContain('Cancel subscription')
-    expect(text).toContain('Delete all data')
+    expect(text).toContain('Erase all files')
     expect(text).toContain('Delete account')
     // Honest omission of per-file blind deletion:
     expect(text).toContain("can't show")
@@ -257,6 +261,11 @@ describe('task 1704 SLICE 2: ProtectedRoute routes the fresh-password/no-key cas
     expect(spies.bulkTrashFiles).not.toHaveBeenCalled()
     expect(spies.bulkPermanentDelete).not.toHaveBeenCalled()
     expect(spies.confirmAction).not.toHaveBeenCalled()
+    // Task 1918: the erase exit only READS its status on mount; it never trashes,
+    // never erases, and files no request until the typed count + step-up.
+    expect(spies.getEraseRequest).toHaveBeenCalledTimes(1)
+    expect(spies.createEraseRequest).not.toHaveBeenCalled()
+    expect(spies.cancelEraseRequest).not.toHaveBeenCalled()
   })
 
   test('task 1810: the re-entry CTA never leads to the password-reset page (/recover-with-phrase)', async () => {
@@ -277,7 +286,7 @@ describe('task 1704 SLICE 2: ProtectedRoute routes the fresh-password/no-key cas
     expect(text).toContain('Unlock vault')
     expect(text).not.toContain('Unlock with recovery phrase')
     expect(text).not.toContain('Cancel subscription')
-    expect(text).not.toContain('Delete all data')
+    expect(text).not.toContain('Erase all files')
     expect(text).not.toContain('CONTENT-SHOULD-NOT-RENDER')
     expect(spies.cancelSubscription).not.toHaveBeenCalled()
   })
@@ -441,10 +450,12 @@ describe('task 1704 SLICE 2: VaultLockedNoKey copy + explicit confirmation gates
     expect(html).toContain('Cancel subscription')
     expect(html).toContain('I understand billing stops for this account.')
     expect(html).toContain('Cancel billing')
-    // Exit 2 — delete all data (checkbox gate + action button):
-    expect(html).toContain('Delete all data')
-    expect(html).toContain('I understand every file is erased permanently')
+    // Exit 2 — erase all files (task 1918): a server-side request with a typed count;
+    // no checkbox-and-erase path is left (SSR shows the card while the status loads):
     expect(html).toContain('Erase all files')
+    expect(html).toContain('Checking what this account holds')
+    expect(html).not.toContain('I understand every file is erased permanently')
+    expect(html).not.toContain('Delete all data')
     // Exit 3 — delete account (type-DELETE gate + checkbox + action button):
     expect(html).toContain('Delete account')
     expect(html).toContain('Type DELETE to confirm')
