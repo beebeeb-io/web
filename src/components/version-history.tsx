@@ -24,6 +24,8 @@ interface VersionHistoryProps {
   onClose: () => void
   fileId: string
   fileName: string
+  /** The file's current `name_encrypted`: every version is read with the pin it records (task 1943). */
+  nameEncrypted: string
   /** Used to pick the right MIME for the decrypted version blob. */
   mimeType?: string
   onVersionRestored?: () => void
@@ -46,6 +48,7 @@ export function VersionHistory({
   onClose,
   fileId,
   fileName,
+  nameEncrypted,
   mimeType,
   onVersionRestored,
 }: VersionHistoryProps) {
@@ -107,6 +110,7 @@ export function VersionHistory({
         fileId,
         version.id,
         fileKey,
+        nameEncrypted,
         mimeType ?? 'application/octet-stream',
         version.chunk_count,
         version.size_bytes,

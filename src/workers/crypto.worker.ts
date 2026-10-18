@@ -4,6 +4,14 @@
 
 import * as Comlink from 'comlink'
 import type * as WasmTypes from 'beebeeb-wasm'
+import {
+  applyRecordedPinInRegistry,
+  createContentOps,
+  type ContentOps,
+  type ContentPin,
+  type DecryptSummary,
+  type PinnedMetadata,
+} from '../lib/content-crypto'
 
 // Import the .wasm binary URL via Vite's ?url suffix so it resolves
 // correctly inside a bundled worker (import.meta.url in the wasm-pack
@@ -24,6 +32,18 @@ let wasmMemory: WebAssembly.Memory | null = null
 // `StreamingEncryptor` proxy.
 const liveEncryptors = new Map<number, WasmTypes.WasmChunkEncryptor>()
 let nextEncryptorHandle = 1
+
+// ── File content + note crypto (core 1908 chunk format v2, task 1943) ───────
+// One `createContentOps` bound to this worker's WASM instance: the streaming
+// content decryptors (handle-addressed, like the encryptors above), core's
+// file / name metadata readers (which return the file's chunk-format pin) and
+// the note sealer / opener. Unit tests run the same ops over the same WASM
+// build (src/lib/content-crypto.ts).
+let contentOps: ContentOps | null = null
+async function content(): Promise<ContentOps> {
+  if (!contentOps) contentOps = createContentOps(await ensureWasm())
+  return contentOps
+}
 
 // ── Worker-owned search-index registry (B4, task 0871) ──────────────────────
 // `WasmSearchIndex` is a stateful struct (a pointer into THIS worker's WASM
@@ -216,7 +236,12 @@ const cryptoWorker = {
     )
   },
 
-  /** Decrypt a chunk that was encrypted with encryptChunk. */
+  /**
+   * Generic AES-256-GCM open with NO associated data: KEY UNWRAPPING only
+   * (folder keys, user-to-user share keys). Never file content (that is
+   * `createDecryptor` + `decryptorPushFrame`, which know the file's pin and the
+   * chunk position) and never a name or note (core's readers below).
+   */
   async decryptChunk(
     fileKey: Uint8Array,
     nonce: Uint8Array,
@@ -239,60 +264,27 @@ const cryptoWorker = {
     }
   },
 
-  /** Decrypt a filename / metadata string. */
-  async decryptFilename(
-    fileKey: Uint8Array,
-    nonce: Uint8Array,
-    ciphertext: Uint8Array,
-  ): Promise<string> {
-    const wasm = await ensureWasm()
-    return wasm.decrypt_metadata(fileKey, nonce, ciphertext)
-  },
-
   /**
-   * Batched filename + metadata decryption.
-   *
-   * Takes an array of pre-derived per-file inputs and returns one result per
-   * item in the same order. Errors are captured per-item — one bad row does
-   * not fail the whole batch. The caller is responsible for deriving file
-   * keys (cheap, parallelizable on the main thread) and pre-parsing the
-   * encrypted blob into nonce + ciphertext.
-   *
-   * The shape mirrors `decryptFileMetadata` in `src/lib/crypto.ts`:
-   *   - JSON plaintext `{"name":"...","mime_type":"..."}` → returns both fields
-   *   - Bare string plaintext (legacy)                    → name only
-   *
-   * Round-trip cost: one Comlink call regardless of `items.length`.
+   * Batched name decryption for the drive listing: one Comlink round trip for
+   * the whole page. Each item is read by core's display reader
+   * (`decrypt_name_metadata_with_key`: the name subkey first, then the legacy
+   * raw key, both envelope shapes, a JSON `{name, mime_type}` or a bare legacy
+   * filename inside), so names sealed after the 1908 switch open too. Errors
+   * are captured per item; one bad row never fails the batch.
    */
   async decryptManyNames(
     items: Array<{
       id: string
       fileKey: Uint8Array
-      nonce: Uint8Array
-      ciphertext: Uint8Array
+      nameEncrypted: string
     }>,
   ): Promise<Array<{ id: string; name?: string; mimeType?: string; error?: string }>> {
-    const wasm = await ensureWasm()
+    const ops = await content()
     const results: Array<{ id: string; name?: string; mimeType?: string; error?: string }> = []
     for (const item of items) {
       try {
-        const plain = wasm.decrypt_metadata(item.fileKey, item.nonce, item.ciphertext)
-        let name = plain
-        let mimeType: string | undefined
-        try {
-          const meta = JSON.parse(plain) as { name?: string; mime_type?: string }
-          if (meta && typeof meta === 'object') {
-            if (typeof meta.name === 'string' && meta.name.trim()) {
-              name = meta.name.trim()
-            }
-            if (typeof meta.mime_type === 'string') {
-              mimeType = meta.mime_type
-            }
-          }
-        } catch {
-          // Legacy format — `plain` is the bare filename, already assigned to `name`.
-        }
-        results.push({ id: item.id, name, mimeType })
+        const meta = ops.readNameMetadata(item.fileKey, item.nameEncrypted)
+        results.push({ id: item.id, name: meta.name.trim() || meta.name, mimeType: meta.mimeType ?? undefined })
       } catch (err) {
         results.push({
           id: item.id,
@@ -301,6 +293,55 @@ const cryptoWorker = {
       }
     }
     return results
+  },
+
+  // ── File content + notes (core 1908, task 1943) ──────────────────────────
+  // Thin pass-throughs to `createContentOps` (src/lib/content-crypto.ts).
+
+  /** Core's FILE metadata reader: name, MIME and the content pin. Throws on a plaintext or unreadable name. */
+  async readFileMetadata(fileKey: Uint8Array, nameEncrypted: string): Promise<PinnedMetadata> {
+    return (await content()).readFileMetadata(fileKey, nameEncrypted)
+  },
+
+  /** Core's display / folder reader (a plaintext legacy name reads as itself, pin 0). */
+  async readNameMetadata(fileKey: Uint8Array, nameEncrypted: string): Promise<PinnedMetadata> {
+    return (await content()).readNameMetadata(fileKey, nameEncrypted)
+  },
+
+  /** A streaming content decryptor for one file; returns an opaque handle. */
+  async createDecryptor(fileKey: Uint8Array, fileId: string, pin: ContentPin): Promise<number> {
+    return (await content()).createDecryptor(fileKey, fileId, pin)
+  },
+
+  /** Open the next frame in order; the plaintext buffer is transferred back (zero-copy). */
+  async decryptorPushFrame(handle: number, frame: Uint8Array): Promise<Uint8Array> {
+    const plaintext = (await content()).decryptorPushFrame(handle, frame)
+    return Comlink.transfer(plaintext, [plaintext.buffer])
+  },
+
+  /** End-of-stream check (truncation); consumes the decryptor. */
+  async decryptorFinish(handle: number): Promise<DecryptSummary> {
+    return (await content()).decryptorFinish(handle)
+  },
+
+  /** Free a decryptor that will not be finished. Idempotent. */
+  async decryptorDispose(handle: number): Promise<void> {
+    ;(await content()).decryptorDispose(handle)
+  },
+
+  /** Live decryptors: the owner never recycles this worker while one is live. */
+  liveDecryptorCount(): number {
+    return contentOps ? contentOps.liveDecryptorCount() : 0
+  },
+
+  /** Seal a note of an existing file under the rule of its recorded pin. */
+  async encryptNoteFor(fileKey: Uint8Array, text: string, pin: ContentPin): Promise<string> {
+    return (await content()).encryptNoteFor(fileKey, text, pin)
+  },
+
+  /** Open a note (note subkey, then the legacy raw key). */
+  async decryptNote(fileKey: Uint8Array, noteEncrypted: string): Promise<string> {
+    return (await content()).decryptNote(fileKey, noteEncrypted)
   },
 
   /** Generate a 12-word BIP39 recovery phrase and the corresponding master key. */
@@ -469,6 +510,33 @@ const cryptoWorker = {
     if (!enc) throw new Error(`No live encryptor for handle ${handle}`)
     const frame = enc.pushChunk(plaintext) as Uint8Array
     return Comlink.transfer(frame, [frame.buffer])
+  },
+
+  /**
+   * Replace / new version of an EXISTING file (core 1908 checklist item 4):
+   * make the encryptor write the format the file's recorded pin requires,
+   * before its first chunk. `pin` is read from that file's authenticated
+   * metadata (`readFileMetadata`); a brand-new file id never comes here.
+   * Returns the format the encryptor now writes (1 = v1, 2 = v2).
+   */
+  encryptorApplyRecordedPin(handle: number, pin: ContentPin): number {
+    return applyRecordedPinInRegistry(liveEncryptors, handle, pin)
+  },
+
+  /** The chunk format the encryptor writes (1 = v1, 2 = v2). */
+  encryptorFormat(handle: number): number {
+    const enc = liveEncryptors.get(handle)
+    if (!enc) throw new Error(`No live encryptor for handle ${handle}`)
+    return enc.format
+  },
+
+  /** Core's resume rule for this encryptor and the stored session's format (`undefined` = not recorded). */
+  encryptorResumePolicy(handle: number, storedFormat: number | undefined): 'continue' | 'restart' {
+    const enc = liveEncryptors.get(handle)
+    if (!enc) throw new Error(`No live encryptor for handle ${handle}`)
+    const answer = enc.resumePolicy(storedFormat ?? null)
+    if (answer !== 'continue' && answer !== 'restart') throw new Error(`unexpected resume policy ${answer}`)
+    return answer
   },
 
   /**

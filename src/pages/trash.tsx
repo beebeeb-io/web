@@ -9,7 +9,7 @@ import { listAllFiles, restoreFile, bulkPermanentDelete, confirmAction, ApiError
 import { useToast } from '../components/toast'
 import { useKeys } from '../lib/key-context'
 import { TrashRowSkeleton } from '@beebeeb/shared'
-import { decryptFilename, parseEncryptedBlob } from '../lib/crypto'
+import { readNameMetadata } from '../lib/crypto'
 import { useWsEvent } from '../lib/ws-context'
 import { EmptyTrash } from '../components/empty-states/empty-trash'
 import { ConfirmPasswordModal } from '../components/confirm-password-modal'
@@ -170,17 +170,10 @@ export function Trash() {
         return file.name_encrypted
       }
       const fileKey = await getFileKey(file.id)
-      const { nonce, ciphertext } = parseEncryptedBlob(file.name_encrypted)
-      const plain = await decryptFilename(fileKey, nonce, ciphertext)
-      try {
-        const meta = JSON.parse(plain) as { name?: string }
-        if (meta && typeof meta === 'object' && typeof meta.name === 'string' && meta.name.trim()) {
-          return meta.name.trim()
-        }
-      } catch {
-        // Legacy format — `plain` is the bare filename.
-      }
-      return plain
+      // Core's display reader (task 1943): name subkey first, then the legacy
+      // raw key; a {name, mime_type} plaintext or a bare legacy filename.
+      const { name } = await readNameMetadata(fileKey, file.name_encrypted)
+      return name.trim() || name
     }
 
     async function decryptAll() {
@@ -413,6 +406,7 @@ export function Trash() {
       location: 'Trash',
       cipher: isUnlocked ? 'AES-256-GCM' : undefined,
       keyId: isUnlocked ? file.id : undefined,
+      nameEncrypted: file.name_encrypted,
       noteEncrypted: file.note_encrypted ?? null,
     }
   }

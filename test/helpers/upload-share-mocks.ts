@@ -40,6 +40,10 @@ let pageImpl: (opts: { parentId?: string; cursor?: string }) => { files: Child[]
 export function setListPage(fn: typeof pageImpl): void { pageImpl = fn }
 
 const stubStream = (masterKey: Uint8Array) => ({
+  // Task 1943: the upload asks the encryptor's format (recorded with the
+  // session) and, on a resume, core's resume policy. A new v1 upload here.
+  format: async () => 1,
+  resumePolicy: async () => 'continue' as const,
   pushChunk: async () => new Uint8Array([masterKey[0]]),
   finish: async () => ({ chunk_count: 1, total_plaintext_bytes: 4, total_ciphertext_bytes: 1 }),
   dispose: async () => {},

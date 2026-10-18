@@ -17,8 +17,8 @@ import {
   type ShareItem,
 } from '../lib/api'
 import { useAuth, isAuthenticated } from '../lib/auth-context'
-import { decryptFilename, fromBase64, toBase64url, parseEncryptedBlob, unwrapKeyFromShare, unwrapBundleItemKey, initCrypto } from '../lib/crypto'
-import { decryptEncryptedBytes, inferChunkCountFromEncryptedSize } from '../lib/encrypted-download'
+import { fromBase64, toBase64url, unwrapKeyFromShare, unwrapBundleItemKey, initCrypto, readFileMetadata, readNameMetadata, PIN_V2, type ContentPin } from '../lib/crypto'
+import { decryptEncryptedBytes, inferChunkCountFromEncryptedSize, UNVERIFIED_FILE_COPY } from '../lib/encrypted-download'
 import { withNetworkRetry } from '../lib/net-retry'
 import { formatBytes } from '../lib/format'
 import { formatEur } from '../lib/trial-checkout'
@@ -521,36 +521,40 @@ interface BundleRow {
   chunk_count: number
   /** The item's FileKey (unwrapped from K_c), or null if K_c was wrong. */
   fileKey: Uint8Array | null
+  /**
+   * The item's content pin from its authenticated metadata (core's FILE
+   * reader, task 1943), or null when that cannot be read (a legacy plaintext
+   * name): the name still shows, but the content is not opened.
+   */
+  pin: ContentPin | null
 }
 
 /**
- * Decrypt one manifest item: unwrap its FileKey from K_c, then decrypt its name.
- * A wrong K_c (AES-GCM auth failure) yields `{ fileKey: null, name: null }` —
- * the row renders as an undecryptable placeholder rather than crashing the list.
+ * Decrypt one manifest item: unwrap its FileKey from K_c, then read its
+ * metadata with core's FILE reader (name + content pin; names sealed under the
+ * name subkey open too). A wrong K_c (AES-GCM auth failure) or a name that does
+ * not open yields `{ fileKey: null, name: null }`: the row renders as an
+ * undecryptable placeholder rather than crashing the list.
  */
 async function decryptBundleItem(clientKey: Uint8Array, item: ShareItem): Promise<BundleRow> {
   let fileKey: Uint8Array | null = null
   let name: string | null = null
+  let pin: ContentPin | null = null
   try {
     fileKey = await unwrapBundleItemKey(clientKey, item.wrapped_file_key)
     if (fileKey.length !== KEY_BYTES) {
       fileKey = null
     } else if (item.name_encrypted.startsWith('{')) {
-      const { nonce, ciphertext } = parseEncryptedBlob(item.name_encrypted)
-      const raw = await decryptFilename(fileKey, nonce, ciphertext)
-      name = raw
-      try {
-        const meta = JSON.parse(raw) as { name?: string }
-        if (meta && typeof meta.name === 'string') name = meta.name
-      } catch {
-        /* legacy plain string — raw IS the name */
-      }
+      const meta = await readFileMetadata(fileKey, item.name_encrypted)
+      name = meta.name
+      pin = meta.pin
     } else {
-      name = item.name_encrypted // legacy plaintext name
+      name = item.name_encrypted // legacy plaintext name: shown, but carries no pin
     }
   } catch {
     fileKey = null
     name = null
+    pin = null
   }
   return {
     file_id: item.file_id,
@@ -559,6 +563,7 @@ async function decryptBundleItem(clientKey: Uint8Array, item: ShareItem): Promis
     size: item.size,
     chunk_count: item.chunk_count,
     fileKey,
+    pin,
   }
 }
 
@@ -629,6 +634,10 @@ function BundleShareView({
       setDownloadError(`Couldn’t open “${row.name ?? 'this file'}” — the key in the link doesn’t match it.`)
       return false
     }
+    if (row.pin === null) {
+      setDownloadError(UNVERIFIED_FILE_COPY)
+      return false
+    }
     try {
       await initCrypto()
       const { blob, chunkCount: hdrCount, chunkSize: hdrSize, originalSize: hdrOriginal } =
@@ -639,7 +648,7 @@ function BundleShareView({
         ?? row.chunk_count
         ?? inferChunkCountFromEncryptedSize(encrypted.length, originalSize)
       const plaintext = await decryptEncryptedBytes(
-        row.fileKey, encrypted, chunkCount, originalSize, hdrSize ?? undefined,
+        row.fileKey, { fileId: row.file_id, pin: row.pin }, encrypted, chunkCount, originalSize, hdrSize ?? undefined,
       )
       const url = URL.createObjectURL(new Blob([plaintext as BlobPart]))
       const a = document.createElement('a')
@@ -1040,15 +1049,10 @@ export function ShareViewPage() {
         // simply leave the name as the encrypted placeholder.
         if (outcome.kind !== 'ok') return
         const fileKey = outcome.key
-        const { nonce, ciphertext: ct } = parseEncryptedBlob(nameEnc)
-        const raw = await decryptFilename(fileKey, nonce, ct)
-        let displayName = raw
-        try {
-          const meta = JSON.parse(raw) as { name?: string; mime_type?: string }
-          if (meta && typeof meta.name === 'string') displayName = meta.name
-        } catch {
-          // Legacy format — raw is just the filename string
-        }
+        // Core's display reader: the name subkey first (names sealed since core
+        // 1908), then the legacy raw key; a JSON {name, mime_type} or a bare
+        // legacy filename inside (task 1943).
+        const { name: displayName } = await readNameMetadata(fileKey, nameEnc)
         if (!cancelled) setDecryptedName(displayName)
       } catch {
         // Can't decrypt -- will show encrypted placeholder
@@ -1149,6 +1153,25 @@ export function ShareViewPage() {
       // worker uninitialized when the user clicks Download.
       await initCrypto()
 
+      // The content pin from the file's authenticated metadata (core's FILE
+      // reader, task 1943). Unreadable: refuse before downloading anything.
+      let pin: ContentPin
+      try {
+        pin = (await readFileMetadata(fileKey, shareData.name_encrypted ?? '')).pin
+      } catch {
+        setDownloadError(UNVERIFIED_FILE_COPY)
+        return
+      }
+      // The single-file share view does not carry the file id, which every v2
+      // frame binds. Every file that exists today is v1 (pin 0), whose frames
+      // do not use it; a v2-pinned file cannot be opened from this link until
+      // the server sends `file_id` (task 1943 follow-up). Say so honestly
+      // instead of failing on a tag mismatch.
+      if (pin === PIN_V2) {
+        setDownloadError('This file uses a newer encryption format that this link cannot open yet.')
+        return
+      }
+
       const {
         blob,
         chunkCount: headerChunkCount,
@@ -1175,6 +1198,7 @@ export function ShareViewPage() {
         ?? inferChunkCountFromEncryptedSize(encrypted.length, originalSize)
       const plaintext = await decryptEncryptedBytes(
         fileKey,
+        { fileId: '', pin },
         encrypted,
         chunkCount,
         originalSize,

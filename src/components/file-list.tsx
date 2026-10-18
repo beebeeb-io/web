@@ -9,7 +9,7 @@ import { getBadgeStyle } from '../lib/file-colors'
 import { ContextMenu } from './context-menu'
 import { FileRowSkeleton } from '@beebeeb/shared'
 import { useKeys } from '../lib/key-context'
-import { decryptManyNames, parseEncryptedBlob, encryptFilename, serializeEncryptedBlob } from '../lib/crypto'
+import { decryptManyNames, encryptFilename, serializeEncryptedBlob } from '../lib/crypto'
 import { onDecrypted } from '../lib/decrypt-events'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { isPreviewable } from '../lib/preview'
@@ -306,17 +306,18 @@ export function FileList({
     const MAX_ATTEMPTS = 4
     const RETRY_DELAY_MS = 300
 
-    // Per-file decryption is split into three phases so we can collapse N
+    // Per-file decryption is split into two phases so we can collapse N
     // worker round-trips into 1:
     //   1) Key derivation runs on the main thread in parallel (cheap, cached).
-    //   2) Encrypted blob parsing is a synchronous JSON.parse.
-    //   3) The actual decrypt is one batched Comlink call to the worker.
+    //   2) The decrypt is one batched Comlink call to the worker, which reads
+    //      every envelope with core's name reader (name subkey first, then the
+    //      legacy raw key; task 1943).
     //
-    // Errors are tracked per file: a key-derivation failure or a blob-parse
-    // failure for one row never blocks the others, and the worker's batched
-    // call also reports errors per-item.
+    // Errors are tracked per file: a key-derivation failure for one row never
+    // blocks the others, and the worker's batched call also reports errors
+    // per-item (an unparsable or unopenable envelope included).
     type Prepared =
-      | { id: string; status: 'ok'; fileKey: Uint8Array; nonce: Uint8Array; ciphertext: Uint8Array }
+      | { id: string; status: 'ok'; fileKey: Uint8Array; nameEncrypted: string }
       | { id: string; status: 'plaintext'; name: string }
       | { id: string; status: 'error'; error: unknown }
 
@@ -327,8 +328,7 @@ export function FileList({
       }
       try {
         const fileKey = await getFileKeyForFile(file)
-        const { nonce, ciphertext } = parseEncryptedBlob(file.name_encrypted)
-        return { id: file.id, status: 'ok', fileKey, nonce, ciphertext }
+        return { id: file.id, status: 'ok', fileKey, nameEncrypted: file.name_encrypted }
       } catch (err) {
         return { id: file.id, status: 'error', error: err }
       }
@@ -344,14 +344,14 @@ export function FileList({
       for (let attempt = 0; attempt < MAX_ATTEMPTS && pending.length > 0; attempt++) {
         if (cancelled) return
 
-        // Phase 1+2: derive keys in parallel + parse blobs.
+        // Phase 1: derive keys in parallel.
         const prepared = await Promise.all(pending.map(prepareOne))
         if (cancelled) return
 
-        // Phase 3: one batched worker call for all rows that made it to "ok".
+        // Phase 2: one batched worker call for all rows that made it to "ok".
         const batchInput = prepared
           .filter((p): p is Extract<Prepared, { status: 'ok' }> => p.status === 'ok')
-          .map(({ id, fileKey, nonce, ciphertext }) => ({ id, fileKey, nonce, ciphertext }))
+          .map(({ id, fileKey, nameEncrypted }) => ({ id, fileKey, nameEncrypted }))
 
         let batchResults: Awaited<ReturnType<typeof decryptManyNames>> = []
         if (batchInput.length > 0) {

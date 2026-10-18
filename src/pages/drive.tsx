@@ -1465,6 +1465,16 @@ export function Drive() {
     uploadAbortRef.current.set(uploadId, abortController)
 
     try {
+      // Replace: the existing file's current name, whose recorded pin decides
+      // the format of the new version (task 1943). Read from the listing, or
+      // from the server when the row is not loaded here; a new file has none.
+      const replaceOf = replaceFileId
+        ? {
+            nameEncrypted:
+              files.find((f) => f.id === replaceFileId)?.name_encrypted
+              ?? (await getFile(replaceFileId)).name_encrypted,
+          }
+        : undefined
       let uploadStartedAt: number | undefined
       const uploadedFile = await encryptedUpload(file, fileId, fileKey, getMasterKey(), currentParentId, (p) => {
         if (p.stage === 'Uploading' && !uploadStartedAt) {
@@ -1487,7 +1497,7 @@ export function Drive() {
               : u,
           ),
         )
-      }, undefined, undefined, abortController.signal, getFileKey, { conflictCreated })
+      }, undefined, undefined, abortController.signal, getFileKey, { conflictCreated, replaceOf })
       const uploadedFileId = uploadedFile.id
 
       // Update the encrypted search index with the new file
@@ -2234,6 +2244,7 @@ export function Drive() {
       cipher: isUnlocked ? 'AES-256-GCM' : undefined,
       keyId: isUnlocked ? file.id : undefined,
       region: undefined,
+      nameEncrypted: file.name_encrypted,
       noteEncrypted: file.note_encrypted ?? null,
     }
   }
@@ -3310,6 +3321,7 @@ export function Drive() {
             onClose={() => setVersionFileId(null)}
             fileId={versionFileId}
             fileName={f ? displayName(f) : ''}
+            nameEncrypted={f?.name_encrypted ?? ''}
             mimeType={f?.mime_type ?? undefined}
             onVersionRestored={fetchFiles}
           />

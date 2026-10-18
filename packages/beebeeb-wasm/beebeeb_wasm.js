@@ -103,6 +103,189 @@ export class WasmBreachCheck {
 if (Symbol.dispose) WasmBreachCheck.prototype[Symbol.dispose] = WasmBreachCheck.prototype.free;
 
 /**
+ * Stateful, single-file streaming decryptor for the web client — the ONE way
+ * web should decrypt file content (downloads, previews, shared links).
+ *
+ * Reads v2 (position-bound) and v1 (legacy) files. Both constructors take
+ * `expectedChunkFormat` from the file's encrypted metadata
+ * (`decrypt_file_metadata(...).chunk_format`; 0 = unrecorded, 2 = v2): with
+ * 2 only v2 frames open; with 0 (legacy metadata) chunk 0 decides. In v2 every
+ * frame must be the next chunk in order and from the same upload as chunk 0,
+ * and nothing may follow the last one; [`finish`] fails if the file ended
+ * before its last chunk (truncation). JS must treat any thrown error — from
+ * `pushFrame` or `finish` — as a failed download and discard the plaintext it
+ * has buffered.
+ *
+ * Replaces the per-chunk `decrypt_chunk(fileKey, nonce, ciphertext)` loop for
+ * file content: that generic function has no position and can only open v1
+ * frames (it stays for key unwrapping).
+ *
+ * [`finish`]: Self::finish
+ */
+export class WasmChunkDecryptor {
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(WasmChunkDecryptor.prototype);
+        obj.__wbg_ptr = ptr;
+        WasmChunkDecryptorFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmChunkDecryptorFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmchunkdecryptor_free(ptr, 0);
+    }
+    /**
+     * How many frames have been decrypted so far.
+     * @returns {number}
+     */
+    get chunksDecrypted() {
+        const ret = wasm.wasmchunkdecryptor_chunksDecrypted(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Consume the decryptor and run the end-of-stream check. Throws if no frame
+     * was pushed or a v2 file ended before its last chunk. Returns
+     * `{ chunk_count, format }`.
+     * @returns {any}
+     */
+    finish() {
+        try {
+            const ptr = this.__destroy_into_raw();
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmchunkdecryptor_finish(retptr, ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * The file's chunk format once chunk 0 has been opened: 1 = v1, 2 = v2;
+     * 0 before the first frame.
+     * @returns {number}
+     */
+    get format() {
+        const ret = wasm.wasmchunkdecryptor_format(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * Decryptor from an already-unwrapped 32-byte file key (share / shared-link
+     * recipients). `file_id` must be the id the file was uploaded under.
+     * @param {Uint8Array} file_key
+     * @param {string} file_id
+     * @param {number} expected_chunk_format
+     * @returns {WasmChunkDecryptor}
+     */
+    static fromFileKey(file_key, file_id, expected_chunk_format) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passArray8ToWasm0(file_key, wasm.__wbindgen_export);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(file_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len1 = WASM_VECTOR_LEN;
+            wasm.wasmchunkdecryptor_fromFileKey(retptr, ptr0, len0, ptr1, len1, expected_chunk_format);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return WasmChunkDecryptor.__wrap(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Decryptor for the owner: the file key is derived in core from the
+     * 32-byte master key and `file_id`.
+     * @param {Uint8Array} master_key
+     * @param {string} file_id
+     * @param {number} expected_chunk_format
+     */
+    constructor(master_key, file_id, expected_chunk_format) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(file_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len1 = WASM_VECTOR_LEN;
+            wasm.wasmchunkdecryptor_new(retptr, ptr0, len0, ptr1, len1, expected_chunk_format);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            this.__wbg_ptr = r0 >>> 0;
+            WasmChunkDecryptorFinalization.register(this, this.__wbg_ptr, this);
+            return this;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Decrypt the next wire frame (`nonce(12) || ciphertext || tag(16)`),
+     * returning its plaintext. Frames must be pushed in order from chunk 0.
+     * @param {Uint8Array} frame
+     * @returns {Uint8Array}
+     */
+    pushFrame(frame) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passArray8ToWasm0(frame, wasm.__wbindgen_export);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.wasmchunkdecryptor_pushFrame(retptr, this.__wbg_ptr, ptr0, len0);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+            if (r3) {
+                throw takeObject(r2);
+            }
+            var v2 = getArrayU8FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export4(r0, r1 * 1, 1);
+            return v2;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * v2: the upload's version id (chunk 0's 12-byte nonce) once chunk 0 has
+     * authenticated — what a seeking reader passes to `decrypt_chunk_frame`.
+     * `undefined` before chunk 0 and for v1 files.
+     * @returns {Uint8Array | undefined}
+     */
+    get versionId() {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmchunkdecryptor_versionId(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            let v1;
+            if (r0 !== 0) {
+                v1 = getArrayU8FromWasm0(r0, r1).slice();
+                wasm.__wbindgen_export4(r0, r1 * 1, 1);
+            }
+            return v1;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+}
+if (Symbol.dispose) WasmChunkDecryptor.prototype[Symbol.dispose] = WasmChunkDecryptor.prototype.free;
+
+/**
  * Stateful, single-file streaming encryptor for the web client.
  *
  * WASM is single-threaded and cannot `Read` a browser `File`, so the web
@@ -198,6 +381,17 @@ export class WasmChunkEncryptor {
         }
     }
     /**
+     * The chunk format this encryptor writes: 1 = v1, 2 = v2 (task 1908).
+     * Still 1 during the read-only rollout phase. Record it at upload via
+     * `encrypt_name_with_chunk_format` (2 if this is 2, else 0) so readers
+     * can pin it.
+     * @returns {number}
+     */
+    get format() {
+        const ret = wasm.wasmchunkencryptor_format(this.__wbg_ptr);
+        return ret;
+    }
+    /**
      * Create a push-form encryptor whose chunk plan is derived from
      * `file_size` + `profile` (the client ladder).
      *
@@ -261,6 +455,43 @@ export class WasmChunkEncryptor {
         }
     }
     /**
+     * Resuming an interrupted upload (task 1908 round 3): may this (new)
+     * encryptor continue the old server upload session? `storedFormat` = the
+     * `format` persisted next to the session id when the session was opened
+     * (1 = v1, 2 = v2), or `undefined` if the resume record does not say.
+     * Returns `"continue"` (keep the session, re-PUT from chunk 0) only for a
+     * v1 session resumed by a v1 encryptor, else `"restart"`: never PUT to the
+     * old session again, upload from chunk 0 into a fresh session. Restart =
+     * `POST /api/v1/files/{id}/upload/abandon` (or wait for the lease to
+     * expire), then init again; on a 409 retry that, never the old session.
+     * @param {number | null} [stored_format]
+     * @returns {string}
+     */
+    resumePolicy(stored_format) {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmchunkencryptor_resumePolicy(retptr, this.__wbg_ptr, isLikeNone(stored_format) ? 0xFFFFFF : stored_format);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+            var ptr1 = r0;
+            var len1 = r1;
+            if (r3) {
+                ptr1 = 0; len1 = 0;
+                throw takeObject(r2);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+            wasm.__wbindgen_export4(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
      * Create a push-form encryptor with an explicit, server-dictated chunk
      * size. Use this when the v2 upload-init response overrode `chunk_size`
      * so the client plan can't diverge from what the server expects.
@@ -278,6 +509,40 @@ export class WasmChunkEncryptor {
             const ptr1 = passStringToWasm0(file_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
             const len1 = WASM_VECTOR_LEN;
             wasm.wasmchunkencryptor_withChunkSize(retptr, ptr0, len0, ptr1, len1, file_size, chunk_size_bytes);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return WasmChunkEncryptor.__wrap(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Replace / new version of an EXISTING file (task 1908 round 4, I-1):
+     * returns this encryptor writing in the format the file's recorded pin
+     * requires. `recordedPin` = the `chunk_format` from
+     * `decrypt_file_metadata` (0 = unrecorded, 2 = v2), never a server field.
+     * A v2 pin forces v2 frames even during the read-only phase; 0 keeps the
+     * default. Before the first `pushChunk` only; other codes throw. Consumes
+     * the old JS object — use the returned one.
+     *
+     * **New-file rule (lead ruling 2026-10-17):** pass 2 ONLY when it was
+     * read from an EXISTING file's authenticated metadata. A brand-new file
+     * makes NO call (the default write format applies) and records `format`
+     * in its name; passing 2 for a new file would create a v2 file before the
+     * switch. Core cannot enforce this; the web client keeps a test that its
+     * new-file path never calls this with 2.
+     * @param {number} recorded_pin
+     * @returns {WasmChunkEncryptor}
+     */
+    withRecordedPin(recorded_pin) {
+        try {
+            const ptr = this.__destroy_into_raw();
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmchunkencryptor_withRecordedPin(retptr, ptr, recorded_pin);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
             var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
@@ -906,6 +1171,10 @@ export function decompress_gzip(data) {
 /**
  * Decrypt a ciphertext chunk that was produced by `encrypt_chunk`.
  * `key`, `nonce`, and `ciphertext` are raw byte slices.
+ *
+ * Generic no-AAD AEAD open (key unwrap, share keys, v1 blobs). It does NOT
+ * open v2 file-content frames — use `WasmChunkDecryptor` (sequential) or
+ * `decrypt_chunk_frame` (random access) for file content (task 1908).
  * @param {Uint8Array} key
  * @param {Uint8Array} nonce
  * @param {Uint8Array} ciphertext
@@ -937,6 +1206,51 @@ export function decrypt_chunk(key, nonce, ciphertext) {
 }
 
 /**
+ * Random-access open of ONE file-content frame at a known position (seeking
+ * readers: video, range previews). `index` is the chunk requested and
+ * `is_last = index == chunk_count - 1`; a server that serves another chunk or
+ * lies about the count fails the tag. `format` (1 = v1, 2 = v2) must come from
+ * authenticated data (2 when the encrypted metadata records v2, else a
+ * `WasmChunkDecryptor.format` after chunk 0), never from a server field.
+ * `version_id` (12 bytes, v2 only; ignored for v1) is `WasmChunkDecryptor.versionId`
+ * after chunk 0 (or chunk 0's first 12 bytes): another upload's frames fail.
+ * @param {Uint8Array} file_key
+ * @param {string} file_id
+ * @param {Uint8Array} version_id
+ * @param {number} index
+ * @param {boolean} is_last
+ * @param {number} format
+ * @param {Uint8Array} frame
+ * @returns {Uint8Array}
+ */
+export function decrypt_chunk_frame(file_key, file_id, version_id, index, is_last, format, frame) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(file_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(file_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(version_id, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passArray8ToWasm0(frame, wasm.__wbindgen_export);
+        const len3 = WASM_VECTOR_LEN;
+        wasm.decrypt_chunk_frame(retptr, ptr0, len0, ptr1, len1, ptr2, len2, index, is_last, format, ptr3, len3);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v5 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v5;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * Decrypt a sequence of encrypted chunks and return the concatenated plaintext.
  * Each chunk is a JS object `{ nonce: Uint8Array, ciphertext: Uint8Array }`.
  * Returns the full plaintext as `Uint8Array`.
@@ -960,6 +1274,65 @@ export function decrypt_chunks(key, chunks) {
         var v2 = getArrayU8FromWasm0(r0, r1).slice();
         wasm.__wbindgen_export4(r0, r1 * 1, 1);
         return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * The metadata reader for FILES (task 1908 round 3): exactly
+ * [`decrypt_name_metadata`], except that a plaintext (non-JSON)
+ * `name_encrypted` is refused — a plaintext name carries no chunk-format pin.
+ * Take every file-content reader's `chunk_format` from THIS;
+ * `decrypt_name_metadata` stays for folders / display.
+ * @param {Uint8Array} master_key
+ * @param {string} file_id
+ * @param {string} name_encrypted
+ * @returns {any}
+ */
+export function decrypt_file_metadata(master_key, file_id, name_encrypted) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(file_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(name_encrypted, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.decrypt_file_metadata(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * [`decrypt_file_metadata`] with an already-unwrapped 32-byte file key.
+ * @param {Uint8Array} file_key
+ * @param {string} name_encrypted
+ * @returns {any}
+ */
+export function decrypt_file_metadata_with_key(file_key, name_encrypted) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(file_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(name_encrypted, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.decrypt_file_metadata_with_key(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
@@ -1004,6 +1377,65 @@ export function decrypt_metadata(key, nonce, ciphertext) {
 }
 
 /**
+ * Decrypt a `name_encrypted` envelope (same format/key matrix as core
+ * `decrypt_name`) into `{ name, mime_type, chunk_format }`. `chunk_format`
+ * (0 = unrecorded, 2 = v2) is what every content reader of the file must be
+ * given — task 1908.
+ * @param {Uint8Array} master_key
+ * @param {string} file_id
+ * @param {string} name_encrypted
+ * @returns {any}
+ */
+export function decrypt_name_metadata(master_key, file_id, name_encrypted) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(file_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(name_encrypted, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.decrypt_name_metadata(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * [`decrypt_name_metadata`] with an already-unwrapped 32-byte file key (share
+ * / shared-link recipients, file-request content keys).
+ * @param {Uint8Array} file_key
+ * @param {string} name_encrypted
+ * @returns {any}
+ */
+export function decrypt_name_metadata_with_key(file_key, name_encrypted) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(file_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(name_encrypted, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.decrypt_name_metadata_with_key(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * Batch-decrypt file names in ONE WASM call (task 0806 — folder-load perf).
  *
  * `items` is a JS array of `{ fileId: string, nameEncrypted: string }`.
@@ -1029,6 +1461,73 @@ export function decrypt_names(master_key, items) {
             throw takeObject(r1);
         }
         return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Open a `note_encrypted` envelope: the note subkey first, then the legacy
+ * raw file key (notes stored before the switch). A plaintext value is an
+ * error. The ONLY way to open a note — not `decryptFilename`.
+ * @param {Uint8Array} file_key
+ * @param {string} note_encrypted
+ * @returns {string}
+ */
+export function decrypt_note(file_key, note_encrypted) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(file_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(note_encrypted, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.decrypt_note(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr3 = r0;
+        var len3 = r1;
+        if (r3) {
+            ptr3 = 0; len3 = 0;
+            throw takeObject(r2);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * Open a thumbnail frame: the thumbnail subkey first, then the legacy raw
+ * file key (thumbnails stored before the switch).
+ * @param {Uint8Array} file_key
+ * @param {Uint8Array} frame
+ * @returns {Uint8Array}
+ */
+export function decrypt_thumbnail(file_key, frame) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(file_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(frame, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.decrypt_thumbnail(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v3 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v3;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
@@ -1252,6 +1751,200 @@ export function encrypt_metadata(key, metadata) {
             throw takeObject(r1);
         }
         return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Encrypt a filename (+ MIME) into a `name_encrypted` envelope that also
+ * records the file's chunk format (task 1908): `chunk_format` 2 = every upload
+ * of this file id is v2, 0 = record nothing (the pre-1908 shape). New file:
+ * 2 only if its content was written as v2. Rename / replace: pass the value
+ * `decrypt_file_metadata` returned — never upgrade a file with v1 history,
+ * never drop a recorded 2.
+ * @param {Uint8Array} master_key
+ * @param {string} file_id
+ * @param {string} filename
+ * @param {string | null | undefined} mime_type
+ * @param {number} chunk_format
+ * @returns {string}
+ */
+export function encrypt_name_with_chunk_format(master_key, file_id, filename, mime_type, chunk_format) {
+    let deferred6_0;
+    let deferred6_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(file_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(filename, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(mime_type) ? 0 : passStringToWasm0(mime_type, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        var len3 = WASM_VECTOR_LEN;
+        wasm.encrypt_name_with_chunk_format(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, chunk_format);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr5 = r0;
+        var len5 = r1;
+        if (r3) {
+            ptr5 = 0; len5 = 0;
+            throw takeObject(r2);
+        }
+        deferred6_0 = ptr5;
+        deferred6_1 = len5;
+        return getStringFromWasm0(ptr5, len5);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred6_0, deferred6_1, 1);
+    }
+}
+
+/**
+ * Seal a file note for a file with no recorded pin yet (task 1908 round 5):
+ * returns the canonical `EncryptedBlob` JSON to store in `note_encrypted` (the
+ * shape `serializeEncryptedBlob` writes). Follows the gated seal switch, like
+ * `encrypt_thumbnail`. For a note on an EXISTING file (the details panel) use
+ * `encrypt_note_for` with the file's recorded pin. The ONLY way to seal a
+ * note — not `encryptFilename` / `encrypt_metadata` under the file key (a
+ * raw-key note can stand in for a v2 file's name and content).
+ * @param {Uint8Array} file_key
+ * @param {string} note
+ * @returns {string}
+ */
+export function encrypt_note(file_key, note) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(file_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(note, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.encrypt_note(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr3 = r0;
+        var len3 = r1;
+        if (r3) {
+            ptr3 = 0; len3 = 0;
+            throw takeObject(r2);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * Seal a note of an EXISTING file under the rule of its recorded pin (task
+ * 1908 round 5): `recordedPin` = the `chunk_format` from
+ * `decrypt_file_metadata` of THIS file (0 = unrecorded, 2 = v2), never a
+ * server field. A v2 pin is always sealed under the note subkey; 0 behaves
+ * like `encrypt_note`.
+ * @param {Uint8Array} file_key
+ * @param {string} note
+ * @param {number} recorded_pin
+ * @returns {string}
+ */
+export function encrypt_note_for(file_key, note, recorded_pin) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(file_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(note, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.encrypt_note_for(retptr, ptr0, len0, ptr1, len1, recorded_pin);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr3 = r0;
+        var len3 = r1;
+        if (r3) {
+            ptr3 = 0; len3 = 0;
+            throw takeObject(r2);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * Seal a thumbnail (already-encoded image bytes) under a 32-byte file key:
+ * `nonce(12) || ciphertext || tag(16)` (the existing thumbnail wire format).
+ * The ONLY way to seal a thumbnail (task 1908 round 3) — after the gated seal
+ * switch it uses the thumbnail subkey, so a thumbnail can never be served as
+ * file content.
+ * @param {Uint8Array} file_key
+ * @param {Uint8Array} plaintext
+ * @returns {Uint8Array}
+ */
+export function encrypt_thumbnail(file_key, plaintext) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(file_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(plaintext, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.encrypt_thumbnail(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v3 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v3;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Seal a thumbnail of an EXISTING file under the rule of its recorded pin
+ * (task 1908 round 4): `recordedPin` = the `chunk_format` from
+ * `decrypt_file_metadata` (0 = unrecorded, 2 = v2). A v2 pin is always sealed
+ * under the thumbnail subkey; 0 behaves like `encrypt_thumbnail`.
+ * @param {Uint8Array} file_key
+ * @param {Uint8Array} plaintext
+ * @param {number} recorded_pin
+ * @returns {Uint8Array}
+ */
+export function encrypt_thumbnail_for(file_key, plaintext, recorded_pin) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(file_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(plaintext, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.encrypt_thumbnail_for(retptr, ptr0, len0, ptr1, len1, recorded_pin);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v3 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v3;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
@@ -2371,6 +3064,9 @@ function __wbg_get_imports() {
 const WasmBreachCheckFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmbreachcheck_free(ptr >>> 0, 1));
+const WasmChunkDecryptorFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmchunkdecryptor_free(ptr >>> 0, 1));
 const WasmChunkEncryptorFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmchunkencryptor_free(ptr >>> 0, 1));

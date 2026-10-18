@@ -30,7 +30,7 @@ import {
 import { useKeys } from '../lib/key-context'
 import { buildShareLink, canRebuildShareLink } from '../lib/share-link'
 import { userFriendlyError } from '../lib/user-friendly-error'
-import { decryptFilename, decryptFileMetadata, decryptChunk, fromBase64, parseEncryptedBlob, x25519SharedSecret, deriveShareKey, deriveX25519Private, zeroize } from '../lib/crypto'
+import { readNameMetadata, decryptFileMetadata, decryptChunk, fromBase64, x25519SharedSecret, deriveShareKey, deriveX25519Private, zeroize } from '../lib/crypto'
 import { encryptedDownload } from '../lib/encrypted-download'
 import { encryptedUpload } from '../lib/encrypted-upload'
 import { SharedRowSkeleton } from '@beebeeb/shared'
@@ -221,8 +221,10 @@ export function Shared() {
             const efkBytes = fromBase64(invite.encrypted_file_key)
             const fileKey = await decryptChunk(shareKey, efkBytes.slice(0, 12), efkBytes.slice(12))
 
-            const { nonce, ciphertext: ct } = parseEncryptedBlob(invite.file_name_encrypted)
-            names[invite.id] = await decryptFilename(fileKey, nonce, ct)
+            // Core's display reader (task 1943): the name subkey first, then
+            // the legacy raw key, and the NAME out of a {name, mime_type}
+            // plaintext (the raw-key decrypt used to show that JSON verbatim).
+            names[invite.id] = (await readNameMetadata(fileKey, invite.file_name_encrypted)).name
 
             zeroize(myPrivate)
             zeroize(sharedSecret)

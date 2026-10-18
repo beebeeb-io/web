@@ -64,6 +64,25 @@ export interface UploadState {
   chunk_size_bytes?: number
   chunk_count?: number
   region?: string | null
+  /**
+   * The chunk format of the frames this session holds (1 = v1, 2 = v2),
+   * recorded before the first PUT (task 1943, core 1908 resume rule). Absent
+   * on records written before 1943: core then says restart, never continue.
+   */
+  chunk_format?: number
+  /**
+   * The recorded pin a REPLACE applied to its writer (0 or 2, read from the
+   * replaced file's authenticated metadata). A resumed replace writes with the
+   * same pin. Absent for a new file, which never applies a pin.
+   */
+  replace_pin?: number
+  /**
+   * The file id `replace_pin` belongs to (the replaced file). Written with
+   * every pin; a resume applies the pin only when this equals `fileId` and
+   * the id being resumed. A replace the server answered with another id is a
+   * new file: its record carries neither field.
+   */
+  replace_pin_file_id?: string
   parentId: string | null
   createdAt: number // Date.now()
 }

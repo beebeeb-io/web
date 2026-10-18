@@ -47,6 +47,67 @@ export class WasmBreachCheck {
 }
 
 /**
+ * Stateful, single-file streaming decryptor for the web client — the ONE way
+ * web should decrypt file content (downloads, previews, shared links).
+ *
+ * Reads v2 (position-bound) and v1 (legacy) files. Both constructors take
+ * `expectedChunkFormat` from the file's encrypted metadata
+ * (`decrypt_file_metadata(...).chunk_format`; 0 = unrecorded, 2 = v2): with
+ * 2 only v2 frames open; with 0 (legacy metadata) chunk 0 decides. In v2 every
+ * frame must be the next chunk in order and from the same upload as chunk 0,
+ * and nothing may follow the last one; [`finish`] fails if the file ended
+ * before its last chunk (truncation). JS must treat any thrown error — from
+ * `pushFrame` or `finish` — as a failed download and discard the plaintext it
+ * has buffered.
+ *
+ * Replaces the per-chunk `decrypt_chunk(fileKey, nonce, ciphertext)` loop for
+ * file content: that generic function has no position and can only open v1
+ * frames (it stays for key unwrapping).
+ *
+ * [`finish`]: Self::finish
+ */
+export class WasmChunkDecryptor {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Consume the decryptor and run the end-of-stream check. Throws if no frame
+     * was pushed or a v2 file ended before its last chunk. Returns
+     * `{ chunk_count, format }`.
+     */
+    finish(): any;
+    /**
+     * Decryptor from an already-unwrapped 32-byte file key (share / shared-link
+     * recipients). `file_id` must be the id the file was uploaded under.
+     */
+    static fromFileKey(file_key: Uint8Array, file_id: string, expected_chunk_format: number): WasmChunkDecryptor;
+    /**
+     * Decryptor for the owner: the file key is derived in core from the
+     * 32-byte master key and `file_id`.
+     */
+    constructor(master_key: Uint8Array, file_id: string, expected_chunk_format: number);
+    /**
+     * Decrypt the next wire frame (`nonce(12) || ciphertext || tag(16)`),
+     * returning its plaintext. Frames must be pushed in order from chunk 0.
+     */
+    pushFrame(frame: Uint8Array): Uint8Array;
+    /**
+     * How many frames have been decrypted so far.
+     */
+    readonly chunksDecrypted: number;
+    /**
+     * The file's chunk format once chunk 0 has been opened: 1 = v1, 2 = v2;
+     * 0 before the first frame.
+     */
+    readonly format: number;
+    /**
+     * v2: the upload's version id (chunk 0's 12-byte nonce) once chunk 0 has
+     * authenticated — what a seeking reader passes to `decrypt_chunk_frame`.
+     * `undefined` before chunk 0 and for v1 files.
+     */
+    readonly versionId: Uint8Array | undefined;
+}
+
+/**
  * Stateful, single-file streaming encryptor for the web client.
  *
  * WASM is single-threaded and cannot `Read` a browser `File`, so the web
@@ -92,11 +153,40 @@ export class WasmChunkEncryptor {
      */
     pushChunk(plaintext: Uint8Array): Uint8Array;
     /**
+     * Resuming an interrupted upload (task 1908 round 3): may this (new)
+     * encryptor continue the old server upload session? `storedFormat` = the
+     * `format` persisted next to the session id when the session was opened
+     * (1 = v1, 2 = v2), or `undefined` if the resume record does not say.
+     * Returns `"continue"` (keep the session, re-PUT from chunk 0) only for a
+     * v1 session resumed by a v1 encryptor, else `"restart"`: never PUT to the
+     * old session again, upload from chunk 0 into a fresh session. Restart =
+     * `POST /api/v1/files/{id}/upload/abandon` (or wait for the lease to
+     * expire), then init again; on a 409 retry that, never the old session.
+     */
+    resumePolicy(stored_format?: number | null): string;
+    /**
      * Create a push-form encryptor with an explicit, server-dictated chunk
      * size. Use this when the v2 upload-init response overrode `chunk_size`
      * so the client plan can't diverge from what the server expects.
      */
     static withChunkSize(master_key: Uint8Array, file_id: string, file_size: bigint, chunk_size_bytes: bigint): WasmChunkEncryptor;
+    /**
+     * Replace / new version of an EXISTING file (task 1908 round 4, I-1):
+     * returns this encryptor writing in the format the file's recorded pin
+     * requires. `recordedPin` = the `chunk_format` from
+     * `decrypt_file_metadata` (0 = unrecorded, 2 = v2), never a server field.
+     * A v2 pin forces v2 frames even during the read-only phase; 0 keeps the
+     * default. Before the first `pushChunk` only; other codes throw. Consumes
+     * the old JS object — use the returned one.
+     *
+     * **New-file rule (lead ruling 2026-10-17):** pass 2 ONLY when it was
+     * read from an EXISTING file's authenticated metadata. A brand-new file
+     * makes NO call (the default write format applies) and records `format`
+     * in its name; passing 2 for a new file would create a v2 file before the
+     * switch. Core cannot enforce this; the web client keeps a test that its
+     * new-file path never calls this with 2.
+     */
+    withRecordedPin(recorded_pin: number): WasmChunkEncryptor;
     /**
      * Planned number of chunks for this file.
      */
@@ -116,6 +206,13 @@ export class WasmChunkEncryptor {
      * number (`f64`).
      */
     readonly expectedTotalCiphertext: number;
+    /**
+     * The chunk format this encryptor writes: 1 = v1, 2 = v2 (task 1908).
+     * Still 1 during the read-only rollout phase. Record it at upload via
+     * `encrypt_name_with_chunk_format` (2 if this is 2, else 0) so readers
+     * can pin it.
+     */
+    readonly format: number;
 }
 
 /**
@@ -300,8 +397,24 @@ export function decompress_gzip(data: Uint8Array): Uint8Array;
 /**
  * Decrypt a ciphertext chunk that was produced by `encrypt_chunk`.
  * `key`, `nonce`, and `ciphertext` are raw byte slices.
+ *
+ * Generic no-AAD AEAD open (key unwrap, share keys, v1 blobs). It does NOT
+ * open v2 file-content frames — use `WasmChunkDecryptor` (sequential) or
+ * `decrypt_chunk_frame` (random access) for file content (task 1908).
  */
 export function decrypt_chunk(key: Uint8Array, nonce: Uint8Array, ciphertext: Uint8Array): Uint8Array;
+
+/**
+ * Random-access open of ONE file-content frame at a known position (seeking
+ * readers: video, range previews). `index` is the chunk requested and
+ * `is_last = index == chunk_count - 1`; a server that serves another chunk or
+ * lies about the count fails the tag. `format` (1 = v1, 2 = v2) must come from
+ * authenticated data (2 when the encrypted metadata records v2, else a
+ * `WasmChunkDecryptor.format` after chunk 0), never from a server field.
+ * `version_id` (12 bytes, v2 only; ignored for v1) is `WasmChunkDecryptor.versionId`
+ * after chunk 0 (or chunk 0's first 12 bytes): another upload's frames fail.
+ */
+export function decrypt_chunk_frame(file_key: Uint8Array, file_id: string, version_id: Uint8Array, index: number, is_last: boolean, format: number, frame: Uint8Array): Uint8Array;
 
 /**
  * Decrypt a sequence of encrypted chunks and return the concatenated plaintext.
@@ -311,9 +424,37 @@ export function decrypt_chunk(key: Uint8Array, nonce: Uint8Array, ciphertext: Ui
 export function decrypt_chunks(key: Uint8Array, chunks: any): Uint8Array;
 
 /**
+ * The metadata reader for FILES (task 1908 round 3): exactly
+ * [`decrypt_name_metadata`], except that a plaintext (non-JSON)
+ * `name_encrypted` is refused — a plaintext name carries no chunk-format pin.
+ * Take every file-content reader's `chunk_format` from THIS;
+ * `decrypt_name_metadata` stays for folders / display.
+ */
+export function decrypt_file_metadata(master_key: Uint8Array, file_id: string, name_encrypted: string): any;
+
+/**
+ * [`decrypt_file_metadata`] with an already-unwrapped 32-byte file key.
+ */
+export function decrypt_file_metadata_with_key(file_key: Uint8Array, name_encrypted: string): any;
+
+/**
  * Decrypt a metadata blob back to a UTF-8 string.
  */
 export function decrypt_metadata(key: Uint8Array, nonce: Uint8Array, ciphertext: Uint8Array): string;
+
+/**
+ * Decrypt a `name_encrypted` envelope (same format/key matrix as core
+ * `decrypt_name`) into `{ name, mime_type, chunk_format }`. `chunk_format`
+ * (0 = unrecorded, 2 = v2) is what every content reader of the file must be
+ * given — task 1908.
+ */
+export function decrypt_name_metadata(master_key: Uint8Array, file_id: string, name_encrypted: string): any;
+
+/**
+ * [`decrypt_name_metadata`] with an already-unwrapped 32-byte file key (share
+ * / shared-link recipients, file-request content keys).
+ */
+export function decrypt_name_metadata_with_key(file_key: Uint8Array, name_encrypted: string): any;
 
 /**
  * Batch-decrypt file names in ONE WASM call (task 0806 — folder-load perf).
@@ -326,6 +467,19 @@ export function decrypt_metadata(key: Uint8Array, nonce: Uint8Array, ciphertext:
  * `decrypt_names` (string-UUID then legacy binary-UUID key attempt).
  */
 export function decrypt_names(master_key: Uint8Array, items: any): any;
+
+/**
+ * Open a `note_encrypted` envelope: the note subkey first, then the legacy
+ * raw file key (notes stored before the switch). A plaintext value is an
+ * error. The ONLY way to open a note — not `decryptFilename`.
+ */
+export function decrypt_note(file_key: Uint8Array, note_encrypted: string): string;
+
+/**
+ * Open a thumbnail frame: the thumbnail subkey first, then the legacy raw
+ * file key (thumbnails stored before the switch).
+ */
+export function decrypt_thumbnail(file_key: Uint8Array, frame: Uint8Array): Uint8Array;
 
 /**
  * Derive a per-file encryption key from a master key and file ID via
@@ -372,6 +526,53 @@ export function encrypt_chunk(key: Uint8Array, plaintext: Uint8Array): any;
  * Returns the same JS object shape as `encrypt_chunk`.
  */
 export function encrypt_metadata(key: Uint8Array, metadata: string): any;
+
+/**
+ * Encrypt a filename (+ MIME) into a `name_encrypted` envelope that also
+ * records the file's chunk format (task 1908): `chunk_format` 2 = every upload
+ * of this file id is v2, 0 = record nothing (the pre-1908 shape). New file:
+ * 2 only if its content was written as v2. Rename / replace: pass the value
+ * `decrypt_file_metadata` returned — never upgrade a file with v1 history,
+ * never drop a recorded 2.
+ */
+export function encrypt_name_with_chunk_format(master_key: Uint8Array, file_id: string, filename: string, mime_type: string | null | undefined, chunk_format: number): string;
+
+/**
+ * Seal a file note for a file with no recorded pin yet (task 1908 round 5):
+ * returns the canonical `EncryptedBlob` JSON to store in `note_encrypted` (the
+ * shape `serializeEncryptedBlob` writes). Follows the gated seal switch, like
+ * `encrypt_thumbnail`. For a note on an EXISTING file (the details panel) use
+ * `encrypt_note_for` with the file's recorded pin. The ONLY way to seal a
+ * note — not `encryptFilename` / `encrypt_metadata` under the file key (a
+ * raw-key note can stand in for a v2 file's name and content).
+ */
+export function encrypt_note(file_key: Uint8Array, note: string): string;
+
+/**
+ * Seal a note of an EXISTING file under the rule of its recorded pin (task
+ * 1908 round 5): `recordedPin` = the `chunk_format` from
+ * `decrypt_file_metadata` of THIS file (0 = unrecorded, 2 = v2), never a
+ * server field. A v2 pin is always sealed under the note subkey; 0 behaves
+ * like `encrypt_note`.
+ */
+export function encrypt_note_for(file_key: Uint8Array, note: string, recorded_pin: number): string;
+
+/**
+ * Seal a thumbnail (already-encoded image bytes) under a 32-byte file key:
+ * `nonce(12) || ciphertext || tag(16)` (the existing thumbnail wire format).
+ * The ONLY way to seal a thumbnail (task 1908 round 3) — after the gated seal
+ * switch it uses the thumbnail subkey, so a thumbnail can never be served as
+ * file content.
+ */
+export function encrypt_thumbnail(file_key: Uint8Array, plaintext: Uint8Array): Uint8Array;
+
+/**
+ * Seal a thumbnail of an EXISTING file under the rule of its recorded pin
+ * (task 1908 round 4): `recordedPin` = the `chunk_format` from
+ * `decrypt_file_metadata` (0 = unrecorded, 2 = v2). A v2 pin is always sealed
+ * under the thumbnail subkey; 0 behaves like `encrypt_thumbnail`.
+ */
+export function encrypt_thumbnail_for(file_key: Uint8Array, plaintext: Uint8Array, recorded_pin: number): Uint8Array;
 
 /**
  * Evaluate a password against the server's `policy.password.min_length`
@@ -592,15 +793,23 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_wasmbreachcheck_free: (a: number, b: number) => void;
+    readonly __wbg_wasmchunkdecryptor_free: (a: number, b: number) => void;
     readonly __wbg_wasmchunkencryptor_free: (a: number, b: number) => void;
     readonly __wbg_wasmsearchindex_free: (a: number, b: number) => void;
     readonly __wbg_wasmsignupceremony_free: (a: number, b: number) => void;
     readonly compute_recovery_check: (a: number, b: number, c: number) => void;
     readonly decompress_gzip: (a: number, b: number, c: number) => void;
     readonly decrypt_chunk: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly decrypt_chunk_frame: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => void;
     readonly decrypt_chunks: (a: number, b: number, c: number, d: number) => void;
+    readonly decrypt_file_metadata: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly decrypt_file_metadata_with_key: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly decrypt_metadata: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly decrypt_name_metadata: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly decrypt_name_metadata_with_key: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly decrypt_names: (a: number, b: number, c: number, d: number) => void;
+    readonly decrypt_note: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly decrypt_thumbnail: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly derive_file_key: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly derive_master_key: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly derive_request_wrap_key: (a: number, b: number, c: number, d: number, e: number) => void;
@@ -609,6 +818,11 @@ export interface InitOutput {
     readonly derive_x25519_public: (a: number, b: number, c: number) => void;
     readonly encrypt_chunk: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly encrypt_metadata: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly encrypt_name_with_chunk_format: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
+    readonly encrypt_note: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly encrypt_note_for: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly encrypt_thumbnail: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly encrypt_thumbnail_for: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly evaluate_password: (a: number, b: number, c: number, d: number) => void;
     readonly generate_recovery_pdf: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly generate_recovery_phrase: (a: number) => void;
@@ -642,14 +856,24 @@ export interface InitOutput {
     readonly wasmbreachcheck_evaluate: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly wasmbreachcheck_new: (a: number, b: number) => number;
     readonly wasmbreachcheck_prefix: (a: number, b: number) => void;
+    readonly wasmchunkdecryptor_chunksDecrypted: (a: number) => number;
+    readonly wasmchunkdecryptor_finish: (a: number, b: number) => void;
+    readonly wasmchunkdecryptor_format: (a: number) => number;
+    readonly wasmchunkdecryptor_fromFileKey: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly wasmchunkdecryptor_new: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly wasmchunkdecryptor_pushFrame: (a: number, b: number, c: number, d: number) => void;
+    readonly wasmchunkdecryptor_versionId: (a: number, b: number) => void;
     readonly wasmchunkencryptor_chunkCount: (a: number) => number;
     readonly wasmchunkencryptor_chunkSize: (a: number) => number;
     readonly wasmchunkencryptor_chunksEmitted: (a: number) => number;
     readonly wasmchunkencryptor_expectedTotalCiphertext: (a: number) => number;
     readonly wasmchunkencryptor_finish: (a: number, b: number) => void;
+    readonly wasmchunkencryptor_format: (a: number) => number;
     readonly wasmchunkencryptor_new: (a: number, b: number, c: number, d: number, e: number, f: bigint, g: number, h: number) => void;
     readonly wasmchunkencryptor_pushChunk: (a: number, b: number, c: number, d: number) => void;
+    readonly wasmchunkencryptor_resumePolicy: (a: number, b: number, c: number) => void;
     readonly wasmchunkencryptor_withChunkSize: (a: number, b: number, c: number, d: number, e: number, f: bigint, g: bigint) => void;
+    readonly wasmchunkencryptor_withRecordedPin: (a: number, b: number, c: number) => void;
     readonly wasmsearchindex_build: (a: number, b: number, c: number) => void;
     readonly wasmsearchindex_encryptBuckets: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly wasmsearchindex_encryptShards: (a: number, b: number, c: number, d: number) => void;

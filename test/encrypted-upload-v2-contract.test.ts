@@ -37,15 +37,20 @@ describe('encryptedUpload v2 server file id contract', () => {
     expect(cap.uploadedChunks).toEqual([
       { fileId: 'server-file-id', index: 0, firstByte: 9, uploadSessionId: 'upload-session-id' },
     ])
-    expect(cap.savedStates).toHaveLength(1)
-    expect(cap.savedStates[0]).toMatchObject({
-      fileId: 'server-file-id',
-      upload_session_id: 'upload-session-id',
-      object_version_id: 'object-version-id',
-      chunk_size_bytes: 4,
-      chunk_count: 1,
-      region: 'Europe',
-    })
+    // Saved once after init, and again (task 1943) to record the chunk format
+    // the session holds before its first PUT. Both under the server's file id.
+    expect(cap.savedStates).toHaveLength(2)
+    for (const state of cap.savedStates) {
+      expect(state).toMatchObject({
+        fileId: 'server-file-id',
+        upload_session_id: 'upload-session-id',
+        object_version_id: 'object-version-id',
+        chunk_size_bytes: 4,
+        chunk_count: 1,
+        region: 'Europe',
+      })
+    }
+    expect(cap.savedStates[1]).toMatchObject({ chunk_format: 1 })
     expect(cap.removedStates).toEqual(['server-file-id'])
   })
 })
