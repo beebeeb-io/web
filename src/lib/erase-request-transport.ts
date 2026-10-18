@@ -9,10 +9,11 @@
  * its daily-cap message either.
  *
  * This module sends the same request `request()` would (session cookie, legacy bearer, the
- * provenance and expected-user headers, JSON) with plain `fetch`, once. It does not retry, and it
- * does not run `request()`'s global handlers (session expired, account deleted or suspended):
- * the next status read, which goes through `request()`, does that. `packages/shared` is left
- * untouched (another session owns it).
+ * provenance and expected-user headers, JSON) with plain `fetch`, once. It does not retry.
+ * Round 4b: `request()`'s global handlers (session expired, account deleted, suspended or
+ * mismatched) are reached by ONE status read through `request()` right after such an answer
+ * (a 401, or the codes in `AUTH_STATE_CODES`); the POST itself is never sent again.
+ * `packages/shared` is left untouched (another session owns it).
  */
 import {
   ApiError,
@@ -21,7 +22,14 @@ import {
   getToken,
   parseErrorBody,
   provenanceHeaders,
+  request,
 } from '@beebeeb/shared'
+
+/** Answers that mean the LOGIN is gone or wrong, not this request (`request()` handles them). */
+export const AUTH_STATE_CODES: ReadonlySet<string> = new Set(['account_deleted', 'account_suspended', 'account_mismatch'])
+
+/** One read through the shared client, so its global handlers see the state. */
+const readThroughSharedClient = () => request<unknown>('/api/v1/account/erase-request')
 
 export interface OnceDeps {
   fetchImpl?: typeof fetch
@@ -30,6 +38,8 @@ export interface OnceDeps {
   token?: string | null
   /** Extra headers the shared client would add (default: provenance + expected user). */
   extraHeaders?: Record<string, string>
+  /** After a 401 or an `AUTH_STATE_CODES` answer (default: a status read through `request()`). */
+  afterAuthFailure?: () => Promise<unknown>
 }
 
 /**
@@ -67,6 +77,9 @@ export async function postEraseRequestOnce(
   if (!res.ok) {
     const body = (await res.json().catch(() => ({ error: 'Server returned an invalid response' }))) as Record<string, unknown>
     const { code, message } = parseErrorBody(body, res.statusText)
+    if (res.status === 401 || (code !== undefined && AUTH_STATE_CODES.has(code))) {
+      await (deps.afterAuthFailure ?? readThroughSharedClient)().catch(() => undefined)
+    }
     throw new ApiError(message, res.status, code, body)
   }
   return res.json()

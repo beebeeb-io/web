@@ -467,7 +467,8 @@ describe('5. "Restore everything from the erase on <date>"', () => {
     const running = draw({ offer: 'running', rowsRestored: 40, inTrash: 110 })
     expect(running).toContain('40 restored, 110 still in the trash')
     expect(running).not.toContain('data-testid="erase-restore-button"')
-    expect(draw({ offer: 'done', inTrash: 0 })).toContain('Everything from the erase is back.')
+    // Round 4b: counts, never "everything is back" (items may have been deleted for good one by one).
+    expect(draw({ offer: 'done', inTrash: 0 })).toContain('Nothing from this erase is left in the trash.')
     expect(draw({ offer: 'none' })).toBe('')
   })
 
@@ -479,7 +480,10 @@ describe('5. "Restore everything from the erase on <date>"', () => {
   })
 
   test('it is drawn where the owner looks: the locked screen, Trash, the empty drive', () => {
-    expect(read('components/vault-locked-no-key.tsx')).toContain('<RestoreFromErase executed={lastExecuted} onStatus={applyRestoreStatus} />')
+    // Round 4b: the block shares the screen's gate and makes the screen read again when done.
+    expect(read('components/vault-locked-no-key.tsx')).toContain(
+      '<RestoreFromErase executed={lastExecuted} gate={eraseGate.current} onStatus={applyRestoreStatus} onDone={reloadAfterRestore} />',
+    )
     expect(read('components/vault-locked-no-key.tsx')).toContain('restore={restoreSlot}')
     expect(read('pages/trash.tsx')).toContain('<RestoreFromEraseOffer className="px-5 pt-3" onDone={fetchTrash} />')
     expect(read('pages/drive.tsx')).toContain('notice={<RestoreFromEraseOffer className="mb-6" />}')
@@ -599,19 +603,22 @@ describe('7. a late status read never overwrites a newer action', () => {
     const screen = read('components/vault-locked-no-key.tsx')
     expect(screen).toContain('const seq = eraseGate.current.begin()')
     expect(screen).toContain('if (!alive.current || !eraseGate.current.isLatest(seq)) return')
-    expect(screen.match(/eraseGate\.current\.supersede\(\)/g)?.length ?? 0).toBeGreaterThanOrEqual(3)
+    // Round 4b: the request and the cancel supersede here; the restore block supersedes the SAME
+    // gate itself (test/1918-erase-request-r4b.test.tsx), so applying its status needs no extra one.
+    expect(screen.match(/eraseGate\.current\.supersede\(\)/g)?.length ?? 0).toBeGreaterThanOrEqual(2)
   })
 
   test('"Check again" stays until the request shows up or the follow-up read ran', async () => {
     const m = await lib()
     const keep = m.keepCheckAgain as Fn
-    expect(keep(true, status(), false)).toBe(true)
-    expect(keep(true, status({ request: AWAITING }), false)).toBe(false)
-    expect(keep(true, status(), true)).toBe(false)
-    expect(keep(false, status(), false)).toBe(false)
+    // Round 4b: a mode ('request' waits for the request to show up), not a boolean.
+    expect(keep('request', status(), false)).toBe('request')
+    expect(keep('request', status({ request: AWAITING }), false)).toBe(null)
+    expect(keep('request', status(), true)).toBe(null)
+    expect(keep(null, status(), false)).toBe(null)
     expect(m.FOLLOW_UP_MS).toBe(10_000)
     const screen = read('components/vault-locked-no-key.tsx')
-    expect(screen).toContain("setEraseCheckAgain((shown) => keepCheckAgain(shown, status, opts.followUp === true))")
+    expect(screen).toContain('setEraseCheckAgain((mode) => keepCheckAgain(mode, status, followUp))')
     expect(screen).toContain('void loadEraseStatus({ followUp: true })')
     expect(screen.match(/scheduleFollowUp\(\)/g)?.length ?? 0).toBeGreaterThanOrEqual(2)
   })

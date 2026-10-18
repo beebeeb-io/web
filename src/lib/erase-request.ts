@@ -377,6 +377,23 @@ export async function requestErase(deps: EraseDeps, confirmCount: number, confir
   return { kind: 'unknown', message: UNKNOWN_REQUEST_MESSAGE }
 }
 
+/**
+ * Round 4b: the note after a `requested` outcome says what came back. Only a request this POST
+ * created sent an email just now; an existing one is described as it is.
+ */
+export function requestedNote(outcome: Extract<RequestOutcome, { kind: 'requested' }>): string {
+  if (outcome.created === true) return 'Requested. Check your email to confirm it.'
+  if (outcome.created === false) {
+    return outcome.request.verified
+      ? 'There is already a confirmed erase request.'
+      : 'A request is already waiting for confirmation by email.'
+  }
+  // Learned from a status read after an unknown answer: it may or may not be this attempt's.
+  return outcome.request.verified
+    ? 'There is a confirmed erase request.'
+    : 'The request is waiting for confirmation by email.'
+}
+
 export type CancelOutcome =
   | { kind: 'cancelled' }
   /** The move has started; the files are going to the trash. */
@@ -390,6 +407,11 @@ export type CancelOutcome =
   | { kind: 'already_executed'; status: EraseStatus }
   /** The cancel did not reach the server or failed there, and the request is still pending. */
   | { kind: 'still_pending'; request: EraseRequestView; message: string }
+  /**
+   * Round 4b: the request being cancelled is gone, and a NEWER one is pending (made on another
+   * screen meanwhile). The screen shows the new one; it does not say the cancel failed.
+   */
+  | { kind: 'replaced'; status: EraseStatus }
   /** We could not learn what happened. */
   | { kind: 'unknown'; message: string }
 
@@ -411,6 +433,7 @@ function afterCancelMiss(status: EraseStatus | undefined, requestId: string | nu
     return { kind: 'unknown', message: "We couldn't confirm what happened to the request. Check again, or use the link in the email." }
   }
   if (status.request) {
+    if (requestId !== null && status.request.id !== requestId) return { kind: 'replaced', status }
     return {
       kind: 'still_pending',
       request: status.request,
@@ -445,6 +468,8 @@ export function cancelNote(outcome: CancelOutcome): string | null {
       return 'It had already run: every file is in the trash, where it can still be restored.'
     case 'already_started':
       return 'The move to the trash has started, so it can no longer be cancelled. Everything can be restored from the trash.'
+    case 'replaced':
+      return 'That request is gone; a newer request is pending.'
     case 'unknown':
       return outcome.message
     default:
@@ -566,7 +591,31 @@ export function restoreProgressText(rowsRestored: number, inTrash: number | null
   return inTrash === null ? `${rowsRestored} restored` : `${rowsRestored} restored, ${inTrash} still in the trash`
 }
 
-export const RESTORE_DONE_TEXT = 'Everything from the erase is back.'
+/**
+ * Round 4b: counts, never "everything is back": items may have been deleted for good one by one
+ * from the trash since the erase, and those cannot come back.
+ */
+export const RESTORE_DONE_TEXT = 'Nothing from this erase is left in the trash.'
+
+/** "150 items from this erase are still in the trash" (`null`: an older server, no count). */
+export function inTrashText(inTrash: number | null): string | null {
+  if (inTrash === null) return null
+  return `${itemsLabel(inTrash)} from this erase ${inTrash === 1 ? 'is' : 'are'} still in the trash`
+}
+
+/**
+ * What a fresh status means for a restore block following erase `shownId` (round 4b): `lost`
+ * when the status no longer carries that erase as its last one (stop polling, say so); else the
+ * newer state, and whether an earlier error is stale now (the restore runs or is done).
+ */
+export type RestoreUpdate = { kind: 'lost' } | { kind: 'update'; executed: EraseExecuted; clearError: boolean }
+
+export function restoreUpdate(shownId: string, status: EraseStatus): RestoreUpdate {
+  const next = status.last_executed
+  if (!next || next.id !== shownId) return { kind: 'lost' }
+  const offer = restoreOffer(next)
+  return { kind: 'update', executed: next, clearError: offer === 'running' || offer === 'done' }
+}
 
 export type RestoreOutcome =
   /** Everything came back (at once, or the server says so now). */
@@ -645,9 +694,18 @@ export function createLatestGate(): LatestGate {
 export const FOLLOW_UP_MS = 10_000
 
 /**
- * "Check again" stays until the request shows up or the follow-up read ran (round 4): a status
- * read that finds nothing yet, right after the unknown outcome, must not hide it.
+ * What "Check again" waits for (round 4b): after an unknown REQUEST outcome, for the request to
+ * show up; after an unknown CANCEL outcome, for the request to be gone.
  */
-export function keepCheckAgain(shown: boolean, status: EraseStatus, followUp: boolean): boolean {
-  return shown && !followUp && status.request === null
+export type CheckAgainMode = 'request' | 'cancel' | null
+
+/**
+ * "Check again" stays until what it waits for is seen, or until a follow-up read ran (the
+ * scheduled one, or a click on "Check again"): a status read right after the unknown outcome that
+ * does not show it yet must not hide the button.
+ */
+export function keepCheckAgain(mode: CheckAgainMode, status: EraseStatus, followUp: boolean): CheckAgainMode {
+  if (mode === null || followUp) return null
+  if (mode === 'request') return status.request ? null : 'request'
+  return status.request ? 'cancel' : null
 }

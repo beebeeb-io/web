@@ -287,10 +287,13 @@ function verifyContent(view: VerifyView, onConfirm: () => void, onCancel: () => 
       body: (
         <div className="flex flex-col gap-3 text-[13px] text-ink-3 leading-relaxed" data-testid="erase-verify-reopen">
           <p>
-            This page works only with the link from the email. It forgets the link as soon as it has read it, so a
-            reload cannot use it again.
+            This page works only with the link from the email, and it forgets the link as soon as it has read it.
+            After a reload it can't tell what happened before.
           </p>
-          <p>Open the confirmation link in the email once more. Nothing has been confirmed or cancelled from this page.</p>
+          <p>
+            Open the confirmation link in the email again. If you already confirmed, clicking Confirm says so and changes
+            nothing.
+          </p>
         </div>
       ),
     }

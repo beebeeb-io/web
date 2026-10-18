@@ -31,7 +31,9 @@ import {
   parseEraseStatus,
   parseTypedCount,
   requestErase,
+  requestedNote,
   restoreOffer,
+  type CheckAgainMode,
   type EraseDeps,
   type EraseStatus,
 } from '../lib/erase-request'
@@ -129,8 +131,9 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
   const [eraseBusy, setEraseBusy] = useState(false)
   const [eraseNote, setEraseNote] = useState('')
   const [eraseError, setEraseError] = useState('')
-  // The last POST's outcome is unknown (round 2): offer "Check again".
-  const [eraseCheckAgain, setEraseCheckAgain] = useState(false)
+  // The last action's outcome is unknown (round 2): offer "Check again". Round 4b: what it waits
+  // for — the request to show up (an unknown request) or to be gone (an unknown cancel).
+  const [eraseCheckAgain, setEraseCheckAgain] = useState<CheckAgainMode>(null)
   // Round 4: after each action the outcome takes the focus (the card watches this).
   const [eraseFocusTick, setEraseFocusTick] = useState(0)
 
@@ -177,20 +180,30 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
   // whose answer was just applied supersedes every read started before it. "Check again" stays
   // until the request shows up or the follow-up read (`FOLLOW_UP_MS` after an unknown outcome)
   // has run.
+  //
+  // Round 4b: this gate is THE sequencing authority of the screen: the restore block reads and
+  // supersedes through it too. A follow-up read that a newer read or action superseded schedules
+  // one more follow-up (it never ran); a click on "Check again" counts as the follow-up.
   const eraseGate = useRef(createLatestGate())
+  const scheduleFollowUpRef = useRef<() => void>(() => {})
   const loadEraseStatus = useCallback(async (opts: { followUp?: boolean } = {}) => {
+    const followUp = opts.followUp === true
     const seq = eraseGate.current.begin()
     try {
       const status = parseEraseStatus(await getEraseRequest())
       if (!status) throw new Error('unexpected answer')
-      if (!alive.current || !eraseGate.current.isLatest(seq)) return
+      if (!alive.current) return
+      if (!eraseGate.current.isLatest(seq)) {
+        if (followUp) scheduleFollowUpRef.current()
+        return
+      }
       setEraseStatus(status)
       setEraseLoadError('')
-      setEraseCheckAgain((shown) => keepCheckAgain(shown, status, opts.followUp === true))
+      setEraseCheckAgain((mode) => keepCheckAgain(mode, status, followUp))
     } catch {
       if (!alive.current || !eraseGate.current.isLatest(seq)) return
       setEraseLoadError('We could not check what this account holds. Try again.')
-      if (opts.followUp) setEraseCheckAgain(false)
+      if (followUp) setEraseCheckAgain(null)
     }
   }, [])
 
@@ -203,6 +216,7 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
       void loadEraseStatus({ followUp: true })
     }, FOLLOW_UP_MS)
   }, [loadEraseStatus])
+  scheduleFollowUpRef.current = scheduleFollowUp
   useEffect(() => () => {
     if (followUpTimer.current) clearTimeout(followUpTimer.current)
   }, [])
@@ -246,7 +260,8 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
       // before this answer are stale now (round 4).
       eraseGate.current.supersede()
       setEraseStatus((s) => applyRequest(s, outcome.request))
-      setEraseNote('Requested. Check your email to confirm it.')
+      // Round 4b: only a request this POST created sent an email just now.
+      setEraseNote(requestedNote(outcome))
       void loadEraseStatus()
     } else if (outcome.kind === 'count_changed') {
       setEraseTyped('')
@@ -254,7 +269,7 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
       setEraseNote(`The number changed: the account now holds ${outcome.liveItems}. Nothing was scheduled. Type the new number to continue.`)
     } else if (outcome.kind === 'unknown' || outcome.kind === 'in_progress') {
       setEraseNote(outcome.message)
-      setEraseCheckAgain(true)
+      setEraseCheckAgain('request')
       void loadEraseStatus()
       scheduleFollowUp()
     } else {
@@ -276,8 +291,9 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
     if (outcome.kind === 'cancelled') {
       setEraseStatus(applyCancelled)
       setEraseNote(cancelNote(outcome) ?? '')
-    } else if (outcome.kind === 'nothing_pending' || outcome.kind === 'already_executed') {
-      // Round 4: a 404 says what the server holds NOW (it may have run), from a fresh read.
+    } else if (outcome.kind === 'nothing_pending' || outcome.kind === 'already_executed' || outcome.kind === 'replaced') {
+      // Round 4: a 404 says what the server holds NOW (it may have run, or a newer request may be
+      // pending: round 4b), from a fresh read.
       setEraseStatus(outcome.status)
       setEraseNote(cancelNote(outcome) ?? '')
     } else if (outcome.kind === 'already_started') {
@@ -287,21 +303,25 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
       setEraseError(outcome.message)
     } else {
       setEraseNote(outcome.message)
-      setEraseCheckAgain(true)
+      setEraseCheckAgain('cancel')
       scheduleFollowUp()
     }
     void loadEraseStatus()
   }, [eraseStatus, loadEraseStatus, scheduleFollowUp])
 
-  // Round 4: "Restore everything from the erase" — a fresher status the block read is applied
-  // (and supersedes older reads).
+  // Round 4: "Restore everything from the erase". Round 4b: the block reads through THIS
+  // screen's gate (one sequencing authority), so what it hands back started after every action
+  // and is applied as is; when nothing of the erase is left in the trash the screen reads the
+  // status again, so the card stops saying the files are in the trash.
   const applyRestoreStatus = useCallback((status: EraseStatus) => {
-    eraseGate.current.supersede()
     setEraseStatus(status)
   }, [])
+  const reloadAfterRestore = useCallback(() => {
+    void loadEraseStatus()
+  }, [loadEraseStatus])
   const lastExecuted = eraseStatus?.last_executed ?? null
   const restoreSlot = lastExecuted && restoreOffer(lastExecuted) !== 'none'
-    ? <RestoreFromErase executed={lastExecuted} onStatus={applyRestoreStatus} />
+    ? <RestoreFromErase executed={lastExecuted} gate={eraseGate.current} onStatus={applyRestoreStatus} onDone={reloadAfterRestore} />
     : null
 
   const runAccountDeletion = useCallback(async (token: string) => {
@@ -478,7 +498,8 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
           busy={eraseBusy}
           note={eraseNote}
           error={eraseError}
-          checkAgain={eraseCheckAgain}
+          checkAgain={eraseCheckAgain !== null}
+          onCheckAgain={() => void loadEraseStatus({ followUp: true })}
           restore={restoreSlot}
           focusTick={eraseFocusTick}
         />

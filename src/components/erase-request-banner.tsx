@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type Ref } from 'react'
 import { BBButton, Icon } from '@beebeeb/shared'
 import { cancelEraseRequest, createEraseRequest, getEraseRequest } from '../lib/api'
+import { useAuth } from '../lib/auth-context'
+import { sharedEraseStatus } from '../lib/erase-status-store'
 import {
   attachEraseRefresh,
   cancelErase,
@@ -10,9 +12,9 @@ import {
   eraseRefreshPlan,
   formatDue,
   itemsLabel,
-  parseEraseStatus,
   type EraseCard,
   type EraseDeps,
+  type EraseStatus,
 } from '../lib/erase-request'
 
 /**
@@ -25,8 +27,10 @@ import {
  * With it, the copy elsewhere can say truthfully where cancelling works: on the locked screen,
  * with the email link, or in Beebeeb on the web while signed in.
  *
- * It reads `GET /api/v1/account/erase-request` on mount, on focus, when the tab becomes visible
- * and every minute while a request is pending; it draws nothing when there is no request.
+ * It reads the status through the app's shared, cached read (`erase-status-store.ts`, round 4b:
+ * reused for 30 s, so a navigation does not cost a request): on mount, on focus, when the tab
+ * becomes visible and every minute while a request is pending; after a cancel it reads fresh. It
+ * draws nothing when there is no request.
  */
 const ERASE_DEPS: EraseDeps = { create: createEraseRequest, cancel: cancelEraseRequest, status: getEraseRequest }
 
@@ -39,11 +43,26 @@ export interface EraseRequestBannerViewProps {
   error: string
   onCancel: () => void
   noteRef?: Ref<HTMLParagraphElement>
+  errorRef?: Ref<HTMLParagraphElement>
+  /** The last outcome is unknown: draw "Check again" (round 4b). */
+  checkAgain?: boolean
+  onCheckAgain?: () => void
   nowMs?: number
 }
 
 /** Pure presentation (SSR-tested in `test/1918-erase-request-r4.test.tsx`). */
-export function EraseRequestBannerView({ card, busy, note, error, onCancel, noteRef, nowMs = Date.now() }: EraseRequestBannerViewProps) {
+export function EraseRequestBannerView({
+  card,
+  busy,
+  note,
+  error,
+  onCancel,
+  noteRef,
+  errorRef,
+  checkAgain,
+  onCheckAgain,
+  nowMs = Date.now(),
+}: EraseRequestBannerViewProps) {
   if (!card && !note && !error) return null
   let text = ''
   if (card?.kind === 'awaiting') {
@@ -79,21 +98,30 @@ export function EraseRequestBannerView({ card, busy, note, error, onCancel, note
         {note}
       </p>
       {error && (
-        <p role="alert" className="basis-full text-red" data-testid="erase-banner-error">
+        <p ref={errorRef} tabIndex={-1} role="alert" className="basis-full text-red outline-none" data-testid="erase-banner-error">
           {error}
         </p>
+      )}
+      {checkAgain && onCheckAgain && (
+        <BBButton type="button" variant="default" size="sm" onClick={onCheckAgain} data-testid="erase-banner-check-again">
+          Check again
+        </BBButton>
       )}
     </div>
   )
 }
 
 export function EraseRequestBanner() {
+  const { user } = useAuth()
+  const key = user?.user_id ?? ''
   const [card, setCard] = useState<BannerCard | null>(null)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
   const [error, setError] = useState('')
+  const [checkAgain, setCheckAgain] = useState(false)
   const [focusTick, setFocusTick] = useState(0)
   const noteRef = useRef<HTMLParagraphElement>(null)
+  const errorRef = useRef<HTMLParagraphElement>(null)
   const alive = useRef(true)
   const gate = useRef(createLatestGate())
 
@@ -104,17 +132,26 @@ export function EraseRequestBanner() {
     }
   }, [])
 
-  const load = useCallback(async () => {
-    const seq = gate.current.begin()
-    try {
-      const status = parseEraseStatus(await getEraseRequest())
-      if (!alive.current || !gate.current.isLatest(seq) || !status) return
-      const next = eraseCard(status)
-      setCard(next.kind === 'awaiting' || next.kind === 'pending' || next.kind === 'moving' ? next : null)
-    } catch {
-      // No banner without a status; the next refresh tries again.
-    }
+  const show = useCallback((status: EraseStatus) => {
+    const next = eraseCard(status)
+    setCard(next.kind === 'awaiting' || next.kind === 'pending' || next.kind === 'moving' ? next : null)
   }, [])
+
+  const load = useCallback(
+    async (opts: { force?: boolean } = {}) => {
+      if (!key) return
+      const seq = gate.current.begin()
+      try {
+        const status = await sharedEraseStatus.read(key, { force: opts.force === true })
+        if (!alive.current || !gate.current.isLatest(seq) || !status) return
+        show(status)
+        if (opts.force) setCheckAgain(false)
+      } catch {
+        // No banner without a status; the next refresh tries again.
+      }
+    },
+    [key, show],
+  )
 
   useEffect(() => {
     void load()
@@ -123,13 +160,14 @@ export function EraseRequestBanner() {
   const refreshKey = card ? `${card.kind}:${card.request.due_at}` : 'none'
   useEffect(() => {
     if (typeof window === 'undefined' || typeof document === 'undefined') return
+    // Focus and visibility go through the cache (a fresh answer is reused for 30 s).
     return attachEraseRefresh({ win: window, doc: document, refresh: () => void load(), plan: eraseRefreshPlan(card, Date.now()) })
     // The plan only changes with the card's kind and due time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey, load])
 
   useEffect(() => {
-    if (focusTick > 0) noteRef.current?.focus()
+    if (focusTick > 0) (errorRef.current ?? noteRef.current)?.focus()
   }, [focusTick])
 
   const cancel = useCallback(async () => {
@@ -137,21 +175,35 @@ export function EraseRequestBanner() {
     setBusy(true)
     setError('')
     setNote('')
+    setCheckAgain(false)
     const outcome = await cancelErase(ERASE_DEPS, card.request.id)
     if (!alive.current) return
     setBusy(false)
     gate.current.supersede()
+    sharedEraseStatus.invalidate()
     if (outcome.kind === 'still_pending') {
       setError(outcome.message)
     } else {
       setNote(cancelNote(outcome) ?? '')
-      if (outcome.kind !== 'already_started' && outcome.kind !== 'unknown') setCard(null)
+      if (outcome.kind === 'replaced') show(outcome.status)
+      else if (outcome.kind === 'unknown') setCheckAgain(true)
+      else if (outcome.kind !== 'already_started') setCard(null)
     }
     setFocusTick((n) => n + 1)
-    void load()
-  }, [card, load])
+    void load({ force: true })
+  }, [card, load, show])
 
   return (
-    <EraseRequestBannerView card={card} busy={busy} note={note} error={error} onCancel={() => void cancel()} noteRef={noteRef} />
+    <EraseRequestBannerView
+      card={card}
+      busy={busy}
+      note={note}
+      error={error}
+      onCancel={() => void cancel()}
+      noteRef={noteRef}
+      errorRef={errorRef}
+      checkAgain={checkAgain}
+      onCheckAgain={() => void load({ force: true })}
+    />
   )
 }

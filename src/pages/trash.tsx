@@ -13,6 +13,7 @@ import { readNameMetadata } from '../lib/crypto'
 import { useWsEvent } from '../lib/ws-context'
 import { EmptyTrash } from '../components/empty-states/empty-trash'
 import { RestoreFromEraseOffer } from '../components/restore-from-erase'
+import { restoreToast, splitRestored } from '../lib/trash-restore-summary'
 import { ConfirmPasswordModal } from '../components/confirm-password-modal'
 import { formatBytes } from '../lib/format'
 import { FileDetailsPanel, type FileDetailsMeta } from '../components/file-details-panel'
@@ -358,25 +359,30 @@ export function Trash() {
   /**
    * Restore every id, bounding concurrency to waves of WAVE_SIZE so restoring
    * thousands of trashed rows doesn't fire thousands of parallel requests at
-   * once. Returns the ids that restored successfully; throws on the first wave
-   * that fails (the caller refetches to resync after partial progress).
+   * once. Throws on the first wave that fails (the caller refetches to resync
+   * after partial progress). Task 1918 round 4b: returns which ids came back now
+   * and which are large folders the server restores in the background (202).
    */
-  const restoreInWaves = async (ids: string[]): Promise<void> => {
+  const restoreInWaves = async (ids: string[]): Promise<{ done: string[]; background: string[] }> => {
     const WAVE_SIZE = 20
-    let background = 0
+    const done: string[] = []
+    const background: string[] = []
     for (let i = 0; i < ids.length; i += WAVE_SIZE) {
       const wave = ids.slice(i, i + WAVE_SIZE)
       const results = await Promise.all(wave.map((id) => restoreFile(id)))
-      background += results.filter((r) => !r.complete).length
+      const split = splitRestored(wave, results)
+      done.push(...split.done)
+      background.push(...split.background)
     }
-    // Task 1918 round 4: a folder too large for one request (202) comes back in batches.
-    if (background > 0) {
-      showToast({
-        icon: 'check',
-        title: 'Large folders are restoring in the background',
-        description: 'Their contents come back over the next minutes; the trash updates as they do.',
-      })
-    }
+    return { done, background }
+  }
+
+  /** Rows that came back leave the list; large folders restoring in the background stay. */
+  const applyBulkRestore = (outcome: { done: string[]; background: string[] }) => {
+    const gone = new Set(outcome.done)
+    setFiles((prev) => prev.filter((f) => !gone.has(f.id)))
+    setSelected((prev) => new Set([...prev].filter((id) => !gone.has(id))))
+    showToast({ icon: 'check', ...restoreToast(outcome.done.length, outcome.background.length) })
   }
 
   const handleRestoreSelected = async () => {
@@ -384,10 +390,7 @@ export function Trash() {
     if (ids.length === 0) return
     setLoading(true)
     try {
-      await restoreInWaves(ids)
-      setFiles((prev) => prev.filter((f) => !selected.has(f.id)))
-      setSelected(new Set())
-      showToast({ icon: 'check', title: `${ids.length} file${ids.length !== 1 ? 's' : ''} restored`, description: 'Moved back to your vault' })
+      applyBulkRestore(await restoreInWaves(ids))
     } catch (err) {
       showToast({ icon: 'x', title: 'Restore failed', description: err instanceof Error ? err.message : 'Some files could not be restored', danger: true })
       fetchTrash()
@@ -401,10 +404,7 @@ export function Trash() {
     if (ids.length === 0) return
     setLoading(true)
     try {
-      await restoreInWaves(ids)
-      setFiles([])
-      setSelected(new Set())
-      showToast({ icon: 'check', title: `${ids.length} file${ids.length !== 1 ? 's' : ''} restored`, description: 'Moved back to your vault' })
+      applyBulkRestore(await restoreInWaves(ids))
     } catch (err) {
       showToast({ icon: 'x', title: 'Restore all failed', description: err instanceof Error ? err.message : 'Some files could not be restored', danger: true })
       fetchTrash()

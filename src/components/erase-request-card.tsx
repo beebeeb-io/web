@@ -37,8 +37,10 @@ export interface EraseRequestCardProps {
   /** A plain note after an action ("Cancelled. Nothing will move."). */
   note: string
   error: string
-  /** The last action's outcome is unknown: offer "Check again" (calls `onRetryLoad`). */
+  /** The last action's outcome is unknown: offer "Check again" (calls `onCheckAgain`, else `onRetryLoad`). */
   checkAgain?: boolean
+  /** Round 4b: "Check again" counts as the follow-up read. */
+  onCheckAgain?: () => void
   /** "Restore everything from the erase" (round 4), drawn at the top of the card when given. */
   restore?: ReactNode
   /** Bumped after each action: the outcome (error, else note) takes the focus (round 4). */
@@ -235,7 +237,7 @@ export function EraseRequestCard(props: EraseRequestCardProps) {
           variant="default"
           size="sm"
           className="mt-2"
-          onClick={props.onRetryLoad}
+          onClick={props.onCheckAgain ?? props.onRetryLoad}
           data-testid="erase-check-again"
         >
           Check again

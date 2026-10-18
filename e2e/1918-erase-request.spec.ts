@@ -277,7 +277,7 @@ test('locked screen: request, confirm by the email link, see the due time, cance
     expect(sql(`SELECT status FROM account_erase_requests WHERE user_id = '${userId}' AND status = 'pending'`)).toBe('pending')
     await shot(guest, '03b-cancel-link-waits-for-a-click')
     await guest.reload()
-    await expect(guest.getByTestId('erase-link-reopen')).toContainText('Open the cancel link in the email once more')
+    await expect(guest.getByTestId('erase-link-reopen')).toContainText("After a reload it can't tell what happened before.")
     await expect(guest.getByText('Open the link from your email again')).toBeVisible()
     expect(apiCalls(guestRequests)).toEqual([])
     await shot(guest, '03c-cancel-link-reloaded')
@@ -491,7 +491,7 @@ test('a second account: confirmed, the due time passes, every file moves to the 
   )
   await restore.click()
   expect([200, 202]).toContain((await restoreAnswer).status())
-  await expect(page.getByTestId('erase-restore-status')).toContainText('Everything from the erase is back.', { timeout: 150_000 })
+  await expect(page.getByTestId('erase-restore-status')).toContainText('Nothing from this erase is left in the trash.', { timeout: 150_000 })
   const back = sql(
     `SELECT count(*), count(*) FILTER (WHERE NOT is_trashed), count(*) FILTER (WHERE is_trashed) FROM files WHERE user_id = '${userId}'`,
   )
