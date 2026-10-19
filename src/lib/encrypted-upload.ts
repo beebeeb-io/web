@@ -27,6 +27,7 @@ import {
 } from './crypto'
 import { initUpload, uploadChunk, completeUpload, getUploadStatus, updateFile } from './api'
 import { withNetworkRetry } from './net-retry'
+import { fileStorageCountry } from './storage-regions'
 import type { DriveFile } from './api'
 import {
   computeFingerprint,
@@ -57,6 +58,12 @@ export interface UploadProgress {
   totalChunks?: number
   chunkSizeBytes?: number
   region?: string | null
+  /**
+   * Task 2062 — the COUNTRY the server chose at init (`storage_location.country`),
+   * known before the first byte moves. Null for a session resumed from storage
+   * (no fresh init) and for an unknown pool. Never a city.
+   */
+  country?: string | null
 }
 
 /**
@@ -215,6 +222,7 @@ async function uploadFile(
   let chunkBytes = fallbackPlan.chunk_size_bytes
   let totalChunks = fallbackChunkCount
   let region: string | null = null
+  let country: string | null = null
   // Core 1908 resume rule (checklist item 7): the chunk format of the frames
   // the current session already holds (from the resume record; undefined when
   // it does not say), and whether this call resumes STORED frames rather than
@@ -252,6 +260,8 @@ async function uploadFile(
 
     serverFileId = init.file_id
     totalChunks = init.chunk_count
+    // Task 2062: both protocols answer with the pool's country at init.
+    country = fileStorageCountry(init)
     // A fresh session holds no frames: nothing to resume, nothing recorded yet.
     sessionFormat = undefined
     resumingStoredFrames = false
@@ -444,6 +454,7 @@ async function uploadFile(
       totalChunks,
       chunkSizeBytes: chunkBytes,
       region,
+      country,
     })
 
     function reportProgress() {
@@ -457,6 +468,7 @@ async function uploadFile(
         totalChunks,
         chunkSizeBytes: chunkBytes,
         region,
+        country,
       })
     }
 
@@ -471,6 +483,7 @@ async function uploadFile(
         totalChunks,
         chunkSizeBytes: chunkBytes,
         region,
+        country,
       })
     }
 

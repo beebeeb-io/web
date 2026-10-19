@@ -54,6 +54,15 @@ function formatChunkSize(bytes?: number): string | null {
   return `${mib.toFixed(1)} MiB`
 }
 
+/**
+ * Task 2062 — where the card says the bytes are going: the COUNTRY the server
+ * named at init, else the region ("Europe") until it does (an older server).
+ * Never a city.
+ */
+export function uploadPlaceLabel(upload: Pick<UploadItem, 'storageCountry' | 'storageRegion'>): string | null {
+  return upload.storageCountry ?? regionLabel(upload.storageRegion)
+}
+
 function regionLabel(region?: string | null): string | null {
   if (!region) return null
   return region
@@ -106,7 +115,7 @@ export function UploadCard({ upload, onCancel, onRetry }: UploadCardProps) {
   const isEncrypting = stage === 'Queued' || stage === 'Preparing' || stage === 'Encrypting'
   const isError = stage === 'Error'
   const chunkSize = formatChunkSize(upload.chunkSizeBytes)
-  const region = regionLabel(upload.storageRegion)
+  const region = uploadPlaceLabel(upload)
   const speed = computeSpeed(upload)
   const eta = computeEta(upload, speed)
 
