@@ -14,11 +14,10 @@ import {
   attachEraseRefresh,
   cancelErase,
   cancelNote,
-  checkAgainAfterRead,
+  createCheckAgainTracker,
   createLatestGate,
   eraseCard,
   eraseRefreshPlan,
-  type CheckAgainMode,
   type EraseCard,
   type EraseDeps,
   type EraseStatus,
@@ -73,9 +72,8 @@ export function createBannerController(opts: BannerControllerOptions): BannerCon
   let attached = false
   let detachRefresh: (() => void) | null = null
   let refreshKey = ''
-  let mode: CheckAgainMode = null
-  /** The request an unknown cancel was for (round 4d). */
-  let cancelledId: string | null = null
+  /** Round 4e: the same tracker the locked screen uses (mode + the cancelled request's id). */
+  const check = createCheckAgainTracker()
 
   const keyOf = (card: BannerCard | null) => (card ? `${card.kind}:${card.request.due_at}` : 'none')
 
@@ -122,18 +120,15 @@ export function createBannerController(opts: BannerControllerOptions): BannerCon
         return // no banner without a status; the next refresh tries again
       }
       if (!attached || !gate.isLatest(seq) || !status) return
-      const after = checkAgainAfterRead(mode, status, followUp, cancelledId)
-      mode = after.mode
-      if (mode === null) cancelledId = null
-      const patch: Partial<BannerState> = { card: bannerCardOf(status), checkAgain: mode !== null }
+      const after = check.afterRead(status, followUp)
+      const patch: Partial<BannerState> = { card: bannerCardOf(status), checkAgain: after.mode !== null }
       if (after.note) patch.note = after.note
       set(patch)
     },
     async cancel() {
       const card = state.card
       if (!card || state.busy) return
-      mode = null
-      cancelledId = null
+      check.reset()
       set({ busy: true, error: '', note: '', checkAgain: false })
       const outcome = await cancelErase(opts.deps, card.request.id)
       if (!attached) return
@@ -146,8 +141,7 @@ export function createBannerController(opts: BannerControllerOptions): BannerCon
         patch.note = cancelNote(outcome) ?? ''
         if (outcome.kind === 'replaced') patch.card = bannerCardOf(outcome.status)
         else if (outcome.kind === 'unknown') {
-          mode = 'cancel'
-          cancelledId = card.request.id
+          check.unknownCancel(card.request.id)
           patch.checkAgain = true
         } else if (outcome.kind !== 'already_started') patch.card = null
       }

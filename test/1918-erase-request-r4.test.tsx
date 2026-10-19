@@ -659,8 +659,9 @@ describe('7. a late status read never overwrites a newer action', () => {
     expect(keep('request', status(), true)).toBe(null)
     expect(keep(null, status(), false)).toBe(null)
     expect(m.FOLLOW_UP_MS).toBe(10_000)
+    // Round 4e: the screen reads through createCheckAgainTracker (behaviour: r4e test file).
     const screen = read('components/vault-locked-no-key.tsx')
-    expect(screen).toContain('setEraseCheckAgain((mode) => keepCheckAgain(mode, status, followUp))')
+    expect(screen).toContain('applyCheckRead(status, followUp)')
     expect(screen).toContain('void loadEraseStatus({ followUp: true })')
     expect(screen.match(/scheduleFollowUp\(\)/g)?.length ?? 0).toBeGreaterThanOrEqual(2)
   })

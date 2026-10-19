@@ -28,7 +28,7 @@ import {
   createLatestGate,
   eraseCard,
   eraseRefreshPlan,
-  keepCheckAgain,
+  createCheckAgainTracker,
   parseEraseStatus,
   parseTypedCount,
   requestErase,
@@ -190,6 +190,14 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
   // supersedes through it too. A follow-up read that a newer read or action superseded schedules
   // one more follow-up (it never ran); a click on "Check again" counts as the follow-up.
   const eraseGate = useRef(createLatestGate())
+  // Round 4e: what "Check again" waits for and the note a read gives (the request it was
+  // cancelling ran / is moving / is gone), shared with the banner (`createCheckAgainTracker`).
+  const eraseCheck = useRef(createCheckAgainTracker())
+  const applyCheckRead = useCallback((status: EraseStatus, followUp: boolean) => {
+    const after = eraseCheck.current.afterRead(status, followUp)
+    setEraseCheckAgain(after.mode)
+    if (after.note) setEraseNote(after.note)
+  }, [])
   const scheduleFollowUpRef = useRef<() => void>(() => {})
   const loadEraseStatus = useCallback(async (opts: { followUp?: boolean } = {}) => {
     const followUp = opts.followUp === true
@@ -204,13 +212,16 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
       }
       setEraseStatus(status)
       setEraseLoadError('')
-      setEraseCheckAgain((mode) => keepCheckAgain(mode, status, followUp))
+      applyCheckRead(status, followUp)
     } catch {
       if (!alive.current || !eraseGate.current.isLatest(seq)) return
       setEraseLoadError('We could not check what this account holds. Try again.')
-      if (followUp) setEraseCheckAgain(null)
+      if (followUp) {
+        eraseCheck.current.reset()
+        setEraseCheckAgain(null)
+      }
     }
-  }, [])
+  }, [applyCheckRead])
 
   // One follow-up read after an unknown outcome (round 4).
   const followUpTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -253,6 +264,8 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
     const count = parseTypedCount(eraseTyped)
     if (count === null) return
     setRestorePin(null)
+    eraseCheck.current.reset()
+    setEraseCheckAgain(null)
     setEraseBusy(true)
     setEraseError('')
     setEraseNote('')
@@ -277,6 +290,7 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
       setEraseNote(`The number changed: the account now holds ${outcome.liveItems}. Nothing was scheduled. Type the new number to continue.`)
     } else if (outcome.kind === 'unknown' || outcome.kind === 'in_progress') {
       setEraseNote(outcome.message)
+      eraseCheck.current.unknownRequest()
       setEraseCheckAgain('request')
       void loadEraseStatus()
       scheduleFollowUp()
@@ -287,6 +301,8 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
 
   const handleEraseCancel = useCallback(async () => {
     setRestorePin(null)
+    eraseCheck.current.reset()
+    setEraseCheckAgain(null)
     setEraseBusy(true)
     setEraseError('')
     setEraseNote('')
@@ -314,6 +330,7 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
       setEraseError(outcome.message)
     } else {
       setEraseNote(outcome.message)
+      eraseCheck.current.unknownCancel(shownId)
       setEraseCheckAgain('cancel')
       scheduleFollowUp()
     }
@@ -332,8 +349,8 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
   const applyRestoreStatus = useCallback((status: EraseStatus) => {
     setEraseStatus(status)
     setEraseLoadError('')
-    setEraseCheckAgain((mode) => keepCheckAgain(mode, status, false))
-  }, [])
+    applyCheckRead(status, false)
+  }, [applyCheckRead])
   const reloadAfterRestore = useCallback(() => {
     void loadEraseStatus()
   }, [loadEraseStatus])

@@ -767,6 +767,12 @@ export function checkAgainAfterRead(
   requestId: string | null = null,
 ): { mode: CheckAgainMode; note: string | null } {
   const next = keepCheckAgain(mode, status, followUp)
+  if (mode === 'request') {
+    // Round 4e: after an unknown REQUEST outcome the note follows the read too: the request is
+    // there (it may be this attempt's: no claim about an email), or, on the follow-up, it is not.
+    if (status.request) return { mode: next, note: requestedNote({ kind: 'requested', request: status.request, created: null }) }
+    return { mode: next, note: followUp ? 'There is no erase request pending now.' : null }
+  }
   if (mode !== 'cancel') return { mode: next, note: null }
   if (status.request === null) {
     // Round 4d: it may have RUN instead of being cancelled.
@@ -778,4 +784,48 @@ export function checkAgainAfterRead(
   // Round 4d: still there, but the move has started: it can no longer be cancelled.
   if (!status.request.cancellable) return { mode: null, note: cancelNote({ kind: 'already_started' }) }
   return { mode: next, note: followUp ? 'The request is still pending.' : null }
+}
+
+/**
+ * Round 4e: what "Check again" waits for, and the note a read gives, in one place — the locked
+ * screen and the banner both use it. `unknownRequest()` / `unknownCancel(id)` after an unknown
+ * outcome; `afterRead()` after every fresh status read (`followUp`: the scheduled follow-up or a
+ * click on "Check again"); `reset()` when the person starts a new action. The note it returns
+ * replaces the "We couldn't confirm…" one as soon as a read shows the outcome, so that note never
+ * stands next to a card that shows what happened.
+ */
+export interface CheckAgainTracker {
+  readonly mode: CheckAgainMode
+  unknownRequest(): void
+  unknownCancel(requestId: string | null): void
+  reset(): void
+  afterRead(status: EraseStatus, followUp: boolean): { mode: CheckAgainMode; note: string | null }
+}
+
+export function createCheckAgainTracker(): CheckAgainTracker {
+  let mode: CheckAgainMode = null
+  let cancelledId: string | null = null
+  return {
+    get mode() {
+      return mode
+    },
+    unknownRequest() {
+      mode = 'request'
+      cancelledId = null
+    },
+    unknownCancel(requestId) {
+      mode = 'cancel'
+      cancelledId = requestId
+    },
+    reset() {
+      mode = null
+      cancelledId = null
+    },
+    afterRead(status, followUp) {
+      const after = checkAgainAfterRead(mode, status, followUp, cancelledId)
+      mode = after.mode
+      if (mode === null) cancelledId = null
+      return after
+    },
+  }
 }

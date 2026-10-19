@@ -419,13 +419,18 @@ describe('6. after an unknown outcome the truth replaces the error; a refusal st
 // ── 7 ──────────────────────────────────────────────────────────────────────────────────────
 
 describe('7. the locked screen applies a block-read status like its own read', () => {
-  test('applyRestoreStatus clears a load error and takes part in "Check again"', () => {
-    const screen = code('components/vault-locked-no-key.tsx')
-    expect(screen).toMatch(
-      /const applyRestoreStatus = useCallback\(\(status: EraseStatus\) => \{\s*setEraseStatus\(status\)\s*setEraseLoadError\(''\)\s*setEraseCheckAgain\(\(mode\) => keepCheckAgain\(mode, status, false\)\)/,
+  test('applyRestoreStatus clears a load error and takes part in "Check again"', async () => {
+    // Round 4e: "takes part" = the screen's tracker (createCheckAgainTracker) reads it like any read.
+    const m = await lib()
+    const tracker = (m.createCheckAgainTracker as Fn)() as { unknownCancel(id: string): void; afterRead(s: EraseStatus, f: boolean): { mode: unknown; note: string | null } }
+    tracker.unknownCancel(REQ)
+    expect(tracker.afterRead(status({ request: PENDING }), false)).toEqual({ mode: 'cancel', note: null })
+    expect(tracker.afterRead(status(), false)).toEqual({ mode: null, note: 'There is no erase request pending now.' })
+    // Source check (no DOM): the screen applies a block-read status like its own read.
+    expect(code('components/vault-locked-no-key.tsx')).toMatch(
+      /const applyRestoreStatus = useCallback\(\(status: EraseStatus\) => \{\s*setEraseStatus\(status\)\s*setEraseLoadError\(''\)\s*applyCheckRead\(status, false\)/,
     )
   })
-
   test('a follow-up read superseded by a block poll reschedules itself', () => {
     expect(code('components/vault-locked-no-key.tsx')).toMatch(
       /if \(!eraseGate\.current\.isLatest\(seq\)\) \{\s*if \(followUp\) scheduleFollowUpRef\.current\(\)/,
