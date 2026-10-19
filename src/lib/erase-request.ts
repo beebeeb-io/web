@@ -627,17 +627,38 @@ export type RestoreErrorKind = 'refused' | 'unknown' | null
 export const RESTORE_DID_NOT_START_TEXT = 'The restore did not start.'
 
 /**
- * Round 4c (web#174 review): after an UNKNOWN outcome any fresh status replaces the error with the
+ * Round 4c (web#174 review): after an UNKNOWN outcome a fresh status replaces the error with the
  * truth: it runs or is done (the error goes), or it never started (the error goes, the offer is
  * back, and the block says the restore did not start). A definite refusal's error stays until the
  * next click.
+ *
+ * Round 4d: the same rule as `keepCheckAgain`. A read that shows the restore running or done ends
+ * the doubt at once; any other answer (not started, or the erase is gone) is trusted only from a
+ * FOLLOW-UP read (the scheduled one, or a click on "Check again"): a read taken right after the
+ * failure may not see a restore the server is still starting.
  */
-export function restoreErrorAfterRead(kind: RestoreErrorKind, executed: EraseExecuted | null): { clear: boolean; notice: string | null } {
+export function restoreErrorAfterRead(
+  kind: RestoreErrorKind,
+  executed: EraseExecuted | null,
+  followUp: boolean,
+): { clear: boolean; notice: string | null } {
   if (kind !== 'unknown') return { clear: false, notice: null }
-  if (!executed) return { clear: true, notice: null }
-  const offer = restoreOffer(executed)
-  if (offer === 'running' || offer === 'done') return { clear: true, notice: null }
-  return { clear: true, notice: RESTORE_DID_NOT_START_TEXT }
+  if (executed) {
+    const offer = restoreOffer(executed)
+    if (offer === 'running' || offer === 'done') return { clear: true, notice: null }
+  }
+  if (!followUp) return { clear: false, notice: null }
+  return { clear: true, notice: executed ? RESTORE_DID_NOT_START_TEXT : null }
+}
+
+/**
+ * Round 4d: the erase the locked screen's restore block follows. Once the person acted on a block
+ * (`pin`), it stays with that erase until their next action, even when a status no longer
+ * carries it, so a refusal's words and the "can't be followed here" line are not torn away.
+ */
+export function restoreSlotFor(pin: EraseExecuted | null, last: EraseExecuted | null): EraseExecuted | null {
+  if (pin) return pin
+  return last && restoreOffer(last) !== 'none' ? last : null
 }
 
 export type RestoreOutcome =
@@ -742,9 +763,19 @@ export function checkAgainAfterRead(
   mode: CheckAgainMode,
   status: EraseStatus,
   followUp: boolean,
+  /** Round 4d: the request the unknown cancel was for. */
+  requestId: string | null = null,
 ): { mode: CheckAgainMode; note: string | null } {
   const next = keepCheckAgain(mode, status, followUp)
   if (mode !== 'cancel') return { mode: next, note: null }
-  if (status.request === null) return { mode: next, note: 'There is no erase request pending now.' }
+  if (status.request === null) {
+    // Round 4d: it may have RUN instead of being cancelled.
+    if (requestId !== null && status.last_executed?.id === requestId) {
+      return { mode: null, note: cancelNote({ kind: 'already_executed', status }) }
+    }
+    return { mode: next, note: 'There is no erase request pending now.' }
+  }
+  // Round 4d: still there, but the move has started: it can no longer be cancelled.
+  if (!status.request.cancellable) return { mode: null, note: cancelNote({ kind: 'already_started' }) }
   return { mode: next, note: followUp ? 'The request is still pending.' : null }
 }

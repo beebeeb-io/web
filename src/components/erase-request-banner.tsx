@@ -1,22 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type Ref } from 'react'
+import { useEffect, useRef, useSyncExternalStore, type Ref } from 'react'
 import { BBButton, Icon } from '@beebeeb/shared'
 import { cancelEraseRequest, createEraseRequest, getEraseRequest } from '../lib/api'
 import { useAuth } from '../lib/auth-context'
 import { sharedEraseStatus } from '../lib/erase-status-store'
-import {
-  attachEraseRefresh,
-  cancelErase,
-  cancelNote,
-  checkAgainAfterRead,
-  createLatestGate,
-  eraseCard,
-  eraseRefreshPlan,
-  formatDue,
-  type CheckAgainMode,
-  type EraseCard,
-  type EraseDeps,
-  type EraseStatus,
-} from '../lib/erase-request'
+import { formatDue, type EraseDeps } from '../lib/erase-request'
+import { createBannerController, type BannerCard, type BannerController } from '../lib/erase-banner-controller'
 
 /**
  * Task 1918 round 4 (web#174 review) — a pending "erase all files" request, shown in the UNLOCKED
@@ -37,10 +25,11 @@ import {
  * request is waiting or confirmed, and its due time); the due-time timer reads FRESH; and
  * "Check again" after an unknown cancel follows the locked screen's rule (`keepCheckAgain`
  * 'cancel'): a read only hides it once it shows no request pending, and then the note says so.
+ *
+ * Round 4d: the behaviour lives in `lib/erase-banner-controller.ts`, which the tests drive; the
+ * note after an unknown cancel also says when the request had already run, or the move started.
  */
 const ERASE_DEPS: EraseDeps = { create: createEraseRequest, cancel: cancelEraseRequest, status: getEraseRequest }
-
-type BannerCard = Extract<EraseCard, { kind: 'awaiting' | 'pending' | 'moving' }>
 
 export interface EraseRequestBannerViewProps {
   card: BannerCard | null
@@ -120,112 +109,47 @@ export function EraseRequestBannerView({
 export function EraseRequestBanner() {
   const { user } = useAuth()
   const key = user?.user_id ?? ''
-  const [card, setCard] = useState<BannerCard | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [note, setNote] = useState('')
-  const [error, setError] = useState('')
-  // Round 4c: what "Check again" waits for (after an unknown cancel: the request to be gone).
-  const [checkAgain, setCheckAgain] = useState<CheckAgainMode>(null)
-  const checkMode = useRef<CheckAgainMode>(null)
-  const [focusTick, setFocusTick] = useState(0)
+  const ctrl = useBannerController(key)
+  const state = useSyncExternalStore(ctrl.subscribe, ctrl.getState, ctrl.getState)
   const noteRef = useRef<HTMLParagraphElement>(null)
   const errorRef = useRef<HTMLParagraphElement>(null)
-  const alive = useRef(true)
-  const gate = useRef(createLatestGate())
-
   useEffect(() => {
-    alive.current = true
-    return () => {
-      alive.current = false
-    }
-  }, [])
-
-  const show = useCallback((status: EraseStatus) => {
-    const next = eraseCard(status)
-    setCard(next.kind === 'awaiting' || next.kind === 'pending' || next.kind === 'moving' ? next : null)
-  }, [])
-
-  const load = useCallback(
-    async (opts: { force?: boolean; followUp?: boolean } = {}) => {
-      if (!key) return
-      const seq = gate.current.begin()
-      try {
-        const status = await sharedEraseStatus.read(key, { force: opts.force === true || opts.followUp === true })
-        if (!alive.current || !gate.current.isLatest(seq) || !status) return
-        show(status)
-        const after = checkAgainAfterRead(checkMode.current, status, opts.followUp === true)
-        checkMode.current = after.mode
-        setCheckAgain(after.mode)
-        if (after.note) setNote(after.note)
-      } catch {
-        // No banner without a status; the next refresh tries again.
-      }
-    },
-    [key, show],
-  )
-
-  useEffect(() => {
-    void load()
-  }, [load])
-
-  const refreshKey = card ? `${card.kind}:${card.request.due_at}` : 'none'
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof document === 'undefined') return
-    // Focus and visibility go through the cache (a fresh answer is reused for 30 s); the due-time
-    // timer reads fresh (round 4c).
-    return attachEraseRefresh({
-      win: window,
-      doc: document,
-      refresh: () => void load(),
-      refreshDue: () => void load({ force: true }),
-      plan: eraseRefreshPlan(card, Date.now()),
-    })
-    // The plan only changes with the card's kind and due time.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshKey, load])
-
-  useEffect(() => {
-    if (focusTick > 0) (errorRef.current ?? noteRef.current)?.focus()
-  }, [focusTick])
-
-  const cancel = useCallback(async () => {
-    if (!card) return
-    setBusy(true)
-    setError('')
-    setNote('')
-    checkMode.current = null
-    setCheckAgain(null)
-    const outcome = await cancelErase(ERASE_DEPS, card.request.id)
-    if (!alive.current) return
-    setBusy(false)
-    gate.current.supersede()
-    sharedEraseStatus.invalidate()
-    if (outcome.kind === 'still_pending') {
-      setError(outcome.message)
-    } else {
-      setNote(cancelNote(outcome) ?? '')
-      if (outcome.kind === 'replaced') show(outcome.status)
-      else if (outcome.kind === 'unknown') {
-        checkMode.current = 'cancel'
-        setCheckAgain('cancel')
-      }
-      else if (outcome.kind !== 'already_started') setCard(null)
-    }
-    setFocusTick((n) => n + 1)
-    void load({ force: true })
-  }, [card, load, show])
-
+    if (state.focusTick > 0) (errorRef.current ?? noteRef.current)?.focus()
+  }, [state.focusTick])
   return (
     <EraseRequestBannerView
-      card={card}
-      busy={busy}
-      note={note}
-      error={error}
-      onCancel={() => void cancel()}
+      card={state.card}
+      busy={state.busy}
+      note={state.note}
+      error={state.error}
+      onCancel={() => void ctrl.cancel()}
       noteRef={noteRef}
       errorRef={errorRef}
-      checkAgain={checkAgain !== null}
-      onCheckAgain={() => void load({ followUp: true })}
+      checkAgain={state.checkAgain}
+      onCheckAgain={() => void ctrl.checkAgain()}
     />
   )
+}
+
+/** One controller per account, attached while mounted. */
+function useBannerController(key: string): BannerController {
+  const ref = useRef<{ key: string; ctrl: BannerController } | null>(null)
+  if (ref.current === null || ref.current.key !== key) {
+    ref.current = {
+      key,
+      ctrl: createBannerController({
+        cache: sharedEraseStatus,
+        key,
+        deps: ERASE_DEPS,
+        win: typeof window === 'undefined' ? new EventTarget() : window,
+        doc: typeof document === 'undefined' ? new EventTarget() : document,
+      }),
+    }
+  }
+  const ctrl = ref.current.ctrl
+  useEffect(() => {
+    ctrl.attach()
+    return () => ctrl.detach()
+  }, [ctrl])
+  return ctrl
 }

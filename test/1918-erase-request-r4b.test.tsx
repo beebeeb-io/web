@@ -21,14 +21,19 @@
  * 13. after an action the error (if any) takes the focus, else the result line.
  *
  * New modules and exports are imported dynamically, so on 9f2c6d6 each test fails on its own.
+ *
+ * Round 4d (web#174 review, finding 5): tests that read the source of the restore block and the
+ * banner now drive their controllers. Kept as source checks (no DOM to exercise them): the focus
+ * moves (refs), and the locked screen's wiring.
  */
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, mock, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
 import { eraseCard, type EraseStatus } from '../src/lib/erase-request'
+import { apiError as fakeApiError, deferred, flush, manualTimers } from './helpers/erase-request-fakes'
 
 const SRC = path.resolve(import.meta.dir, '../src')
 const REQ = '6f1c2b8e-0000-4000-8000-000000000005'
@@ -42,6 +47,20 @@ const store = async () => (await import('../src/lib/erase-status-store')) as unk
 const summary = async () => (await import('../src/lib/trash-restore-summary')) as unknown as Mod
 const restoreMod = async () => (await import('../src/components/restore-from-erase')) as unknown as Mod
 const bannerMod = async () => (await import('../src/components/erase-request-banner')) as unknown as Mod
+const restoreCtl = async () => (await import('../src/lib/restore-controller')) as unknown as Mod
+const bannerCtl = async () => (await import('../src/lib/erase-banner-controller')) as unknown as Mod
+
+function bannerOpts(cacheRead: (k: string, o?: { force?: boolean }) => Promise<unknown>, cancel: () => Promise<unknown>, extra: Record<string, unknown> = {}) {
+  return {
+    cache: { read: cacheRead, invalidate: () => {}, subscribe: () => () => {} },
+    key: 'u1',
+    deps: { create: async () => ({}), cancel, status: async () => Promise.reject(new TypeError('x')) },
+    win: new EventTarget(),
+    doc: Object.assign(new EventTarget(), { visibilityState: 'visible' }),
+    timers: manualTimers().hooks,
+    ...extra,
+  }
+}
 
 const read = (rel: string) => readFileSync(path.join(SRC, rel), 'utf8')
 const code = (rel: string) => read(rel).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
@@ -65,6 +84,8 @@ const EXECUTED = {
   in_trash: 150,
   restore: null,
 }
+/** A restore running for EXECUTED (round 4d controller tests). */
+const RUNNING_FOR_GATE = { ...EXECUTED, in_trash: 100, restore: { state: 'running', requested_at: null, rows_restored: 50, finished_at: null } }
 
 function status(over: Record<string, unknown> = {}): EraseStatus {
   return {
@@ -123,10 +144,21 @@ describe('1. the locked screen reads the status again when a restore finishes', 
     expect(screen).toContain('onStatus={applyRestoreStatus}')
   })
 
-  test('the block calls onDone once when nothing of the erase is left in the trash', () => {
-    const block = read('components/restore-from-erase.tsx')
-    // Round 4c: the shared cache is invalidated before the parent re-reads.
-    expect(block).toMatch(/if \(offer === 'done' && !doneReported\.current\) \{\s*doneReported\.current = true\s*sharedEraseStatus\.invalidate\(\)\s*onDone\?\.\(\)/)
+  test('the block calls onDone once when nothing of the erase is left in the trash', async () => {
+    const r = await restoreCtl()
+    const onDone = mock(() => {})
+    const done = { ...EXECUTED, in_trash: 0, restore: { state: 'done', requested_at: null, rows_restored: 150, finished_at: 'x' } }
+    const ctl = (r.createRestoreController as Fn)({
+      executed: EXECUTED,
+      deps: { restore: async () => ({ restore: { state: 'running', rows_restored: 50 }, in_trash: 100 }), status: async () => status({ last_executed: done }) },
+      timers: manualTimers(),
+      onDone,
+    }) as { start(): Promise<void>; poll(): Promise<void> }
+    await ctl.start()
+    expect(onDone).toHaveBeenCalledTimes(0)
+    await ctl.poll()
+    await ctl.poll()
+    expect(onDone).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -157,15 +189,38 @@ describe('2. after a reload the link pages claim nothing about what happened bef
 // ── 3 ──────────────────────────────────────────────────────────────────────────────────────
 
 describe('3. one sequencing authority for the screen and its restore block', () => {
-  test('the block reads and supersedes through the gate it is given; the screen gives its own', () => {
-    const block = code('components/restore-from-erase.tsx')
-    expect(block).toContain('const seqGate = gate ?? ownGate.current')
-    expect(block).toContain('const seq = seqGate.begin()')
-    expect(block).toContain('!seqGate.isLatest(seq)')
-    expect(block).toContain('seqGate.supersede()')
+  test('the block reads and supersedes through the gate it is given; the screen gives its own', async () => {
+    const m = await lib()
+    const r = await restoreCtl()
+    const gate = (m.createLatestGate as Fn)() as { begin(): number; isLatest(n: number): boolean; supersede(): void }
+    const onStatus = mock((_s: unknown) => {})
+    let answer!: (v: unknown) => void
+    const ctl = (r.createRestoreController as Fn)({
+      executed: EXECUTED,
+      deps: {
+        restore: async () => ({ restore: { state: 'running', rows_restored: 1 }, in_trash: 149 }),
+        status: () =>
+          new Promise((res) => {
+            answer = res
+          }),
+      },
+      gate,
+      timers: manualTimers(),
+      onStatus,
+    }) as { start(): Promise<void>; poll(): Promise<void> }
+    // a screen read in flight loses to the block's restore answer
+    const screenRead = gate.begin()
+    await ctl.start()
+    expect(gate.isLatest(screenRead)).toBe(false)
+    // a block poll in flight loses to a newer screen read
+    const poll = ctl.poll()
+    gate.begin()
+    answer(status({ last_executed: RUNNING_FOR_GATE }))
+    await poll
+    expect(onStatus).toHaveBeenCalledTimes(0)
+    // Source check (no DOM): the locked screen hands its gate to the block.
     expect(read('components/vault-locked-no-key.tsx')).toContain('gate={eraseGate.current}')
   })
-
   test('with one gate, a screen read in flight loses to the restore answer, and a block poll in flight loses to a cancel', async () => {
     const m = await lib()
     const gate = (m.createLatestGate as Fn)() as { begin(): number; isLatest(n: number): boolean; supersede(): void }
@@ -196,13 +251,24 @@ describe('4. a status without this erase stops the polling; a frozen refusal sho
     expect(html).not.toContain('follows in the background')
   })
 
-  test('the block stops polling once lost (polling runs only while the view is running)', () => {
-    const block = code('components/restore-from-erase.tsx')
-    expect(block).toContain("const offer: RestoreView = lost ? 'lost' : restoreOffer(shown)")
-    // Round 4c: the status still goes to the parent when lost.
-    expect(block).toMatch(/if \(update\.kind === 'lost'\) \{\s*setLost\(true\)\s*onStatus\?\.\(status\)\s*return/)
+  test('the block stops polling once lost (polling runs only while the view is running)', async () => {
+    const r = await restoreCtl()
+    const timers = manualTimers()
+    let answer: unknown = status({ last_executed: RUNNING_FOR_GATE })
+    const ctl = (r.createRestoreController as Fn)({
+      executed: EXECUTED,
+      deps: { restore: async () => ({ restore: { state: 'running', rows_restored: 1 }, in_trash: 149 }), status: async () => answer },
+      timers,
+      pollMs: 5_000,
+    }) as { start(): Promise<void>; getState(): { view: string } }
+    await ctl.start()
+    expect(timers.intervals()).toEqual([5_000])
+    answer = status({ last_executed: null })
+    timers.tickIntervals()
+    await flush()
+    expect(ctl.getState().view).toBe('lost')
+    expect(timers.intervals()).toEqual([])
   })
-
   test('403 account_frozen: refused in the server words; the view shows it with no background line', async () => {
     const m = await lib()
     const frozenMsg = 'This account is frozen, so nothing can be restored right now.'
@@ -303,15 +369,42 @@ describe('7. a stale error clears on progress; unknown outcomes get a real "Chec
     expect(openTag(banner, 'erase-banner-check-again')).toContain('<button')
   })
 
-  test('the stateful parts set it on unknown and clear it on the next read', () => {
-    const block = code('components/restore-from-erase.tsx')
-    expect(block).toContain("if (outcome.kind === 'unknown') setCheckAgain(true)")
-    // Round 4c: the error after a read follows restoreErrorAfterRead.
-    expect(block).toContain('const after = restoreErrorAfterRead(errorKind.current,')
-    const banner = code('components/erase-request-banner.tsx')
-    // Round 4c: the banner waits like the screen ('cancel' mode) and lets checkAgainAfterRead decide.
-    expect(banner).toContain("setCheckAgain('cancel')")
-    expect(banner).toContain('const after = checkAgainAfterRead(checkMode.current, status, opts.followUp === true)')
+  test('the stateful parts set it on unknown and clear it on the next read', async () => {
+    // the restore block: an unknown outcome sets "Check again"; a read showing it running clears it
+    const r = await restoreCtl()
+    let reads = 0
+    const held = deferred<unknown>()
+    const ctl = (r.createRestoreController as Fn)({
+      executed: EXECUTED,
+      deps: {
+        restore: async () => Promise.reject(fakeApiError(0, '')),
+        // the reconcile inside restoreEverything sees no restore yet (unknown); the block's own
+        // read right after sees it running
+        status: () => (++reads === 1 ? Promise.resolve(status({ last_executed: EXECUTED })) : held.promise),
+      },
+      timers: manualTimers(),
+    }) as { start(): Promise<void>; getState(): { checkAgain: boolean; error: string } }
+    await ctl.start()
+    expect(ctl.getState().checkAgain).toBe(true)
+    expect(ctl.getState().error).not.toBe('')
+    held.resolve(status({ last_executed: RUNNING_FOR_GATE }))
+    await flush()
+    expect(ctl.getState().checkAgain).toBe(false) // the read showed it running: no doubt left
+    expect(ctl.getState().error).toBe('')
+    // the banner: an unknown cancel sets it; a read without a request clears it
+    const b = await bannerCtl()
+    let answer = status({ request: PENDING })
+    const banner = (b.createBannerController as Fn)(
+      bannerOpts(async () => answer, async () => Promise.reject(fakeApiError(0, ''))),
+    ) as { attach(): void; cancel(): Promise<void>; load(): Promise<void>; getState(): { checkAgain: boolean } }
+    banner.attach()
+    await flush()
+    await banner.cancel()
+    await flush()
+    expect(banner.getState().checkAgain).toBe(true)
+    answer = status()
+    await banner.load()
+    expect(banner.getState().checkAgain).toBe(false)
   })
 })
 
@@ -356,11 +449,26 @@ describe('9. a cancel miss with a newer pending request', () => {
     expect(out.kind).toBe('still_pending')
   })
 
-  test('the screen shows the new request', () => {
+  test('the screen shows the new request', async () => {
+    // the banner: a 404 with a newer request pending shows the newer one
+    const b = await bannerCtl()
+    const newer = status({ request: { ...PENDING, id: OTHER } })
+    let answer = status({ request: PENDING })
+    const banner = (b.createBannerController as Fn)(
+      bannerOpts(async () => answer, async () => Promise.reject(fakeApiError(404, 'no_pending_erase_request')), {
+        deps: { create: async () => ({}), cancel: async () => Promise.reject(fakeApiError(404, 'no_pending_erase_request')), status: async () => newer },
+      }),
+    ) as { attach(): void; cancel(): Promise<void>; getState(): { card: { request: { id: string } } | null; note: string } }
+    banner.attach()
+    await flush()
+    answer = newer
+    await banner.cancel()
+    expect(banner.getState().card?.request.id).toBe(OTHER)
+    expect(banner.getState().note).toBe('That request is gone; a newer request is pending.')
+    // Source check (no DOM): the locked screen applies the fresh status for 'replaced'.
     expect(read('components/vault-locked-no-key.tsx')).toContain(
       "outcome.kind === 'nothing_pending' || outcome.kind === 'already_executed' || outcome.kind === 'replaced'",
     )
-    expect(read('components/erase-request-banner.tsx')).toContain("if (outcome.kind === 'replaced') show(outcome.status)")
   })
 })
 
@@ -469,15 +577,29 @@ describe('11. one cached status read for the unlocked app', () => {
     expect(fetches).toBe(1)
   })
 
-  test('the banner and both restore offers read through it; focus and visibility respect it', () => {
-    const banner = code('components/erase-request-banner.tsx')
-    // Round 4c: a "Check again" click (followUp) reads fresh too.
-    expect(banner).toContain('sharedEraseStatus.read(key, { force: opts.force === true || opts.followUp === true })')
-    expect(banner).toContain('refresh: () => void load()')
-    const offer = code('components/restore-from-erase.tsx')
-    // Round 4c: the offers read fresh on mount (the count must not predate an own action).
-    expect(offer).toContain('sharedEraseStatus.read(key, { force: true }).then(')
-    expect(offer).toContain('status: () => sharedEraseStatus.read(key, { force: true })')
+  test('the banner and both restore offers read through it; focus and visibility respect it', async () => {
+    const b = await bannerCtl()
+    const reads: Array<{ force?: boolean }> = []
+    const win = new EventTarget()
+    const banner = (b.createBannerController as Fn)(
+      bannerOpts(
+        async (_k, o = {}) => {
+          reads.push(o)
+          return status({ request: PENDING })
+        },
+        async () => ({}),
+        { win },
+      ),
+    ) as { attach(): void }
+    banner.attach()
+    await flush()
+    win.dispatchEvent(new Event('focus'))
+    await flush()
+    // mount and focus go through the cache (not forced)
+    expect(reads).toEqual([{ force: false }, { force: false }])
+    // the offers read through it, fresh (test/1918-erase-request-r4c.test.tsx, item 1)
+    const m = await store()
+    expect(typeof m.watchLastExecuted).toBe('function')
   })
 })
 
@@ -508,11 +630,11 @@ describe('12. Trash bulk restores: large folders restore in the background and s
 // ── 13 ─────────────────────────────────────────────────────────────────────────────────────
 
 describe('13. after an action the error takes the focus when there is one', () => {
+  // Source check (no DOM): the focus moves use refs; the controllers only count the actions.
   test('the restore block and the banner focus the error first', () => {
-    expect(code('components/restore-from-erase.tsx')).toContain('if (focusTick > 0) (errorRef.current ?? resultRef.current)?.focus()')
-    expect(code('components/erase-request-banner.tsx')).toContain('if (focusTick > 0) (errorRef.current ?? noteRef.current)?.focus()')
+    expect(code('components/restore-from-erase.tsx')).toContain('if (state.focusTick > 0) (errorRef.current ?? resultRef.current)?.focus()')
+    expect(code('components/erase-request-banner.tsx')).toContain('if (state.focusTick > 0) (errorRef.current ?? noteRef.current)?.focus()')
   })
-
   test('their error lines are focusable alerts', async () => {
     const r = await drawRestore({ offer: 'offer', error: 'x' })
     expect(openTag(r, 'erase-restore-error')).toContain('tabindex="-1"')

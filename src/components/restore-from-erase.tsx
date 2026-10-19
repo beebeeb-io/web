@@ -1,28 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type Ref } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore, type Ref } from 'react'
 import { BBButton } from '@beebeeb/shared'
 import { getEraseRequest, restoreEraseRequest } from '../lib/api'
 import { useAuth } from '../lib/auth-context'
-import { sharedEraseStatus } from '../lib/erase-status-store'
+import { sharedEraseStatus, watchLastExecuted } from '../lib/erase-status-store'
 import {
   RESTORE_DONE_TEXT,
-  RESTORE_POLL_MS,
-  createLatestGate,
   formatEraseDate,
   inTrashText,
-  parseEraseStatus,
-  restoreEverything,
   restoreLabel,
   restoreOffer,
-  restoreErrorAfterRead,
   restoreProgressText,
-  restoreUpdate,
   type EraseExecuted,
   type EraseStatus,
   type LatestGate,
-  type RestoreErrorKind,
   type RestoreDeps,
-  type RestoreOffer,
 } from '../lib/erase-request'
+import { createRestoreController, type RestoreController, type RestoreView } from '../lib/restore-controller'
+
+export type { RestoreView } from '../lib/restore-controller'
 
 /**
  * Task 1918 round 4 — "Restore everything from the erase on <date>".
@@ -51,11 +46,14 @@ import {
  *   UNKNOWN outcome any fresh status replaces the error with the truth ("The restore did not
  *   start." when it shows none), while a definite refusal's error stays until the next click;
  * - a status that no longer carries this erase still goes to the parent (`onStatus`).
+ *
+ * Round 4d: the behaviour lives in `lib/restore-controller.ts` (a plain object this component
+ * binds to), so the tests drive it instead of reading this source; the Trash / empty-drive offer
+ * follows the shared cache (`watchLastExecuted`) and re-reads after every own trash action and
+ * live trash event.
  */
-export const RESTORE_DEPS: RestoreDeps = { restore: restoreEraseRequest, status: getEraseRequest }
 
-/** What the block shows: the server's offer, or `lost` when the status no longer carries this erase. */
-export type RestoreView = RestoreOffer | 'lost'
+export const RESTORE_DEPS: RestoreDeps = { restore: restoreEraseRequest, status: getEraseRequest }
 
 export const RESTORE_LOST_TEXT = "The restore can't be followed here any more. Trash shows what is still there."
 
@@ -150,142 +148,53 @@ export interface RestoreFromEraseProps {
   onStatus?: (status: EraseStatus) => void
   /** Nothing of the erase is left in the trash (the parent re-reads / refreshes its listing). */
   onDone?: () => void
+  /** The person clicked "Restore everything" (round 4d: the locked screen pins the block). */
+  onAction?: () => void
   pollMs?: number
 }
 
-/** The stateful block: starts the restore, polls while it runs, reports when it is done. */
-export function RestoreFromErase({ executed, deps = RESTORE_DEPS, gate, onStatus, onDone, pollMs = RESTORE_POLL_MS }: RestoreFromEraseProps) {
-  const [shown, setShown] = useState<EraseExecuted>(executed)
-  const [lost, setLost] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  // Round 4c: a definite refusal's error stays until the next click; an unknown one is replaced
-  // by the next fresh status.
-  const errorKind = useRef<RestoreErrorKind>(null)
-  const [notice, setNotice] = useState('')
-  const [checkAgain, setCheckAgain] = useState(false)
+/** The stateful block: a binding to `createRestoreController`. */
+export function RestoreFromErase({ executed, deps = RESTORE_DEPS, gate, onStatus, onDone, onAction, pollMs }: RestoreFromEraseProps) {
+  const ctrlRef = useRef<RestoreController | null>(null)
+  if (ctrlRef.current === null) {
+    ctrlRef.current = createRestoreController({
+      executed,
+      deps,
+      gate,
+      pollMs,
+      invalidate: () => sharedEraseStatus.invalidate(),
+    })
+  }
+  const ctrl = ctrlRef.current
+  ctrl.setCallbacks({ onStatus, onDone, onAction })
+  useEffect(() => {
+    ctrl.attach()
+    return () => ctrl.detach()
+  }, [ctrl])
+  // The parent read a newer status of this erase: follow it.
+  useEffect(() => {
+    ctrl.setExecuted(executed)
+  }, [ctrl, executed])
+  const state = useSyncExternalStore(ctrl.subscribe, ctrl.getState, ctrl.getState)
+
   const resultRef = useRef<HTMLParagraphElement>(null)
   const errorRef = useRef<HTMLParagraphElement>(null)
-  const [focusTick, setFocusTick] = useState(0)
-  const alive = useRef(true)
-  const ownGate = useRef<LatestGate>(createLatestGate())
-  const seqGate = gate ?? ownGate.current
-  const doneReported = useRef(false)
-
   useEffect(() => {
-    alive.current = true
-    return () => {
-      alive.current = false
-    }
-  }, [])
-
-  // The parent read a newer status: follow it.
-  useEffect(() => {
-    setShown(executed)
-    setLost(false)
-  }, [executed])
-
-  const offer: RestoreView = lost ? 'lost' : restoreOffer(shown)
-
-  const applyStatus = useCallback(
-    (status: EraseStatus) => {
-      const update = restoreUpdate(shown.id, status)
-      const after = restoreErrorAfterRead(errorKind.current, update.kind === 'lost' ? null : update.executed)
-      if (after.clear) {
-        setError('')
-        errorKind.current = null
-      }
-      if (after.notice) setNotice(after.notice)
-      setCheckAgain(false)
-      if (update.kind === 'lost') {
-        // This erase is no longer the account's last one (or it aged out): stop following it,
-        // and still hand the status to the parent (its card follows it).
-        setLost(true)
-        onStatus?.(status)
-        return
-      }
-      setShown(update.executed)
-      onStatus?.(status)
-    },
-    [shown.id, onStatus],
-  )
-
-  const poll = useCallback(async () => {
-    const seq = seqGate.begin()
-    try {
-      const status = parseEraseStatus(await deps.status())
-      if (!alive.current || !seqGate.isLatest(seq) || !status) return
-      applyStatus(status)
-    } catch {
-      // the next poll tries again
-    }
-  }, [deps, applyStatus, seqGate])
-
-  useEffect(() => {
-    if (offer !== 'running') return
-    const id = setInterval(() => void poll(), pollMs)
-    return () => clearInterval(id)
-  }, [offer, poll, pollMs])
-
-  useEffect(() => {
-    if (offer === 'done' && !doneReported.current) {
-      doneReported.current = true
-      sharedEraseStatus.invalidate()
-      onDone?.()
-    }
-  }, [offer, onDone])
-
-  useEffect(() => {
-    if (focusTick > 0) (errorRef.current ?? resultRef.current)?.focus()
-  }, [focusTick])
-
-  const start = useCallback(async () => {
-    setBusy(true)
-    setError('')
-    errorKind.current = null
-    setNotice('')
-    setCheckAgain(false)
-    const outcome = await restoreEverything(deps, shown.id)
-    if (!alive.current) return
-    setBusy(false)
-    // The answer is newer than any read still in flight, on either side, and newer than any
-    // cached status (round 4c).
-    seqGate.supersede()
-    sharedEraseStatus.invalidate()
-    if (outcome.kind === 'done') {
-      setShown((s) => ({
-        ...s,
-        in_trash: 0,
-        restore: { state: 'done', requested_at: s.restore?.requested_at ?? null, rows_restored: outcome.rowsRestored, finished_at: null },
-      }))
-    } else if (outcome.kind === 'running') {
-      setShown((s) => ({
-        ...s,
-        in_trash: outcome.inTrash ?? s.in_trash,
-        restore: { state: 'running', requested_at: s.restore?.requested_at ?? null, rows_restored: outcome.rowsRestored, finished_at: null },
-      }))
-    } else {
-      setError(outcome.message)
-      errorKind.current = outcome.kind
-      if (outcome.kind === 'unknown') setCheckAgain(true)
-      // Round 4c: read once, so the true state (or 'lost') shows.
-      void poll()
-    }
-    setFocusTick((n) => n + 1)
-  }, [deps, shown.id, seqGate, poll])
+    if (state.focusTick > 0) (errorRef.current ?? resultRef.current)?.focus()
+  }, [state.focusTick])
 
   return (
     <RestoreFromEraseView
-      executed={shown}
-      offer={offer}
-      busy={busy}
-      rowsRestored={shown.restore?.rows_restored ?? 0}
-      inTrash={shown.in_trash}
-      error={error}
-      onRestore={() => void start()}
-      checkAgain={checkAgain}
-      onCheckAgain={() => void poll()}
-      notice={notice}
+      executed={state.shown}
+      offer={state.view}
+      busy={state.busy}
+      rowsRestored={state.shown.restore?.rows_restored ?? 0}
+      inTrash={state.shown.in_trash}
+      error={state.error}
+      onRestore={() => void ctrl.start()}
+      checkAgain={state.checkAgain}
+      onCheckAgain={() => void ctrl.poll({ followUp: true })}
+      notice={state.notice}
       resultRef={resultRef}
       errorRef={errorRef}
     />
@@ -293,10 +202,11 @@ export function RestoreFromErase({ executed, deps = RESTORE_DEPS, gate, onStatus
 }
 
 /**
- * For pages that do not hold the erase status themselves (Trash, the empty drive): reads the
- * status through the shared cache, FRESH on mount (round 4c: the count it shows must not predate
- * the person's own action), and draws the block while something of the last erase is in the
- * trash or a restore runs.
+ * For pages that do not hold the erase status themselves (Trash, the empty drive). Follows the
+ * account's last erase through the shared cache: fresh on mount, and fresh again after every
+ * `invalidate()` (the person's own trash actions, the trash's live events). Drawn while something
+ * of the last erase is in the trash or a restore runs; once drawn it stays (so the block can say
+ * that nothing is left, or hide itself when its offer is gone).
  */
 export function RestoreFromEraseOffer({
   onDone,
@@ -309,36 +219,24 @@ export function RestoreFromEraseOffer({
   const { user } = useAuth()
   const key = user?.user_id ?? ''
   const [executed, setExecuted] = useState<EraseExecuted | null>(null)
+  const [drawn, setDrawn] = useState(false)
   useEffect(() => {
     if (!key) return
-    let live = true
-    // Round 4c: fresh, never a cached count from before the person's own action.
-    sharedEraseStatus.read(key, { force: true }).then(
-      (status) => {
-        if (live && status) setExecuted(status.last_executed)
-      },
-      () => {
-        // no offer without a status
-      },
-    )
-    return () => {
-      live = false
-    }
+    return watchLastExecuted(sharedEraseStatus, key, (next) => {
+      setExecuted(next)
+      const offer = restoreOffer(next)
+      if (offer === 'offer' || offer === 'running') setDrawn(true)
+    })
   }, [key])
-  // The block polls through the same cache, forced (progress must be fresh), so the banner and
-  // the other offer see it too.
-  const deps = useMemo<RestoreDeps>(
-    () => ({ restore: restoreEraseRequest, status: () => sharedEraseStatus.read(key, { force: true }) }),
-    [key],
-  )
-  // Only while there is something to restore (or a restore runs): a restore that finished on
-  // another day is not news on every visit.
-  if (!executed) return null
-  const offer = restoreOffer(executed)
-  if (offer !== 'offer' && offer !== 'running') return null
+  const deps = useRef<RestoreDeps>({
+    restore: restoreEraseRequest,
+    status: () => sharedEraseStatus.read(key, { force: true }),
+  })
+  deps.current.status = () => sharedEraseStatus.read(key, { force: true })
+  if (!drawn || !executed) return null
   return (
     <div className={className}>
-      <RestoreFromErase executed={executed} deps={deps} onDone={onDone} />
+      <RestoreFromErase key={executed.id} executed={executed} deps={deps.current} onDone={onDone} />
     </div>
   )
 }

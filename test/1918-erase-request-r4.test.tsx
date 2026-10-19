@@ -21,6 +21,10 @@
  *  8. the typed number accepts real thousands grouping only.
  *
  * New modules and exports are imported dynamically, so on eebd97e each test fails on its own.
+ *
+ * Round 4d (web#174 review, finding 5): the tests of the restore block's polling and the banner's
+ * cancel drive their controllers now; the placement test stays a source check (the locked screen,
+ * Trash and the drive cannot be rendered with effects here).
  */
 import { describe, expect, test } from 'bun:test'
 import { existsSync, readFileSync } from 'node:fs'
@@ -30,6 +34,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
 import { EraseRequestCard, type EraseRequestCardProps } from '../src/components/erase-request-card'
 import { eraseCard, parseEraseStatus, type EraseStatus } from '../src/lib/erase-request'
+import { apiError as fakeApiError, flush, manualTimers } from './helpers/erase-request-fakes'
 
 const SRC = path.resolve(import.meta.dir, '../src')
 const TOKEN = 'Qm9vbS1ib29tLWJvb20tYm9vbS1ib29tLWJvb20tYm9v'
@@ -42,6 +47,8 @@ const link = async () => (await import('../src/lib/erase-request-link')) as unkn
 const transport = async () => (await import('../src/lib/erase-request-transport')) as unknown as Mod
 const restoreMod = async () => (await import('../src/components/restore-from-erase')) as unknown as Mod
 const bannerMod = async () => (await import('../src/components/erase-request-banner')) as unknown as Mod
+const restoreCtl = async () => (await import('../src/lib/restore-controller')) as unknown as Mod
+const bannerCtl = async () => (await import('../src/lib/erase-banner-controller')) as unknown as Mod
 const cancelPage = async () => (await import('../src/pages/erase-request-cancel')) as unknown as Mod
 const verifyPage = async () => (await import('../src/pages/erase-request-verify')) as unknown as Mod
 
@@ -373,12 +380,30 @@ describe('4b. a cancel that finds nothing says what the server holds now', () =>
     expect(out.message).not.toMatch(/nothing will be moved/i)
   })
 
-  test('the locked screen and the banner apply the fresh status and pass the shown request id', () => {
+  test('the locked screen and the banner apply the fresh status and pass the shown request id', async () => {
+    // the banner cancels the request it shows: a 404 whose fresh status shows THAT request ran
+    // says it ran (which needs the id)
+    const b = await bannerCtl()
+    const ran = status({ last_executed: EXECUTED })
+    let answer = status({ request: PENDING })
+    const banner = (b.createBannerController as Fn)({
+      cache: { read: async () => answer, invalidate: () => {}, subscribe: () => () => {} },
+      key: 'u1',
+      deps: { create: async () => ({}), cancel: async () => Promise.reject(fakeApiError(404, 'no_pending_erase_request')), status: async () => ran },
+      win: new EventTarget(),
+      doc: Object.assign(new EventTarget(), { visibilityState: 'visible' }),
+      timers: manualTimers().hooks,
+    }) as { attach(): void; cancel(): Promise<void>; getState(): { note: string; card: unknown } }
+    banner.attach()
+    await flush()
+    answer = ran
+    await banner.cancel()
+    expect(banner.getState().note).toContain('It had already run')
+    expect(banner.getState().card).toBeNull()
+    // Source check (no DOM): the locked screen passes the shown id and applies the fresh status.
     const screen = read('components/vault-locked-no-key.tsx')
     expect(screen).toContain('cancelErase(ERASE_DEPS, shownId)')
-    expect(screen).toContain("outcome.kind === 'nothing_pending' || outcome.kind === 'already_executed'")
     expect(screen).toContain('setEraseStatus(outcome.status)')
-    expect(read('components/erase-request-banner.tsx')).toContain('cancelErase(ERASE_DEPS, card.request.id)')
   })
 })
 
@@ -475,20 +500,37 @@ describe('5. "Restore everything from the erase on <date>"', () => {
   test('it polls every 5 s while a restore runs', async () => {
     const m = await lib()
     expect(m.RESTORE_POLL_MS).toBe(5_000)
-    const src = read('components/restore-from-erase.tsx')
-    expect(src).toMatch(/if \(offer !== 'running'\) return\s*\n\s*const id = setInterval\(\(\) => void poll\(\), pollMs\)/)
+    const r = await restoreCtl()
+    const timers = manualTimers()
+    let reads = 0
+    const ctl = (r.createRestoreController as Fn)({
+      executed: EXECUTED,
+      deps: {
+        restore: async () => ({ restore: { state: 'running', rows_restored: 40 }, in_trash: 110 }),
+        status: async () => {
+          reads++
+          return status({ last_executed: { ...EXECUTED, in_trash: 60, restore: { state: 'running', requested_at: null, rows_restored: 90, finished_at: null } } })
+        },
+      },
+      timers,
+    }) as { start(): Promise<void>; getState(): { view: string; shown: { in_trash: number } } }
+    expect(timers.intervals()).toEqual([])
+    await ctl.start()
+    expect(ctl.getState().view).toBe('running')
+    expect(timers.intervals()).toEqual([5_000])
+    timers.tickIntervals()
+    await flush()
+    expect(reads).toBe(1)
+    expect(ctl.getState().shown.in_trash).toBe(60)
   })
-
+  // Source check (no DOM): placement inside the locked screen, Trash and the drive.
   test('it is drawn where the owner looks: the locked screen, Trash, the empty drive', () => {
-    // Round 4b: the block shares the screen's gate and makes the screen read again when done.
-    expect(read('components/vault-locked-no-key.tsx')).toContain(
-      '<RestoreFromErase executed={lastExecuted} gate={eraseGate.current} onStatus={applyRestoreStatus} onDone={reloadAfterRestore} />',
-    )
-    expect(read('components/vault-locked-no-key.tsx')).toContain('restore={restoreSlot}')
+    const screen = read('components/vault-locked-no-key.tsx')
+    expect(screen).toMatch(/<RestoreFromErase\s+key=\{slotExecuted\.id\}\s+executed=\{slotExecuted\}\s+gate=\{eraseGate\.current\}\s+onStatus=\{applyRestoreStatus\}\s+onDone=\{reloadAfterRestore\}/)
+    expect(screen).toContain('restore={restoreSlot}')
     expect(read('pages/trash.tsx')).toContain('<RestoreFromEraseOffer className="px-5 pt-3" onDone={fetchTrash} />')
     expect(read('pages/drive.tsx')).toContain('notice={<RestoreFromEraseOffer className="mb-6" />}')
   })
-
   test('the transport: POST /account/erase-request/{id}/restore; a 202 folder restore is "in the background"', () => {
     const api = read('lib/api.ts')
     expect(api).toContain('/api/v1/account/erase-request/${encodeURIComponent(requestId)}/restore')

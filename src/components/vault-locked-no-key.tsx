@@ -33,8 +33,9 @@ import {
   parseTypedCount,
   requestErase,
   requestedNote,
-  restoreOffer,
+  restoreSlotFor,
   type CheckAgainMode,
+  type EraseExecuted,
   type EraseDeps,
   type EraseStatus,
 } from '../lib/erase-request'
@@ -137,6 +138,9 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
   const [eraseCheckAgain, setEraseCheckAgain] = useState<CheckAgainMode>(null)
   // Round 4: after each action the outcome takes the focus (the card watches this).
   const [eraseFocusTick, setEraseFocusTick] = useState(0)
+  // Round 4d: once the person acted on the restore block it stays with that erase until their
+  // next action (a refusal's words survive a status that no longer carries the erase).
+  const [restorePin, setRestorePin] = useState<EraseExecuted | null>(null)
 
   // ── exit 3: delete account ──
   const [accountGate, setAccountGate] = useState(false)
@@ -248,6 +252,7 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
   const runEraseRequest = useCallback(async (token: string) => {
     const count = parseTypedCount(eraseTyped)
     if (count === null) return
+    setRestorePin(null)
     setEraseBusy(true)
     setEraseError('')
     setEraseNote('')
@@ -281,6 +286,7 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
   }, [eraseTyped, loadEraseStatus, scheduleFollowUp])
 
   const handleEraseCancel = useCallback(async () => {
+    setRestorePin(null)
     setEraseBusy(true)
     setEraseError('')
     setEraseNote('')
@@ -332,8 +338,18 @@ export function VaultLockedNoKey({ onTryPreviousPassword, onUnlockWithPhrase }: 
     void loadEraseStatus()
   }, [loadEraseStatus])
   const lastExecuted = eraseStatus?.last_executed ?? null
-  const restoreSlot = lastExecuted && restoreOffer(lastExecuted) !== 'none'
-    ? <RestoreFromErase executed={lastExecuted} gate={eraseGate.current} onStatus={applyRestoreStatus} onDone={reloadAfterRestore} />
+  const slotExecuted = restoreSlotFor(restorePin, lastExecuted)
+  const restoreSlot = slotExecuted
+    ? (
+      <RestoreFromErase
+        key={slotExecuted.id}
+        executed={slotExecuted}
+        gate={eraseGate.current}
+        onStatus={applyRestoreStatus}
+        onDone={reloadAfterRestore}
+        onAction={() => setRestorePin(slotExecuted)}
+      />
+    )
     : null
 
   const runAccountDeletion = useCallback(async (token: string) => {

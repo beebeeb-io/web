@@ -148,10 +148,13 @@ export function Trash() {
     fetchTrash()
   }, [fetchTrash])
 
-  // Real-time: refresh trash when files are trashed, restored, or permanently deleted
+  // Real-time: refresh trash when files are trashed, restored, or permanently deleted. Task 1918
+  // round 4d: the erase status (what of the erase is left in the trash) changed too; the restore
+  // offer re-reads it (coalesced) when the shared cache is invalidated.
   useWsEvent(
     ['file.trashed', 'file.restored', 'file.deleted'],
     useCallback(() => {
+      sharedEraseStatus.invalidate()
       fetchTrash()
     }, [fetchTrash]),
   )
