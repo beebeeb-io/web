@@ -9,7 +9,7 @@
 // burst.
 
 import type { DriveFile } from './api'
-import { fileStorageCity } from './storage-regions'
+import { fileStorageCountry } from './storage-regions'
 
 /**
  * How long an all-empty derive waits for confirmation before it may be
@@ -20,9 +20,9 @@ export const EMPTY_CONFIRM_MS = 250
 
 /**
  * Cheap row identity: id + the fields the list renders on
- * (id+name+size+updated_at+parent+flags+storage city). Two derivations with
+ * (id+name+size+updated_at+parent+flags+storage country). Two derivations with
  * the same signature are the same rows — the caller must not touch list state.
- * The city is rendered on the row (task 1919), so a derive that lost or changed
+ * The country is rendered on the row (task 1919), so a derive that lost or changed
  * it is a different row.
  */
 export function rowsSignature(rows: DriveFile[]): string {
@@ -39,7 +39,7 @@ export function rowsSignature(rows: DriveFile[]): string {
       f.is_folder ? '1' : '0',
       f.has_thumbnail ? '1' : '0',
       f.has_large_thumbnail ? '1' : '0',
-      fileStorageCity(f) ?? '',
+      fileStorageCountry(f) ?? '',
     ].join('\u0000'))
   }
   return parts.join('\u0001')

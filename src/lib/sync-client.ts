@@ -993,7 +993,7 @@ export class SyncClient {
           has_large_thumbnail:
             (payload.has_large_thumbnail as boolean | undefined) ?? existing.has_large_thumbnail,
           // A new version can land in another pool (task 1919: the person
-          // picked another datacenter); the drive shows that pool's city.
+          // picked another country); the drive shows that pool's country.
           storage_pool_id:
             'storage_pool_id' in payload
               ? ((payload.storage_pool_id as string | null | undefined) ?? null)

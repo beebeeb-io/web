@@ -16,8 +16,8 @@ import { PRICING_PAGE_PLANS } from '../src/lib/plan-constants'
  * choosable, Ede coming soon) those surfaces take every city and country from
  * `GET /api/v1/storage-regions` and keep NO static list; that is pinned in
  * `test/1919-storage-regions.test.ts`. The settings/privacy error-report
- * disclosure keeps its specific location: it states where one server
- * processes crash reports, not where files live.
+ * disclosure names the country of the server that processes crash reports
+ * (task 2050: a country, never a city).
  *
  * Honesty guard for THIS static copy (marketing-style lines): it names no
  * city and makes no choose-your-region claim; the choice lives in Settings.

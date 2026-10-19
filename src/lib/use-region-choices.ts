@@ -21,8 +21,10 @@ export interface RegionStoreState {
   /** Whose data this is; a different person resets the store. */
   owner: string | null
   choices: StorageRegionChoice[]
-  /** The stored preference as the server holds it: null, the default id, or a datacenter id. */
+  /** The stored preference as the server holds it: null, the default id, or a country id. */
   preferred: string | null
+  /** "Only store in <country>" (task 1952): uploads stop rather than leave the country. */
+  strict: boolean
   /** True when the server has no region endpoint at all (older than the feature). */
   endpointMissing: boolean
   /** True when the server answered but sent no `choices` (older than task 1919). */
@@ -35,6 +37,7 @@ const INITIAL: RegionStoreState = {
   owner: null,
   choices: [],
   preferred: null,
+  strict: false,
   endpointMissing: false,
   listMissing: false,
   error: null,
@@ -62,6 +65,11 @@ function snapshot(): RegionStoreState {
   return state
 }
 
+/** The current state without React (exported for tests). */
+export function regionStoreSnapshot(): RegionStoreState {
+  return state
+}
+
 /** Forget everything (sign-out, a different person). Exported for tests. */
 export function resetRegionStore(): void {
   epoch++
@@ -84,6 +92,7 @@ export async function loadRegionChoices(owner: string | null, opts: { force?: bo
         owner,
         choices,
         preferred: data.preferred_region ?? null,
+        strict: data.region_strict === true && data.preferred_region != null,
         endpointMissing: false,
         listMissing: choices.length === 0,
         error: null,
@@ -105,17 +114,24 @@ export async function loadRegionChoices(owner: string | null, opts: { force?: bo
 }
 
 /**
- * Save a choice. The new value shows at once and is rolled back if the server
- * refuses; the refusal is thrown to the caller (the page toasts it).
+ * Save a choice (and whether it is strict: PUT replaces the whole choice, so
+ * the flag always travels with the id). The new value shows at once and is
+ * rolled back if the server refuses; the refusal is thrown to the caller (the
+ * page toasts it).
  */
-export async function saveRegionChoice(id: string | null): Promise<void> {
-  const previous = state.preferred
-  set({ ...state, preferred: id })
+export async function saveRegionChoice(id: string | null, strict = false): Promise<void> {
+  const previous = { preferred: state.preferred, strict: state.strict }
+  const wantStrict = strict && id !== null
+  set({ ...state, preferred: id, strict: wantStrict })
   try {
-    const result = await setUserRegion(id)
-    set({ ...state, preferred: result.preferred_region ?? null })
+    const result = await setUserRegion(id, wantStrict)
+    set({
+      ...state,
+      preferred: result.preferred_region ?? null,
+      strict: result.region_strict === true && result.preferred_region != null,
+    })
   } catch (err) {
-    set({ ...state, preferred: previous })
+    set({ ...state, ...previous })
     throw err
   }
 }

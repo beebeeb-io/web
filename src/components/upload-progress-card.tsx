@@ -65,8 +65,8 @@ function regionLabel(region?: string | null): string | null {
 
 /**
  * The card never names a city: the upload init only says "europe" (the pool's
- * public region), not which datacenter took the bytes. The file's own
- * `storage_location` names the city once it is stored (task 1919).
+ * public region), not which data center took the bytes. The file's own
+ * `storage_location` names the country once it is stored (task 1919, 2050).
  */
 function phaseLabel(item: UploadItem): string {
   if (item.stage === 'Done') return 'done'

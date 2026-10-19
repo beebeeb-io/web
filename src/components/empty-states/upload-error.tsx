@@ -11,6 +11,7 @@ export interface FailedUpload {
 }
 
 interface UploadErrorProps {
+  /** Where the upload was going (a country or "Europe"), when known. Never a city. */
   region?: string
   files: FailedUpload[]
   onResume: () => void
@@ -19,7 +20,7 @@ interface UploadErrorProps {
 }
 
 export function UploadError({
-  region = 'Falkenstein',
+  region,
   files,
   onResume,
   onCancel,
@@ -57,7 +58,7 @@ export function UploadError({
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-[13px] font-semibold text-red">
-              Connection to {region} dropped
+              {region ? `Connection to ${region} dropped` : 'Connection dropped'}
             </div>
             <div className="text-xs text-ink-2 mt-0.5 leading-relaxed">
               Chunks already encrypted stay safe. We can pick up where we

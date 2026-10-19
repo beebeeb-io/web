@@ -17,8 +17,8 @@ export interface UploadItem {
   startedAt?: number
   /** Whether this upload is paused */
   paused?: boolean
-  /** City where the ciphertext is stored — used in stage labels */
-  storageCity?: string
+  /** Country where the ciphertext is stored (task 2050), when known — used in stage labels. Never a city. */
+  storageCountry?: string
   /** Human-readable failure reason — surfaced when stage === 'Error' */
   errorMessage?: string
 }
@@ -31,11 +31,7 @@ interface UploadProgressProps {
   onResume?: (id: string) => void
   /** Retry a failed upload — only invoked for items in stage='Error' */
   onRetry?: (id: string) => void
-  /** Default city when an item has no `storageCity` set yet */
-  defaultCity?: string
 }
-
-const DEFAULT_CITY = 'Falkenstein'
 
 function formatSpeed(bytesPerSecond: number): string {
   if (bytesPerSecond < 1024) return `${bytesPerSecond.toFixed(0)} B/s`
@@ -79,7 +75,7 @@ function pipelineStage(item: UploadItem): PipelineStage {
   return 'encrypt'
 }
 
-function stageLabel(item: UploadItem, city: string): string {
+function stageLabel(item: UploadItem): string {
   if (item.paused) return 'Paused'
   if (item.stage === 'Error') {
     return item.errorMessage ?? "Couldn't reach the server. Retry?"
@@ -93,9 +89,9 @@ function stageLabel(item: UploadItem, city: string): string {
       if (item.totalChunks) {
         return `Uploading ${item.uploadedChunks ?? 0} / ${item.totalChunks} chunks`
       }
-      return `Uploading ciphertext to ${city}`
+      return 'Uploading ciphertext'
     case 'confirm':
-      return `Stored in ${item.storageRegion ?? 'Europe'} · ${city} · Key stayed on your device`
+      return `Stored in ${item.storageCountry ?? item.storageRegion ?? 'Europe'} · Key stayed on your device`
   }
 }
 
@@ -106,7 +102,6 @@ export function UploadProgress({
   onPause,
   onResume,
   onRetry,
-  defaultCity = DEFAULT_CITY,
 }: UploadProgressProps) {
   if (items.length === 0) return null
 
@@ -152,7 +147,6 @@ export function UploadProgress({
           const isDone = item.stage === 'Done'
           const isError = item.stage === 'Error'
           const stage = pipelineStage(item)
-          const city = item.storageCity ?? defaultCity
 
           return (
             <div key={item.id}>
@@ -257,7 +251,7 @@ export function UploadProgress({
                         : 'var(--color-ink-3)',
                 }}
               >
-                {stageLabel(item, city)}
+                {stageLabel(item)}
               </div>
 
               {/* 3-stage pipeline bar */}

@@ -96,7 +96,7 @@ import { decideSyncRows, EMPTY_CONFIRM_MS } from '../lib/sync-rows'
 import { createScopedTimer } from '../lib/scoped-timer'
 import { hashFile, checkDuplicate, recordUpload } from '../lib/upload-dedup'
 import { isBackupsRoot as isBackupsRootPure } from '../lib/backups-root'
-import { fileStorageCity } from '../lib/storage-regions'
+import { fileStorageCountry } from '../lib/storage-regions'
 import { knownPoolLocation, learnPoolLocations } from '../lib/sync-storage-locations'
 
 // ─── Drive component ────────────────────────────────
@@ -426,7 +426,7 @@ export function Drive() {
 
   // Sync nodes carry a storage_pool_id but no storage_location; GET /files
   // carries the location. Learn pool -> location from API rows so a
-  // sync-derived refresh keeps each row's real city (task 1919; see
+  // sync-derived refresh keeps each row's real country (task 1919, 2050; see
   // lib/sync-storage-locations.ts). A pool never seen stays unknown.
   const poolLocationsRef = useRef(new Map<string, unknown>())
 
@@ -3224,7 +3224,7 @@ export function Drive() {
             createdAt: f.created_at,
             cipher: 'AES-256-GCM',
             region: 'Europe',
-            city: fileStorageCity(f) ?? undefined,
+            country: fileStorageCountry(f) ?? undefined,
           }
           return trust
         })()}
