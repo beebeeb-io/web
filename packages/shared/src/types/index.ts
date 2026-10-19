@@ -1665,9 +1665,10 @@ export interface DataExportStatus {
 export interface AvailableRegion {
   continent: string
   display_name: string
-  /** Representative city, e.g. "Falkenstein". Server (storage.rs `RegionInfo`)
-   *  emits this as `example_city` — NOT `city`. */
-  example_city: string
+  /** Representative COUNTRY, e.g. "Germany" (task 2050). Absent on a server
+   *  older than 2050. The server still emits a deprecated `example_city` for
+   *  one release; it is deliberately not typed here, so nothing can render it. */
+  example_country?: string
   /** No `provider` field — the brand rule (docs/canon/data-residency.md) is
    *  name the city, never the hosting provider, in user-facing copy. The
    *  server's `RegionInfo.provider` is `#[serde(skip_serializing)]` (task
@@ -1678,6 +1679,8 @@ export interface AvailableRegion {
 
 export interface UserRegionResponse {
   preferred_region: string | null
+  /** "Only store in <country>" (task 1952). Absent on a server older than 1952. */
+  region_strict?: boolean
   /** Server (regions.rs `get_preferred_region`) returns the array under
    *  `available_regions`, not `regions`. */
   available_regions: AvailableRegion[]

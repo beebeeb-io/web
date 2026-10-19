@@ -306,22 +306,28 @@ The full rules live in the workspace `CLAUDE.md` → "How we work" (also summari
   middleware — several sign-up specs can run back-to-back against one dev API without hitting `429`.
 - **UI tasks are verified in a browser** (Playwright screenshots in the task's evidence path), never
   by curl. A new spec is trusted only after it has been seen to fail against a deliberate mutation.
-- **Region choice (task 1919, `/settings/data-residency`):** "Europe" is the DEFAULT (no country, any
-  of our European datacenters); below it the person pins new uploads to one datacenter, and a datacenter
-  that is not live is listed "Coming soon", not selectable. The list is the SERVER'S: `choices` of
-  `GET /api/v1/me/region` (same array as the public `GET /api/v1/storage-regions`), parsed by
-  `src/lib/storage-regions.ts` (pure) and held in `src/lib/use-region-choices.ts` (one store for the page,
-  the sidebar's region row and nothing else). No source file keeps a city, country, id or provider
-  (`test/1919-storage-regions.test.ts` greps for it). `PUT /me/region` sends a choice's `id` verbatim
-  (`null` clears); a failed list fetch is an honest error with Retry, never an invented list. A file's
-  city on the drive row and in the encryption-details panel is the server's `storage_location.city`
-  (`fileStorageCity`), never a default. The upload init only says `region: "europe"`, so the upload card
-  names no city. Opt-in e2e (`e2e/1919-region-choice.spec.ts`, replaces the 1416 live-region spec): needs an
-  API built from the server 1919 branch with pools fsn1/hel1/nbg1 and a scratch Postgres it may edit;
-  `E2E_API_BIN=<server-1919 beebeeb-api> e2e/scripts/region-stack.sh up` builds that and prints the env
-  (`E2E_1919=1 ...`, plus `E2E_1919_PGPASSWORD`). It proves upload placement by counting files under each
-  pool's blob directory and by the file's own `storage_location`, and proves the list is the API's by
-  editing the API's rows. Screenshots land in `E2E_EVIDENCE_DIR` (default `test-results/1919/`).
+- **Region choice (task 1919, by COUNTRY since task 2050, `/settings/data-residency`):** "Europe" is the
+  DEFAULT (any of our European data centers, the server places the data); below it the person pins new
+  uploads to one COUNTRY, a country that is not live is listed "Coming soon", not selectable, and a
+  pinned country has an off-by-default "Only store in <country>" toggle (strict, task 1952). A CITY is
+  never shown, sent or read (Guus 2026-10-19: the cities together identify the provider;
+  `docs/canon/data-residency.md`). The list is the SERVER'S: `choices` of `GET /api/v1/me/region` (same
+  array as the public `GET /api/v1/storage-regions`: `id` `europe`|`de`|`fi`..., `kind` `region`|`country`),
+  parsed by `src/lib/storage-regions.ts` (pure) and held in `src/lib/use-region-choices.ts` (one store
+  for the page, the sidebar's region row and nothing else). No source file keeps a city, country, id or
+  provider (`test/1919-storage-regions.test.ts` greps for it) and `test/2050-no-city-in-copy.test.ts`
+  fails on a city name in any code in `src/` (comments and `lib/timezones.ts` excepted). `PUT /me/region`
+  sends a choice's `id` verbatim plus `region_strict` (PUT replaces the whole choice; `null` clears; a
+  failed list fetch is an honest error with Retry, never an invented list). A server older than 2050
+  (one `kind: "datacenter"` entry per city) is folded into one row per country by `parseChoices`; a
+  datacenter with no country is dropped, never shown by its city. A file's location on the drive row and
+  in the encryption-details panel is the server's `storage_location.country` (`fileStorageCountry`, never
+  the deprecated `city`), "Europe" when absent. The upload init only says `region: "europe"`, so the
+  upload card names no country. A 409 `region_unavailable_strict` upload refusal is worded by
+  `strictRefusalMessage` (reads `country`, never the `city` alias). Mocked-API Playwright spec:
+  `bunx playwright test --config=e2e/2050-location-by-country.config.ts` (no server; screenshots in
+  `E2E_EVIDENCE_DIR`). The opt-in real-stack spec `e2e/1919-region-choice.spec.ts` still asserts the
+  per-datacenter model and needs a rewrite against the 2050 server (follow-up).
 - **Design before code:** `../../design/hifi/*.jsx` wins over the code; deviations are recorded in
   the task file before the code changes.
 - **`@beebeeb/shared` edits happen in `packages/shared/src/` here, then `make sync-shared`** — the

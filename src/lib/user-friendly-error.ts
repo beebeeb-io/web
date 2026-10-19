@@ -12,6 +12,7 @@ import { ApiError } from './api'
 import { consumeAccountDeletedNotice, type NoticeStorage } from './account-deleted-notice'
 import { ACCOUNT_INACTIVE_NOTICE } from './account-inactive'
 import { UploadRestartFailedError } from './upload-session-reinit'
+import { strictRefusalMessage } from './storage-regions'
 import { shareRefusalCopy, startTrialErrorCopy, trialBillingRefusalCopy } from './no-card-trial'
 
 /** Maximum length below which we trust the existing message as user-facing. */
@@ -146,6 +147,10 @@ export function userFriendlyError(err: unknown): string {
     // pattern-match the human message. Branch on these BEFORE the generic
     // status handling, otherwise the 403/413 fall-throughs swallow them with
     // "You don't have permission to do that." (server task 0670).
+    // Task 1952 / 2050 — strict placement: the chosen country cannot take the
+    // write, and the person said never to go anywhere else. Names the COUNTRY.
+    const strictRefusal = strictRefusalMessage(err)
+    if (strictRefusal) return strictRefusal
     if (err.code === 'object_budget_exceeded') {
       // Object-COUNT cap, distinct from the byte/storage quota below.
       return "File limit reached. This account has hit its maximum number of files — delete some files or contact support to raise the limit."

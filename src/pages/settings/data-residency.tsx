@@ -1,23 +1,25 @@
 import { useState, useCallback } from 'react'
 import { SettingsShell, SettingsHeader } from '../../components/settings-shell'
-import { Icon } from '@beebeeb/shared'
+import { Icon, BBToggle } from '@beebeeb/shared'
 import { useToast } from '../../components/toast'
 import { useAuth } from '../../lib/auth-context'
 import { useRegionChoices, saveRegionChoice } from '../../lib/use-region-choices'
 import {
   groupChoices,
-  choiceSubline,
-  locationLabel,
+  choiceLabel,
   preferenceUnavailable,
   selectedChoiceId,
+  selectedCountry,
+  strictLabel,
   type StorageRegionChoice,
 } from '../../lib/storage-regions'
 
-// Task 1919. The whole list comes from the API (`choices` of GET /me/region):
-// "Europe" is the default (any of our European datacenters, the server places
-// the data); below it each datacenter we run, and the ones that are not live
-// yet as "Coming soon". This file holds no city, country or id: a datacenter
-// that turns live changes the screen without a client release.
+// Task 1919, by COUNTRY since task 2050. The whole list comes from the API
+// (`choices` of GET /me/region): "Europe" is the default (any of our European
+// data centers, the server places the data); below it each country we store in,
+// and the ones that are not live yet as "Coming soon". This file holds no city,
+// country or id: a country that turns live changes the screen without a client
+// release. A city is never shown (docs/canon/data-residency.md).
 
 // ── Region row ────────────────────────────────────────────────────────────────
 
@@ -26,7 +28,7 @@ interface ChoiceRowProps {
   selected: boolean
   /** True while a save is in flight. */
   busy: boolean
-  /** Shown under the name for the default row (the data has no location for it). */
+  /** Shown under the name (the default row explains itself; a country has no subline). */
   hint?: string
   onSelect: () => void
 }
@@ -34,8 +36,7 @@ interface ChoiceRowProps {
 function ChoiceRow({ choice, selected, busy, hint, onSelect }: ChoiceRowProps) {
   const comingSoon = choice.status === 'coming_soon'
   const unavailable = !choice.selectable
-  const location = choiceSubline(choice)
-  const subline = location || hint || ''
+  const subline = hint ?? ''
 
   return (
     <button
@@ -80,11 +81,7 @@ function ChoiceRow({ choice, selected, busy, hint, onSelect }: ChoiceRowProps) {
           )}
         </div>
         {subline && (
-          <div
-            className={`text-[12px] text-ink-3 mt-0.5 ${location ? 'font-mono' : 'leading-relaxed'}`}
-          >
-            {subline}
-          </div>
+          <div className="text-[12px] text-ink-3 mt-0.5 leading-relaxed">{subline}</div>
         )}
       </div>
 
@@ -98,7 +95,7 @@ function ChoiceRow({ choice, selected, busy, hint, onSelect }: ChoiceRowProps) {
 export function SettingsDataResidency() {
   const { showToast } = useToast()
   const { user } = useAuth()
-  const { status, choices, preferred, endpointMissing, listMissing, error, reload } = useRegionChoices(
+  const { status, choices, preferred, strict, endpointMissing, listMissing, error, reload } = useRegionChoices(
     user?.user_id,
   )
   const [saving, setSaving] = useState(false)
@@ -106,6 +103,7 @@ export function SettingsDataResidency() {
   const grouped = groupChoices(choices)
   const selectedId = selectedChoiceId(preferred, choices)
   const unavailable = preferenceUnavailable(preferred, choices)
+  const pinned = selectedCountry(preferred, choices)
   const loading = status === 'idle' || status === 'loading'
   const failed = status === 'error' || (status === 'ready' && (listMissing || !grouped.defaultChoice))
 
@@ -114,13 +112,15 @@ export function SettingsDataResidency() {
       if (saving || !choice.selectable || choice.id === selectedId) return
       setSaving(true)
       try {
-        await saveRegionChoice(choice.id)
+        // Strict is a promise about ONE country: it carries over to another
+        // country, and ends when the person goes back to "Europe".
+        await saveRegionChoice(choice.id, choice.kind === 'country' && strict)
         showToast({
           icon: 'check',
           title: 'Region updated',
           description: choice.is_default
-            ? 'New uploads go to any of our European datacenters.'
-            : `New uploads go to ${locationLabel(choice) || choice.name}.`,
+            ? 'New uploads go to any of our European data centers.'
+            : `New uploads go to ${choiceLabel(choice)}.`,
         })
       } catch (err) {
         showToast({
@@ -133,7 +133,34 @@ export function SettingsDataResidency() {
         setSaving(false)
       }
     },
-    [saving, selectedId, showToast],
+    [saving, selectedId, strict, showToast],
+  )
+
+  const handleStrict = useCallback(
+    async (next: boolean) => {
+      if (saving || !pinned) return
+      setSaving(true)
+      try {
+        await saveRegionChoice(pinned.id, next)
+        showToast({
+          icon: 'check',
+          title: next ? `Only storing in ${choiceLabel(pinned)}` : 'Other EU countries allowed',
+          description: next
+            ? `If ${choiceLabel(pinned)} cannot take a new file, the upload stops.`
+            : 'If your country cannot take a new file, it goes to another EU country.',
+        })
+      } catch (err) {
+        showToast({
+          icon: 'x',
+          title: 'Failed to save region',
+          description: err instanceof Error ? err.message : 'Please try again.',
+          danger: true,
+        })
+      } finally {
+        setSaving(false)
+      }
+    },
+    [saving, pinned, showToast],
   )
 
   return (
@@ -171,20 +198,20 @@ export function SettingsDataResidency() {
       ) : (
         <>
           <div className="px-7 mt-5" role="radiogroup" aria-label="Where new uploads are stored">
-            {/* The default: no country, any European datacenter. */}
+            {/* The default: no country, any European data center. */}
             {grouped.defaultChoice && (
               <ChoiceRow
                 choice={grouped.defaultChoice}
                 selected={selectedId === grouped.defaultChoice.id}
                 busy={saving}
-                hint="Any of our European datacenters. We place your files."
+                hint="Any of our European data centers. We place your files."
                 onSelect={() => void handleSelect(grouped.defaultChoice!)}
               />
             )}
 
             {(grouped.live.length > 0 || grouped.comingSoon.length > 0) && (
               <div className="text-[11px] font-medium uppercase tracking-wider text-ink-3 mt-5 mb-2.5">
-                Or choose one datacenter
+                Or choose a country
               </div>
             )}
 
@@ -208,11 +235,34 @@ export function SettingsDataResidency() {
                 />
               ))}
             </div>
+            {pinned && (
+              <div
+                className="mt-4 flex items-start gap-3.5 px-4 py-3.5 rounded-lg border border-line bg-paper"
+                data-testid="region-strict"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="text-[13px] font-semibold text-ink-2" id="region-strict-label">
+                    {strictLabel(pinned)}
+                  </div>
+                  <div className="text-[12px] text-ink-3 mt-0.5 leading-relaxed">
+                    Off by default. If {choiceLabel(pinned)} cannot take a new file, the upload
+                    stops instead of going to another EU country.
+                  </div>
+                </div>
+                <BBToggle
+                  on={strict}
+                  size="adaptive"
+                  disabled={saving}
+                  aria-label={strictLabel(pinned)}
+                  onChange={(next) => void handleStrict(next)}
+                />
+              </div>
+            )}
 
             {unavailable && (
               <p className="text-[12px] text-ink-3 mt-3 leading-relaxed" data-testid="region-unavailable">
-                The datacenter you chose is not available right now. New uploads go to any of our
-                European datacenters until it is back.
+                The country you chose is not available right now. New uploads go to any of our
+                European data centers until it is back.
               </p>
             )}
           </div>
@@ -222,9 +272,10 @@ export function SettingsDataResidency() {
               <Icon name="shield" size={13} className="text-amber-deep shrink-0 mt-0.5" />
               <div className="text-[12px] text-ink-3 leading-relaxed">
                 <strong className="text-ink-2">Existing files stay where they are.</strong>{' '}
-                Only new uploads use your choice. If the datacenter you chose cannot take new files
-                at that moment, they go to another European datacenter, and the file&apos;s details
-                always show where it is. Everything is stored in Europe, under EU law.
+                Only new uploads use your choice. Unless you turn on &ldquo;only store in&rdquo;, a
+                country that cannot take new files at that moment passes them to another European
+                data center, and the file&apos;s details always show which country it is in.
+                Everything is stored in Europe, under EU law.
               </div>
             </div>
           </div>

@@ -28,7 +28,7 @@ import { FolderViewerBadge } from './presence-avatars'
 import { useToast } from './toast'
 import { getFolderColorDot, FOLDER_COLORS } from '../lib/folder-colors'
 import type { DriveFile, MyShare } from '../lib/api'
-import { fileStorageCity } from '../lib/storage-regions'
+import { fileStorageCountry } from '../lib/storage-regions'
 
 // ─── Sort types ─────────────────────────────────────
 
@@ -1333,7 +1333,7 @@ export function FileList({
           </div>
           {!file.is_folder && (
             <div className="font-mono text-[10.5px] text-ink-3 mt-0.5 truncate tabular-nums">
-              AES-256-GCM · Europe{fileStorageCity(file) ? ` · ${fileStorageCity(file)}` : ''}
+              AES-256-GCM · {fileStorageCountry(file) ?? 'Europe'}
             </div>
           )}
         </div>

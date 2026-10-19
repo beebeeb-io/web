@@ -71,7 +71,7 @@ test('the toggle renders with the honest copy once telemetry has a DSN', async (
   await page.goto('/settings/privacy')
   await expect(page.getByText('Send error reports')).toBeVisible({ timeout: 15000 })
   await expect(page.getByText('Off by default.')).toBeVisible()
-  await expect(page.getByText('Falkenstein, Germany')).toBeVisible()
+  await expect(page.getByText(/our own server in\s+Germany/)).toBeVisible()
 })
 
 test('sends nothing while consent is off', async ({ page }) => {

@@ -4082,15 +4082,21 @@ export async function getUserRegion(): Promise<UserRegionData> {
 
 /** PUT /api/v1/me/region — set where new uploads go.
  * Send the `id` of a choice from the list verbatim (the default row's id, or a
- * live datacenter's id), or `null` to clear the preference. The server answers
+ * live country's id), or `null` to clear the preference. The server answers
  * 400 `region_unavailable` for anything it does not offer as live (coming soon,
- * unknown), and the stored value stays unchanged.
- * Server (regions.rs `SetRegionBody`) deserializes ONLY `preferred_region`;
- * sending `{continent}` silently dropped the value and cleared the preference. */
-export async function setUserRegion(id: string | null): Promise<{ preferred_region: string | null }> {
-  return request<{ preferred_region: string | null }>('/api/v1/me/region', {
+ * unknown), and the stored value stays unchanged. PUT replaces the whole
+ * choice: an omitted `region_strict` means false, and strict needs a country
+ * (400 `region_strict_requires_datacenter` otherwise; the code predates 2050).
+ * Server (regions.rs `SetRegionBody`) deserializes ONLY `preferred_region` and
+ * `region_strict`; sending `{continent}` silently dropped the value and cleared
+ * the preference. */
+export async function setUserRegion(
+  id: string | null,
+  strict = false,
+): Promise<{ preferred_region: string | null; region_strict?: boolean }> {
+  return request<{ preferred_region: string | null; region_strict?: boolean }>('/api/v1/me/region', {
     method: 'PUT',
-    body: JSON.stringify({ preferred_region: id }),
+    body: JSON.stringify({ preferred_region: id, region_strict: strict }),
   })
 }
 

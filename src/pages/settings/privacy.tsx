@@ -279,7 +279,7 @@ function ErrorReportsCard({ configured }: { configured: boolean }) {
             message, where in our code it happened, your platform and app version, and a random ID
             for this install. It never sends file names, folder names, links, your email, your
             account ID, or anything from inside your files. Reports go to our own server in
-            Falkenstein, Germany and are deleted after 90 days.
+            Germany and are deleted after 90 days.
           </p>
         </div>
         <BBToggle

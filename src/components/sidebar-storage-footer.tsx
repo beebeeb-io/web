@@ -19,8 +19,8 @@ interface SidebarStorageFooterProps {
   planLabel: string
   /**
    * Where new uploads go, as the person chose it: "Europe" (the default) or a
-   * datacenter's "City, Country". Built from the server's list
-   * (`sidebarRegionLabel`), never from a table in this file (task 1919).
+   * country's name. Built from the server's list (`sidebarRegionLabel`), never
+   * from a table in this file (task 1919, by country since task 2050).
    */
   regionLabel: string
 }

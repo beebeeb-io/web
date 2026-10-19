@@ -5,6 +5,10 @@ import path from 'node:path'
 import { uploadTextFile } from './helpers/drive'
 
 /**
+ * STALE since task 2050 (storage location by COUNTRY): this opt-in real-stack spec still asserts the
+ * per-datacenter, per-city model of 1919 and must be rewritten against a server built from 2050
+ * (follow-up). The country model is covered by e2e/2050-location-by-country.spec.ts (mocked API).
+ *
  * Task 1919 (web) — the region choice, proven end to end on a local stack.
  *
  * Product model (Guus, 2026-10-17): "Europe" is the DEFAULT (no country, any of
