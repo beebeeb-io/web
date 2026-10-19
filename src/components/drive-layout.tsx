@@ -26,6 +26,7 @@ import { useSearchIndex, type NodeNameResolver } from '../hooks/use-search-index
 import { QuotaWarning } from './quota-warning'
 import { QuickAccess } from './quick-access'
 import { EmailVerifyBanner } from './email-verify-banner'
+import { EraseRequestBanner } from './erase-request-banner'
 import { TrialBanner } from './trial-banner'
 import { TrialEndedAllowanceNotice } from './trial-ended-notice'
 import { AnnouncementBanner } from './announcement-banner'
@@ -648,6 +649,8 @@ export function DriveLayout({ children }: { children: ReactNode }) {
         <IosAppBanner />
         <AnnouncementBanner />
         <EmailVerifyBanner />
+        {/* Task 1918 round 4: a pending "erase all files" request, with Cancel. */}
+        <EraseRequestBanner />
         <TrialBanner />
         <TrialEndedAllowanceNotice />
         {isFrozen && (

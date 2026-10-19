@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { ReactNode, Ref } from 'react'
 import { BBLogo } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 
@@ -26,6 +26,11 @@ export interface AuthShellFrameProps {
   wide?: boolean
   /** Pinned to the top of the screen (AuthShell passes the announcement banner). */
   banner?: ReactNode
+  /**
+   * When given, the title heading is focusable (`tabIndex={-1}`) and attached to this ref, so a
+   * page can move the focus to the result of an action (task 1918 round 4, the email-link pages).
+   */
+  titleRef?: Ref<HTMLHeadingElement>
 }
 
 export function AuthShellFrame({
@@ -37,6 +42,7 @@ export function AuthShellFrame({
   hideTrust,
   wide,
   banner,
+  titleRef,
 }: AuthShellFrameProps) {
   return (
     <div className="auth-bg min-h-screen flex flex-col items-center justify-center bg-paper px-4 py-6 sm:p-xl">
@@ -61,7 +67,13 @@ export function AuthShellFrame({
 
         {/* Content */}
         <div className="px-5 py-4 sm:px-xl sm:py-lg">
-          <h2 className="text-lg font-semibold text-ink mb-1">{title}</h2>
+          <h2
+            ref={titleRef}
+            tabIndex={titleRef ? -1 : undefined}
+            className="text-lg font-semibold text-ink mb-1 outline-none"
+          >
+            {title}
+          </h2>
           {subtitle && (
             <p className="text-[13px] text-ink-3 leading-relaxed mb-5">
               {subtitle}

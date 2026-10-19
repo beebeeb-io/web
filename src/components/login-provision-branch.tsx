@@ -18,8 +18,9 @@ import type { ProvisionAuthMethod } from '../lib/device-provision-logic'
  * password reset. The phrase screen is now ALWAYS the first thing shown: the
  * password is already proven, so the phrase is the only thing missing. For a
  * person who has lost the phrase, "I've lost my recovery phrase" opens the
- * self-service exits (1704 slice 2: cancel billing, delete all data, delete
- * account) and its phrase button returns here.
+ * self-service exits (1704 slice 2: cancel billing, erase all files (task
+ * 1918: a 72 h server-side request), delete account) and its phrase button
+ * returns here.
  *
  * Exported through login.tsx too (test/1713-post-reset-provisioning-routing).
  */
