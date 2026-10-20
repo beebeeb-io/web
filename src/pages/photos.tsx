@@ -364,6 +364,7 @@ export function Photos() {
           totalChunks: p.totalChunks,
           chunkSizeBytes: p.chunkSizeBytes,
           storageRegion: p.region,
+          storageCountry: p.country ?? undefined,
         } : u))
       }, undefined, undefined, abortController.signal, getFileKey)
       setUploads((prev) => prev.filter((u) => u.id !== uploadId))

@@ -1081,6 +1081,8 @@ export async function createFolder(
 interface UploadInitV1Response {
   file_id: string
   chunk_count: number
+  /** Task 2062 — the pool chosen at init. */
+  storage_location?: { country?: string | null } | null
 }
 
 interface UploadInitV2Response {
@@ -1093,6 +1095,8 @@ interface UploadInitV2Response {
   storage_format_version: number
   storage_pool_id: string
   region: string
+  /** Task 2062 — `{ region, country, country_code }` for the pool chosen at init; no city. */
+  storage_location?: { country?: string | null } | null
 }
 
 export type UploadInitResponse =

@@ -1142,6 +1142,7 @@ export function Drive() {
                       totalChunks: p.totalChunks,
                       chunkSizeBytes: p.chunkSizeBytes,
                       storageRegion: p.region,
+                      storageCountry: p.country ?? undefined,
                       startedAt: resumeStartedAt,
                     }
                   : u,
@@ -1493,6 +1494,7 @@ export function Drive() {
                   totalChunks: p.totalChunks,
                   chunkSizeBytes: p.chunkSizeBytes,
                   storageRegion: p.region,
+                  storageCountry: p.country ?? undefined,
                   startedAt: uploadStartedAt,
                 }
               : u,
@@ -1758,6 +1760,7 @@ export function Drive() {
                     totalChunks: p.totalChunks,
                     chunkSizeBytes: p.chunkSizeBytes,
                     storageRegion: p.region,
+                    storageCountry: p.country ?? undefined,
                   }
                 : u,
             ),
