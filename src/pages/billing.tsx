@@ -27,8 +27,6 @@ import {
   reactivateSubscription,
   pauseSubscription,
   resumeSubscription,
-  getWinbackEligible,
-  claimWinback,
   getPreference,
   setPreference,
   getStorageAddons,
@@ -374,19 +372,16 @@ export function Billing() {
       payNowPollCancelledRef.current = true
     }
   }, [])
-  // Cancel flow is a four-step machine (task 0544 added 'pause'):
+  // Cancel flow is a three-step machine (task 0544 added 'pause'):
   //   'idle'    — initial state, "Cancel plan" link is visible
-  //   'offer'   — win-back offer card (50% off / 3 months); only when eligible
   //   'pause'   — "Pause instead?" card with 30/60/90-day options
   //   'confirm' — final cancel-confirmation panel
   // `cancelConfirm` is derived as `cancelStep === 'confirm'` so the existing
   // JSX condition keeps working unchanged.
-  const [cancelStep, setCancelStep] = useState<'idle' | 'offer' | 'pause' | 'confirm'>('idle')
+  const [cancelStep, setCancelStep] = useState<'idle' | 'pause' | 'confirm'>('idle')
   const cancelConfirm = cancelStep === 'confirm'
   const setCancelConfirm = (v: boolean) => setCancelStep(v ? 'confirm' : 'idle')
   const [cancelLoading, setCancelLoading] = useState(false)
-  const [winbackStartingLoading, setWinbackStartingLoading] = useState(false)
-  const [winbackAcceptLoading, setWinbackAcceptLoading] = useState(false)
   const [reactivateLoading, setReactivateLoading] = useState(false)
   // Pause flow (task 0544)
   const [pauseLoading, setPauseLoading] = useState<30 | 60 | 90 | null>(null)
@@ -1039,30 +1034,13 @@ function openUpgrade(plan: string) {
     }
   }
 
-  // Entry point for the cancel flow. Checks win-back eligibility before
-  // jumping straight to the cancel-confirmation panel. The full sequence is
-  //   offer (if eligible) → pause → confirm
-  // — each step has a "no thanks" link to the next, so users always have a
-  // softer landing before committing to cancel.
-  //
-  // The 'pause' step only exists when the active billing provider supports
-  // pause/resume (task 0924). Under Mollie (`pause_supported === false`) there
-  // is no native pause, so we NEVER route to 'pause' — eligible users still see
-  // the retention offer (then continue straight to confirm), and ineligible
-  // users go directly to confirm.
+  // Entry point for the cancel flow: pause (only when the active billing
+  // provider supports pause/resume, task 0924) → confirm. Under Mollie
+  // (`pause_supported === false`) there is no native pause, so we go straight
+  // to confirm.
   const pauseSupported = sub?.pause_supported ?? false
-  async function startCancelFlow() {
-    setWinbackStartingLoading(true)
-    try {
-      const { eligible } = await getWinbackEligible()
-      setCancelStep(eligible ? 'offer' : pauseSupported ? 'pause' : 'confirm')
-    } catch {
-      // Don't block cancel if eligibility check fails — skip the offer and go
-      // to the pause card (or straight to confirm when pause isn't supported).
-      setCancelStep(pauseSupported ? 'pause' : 'confirm')
-    } finally {
-      setWinbackStartingLoading(false)
-    }
+  function startCancelFlow() {
+    setCancelStep(pauseSupported ? 'pause' : 'confirm')
   }
 
   async function handlePauseSubscription(days: 30 | 60 | 90) {
@@ -1107,31 +1085,6 @@ function openUpgrade(plan: string) {
       })
     } finally {
       setResumeLoading(false)
-    }
-  }
-
-  async function handleAcceptWinback() {
-    setWinbackAcceptLoading(true)
-    try {
-      const result = await claimWinback()
-      setCancelStep('idle')
-      showToast({
-        icon: 'check',
-        title: 'Discount applied',
-        description: `${result.discount_pct}% off for the next ${result.months} months — it shows up on your next invoice.`,
-      })
-      window.dispatchEvent(new Event('beebeeb:plan-changed'))
-      refreshPlanDetails()
-      await loadData()
-    } catch (err) {
-      showToast({
-        icon: 'x',
-        title: 'Could not apply discount',
-        description: err instanceof Error ? err.message : 'Please try again.',
-        danger: true,
-      })
-    } finally {
-      setWinbackAcceptLoading(false)
     }
   }
 
@@ -2293,20 +2246,19 @@ function openUpgrade(plan: string) {
                       sub?.status !== 'trialing' && (
                         <button
                           className="text-[13px] text-ink-3 hover:text-red transition-colors disabled:opacity-50"
-                          disabled={winbackStartingLoading}
                           onClick={() => {
                             // Task 1064 (D7): this used to just switch to the
                             // full plan-comparison view — a mismatch with what
                             // "Cancel" says it does. Now it opens the SAME
                             // view AND starts the actual cancel sequence
-                            // (win-back check → offer/pause/confirm), so the
+                            // (pause/confirm), so the
                             // user who clicked "Cancel" lands directly in the
                             // cancel flow instead of a neutral compare screen.
                             setView('change')
                             void startCancelFlow()
                           }}
                         >
-                          {winbackStartingLoading ? 'Cancel...' : 'Cancel'}
+                          Cancel
                         </button>
                       )}
                   </div>
@@ -3126,45 +3078,13 @@ function openUpgrade(plan: string) {
             )}
 
             {/* Cancel plan — paid plans only, not already cancelling or paused.
-                Four steps (task 0544 added 'pause'):
+                Three steps (task 0544 added 'pause'):
                   idle    → "Cancel plan" link
-                  offer   → win-back 50%-off-3-months card (only when eligible)
                   pause   → "Pause instead?" card with 30/60/90-day options
                   confirm → existing cancel-confirmation panel
             */}
             {effectivePlan !== 'free' && sub?.status !== 'cancelling' && sub?.status !== 'paused' && sub?.status !== 'trialing' && (
-              cancelStep === 'offer' ? (
-                <div className="mt-3 p-3.5 bg-amber-bg/40 border border-amber/30 rounded-lg space-y-4">
-                  <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep">
-                    Before you go
-                  </div>
-                  <div className="text-sm text-ink">
-                    Wait — stay with us. Get 50% off for the next 3 months.
-                  </div>
-                  <p className="text-xs text-ink-3">
-                    One-time offer, applied to your next invoice. If it still
-                    isn&apos;t the right fit after that, you can cancel any
-                    time.
-                  </p>
-                  <div className="flex gap-2">
-                    <BBButton
-                      size="sm"
-                      onClick={() => void handleAcceptWinback()}
-                      disabled={winbackAcceptLoading}
-                    >
-                      {winbackAcceptLoading ? 'Applying...' : 'Accept offer'}
-                    </BBButton>
-                    <BBButton
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => setCancelStep(pauseSupported ? 'pause' : 'confirm')}
-                      disabled={winbackAcceptLoading}
-                    >
-                      No thanks
-                    </BBButton>
-                  </div>
-                </div>
-              ) : cancelStep === 'pause' && pauseSupported ? (
+              cancelStep === 'pause' && pauseSupported ? (
                 <div className="mt-3 p-3.5 bg-paper-2 border border-line rounded-lg space-y-4">
                   <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">
                     Pause instead?
@@ -3324,14 +3244,8 @@ function openUpgrade(plan: string) {
                   <button
                     className="text-[11.5px] text-ink-4 hover:text-red transition-colors disabled:opacity-50"
                     onClick={() => void startCancelFlow()}
-                    disabled={winbackStartingLoading}
                   >
-                    {/* Task 1064 (D7): "Cancel plan..." read as if cancelling
-                        were already in flight — it's just the win-back
-                        eligibility check that runs before the offer/pause/
-                        confirm panel opens. "Checking..." names what's
-                        actually happening. */}
-                    {winbackStartingLoading ? 'Checking...' : 'Cancel plan'}
+Cancel plan
                   </button>
                 </div>
               )
