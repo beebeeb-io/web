@@ -187,6 +187,58 @@ export function preferenceUnavailable(
   return !hit || !hit.selectable
 }
 
+/**
+ * Task 2053. "Only store in <country>" is on, but that country is gone from the
+ * list or listed without being selectable: the server refuses new uploads
+ * (409 `region_unavailable_strict`), it does NOT place them elsewhere. Returns
+ * the stored id and the country's name, or null when this state does not apply.
+ *
+ * The name is the list's when the list still has the row; otherwise the
+ * browser's own name for the stored code ("fi" is "Finland"), which is not a
+ * client-side country table. Anything that is not a two-letter code gets a
+ * generic name: we never guess one.
+ */
+export function strictUnavailable(
+  preferred: string | null | undefined,
+  strict: boolean,
+  choices: StorageRegionChoice[],
+): { id: string; name: string } | null {
+  if (!strict || !preferenceUnavailable(preferred, choices)) return null
+  const id = (preferred ?? '').trim()
+  const wanted = id.toLowerCase()
+  const row = choices.find((c) => matches(c, wanted))
+  if (row) return { id, name: choiceLabel(row) }
+  let name: string | null = null
+  if (/^[a-z]{2}$/.test(wanted)) {
+    try {
+      const n = new Intl.DisplayNames(['en'], { type: 'region' }).of(wanted.toUpperCase())
+      if (n && n.toUpperCase() !== wanted.toUpperCase()) name = n
+    } catch {
+      /* no Intl region names: fall through to the generic name */
+    }
+  }
+  return { id, name: name ?? 'your chosen country' }
+}
+
+/**
+ * Task 2053. What to PUT when the person turns "only store in" off while their
+ * country is unavailable. The server (store_choice) lets a country it still
+ * knows (listed, even not selectable) be re-saved with either strict value, but
+ * a value missing from the list that is not choosable is a 400
+ * `region_unavailable`. So: listed -> keep the id; missing -> no preference
+ * (any EU country). `missing` tells the caller not to promise the old country.
+ */
+export function allowOthersPayload(
+  preferredId: string,
+  choices: StorageRegionChoice[],
+): { preferred: string | null; strict: false; missing: boolean } {
+  const wanted = preferredId.trim().toLowerCase()
+  const known = choices.some((c) => !c.is_default && matches(c, wanted))
+  return known
+    ? { preferred: preferredId, strict: false, missing: false }
+    : { preferred: null, strict: false, missing: true }
+}
+
 /** The row for the stored preference when it is a country the person pinned, else null. */
 export function selectedCountry(
   preferred: string | null | undefined,

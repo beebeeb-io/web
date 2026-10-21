@@ -7,10 +7,12 @@ import { useRegionChoices, saveRegionChoice } from '../../lib/use-region-choices
 import {
   groupChoices,
   choiceLabel,
+  allowOthersPayload,
   preferenceUnavailable,
   selectedChoiceId,
   selectedCountry,
   strictLabel,
+  strictUnavailable,
   type StorageRegionChoice,
 } from '../../lib/storage-regions'
 
@@ -101,7 +103,9 @@ export function SettingsDataResidency() {
   const [saving, setSaving] = useState(false)
 
   const grouped = groupChoices(choices)
-  const selectedId = selectedChoiceId(preferred, choices)
+  // Task 2053: strict on and the country unavailable: uploads are refused, not rerouted.
+  const refusing = strictUnavailable(preferred, strict, choices)
+  const selectedId = refusing ? null : selectedChoiceId(preferred, choices)
   const unavailable = preferenceUnavailable(preferred, choices)
   const pinned = selectedCountry(preferred, choices)
   const loading = status === 'idle' || status === 'loading'
@@ -162,6 +166,31 @@ export function SettingsDataResidency() {
     },
     [saving, pinned, showToast],
   )
+
+  const handleAllowOthers = useCallback(async () => {
+    if (saving || !refusing) return
+    setSaving(true)
+    try {
+      const payload = allowOthersPayload(refusing.id, choices)
+      await saveRegionChoice(payload.preferred, false)
+      showToast({
+        icon: 'check',
+        title: 'Other EU countries allowed',
+        description: payload.missing
+          ? 'New uploads go to any of our European data centers.'
+          : 'New uploads go to another European data center until your country is back.',
+      })
+    } catch (err) {
+      showToast({
+        icon: 'x',
+        title: 'Failed to save region',
+        description: err instanceof Error ? err.message : 'Please try again.',
+        danger: true,
+      })
+    } finally {
+      setSaving(false)
+    }
+  }, [saving, refusing, choices, showToast])
 
   return (
     <SettingsShell activeSection="data-residency">
@@ -235,35 +264,60 @@ export function SettingsDataResidency() {
                 />
               ))}
             </div>
-            {pinned && (
+            {(pinned || refusing) && (
               <div
                 className="mt-4 flex items-start gap-3.5 px-4 py-3.5 rounded-lg border border-line bg-paper"
                 data-testid="region-strict"
               >
                 <div className="flex-1 min-w-0">
                   <div className="text-[13px] font-semibold text-ink-2" id="region-strict-label">
-                    {strictLabel(pinned)}
+                    {refusing ? `Only store in ${refusing.name}` : strictLabel(pinned!)}
                   </div>
                   <div className="text-[12px] text-ink-3 mt-0.5 leading-relaxed">
-                    Off by default. If {choiceLabel(pinned)} cannot take a new file, the upload
-                    stops instead of going to another EU country.
+                    Off by default. If {refusing ? refusing.name : choiceLabel(pinned!)} cannot take a
+                    new file, the upload stops instead of going to another EU country.
                   </div>
                 </div>
                 <BBToggle
                   on={strict}
                   size="adaptive"
                   disabled={saving}
-                  aria-label={strictLabel(pinned)}
-                  onChange={(next) => void handleStrict(next)}
+                  aria-label={refusing ? `Only store in ${refusing.name}` : strictLabel(pinned!)}
+                  onChange={(next) => {
+                    if (refusing) {
+                      if (!next) void handleAllowOthers()
+                    } else void handleStrict(next)
+                  }}
                 />
               </div>
             )}
 
-            {unavailable && (
-              <p className="text-[12px] text-ink-3 mt-3 leading-relaxed" data-testid="region-unavailable">
-                The country you chose is not available right now. New uploads go to any of our
-                European data centers until it is back.
-              </p>
+            {refusing ? (
+              <div
+                className="mt-3 p-3 rounded-lg border border-line bg-paper-2"
+                data-testid="region-unavailable"
+              >
+                <p className="text-[12px] text-ink-2 leading-relaxed">
+                  <strong>New uploads are refused while {refusing.name} is unavailable.</strong>{' '}
+                  You chose to only store in {refusing.name}, so we stop an upload rather than send
+                  it elsewhere. Existing files are not affected.
+                </p>
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => void handleAllowOthers()}
+                  className="mt-2 text-[12px] font-medium text-ink-2 underline underline-offset-2 hover:text-ink disabled:opacity-60"
+                >
+                  Allow other EU countries
+                </button>
+              </div>
+            ) : (
+              unavailable && (
+                <p className="text-[12px] text-ink-3 mt-3 leading-relaxed" data-testid="region-unavailable">
+                  The country you chose is not available right now. New uploads go to any of our
+                  European data centers until it is back.
+                </p>
+              )
             )}
           </div>
 
