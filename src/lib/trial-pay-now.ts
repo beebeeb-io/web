@@ -27,6 +27,8 @@ export interface PayNowPayResult {
   status?: string
   amount_cents?: number
   pending?: boolean
+  /** Task 2092: set EXACTLY when status is `open` — a hosted, customer-present checkout. */
+  checkout_url?: string | null
 }
 
 export const PAY_NOW_POLL_INTERVAL_MS = 3000
@@ -104,4 +106,70 @@ export function stateForPollOutcome(outcome: PollOutcome, elapsedMs: number, pay
     }
   }
   return { phase: 'pending', paymentId, message: payNowWaitingMessage(elapsedMs) }
+}
+
+/* ── Task 2092: customer-present checkout (3-D Secure) ───────────────── */
+
+/** sessionStorage key carrying the payment id across the checkout redirect. */
+export const PAY_NOW_PAYMENT_STORAGE_KEY = 'bb_pay_now_payment_id'
+/** Query param the checkout redirects back with: `returned` or `canceled`. */
+export const PAY_NOW_RETURN_PARAM = 'trial_pay_now'
+
+export type PayNowRouting =
+  | { kind: 'redirect'; url: string; paymentId: string }
+  | { kind: 'inline'; state: PayNowState }
+
+/**
+ * Decide what to do with the pay-now response. A `checkout_url` means the
+ * bank may ask for 3-D Secure, so the person is sent there. Without one (an
+ * older server) the pre-2092 behaviour applies unchanged. Only https URLs are
+ * ever followed.
+ */
+export function routePayNowResult(result: PayNowPayResult): PayNowRouting {
+  const url = result.checkout_url
+  if (typeof url === 'string' && url.startsWith('https://')) {
+    return { kind: 'redirect', url, paymentId: result.payment_id }
+  }
+  return { kind: 'inline', state: stateAfterPayNowResult(result) }
+}
+
+export type PayNowReturnKind = 'returned' | 'canceled'
+
+export function payNowReturnKind(param: string | null | undefined): PayNowReturnKind | null {
+  return param === 'returned' || param === 'canceled' ? param : null
+}
+
+export type PayNowReturnDecision = 'paid' | 'failed' | 'keep_polling' | 'waiting'
+
+/** One tick of the return poll, from the payment status and the time waited. */
+export function payNowReturnDecision(status: string | null | undefined, elapsedMs: number): PayNowReturnDecision {
+  if (status === 'paid') return 'paid'
+  if (status === 'failed' || status === 'canceled' || status === 'expired') return 'failed'
+  return elapsedMs >= PAY_NOW_POLL_TIMEOUT_MS ? 'waiting' : 'keep_polling'
+}
+
+export type PayNowReturnViewKind = 'checking' | 'paid' | 'failed' | 'waiting' | 'canceled'
+
+export interface PayNowReturnView {
+  kind: PayNowReturnViewKind
+  message: string
+  /** Offer "Try again" (a definite failure or a cancel). */
+  retry: boolean
+  /** Offer "Refresh" (still undecided after the bound). */
+  refresh: boolean
+}
+
+export function payNowReturnView(kind: PayNowReturnViewKind): PayNowReturnView {
+  switch (kind) {
+    case 'paid':
+      return { kind, message: 'Payment received — your plan is active.', retry: false, refresh: false }
+    case 'failed':
+      return { kind, message: "Your bank didn't confirm the payment. Nothing was charged.", retry: true, refresh: false }
+    case 'waiting':
+      return { kind, message: "We're waiting for your bank's confirmation.", retry: false, refresh: true }
+    case 'canceled':
+      return { kind, message: 'Payment cancelled. Nothing was charged.', retry: true, refresh: false }
+    default:
+      return { kind: 'checking', message: 'Checking your payment…', retry: false, refresh: false }
+  }
 }
