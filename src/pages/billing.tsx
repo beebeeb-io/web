@@ -112,11 +112,18 @@ import {
 import {
   type PayNowState,
   IDLE_STATE as PAY_NOW_IDLE_STATE,
-  stateAfterPayNowResult,
   stateAfterPayNowError,
   payNowPollDecision,
   stateForPollOutcome,
   PAY_NOW_POLL_INTERVAL_MS,
+  PAY_NOW_PAYMENT_STORAGE_KEY,
+  shouldClearPayNowMarker,
+  PAY_NOW_RETURN_PARAM,
+  routePayNowResult,
+  payNowReturnKind,
+  payNowReturnDecision,
+  payNowReturnView,
+  type PayNowReturnView,
 } from '../lib/trial-pay-now'
 
 /* ── Plan metadata (imported from plan-constants.ts) ──── */
@@ -369,6 +376,9 @@ export function Billing() {
   const [payNowState, setPayNowState] = useState<PayNowState>(PAY_NOW_IDLE_STATE)
   const payNowPollStartRef = useRef<number | null>(null)
   const payNowPollCancelledRef = useRef(false)
+  // Task 2092: the result of a customer-present pay-now checkout, shown after the
+  // redirect back (`?trial_pay_now=returned|canceled`).
+  const [payNowReturn, setPayNowReturn] = useState<PayNowReturnView | null>(null)
   useEffect(() => {
     return () => {
       payNowPollCancelledRef.current = true
@@ -1135,7 +1145,15 @@ function openUpgrade(plan: string) {
     setPayNowState({ phase: 'submitting' })
     try {
       const result = await payTrialNow()
-      const next = stateAfterPayNowResult(result)
+      // Task 2092: a checkout_url means the bank may ask for 3-D Secure — send the
+      // person there. An older server (no checkout_url) keeps the inline behaviour.
+      const routed = routePayNowResult(result)
+      if (routed.kind === 'redirect') {
+        try { sessionStorage.setItem(PAY_NOW_PAYMENT_STORAGE_KEY, routed.paymentId) } catch { /* return page falls back to the subscription */ }
+        window.location.assign(routed.url)
+        return // stay in 'submitting' while the browser navigates
+      }
+      const next = routed.state
       setPayNowState(next)
       if (next.phase === 'pending') {
         payNowPollStartRef.current = Date.now()
@@ -1159,6 +1177,80 @@ function openUpgrade(plan: string) {
       }
     }
   }
+
+  // Task 2092: handle the return from the pay-now checkout. Bounded poll of the
+  // payment status; honest copy for every outcome; query param cleaned up front.
+  // The stored payment marker survives a 'waiting' outcome (the payment may
+  // still be open): only a final state clears it. Refresh and a later plain
+  // visit to /billing both resume the check from the marker.
+  const payNowReconcileCancelRef = useRef<(() => void) | null>(null)
+  function reconcilePayNow(paymentId: string | null) {
+    payNowReconcileCancelRef.current?.()
+    setPayNowReturn(payNowReturnView('checking'))
+    let cancelled = false
+    payNowReconcileCancelRef.current = () => { cancelled = true }
+    const start = Date.now()
+    const tick = async () => {
+      if (cancelled) return
+      let status: string | null = null
+      try {
+        if (paymentId) {
+          status = (await getPaymentStatus(paymentId)).status
+        } else {
+          status = (await getSubscription()).status === 'active' ? 'paid' : null
+        }
+      } catch {
+        // Transient failure — keep polling until the bound.
+      }
+      if (cancelled) return
+      const decision = payNowReturnDecision(status, Date.now() - start)
+      if (decision === 'keep_polling') {
+        setTimeout(() => { void tick() }, PAY_NOW_POLL_INTERVAL_MS)
+        return
+      }
+      setPayNowReturn(payNowReturnView(decision))
+      if (shouldClearPayNowMarker(decision)) {
+        try { sessionStorage.removeItem(PAY_NOW_PAYMENT_STORAGE_KEY) } catch { /* ignore */ }
+      }
+      if (decision === 'paid') {
+        window.dispatchEvent(new Event('beebeeb:plan-changed'))
+        refreshPlanDetails()
+        void loadData()
+      }
+    }
+    void tick()
+  }
+
+  useEffect(() => {
+    const kind = payNowReturnKind(searchParams.get(PAY_NOW_RETURN_PARAM))
+    let paymentId: string | null = null
+    try {
+      // Read, don't remove yet: a dev-mode double effect run must see it again.
+      paymentId = sessionStorage.getItem(PAY_NOW_PAYMENT_STORAGE_KEY)
+    } catch { /* no storage: fall back to the subscription */ }
+    if (!kind) {
+      // Plain visit: resume checking a payment we never saw a final state for.
+      if (paymentId) reconcilePayNow(paymentId)
+      return () => { payNowReconcileCancelRef.current?.() }
+    }
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev)
+        p.delete(PAY_NOW_RETURN_PARAM)
+        return p
+      },
+      { replace: true },
+    )
+    if (kind === 'canceled') {
+      setPayNowReturn(payNowReturnView('canceled'))
+      try { sessionStorage.removeItem(PAY_NOW_PAYMENT_STORAGE_KEY) } catch { /* ignore */ }
+      return
+    }
+    reconcilePayNow(paymentId)
+    return () => { payNowReconcileCancelRef.current?.() }
+    // Runs once per landing: the param is removed above, so re-runs find nothing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   async function onPayNowSettled() {
     window.dispatchEvent(new Event('beebeeb:plan-changed'))
@@ -1790,6 +1882,32 @@ function openUpgrade(plan: string) {
       )}
 
       <div className="p-7 space-y-6">
+        {payNowReturn && (
+          <div
+            data-testid="pay-now-return"
+            data-kind={payNowReturn.kind}
+            role="status"
+            className={`rounded-xl border px-6 py-4 flex items-center gap-4 ${
+              payNowReturn.kind === 'paid' ? 'border-amber/60 bg-amber-bg' : 'border-line bg-paper-2'
+            }`}
+          >
+            <span className="flex-1 text-[13.5px] text-ink-2">{payNowReturn.message}</span>
+            {payNowReturn.retry && (
+              <BBButton size="sm" variant="amber" data-testid="pay-now-return-retry" onClick={() => { setPayNowReturn(null); void handlePayNow() }}>
+                Try again
+              </BBButton>
+            )}
+            {payNowReturn.refresh && (
+              <BBButton size="sm" data-testid="pay-now-return-refresh" onClick={() => {
+                let id: string | null = null
+                try { id = sessionStorage.getItem(PAY_NOW_PAYMENT_STORAGE_KEY) } catch { /* ignore */ }
+                reconcilePayNow(id)
+              }}>
+                Refresh
+              </BBButton>
+            )}
+          </div>
+        )}
         {/* Checkout return — provisioning is async, so we poll before claiming
             success. Three states: finalizing (polling) → complete (confirmed) or
             unconfirmed (poll window elapsed; honest "still processing"). (0865) */}

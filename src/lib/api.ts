@@ -2782,6 +2782,9 @@ export interface TrialPayNowResult {
   status?: string
   amount_cents?: number
   pending?: boolean
+  /** Task 2092: a hosted checkout, set exactly when `status` is `open`. */
+  checkout_url?: string | null
+  reused?: boolean
 }
 
 export async function payTrialNow(): Promise<TrialPayNowResult> {
