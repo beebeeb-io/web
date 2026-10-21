@@ -117,6 +117,7 @@ import {
   stateForPollOutcome,
   PAY_NOW_POLL_INTERVAL_MS,
   PAY_NOW_PAYMENT_STORAGE_KEY,
+  shouldClearPayNowMarker,
   PAY_NOW_RETURN_PARAM,
   routePayNowResult,
   payNowReturnKind,
@@ -1179,29 +1180,15 @@ function openUpgrade(plan: string) {
 
   // Task 2092: handle the return from the pay-now checkout. Bounded poll of the
   // payment status; honest copy for every outcome; query param cleaned up front.
-  useEffect(() => {
-    const kind = payNowReturnKind(searchParams.get(PAY_NOW_RETURN_PARAM))
-    if (!kind) return
-    setSearchParams(
-      (prev) => {
-        const p = new URLSearchParams(prev)
-        p.delete(PAY_NOW_RETURN_PARAM)
-        return p
-      },
-      { replace: true },
-    )
-    let paymentId: string | null = null
-    try {
-      // Read, don't remove yet: a dev-mode double effect run must see it again.
-      paymentId = sessionStorage.getItem(PAY_NOW_PAYMENT_STORAGE_KEY)
-    } catch { /* no storage: fall back to the subscription */ }
-    if (kind === 'canceled') {
-      setPayNowReturn(payNowReturnView('canceled'))
-      try { sessionStorage.removeItem(PAY_NOW_PAYMENT_STORAGE_KEY) } catch { /* ignore */ }
-      return
-    }
+  // The stored payment marker survives a 'waiting' outcome (the payment may
+  // still be open): only a final state clears it. Refresh and a later plain
+  // visit to /billing both resume the check from the marker.
+  const payNowReconcileCancelRef = useRef<(() => void) | null>(null)
+  function reconcilePayNow(paymentId: string | null) {
+    payNowReconcileCancelRef.current?.()
     setPayNowReturn(payNowReturnView('checking'))
     let cancelled = false
+    payNowReconcileCancelRef.current = () => { cancelled = true }
     const start = Date.now()
     const tick = async () => {
       if (cancelled) return
@@ -1222,7 +1209,9 @@ function openUpgrade(plan: string) {
         return
       }
       setPayNowReturn(payNowReturnView(decision))
-      try { sessionStorage.removeItem(PAY_NOW_PAYMENT_STORAGE_KEY) } catch { /* ignore */ }
+      if (shouldClearPayNowMarker(decision)) {
+        try { sessionStorage.removeItem(PAY_NOW_PAYMENT_STORAGE_KEY) } catch { /* ignore */ }
+      }
       if (decision === 'paid') {
         window.dispatchEvent(new Event('beebeeb:plan-changed'))
         refreshPlanDetails()
@@ -1230,7 +1219,35 @@ function openUpgrade(plan: string) {
       }
     }
     void tick()
-    return () => { cancelled = true }
+  }
+
+  useEffect(() => {
+    const kind = payNowReturnKind(searchParams.get(PAY_NOW_RETURN_PARAM))
+    let paymentId: string | null = null
+    try {
+      // Read, don't remove yet: a dev-mode double effect run must see it again.
+      paymentId = sessionStorage.getItem(PAY_NOW_PAYMENT_STORAGE_KEY)
+    } catch { /* no storage: fall back to the subscription */ }
+    if (!kind) {
+      // Plain visit: resume checking a payment we never saw a final state for.
+      if (paymentId) reconcilePayNow(paymentId)
+      return () => { payNowReconcileCancelRef.current?.() }
+    }
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev)
+        p.delete(PAY_NOW_RETURN_PARAM)
+        return p
+      },
+      { replace: true },
+    )
+    if (kind === 'canceled') {
+      setPayNowReturn(payNowReturnView('canceled'))
+      try { sessionStorage.removeItem(PAY_NOW_PAYMENT_STORAGE_KEY) } catch { /* ignore */ }
+      return
+    }
+    reconcilePayNow(paymentId)
+    return () => { payNowReconcileCancelRef.current?.() }
     // Runs once per landing: the param is removed above, so re-runs find nothing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -1881,7 +1898,11 @@ function openUpgrade(plan: string) {
               </BBButton>
             )}
             {payNowReturn.refresh && (
-              <BBButton size="sm" data-testid="pay-now-return-refresh" onClick={() => window.location.reload()}>
+              <BBButton size="sm" data-testid="pay-now-return-refresh" onClick={() => {
+                let id: string | null = null
+                try { id = sessionStorage.getItem(PAY_NOW_PAYMENT_STORAGE_KEY) } catch { /* ignore */ }
+                reconcilePayNow(id)
+              }}>
                 Refresh
               </BBButton>
             )}

@@ -148,6 +148,14 @@ export function payNowReturnDecision(status: string | null | undefined, elapsedM
   return elapsedMs >= PAY_NOW_POLL_TIMEOUT_MS ? 'waiting' : 'keep_polling'
 }
 
+/**
+ * The stored payment marker is dropped only on a FINAL state. 'waiting' shows a
+ * Refresh button and the payment may still be open, so it must stay.
+ */
+export function shouldClearPayNowMarker(decision: PayNowReturnDecision): boolean {
+  return decision === 'paid' || decision === 'failed'
+}
+
 export type PayNowReturnViewKind = 'checking' | 'paid' | 'failed' | 'waiting' | 'canceled'
 
 export interface PayNowReturnView {

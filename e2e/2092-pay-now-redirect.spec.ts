@@ -294,4 +294,41 @@ test.describe('2092 — pay now follows the hosted checkout (3-D Secure)', () =>
     await expect(page.getByTestId('pay-now-pending')).toBeVisible({ timeout: 10_000 })
     expect(page.url()).toContain('/billing')
   })
+
+  test('waiting past the bound keeps the marker; Refresh re-checks and settles', async ({ page }) => {
+    const sub: Record<string, unknown> = { ...CAPPED_TRIAL_SUB }
+    let settle = false
+    const statusCalls: string[] = []
+    await installMocks(page, {
+      sub,
+      onPaymentStatus: (id) => {
+        statusCalls.push(id)
+        if (!settle) return STATUS_RESP(id, 'open')
+        sub.status = 'active'; sub.billing_state = 'active'; sub.trial_storage_cap_bytes = null
+        return STATUS_RESP(id, 'paid')
+      },
+    })
+    await page.addInitScript(() => {
+      if (!sessionStorage.getItem('bb_pay_now_seeded')) {
+        sessionStorage.setItem('bb_pay_now_seeded', '1')
+        sessionStorage.setItem('bb_pay_now_payment_id', 'tr_slow')
+      }
+    })
+    await page.clock.install()
+    await bootApp(page, '/billing?trial_pay_now=returned')
+    const banner = page.getByTestId('pay-now-return')
+    await expect(banner).toHaveAttribute('data-kind', 'checking', { timeout: 20_000 })
+    // Stay 'open' past the 60 s bound.
+    for (let i = 0; i < 25; i++) await page.clock.fastForward(3_000)
+    await expect(banner).toHaveAttribute('data-kind', 'waiting', { timeout: 20_000 })
+    await expect(page.getByTestId('pay-now-return-refresh')).toBeVisible()
+    expect(await page.evaluate(() => sessionStorage.getItem('bb_pay_now_payment_id'))).toBe('tr_slow')
+
+    settle = true
+    await page.getByTestId('pay-now-return-refresh').click()
+    await expect(banner).toHaveAttribute('data-kind', 'paid', { timeout: 20_000 })
+    await expect(banner).toContainText('Payment received — your plan is active.')
+    expect(await page.evaluate(() => sessionStorage.getItem('bb_pay_now_payment_id'))).toBeNull()
+    expect(statusCalls.every((id) => id === 'tr_slow')).toBe(true)
+  })
 })

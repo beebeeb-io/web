@@ -10,6 +10,7 @@ import {
   payNowReturnKind,
   payNowReturnDecision,
   payNowReturnView,
+  shouldClearPayNowMarker,
   PAY_NOW_POLL_TIMEOUT_MS,
 } from '../src/lib/trial-pay-now'
 
@@ -74,5 +75,20 @@ describe('payNowReturnView copy', () => {
     for (const k of ['paid', 'failed', 'waiting', 'canceled', 'checking'] as const) {
       expect(payNowReturnView(k).message.toLowerCase()).not.toContain('mollie')
     }
+  })
+})
+
+describe('pay-now payment marker lifecycle', () => {
+  test('waiting keeps the marker (the payment may still be open)', () => {
+    expect(shouldClearPayNowMarker(payNowReturnDecision('open', PAY_NOW_POLL_TIMEOUT_MS))).toBe(false)
+  })
+  test('keep_polling keeps the marker', () => {
+    expect(shouldClearPayNowMarker(payNowReturnDecision('open', 1000))).toBe(false)
+  })
+  test('paid clears it', () => {
+    expect(shouldClearPayNowMarker(payNowReturnDecision('paid', 0))).toBe(true)
+  })
+  test.each(['failed', 'canceled', 'expired'] as const)('%s clears it', (s) => {
+    expect(shouldClearPayNowMarker(payNowReturnDecision(s, 0))).toBe(true)
   })
 })
