@@ -146,7 +146,6 @@ function installMocks(page: Page, creditNotes: unknown[], pdfAuth: { header?: st
         effective_storage_bytes: 100_000_000_000,
       })
     }
-    if (url.includes('/billing/winback-eligible')) return json(route, { eligible: false })
     if (url.includes('/files')) return json(route, { files: [] })
     if (url.includes('/preferences/')) return json(route, {}, 404)
     if (url.includes('/incoming') || url.includes('/shares')) return json(route, { shares: [] })
