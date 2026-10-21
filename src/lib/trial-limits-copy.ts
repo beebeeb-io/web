@@ -45,7 +45,7 @@ export interface CancelledCardCopy {
   kind: CancelledCardKind
   /** "Uploads stopped" (never-paid trial) or a plan-named headline (paid). */
   headline: string
-  /** Date access (view/download) stops — `access_until` for a trial, `current_period_end` for a paid cancel. */
+  /** `access_until` for a trial (the trial end: when uploads/plan access end, NOT when view/download end), `current_period_end` for a paid cancel. */
   accessUntilIso: string | null
   /** Date the account/files are permanently deleted, when the server has computed one. Null = not yet known / not applicable. */
   deletionIso: string | null
@@ -123,4 +123,19 @@ export function cancelledCompactLine(
   if (copy.accessUntilIso) parts.push(`Access until ${formatDate(copy.accessUntilIso)}`)
   if (copy.deletionIso) parts.push(`Files deleted on ${formatDate(copy.deletionIso)}`)
   return parts.join(' · ')
+}
+
+/**
+ * The view/download sentence of the cancelled never-paid-trial panel. The server gates only
+ * uploads and shares (signup_plan.rs `ensure_can_upload_for`, `check_has_plan`); list, download
+ * and chunk routes carry no billing gate, so reading works until the files are deleted at
+ * `data_deletion_at`, which is after `access_until` (the trial end). Never ties it to access_until.
+ */
+export function neverPaidViewDownloadSentence(
+  copy: CancelledCardCopy,
+  formatDate: (iso: string) => string,
+): string {
+  return copy.deletionIso
+    ? `You can still view and download your files until they are deleted on ${formatDate(copy.deletionIso)}.`
+    : 'You can still view and download your files until they are deleted.'
 }
