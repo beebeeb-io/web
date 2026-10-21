@@ -52,6 +52,7 @@ import {
   cancelDowngrade,
 } from '../lib/api'
 import { useDriveData } from '../lib/drive-data-context'
+import { cardTrialCancelCopy } from '../lib/no-card-trial'
 import { NoCardTrialPlanLines, TrialEndedCard, TrialStartCard, TrialUnavailableNote } from '../components/no-card-trial'
 import { useStartNoCardTrial } from '../hooks/use-start-no-card-trial'
 import { noCardTrialStatus, trialBillingRefusalCopy, trialEndedStatus, trialOfferView } from '../lib/no-card-trial'
@@ -2151,10 +2152,7 @@ function openUpgrade(plan: string) {
             ) : (
               <div className="p-4 bg-paper border border-line rounded-lg space-y-3">
                 <p className="text-[13px] text-ink-2 leading-relaxed">
-                  Cancelling stops the automatic charge. You keep {meta.label} until{' '}
-                  <span className="font-mono text-ink">{formatDate(sub.trial_ends_at)}</span>. After that your
-                  vault becomes read-only, and your files are permanently deleted 60 days later unless you
-                  subscribe. We can&apos;t recover them once they&apos;re deleted.
+                  {cardTrialCancelCopy(formatDate(sub.trial_ends_at))}
                 </p>
                 <div className="flex gap-2">
                   <BBButton size="sm" variant="amber" onClick={() => setTrialCancelConfirm(false)}>
@@ -2199,8 +2197,9 @@ function openUpgrade(plan: string) {
                       marketed plan that no longer exists (Free is admin-only —
                       see WP-B/task 1060). A lapsed trial is a DIFFERENT server
                       path from cancel, though: it drops to the 5 GB quota with
-                      a 60-day grace before any deletion (billing_lifecycle.rs),
-                      not the cancel wipe-at-period-end model — so this stays
+                      no deletion at all (a legacy, grandfathered trial lands on Free; a new-model
+                      account never reaches this panel: it has the no-card trial and 14/60-day
+                      retention, task 2085), not the cancel wipe-at-period-end model — so this stays
                       honest about the real (gentler) trial-lapse behavior
                       instead of borrowing the cancel copy verbatim. */}
                   {' '}No card required — if you do nothing, your account simply

@@ -496,3 +496,15 @@ export function trialCapShortfallNotice(
     href: PAID_CHECKOUT_PATH,
   }
 }
+
+/**
+ * What cancelling a card trial does (task 2085). The server (signup_plan.rs,
+ * `ensure_trial_not_cancelled_read_only`) stops uploads and new shares the moment a
+ * never-paid trial is cancelled; view and download keep working. On the trial's end
+ * date the account lapses and, having never paid, its files are deleted
+ * {@link NEVER_PAID_RETENTION_DAYS} days later (Terms 7.10), not the 60 days an
+ * account that has paid before keeps.
+ */
+export function cardTrialCancelCopy(trialEndDay: string): string {
+  return `Cancelling stops the automatic charge. Uploads and new shares pause straight away; you can still view and download everything. After ${trialEndDay} your vault is read-only, and your files are permanently deleted ${NEVER_PAID_RETENTION_DAYS} days later unless you subscribe. We can't recover them once they're deleted.`
+}
