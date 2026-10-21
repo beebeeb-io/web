@@ -7,6 +7,7 @@ import { useRegionChoices, saveRegionChoice } from '../../lib/use-region-choices
 import {
   groupChoices,
   choiceLabel,
+  allowOthersPayload,
   preferenceUnavailable,
   selectedChoiceId,
   selectedCountry,
@@ -170,11 +171,14 @@ export function SettingsDataResidency() {
     if (saving || !refusing) return
     setSaving(true)
     try {
-      await saveRegionChoice(refusing.id, false)
+      const payload = allowOthersPayload(refusing.id, choices)
+      await saveRegionChoice(payload.preferred, false)
       showToast({
         icon: 'check',
         title: 'Other EU countries allowed',
-        description: 'New uploads go to another European data center until your country is back.',
+        description: payload.missing
+          ? 'New uploads go to any of our European data centers.'
+          : 'New uploads go to another European data center until your country is back.',
       })
     } catch (err) {
       showToast({
@@ -186,7 +190,7 @@ export function SettingsDataResidency() {
     } finally {
       setSaving(false)
     }
-  }, [saving, refusing, showToast])
+  }, [saving, refusing, choices, showToast])
 
   return (
     <SettingsShell activeSection="data-residency">

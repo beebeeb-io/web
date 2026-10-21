@@ -71,6 +71,17 @@ function installMocks(page: Page, opts: MockOptions = {}) {
       if (method === 'PUT') {
         const body = JSON.parse(route.request().postData() ?? '{}') as Record<string, unknown>
         opts.puts?.push(body)
+        // Server rule (store_choice): a stored country that is still KNOWN (in
+        // choices) may be re-saved while unavailable, with either strict value;
+        // a value missing from choices that is not choosable is a 400.
+        const want = body.preferred_region as string | null | undefined
+        if (want) {
+          const row = (opts.choices ?? CHOICES).find((c) => (c as { id: string }).id === want) as
+            | { selectable: boolean }
+            | undefined
+          const ok = row ? row.selectable || want === preferred : false
+          if (!ok) return json(route, { error: 'region_unavailable' }, 400)
+        }
         preferred = (body.preferred_region as string | null) ?? null
         strict = body.region_strict === true
         return json(route, { preferred_region: preferred, region_strict: strict })
@@ -164,10 +175,19 @@ for (const c of CASES) {
 
       if (vp.name === 'desktop-1440') {
         await page.getByRole('button', { name: 'Allow other EU countries' }).click()
-        await expect.poll(() => puts.at(-1)).toEqual({ preferred_region: 'fi', region_strict: false })
-        // Strict is off now: the honest "goes elsewhere" note applies.
-        await expect(page.getByTestId('region-unavailable')).toContainText('go to any of our European data centers')
-        await expect(page.getByRole('button', { name: 'Allow other EU countries' })).toHaveCount(0)
+        if (c.key === 'missing') {
+          // Finland is not a known country any more: send "any EU country", never the old id.
+          await expect.poll(() => puts.at(-1)).toEqual({ preferred_region: null, region_strict: false })
+          await expect(page.getByTestId('region-europe')).toHaveAttribute('aria-checked', 'true')
+          await expect(page.getByText('Failed to save region')).toHaveCount(0)
+          await expect(page.getByTestId('region-unavailable')).toHaveCount(0)
+          await expect(page.getByText(/until your country is back/)).toHaveCount(0)
+        } else {
+          await expect.poll(() => puts.at(-1)).toEqual({ preferred_region: 'fi', region_strict: false })
+          // Strict is off now: the honest "goes elsewhere" note applies.
+          await expect(page.getByTestId('region-unavailable')).toContainText('go to any of our European data centers')
+          await expect(page.getByRole('button', { name: 'Allow other EU countries' })).toHaveCount(0)
+        }
       }
     })
   }

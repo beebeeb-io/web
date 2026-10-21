@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  allowOthersPayload,
   parseChoices,
   selectedChoiceId,
   strictUnavailable,
@@ -52,5 +53,14 @@ describe('strictUnavailable', () => {
     // selectedChoiceId alone still falls back to the default row; the page
     // must not use it as the selection while strict is refusing uploads.
     expect(selectedChoiceId('fi', list(EUROPE, DE))).toBe('europe')
+  })
+})
+
+describe('allowOthersPayload', () => {
+  test('country listed but not selectable: keeps the stored id', () => {
+    expect(allowOthersPayload('fi', list(EUROPE, DE, FI_COMING))).toEqual({ preferred: 'fi', strict: false, missing: false })
+  })
+  test('country missing from the list: any EU country (null), never the old id', () => {
+    expect(allowOthersPayload('fi', list(EUROPE, DE))).toEqual({ preferred: null, strict: false, missing: true })
   })
 })

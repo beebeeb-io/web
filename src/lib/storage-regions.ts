@@ -220,6 +220,25 @@ export function strictUnavailable(
   return { id, name: name ?? 'your chosen country' }
 }
 
+/**
+ * Task 2053. What to PUT when the person turns "only store in" off while their
+ * country is unavailable. The server (store_choice) lets a country it still
+ * knows (listed, even not selectable) be re-saved with either strict value, but
+ * a value missing from the list that is not choosable is a 400
+ * `region_unavailable`. So: listed -> keep the id; missing -> no preference
+ * (any EU country). `missing` tells the caller not to promise the old country.
+ */
+export function allowOthersPayload(
+  preferredId: string,
+  choices: StorageRegionChoice[],
+): { preferred: string | null; strict: false; missing: boolean } {
+  const wanted = preferredId.trim().toLowerCase()
+  const known = choices.some((c) => !c.is_default && matches(c, wanted))
+  return known
+    ? { preferred: preferredId, strict: false, missing: false }
+    : { preferred: null, strict: false, missing: true }
+}
+
 /** The row for the stored preference when it is a country the person pinned, else null. */
 export function selectedCountry(
   preferred: string | null | undefined,
