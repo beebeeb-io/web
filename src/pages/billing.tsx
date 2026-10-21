@@ -106,6 +106,7 @@ import { billingPeriodLine } from '../lib/billing-period-line'
 import {
   cancelledCardCopy,
   cancelledCompactLine,
+  neverPaidViewDownloadSentence,
   isTrialCapped,
   trialCapExplainer,
   payNowButtonLabel,
@@ -2852,15 +2853,8 @@ function openUpgrade(plan: string) {
                       <>
                         <p className="text-xs text-ink-2 leading-relaxed">
                           You cancelled your trial before its first payment, so
-                          uploads and new shares are off. You can still view
-                          and download your files
-                          {cancelCopy.accessUntilIso && (
-                            <>
-                              {' '}until{' '}
-                              <strong className="font-mono">{formatDate(cancelCopy.accessUntilIso)}</strong>
-                            </>
-                          )}
-                          .
+                          uploads and new shares are off.{' '}
+                          {neverPaidViewDownloadSentence(cancelCopy, formatDate)}
                         </p>
                         {cancelCopy.deletionIso && (
                           <p className="text-xs text-ink-2 leading-relaxed">

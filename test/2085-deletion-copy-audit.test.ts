@@ -28,6 +28,32 @@ describe('2085 deletion copy matches the server', () => {
     expect(copy).toContain('download')
   })
 
+  // Server truth (repos/server origin/main): list_files / download_file / download_chunk carry no
+  // billing or plan gate, and a lapse (signup_plan.rs lapse_row_with) only blocks uploads and shares,
+  // so viewing and downloading work until the deletion deadline, not just until the trial end.
+  test('cancel confirmation says view/download last until deletion, not just the trial end', async () => {
+    const { cardTrialCancelCopy } = await import('../src/lib/no-card-trial')
+    const copy = cardTrialCancelCopy('1 December 2026')
+    expect(copy).toContain('until your files are deleted')
+  })
+
+  test('cancelled-trial panel ties view/download to the deletion date, not access_until', async () => {
+    const { neverPaidViewDownloadSentence } = await import('../src/lib/trial-limits-copy')
+    const fmt = (iso: string) => iso.slice(0, 10)
+    const withDeletion = neverPaidViewDownloadSentence(
+      { kind: 'never_paid_trial', headline: '', accessUntilIso: '2026-12-01T00:00:00Z', deletionIso: '2026-12-15T00:00:00Z', uploadsBlockedNow: true },
+      fmt,
+    )
+    expect(withDeletion).toContain('2026-12-15')
+    expect(withDeletion).not.toContain('2026-12-01')
+    const noDeletion = neverPaidViewDownloadSentence(
+      { kind: 'never_paid_trial', headline: '', accessUntilIso: '2026-12-01T00:00:00Z', deletionIso: null, uploadsBlockedNow: true },
+      fmt,
+    )
+    expect(noDeletion).not.toContain('2026-12-01')
+    expect(read('src/pages/billing.tsx')).toContain('neverPaidViewDownloadSentence(')
+  })
+
   test('the empty-trash copy does not claim a key-destruction order the server has no path for', () => {
     expect(read('src/components/empty-states/empty-trash.tsx')).not.toContain('vault keys')
   })
