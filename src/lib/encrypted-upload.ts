@@ -34,6 +34,7 @@ import {
   findByFingerprint,
   saveUploadState,
   removeUploadState,
+  recordedCountry,
   type UploadState,
 } from './upload-resume'
 import { isLikelyAlbumArtOrIcon } from './photo-library'
@@ -60,8 +61,8 @@ export interface UploadProgress {
   region?: string | null
   /**
    * Task 2062 — the COUNTRY the server chose at init (`storage_location.country`),
-   * known before the first byte moves. Null for a session resumed from storage
-   * (no fresh init) and for an unknown pool. Never a city.
+   * known before the first byte moves. Restored from the resume record for a resumed
+   * session (task 2083); null for an old record and for an unknown pool. Never a city.
    */
   country?: string | null
 }
@@ -302,6 +303,7 @@ async function uploadFile(
       chunkBytes = record.chunk_size_bytes ?? LEGACY_FALLBACK_CHUNK_SIZE_BYTES
       totalChunks = record.chunk_count ?? record.totalChunks
       region = record.region ?? null
+      country = recordedCountry(record)
       resumingStoredFrames = true
       sessionFormat = record.chunk_format
     } else {
@@ -309,6 +311,7 @@ async function uploadFile(
         chunkBytes = record.chunk_size_bytes ?? LEGACY_FALLBACK_CHUNK_SIZE_BYTES
         totalChunks = record.chunk_count ?? record.totalChunks
         region = record.region ?? null
+      country = recordedCountry(record)
       }
       try {
         const status = await getUploadStatus(resumeFileId)
@@ -336,6 +339,7 @@ async function uploadFile(
       chunkBytes = existing.chunk_size_bytes ?? LEGACY_FALLBACK_CHUNK_SIZE_BYTES
       totalChunks = existing.chunk_count ?? existing.totalChunks
       region = existing.region ?? null
+      country = recordedCountry(existing)
       adoptRecordedReplacePin(existing, fileId)
       if (existing.upload_session_id) {
         uploadSessionId = existing.upload_session_id
@@ -379,6 +383,7 @@ async function uploadFile(
       chunk_size_bytes: chunkBytes,
       chunk_count: totalChunks,
       region,
+      country,
       chunk_format: sessionFormat,
       // Recorded only under the file it belongs to, with that file's id.
       ...(pin !== null ? { replace_pin: pin, replace_pin_file_id: serverFileId } : {}),
