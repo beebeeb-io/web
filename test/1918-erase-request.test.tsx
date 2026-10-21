@@ -38,6 +38,9 @@ import { isVaultFreePath } from '../src/lib/vault-free-paths'
 
 const SRC = path.resolve(import.meta.dir, '../src')
 
+/** The frozen "now": 2026-10-19, inside PENDING's wait (due 2026-10-21). Never the real clock. */
+const NOW_MS = Date.parse('2026-10-19T00:00:00Z')
+
 const PENDING = {
   id: '6f1c2b8e-0000-4000-8000-000000000001',
   requested_at: '2026-10-18T10:00:00Z',
@@ -85,6 +88,7 @@ function renderCard(over: Partial<EraseRequestCardProps> = {}): string {
     busy: false,
     note: '',
     error: '',
+    nowMs: NOW_MS,
     ...over,
   }
   return decode(renderToStaticMarkup(React.createElement(EraseRequestCard, props)))
