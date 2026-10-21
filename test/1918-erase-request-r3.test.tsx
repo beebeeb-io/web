@@ -85,6 +85,9 @@ function decode(html: string): string {
     .replace(/&gt;/g, '>')
 }
 
+/** Frozen "now" (inside CONFIRMED's wait); the card must never read the real clock. */
+const NOW_MS = Date.parse('2026-10-19T09:00:00Z')
+
 function renderCard(over: Partial<EraseRequestCardProps> = {}): string {
   const props: EraseRequestCardProps = {
     card: eraseCard(status()),
@@ -100,6 +103,7 @@ function renderCard(over: Partial<EraseRequestCardProps> = {}): string {
     busy: false,
     note: '',
     error: '',
+    nowMs: NOW_MS,
     ...over,
   }
   return decode(renderToStaticMarkup(React.createElement(EraseRequestCard, props)))
