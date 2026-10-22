@@ -9,7 +9,8 @@ import {
   toBase64,
   zeroize,
 } from './crypto'
-import { listFilesPage, FILE_LIST_HARD_CAP } from './api'
+import { listFilesPage, getSentInvites, FILE_LIST_HARD_CAP } from './api'
+import type { ShareInvite } from './api'
 
 export async function generateFolderKey(): Promise<Uint8Array> {
   const key = new Uint8Array(32)
@@ -81,6 +82,51 @@ export async function decryptOwnerFolderKey(
   const folderKey = await decryptChunk(folderDerivedKey, nonce, ciphertext)
   zeroize(folderDerivedKey)
   return folderKey
+}
+
+/** Owner-key blobs for this folder from the owner's sent invites, newest first (task 2133). */
+export function ownerFolderKeyBlobs(invites: ShareInvite[], folderId: string): string[] {
+  return invites
+    .filter((i) => i.is_folder_share && i.file_id === folderId && !!i.encrypted_owner_folder_key)
+    .sort((x, y) => (x.created_at < y.created_at ? 1 : x.created_at > y.created_at ? -1 : 0))
+    .map((i) => i.encrypted_owner_folder_key as string)
+}
+
+/**
+ * Task 2133: the folder's key is minted ONCE, at its first invite, and every
+ * later invite reuses it. The server keeps one wrapped child key per
+ * (folder, file) and upserts on every invite, so a fresh key per invite
+ * re-wraps every child under a key the earlier members never received and
+ * locks them out.
+ *
+ * The owner's own copy of that key travels with every folder invite
+ * (`encrypted_owner_folder_key`, sealed under the owner's master key) and
+ * `GET /shares/invites/sent` returns it. Newest first: any copy of this
+ * folder's key is the same key.
+ *
+ * Returns the base64 blob to send again verbatim, plus the unwrapped key, or
+ * null when this owner has never invited anyone to the folder (the caller
+ * then mints the key). A copy that exists but does NOT open throws: minting a
+ * new key then is exactly the lock-out this guards against.
+ */
+export async function findExistingFolderKey(
+  masterKey: Uint8Array,
+  folderId: string,
+  invites?: ShareInvite[],
+): Promise<{ folderKey: Uint8Array; encryptedOwnerFolderKeyB64: string } | null> {
+  const blobs = ownerFolderKeyBlobs(invites ?? (await getSentInvites()), folderId)
+  if (blobs.length === 0) return null
+  for (const b64 of blobs) {
+    try {
+      const folderKey = await decryptOwnerFolderKey(masterKey, folderId, fromBase64(b64))
+      return { folderKey, encryptedOwnerFolderKeyB64: b64 }
+    } catch {
+      // try the next copy
+    }
+  }
+  throw new Error(
+    "This folder is already shared, but we couldn't open its key, so a new invite would lock out the people who have it. Nothing was sent.",
+  )
 }
 
 export async function encryptChildFileKey(
