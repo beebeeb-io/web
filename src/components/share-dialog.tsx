@@ -262,8 +262,9 @@ function InviteForm({
 
       if (isFolder) {
         // Folder sharing flow. Key rule (task 2133): reuse the folder's key
-        // (active invites, verified against a stored child wrap); mint only
-        // when the folder has no active invite. Then encrypt children, create invite.
+        // (newest openable key among status-active invites; exact check comes
+        // with the server key fingerprint, 2133 design K); mint only when the
+        // folder has no active invite. Then encrypt children, create invite.
         const masterKey = getMasterKey()
         setProgress('Checking folder key...')
         const existing = await findExistingFolderKey(masterKey, fileId)
