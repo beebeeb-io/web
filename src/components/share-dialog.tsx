@@ -30,6 +30,7 @@ import {
 } from '../lib/crypto'
 import {
   generateFolderKey,
+  findExistingFolderKey,
   encryptFolderKeyForRecipient,
   encryptOwnerFolderKey,
   encryptAllChildrenKeys,
@@ -260,47 +261,55 @@ function InviteForm({
       }
 
       if (isFolder) {
-        // Folder sharing flow — generate folder_key, encrypt children, create invite
+        // Folder sharing flow. Key rule (task 2133): reuse the folder's key
+        // (newest openable key among status-active invites; exact check comes
+        // with the server key fingerprint, 2133 design K); mint only when the
+        // folder has no active invite. Then encrypt children, create invite.
         const masterKey = getMasterKey()
-        const folderKey = await generateFolderKey()
+        setProgress('Checking folder key...')
+        const existing = await findExistingFolderKey(masterKey, fileId)
+        const folderKey = existing?.folderKey ?? (await generateFolderKey())
+        try {
+          setProgress('Encrypting folder contents...')
+          const folderKeys = await encryptAllChildrenKeys(
+            masterKey, folderKey, fileId,
+            (done, total) => setProgress(`Encrypting keys: ${done}/${total}`),
+          )
 
-        setProgress('Encrypting folder contents...')
-        const folderKeys = await encryptAllChildrenKeys(
-          masterKey, folderKey, fileId,
-          (done, total) => setProgress(`Encrypting keys: ${done}/${total}`),
-        )
+          // Encrypt folder key for owner (self-storage)
+          const encOwnerFKB64 =
+            existing?.encryptedOwnerFolderKeyB64 ??
+            toBase64(await encryptOwnerFolderKey(masterKey, fileId, folderKey))
 
-        // Encrypt folder key for owner (self-storage)
-        const encOwnerFK = await encryptOwnerFolderKey(masterKey, fileId, folderKey)
+          setProgress('Creating invite...')
+          // The recipient-encrypted folder key is set later by the approve endpoint
+          // (which writes to the encrypted_file_key column for both file and folder shares).
+          // We can only encrypt for the recipient once their public key is known — either
+          // immediately on auto-claim below, or when the sender approves after the
+          // recipient signs up and claims.
+          const result = await createInvite(fileId, recipientEmail, {
+            is_folder_share: true,
+            encrypted_folder_key: '',
+            encrypted_owner_folder_key: encOwnerFKB64,
+            folder_keys: folderKeys,
+          })
 
-        setProgress('Creating invite...')
-        // The recipient-encrypted folder key is set later by the approve endpoint
-        // (which writes to the encrypted_file_key column for both file and folder shares).
-        // We can only encrypt for the recipient once their public key is known — either
-        // immediately on auto-claim below, or when the sender approves after the
-        // recipient signs up and claims.
-        const result = await createInvite(fileId, recipientEmail, {
-          is_folder_share: true,
-          encrypted_folder_key: '',
-          encrypted_owner_folder_key: toBase64(encOwnerFK),
-          folder_keys: folderKeys,
-        })
-
-        // Auto-approve when the recipient already has an account and the server
-        // auto-claimed: encrypt the folder key for their pubkey and call approve.
-        if (result.recipient_public_key && result.status === 'claimed') {
-          try {
-            const recipientPubKey = fromBase64(result.recipient_public_key)
-            const encFolderKey = await encryptFolderKeyForRecipient(
-              masterKey, recipientPubKey, fileId, folderKey,
-            )
-            await approveInvite(result.invite_id, toBase64(encFolderKey))
-          } catch {
-            // Approval failed — invite stays claimed, sender can retry approval later.
+          // Auto-approve when the recipient already has an account and the server
+          // auto-claimed: encrypt the folder key for their pubkey and call approve.
+          if (result.recipient_public_key && result.status === 'claimed') {
+            try {
+              const recipientPubKey = fromBase64(result.recipient_public_key)
+              const encFolderKey = await encryptFolderKeyForRecipient(
+                masterKey, recipientPubKey, fileId, folderKey,
+              )
+              await approveInvite(result.invite_id, toBase64(encFolderKey))
+            } catch {
+              // Approval failed — invite stays claimed, sender can retry approval later.
+            }
           }
+        } finally {
+          zeroize(folderKey)
         }
-
-        zeroize(folderKey)
       } else {
         // Single file sharing flow
         const result = await createInvite(fileId, recipientEmail)

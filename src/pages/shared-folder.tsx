@@ -275,6 +275,7 @@ export function SharedFolder() {
                     <BBButton
                       size="sm"
                       variant="ghost"
+                      aria-label="Download"
                       className="opacity-0 group-hover:opacity-100 transition-opacity"
                       onClick={(e) => {
                         e.stopPropagation()
