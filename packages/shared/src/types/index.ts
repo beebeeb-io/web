@@ -617,6 +617,14 @@ export interface Subscription {
    */
   trial_auto_converts?: boolean
   /**
+   * Task 2106 (server 2092b). RFC 3339 end of the 3-day hold when the bank asked the
+   * customer to confirm a trial's first payment (3-D Secure); null/absent otherwise.
+   * `trial_auto_converts` stays true during the hold, so THIS field alone says the
+   * trial does not charge by itself: it ends at this instant unless the customer
+   * confirms (pay-now).
+   */
+  confirm_payment_by?: string | null
+  /**
    * Why a paid trial mandate did NOT start a trial (task 1037, one trial per
    * payment method): `"payment_method_already_used"` when the card / bank
    * account already started a trial on any account. The account stays

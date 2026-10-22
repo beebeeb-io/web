@@ -125,6 +125,14 @@ import {
   payNowReturnView,
   type PayNowReturnView,
 } from '../lib/trial-pay-now'
+import {
+  confirmPaymentBy,
+  confirmPaymentBannerCopy,
+  confirmPaymentIntent,
+  CONFIRM_PAYMENT_PARAM,
+  CONFIRM_PAYMENT_REASSURANCE,
+  CONFIRM_PAYMENT_CTA,
+} from '../lib/confirm-payment'
 
 /* ── Plan metadata (imported from plan-constants.ts) ──── */
 
@@ -1331,6 +1339,29 @@ function openUpgrade(plan: string) {
     }
   }
 
+  // Task 2106 — the mails' buttons land here with `?confirm_payment=1` (renewal / past due:
+  // pay-overdue) or `?confirm_payment=trial` (held trial: pay-now). Start the customer-present
+  // checkout straight away, once per landing; the ref also guards the dev-mode double effect.
+  const confirmIntentHandledRef = useRef(false)
+  useEffect(() => {
+    const raw = searchParams.get(CONFIRM_PAYMENT_PARAM)
+    if (raw === null || confirmIntentHandledRef.current) return
+    confirmIntentHandledRef.current = true
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev)
+        p.delete(CONFIRM_PAYMENT_PARAM)
+        return p
+      },
+      { replace: true },
+    )
+    const intent = confirmPaymentIntent(raw)
+    if (intent === 'overdue') void handlePayOverdue()
+    else if (intent === 'trial') void handlePayNow()
+    // Runs once per landing: the param is removed above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   async function handlePreviewStorageAddon() {
     setAddonPreviewLoading(true)
     try {
@@ -2194,7 +2225,38 @@ function openUpgrade(plan: string) {
 
         {/* Task 1037 — a trial started WITH a mandate converts on its own at
             trial_ends_at: state the date + amount, offer the cancel action. */}
-        {sub?.status === 'trialing' && sub.trial_auto_converts === true && sub.trial_ends_at && remainingDays(sub.trial_ends_at) > 0 && (
+        {/* Task 2106 — the bank asked the customer to confirm the first payment (3-D Secure).
+            The trial is held, `trial_auto_converts` is still true, but nothing charges by itself:
+            never the "charged automatically" copy below. */}
+        {confirmPaymentBy(sub) && (
+          <div className="rounded-xl border border-amber/60 bg-amber-bg px-6 py-5" data-testid="billing-trial-confirm">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep mb-1">
+              Free trial
+            </div>
+            <h2 className="text-lg font-bold text-ink leading-snug mb-1">Confirm your first payment</h2>
+            <p className="text-[13.5px] text-ink-2 leading-relaxed mb-1" data-testid="billing-trial-confirm-copy">
+              {confirmPaymentBannerCopy(confirmPaymentBy(sub)!, undefined)}
+            </p>
+            <p className="text-[13px] text-ink-3 leading-relaxed mb-4">{CONFIRM_PAYMENT_REASSURANCE}</p>
+            {payNowState.phase === 'pending' && (
+              <p className="text-xs text-amber-deep leading-relaxed mb-3" data-testid="billing-trial-confirm-pending">{payNowState.message}</p>
+            )}
+            {payNowState.phase === 'error' && (
+              <p className="text-xs text-red leading-relaxed mb-3" data-testid="billing-trial-confirm-error">{payNowState.message}</p>
+            )}
+            <BBButton
+              size="sm"
+              variant="amber"
+              data-testid="billing-trial-confirm-cta"
+              onClick={() => void handlePayNow()}
+              disabled={payNowState.phase === 'submitting' || payNowState.phase === 'pending'}
+            >
+              {payNowState.phase === 'submitting' || payNowState.phase === 'pending' ? 'Processing…' : CONFIRM_PAYMENT_CTA}
+            </BBButton>
+          </div>
+        )}
+
+        {sub?.status === 'trialing' && sub.trial_auto_converts === true && !confirmPaymentBy(sub) && sub.trial_ends_at && remainingDays(sub.trial_ends_at) > 0 && (
           <div className="rounded-xl border border-line bg-paper-2 px-6 py-5" data-testid="billing-trial-auto">
             <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep mb-1">
               Free trial

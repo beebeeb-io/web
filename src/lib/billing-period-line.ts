@@ -41,6 +41,11 @@ export interface BillingPeriodFields {
    * for legacy no-card trials, which lapse to Free at `trial_ends_at` instead.
    */
   trial_auto_converts?: boolean | null
+  /**
+   * Task 2106 — RFC3339 end of a 3-D Secure confirmation hold (server 2092b), else null/absent.
+   * While set, nothing charges by itself: the trial ends then unless the customer confirms.
+   */
+  confirm_payment_by?: string | null
   /** RFC3339 deletion date for a lapsed/lapsing account; null/absent otherwise (task 1037). */
   data_deletion_at?: string | null
 }
@@ -63,6 +68,10 @@ export function billingPeriodLine(sub: BillingPeriodFields | null | undefined): 
   if (status === 'trialing') {
     const dateIso = sub.trial_ends_at ?? sub.current_period_end ?? null
     if (!dateIso) return null
+    // Task 2106 — a held trial does not charge by itself; it ends unless the customer confirms.
+    if (typeof sub.confirm_payment_by === 'string' && sub.confirm_payment_by.length > 0) {
+      return { label: 'Trial ends', dateIso }
+    }
     return sub.trial_auto_converts === true
       ? { label: 'Trial · first charge on', dateIso }
       : { label: 'Trial ends', dateIso }
