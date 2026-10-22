@@ -1757,6 +1757,57 @@ export function encrypt_metadata(key, metadata) {
 }
 
 /**
+ * Seal the name/MIME envelope under a GIVEN per-file key, by the rule of a
+ * recorded pin (task 1958). The only name writer that takes a key, so it serves
+ * keys NOT derived from the master key (file-request uploads, shared-folder
+ * files); for a derived key it writes what `encrypt_name_with_chunk_format`
+ * writes. A v2 pin records `chunk_format: 2` and is always sealed under the
+ * name subkey; 0 follows the current write rule. Any other code is an error.
+ * `recordedPin`:
+ * - an EXISTING file (rename): the `chunk_format` from
+ *   `decrypt_file_metadata` / `..._with_key` of THIS file (0 = unrecorded,
+ *   2 = v2), never a server field;
+ * - a NEW file (e.g. a file-request upload): the pin of the format its content
+ *   was written in, `recorded_for(encryptor.format())` (2 for a v2 upload, 0
+ *   for v1), as at any upload. Nothing else is allowed for a new file.
+ * @param {Uint8Array} file_key
+ * @param {string} filename
+ * @param {string | null | undefined} mime_type
+ * @param {number} recorded_pin
+ * @returns {string}
+ */
+export function encrypt_name_for(file_key, filename, mime_type, recorded_pin) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(file_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(filename, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(mime_type) ? 0 : passStringToWasm0(mime_type, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        var len2 = WASM_VECTOR_LEN;
+        wasm.encrypt_name_for(retptr, ptr0, len0, ptr1, len1, ptr2, len2, recorded_pin);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr4 = r0;
+        var len4 = r1;
+        if (r3) {
+            ptr4 = 0; len4 = 0;
+            throw takeObject(r2);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred5_0, deferred5_1, 1);
+    }
+}
+
+/**
  * Encrypt a filename (+ MIME) into a `name_encrypted` envelope that also
  * records the file's chunk format (task 1908): `chunk_format` 2 = every upload
  * of this file id is v2, 0 = record nothing (the pre-1908 shape). New file:
@@ -1972,6 +2023,36 @@ export function evaluate_password(password, min_length) {
             throw takeObject(r1);
         }
         return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * A shared folder's key id (task 2133): a one-way id of the folder's 32-byte
+ * key, for a server to compare folder keys without learning them (HKDF-SHA256,
+ * info `beebeeb/folder-key-id/v1`). Returns a 32-byte `Uint8Array`; not secret,
+ * and never a key. Wipes the copy of the key this function owns
+ * (wasm-bindgen's own copy is freed without a wipe).
+ * @param {Uint8Array} folder_key
+ * @returns {Uint8Array}
+ */
+export function folder_key_id(folder_key) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(folder_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.folder_key_id(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v2;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
