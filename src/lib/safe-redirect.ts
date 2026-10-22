@@ -72,7 +72,12 @@ export function sanitizeRedirect(raw: string | null | undefined): string | null 
   // `/settings/billing` is the one allowlisted path whose query is NOT preserved: that page
   // reads `?success=true` / `?upgraded=true` as "a checkout just completed", so a crafted
   // `/login?next=/settings/billing?success=true` must not be able to forge it (task 1743, round 3).
-  if (pathname === '/settings/billing') return pathname
+  // Task 2106: exactly one query survives, the mails' `?confirm_payment=1|trial` intent (the value
+  // must match the enum; nothing else may ride along, so the forged-flag rule above still holds).
+  if (pathname === '/settings/billing') {
+    const query = raw.slice(pathname.length).split('#')[0]
+    return query === '?confirm_payment=1' || query === '?confirm_payment=trial' ? pathname + query : pathname
+  }
 
   return raw
 }

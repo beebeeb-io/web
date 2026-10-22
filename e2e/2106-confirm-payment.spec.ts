@@ -30,7 +30,8 @@ const DB_NAME = process.env.E2E_DB_NAME ?? 'beebeeb_web_e2e_3003'
 const PG_PORT = process.env.E2E_PG_PORT ?? '5434'
 const PG_CONTAINER = process.env.E2E_PG_CONTAINER ?? 'beebeebio-postgres-1'
 
-test.use({ storageState: { cookies: [], origins: [] } })
+// A viewer far from Amsterdam: the hold's day must still be the Amsterdam day everywhere on the page.
+test.use({ storageState: { cookies: [], origins: [] }, timezoneId: 'Pacific/Kiritimati' })
 test.setTimeout(300_000)
 test.skip(
   process.env.BB_REQUIRE_PLAN_AT_SIGNUP !== '1' || !process.env.MOLLIE_API_BASE,
@@ -97,7 +98,16 @@ async function startMandatedTrial(page: Page, email: string) {
   await expect.poll(async () => (await subscription(page)).status, { timeout: 30_000 }).toBe('trialing')
 }
 
-test('normal trial keeps today\'s copy; a held trial shows the confirm banner; ?confirm_payment=trial pays now', async ({ page }) => {
+/** The hold, exactly as the server leaves it after a 3-D Secure trial-end decline (see the header). */
+function seedHold(email: string) {
+  sql(`WITH s AS (SELECT id FROM subscriptions WHERE user_id = (SELECT id FROM users WHERE email = '${email}') ORDER BY created_at DESC LIMIT 1),
+            u AS (UPDATE subscriptions SET trial_ends_at = NOW() + INTERVAL '3 days', current_period_end = NOW() + INTERVAL '3 days'
+                  WHERE id = (SELECT id FROM s))
+       INSERT INTO billing_jobs (job_type, idempotency_key, payload, max_attempts, next_run_at)
+       SELECT 'trial_confirm_payment_lapse', 'trial-confirm-payment-lapse-' || s.id::text, '{}'::jsonb, 5, NOW() + INTERVAL '3 days' FROM s;`)
+}
+
+test('normal trial keeps today\'s copy; a held trial shows the confirm banner; the shell banner starts pay-now on billing', async ({ page }) => {
   const email = uniqueEmail('trial-2106')
   await startMandatedTrial(page, email)
 
@@ -114,12 +124,19 @@ test('normal trial keeps today\'s copy; a held trial shows the confirm banner; ?
   await expect(page.getByTestId('trial-banner-auto')).toBeVisible({ timeout: 30_000 })
   await expect(page.getByTestId('trial-banner-confirm')).toHaveCount(0)
 
+  // The mail's link on a trial that is NOT held starts nothing: the param is consumed, a note is shown.
+  let strayPayNow = 0
+  page.on('request', (r) => { if (r.url().includes('/api/v1/billing/trial/pay-now') && r.method() === 'POST') strayPayNow++ })
+  await page.goto('/settings/billing?confirm_payment=trial')
+  await expect(page.getByTestId('billing-confirm-note')).toBeVisible({ timeout: 30_000 })
+  await expect.poll(() => new URL(page.url()).searchParams.get('confirm_payment')).toBeNull()
+  expect(strayPayNow).toBe(0)
+  await page.reload()
+  await expect(page.getByTestId('billing-trial-auto')).toBeVisible({ timeout: 30_000 })
+  expect(strayPayNow).toBe(0)
+
   // ── 2. Seed the hold exactly as the server leaves it after a 3-D Secure trial-end decline. ──
-  sql(`WITH s AS (SELECT id FROM subscriptions WHERE user_id = (SELECT id FROM users WHERE email = '${email}') ORDER BY created_at DESC LIMIT 1),
-            u AS (UPDATE subscriptions SET trial_ends_at = NOW() + INTERVAL '3 days', current_period_end = NOW() + INTERVAL '3 days'
-                  WHERE id = (SELECT id FROM s))
-       INSERT INTO billing_jobs (job_type, idempotency_key, payload, max_attempts, next_run_at)
-       SELECT 'trial_confirm_payment_lapse', 'trial-confirm-payment-lapse-' || s.id::text, '{}'::jsonb, 5, NOW() + INTERVAL '3 days' FROM s;`)
+  seedHold(email)
   sub = await subscription(page)
   expect(sub.status).toBe('trialing')
   expect(sub.trial_auto_converts).toBe(true) // the hold does NOT change it (server review P1-1)
@@ -136,6 +153,15 @@ test('normal trial keeps today\'s copy; a held trial shows the confirm banner; ?
   await expect(page.getByTestId('billing-trial-auto')).toHaveCount(0)
   await expect(page.getByText(/charged automatically/i)).toHaveCount(0)
   await expect(page.getByTestId('billing-trial-confirm-cta')).toBeEnabled()
+  // ONE pay-now action (the capped-trial card's own button is hidden while held) and a cancel control.
+  await expect(page.getByTestId('billing-trial-confirm-cta')).toHaveCount(1)
+  await expect(page.getByTestId('pay-now-button')).toHaveCount(0)
+  await expect(page.getByTestId('billing-trial-cancel')).toBeVisible()
+  // Every hold-related date is the same Amsterdam day, in the same en-GB form (viewer is UTC+14).
+  const copy = (await page.getByTestId('billing-trial-confirm-copy').textContent()) ?? ''
+  const day = /Confirm by (\d{1,2} \w{3} \d{4}), or/.exec(copy)?.[1]
+  expect(day, copy).toBeTruthy()
+  await expect(page.getByText(new RegExp(`Trial ends\\s*${day}`))).toBeVisible()
   await shot(page, '2106-held-billing-1440')
   // Narrow: load fresh at 390 (resizing a loaded page leaves the mobile nav drawer open over the card).
   await page.setViewportSize({ width: 390, height: 844 })
@@ -154,7 +180,37 @@ test('normal trial keeps today\'s copy; a held trial shows the confirm banner; ?
   await expect(page.getByTestId('trial-banner-auto')).toHaveCount(0)
   await shot(page, '2106-held-shell-1440')
 
-  // ── 4. The held-trial mail's link: ?confirm_payment=trial starts pay-now. ──
+  // ── 3b. The shell banner's button, clicked ON the billing page, starts pay-now (same route). ──
+  await page.goto('/settings/billing')
+  await dismissOverlays(page)
+  await expect(page.getByTestId('billing-trial-confirm')).toBeVisible({ timeout: 30_000 })
+  await shot(page, '2106-shell-banner-on-billing-1440')
+  let payNowPosts = 0
+  page.on('request', (r) => { if (r.url().includes('/api/v1/billing/trial/pay-now') && r.method() === 'POST') payNowPosts++ })
+  await page.getByTestId('trial-banner-confirm-cta').click()
+  await page.waitForURL(/\/dev\/mock-mollie\/checkout\//, { timeout: 15_000 })
+  expect(payNowPosts).toBe(1)
+  // Leave the checkout unpaid: back on billing the param is gone, and a reload starts nothing.
+  await page.goto('/settings/billing')
+  await expect(page.getByTestId('billing-trial-confirm')).toBeVisible({ timeout: 30_000 })
+  expect(new URL(page.url()).searchParams.get('confirm_payment')).toBeNull()
+  await page.reload()
+  await expect(page.getByTestId('billing-trial-confirm')).toBeVisible({ timeout: 30_000 })
+  expect(payNowPosts).toBe(1)
+
+})
+
+// A second account: the mail's link pays a held trial (kept apart so the first test's abandoned
+// checkout cannot leave a cached 'open' payment status in front of this one's poll).
+test('the held-trial mail link (/billing?confirm_payment=trial) starts pay-now and the return shows the result', async ({ page }) => {
+  const email = uniqueEmail('trial-2106-mail')
+  await startMandatedTrial(page, email)
+  seedHold(email)
+  expect(typeof (await subscription(page)).confirm_payment_by).toBe('string')
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await dismissOverlays(page)
+
+  // The held-trial mail's link: ?confirm_payment=trial starts pay-now.
   const payNow = page.waitForResponse((r) => r.url().includes('/api/v1/billing/trial/pay-now') && r.request().method() === 'POST')
   await page.goto('/billing?confirm_payment=trial') // the mail's path; redirects to /settings/billing
   const res = await payNow

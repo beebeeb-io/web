@@ -24,12 +24,16 @@
  * Pure so it is unit-testable without React.
  */
 
+import { chargesAutomatically, confirmPaymentBy } from './confirm-payment'
+
 export type BillingCycle = 'monthly' | 'yearly'
 
 /** The subscription fields this module's decisions are driven by. */
 export interface CycleSwitchSubscription {
   status?: string | null
   trial_auto_converts?: boolean | null
+  /** Task 2106: set while the trial is held for a 3-D Secure confirmation (see confirm-payment.ts). */
+  confirm_payment_by?: string | null
   trial_ends_at?: string | null
   current_period_end?: string | null
 }
@@ -41,7 +45,22 @@ export function isTrialing(status: string | null | undefined): boolean {
 
 /** Case (a) — a trialing row that already holds a Mollie mandate. */
 export function isMandatedTrial(sub: CycleSwitchSubscription | null | undefined): boolean {
-  return isTrialing(sub?.status) && sub?.trial_auto_converts === true
+  return chargesAutomatically(sub)
+}
+
+/** Task 2106 — a trial held for the bank's confirmation: nothing is charged by itself. */
+export function isHeldTrial(sub: CycleSwitchSubscription | null | undefined): boolean {
+  return isTrialing(sub?.status) && confirmPaymentBy(sub) !== null
+}
+
+/** Held trial — the honest "what happens next" line for a cycle switch. */
+export function heldTrialCycleSwitchNote(trialEndLabel: string): string {
+  return `Nothing is charged today. Your trial still ends on ${trialEndLabel} unless you confirm your first payment.`
+}
+
+/** Held trial — toast description after a successful cycle switch. */
+export function heldTrialCycleSwitchToast(trialEndLabel: string): string {
+  return `Nothing was charged. Your trial still ends on ${trialEndLabel} unless you confirm your first payment.`
 }
 
 /**
@@ -129,6 +148,7 @@ export function trialCycleSwitchNoteFor(
   newPriceLabel: string,
 ): string {
   if (isCancelledTrial(sub)) return trialCancelledSwitchNote()
+  if (isHeldTrial(sub)) return heldTrialCycleSwitchNote(trialEndLabel)
   if (isMandatedTrial(sub)) return mandatedTrialCycleSwitchNote(target, newPriceLabel, trialEndLabel)
   return trialCycleSwitchNote(target, trialEndLabel)
 }
@@ -141,6 +161,7 @@ export function trialCycleSwitchToastFor(
   newPriceLabel: string,
 ): string {
   if (isCancelledTrial(sub)) return trialCancelledSwitchNote()
+  if (isHeldTrial(sub)) return heldTrialCycleSwitchToast(trialEndLabel)
   if (isMandatedTrial(sub)) return mandatedTrialCycleSwitchToast(newPriceLabel, trialEndLabel)
   return trialCycleSwitchToast(target, trialEndLabel)
 }

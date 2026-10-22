@@ -50,6 +50,8 @@ export interface BillingPeriodFields {
   data_deletion_at?: string | null
 }
 
+import { chargesAutomatically } from './confirm-payment'
+
 export type BillingPeriodLabel = 'Renews' | 'Trial ends' | 'Trial · first charge on' | 'Access until'
 
 export interface BillingPeriodLine {
@@ -68,11 +70,8 @@ export function billingPeriodLine(sub: BillingPeriodFields | null | undefined): 
   if (status === 'trialing') {
     const dateIso = sub.trial_ends_at ?? sub.current_period_end ?? null
     if (!dateIso) return null
-    // Task 2106 — a held trial does not charge by itself; it ends unless the customer confirms.
-    if (typeof sub.confirm_payment_by === 'string' && sub.confirm_payment_by.length > 0) {
-      return { label: 'Trial ends', dateIso }
-    }
-    return sub.trial_auto_converts === true
+    // Task 2106 — a held trial does not charge by itself (chargesAutomatically is false for it).
+    return chargesAutomatically(sub)
       ? { label: 'Trial · first charge on', dateIso }
       : { label: 'Trial ends', dateIso }
   }

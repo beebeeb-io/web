@@ -140,11 +140,21 @@ export function isLocalHttpUrl(url: string): boolean {
  * ever followed.
  */
 export function routePayNowResult(result: PayNowPayResult, opts: { allowLocalHttp?: boolean } = {}): PayNowRouting {
-  const url = result.checkout_url
-  if (typeof url === 'string' && (url.startsWith('https://') || (opts.allowLocalHttp === true && isLocalHttpUrl(url)))) {
+  const url = safeCheckoutUrl(result.checkout_url, opts)
+  if (url) {
     return { kind: 'redirect', url, paymentId: result.payment_id }
   }
   return { kind: 'inline', state: stateAfterPayNowResult(result) }
+}
+
+/**
+ * The one guard every hosted-checkout redirect goes through (pay-now, pay-overdue): https, or
+ * (only when the caller opts in for a dev build) a loopback http URL. Anything else is null.
+ */
+export function safeCheckoutUrl(url: string | null | undefined, opts: { allowLocalHttp?: boolean } = {}): string | null {
+  if (typeof url !== 'string') return null
+  if (url.startsWith('https://')) return url
+  return opts.allowLocalHttp === true && isLocalHttpUrl(url) ? url : null
 }
 
 export type PayNowReturnKind = 'returned' | 'canceled'

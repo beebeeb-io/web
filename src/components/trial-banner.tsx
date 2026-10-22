@@ -48,6 +48,7 @@ import { PAID_CHECKOUT_PATH } from '../lib/account-state'
 import { NoCardTrialStatusCard } from './no-card-trial'
 import {
   confirmPaymentBy,
+  chargesAutomatically,
   confirmPaymentBannerCopy,
   CONFIRM_PAYMENT_CTA,
   CONFIRM_PAYMENT_TRIAL_PATH,
@@ -95,7 +96,7 @@ export function TrialBanner() {
         className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 bg-paper-2 border-b border-line text-[12.5px] text-ink"
       >
         <Icon name="clock" size={12} className="text-amber-deep shrink-0" />
-        <span className="flex-1 min-w-[16rem] text-ink-2">{confirmPaymentBannerCopy(heldUntil, undefined)}</span>
+        <span className="flex-1 min-w-[16rem] text-ink-2">{confirmPaymentBannerCopy(heldUntil)}</span>
         <Link
           to={CONFIRM_PAYMENT_TRIAL_PATH}
           data-testid="trial-banner-confirm-cta"
@@ -108,7 +109,7 @@ export function TrialBanner() {
   }
 
   // Task 1037 — mandate already captured: it converts on its own.
-  if (sub.trial_auto_converts === true) {
+  if (chargesAutomatically(sub)) {
     const amount = trialRenewalAmount(sub, planDetails.plan)
     const cycle = sub.billing_cycle === 'yearly' ? 'yearly' : 'monthly'
     return (

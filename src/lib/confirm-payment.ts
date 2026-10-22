@@ -35,23 +35,37 @@ export function confirmPaymentBy(sub: ConfirmPaymentFields | null | undefined): 
 }
 
 /**
- * The hold ends at 23:59:59 Europe/Amsterdam on the stated day (and the mail
- * names that day), so the date is shown on that clock: in the viewer's own
- * timezone the same instant could read as the next day and contradict the mail.
- * The language and number format follow the viewer's locale.
+ * ONE formatter for every date that belongs to a hold (the banner, the period line, the
+ * cycle-switch copy, the cancel copy). The hold ends at 23:59:59 Europe/Amsterdam on the stated
+ * day and the mail names that day, so it is shown on that clock: in the viewer's own timezone the
+ * same instant can read as the next day. The format is en-GB short ("25 Oct 2026"), exactly what
+ * the rest of the billing page and the mail use.
  */
-export function formatConfirmDate(iso: string, locale?: string | string[]): string {
-  return new Date(iso).toLocaleDateString(locale, {
+export function formatConfirmDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-GB', {
     day: 'numeric',
-    month: 'long',
+    month: 'short',
     year: 'numeric',
     timeZone: 'Europe/Amsterdam',
   })
 }
 
 /** The banner sentence. Honest and plain: what the bank asked, by when, what happens otherwise. */
-export function confirmPaymentBannerCopy(iso: string, locale?: string | string[]): string {
-  return `Your bank asks you to confirm your first payment. Confirm by ${formatConfirmDate(iso, locale)}, or your trial ends then.`
+export function confirmPaymentBannerCopy(iso: string): string {
+  return `Your bank asks you to confirm your first payment. Confirm by ${formatConfirmDate(iso)}, or your trial ends then.`
+}
+
+export interface ChargesAutomaticallyFields extends ConfirmPaymentFields {
+  trial_auto_converts?: boolean | null
+}
+
+/**
+ * The ONE predicate behind every "charged automatically" / "your first charge is on" promise:
+ * a mandated trial that is NOT held. A held trial keeps `trial_auto_converts: true` but does not
+ * charge by itself; it ends unless the customer confirms the payment.
+ */
+export function chargesAutomatically(sub: ChargesAutomaticallyFields | null | undefined): boolean {
+  return !!sub && sub.status === 'trialing' && sub.trial_auto_converts === true && confirmPaymentBy(sub) === null
 }
 
 /** The reassurance that goes with it: nothing is wrong with the card. */

@@ -7,8 +7,11 @@ import {
   confirmPaymentBannerCopy,
   confirmPaymentIntent,
   formatConfirmDate,
+  chargesAutomatically,
   CONFIRM_PAYMENT_TRIAL_PATH,
 } from '../src/lib/confirm-payment'
+import { sanitizeRedirect } from '../src/lib/safe-redirect'
+import { trialCycleSwitchNoteFor, trialCycleSwitchToastFor } from '../src/lib/cycle-switch-copy'
 import { billingPeriodLine } from '../src/lib/billing-period-line'
 import { routePayNowResult } from '../src/lib/trial-pay-now'
 import { trialAutoConvertCopy } from '../src/lib/trial-checkout'
@@ -31,17 +34,79 @@ describe('confirmPaymentBy', () => {
 
 describe('confirmPaymentBannerCopy', () => {
   test('says what the bank asks, by when, and never "charged automatically"', () => {
-    const copy = confirmPaymentBannerCopy('2026-10-25T22:59:59Z', 'en-GB')
-    expect(copy).toBe('Your bank asks you to confirm your first payment. Confirm by 25 October 2026, or your trial ends then.')
+    const copy = confirmPaymentBannerCopy('2026-10-25T22:59:59Z')
+    expect(copy).toBe('Your bank asks you to confirm your first payment. Confirm by 25 Oct 2026, or your trial ends then.')
     expect(copy.toLowerCase()).not.toContain('charged automatically')
-  })
-  test('the date follows the viewer locale and the Amsterdam day', () => {
-    expect(formatConfirmDate('2026-10-25T22:59:59Z', 'nl-NL')).toBe('25 oktober 2026')
-    // 22:59:59Z is already the next day in a UTC+11 viewer's zone; the mail names 25 Oct.
-    expect(formatConfirmDate('2026-10-25T22:59:59Z', 'en-GB')).toContain('25')
   })
   test('the normal mandated-trial copy is unchanged', () => {
     expect(trialAutoConvertCopy('2026-10-13T00:00:00Z', 4.99, 'monthly')).toContain('charged automatically')
+  })
+})
+
+describe('formatConfirmDate: the Amsterdam day, en-GB like the rest of the page and the mail', () => {
+  test('23:59:59 Amsterdam in summer (CEST) and winter (CET) is that same day', () => {
+    expect(formatConfirmDate('2026-07-14T21:59:59Z')).toBe('14 Jul 2026') // CEST, UTC+2
+    expect(formatConfirmDate('2026-12-14T22:59:59Z')).toBe('14 Dec 2026') // CET, UTC+1
+  })
+  test('the DST end day 2026-10-25 (clocks back at 03:00): 23:59:59 is 22:59:59Z', () => {
+    expect(formatConfirmDate('2026-10-25T22:59:59Z')).toBe('25 Oct 2026')
+    // one hour earlier is 22:59:59 Amsterdam, still the 25th; one second later is the 26th
+    expect(formatConfirmDate('2026-10-25T21:59:59Z')).toBe('25 Oct 2026')
+    expect(formatConfirmDate('2026-10-25T23:00:00Z')).toBe('26 Oct 2026')
+  })
+  test('the viewer timezone does not move the day (run under three TZ values)', () => {
+    for (const tz of ['Pacific/Kiritimati', 'America/Los_Angeles', 'UTC']) {
+      const r = Bun.spawnSync({
+        cmd: ['bun', '-e', "import { formatConfirmDate } from './src/lib/confirm-payment'; console.log(formatConfirmDate('2026-10-25T22:59:59Z'))"],
+        env: { ...process.env, TZ: tz },
+        cwd: `${import.meta.dir}/..`,
+      })
+      expect([tz, r.stdout.toString().trim()]).toEqual([tz, '25 Oct 2026'])
+    }
+  })
+})
+
+describe('chargesAutomatically: one predicate for every automatic-charge promise', () => {
+  const mandated = { status: 'trialing', trial_auto_converts: true }
+  test('a mandated trial charges automatically; held, no-card, and non-trial rows do not', () => {
+    expect(chargesAutomatically({ ...mandated, confirm_payment_by: null })).toBe(true)
+    expect(chargesAutomatically({ ...mandated, confirm_payment_by: HELD })).toBe(false)
+    expect(chargesAutomatically({ status: 'trialing', trial_auto_converts: false })).toBe(false)
+    expect(chargesAutomatically({ status: 'active', trial_auto_converts: true })).toBe(false)
+    expect(chargesAutomatically(null)).toBe(false)
+  })
+})
+
+describe('the cycle-switch copy for a held trial', () => {
+  const held = { status: 'trialing', trial_auto_converts: true, confirm_payment_by: HELD }
+  const normal = { status: 'trialing', trial_auto_converts: true, confirm_payment_by: null }
+  test('a held trial promises no first charge', () => {
+    const note = trialCycleSwitchNoteFor(held, 'yearly', '25 Oct 2026', 'EUR 39.90/year')
+    const toast = trialCycleSwitchToastFor(held, 'yearly', '25 Oct 2026', 'EUR 39.90/year')
+    for (const t of [note, toast]) {
+      expect(t.toLowerCase()).not.toContain('first charge')
+      expect(t).toContain('25 Oct 2026')
+      expect(t).toContain('confirm')
+    }
+  })
+  test('a normal mandated trial keeps its copy', () => {
+    expect(trialCycleSwitchNoteFor(normal, 'yearly', '25 Oct 2026', 'EUR 39.90/year')).toContain('Your first charge of EUR 39.90/year is on 25 Oct 2026')
+    expect(trialCycleSwitchToastFor(normal, 'yearly', '25 Oct 2026', 'EUR 39.90/year')).toContain('first charge')
+  })
+})
+
+describe('sign-in bounce keeps exactly the confirm_payment intent on /settings/billing', () => {
+  test('1 and trial survive', () => {
+    expect(sanitizeRedirect('/settings/billing?confirm_payment=1')).toBe('/settings/billing?confirm_payment=1')
+    expect(sanitizeRedirect('/settings/billing?confirm_payment=trial')).toBe('/settings/billing?confirm_payment=trial')
+  })
+  test('anything else is stripped, including a forged checkout-return flag riding along', () => {
+    expect(sanitizeRedirect('/settings/billing?confirm_payment=2')).toBe('/settings/billing')
+    expect(sanitizeRedirect('/settings/billing?confirm_payment=')).toBe('/settings/billing')
+    expect(sanitizeRedirect('/settings/billing?confirm_payment=1&success=true')).toBe('/settings/billing')
+    expect(sanitizeRedirect('/settings/billing?success=true&confirm_payment=1')).toBe('/settings/billing')
+    expect(sanitizeRedirect('/settings/billing?confirm_payment=trial%0a')).toBe('/settings/billing')
+    expect(sanitizeRedirect('/settings/privacy?confirm_payment=1')).toBe('/settings/privacy?confirm_payment=1') // other paths unchanged
   })
 })
 
