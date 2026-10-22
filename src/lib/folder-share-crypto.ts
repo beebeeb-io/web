@@ -9,7 +9,7 @@ import {
   toBase64,
   zeroize,
 } from './crypto'
-import { listFilesPage, getSentInvites, FILE_LIST_HARD_CAP } from './api'
+import { listFilesPage, getSentInvites, getFolderKeys, FILE_LIST_HARD_CAP } from './api'
 import type { ShareInvite } from './api'
 
 export async function generateFolderKey(): Promise<Uint8Array> {
@@ -25,13 +25,19 @@ export async function encryptFolderKeyForRecipient(
   folderKey: Uint8Array,
 ): Promise<Uint8Array> {
   const myPrivate = await deriveX25519Private(masterKey)
-  const sharedSecret = await x25519SharedSecret(myPrivate, recipientPublicKey)
-  const fileIdBytes = new TextEncoder().encode(folderId)
-  const shareKey = await deriveShareKey(sharedSecret, fileIdBytes)
-  const result = await encryptChunk(shareKey, folderKey)
-  zeroize(myPrivate)
-  zeroize(sharedSecret)
-  zeroize(shareKey)
+  let sharedSecret: Uint8Array | undefined
+  let shareKey: Uint8Array | undefined
+  let result: Awaited<ReturnType<typeof encryptChunk>>
+  try {
+    sharedSecret = await x25519SharedSecret(myPrivate, recipientPublicKey)
+    const fileIdBytes = new TextEncoder().encode(folderId)
+    shareKey = await deriveShareKey(sharedSecret, fileIdBytes)
+    result = await encryptChunk(shareKey, folderKey)
+  } finally {
+    zeroize(myPrivate)
+    if (sharedSecret) zeroize(sharedSecret)
+    if (shareKey) zeroize(shareKey)
+  }
   const combined = new Uint8Array(result.nonce.length + result.ciphertext.length)
   combined.set(result.nonce, 0)
   combined.set(result.ciphertext, result.nonce.length)
@@ -84,49 +90,131 @@ export async function decryptOwnerFolderKey(
   return folderKey
 }
 
-/** Owner-key blobs for this folder from the owner's sent invites, newest first (task 2133). */
-export function ownerFolderKeyBlobs(invites: ShareInvite[], folderId: string): string[] {
+const ACTIVE_STATUSES = new Set(['invited', 'claimed', 'approved'])
+
+/** Active folder invites of this folder: invited/claimed/approved and not past expires_at, newest first. */
+export function activeFolderInvites(
+  invites: ShareInvite[],
+  folderId: string,
+  now: number = Date.now(),
+): ShareInvite[] {
   return invites
-    .filter((i) => i.is_folder_share && i.file_id === folderId && !!i.encrypted_owner_folder_key)
+    .filter((i) => i.is_folder_share && i.file_id === folderId && ACTIVE_STATUSES.has(i.status))
+    .filter((i) => !i.expires_at || new Date(i.expires_at).getTime() > now)
     .sort((x, y) => (x.created_at < y.created_at ? 1 : x.created_at > y.created_at ? -1 : 0))
-    .map((i) => i.encrypted_owner_folder_key as string)
 }
 
+/** Owner-key blobs of the ACTIVE invites for this folder, newest first, de-duplicated (task 2133). */
+export function ownerFolderKeyBlobs(
+  invites: ShareInvite[],
+  folderId: string,
+  now: number = Date.now(),
+): string[] {
+  const blobs = activeFolderInvites(invites, folderId, now)
+    .map((i) => i.encrypted_owner_folder_key)
+    .filter((b): b is string => !!b)
+  return [...new Set(blobs)]
+}
+
+export interface ExistingFolderKeyPorts {
+  getSentInvites: () => Promise<ShareInvite[]>
+  getFolderKeys: (inviteId: string) => Promise<{ file_id: string; encrypted_file_key: string }[]>
+  deriveFileKey: typeof deriveFileKey
+  decryptChunk: typeof decryptChunk
+  fromBase64: typeof fromBase64
+  decryptChildFileKey: (folderKey: Uint8Array, encryptedFileKeyB64: string) => Promise<Uint8Array>
+  zeroize: typeof zeroize
+  now: () => number
+}
+
+export const REAL_EXISTING_FOLDER_KEY_PORTS: ExistingFolderKeyPorts = {
+  getSentInvites,
+  getFolderKeys,
+  deriveFileKey,
+  decryptChunk,
+  fromBase64,
+  decryptChildFileKey: (k, b) => decryptChildFileKey(k, b),
+  zeroize,
+  now: () => Date.now(),
+}
+
+// Must stay <= 80 characters so userFriendlyError shows it (SHORT_MESSAGE_MAX).
+export const FOLDER_KEY_UNVERIFIED =
+  "This folder's sharing key couldn't be checked. Nothing was sent."
+
 /**
- * Task 2133: the folder's key is minted ONCE, at its first invite, and every
- * later invite reuses it. The server keeps one wrapped child key per
- * (folder, file) and upserts on every invite, so a fresh key per invite
- * re-wraps every child under a key the earlier members never received and
- * locks them out.
+ * Task 2133: the folder's key is minted at its first invite, and every later
+ * invite while the folder has an active invite reuses it. The server keeps
+ * one wrapped child key per (folder, file) and upserts on every invite, so a
+ * fresh key per invite re-wraps every child under a key the earlier members
+ * never received and locks them out.
  *
- * The owner's own copy of that key travels with every folder invite
- * (`encrypted_owner_folder_key`, sealed under the owner's master key) and
- * `GET /shares/invites/sent` returns it. Newest first: any copy of this
- * folder's key is the same key.
+ * The rule: reuse the folder's key (from ACTIVE invites: invited/claimed/
+ * approved, not past expires_at, verified against a stored child wrap); mint
+ * only when the folder has no active invite. Denied/expired rows never supply
+ * a key. (Rotation on revoke is a separate design decision, not done here.)
  *
- * Returns the base64 blob to send again verbatim, plus the unwrapped key, or
- * null when this owner has never invited anyone to the folder (the caller
- * then mints the key). A copy that exists but does NOT open throws: minting a
- * new key then is exactly the lock-out this guards against.
+ * The owner's own copy of the key travels with every folder invite
+ * (`encrypted_owner_folder_key`, sealed under the owner's master key).
+ * Candidates are tried newest first; the first that opens AND opens a stored
+ * child wrap (GET /shares/invites/:id/folder-keys, the way
+ * resolveRecipientFolderKey authenticates; that endpoint serves approved
+ * invites only) wins. If there is no approved invite, or no stored wraps at
+ * all, there is nothing to verify against, so the newest openable key is
+ * accepted.
+ *
+ * Returns the blob to send again verbatim plus the unwrapped key, or null
+ * when the folder has no active invite (the caller mints). If active
+ * candidates exist and none verifies, throws: minting then would lock out
+ * the members who hold the key that opens the stored wraps. The caller owns
+ * (and must zeroize) the returned key.
  */
 export async function findExistingFolderKey(
   masterKey: Uint8Array,
   folderId: string,
-  invites?: ShareInvite[],
+  ports: ExistingFolderKeyPorts = REAL_EXISTING_FOLDER_KEY_PORTS,
 ): Promise<{ folderKey: Uint8Array; encryptedOwnerFolderKeyB64: string } | null> {
-  const blobs = ownerFolderKeyBlobs(invites ?? (await getSentInvites()), folderId)
+  const invites = await ports.getSentInvites()
+  const now = ports.now()
+  const blobs = ownerFolderKeyBlobs(invites, folderId, now)
   if (blobs.length === 0) return null
-  for (const b64 of blobs) {
-    try {
-      const folderKey = await decryptOwnerFolderKey(masterKey, folderId, fromBase64(b64))
-      return { folderKey, encryptedOwnerFolderKeyB64: b64 }
-    } catch {
-      // try the next copy
-    }
+
+  // One verifier: a stored child wrap. The wraps belong to the folder (the
+  // server returns the same rows for every invite of it) and the endpoint only
+  // serves APPROVED invites (400 otherwise), so ask the newest approved one,
+  // once. With no approved invite there is no verifier: the newest openable
+  // key is accepted (nothing can be checked, and every holder is pending).
+  const approved = activeFolderInvites(invites, folderId, now).find((i) => i.status === 'approved')
+  let verifier: string | undefined
+  if (approved) {
+    const keys = await ports.getFolderKeys(approved.id)
+    verifier = keys.find((x) => x.encrypted_file_key)?.encrypted_file_key
   }
-  throw new Error(
-    "This folder is already shared, but we couldn't open its key, so a new invite would lock out the people who have it. Nothing was sent.",
-  )
+
+  const wrappingKey = await ports.deriveFileKey(masterKey, folderId)
+  try {
+    for (const b64 of blobs) {
+      let folderKey: Uint8Array
+      try {
+        const blob = ports.fromBase64(b64)
+        folderKey = await ports.decryptChunk(wrappingKey, blob.slice(0, 12), blob.slice(12))
+      } catch {
+        continue
+      }
+      if (verifier) {
+        try {
+          ports.zeroize(await ports.decryptChildFileKey(folderKey, verifier))
+        } catch {
+          ports.zeroize(folderKey)
+          continue
+        }
+      }
+      return { folderKey, encryptedOwnerFolderKeyB64: b64 }
+    }
+  } finally {
+    ports.zeroize(wrappingKey)
+  }
+  throw new Error(FOLDER_KEY_UNVERIFIED)
 }
 
 export async function encryptChildFileKey(
@@ -162,8 +250,12 @@ export async function encryptAllChildrenKeys(
   for (let i = 0; i < allChildren.length; i++) {
     const childId = allChildren[i]
     const fileKey = await deriveFileKey(masterKey, childId)
-    const encrypted = await encryptChildFileKey(folderKey, fileKey)
-    zeroize(fileKey)
+    let encrypted: string
+    try {
+      encrypted = await encryptChildFileKey(folderKey, fileKey)
+    } finally {
+      zeroize(fileKey)
+    }
     result.push({ file_id: childId, encrypted_file_key: encrypted })
     onProgress?.(i + 1, allChildren.length)
   }

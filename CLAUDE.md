@@ -280,7 +280,7 @@ Core chunk format v2 (core#28) binds every content frame to its file id, its upl
 
 ## Critical prop chains
 
-When opening the ShareDialog, ALWAYS pass `isFolder={file.is_folder}`. Folder sharing generates a folder_key and encrypts all children — without this prop, folder shares silently create regular file shares that don't work.
+When opening the ShareDialog, ALWAYS pass `isFolder={file.is_folder}`. Folder sharing encrypts all children under the folder's key: reuse the key held by the folder's active invites (invited/claimed/approved, unexpired, verified against a stored child wrap via `findExistingFolderKey`), mint a new one only when the folder has no active invite (task 2133) — without this prop, folder shares silently create regular file shares that don't work.
 
 For full component reference: use `/beebeeb:components` skill.
 

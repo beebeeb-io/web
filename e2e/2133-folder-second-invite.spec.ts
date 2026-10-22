@@ -98,20 +98,18 @@ async function expectDecryptsAndDownloads(
   await dismissOverlays(page)
   const main = page.locator('main')
   await page.screenshot({ path: path.join(EVIDENCE, `${shot}.png`) })
-  await expect(page.getByTestId('shared-folder-key-missing'), `${shot}: "This folder can't be opened" (folder key mismatch)`).toHaveCount(0, {
-    timeout: 30_000,
-  })
-  await expect(main.getByText('Encrypted file'), `${shot}: child shown as "Encrypted file" (folder key mismatch)`).toHaveCount(0, {
-    timeout: 30_000,
-  })
+  // Wait for the page's LOADED state first (the decrypted child name), so the
+  // absence checks below cannot pass merely because nothing has rendered yet.
   await expect(main.getByText(childName, { exact: true }), `${shot}: decrypted child name not shown`).toBeVisible({
     timeout: 30_000,
   })
+  await expect(page.getByTestId('shared-folder-key-missing'), `${shot}: "This folder can't be opened" (folder key mismatch)`).toHaveCount(0)
+  await expect(main.getByText('Encrypted file'), `${shot}: child shown as "Encrypted file" (folder key mismatch)`).toHaveCount(0)
   const row = main.locator('.group').filter({ hasText: childName }).first()
   await row.hover()
   const [download] = await Promise.all([
     page.waitForEvent('download', { timeout: 60_000 }),
-    row.getByRole('button').last().click(),
+    row.getByRole('button', { name: 'Download' }).click(),
   ])
   const saved = path.join(tmp, `dl-${shot}-${childName}`)
   await download.saveAs(saved)
