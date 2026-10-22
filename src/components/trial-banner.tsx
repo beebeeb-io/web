@@ -46,6 +46,13 @@ import { userFriendlyError } from '../lib/user-friendly-error'
 import { noCardTrialStatus, trialBillingRefusalCopy } from '../lib/no-card-trial'
 import { PAID_CHECKOUT_PATH } from '../lib/account-state'
 import { NoCardTrialStatusCard } from './no-card-trial'
+import {
+  confirmPaymentBy,
+  chargesAutomatically,
+  confirmPaymentBannerCopy,
+  CONFIRM_PAYMENT_CTA,
+  CONFIRM_PAYMENT_TRIAL_PATH,
+} from '../lib/confirm-payment'
 
 /** Whole days remaining until an RFC3339 instant (ceil; never negative). */
 function daysLeft(iso: string): number {
@@ -76,8 +83,33 @@ export function TrialBanner() {
   const remaining = daysLeft(sub.trial_ends_at)
   if (remaining <= 0) return null
 
+  // Task 2106 — the bank asked the customer to confirm the first payment (3-D Secure):
+  // the trial is held and does NOT charge by itself, although `trial_auto_converts` is
+  // still true. Never say "charged automatically" here; send them to billing, which
+  // starts the hosted checkout.
+  const heldUntil = confirmPaymentBy(sub)
+  if (heldUntil) {
+    return (
+      <div
+        role="status"
+        data-testid="trial-banner-confirm"
+        className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 bg-paper-2 border-b border-line text-[12.5px] text-ink"
+      >
+        <Icon name="clock" size={12} className="text-amber-deep shrink-0" />
+        <span className="flex-1 min-w-[16rem] text-ink-2">{confirmPaymentBannerCopy(heldUntil)}</span>
+        <Link
+          to={CONFIRM_PAYMENT_TRIAL_PATH}
+          data-testid="trial-banner-confirm-cta"
+          className="shrink-0 px-2.5 py-1 rounded bg-amber text-ink text-[12px] font-medium hover:brightness-105 transition-all"
+        >
+          {CONFIRM_PAYMENT_CTA}
+        </Link>
+      </div>
+    )
+  }
+
   // Task 1037 — mandate already captured: it converts on its own.
-  if (sub.trial_auto_converts === true) {
+  if (chargesAutomatically(sub)) {
     const amount = trialRenewalAmount(sub, planDetails.plan)
     const cycle = sub.billing_cycle === 'yearly' ? 'yearly' : 'monthly'
     return (

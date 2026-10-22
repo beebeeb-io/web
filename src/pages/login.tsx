@@ -68,12 +68,12 @@ export function Login() {
   const navigateAfterLogin = useCallback(() => {
     // 1. Explicit ?next= redirect (e.g. CLI device-auth) — allowlisted.
     const fromQuery = sanitizeRedirect(searchParams.get('next'))
-    if (fromQuery) return navigate(fromQuery)
+    if (fromQuery) return navigate(fromQuery, { replace: true })
     // 2. Resume a data-export captured when the session expired mid-export
     //    (GDPR Art. 20 resume, task 0720) — routed through the same allowlist.
-    if (consumePendingExport()) return navigate(sanitizeRedirect(DATA_EXPORT_ROUTE) ?? '/')
+    if (consumePendingExport()) return navigate(sanitizeRedirect(DATA_EXPORT_ROUTE) ?? '/', { replace: true })
     // 3. Default home.
-    navigate('/')
+    navigate('/', { replace: true })
   }, [navigate, searchParams])
 
   const handleDevSkip = useCallback(async () => {
