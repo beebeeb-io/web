@@ -24,6 +24,7 @@ import {
   expectedUserHeaders,
   registerOnTokenCleared,
   registerSessionExpiredHandler,
+  readErrorResponse,
   request,
   resolveSessionToken,
   setApiUrl,
@@ -704,11 +705,9 @@ export async function confirmAction(
   }
 
   if (!startRes.ok) {
-    const body = (await startRes
-      .json()
-      .catch(() => ({ error: 'Server returned an invalid response' }))) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(startRes)
     throw new ApiError(
-      (body.message ?? body.error ?? startRes.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       startRes.status,
     )
   }
@@ -756,11 +755,9 @@ export async function confirmAction(
     throw new IncorrectPasswordError()
   }
   if (!finishRes.ok) {
-    const body = (await finishRes
-      .json()
-      .catch(() => ({ error: 'Server returned an invalid response' }))) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(finishRes)
     throw new ApiError(
-      (body.message ?? body.error ?? finishRes.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       finishRes.status,
     )
   }
@@ -809,9 +806,9 @@ async function confirmActionPlaintext(
     throw new IncorrectPasswordError()
   }
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({ error: 'Server returned an invalid response' }))) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(res)
     throw new ApiError(
-      (body.message ?? body.error ?? res.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       res.status,
     )
   }
@@ -851,11 +848,9 @@ export async function confirmPasskey(
   })
 
   if (!startRes.ok) {
-    const body = (await startRes
-      .json()
-      .catch(() => ({ error: 'Server returned an invalid response' }))) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(startRes)
     throw new ApiError(
-      (body.message ?? body.error ?? startRes.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       startRes.status,
     )
   }
@@ -891,11 +886,9 @@ export async function confirmPasskey(
     throw new ApiError('Passkey confirmation failed', 401)
   }
   if (!finishRes.ok) {
-    const body = (await finishRes
-      .json()
-      .catch(() => ({ error: 'Server returned an invalid response' }))) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(finishRes)
     throw new ApiError(
-      (body.message ?? body.error ?? finishRes.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       finishRes.status,
     )
   }
@@ -1194,7 +1187,7 @@ async function uploadChunkRequest(
   }
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(res)
     // Carry the machine-readable `error` code (e.g. `object_budget_exceeded`,
     // `quota_exceeded`) through as ApiError.code so the upload error boundary
     // can branch on it. Chunk uploads use raw fetch(), so unlike the shared
@@ -1205,7 +1198,7 @@ async function uploadChunkRequest(
     // carries `is_trial_cap`/`limit_bytes`/`used_bytes` the same way a
     // request()-routed one does.
     throw new ApiError(
-      (body.message ?? body.error ?? res.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       res.status,
       code,
       body,
@@ -1726,9 +1719,9 @@ export async function getShare(
   const res = await fetch(`${API_URL}/api/v1/shares/${token}${qs ? `?${qs}` : ''}`)
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(res)
     throw new ApiError(
-      (body.message ?? body.error ?? res.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       res.status,
     )
   }
@@ -1788,9 +1781,9 @@ export async function verifySharePassphrase(
   })
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(res)
     throw new ApiError(
-      (body.message ?? body.error ?? res.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       res.status,
     )
   }
@@ -3557,9 +3550,9 @@ export async function getInvitePreview(
   // Public endpoint — no auth header needed
   const res = await fetch(`${API_URL}/api/v1/workspaces/invite-preview/${token}`)
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(res)
     throw new ApiError(
-      (body.message ?? body.error ?? res.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       res.status,
     )
   }
@@ -3797,9 +3790,9 @@ export async function reportShareLink(
   })
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(res)
     throw new ApiError(
-      (body.message ?? body.error ?? res.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       res.status,
     )
   }

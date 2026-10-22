@@ -47,5 +47,6 @@ export {
   IncorrectPasswordError,
   SessionTooOldForConfirmationError,
   parseErrorBody,
+  readErrorResponse,
 } from './errors'
 export * from '../types'
