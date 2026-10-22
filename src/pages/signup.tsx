@@ -147,6 +147,7 @@ export function Signup() {
           cycle={cycle}
           onPlanChange={choosePlan}
           onCycleChange={chooseCycle}
+          noCard
         />
         <div
           className="mt-2.5 flex items-start gap-2 rounded-md border border-line bg-paper-2 px-3 py-2.5"
