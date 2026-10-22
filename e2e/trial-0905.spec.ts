@@ -290,8 +290,9 @@ test.describe('0905 14-day free trial — web UI (UNIT C)', () => {
     // started a Pro trial regardless of label — the per-tier "Compare plans"
     // table is the precise entry point for other tiers.
     await expect(page.getByRole('button', { name: /Start 14-day Pro trial/i })).toBeVisible({ timeout: 10_000 })
-    // Task 1037: a trial now needs a payment mandate — the subtext is the
-    // shared trial terms line (trialTermsCopy), not "No card required".
+    // Task 2164: the subtext is trialTermsLine — the mandate line unless the account document
+    // offers the no-card trial (then "No card or iDEAL needed to start"). This spec's server has
+    // no onboarding offer, so the mandate line shows.
     await expect(page.getByText('14-day free trial. Card or iDEAL needed to start. No charge until day 15; cancel any time before.').first()).toBeVisible()
     await page.screenshot({ path: 'e2e/screenshots/0905-gate1-start-trial-cta.png', fullPage: true })
   })

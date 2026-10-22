@@ -49,7 +49,7 @@ test('site CTA /signup?plan=basic&cycle=yearly → plans first → /choose-plan 
   await expect(picker).toBeVisible({ timeout: 20_000 })
   await expect(page.getByTestId('trial-plan-basic')).toHaveAttribute('aria-checked', 'true')
   await expect(page.getByTestId('trial-cycle-yearly')).toHaveAttribute('aria-checked', 'true')
-  await expect(page.getByTestId('trial-terms')).toContainText(/Card or iDEAL needed to start/)
+  await expect(page.getByTestId('trial-terms')).toContainText(/No card or iDEAL needed to start/)
   expect((await picker.boundingBox())!.y).toBeLessThan((await page.getByLabel(/email/i).boundingBox())!.y)
 
   await page.getByLabel(/email/i).fill(email)

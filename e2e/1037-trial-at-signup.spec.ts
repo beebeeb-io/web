@@ -204,7 +204,7 @@ test.describe('1037 — trial with a payment mandate at signup', () => {
     await expect(page.getByTestId('trial-cycle-yearly')).toHaveAttribute('aria-checked', 'true')
     await expect(page.getByTestId('trial-plan-pro')).toContainText('€109.90')
     await expect(page.getByTestId('trial-terms')).toHaveText(
-      '14-day free trial. Card or iDEAL needed to start. No charge until day 15; cancel any time before.',
+      '14-day free trial. No card or iDEAL needed to start.',
     )
     // The plans come BEFORE the email field.
     const pickerBox = await picker.boundingBox()

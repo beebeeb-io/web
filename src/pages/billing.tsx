@@ -98,7 +98,7 @@ import {
 } from '../lib/checkout-reconcile'
 import { resolveHasUsedTrial, isTrialEligible } from '../lib/trial-eligibility'
 import { parsePlanIntent, clearPlanIntent } from '../lib/plan-intent'
-import { choosePlanPath, trialAutoConvertCopy, trialRenewalAmount, trialTermsCopy } from '../lib/trial-checkout'
+import { choosePlanPath, trialAutoConvertCopy, trialRenewalAmount, trialTermsLine } from '../lib/trial-checkout'
 import { lapsedBannerCopy, lapsedHeading, resolveAccountState } from '../lib/account-state'
 import { billingPeriodLine } from '../lib/billing-period-line'
 import {
@@ -2807,7 +2807,7 @@ function openUpgrade(plan: string) {
             </div>
             {planIntentTrialEligible ? (
               <p className="text-sm text-ink-2 mb-4">
-                {trialTermsCopy(14)}
+                {trialTermsLine(14, { noCardOffered: trialOffer?.kind === 'available' })}
               </p>
             ) : (
               <p className="text-sm text-ink-2 mb-4">
@@ -3337,7 +3337,7 @@ function openUpgrade(plan: string) {
                 so an account that already used its trial never sees this. */}
             {effectivePlan === 'free' && sub?.status !== 'trialing' && !hasUsedTrial && (
               <p className="mt-2.5 text-[11.5px] text-ink-3">
-                {trialTermsCopy(14)}
+                {trialTermsLine(14, { noCardOffered: trialOffer?.kind === 'available' })}
               </p>
             )}
 

@@ -12,7 +12,7 @@ import {
   DEFAULT_TRIAL_PLAN,
   buildTrialPlanOptions,
   isTrialPlanSlug,
-  trialTermsCopy,
+  trialTermsLine,
   type TrialPlanSlug,
 } from '../lib/trial-checkout'
 import { TrialPlanPicker } from '../components/trial-plan-picker'
@@ -153,7 +153,7 @@ export function Signup() {
           data-testid="trial-terms"
         >
           <Icon name="clock" size={13} className="text-amber-deep shrink-0 mt-[2px]" />
-          <p className="text-[11.5px] text-ink-2 leading-relaxed">{trialTermsCopy(trialDays)}</p>
+          <p className="text-[11.5px] text-ink-2 leading-relaxed">{trialTermsLine(trialDays, { noCardOffered: true })}</p>
         </div>
 
         <div className="border-t border-line mt-4 mb-4" />
