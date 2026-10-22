@@ -29,11 +29,13 @@ export interface ConfirmPaymentFields {
  * `trialing` row with a parseable date counts: a stale field on any other
  * status is ignored.
  */
-export function confirmPaymentBy(sub: ConfirmPaymentFields | null | undefined): string | null {
+export function confirmPaymentBy(sub: ConfirmPaymentFields | null | undefined, now: number = Date.now()): string | null {
   if (!sub || sub.status !== 'trialing') return null
   const iso = sub.confirm_payment_by
   if (typeof iso !== 'string' || iso.length === 0) return null
-  return Number.isNaN(new Date(iso).getTime()) ? null : iso
+  const at = new Date(iso).getTime()
+  // A deadline already past is not a hold: the server lapses the trial at that instant.
+  return Number.isNaN(at) || at <= now ? null : iso
 }
 
 /**
@@ -50,6 +52,24 @@ export function formatConfirmDate(iso: string): string {
     year: 'numeric',
     timeZone: 'Europe/Amsterdam',
   })
+}
+
+/** True when the instant is 23:59:59 on some Amsterdam day: exactly where a hold ends. */
+function isAmsterdamDayEnd(iso: string): boolean {
+  const t = new Date(iso)
+  if (Number.isNaN(t.getTime())) return false
+  const clock = t.toLocaleTimeString('en-GB', { hour12: false, timeZone: 'Europe/Amsterdam' })
+  return clock === '23:59:59'
+}
+
+/**
+ * The label for a date on the billing page that may belong to a hold. While held, and also after
+ * the customer cancels the held trial (the server then drops `confirm_payment_by` but keeps the
+ * end-of-hold instant as the trial end), the date is the Amsterdam day the mail named. Any other
+ * date goes through the page's own formatter.
+ */
+export function holdDateLabel(iso: string | null, held: boolean, fallback: (iso: string | null) => string): string {
+  return iso && (held || isAmsterdamDayEnd(iso)) ? formatConfirmDate(iso) : fallback(iso)
 }
 
 /** The banner sentence. Honest and plain: what the bank asked, by when, what happens otherwise. */
@@ -70,7 +90,14 @@ export function chargesAutomatically(sub: ChargesAutomaticallyFields | null | un
   return !!sub && sub.status === 'trialing' && sub.trial_auto_converts === true && confirmPaymentBy(sub) === null
 }
 
-/** The reassurance that goes with it: nothing is wrong with the card. */
+/**
+ * Past-due banner for `?confirm_payment=1`. The mail link alone does not say WHY the payment
+ * failed (a bank asking for confirmation, or a plain decline), so this claims neither.
+ */
+export const CONFIRM_OVERDUE_COPY =
+  'Your last payment did not go through. Your bank may need you to confirm it yourself, which takes a minute. If it was declined, update your payment method instead.'
+
+/** The reassurance on a HELD trial, where the bank has asked for confirmation: nothing is wrong with the card. */
 export const CONFIRM_PAYMENT_REASSURANCE =
   'Nothing is wrong with your card. Some banks need you to approve a payment yourself, and that takes a minute.'
 
@@ -130,3 +157,4 @@ export function confirmIntentAction(
   }
   return { kind: 'ignore' }
 }
+

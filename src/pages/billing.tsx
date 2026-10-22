@@ -136,7 +136,17 @@ import {
   CONFIRM_PAYMENT_PARAM,
   CONFIRM_PAYMENT_REASSURANCE,
   CONFIRM_PAYMENT_CTA,
+  CONFIRM_OVERDUE_COPY,
+  holdDateLabel,
 } from '../lib/confirm-payment'
+import {
+  PAY_OVERDUE_RETURN_PARAM,
+  shouldHandlePayOverdueReturn,
+  payOverdueReturnDecision,
+  payOverdueReturnView,
+  type PayOverdueView,
+} from '../lib/pay-overdue-return'
+import { LiveNote } from '../components/live-note'
 
 /* ── Plan metadata (imported from plan-constants.ts) ──── */
 
@@ -391,6 +401,7 @@ export function Billing() {
   // Task 2092: the result of a customer-present pay-now checkout, shown after the
   // redirect back (`?trial_pay_now=returned|canceled`).
   const [payNowReturn, setPayNowReturn] = useState<PayNowReturnView | null>(null)
+  const [payOverdueReturn, setPayOverdueReturn] = useState<PayOverdueView | null>(null)
   useEffect(() => {
     return () => {
       payNowPollCancelledRef.current = true
@@ -945,7 +956,7 @@ export function Billing() {
   // Task 2106 — a trial held for the bank's confirmation. ONE date formatter for every date that
   // belongs to the hold (the Amsterdam day, en-GB), whichever surface shows it.
   const heldUntil = confirmPaymentBy(sub)
-  const trialDateLabel = (iso: string | null): string => (heldUntil && iso ? formatConfirmDate(iso) : formatDate(iso))
+  const trialDateLabel = (iso: string | null): string => holdDateLabel(iso, heldUntil !== null, formatDate)
 
   // Storage slider derived values
   // Task 1842: a no-card trial has no subscription, so there is no add-on to buy; the Manage
@@ -1171,6 +1182,11 @@ function openUpgrade(plan: string) {
       }
       const next = routed.state
       setPayNowState(next)
+      if (next.phase === 'error') {
+        // Task 2162: a refused checkout_url is an error, never "settled" + an "unlocked" toast.
+        showToast({ icon: 'x', title: 'Could not start the payment', description: next.message, danger: true })
+        return
+      }
       if (next.phase === 'pending') {
         payNowPollStartRef.current = Date.now()
         void pollPayNow(next.paymentId)
@@ -1326,6 +1342,58 @@ function openUpgrade(plan: string) {
       setPortalLoading(false)
     }
   }
+
+  // Task 2162: the return from the pay-overdue checkout (`?paid_overdue=true`). The server gives
+  // no payment id, so this polls the subscription (the webhook un-freezes the account), bounded like
+  // the pay-now return. The param is stripped up front, so a reload or Back never re-runs it, and
+  // nothing here starts a checkout.
+  const payOverdueReconcileCancelRef = useRef<(() => void) | null>(null)
+  function reconcilePayOverdue() {
+    payOverdueReconcileCancelRef.current?.()
+    setPayOverdueReturn(payOverdueReturnView('checking'))
+    let cancelled = false
+    payOverdueReconcileCancelRef.current = () => { cancelled = true }
+    const start = Date.now()
+    const tick = async () => {
+      if (cancelled) return
+      let latest: Awaited<ReturnType<typeof getSubscription>> | null = null
+      try {
+        latest = await getSubscription()
+      } catch {
+        // Transient failure: keep polling until the bound.
+      }
+      if (cancelled) return
+      const decision = payOverdueReturnDecision(latest, Date.now() - start)
+      if (decision === 'keep_polling') {
+        setTimeout(() => { void tick() }, PAY_NOW_POLL_INTERVAL_MS)
+        return
+      }
+      setPayOverdueReturn(payOverdueReturnView(decision))
+      if (decision === 'paid') {
+        setConfirmOverdueIntent(false)
+        window.dispatchEvent(new Event('beebeeb:plan-changed'))
+        refreshPlanDetails()
+        void loadData()
+      }
+    }
+    void tick()
+  }
+
+  useEffect(() => {
+    if (!shouldHandlePayOverdueReturn(searchParams.get(PAY_OVERDUE_RETURN_PARAM))) return
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev)
+        p.delete(PAY_OVERDUE_RETURN_PARAM)
+        return p
+      },
+      { replace: true },
+    )
+    reconcilePayOverdue()
+    return () => { payOverdueReconcileCancelRef.current?.() }
+    // Runs once per landing: the param is removed above, so re-runs find nothing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   /**
    * Task 1062 (WP-D, decision 5) — settle the dunning arrears in full via a
@@ -1940,11 +2008,33 @@ function openUpgrade(plan: string) {
       )}
 
       <div className="p-7 space-y-6">
+        {/* Task 2162: the live regions exist before their text changes, so a screen reader announces it. */}
+        <div role="status" aria-live="polite">
+        {payOverdueReturn && (
+          <div
+            data-testid="pay-overdue-return"
+            data-kind={payOverdueReturn.kind}
+            className="rounded-xl border border-line bg-paper-2 px-6 py-4 flex items-center gap-4 flex-wrap"
+          >
+            <span className="flex-1 min-w-[16rem] text-[13.5px] text-ink-2">{payOverdueReturn.message}</span>
+            {payOverdueReturn.retry && (
+              <BBButton size="sm" variant="amber" data-testid="pay-overdue-return-retry" disabled={payOverdueLoading} onClick={() => { setPayOverdueReturn(null); void handlePayOverdue() }}>
+                Try again
+              </BBButton>
+            )}
+            {payOverdueReturn.refresh && (
+              <BBButton size="sm" data-testid="pay-overdue-return-refresh" onClick={() => reconcilePayOverdue()}>
+                Refresh
+              </BBButton>
+            )}
+          </div>
+        )}
+        </div>
+        <div role="status" aria-live="polite">
         {payNowReturn && (
           <div
             data-testid="pay-now-return"
             data-kind={payNowReturn.kind}
-            role="status"
             className={`rounded-xl border px-6 py-4 flex items-center gap-4 ${
               payNowReturn.kind === 'paid' ? 'border-amber/60 bg-amber-bg' : 'border-line bg-paper-2'
             }`}
@@ -1966,6 +2056,7 @@ function openUpgrade(plan: string) {
             )}
           </div>
         )}
+        </div>
         {/* Checkout return — provisioning is async, so we poll before claiming
             success. Three states: finalizing (polling) → complete (confirmed) or
             unconfirmed (poll window elapsed; honest "still processing"). (0865) */}
@@ -2141,7 +2232,7 @@ function openUpgrade(plan: string) {
             {confirmOverdueIntent ? (
               <>
                 <span className="flex-1" data-testid="billing-past-due-confirm-copy">
-                  Your bank asks you to confirm this payment. Nothing is wrong with your card.
+                  {CONFIRM_OVERDUE_COPY}
                 </span>
                 <BBButton
                   size="sm"
@@ -2151,6 +2242,15 @@ function openUpgrade(plan: string) {
                   disabled={payOverdueLoading}
                 >
                   {payOverdueLoading ? 'Redirecting...' : CONFIRM_PAYMENT_CTA}
+                </BBButton>
+                <BBButton
+                  size="sm"
+                  variant="ghost"
+                  data-testid="billing-past-due-update-method"
+                  onClick={() => void handleUpdatePaymentMethod()}
+                  disabled={portalLoading}
+                >
+                  {portalLoading ? 'Redirecting...' : 'Update payment method'}
                 </BBButton>
               </>
             ) : (
@@ -2274,18 +2374,19 @@ function openUpgrade(plan: string) {
         {/* Task 2106 — the bank asked the customer to confirm the first payment (3-D Secure).
             The trial is held, `trial_auto_converts` is still true, but nothing charges by itself:
             never the "charged automatically" copy below. */}
-        {confirmNote && (
-          <div role="status" data-testid="billing-confirm-note" className="flex items-center gap-3 p-3.5 bg-paper-2 border border-line rounded-lg text-sm text-ink-2">
-            <span className="flex-1">{confirmNote}</span>
-            <button type="button" className="text-ink-3 hover:text-ink" aria-label="Dismiss" onClick={() => setConfirmNote(null)}>
-              <Icon name="x" size={14} />
-            </button>
-          </div>
-        )}
+        <LiveNote
+          text={confirmNote}
+          testId="billing-confirm-note"
+          className="flex items-center gap-3 p-3.5 bg-paper-2 border border-line rounded-lg text-sm text-ink-2"
+        >
+          <button type="button" className="text-ink-3 hover:text-ink" aria-label="Dismiss" onClick={() => setConfirmNote(null)}>
+            <Icon name="x" size={14} />
+          </button>
+        </LiveNote>
 
         {heldUntil && (
-          <div className="rounded-xl border border-amber/60 bg-amber-bg px-6 py-5" data-testid="billing-trial-confirm">
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep mb-1">
+          <div className="rounded-xl border border-line bg-paper-2 px-6 py-5" data-testid="billing-trial-confirm">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-3 mb-1">
               Free trial
             </div>
             <h2 className="text-lg font-bold text-ink leading-snug mb-1">Confirm your first payment</h2>
@@ -2311,6 +2412,7 @@ function openUpgrade(plan: string) {
               </BBButton>
               {!trialCancelConfirm && (
                 <button
+                  type="button"
                   className="text-[13px] text-ink-3 hover:text-red transition-colors disabled:opacity-50"
                   disabled={cancelLoading}
                   onClick={() => setTrialCancelConfirm(true)}
