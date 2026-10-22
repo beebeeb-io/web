@@ -25,7 +25,7 @@
  * Apps should `setApiUrl(...)` once at startup before calling `request()`.
  */
 
-import { ApiError, parseErrorBody } from './errors'
+import { ApiError, readErrorResponse } from './errors'
 import { getApiUrl, provenanceHeaders, expectedUserHeaders } from './config'
 import { clearToken, getToken } from './token'
 import {
@@ -196,8 +196,7 @@ export async function request<T>(
     }
 
     if (!res.ok) {
-      const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
-      const { code, message } = parseErrorBody(body, res.statusText)
+      const { body, code, message } = await readErrorResponse(res)
 
       // Soft-deleted account (task 1403/1404) — the session/credentials were
       // fine, the ACCOUNT itself is gone. Always a 403, never a 401 (the

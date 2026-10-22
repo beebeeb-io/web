@@ -20,8 +20,8 @@ import {
   expectedUserHeaders,
   getApiUrl,
   getToken,
-  parseErrorBody,
   provenanceHeaders,
+  readErrorResponse,
   request,
 } from '@beebeeb/shared'
 
@@ -75,8 +75,7 @@ export async function postEraseRequestOnce(
   }
 
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({ error: 'Server returned an invalid response' }))) as Record<string, unknown>
-    const { code, message } = parseErrorBody(body, res.statusText)
+    const { body, code, message } = await readErrorResponse(res)
     if (res.status === 401 || (code !== undefined && AUTH_STATE_CODES.has(code))) {
       await (deps.afterAuthFailure ?? readThroughSharedClient)().catch(() => undefined)
     }
