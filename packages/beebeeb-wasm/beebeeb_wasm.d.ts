@@ -528,6 +528,23 @@ export function encrypt_chunk(key: Uint8Array, plaintext: Uint8Array): any;
 export function encrypt_metadata(key: Uint8Array, metadata: string): any;
 
 /**
+ * Seal the name/MIME envelope under a GIVEN per-file key, by the rule of a
+ * recorded pin (task 1958). The only name writer that takes a key, so it serves
+ * keys NOT derived from the master key (file-request uploads, shared-folder
+ * files); for a derived key it writes what `encrypt_name_with_chunk_format`
+ * writes. A v2 pin records `chunk_format: 2` and is always sealed under the
+ * name subkey; 0 follows the current write rule. Any other code is an error.
+ * `recordedPin`:
+ * - an EXISTING file (rename): the `chunk_format` from
+ *   `decrypt_file_metadata` / `..._with_key` of THIS file (0 = unrecorded,
+ *   2 = v2), never a server field;
+ * - a NEW file (e.g. a file-request upload): the pin of the format its content
+ *   was written in, `recorded_for(encryptor.format())` (2 for a v2 upload, 0
+ *   for v1), as at any upload. Nothing else is allowed for a new file.
+ */
+export function encrypt_name_for(file_key: Uint8Array, filename: string, mime_type: string | null | undefined, recorded_pin: number): string;
+
+/**
  * Encrypt a filename (+ MIME) into a `name_encrypted` envelope that also
  * records the file's chunk format (task 1908): `chunk_format` 2 = every upload
  * of this file id is v2, 0 = record nothing (the pre-1908 shape). New file:
@@ -581,6 +598,15 @@ export function encrypt_thumbnail_for(file_key: Uint8Array, plaintext: Uint8Arra
  * has_number_or_symbol, strength, level, hint }`. Contains no part of the password.
  */
 export function evaluate_password(password: string, min_length: number): any;
+
+/**
+ * A shared folder's key id (task 2133): a one-way id of the folder's 32-byte
+ * key, for a server to compare folder keys without learning them (HKDF-SHA256,
+ * info `beebeeb/folder-key-id/v1`). Returns a 32-byte `Uint8Array`; not secret,
+ * and never a key. Wipes the copy of the key this function owns
+ * (wasm-bindgen's own copy is freed without a wipe).
+ */
+export function folder_key_id(folder_key: Uint8Array): Uint8Array;
 
 /**
  * Generate a recovery kit PDF with a title, recovery words, and metadata.
@@ -818,12 +844,14 @@ export interface InitOutput {
     readonly derive_x25519_public: (a: number, b: number, c: number) => void;
     readonly encrypt_chunk: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly encrypt_metadata: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly encrypt_name_for: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly encrypt_name_with_chunk_format: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
     readonly encrypt_note: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly encrypt_note_for: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly encrypt_thumbnail: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly encrypt_thumbnail_for: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly evaluate_password: (a: number, b: number, c: number, d: number) => void;
+    readonly folder_key_id: (a: number, b: number, c: number) => void;
     readonly generate_recovery_pdf: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly generate_recovery_phrase: (a: number) => void;
     readonly generate_share_token: (a: number) => void;

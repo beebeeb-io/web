@@ -606,13 +606,13 @@ async function uploadFile(
 
   // If uploading to a shared folder, register the file key under the folder_key
   if (sharedFolderContext) {
-    const { encryptChildFileKey } = await import('./folder-share-crypto')
+    const { encryptChildFileKey, folderKeyId } = await import('./folder-share-crypto')
     const { addFolderKeys } = await import('./api')
     const encryptedKey = await encryptChildFileKey(sharedFolderContext.folderKey, activeFileKey)
     await addFolderKeys(sharedFolderContext.inviteId, [{
       file_id: serverFileId,
       encrypted_file_key: encryptedKey,
-    }])
+    }], await folderKeyId(sharedFolderContext.folderKey))
   }
 
   // Generate and upload encrypted thumbnails for image files (medium + large)

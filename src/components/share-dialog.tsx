@@ -29,11 +29,8 @@ import {
   wrapBundleToken,
 } from '../lib/crypto'
 import {
-  generateFolderKey,
-  findExistingFolderKey,
+  buildFolderInvite,
   encryptFolderKeyForRecipient,
-  encryptOwnerFolderKey,
-  encryptAllChildrenKeys,
 } from '../lib/folder-share-crypto'
 import { useKeys } from '../lib/key-context'
 import { userFriendlyError } from '../lib/user-friendly-error'
@@ -262,37 +259,22 @@ function InviteForm({
 
       if (isFolder) {
         // Folder sharing flow. Key rule (task 2133): reuse the folder's key
-        // (newest openable key among status-active invites; exact check comes
-        // with the server key fingerprint, 2133 design K); mint only when the
-        // folder has no active invite. Then encrypt children, create invite.
+        // (newest openable key among status-active invites); mint only when the
+        // folder has no active invite. The invite also carries the key's id so
+        // the server can refuse a different key for an already-keyed folder.
         const masterKey = getMasterKey()
         setProgress('Checking folder key...')
-        const existing = await findExistingFolderKey(masterKey, fileId)
-        const folderKey = existing?.folderKey ?? (await generateFolderKey())
+        const { folderKey, payload } = await buildFolderInvite(masterKey, fileId, (_s, done, total) =>
+          setProgress(`Encrypting keys: ${done}/${total}`),
+        )
         try {
-          setProgress('Encrypting folder contents...')
-          const folderKeys = await encryptAllChildrenKeys(
-            masterKey, folderKey, fileId,
-            (done, total) => setProgress(`Encrypting keys: ${done}/${total}`),
-          )
-
-          // Encrypt folder key for owner (self-storage)
-          const encOwnerFKB64 =
-            existing?.encryptedOwnerFolderKeyB64 ??
-            toBase64(await encryptOwnerFolderKey(masterKey, fileId, folderKey))
-
           setProgress('Creating invite...')
           // The recipient-encrypted folder key is set later by the approve endpoint
           // (which writes to the encrypted_file_key column for both file and folder shares).
           // We can only encrypt for the recipient once their public key is known — either
           // immediately on auto-claim below, or when the sender approves after the
           // recipient signs up and claims.
-          const result = await createInvite(fileId, recipientEmail, {
-            is_folder_share: true,
-            encrypted_folder_key: '',
-            encrypted_owner_folder_key: encOwnerFKB64,
-            folder_keys: folderKeys,
-          })
+          const result = await createInvite(fileId, recipientEmail, payload)
 
           // Auto-approve when the recipient already has an account and the server
           // auto-claimed: encrypt the folder key for their pubkey and call approve.

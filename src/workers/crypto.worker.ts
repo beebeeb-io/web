@@ -448,6 +448,12 @@ const cryptoWorker = {
     return wasm.derive_share_key(sharedSecret, fileId) as Uint8Array
   },
 
+  /** A shared folder's key id (core `folder_key_id`, task 2133): 32 bytes, not secret. */
+  async folderKeyId(folderKey: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.folder_key_id(folderKey) as Uint8Array
+  },
+
   /** Plan chunks for a file using the core adaptive chunk-size ladder. */
   async planChunks(fileSizeBytes: number, profile: string): Promise<{ chunk_size_bytes: number; chunk_count: number }> {
     const wasm = await ensureWasm()
