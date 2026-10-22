@@ -120,14 +120,28 @@ export type PayNowRouting =
   | { kind: 'inline'; state: PayNowState }
 
 /**
+ * Task 2106 — the debug server's built-in mock Mollie hands out `http://localhost:<port>/…`
+ * checkouts. Followed ONLY when the caller opts in (billing.tsx passes `import.meta.env.DEV`,
+ * false in every production build) and only for loopback hosts.
+ */
+export function isLocalHttpUrl(url: string): boolean {
+  try {
+    const u = new URL(url)
+    return u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1')
+  } catch {
+    return false
+  }
+}
+
+/**
  * Decide what to do with the pay-now response. A `checkout_url` means the
  * bank may ask for 3-D Secure, so the person is sent there. Without one (an
  * older server) the pre-2092 behaviour applies unchanged. Only https URLs are
  * ever followed.
  */
-export function routePayNowResult(result: PayNowPayResult): PayNowRouting {
+export function routePayNowResult(result: PayNowPayResult, opts: { allowLocalHttp?: boolean } = {}): PayNowRouting {
   const url = result.checkout_url
-  if (typeof url === 'string' && url.startsWith('https://')) {
+  if (typeof url === 'string' && (url.startsWith('https://') || (opts.allowLocalHttp === true && isLocalHttpUrl(url)))) {
     return { kind: 'redirect', url, paymentId: result.payment_id }
   }
   return { kind: 'inline', state: stateAfterPayNowResult(result) }

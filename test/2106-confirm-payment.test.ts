@@ -10,6 +10,7 @@ import {
   CONFIRM_PAYMENT_TRIAL_PATH,
 } from '../src/lib/confirm-payment'
 import { billingPeriodLine } from '../src/lib/billing-period-line'
+import { routePayNowResult } from '../src/lib/trial-pay-now'
 import { trialAutoConvertCopy } from '../src/lib/trial-checkout'
 
 const HELD = '2026-10-25T22:59:59Z' // 23:59:59 on 25 Oct in Amsterdam (CET, UTC+1)
@@ -65,5 +66,17 @@ describe('billingPeriodLine on a held trial', () => {
   })
   test('a normal mandated trial keeps "first charge on"', () => {
     expect(billingPeriodLine({ ...base, confirm_payment_by: null })?.label).toBe('Trial · first charge on')
+  })
+})
+
+describe('routePayNowResult and the debug mock checkout (http://localhost)', () => {
+  const local = { payment_id: 'tr_9', status: 'open', checkout_url: 'http://localhost:3003/dev/mock-mollie/checkout/tr_9' }
+  test('refused by default (production behaviour unchanged)', () => {
+    expect(routePayNowResult(local).kind).toBe('inline')
+  })
+  test('followed only with the dev opt-in, and only for loopback hosts', () => {
+    expect(routePayNowResult(local, { allowLocalHttp: true }).kind).toBe('redirect')
+    expect(routePayNowResult({ ...local, checkout_url: 'http://evil.example/x' }, { allowLocalHttp: true }).kind).toBe('inline')
+    expect(routePayNowResult({ ...local, checkout_url: 'http://localhost.evil.example/x' }, { allowLocalHttp: true }).kind).toBe('inline')
   })
 })

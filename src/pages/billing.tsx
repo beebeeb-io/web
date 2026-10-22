@@ -1155,7 +1155,7 @@ function openUpgrade(plan: string) {
       const result = await payTrialNow()
       // Task 2092: a checkout_url means the bank may ask for 3-D Secure — send the
       // person there. An older server (no checkout_url) keeps the inline behaviour.
-      const routed = routePayNowResult(result)
+      const routed = routePayNowResult(result, { allowLocalHttp: import.meta.env.DEV })
       if (routed.kind === 'redirect') {
         try { sessionStorage.setItem(PAY_NOW_PAYMENT_STORAGE_KEY, routed.paymentId) } catch { /* return page falls back to the subscription */ }
         window.location.assign(routed.url)
