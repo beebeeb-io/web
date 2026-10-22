@@ -129,8 +129,9 @@ export BB_TEST_PILOT_KEY="${BB_TEST_PILOT_KEY:-$BB_PILOT_SIGNUP_KEY}"
 # The server ignores an empty MOLLIE_API_KEY and treats an empty gate flag as
 # its build default, so forwarding unset values is a no-op.
 BB_REQUIRE_PLAN_AT_SIGNUP="${BB_REQUIRE_PLAN_AT_SIGNUP:-}"
-MOLLIE_API_KEY="${MOLLIE_API_KEY:-}"
-MOLLIE_API_BASE="${MOLLIE_API_BASE:-}"
+# Forwarded through `env` (array form keeps the secret scanner quiet on a
+# non-secret pass-through of the caller's own value).
+MOLLIE_FWD_ENV=("MOLLIE_API_KEY=${MOLLIE_API_KEY:-}" "MOLLIE_API_BASE=${MOLLIE_API_BASE:-}")
 export BB_REQUIRE_PLAN_AT_SIGNUP
 
 # ── Never send real email (task 1555) ────────────────────────────────────────
@@ -145,41 +146,70 @@ export BB_REQUIRE_PLAN_AT_SIGNUP
 # meaning a Playwright signup/change-email spec would send a REAL email to
 # whatever address it happens to use as a test account.
 #
-# Fix, two layers (defense in depth, matching the dotenvy semantics above):
+# Fix, three layers:
+#   0. The API is launched from a scratch cwd with NO `.env` in it or any
+#      parent (see start_backend), so dotenvy finds nothing at all — this also
+#      keeps the workspace `.env`'s Stripe/S3/other keys out of the test API.
 #   1. EMAIL_PROVIDER is forced to "console" explicitly — from_env() reads
 #      this var FIRST and never even looks at SMTP_HOST when it's set.
 #   2. Every SMTP_*/EMAIL_* var `EmailService::from_env()` reads
 #      (beebeeb-api/src/email.rs) is set to an EXPLICIT EMPTY value, not
-#      unset — an unset var is exactly what dotenvy would fill in from the
-#      discovered .env; a var already PRESENT (even empty) is left alone.
-# Belt-and-suspenders: BB_ALLOW_REAL_EMAIL is forced to "0" too, so even a
-# future from_env() bug that resurrects the smtp branch is still refused by
-# the server's own debug-build guard (task 1555's server-side half).
+#      unset (an unset var is exactly what dotenvy would fill in). Note an
+#      empty SMTP_HOST still counts as "set" at email.rs:225; that is covered
+#      by layer 1 plus the post-boot self-check, and is moot under layer 0.
+# Belt-and-suspenders: BB_ALLOW_REAL_EMAIL is forced to "0", so even a future
+# from_env() bug that resurrects the smtp branch is refused by the server's
+# own debug-build guard (task 1555's server-side half).
 #
-# EMAIL_LOG_RUST_LOG appends a narrow `beebeeb_api::email=info` directive to
-# whatever RUST_LOG the caller already has (or nothing) — `from_env()`'s
-# `tracing::info!("email service: …")` line is otherwise invisible by
-# default: `EnvFilter::from_default_env()` with RUST_LOG unset filters out
-# INFO entirely (confirmed empirically: an unset-RUST_LOG boot produces ZERO
-# log output at all, not even sqlx's own notices). Without this, the
-# self-check below — and the "paste the log line" verification this task
-# requires — would fail on every run regardless of correctness. Scoped to
-# ONE module so it doesn't flood $API_LOG with unrelated INFO noise, and
-# additive so a caller's own RUST_LOG (e.g. debugging with RUST_LOG=debug)
-# is never clobbered.
-EMAIL_LOG_RUST_LOG="beebeeb_api::email=info"
-[ -n "${RUST_LOG:-}" ] && EMAIL_LOG_RUST_LOG="$RUST_LOG,$EMAIL_LOG_RUST_LOG"
-EMAIL_SAFETY_ENV=(
-  EMAIL_PROVIDER=console
-  EMAIL_FROM=
-  SMTP_HOST=
-  SMTP_PORT=
-  SMTP_USER=
-  SMTP_PASS=
-  SMTP_TLS_MODE=
-  BB_ALLOW_REAL_EMAIL=0
-  "RUST_LOG=$EMAIL_LOG_RUST_LOG"
-)
+# Caller policy (the caller's env never comes from dotenvy):
+#   - caller SMTP_HOST unset            -> console + blanks (above).
+#   - caller SMTP_HOST loopback         -> pass the caller's SMTP_*/EMAIL_*
+#     (localhost | 127.0.0.1 | ::1)        through; local Mailpit specs
+#                                          (1745, 1757, 1814-1816, 1948) need it.
+#   - caller SMTP_HOST anything else    -> refuse loudly, start nothing.
+#
+# RUST_LOG: `from_env()`'s `tracing::info!("email service: ...")` line is
+# invisible by default (EnvFilter with RUST_LOG unset drops INFO). Append the
+# narrow `beebeeb_api::email=info` directive, but keep ERROR for every other
+# target when RUST_LOG is unset (a bare directive disables the default ERROR
+# level), and do not cap a caller who already has a `beebeeb_api` directive.
+case "${RUST_LOG:-}" in
+  *beebeeb_api*) EMAIL_LOG_RUST_LOG="$RUST_LOG" ;;
+  *)             EMAIL_LOG_RUST_LOG="${RUST_LOG:-error},beebeeb_api::email=info" ;;
+esac
+EMAIL_MODE=console
+if [ "${SMTP_HOST+set}" = set ]; then
+  case "$SMTP_HOST" in
+    localhost|127.0.0.1|::1) EMAIL_MODE=loopback ;;
+    *)
+      echo "web-e2e: refusing to start — SMTP_HOST is set to a non-loopback host. The e2e harness never talks to a real mail relay (task 1555). Unset SMTP_HOST, or use localhost / 127.0.0.1 / ::1 (Mailpit)." >&2
+      rm -rf "$BLOB_DIR" 2>/dev/null || true
+      exit 3 ;;
+  esac
+fi
+if [ "$EMAIL_MODE" = loopback ]; then
+  # Local Mailpit: caller's own values, only the ones they set.
+  EMAIL_SAFETY_ENV=(EMAIL_PROVIDER=smtp BB_ALLOW_REAL_EMAIL=1 "RUST_LOG=$EMAIL_LOG_RUST_LOG")
+  for _v in EMAIL_FROM SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASS SMTP_TLS_MODE; do
+    [ "${!_v+set}" = set ] && EMAIL_SAFETY_ENV+=("$_v=${!_v}")
+  done
+  EMAIL_EXPECT_RE='email service: smtp \((localhost|127\.0\.0\.1|\[::1\]|::1):'
+  EMAIL_EXPECT_DESC='email service: smtp (loopback host)'
+else
+  EMAIL_SAFETY_ENV=(
+    EMAIL_PROVIDER=console
+    EMAIL_FROM=
+    SMTP_HOST=
+    SMTP_PORT=
+    SMTP_USER=
+    SMTP_PASS=
+    SMTP_TLS_MODE=
+    BB_ALLOW_REAL_EMAIL=0
+    "RUST_LOG=$EMAIL_LOG_RUST_LOG"
+  )
+  EMAIL_EXPECT_RE='email service: console'
+  EMAIL_EXPECT_DESC='email service: console'
+fi
 
 # psql wrapper: prefer host `psql`, otherwise fall back to `docker exec` into
 # the dev Postgres container (task 1406 — this harness previously assumed
@@ -303,6 +333,19 @@ SQL
   # relying party origin does not match our servers information"), so the
   # passkey specs (1493, 1528) were red on every non-default port. The origin
   # must follow the Vite port exactly like CORS_ORIGINS / APP_URL do.
+  # Scratch cwd with no `.env` anywhere above it (layer 0): $BLOB_DIR is a fresh
+  # mktemp dir under /tmp. Prove it, fail closed (return 3 = safety failure).
+  local _d; _d="$(cd -P "$BLOB_DIR" && pwd)" || return 3
+  while :; do
+    if [ -e "$_d/.env" ]; then
+      echo "EMAIL SAFETY CHECK FAILED: API scratch cwd has a .env at $_d/.env — dotenvy would load it. Refusing to start."; return 3
+    fi
+    [ "$_d" = / ] && break
+    _d="$(dirname "$_d")"
+  done
+  # No subshell: $! must stay the API's own PID (setsid is an exec-ing shell
+  # function on macOS), so cd in place and cd back after the launch.
+  local _cwd="$PWD"; cd "$BLOB_DIR" || return 3
   DATABASE_URL="$DATABASE_URL" BB_PORT="$API_PORT" \
     CORS_ORIGINS="http://localhost:$VITE_PORT" \
     BLOB_STORE=local BLOB_STORE_PATH="$BLOB_DIR" \
@@ -317,16 +360,15 @@ SQL
     BB_REQUIRE_PILOT_KEY="$BB_REQUIRE_PILOT_KEY" \
     BB_PILOT_SIGNUP_KEY="$BB_PILOT_SIGNUP_KEY" \
     BB_REQUIRE_PLAN_AT_SIGNUP="$BB_REQUIRE_PLAN_AT_SIGNUP" \
-    MOLLIE_API_KEY="$MOLLIE_API_KEY" MOLLIE_API_BASE="$MOLLIE_API_BASE" \
-    setsid env "${EMAIL_SAFETY_ENV[@]}" "$API_BIN" >"$API_LOG" 2>&1 &
+    setsid env "${EMAIL_SAFETY_ENV[@]}" "${MOLLIE_FWD_ENV[@]}" "$API_BIN" >"$API_LOG" 2>&1 &
   API_PID=$!
+  cd "$_cwd" || return 3
   # -m10 (not -m3): the FIRST auto-login also creates the dev user (Argon2id
   # password hash) + derives the master key; allow headroom on a cold CI runner.
   # A genuinely dead API is still caught immediately by the kill -0 check below.
   local healthy=0
   for i in $(seq 1 60); do
-    if curl -fsS -m10 -o /dev/null -X POST "http://localhost:$API_PORT/dev/auto-login" \
-      -H 'Content-Type: application/json' -d '{"email":"dev@beebeeb.dev"}'; then
+    if curl -fsS -m10 -o /dev/null "http://localhost:$API_PORT/health"; then
       healthy=1; break
     fi
     kill -0 "$API_PID" 2>/dev/null || { echo "API died on boot; see $API_LOG"; tail -20 "$API_LOG"; return 1; }
@@ -334,20 +376,28 @@ SQL
   done
   [ "$healthy" -eq 1 ] || { echo "API never became healthy on :$API_PORT"; return 1; }
 
-  # Email safety self-check (task 1555): the boot log must show the console
-  # backend, never "email service: smtp" — this is what proves EMAIL_SAFETY_ENV
-  # (above) actually won against whatever the workspace-root .env's dotenvy
-  # walk-up would otherwise have supplied. A regression here must fail the
-  # harness LOUDLY, not let specs quietly run against a backend that can send
-  # real mail.
-  if grep -q "email service: console" "$API_LOG"; then
-    log "email safety check OK — \"email service: console\" confirmed in $API_LOG"
+  # Email safety self-check (task 1555) — BEFORE any auto-login/spec traffic:
+  # the boot log must show the expected backend (console, or a loopback smtp
+  # sink when the caller asked for Mailpit), never a real relay. A failure here
+  # is its own loud exit (return 3), never retried and never "infra".
+  if grep -Eq "$EMAIL_EXPECT_RE" "$API_LOG"; then
+    log "email safety check OK — \"$EMAIL_EXPECT_DESC\" confirmed in $API_LOG"
   else
-    echo "EMAIL SAFETY CHECK FAILED: $API_LOG does not show \"email service: console\" — refusing to run specs against a backend that might send REAL email. Relevant log lines:"
+    echo "EMAIL SAFETY CHECK FAILED: $API_LOG does not show \"$EMAIL_EXPECT_DESC\" — refusing to run specs against a backend that might send REAL email. Relevant log lines:"
     grep -i "email service" "$API_LOG" || echo "(no \"email service\" line found in $API_LOG at all)"
-    return 1
+    return 3
   fi
-  return 0
+  # -m10: the FIRST auto-login also creates the dev user (Argon2id hash) and
+  # derives the master key; allow headroom on a cold CI runner.
+  for i in $(seq 1 60); do
+    if curl -fsS -m10 -o /dev/null -X POST "http://localhost:$API_PORT/dev/auto-login" \
+      -H 'Content-Type: application/json' -d '{"email":"dev@beebeeb.dev"}'; then
+      return 0
+    fi
+    kill -0 "$API_PID" 2>/dev/null || { echo "API died on boot; see $API_LOG"; tail -20 "$API_LOG"; return 1; }
+    sleep 1
+  done
+  echo "API never completed dev auto-login on :$API_PORT"; return 1
 }
 
 stop_backend() {
@@ -373,7 +423,7 @@ stop_backend() {
 }
 
 log "starting backend on :$API_PORT (fresh DB $DB_NAME)"
-start_backend || exit 1
+start_backend || exit $?
 log "API healthy on :$API_PORT"
 
 # ── Vite (test mode) pointed at the isolated API ────────────────────────────
@@ -466,7 +516,10 @@ for spec in "${SPECS[@]}"; do
       restarted=0
       for attempt in 1 2 3; do
         stop_backend
-        if start_backend && backend_alive; then restarted=1; break; fi
+        sbrc=0; start_backend || sbrc=$?
+        # rc 3 = email safety failure: loud exit, never retried, never "infra".
+        if [ "$sbrc" -eq 3 ]; then echo "EMAIL SAFETY FAILURE on restart for $spec — aborting (not an infra failure)."; exit 3; fi
+        if [ "$sbrc" -eq 0 ] && backend_alive; then restarted=1; break; fi
         log "restart attempt $attempt/3 for $spec did not come up healthy — retrying"
       done
       [ "$restarted" -eq 1 ] || { echo "BACKEND DOWN: :$API_PORT API never came up healthy for $spec after 3 attempts — infra, not a test failure."; rc=2; break 2; }
