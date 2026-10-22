@@ -26,7 +26,7 @@ function makePorts(invites: unknown[]) {
       return enc('wrapping')
     },
     decryptChunk: async (_k: Uint8Array, _n: Uint8Array, ct: Uint8Array) => {
-      if (dec(ct).startsWith('bad')) throw new Error('auth')
+      if (dec(ct).startsWith('bad')) throw new Error('decryption failed: ciphertext is invalid or key is wrong')
       return enc(dec(ct))
     },
     fromBase64: (s: string) => enc(s),
@@ -102,6 +102,43 @@ describe('findExistingFolderKey', () => {
       inv({ id: 'b', encrypted_owner_folder_key: blob('bad2'), status: 'claimed' }),
     ])
     await expect(findExistingFolderKey(new Uint8Array(32), 'F', none.ports)).rejects.toThrow(FOLDER_KEY_UNVERIFIED)
+  })
+
+  test('P3-1: active invites exist but NONE has an owner blob -> abort, never mint', async () => {
+    const { findExistingFolderKey, FOLDER_KEY_UNVERIFIED } = await import('../src/lib/folder-share-crypto')
+    const { ports, derives } = makePorts([inv({ id: 'a' }), inv({ id: 'b', status: 'claimed', encrypted_owner_folder_key: '' })])
+    await expect(findExistingFolderKey(new Uint8Array(32), 'F', ports)).rejects.toThrow(FOLDER_KEY_UNVERIFIED)
+    expect(derives.length).toBe(0) // nothing to open: no wrapping key was derived
+  })
+
+  test('P3-2: only an authentication failure skips a blob; any other error aborts', async () => {
+    const { findExistingFolderKey } = await import('../src/lib/folder-share-crypto')
+    const { ports } = makePorts([
+      inv({ id: 'a', encrypted_owner_folder_key: blob('K2'), created_at: '2026-10-22T11:00:00Z' }),
+      inv({ id: 'b', encrypted_owner_folder_key: blob('K1'), created_at: '2026-10-22T09:00:00Z' }),
+    ])
+    const crashing = {
+      ...ports,
+      decryptChunk: async () => {
+        throw new Error('worker crashed')
+      },
+    }
+    // The older blob K1 would open, but a crash on the newest must not fall back to it.
+    await expect(findExistingFolderKey(new Uint8Array(32), 'F', crashing)).rejects.toThrow('worker crashed')
+  })
+
+  test('a crash still zeroizes the wrapping key', async () => {
+    const { findExistingFolderKey } = await import('../src/lib/folder-share-crypto')
+    const m = makePorts([inv({ id: 'a', encrypted_owner_folder_key: blob('K1') })])
+    const crashing = { ...m.ports, decryptChunk: async () => { throw new Error('worker crashed') } }
+    await findExistingFolderKey(new Uint8Array(32), 'F', crashing).catch(() => {})
+    expect(m.zeroized.filter((z) => dec(z) === 'wrapping').length).toBe(1)
+  })
+
+  test('P3-4: the abort message tells the owner what to do, within 80 characters', async () => {
+    const { FOLDER_KEY_UNVERIFIED } = await import('../src/lib/folder-share-crypto')
+    expect(FOLDER_KEY_UNVERIFIED.length).toBeLessThanOrEqual(80)
+    expect(FOLDER_KEY_UNVERIFIED).toMatch(/Remove its pending invites/)
   })
 
   test('newest-first fallback: the newest blob does not open, the next one does', async () => {

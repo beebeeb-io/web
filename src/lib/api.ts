@@ -1904,6 +1904,8 @@ export async function createInvite(
     encrypted_folder_key: string
     encrypted_owner_folder_key: string
     folder_keys: { file_id: string; encrypted_file_key: string }[]
+    /** base64 of core's folder_key_id for the key used (task 2133). */
+    folder_key_id: string
   },
 ): Promise<{ invite_id: string; status: string; recipient_public_key?: string | null }> {
   return request('/api/v1/shares/invites', {
@@ -3164,10 +3166,11 @@ export async function getFolderKeys(
 export async function addFolderKeys(
   inviteId: string,
   keys: { file_id: string; encrypted_file_key: string }[],
+  folderKeyId: string,
 ): Promise<void> {
   await request(`/api/v1/shares/invites/${inviteId}/folder-keys`, {
     method: 'POST',
-    body: JSON.stringify({ keys }),
+    body: JSON.stringify({ keys, folder_key_id: folderKeyId }),
   })
 }
 

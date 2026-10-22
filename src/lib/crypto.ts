@@ -577,6 +577,15 @@ export async function deriveShareKey(
 }
 
 /**
+ * A shared folder's key id (task 2133): HKDF-SHA256 of the 32-byte folder key,
+ * derived in core. Returns 32 bytes. Not secret, never a key. A key that is
+ * not 32 bytes is an error.
+ */
+export async function folderKeyId(folderKey: Uint8Array): Promise<Uint8Array> {
+  return withProxy((p) => p.folderKeyId(folderKey))
+}
+
+/**
  * Encrypt a file key for user-to-user sharing.
  * Performs the full X25519 key exchange + AES-256-GCM encryption.
  */

@@ -8,6 +8,7 @@ import {
   decrypt_chunk_frame,
   decrypt_file_metadata,
   decrypt_file_metadata_with_key,
+  folder_key_id,
   decrypt_name_metadata_with_key,
   derive_master_key,
   derive_file_key,
@@ -36,7 +37,7 @@ import { decryptThumbnailBlob } from '../src/lib/thumbnail'
 // relate to this one).
 //
 // ── Vendoring + refresh procedure ───────────────────────────────────────────
-// The vendored copy lives at test/vectors/core-vectors.v5.json and MUST be a
+// The vendored copy lives at test/vectors/core-vectors.v7.json and MUST be a
 // byte-for-byte copy of repos/core/test-vectors/vectors.json (so the drift
 // check below is a real sha256 comparison, not a comparison against a
 // modified copy). To refresh after core bumps the vector file:
@@ -79,16 +80,16 @@ import { decryptThumbnailBlob } from '../src/lib/thumbnail'
 // never touch the worker — so those ARE called directly, exactly as the app
 // calls them.
 
-const VENDORED_PATH = fileURLToPath(new URL('./vectors/core-vectors.v5.json', import.meta.url))
+const VENDORED_PATH = fileURLToPath(new URL('./vectors/core-vectors.v7.json', import.meta.url))
 // Sibling core checkout (present on developer machines / worktrees that keep
 // `core` next to `web`; absent in a bare CI checkout of web alone).
 const CORE_SIBLING_PATH = fileURLToPath(new URL('../../core/test-vectors/vectors.json', import.meta.url))
 
-// Pin from: shasum -a 256 test/vectors/core-vectors.v5.json
+// Pin from: shasum -a 256 test/vectors/core-vectors.v7.json
 // v5 = core dd7bd76 (core#29, task 1943): adds chunk_v2_stream,
 // chunk_v2_single_frame and metadata_v2_name (core#28, task 1908).
-const PINNED_SHA256 = 'fa996d0e8a55063d62370b82e4eca7ed86cff0ce74938d675f4762c29863777c'
-const EXPECTED_VERSION = 5
+const PINNED_SHA256 = 'bddcb7d8f3c5f752efb3d342da3af8b4d5b310b5f1f683ddf491468c3dacad65'
+const EXPECTED_VERSION = 7
 
 function hexToBytes(hex: string): Uint8Array {
   const out = new Uint8Array(hex.length / 2)
@@ -121,7 +122,7 @@ beforeAll(() => {
 // ─── 1. Vendored-file checksum guard ────────────────────────────────────────
 
 describe('vendored vector checksum guard', () => {
-  test('test/vectors/core-vectors.v5.json matches the pinned sha256', () => {
+  test('test/vectors/core-vectors.v7.json matches the pinned sha256', () => {
     const buf = readFileSync(VENDORED_PATH)
     expect(sha256Hex(buf)).toBe(PINNED_SHA256)
   })
@@ -160,6 +161,9 @@ const IMPLEMENTED_FAMILIES = new Set([
   'chunk_v2_stream',
   'chunk_v2_single_frame',
   'metadata_v2_name',
+  'metadata_v2_name_filekey',
+  'metadata_v1_name_filekey',
+  'folder_key_id',
 ])
 
 const SKIPPED_FAMILIES: Record<string, string> = {
@@ -481,5 +485,33 @@ describe('core vectors KAT — chunk format v2 and v2 name metadata', () => {
     expect(() =>
       decrypt_metadata(hexToBytes(v.file_key_hex), new Uint8Array(env.nonce), new Uint8Array(env.ciphertext)),
     ).toThrow()
+  })
+
+  test('metadata_v2_name_filekey — decrypt_file_metadata_with_key opens a pin-2 name sealed by encrypt_name_for; the raw key cannot', () => {
+    const v = vectors.metadata_v2_name_filekey
+    const meta = decrypt_file_metadata_with_key(hexToBytes(v.file_key_hex), v.name_encrypted)
+    expect(meta).toEqual({ name: v.expected_name, mime_type: v.expected_mime_type, chunk_format: v.expected_chunk_format })
+    const env = JSON.parse(v.name_encrypted) as { nonce: number[]; ciphertext: number[] }
+    expect(() =>
+      decrypt_metadata(hexToBytes(v.file_key_hex), new Uint8Array(env.nonce), new Uint8Array(env.ciphertext)),
+    ).toThrow()
+  })
+
+  test('metadata_v1_name_filekey — decrypt_file_metadata_with_key opens a pin-0 name (raw-key sealed, read-only phase) with pin 0', () => {
+    const v = vectors.metadata_v1_name_filekey
+    const meta = decrypt_file_metadata_with_key(hexToBytes(v.file_key_hex), v.name_encrypted)
+    expect(meta).toEqual({ name: v.expected_name, mime_type: v.expected_mime_type, chunk_format: v.expected_chunk_format })
+  })
+
+  test('folder_key_id — the WASM export returns the pinned 32-byte id for the fixed folder key (task 2133)', () => {
+    const v = vectors.folder_key_id
+    const id = folder_key_id(hexToBytes(v.folder_key_hex))
+    expect(id.length).toBe(32)
+    expect(toHex(id)).toBe(v.expected_key_id_hex)
+  })
+
+  test('folder_key_id — a key that is not 32 bytes is an error, not an id', () => {
+    expect(() => folder_key_id(new Uint8Array(31))).toThrow()
+    expect(() => folder_key_id(new Uint8Array(33))).toThrow()
   })
 })

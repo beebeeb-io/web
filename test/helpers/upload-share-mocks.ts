@@ -23,6 +23,7 @@ export const cap = {
   savedStates: [] as Array<{ fileId: string; upload_session_id?: string | null }>,
   removedStates: [] as string[],
   encryptedMetadataKeys: [] as number[],
+  addFolderKeysCalls: [] as Array<{ inviteId: string; keys: unknown[]; folderKeyId: string }>,
 }
 export function resetCaptures(): void {
   cap.initCalls.length = 0
@@ -31,6 +32,7 @@ export function resetCaptures(): void {
   cap.savedStates.length = 0
   cap.removedStates.length = 0
   cap.encryptedMetadataKeys.length = 0
+  cap.addFolderKeysCalls.length = 0
 }
 
 // Listing pager (the folder-share suite drives this).
@@ -63,6 +65,12 @@ export async function installMocks(): Promise<void> {
       cap.encryptedMetadataKeys.push(fileKey[0])
       return { nonce: new Uint8Array([fileKey[0]]), ciphertext: new TextEncoder().encode(plaintext) }
     },
+    // Task 2133: the folder key id and the child-key wrap, stubbed (the WASM
+    // worker is not loadable under bun test). The id is the key's bytes.
+    folderKeyId: async (folderKey: Uint8Array) => Uint8Array.from(folderKey),
+    encryptChunk: async (_k: Uint8Array, plaintext: Uint8Array) => ({
+      nonce: new Uint8Array(12), ciphertext: Uint8Array.from(plaintext),
+    }),
     serializeEncryptedBlob: (nonce: Uint8Array, ciphertext: Uint8Array) =>
       JSON.stringify({ nonce: Array.from(nonce), ciphertext: Array.from(ciphertext) }),
   })
@@ -95,6 +103,9 @@ export async function installMocks(): Promise<void> {
       mime_type: null, size_bytes: 4, chunk_count: 1, is_folder: false, is_uploading: false,
       created_at: '2026-05-08T00:00:00.000Z', updated_at: '2026-05-08T00:00:00.000Z',
     }),
+    addFolderKeys: async (inviteId: string, keys: unknown[], folderKeyId: string) => {
+      cap.addFolderKeysCalls.push({ inviteId, keys, folderKeyId })
+    },
     getUploadStatus: async () => ({ uploaded_chunks: [] }),
     updateFile: async (fileId: string, updates: { name_encrypted?: string }) => {
       cap.updatedFiles.push({ fileId, nameEncrypted: updates.name_encrypted ?? '' })
