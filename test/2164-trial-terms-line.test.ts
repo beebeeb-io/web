@@ -20,4 +20,11 @@ describe('task 2164: trial terms follow the offer', () => {
     expect(src).toContain('trialTermsLine(trialDays, { noCardOffered: true })')
     expect(src).not.toContain('trialTermsCopy')
   })
+
+  test('signup passes noCard to the plan picker (no "then billed" copy)', () => {
+    const src = readFileSync(new URL('../src/pages/signup.tsx', import.meta.url), 'utf8')
+    const m = src.match(/<TrialPlanPicker[\s\S]*?\/>/)
+    expect(m).not.toBeNull()
+    expect(m![0]).toMatch(/\bnoCard\b/)
+  })
 })
