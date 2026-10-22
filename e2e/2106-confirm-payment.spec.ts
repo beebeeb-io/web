@@ -18,6 +18,19 @@
  *   E2E_API_BIN=<server>/target/debug/beebeeb-api \
  *     ./e2e/scripts/web-e2e.sh e2e/2106-confirm-payment.spec.ts
  * Screenshots: e2e/screenshots/2106/ (override with E2E_EVIDENCE_DIR).
+ *
+ * TASK 2162 (the last two tests): the pay-overdue return. Two things are seeded and NOT real:
+ *   1. past_due: the subscription row is set to `past_due` / `grace` by SQL (the debug mock Mollie
+ *      only ever creates `paid` recurring payments, so no failed charge can be produced).
+ *   2. the pay-overdue checkout: the server computes the arrears from FAILED subscription payments
+ *      on Mollie, and the mock has none (the server would answer 422 "no outstanding balance"),
+ *      so POST /billing/pay-overdue is answered by a page.route that opens a REAL mock-Mollie
+ *      payment (redirect -> /settings/billing?paid_overdue=true, exactly the server's redirect)
+ *      and returns the server's response shape { checkout_url, arrears_cents }. Everything after
+ *      that (checkout page, Pay/Cancel, the redirect, the page's own subscription poll) is real.
+ *   The webhook's settlement (`apply_pay_overdue_settlement`: status active, billing_state active,
+ *   past_due_since NULL) is applied by SQL at the moment the customer returns.
+ * Screenshots for 2162: e2e/screenshots/2162/ (E2E_EVIDENCE_DIR2).
  */
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -264,4 +277,133 @@ test('signed out: mail link -> login -> pay-now once; Back twice starts no secon
   expect(payNowPosts).toBe(1)
   expect(page.url()).not.toMatch(/mock-mollie\/checkout/)
   expect(page.url()).not.toContain('confirm_payment')
+})
+
+
+// ───────────────────────── Task 2162: the pay-overdue return ─────────────────────────
+const SHOTS_2162 = process.env.E2E_EVIDENCE_DIR2 ?? 'e2e/screenshots/2162'
+async function shot2162(page: Page, name: string) {
+  fs.mkdirSync(SHOTS_2162, { recursive: true })
+  await page.screenshot({ path: `${SHOTS_2162}/${name}.png`, fullPage: true })
+}
+
+function seedPastDue(email: string) {
+  sql(`UPDATE subscriptions SET status = 'past_due', billing_state = 'grace', past_due_since = NOW() - INTERVAL '2 days'
+       WHERE id = (SELECT id FROM subscriptions WHERE user_id = (SELECT id FROM users WHERE email = '${email}') ORDER BY created_at DESC LIMIT 1);`)
+}
+/** What the webhook's apply_pay_overdue_settlement does on a paid pay-overdue charge. */
+function settlePastDue(email: string) {
+  sql(`UPDATE subscriptions SET status = 'active', billing_state = 'active', past_due_since = NULL, billing_emails_sent = 0
+       WHERE id = (SELECT id FROM subscriptions WHERE user_id = (SELECT id FROM users WHERE email = '${email}') ORDER BY created_at DESC LIMIT 1);`)
+}
+
+/** Answer POST /billing/pay-overdue with a REAL mock-Mollie checkout that returns where the server's does. */
+async function routePayOverdueToMockCheckout(page: Page, counter: { posts: number; fail?: boolean }) {
+  await page.route('**/api/v1/billing/pay-overdue', async (route) => {
+    counter.posts++
+    if (counter.fail) {
+      await route.fulfill({ status: 502, contentType: 'application/json', body: JSON.stringify({ error: 'bad_gateway' }) })
+      return
+    }
+    const origin = new URL(page.url()).origin
+    const r = await fetch(`${API_URL}/dev/mock-mollie/v2/payments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        amount: { currency: 'EUR', value: '4.99' },
+        description: 'Beebeeb basic - outstanding balance',
+        redirectUrl: `${origin}/settings/billing?paid_overdue=true`,
+        metadata: { bb_proration: 'pay_overdue' },
+      }),
+    })
+    const p = await r.json()
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ checkout_url: p._links.checkout.href, arrears_cents: 499 }) })
+  })
+}
+
+test('2162: past due -> ?confirm_payment=1 -> pay-overdue -> checkout -> ?paid_overdue=true shows the paid result', async ({ page }) => {
+  const email = uniqueEmail('trial-2162-paid')
+  await startMandatedTrial(page, email)
+  seedPastDue(email)
+  expect((await subscription(page)).status).toBe('past_due')
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await dismissOverlays(page)
+  const counter = { posts: 0, fail: true }
+  await routePayOverdueToMockCheckout(page, counter)
+
+  // The mail link while the server cannot open the checkout: nothing leaves the page, and the
+  // softened banner stays (no claim about the card), with the confirm action and the alternative.
+  await page.goto('/billing?confirm_payment=1')
+  const copy = page.getByTestId('billing-past-due-confirm-copy')
+  await expect(copy).toBeVisible({ timeout: 30_000 })
+  expect(counter.posts).toBe(1)
+  await expect(copy).toContainText('did not go through')
+  await expect(page.getByText(/nothing is wrong with your card/i)).toHaveCount(0)
+  await expect(page.getByTestId('billing-past-due-confirm-cta')).toBeVisible()
+  await expect(page.getByTestId('billing-past-due-update-method')).toBeVisible()
+  await expect.poll(() => new URL(page.url()).searchParams.get('confirm_payment')).toBeNull()
+  await shot2162(page, '2162-softened-banner-1440')
+  await page.reload()
+  await expect(copy).toHaveCount(0) // the intent was consumed: a reload starts nothing
+  expect(counter.posts).toBe(1)
+  // Narrow, fresh load.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/settings/billing?confirm_payment=1')
+  await dismissOverlays(page)
+  await expect(copy).toBeVisible({ timeout: 30_000 })
+  expect(counter.posts).toBe(2)
+  await copy.scrollIntoViewIfNeeded()
+  await shot2162(page, '2162-softened-banner-390')
+
+  // Now the server opens the checkout: the mail link pays through the mock checkout.
+  counter.fail = false
+  await page.setViewportSize({ width: 1440, height: 900 })
+  // Pay it through the confirm action and the mock checkout.
+  await page.goto('/settings/billing?confirm_payment=1')
+  await page.waitForURL(/\/dev\/mock-mollie\/checkout\//, { timeout: 30_000 })
+  expect(counter.posts).toBe(3)
+  await page.getByTestId('mock-mollie-pay').click()
+  // Back on billing: checking first (the account is still past due), param stripped.
+  const view = page.getByTestId('pay-overdue-return')
+  await expect(view).toHaveAttribute('data-kind', 'checking', { timeout: 30_000 })
+  await expect.poll(() => new URL(page.url()).searchParams.get('paid_overdue')).toBeNull()
+  await shot2162(page, '2162-checking-1440')
+  settlePastDue(email) // the webhook's settlement
+  await expect(view).toHaveAttribute('data-kind', 'paid', { timeout: 30_000 })
+  await expect(view).toContainText('Payment received')
+  await shot2162(page, '2162-paid-1440')
+  // Reload / Back start nothing and the view does not come back.
+  await page.reload()
+  await expect(page.getByTestId('pay-overdue-return')).toHaveCount(0)
+  expect(counter.posts).toBe(3)
+  expect((await subscription(page)).status).toBe('active')
+  await expect(page.getByTestId('billing-past-due-confirm-copy')).toHaveCount(0)
+})
+
+test('2162: the checkout is cancelled -> ?paid_overdue=true shows "waiting" with Refresh, never "failed"; Refresh then finds it paid', async ({ page }) => {
+  const email = uniqueEmail('trial-2162-wait')
+  await startMandatedTrial(page, email)
+  seedPastDue(email)
+  await page.setViewportSize({ width: 390, height: 844 })
+  const counter = { posts: 0 }
+  await routePayOverdueToMockCheckout(page, counter)
+
+  await page.goto('/settings/billing?confirm_payment=1')
+  await page.waitForURL(/\/dev\/mock-mollie\/checkout\//, { timeout: 30_000 })
+  await page.getByTestId('mock-mollie-cancel').click()
+  const view = page.getByTestId('pay-overdue-return')
+  await expect(view).toHaveAttribute('data-kind', 'checking', { timeout: 30_000 })
+  // The poll bound is 60 s, the same as the pay-now return.
+  await expect(view).toHaveAttribute('data-kind', 'waiting', { timeout: 90_000 })
+  await expect(view).not.toContainText(/failed/i)
+  await expect(page.getByTestId('pay-overdue-return-refresh')).toBeVisible()
+  await expect(page.getByTestId('pay-overdue-return-retry')).toBeVisible()
+  await view.scrollIntoViewIfNeeded()
+  await shot2162(page, '2162-waiting-390')
+
+  // The settlement lands late: Refresh finds it.
+  settlePastDue(email)
+  await page.getByTestId('pay-overdue-return-refresh').click()
+  await expect(view).toHaveAttribute('data-kind', 'paid', { timeout: 30_000 })
+  await shot2162(page, '2162-paid-390')
 })

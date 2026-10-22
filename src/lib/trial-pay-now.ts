@@ -144,6 +144,14 @@ export function routePayNowResult(result: PayNowPayResult, opts: { allowLocalHtt
   if (url) {
     return { kind: 'redirect', url, paymentId: result.payment_id }
   }
+  // Task 2162: a checkout_url the guard refused (http, foreign host) is an error. It must not fall
+  // through to the "settled" path below, which would announce an unlock that never happened.
+  if (typeof result.checkout_url === 'string' && result.checkout_url.length > 0) {
+    return {
+      kind: 'inline',
+      state: { phase: 'error', paymentId: result.payment_id, message: 'The payment page could not be opened. Please try again.' },
+    }
+  }
   return { kind: 'inline', state: stateAfterPayNowResult(result) }
 }
 
