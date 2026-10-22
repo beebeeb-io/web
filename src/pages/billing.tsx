@@ -131,7 +131,8 @@ import {
   chargesAutomatically,
   formatConfirmDate,
   confirmPaymentBannerCopy,
-  confirmPaymentIntent,
+  confirmIntentAction,
+  heldTrialCancelCopy,
   CONFIRM_PAYMENT_PARAM,
   CONFIRM_PAYMENT_REASSURANCE,
   CONFIRM_PAYMENT_CTA,
@@ -1367,7 +1368,10 @@ function openUpgrade(plan: string) {
       confirmIntentHandledRef.current = false
       return
     }
-    if (loading || confirmIntentHandledRef.current) return
+    if (confirmIntentHandledRef.current) return
+    const action = confirmIntentAction(confirmIntentRaw, sub, { loading, loadFailed: error !== null })
+    // Not consumed while loading or after a failed load: the param stays, so Retry acts on it.
+    if (action.kind === 'wait') return
     confirmIntentHandledRef.current = true
     setSearchParams(
       (prev) => {
@@ -1377,20 +1381,13 @@ function openUpgrade(plan: string) {
       },
       { replace: true },
     )
-    const intent = confirmPaymentIntent(confirmIntentRaw)
-    if (intent === 'trial') {
-      if (confirmPaymentBy(sub)) void handlePayNow()
-      else setConfirmNote('There is no payment waiting for your confirmation on your trial right now.')
-    } else if (intent === 'overdue') {
-      if (sub?.status === 'past_due' || sub?.billing_state === 'read_only') {
-        setConfirmOverdueIntent(true)
-        void handlePayOverdue()
-      } else {
-        setConfirmNote('There is no outstanding payment to confirm right now.')
-      }
-    }
+    if (action.kind === 'pay-now') void handlePayNow()
+    else if (action.kind === 'pay-overdue') {
+      setConfirmOverdueIntent(true)
+      void handlePayOverdue()
+    } else if (action.kind === 'note') setConfirmNote(action.text)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [confirmIntentRaw, loading])
+  }, [confirmIntentRaw, loading, error])
 
   async function handlePreviewStorageAddon() {
     setAddonPreviewLoading(true)
@@ -2326,7 +2323,7 @@ function openUpgrade(plan: string) {
             {trialCancelConfirm && (
               <div className="mt-4 p-4 bg-paper border border-line rounded-lg space-y-3">
                 <p className="text-[13px] text-ink-2 leading-relaxed">
-                  {cardTrialCancelCopy(formatConfirmDate(heldUntil))}
+                  {heldTrialCancelCopy(formatConfirmDate(heldUntil))}
                 </p>
                 <div className="flex gap-2">
                   <BBButton size="sm" variant="amber" onClick={() => setTrialCancelConfirm(false)}>

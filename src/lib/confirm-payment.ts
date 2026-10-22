@@ -17,6 +17,8 @@
 
 export const CONFIRM_PAYMENT_PARAM = 'confirm_payment'
 
+import { cardTrialCancelCopy } from './no-card-trial'
+
 export interface ConfirmPaymentFields {
   status?: string | null
   confirm_payment_by?: string | null
@@ -85,3 +87,46 @@ export function confirmPaymentIntent(param: string | null | undefined): ConfirmP
 
 /** Where the app shell's banner sends the customer: billing, which starts pay-now. */
 export const CONFIRM_PAYMENT_TRIAL_PATH = `/settings/billing?${CONFIRM_PAYMENT_PARAM}=trial`
+
+/**
+ * Cancel copy for a HELD trial. The card-trial copy opens with "Cancelling stops the automatic
+ * charge", which is false here (a held trial has none); the rest (read-only, retention) is the same.
+ */
+export function heldTrialCancelCopy(trialEndDay: string): string {
+  const rest = cardTrialCancelCopy(trialEndDay).replace(/^Cancelling stops the automatic charge\.\s*/, '')
+  return `Cancelling ends your trial, and nothing is charged. ${rest}`
+}
+
+export type ConfirmIntentAction =
+  | { kind: 'none' }
+  | { kind: 'wait' }
+  | { kind: 'ignore' }
+  | { kind: 'pay-now' }
+  | { kind: 'pay-overdue' }
+  | { kind: 'note'; text: string }
+
+/**
+ * What the billing page does with `?confirm_payment=`. The intent is consumed only after a
+ * SUCCESSFUL subscription load: while loading, or after a failed load, it waits and the param stays
+ * in the URL so Retry acts on it. It starts a checkout only for the state the mail described.
+ */
+export function confirmIntentAction(
+  raw: string | null,
+  sub: (ConfirmPaymentFields & { billing_state?: string | null }) | null | undefined,
+  load: { loading: boolean; loadFailed: boolean },
+): ConfirmIntentAction {
+  if (raw === null) return { kind: 'none' }
+  if (load.loading || load.loadFailed) return { kind: 'wait' }
+  const intent = confirmPaymentIntent(raw)
+  if (intent === 'trial') {
+    return confirmPaymentBy(sub) !== null
+      ? { kind: 'pay-now' }
+      : { kind: 'note', text: 'There is no payment waiting for your confirmation on your trial right now.' }
+  }
+  if (intent === 'overdue') {
+    return sub?.status === 'past_due' || sub?.billing_state === 'read_only'
+      ? { kind: 'pay-overdue' }
+      : { kind: 'note', text: 'There is no outstanding payment to confirm right now.' }
+  }
+  return { kind: 'ignore' }
+}

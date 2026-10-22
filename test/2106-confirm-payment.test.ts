@@ -8,6 +8,8 @@ import {
   confirmPaymentIntent,
   formatConfirmDate,
   chargesAutomatically,
+  heldTrialCancelCopy,
+  confirmIntentAction,
   CONFIRM_PAYMENT_TRIAL_PATH,
 } from '../src/lib/confirm-payment'
 import { sanitizeRedirect } from '../src/lib/safe-redirect'
@@ -143,5 +145,41 @@ describe('routePayNowResult and the debug mock checkout (http://localhost)', () 
     expect(routePayNowResult(local, { allowLocalHttp: true }).kind).toBe('redirect')
     expect(routePayNowResult({ ...local, checkout_url: 'http://evil.example/x' }, { allowLocalHttp: true }).kind).toBe('inline')
     expect(routePayNowResult({ ...local, checkout_url: 'http://localhost.evil.example/x' }, { allowLocalHttp: true }).kind).toBe('inline')
+  })
+})
+
+describe('heldTrialCancelCopy: a held trial has no automatic charge to stop', () => {
+  test('says the trial ends and nothing is charged; never "automatic charge"', () => {
+    const t = heldTrialCancelCopy('25 Oct 2026')
+    expect(t).toContain('Cancelling ends your trial')
+    expect(t).toContain('nothing is charged')
+    expect(t.toLowerCase()).not.toContain('automatic')
+    expect(t).toContain('25 Oct 2026')
+    expect(t).toContain("We can't recover them")
+  })
+})
+
+describe('confirmIntentAction: consume the intent only after a SUCCESSFUL subscription load', () => {
+  const held = { status: 'trialing', confirm_payment_by: '2026-10-25T22:59:59Z' }
+  const plain = { status: 'trialing', confirm_payment_by: null }
+  const ok = { loading: false, loadFailed: false }
+  test('no param: nothing to do', () => {
+    expect(confirmIntentAction(null, held, ok)).toEqual({ kind: 'none' })
+  })
+  test('loading or a failed load: wait, and the param is kept (Retry acts on it)', () => {
+    expect(confirmIntentAction('trial', held, { loading: true, loadFailed: false })).toEqual({ kind: 'wait' })
+    expect(confirmIntentAction('trial', held, { loading: false, loadFailed: true })).toEqual({ kind: 'wait' })
+    expect(confirmIntentAction('1', { status: 'past_due' }, { loading: false, loadFailed: true })).toEqual({ kind: 'wait' })
+  })
+  test('trial: pay-now only when held, else a note', () => {
+    expect(confirmIntentAction('trial', held, ok)).toEqual({ kind: 'pay-now' })
+    expect(confirmIntentAction('trial', plain, ok).kind).toBe('note')
+  })
+  test('1: pay-overdue only when past due, else a note', () => {
+    expect(confirmIntentAction('1', { status: 'past_due' }, ok)).toEqual({ kind: 'pay-overdue' })
+    expect(confirmIntentAction('1', { status: 'active' }, ok).kind).toBe('note')
+  })
+  test('an unknown value is consumed and starts nothing', () => {
+    expect(confirmIntentAction('2', held, ok)).toEqual({ kind: 'ignore' })
   })
 })

@@ -227,3 +227,41 @@ test('the held-trial mail link (/billing?confirm_payment=trial) starts pay-now a
   await shot(page, '2106-pay-now-returned-1440')
   expect((await subscription(page)).status).toBe('active')
 })
+
+// Signed out: the mail link survives the sign-in bounce, starts ONE checkout, and Back from the
+// checkout never lands on /login?next=… (which would bounce to billing with the intent again).
+test('signed out: mail link -> login -> pay-now once; Back twice starts no second checkout', async ({ page }) => {
+  const password = 'trial-2106-correct-horse-battery'
+  const email = uniqueEmail('trial-2106-back')
+  await startMandatedTrial(page, email)
+  seedHold(email)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  // Sign out: drop the session cookie. The vault stays in IndexedDB (same browser profile).
+  await page.context().clearCookies()
+  await page.evaluate(() => { try { sessionStorage.clear() } catch { /* ignore */ } })
+
+  // A signed-out visitor must really be signed out: the dev auto-login would sign in as someone else.
+  await page.route('**/dev/auto-login', (r) => r.abort())
+  let payNowPosts = 0
+  page.on('request', (r) => { if (r.url().includes('/api/v1/billing/trial/pay-now') && r.method() === 'POST') payNowPosts++ })
+
+  await page.goto('/billing?confirm_payment=trial')
+  await page.waitForURL(/\/login\?next=/, { timeout: 30_000 })
+  expect(decodeURIComponent(new URL(page.url()).searchParams.get('next') ?? '')).toBe('/settings/billing?confirm_payment=trial')
+  await page.waitForSelector('body[data-crypto-ready="true"]', { timeout: 30_000 })
+  await page.getByLabel(/email/i).fill(email)
+  await page.locator('input[type="password"]').first().fill(password)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+
+  await page.waitForURL(/\/dev\/mock-mollie\/checkout\//, { timeout: 60_000 })
+  expect(payNowPosts).toBe(1)
+
+  // Back from the checkout, then Back again: neither may start a second checkout.
+  await page.goBack()
+  await page.waitForTimeout(1500)
+  await page.goBack().catch(() => {})
+  await page.waitForTimeout(5000)
+  expect(payNowPosts).toBe(1)
+  expect(page.url()).not.toMatch(/mock-mollie\/checkout/)
+  expect(page.url()).not.toContain('confirm_payment')
+})
