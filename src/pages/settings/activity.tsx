@@ -232,8 +232,8 @@ export function SettingsActivity() {
               <p>Activity tracking is not enabled.</p>
               <p className="mt-1">
                 Enable it in{' '}
-                <Link to="/settings/profile" className="text-amber-deep hover:underline">
-                  Settings &gt; Profile
+                <Link to="/settings/privacy" className="text-amber-deep hover:underline">
+                  Privacy &amp; data
                 </Link>{' '}
                 to see your file activity history.
               </p>
