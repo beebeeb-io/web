@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef } from 'react'
+import { Fragment, type ReactNode, useEffect, useRef } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { Icon } from '@beebeeb/shared'
 import type { IconName } from '@beebeeb/shared'
@@ -9,21 +9,20 @@ type NavItem = {
   label: string
   icon: IconName
   href: string
+  group: string
 }
 
 const navItems: NavItem[] = [
-  { id: 'profile', label: 'Profile', icon: 'users', href: '/settings/profile' },
-  { id: 'security', label: 'Security', icon: 'shield', href: '/settings/security' },
-  { id: 'billing', label: 'Storage & Plan', icon: 'cloud', href: '/settings/billing' },
-  { id: 'privacy', label: 'Privacy', icon: 'eye-off', href: '/settings/privacy' },
-  { id: 'activity', label: 'Activity', icon: 'clock', href: '/settings/activity' },
-  { id: 'notifications', label: 'Notifications', icon: 'bell', href: '/settings/notifications' },
-  { id: 'data-residency', label: 'Data Residency', icon: 'cloud', href: '/settings/data-residency' },
-  { id: 'appearance', label: 'Appearance', icon: 'image', href: '/settings/appearance' },
-  { id: 'import', label: 'Import', icon: 'download', href: '/settings/import' },
-  { id: 'referrals', label: 'Referrals', icon: 'share', href: '/settings/referrals' },
-  { id: 'developer', label: 'Developer', icon: 'key', href: '/settings/developer' },
-  { id: 'support', label: 'Support', icon: 'mail', href: '/settings/support' },
+  { group: 'Your account', id: 'profile', label: 'Account', icon: 'users', href: '/settings/profile' },
+  { group: 'Your account', id: 'billing', label: 'Plan & billing', icon: 'cloud', href: '/settings/billing' },
+  { group: 'Your account', id: 'privacy', label: 'Privacy & data', icon: 'eye-off', href: '/settings/privacy' },
+  { group: 'Sign-in and activity', id: 'security', label: 'Security', icon: 'shield', href: '/settings/security' },
+  { group: 'Sign-in and activity', id: 'activity', label: 'Activity', icon: 'clock', href: '/settings/activity' },
+  { group: 'Files & storage', id: 'data-residency', label: 'Storage location', icon: 'cloud', href: '/settings/data-residency' },
+  { group: 'Files & storage', id: 'import', label: 'Import files', icon: 'download', href: '/settings/import' },
+  { group: 'Preferences', id: 'notifications', label: 'Notifications', icon: 'bell', href: '/settings/notifications' },
+  { group: 'Preferences', id: 'appearance', label: 'Appearance', icon: 'image', href: '/settings/appearance' },
+  { group: 'Help', id: 'support', label: 'Help & about', icon: 'mail', href: '/settings/support' },
 ]
 
 interface SettingsShellProps {
@@ -55,25 +54,30 @@ export function SettingsShell({ activeSection, children }: SettingsShellProps) {
             <Icon name="settings" size={13} className="text-ink-3" />
             <span className="text-[13px] font-semibold text-ink">Settings</span>
           </div>
-          {navItems.map((item) => {
+          {navItems.map((item, index) => {
             const isActive = item.id === activeSection || location.pathname === item.href
             return (
-              <Link
-                key={item.id}
-                to={item.href}
-                className={`flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] transition-colors ${
-                  isActive
-                    ? 'bg-paper-3 font-semibold text-ink'
-                    : 'text-ink-2 hover:bg-paper-3/50'
-                }`}
-              >
-                <Icon
-                  name={item.icon}
-                  size={12}
-                  className={`shrink-0 ${isActive ? 'text-ink' : 'text-ink-3'}`}
-                />
-                <span>{item.label}</span>
-              </Link>
+              <Fragment key={item.id}>
+                {(index === 0 || item.group !== navItems[index - 1].group) && (
+                  <div className="px-2 pt-4 pb-1 text-[11px] font-semibold text-ink-3">{item.group}</div>
+                )}
+                <Link
+                  to={item.href}
+                  aria-current={isActive ? 'page' : undefined}
+                  className={`flex items-center gap-2.5 px-2 py-[7px] rounded-md text-[13px] transition-colors ${
+                    isActive
+                      ? 'bg-paper-3 font-semibold text-ink'
+                      : 'text-ink-2 hover:bg-paper-3/50'
+                  }`}
+                >
+                  <Icon
+                    name={item.icon}
+                    size={12}
+                    className={`shrink-0 ${isActive ? 'text-ink' : 'text-ink-3'}`}
+                  />
+                  <span>{item.label}</span>
+                </Link>
+              </Fragment>
             )
           })}
         </nav>
@@ -90,6 +94,7 @@ export function SettingsShell({ activeSection, children }: SettingsShellProps) {
               <Link
                 key={item.id}
                 to={item.href}
+                aria-current={isActive ? 'page' : undefined}
                 data-active={isActive}
                 className={`flex items-center gap-1.5 shrink-0 px-3 py-1.5 rounded-md text-[13px] whitespace-nowrap transition-colors ${
                   isActive

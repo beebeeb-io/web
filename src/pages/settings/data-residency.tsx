@@ -195,7 +195,7 @@ export function SettingsDataResidency() {
   return (
     <SettingsShell activeSection="data-residency">
       <SettingsHeader
-        title="Data Residency"
+        title="Storage location"
         subtitle="Choose where your files are stored. New uploads go where you choose."
       />
 
