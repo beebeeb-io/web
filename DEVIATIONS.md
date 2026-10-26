@@ -4,6 +4,12 @@ Per `CLAUDE.md`'s "Design before code" rule: where the code and an approved
 design artefact disagree, that gap is recorded here in the same commit as the
 code, never shipped silently.
 
+## Full-speed L2 — Settings structure (2026-10-26)
+
+Guus requested clearer settings categories and fewer duplicates. The workspace design and plan at `docs/superpowers/{specs,plans}/2026-10-26-settings-ia-{design,plan}.md` were written before implementation; program §5.6 item 5 permits building without waiting for approval. PR publication is blocked by this session's network/approval policy; the lead receives local branches and evidence.
+
+This supersedes the flat settings navigation and Profile's privacy controls in the old settings mockup: group live pages by purpose, use shared plain labels, move the existing tracking editor to Privacy & data, retain the canonical deletion flow there, and omit the inert Recovery contact input while preserving its stored field. Developer/Referrals URLs remain; their coming-soon navigation entries are removed. Authentication, billing and deletion handlers are retained. Focused test counts and runtime checks deferred by program §5.4 are recorded in the workspace plan.
+
 ## Task 1567 — office editor
 
 ### First-load state (CRITIQUE.md finding #5, fixed 2026-09-27)

@@ -297,7 +297,7 @@ export function SettingsAppearance() {
     <SettingsShell activeSection="appearance">
       <SettingsHeader
         title="Appearance"
-        subtitle="Customize how Beebeeb looks and feels. Preferences sync across your devices."
+        subtitle="Choose the theme, text size and language for this app."
       />
 
       {/* ─ Theme ─────────────────────────────────── */}
@@ -321,7 +321,7 @@ export function SettingsAppearance() {
       </SettingsRow>
 
       {/* ─ Font size ─────────────────────────────── */}
-      <SettingsRow label="Content density" hint="Adjust text size in the main content area">
+      <SettingsRow label="Text size" hint="Adjust text size in the main content area">
         <div className="flex flex-col gap-1.5 max-w-[520px]">
           {fontSizeOptions.map((option) => (
             <OptionCard

@@ -1,3 +1,4 @@
+import { ActivityTrackingSettings } from '../../components/settings/activity-tracking'
 /**
  * Privacy tools page — GDPR Articles 15-22 self-service UI (spec 025).
  *
@@ -231,30 +232,6 @@ function DataExportCard() {
   )
 }
 
-// ── 2. Activity tracking cross-link ───────────────────────────────────────────
-
-function ActivityTrackingCard() {
-  return (
-    <Card title="Activity tracking">
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex-1 min-w-0">
-          <p className="text-[13px] text-ink-2 leading-relaxed">
-            Control whether we log your sign-ins and file activity. Disabled by default. Disabling deletes all collected data within 30 days.
-          </p>
-          <p className="text-[11px] text-ink-4 mt-2">GDPR Article 7 — consent. Article 17 — right to erasure.</p>
-        </div>
-        <Link
-          to="/settings/profile"
-          className="shrink-0 inline-flex items-center gap-1.5 text-[12.5px] font-medium text-amber-deep hover:underline whitespace-nowrap"
-        >
-          Manage
-          <Icon name="chevron-right" size={11} />
-        </Link>
-      </div>
-    </Card>
-  )
-}
-
 // ── 2b. Error reports card ────────────────────────────────────────────────────
 
 /**
@@ -475,13 +452,13 @@ export function SettingsPrivacy() {
   return (
     <SettingsShell activeSection="privacy">
       <SettingsHeader
-        title="Privacy"
+        title="Privacy & data"
         subtitle="Manage your data, rights, and how we process your information."
       />
 
       <div className="flex flex-col gap-5 py-4">
         <DataExportCard />
-        <ActivityTrackingCard />
+        <ActivityTrackingSettings />
         {showErrorReports && <ErrorReportsCard configured={telemetryConfigured} />}
         <RestrictProcessingCard />
         <DeleteAccountCard />

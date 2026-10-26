@@ -114,7 +114,7 @@ const SECTIONS: NotificationSection[] = [
     rows: [
       {
         key: 'share_received',
-        label: 'File or folder shared with you',
+        label: 'Shared with you',
         description: 'Someone shared a file or folder with your account.',
       },
       {
@@ -135,8 +135,8 @@ const SECTIONS: NotificationSection[] = [
     rows: [
       {
         key: 'storage_warning',
-        label: 'Storage quota warning',
-        description: 'You have used 80% of your storage quota.',
+        label: 'Storage warnings',
+        description: 'You are close to your account storage limit.',
       },
       {
         key: 'storage_critical',
