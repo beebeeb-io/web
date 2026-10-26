@@ -7,6 +7,7 @@ import { setClientInfo, setApiUrl, getAuthStamp, setAuthIdentity, isCurrentAuthS
 import { scrubText } from '../packages/shared/src/telemetry/scrub'
 import v from './fixtures/direct_transfer.json'
 import { createContentOps } from '../src/lib/content-crypto'
+import { hexToBytes, loadVectors } from './helpers/wasm-crypto-mirror'
 
 wasm.initSync({ module: readFileSync('packages/beebeeb-wasm/beebeeb_wasm_bg.wasm') })
 const original = globalThis.fetch
@@ -193,3 +194,45 @@ test('a zero-byte direct file authenticates to empty plaintext through the exist
   expect(opened).toBe(0)
   expect(ops.decryptorFinish(handle).chunk_count).toBe(1)
 })
+
+for (const mismatch of ['corrupt', 'format', 'both corrupt'] as const) {
+  test(`same-length ${mismatch} storage frame retries the pinned API before emitting plaintext`, async () => {
+    const vector = loadVectors().chunk_v2_single_frame
+    const file = vector.file_id as string
+    const key = hexToBytes(vector.file_key_hex)
+    const plain = hexToBytes(vector.plaintext_hex)
+    const healthy = hexToBytes(vector.wire_hex)
+    let bad = healthy.slice()
+    if (mismatch === 'format') {
+      const sealed = wasm.encrypt_chunk(key, plain) as { nonce: Uint8Array; ciphertext: Uint8Array }
+      bad = new Uint8Array([...sealed.nonce, ...sealed.ciphertext])
+    } else bad[bad.length - 1] ^= 1
+    expect(bad.length).toBe(healthy.length)
+    let pinned = 0, rejected = 0
+    class Planner extends wasm.WasmDownloadPlanner {
+      chunkUnauthentic(index: number) { rejected++; super.chunkUnauthentic(index) }
+    }
+    install(url => {
+      if (url.endsWith('capabilities')) return json(disc)
+      if (url.endsWith('download-grants')) return json({ ...windowBody(0, 1, plain.length), file_id: file })
+      if (url.includes('/chunks/')) { pinned++; expect(url).toContain(version); return new Response((mismatch === 'both corrupt' ? bad : healthy).slice()) }
+      return new Response(bad.slice(), { headers: { 'Content-Length': String(bad.length) } })
+    })
+    const ops = createContentOps(wasm)
+    const handle = ops.createDecryptor(key, file, 2)
+    try {
+      const source = await directChunks(file, { versionId: version, chunkFormat: 2 }, new AbortController().signal, {
+        session: session({ ...wasm, WasmDownloadPlanner: Planner }), pairs: [pair],
+        openFrame: async (frame: Uint8Array) => ops.decryptorPushFrame(handle, frame),
+      })
+      if (mismatch === 'both corrupt') {
+        await expect(collect(source!)).rejects.toThrow('Direct download failed')
+        expect([pinned, rejected]).toEqual([1, 2])
+        return
+      }
+      expect((await collect(source!)).map(frame => [...frame])).toEqual([[...plain]])
+      expect([pinned, rejected]).toEqual([1, 1])
+      expect(ops.decryptorFinish(handle).chunk_count).toBe(1)
+    } finally { ops.decryptorDispose(handle) }
+  })
+}
