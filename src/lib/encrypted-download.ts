@@ -1,3 +1,4 @@
+import { directResponse } from './direct/download'
 // ─── Encrypted download ────────────────────────────
 // Downloads encrypted file data, decrypts chunks + filename, triggers browser download.
 //
@@ -414,6 +415,7 @@ export async function pipeDecryptedChunks(
     throw err
   } finally {
     if (signal) signal.removeEventListener('abort', onAbort)
+    await reader.cancel().catch(() => {})
     try { reader.releaseLock() } catch {}
   }
 }
@@ -459,7 +461,7 @@ export async function encryptedDownload(
   const headers: Record<string, string> = {}
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/download`, {
+  const res = await directResponse(fileId, meta.content.pin, opts?.signal ?? new AbortController().signal) ?? await fetch(`${getApiUrl()}/api/v1/files/${fileId}/download`, {
     headers,
     signal: opts?.signal,
     credentials: 'include',
@@ -523,6 +525,7 @@ export async function encryptedDownload(
       // Tear down the partial download and propagate the error so callers
       // see the same contract regardless of which path was taken.
       try { await handles?.abort(err) } catch {}
+      await res.body?.cancel().catch(() => {})
       throw err
     }
   }
@@ -586,7 +589,7 @@ export async function decryptToBlob(
   const headers: Record<string, string> = {}
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const res = await fetch(`${getApiUrl()}/api/v1/files/${fileId}/download`, { headers, credentials: 'include' })
+  const res = await directResponse(fileId, meta.content.pin, new AbortController().signal) ?? await fetch(`${getApiUrl()}/api/v1/files/${fileId}/download`, { headers, credentials: 'include' })
   if (!res.ok) throw new ApiError(res.statusText, res.status)
 
   const encryptedBytes = new Uint8Array(await res.arrayBuffer())

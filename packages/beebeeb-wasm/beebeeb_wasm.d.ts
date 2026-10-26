@@ -1,6 +1,22 @@
 /* tslint:disable */
 /* eslint-disable */
 
+export type DirectVerdict =
+| { kind: "api_for_file" }
+| { kind: "restart" }
+| { kind: "terminal"; status: number; error: string | null }
+| { kind: "corrupt" };
+
+export type DirectPoll =
+| { kind: "request_window"; request: { object_version_id: string | null; start_index: number; count: number; renewal: boolean } }
+| { kind: "fetch"; index: number; method: string; url: WasmSignedUrl; length: number; expires_at: string }
+| { kind: "fetch_via_api"; index: number; object_version_id: string }
+| { kind: "wait"; until_ms: number | null }
+| { kind: "done" }
+| { kind: "stop"; verdict: DirectVerdict };
+
+
+
 /**
  * k-anonymity breach check for one password. Core hashes and matches; **JS
  * makes the HTTP call**, to the endpoint the onboarding document declares in
@@ -216,6 +232,170 @@ export class WasmChunkEncryptor {
 }
 
 /**
+ * How long a discovery answer is trusted, and whether to ask again: one per API base.
+ * `lookup(nowMs)` is `{ kind: "fetch" | "cached" | "use_api", discovery? }`;
+ * `record(outcome, body, nowMs)` takes the `classifyDirectAnswer` result and the
+ * discovery body (or `null`).
+ */
+export class WasmDirectDiscoveryCache {
+    free(): void;
+    [Symbol.dispose](): void;
+    lookup(now_ms: number): any;
+    constructor();
+    record(outcome: any, body: Uint8Array | null | undefined, now_ms: number): void;
+}
+
+/**
+ * Whether this client may start a direct transfer now, per direction: after a transfer gave up direct,
+ * no new one of that direction starts for ten minutes. One per API base and account; feed it
+ * `Date.now()` (or a monotonic clock, consistently). `lastGaveUpMs` / `restore` let a client persist the
+ * two timestamps. A recorded time later than "now" counts as expired.
+ */
+export class WasmDirectHealth {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * A transfer of `direction` gave up direct. Throws `direction_invalid` for anything but
+     * `"download"` or `"upload"` (as every method here does).
+     */
+    gaveUp(direction: string, now_ms: number): void;
+    /**
+     * When the last give-up of `direction` was recorded, or `null`.
+     */
+    lastGaveUpMs(direction: string): number | undefined;
+    /**
+     * May a new direct transfer of `direction` start now?
+     */
+    mayStart(direction: string, now_ms: number): boolean;
+    /**
+     * As `mayStart`, for a file that may already have given up direct: it never may again (`fileGaveUp`).
+     */
+    mayStartFile(direction: string, now_ms: number, file_gave_up: boolean): boolean;
+    constructor();
+    /**
+     * Put back a timestamp `lastGaveUpMs` returned earlier.
+     */
+    restore(direction: string, last_gave_up_ms: number): void;
+}
+
+/**
+ * The download planner for ONE file: when to ask the API for a window of
+ * links, which chunk to fetch next (at most 4 in flight, in order), when to
+ * renew a link, and when a chunk goes to the pinned API route. It performs no
+ * I/O and holds no clock: pass `Date.now()` as `nowMs` on every call.
+ *
+ * Drive it from one place:
+ *
+ * ```js
+ * const p = new WasmDownloadPlanner(discovery, apiBase, fileId, seed)
+ * for (;;) {
+ *   const w = p.poll(Date.now())
+ *   switch (w.kind) {
+ *     case "request_window": // POST, then windowAnswered(body) or windowFailed(outcome)
+ *       break
+ *     case "fetch": // GET w.url.raw() (w.url is a WasmSignedUrl, not a string), then fetchOk(w.index) or fetchFailed(w.index)
+ *       break
+ *     case "fetch_via_api": // pinned route, then fetchOk or apiFetchFailed
+ *       break
+ *     case "wait": // sleep until w.until_ms or until a request returns
+ *       break
+ *     case "done": return
+ *     case "stop": return // discard partial output and act on w.verdict.kind
+ *   }
+ *   // chunks are decrypted IN ORDER: after each, consumed(index); if one does
+ *   // not authenticate, chunkUnauthentic(index)
+ * }
+ * ```
+ */
+export class WasmDownloadPlanner {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * The pinned API route failed for chunk `index` after the caller's own retries.
+     */
+    apiFetchFailed(index: number): void;
+    /**
+     * Chunk `index` arrived but did not authenticate when decrypted.
+     */
+    chunkUnauthentic(index: number): void;
+    /**
+     * Chunk `index` has been decrypted and written. Strictly in order.
+     */
+    consumed(index: number): void;
+    /**
+     * Chunks decrypted and written so far.
+     */
+    consumedCount(): number;
+    /**
+     * The transfer of chunk `index` from storage failed (any non-200, a short
+     * body, a wrong length, a network error, an expired link).
+     */
+    fetchFailed(index: number, now_ms: number): void;
+    /**
+     * Chunk `index` arrived whole (status 200 and the right length).
+     */
+    fetchOk(index: number): void;
+    /**
+     * `{ chunk_count, chunk_size, encrypted_size, original_size }` once the
+     * first window was accepted, else `null`.
+     */
+    geometry(): any;
+    /**
+     * Chunk requests (storage or API) currently outstanding.
+     */
+    inFlight(): number;
+    /**
+     * `discovery` is the object `parseDirectDiscovery` returned; `jitter_seed` is any number.
+     * The seed is the number's IEEE-754 bits (`f64::to_bits`): `Math.random()` is fine, every
+     * distinct number is a distinct seed (so two tabs do not share a retry schedule), the same
+     * number repeats its schedule, and `0` and `-0` are two seeds. It is not a secret.
+     */
+    constructor(discovery: any, api_base: string, file_id: string, jitter_seed: number);
+    /**
+     * The pinned `object_version_id`, or `null` before the first window.
+     */
+    pinnedVersion(): string | undefined;
+    /**
+     * What to do now: a `DirectPoll` (`{ kind, ... }`, see the class docs). For `kind: "fetch"` the
+     * `url` is a `WasmSignedUrl`, not a string: pass `url.raw()` to `fetch` and nothing else.
+     */
+    poll(now_ms: number): DirectPoll;
+    /**
+     * Cap the ciphertext bytes held at once (fetching, or fetched and waiting to be decrypted in order):
+     * the planner then holds `clamp(floor(bytes / (chunk_size + 28)), 1, 4)` chunks, so 64 MiB holds four
+     * chunks of 4 MiB but one of 256 MiB. Call it before the first `poll`. Throws `bytes_invalid` for a
+     * number that is not a whole, non-negative byte count.
+     */
+    setMaxInFlightBytes(bytes: number): void;
+    /**
+     * Did the storage breaker trip? It does when a chunk used up its renewals and no chunk of this
+     * transfer has come whole from storage: from then on every remaining chunk is a `fetch_via_api` poll.
+     * When the file ends with this `true`, tell `WasmDirectHealth.gaveUp("download", nowMs)`.
+     */
+    storageGivenUp(): boolean;
+    /**
+     * The window answer for the outstanding request, as the raw response body
+     * (`Uint8Array`). Returns `"accepted"`, `"malformed"` (the body is not the
+     * contract's JSON; handled like any window the server could not serve), or
+     * the code of the contract violation (`transport`, `file_mismatch`,
+     * `version_changed`, `geometry`, `grants`, `length`, `method`,
+     * `authority_<refusal>`, `expiry`, `unexpected`). It never throws: poll
+     * again.
+     */
+    windowAnswered(body: Uint8Array, now_ms: number): string;
+    /**
+     * The window request failed. `outcome` is what `classifyDirectAnswer`
+     * returned for the answer (or `{ kind: "use_api_now" }` for a network
+     * error).
+     */
+    windowFailed(outcome: any, now_ms: number): void;
+    /**
+     * A 2xx window response whose body could not be decoded at all.
+     */
+    windowMalformed(): void;
+}
+
+/**
  * A stateful, client-side search index over a vault's file names.
  *
  * Build it from a file list, mutate it incrementally (`upsert`/`remove` return
@@ -267,6 +447,34 @@ export class WasmSearchIndex {
      * Shard count this index uses.
      */
     readonly numShards: number;
+}
+
+/**
+ * A presigned storage link as the `fetch` step carries it: a bearer capability until it expires. It
+ * is an object, not a string, so that `console.log`, `String(url)`, a template literal and
+ * `JSON.stringify(step)` can never show it: all of them give the redacted form (scheme and host).
+ * The only way to the link is `raw()`, by name.
+ */
+export class WasmSignedUrl {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * The full presigned link, to hand to `fetch`. Never log it.
+     */
+    raw(): string;
+    /**
+     * Scheme and host only: safe for a log line.
+     */
+    redacted(): string;
+    /**
+     * `JSON.stringify(step)`.
+     */
+    toJSON(): string;
+    /**
+     * `String(url)` and template literals.
+     */
+    toString(): string;
 }
 
 /**
@@ -383,6 +591,38 @@ export class WasmSignupCeremony {
      */
     step(): any;
 }
+
+/**
+ * May the client follow this storage link? Throws an `Error` whose `code` is
+ * the refusal (`malformed`, `not_https`, `userinfo`, `ip_literal`, `loopback`,
+ * `bad_host`, `port`, `host_not_listed`, `bucket_not_listed`, `bad_path`); the
+ * message never contains the URL. `discovery` is the object
+ * `parseDirectDiscovery` returned; `api_base` is the API origin in use.
+ */
+export function checkStorageUrl(url: string, discovery: any, api_base: string): void;
+
+/**
+ * What an API answer means, as `{ kind, millis?, status?, error? }` with `kind`
+ * one of `proceed`, `not_supported`, `use_api_now`, `api_for_this_file`
+ * (for an UPLOAD call: this session cannot go direct, so abandon it and init again WITHOUT the
+ * capability token),
+ * `restart`, `backoff` (with `millis`), `terminal` (with `status`, `error`),
+ * `retry` (the pinned chunk route and the upload calls: a failure that may pass; the retry rules of
+ * the pinned route are `pinnedRetryDecision`, those of an upload are core's `UploadChunkState`, which is
+ * not exported yet, so do not pass an upload outcome to `pinnedRetryDecision`), `regrant`
+ * (`upload_commit` only: the staged chunk is not there, ask for a new link and send it again), `held`
+ * (`upload_commit` only: the server holds the chunk's commit lock, possibly for minutes: wait and
+ * commit again, `millis` is the server's stated wait or null). core's `UploadChunkState` gives a hold an
+ * allowance of its own (the lock TTL, 420 s, plus 30 s; never polling faster than once a second), but it
+ * is not exported yet: a host that handles `held` itself must bound the wait the same way (at least the
+ * server's lock TTL, or it abandons a chunk whose commit would have gone through), poll no faster than
+ * once a second, and not count a hold as one of its failures.
+ * `call` is `"discovery"`, `"download_grant"`, `"pinned_chunk"`, `"upload_grant"` or
+ * `"upload_commit"`; pass `status` 0 when there was
+ * no HTTP answer. `body` is whatever was read of the body (at most 64 KiB is
+ * looked at); `retry_after` is the raw header value.
+ */
+export function classifyDirectAnswer(call: string, status: number, content_type: string | null | undefined, body: Uint8Array, retry_after?: string | null): any;
 
 /**
  * Compute recovery check from master key. Returns 32-byte `Uint8Array`.
@@ -514,6 +754,20 @@ export function derive_x25519_private(master_key: Uint8Array): Uint8Array;
  * Derive X25519 verification key from signing key. Returns 32-byte `Uint8Array`.
  */
 export function derive_x25519_public(private_key: Uint8Array): Uint8Array;
+
+/**
+ * `/api/v1/files/{id}/download-grants` for `file_id`.
+ */
+export function directDownloadGrantsPath(file_id: string): string;
+
+/**
+ * `{ cap_object_download_v1, cap_object_upload_v1, capabilities_header,
+ * discovery_path, max_window, default_window, chunk_overhead,
+ * storage_connect_timeout_ms, storage_get_idle_ms, discovery_timeout_ms,
+ * api_call_timeout_ms, background_put_resource_timeout_ms }`: the contract's
+ * names and numbers, and the time bounds every client applies, so no client re-types them.
+ */
+export function directTransferConstants(): any;
 
 /**
  * Encrypt a plaintext chunk with AES-256-GCM. Returns a JS object
@@ -685,6 +939,23 @@ export function opaque_registration_start(password: Uint8Array): any;
 export function open_request_upload(r_priv: Uint8Array, e_pub: Uint8Array, file_id: Uint8Array, wrapped_key: Uint8Array): Uint8Array;
 
 /**
+ * Decode a discovery body (`GET /api/v1/transfer/capabilities`). Returns
+ * `{ download, upload, storage_hosts, storage_buckets: [{host, bucket}],
+ * max_window, url_ttl_seconds }`; unknown fields are ignored and missing lists
+ * are empty. Throws an `Error` with `code` `discovery_too_large` or
+ * `discovery_malformed`.
+ */
+export function parseDirectDiscovery(body: Uint8Array): any;
+
+/**
+ * The shared retry policy of the pinned per-chunk route (4 attempts, 150 s of waiting in all, a
+ * stated `Retry-After` kept, otherwise 1 s doubling). `outcome` is what `classifyDirectAnswer`
+ * returned for `call: "pinned_chunk"`; `attempt` is the 1-based number of the attempt that just
+ * failed; `waitedMs` is the total waited so far.
+ */
+export function pinnedRetryDecision(outcome: any, attempt: number, waited_ms: number): any;
+
+/**
  * Return the base storage quota (in bytes) for a plan slug.
  */
 export function plan_base_storage_bytes(plan_slug: string): bigint;
@@ -724,6 +995,27 @@ export function plan_monthly_cost_cents(plan_slug: string, extra_tb: bigint, ext
 export function recover_from_phrase(phrase: string): Uint8Array;
 
 /**
+ * A URL for a log line: scheme and host only.
+ */
+export function redactUrl(url: string): string;
+
+/**
+ * What to do with an unfinished upload found on disk. `recorded` is `"api"` or `"direct"` (what the resume
+ * record names); `discovery` is `{ kind, upload? }` with `kind` `"offers"` (and `upload: true | false`),
+ * `"not_supported"` (a JSON 404), `"unknown"` (a 5xx, a timeout, a bare 404: no usable answer) or
+ * `"unauthorized"` (401 or 403); `forcedApi` is the user's own switch. Returns `"continue_api"`,
+ * `"continue_direct"`, `"abandon_to_api"`, `"keep_record_and_fail"` or `"keep_record_and_reauthenticate"`.
+ * A recorded direct session is given up only on a definite no. Throws `recorded_invalid` or
+ * `discovery_state_invalid`.
+ */
+export function resumeTransport(recorded: string, discovery: any, forced_api: boolean): string;
+
+/**
+ * Text that may contain URLs, made safe to print.
+ */
+export function scrubText(text: string): string;
+
+/**
  * Seal a content key to a request's public key (anonymous uploader path).
  * `r_pub` and `content_key` are 32 bytes; `file_id` is arbitrary bytes.
  * Returns `{ e_pub: Uint8Array, wrapped_key: Uint8Array }`.
@@ -738,6 +1030,19 @@ export function seal_to_request(r_pub: Uint8Array, file_id: Uint8Array, content_
  * `search_sync::diff_manifest` doc for the `localIsAuthoritative` semantics.
  */
 export function searchIndexSyncPlan(local: any, remote: any, local_is_authoritative: boolean): any;
+
+/**
+ * The most a storage GET of `len` ciphertext bytes may take, in milliseconds (the same formula as a PUT).
+ * Throws like `storagePutTotalMs`.
+ */
+export function storageGetTotalMs(len: number): number;
+
+/**
+ * The most a storage PUT of `len` ciphertext bytes may take, in milliseconds: a minute plus the
+ * chunk at 1 Mbit/s (`60 s + ceil(len / 131072) s`). Throws an `Error` with `code` `length_invalid`
+ * for a `len` that is not a whole, non-negative number.
+ */
+export function storagePutTotalMs(len: number): number;
 
 /**
  * Format a byte count as a human-readable SI string (e.g. "5.0 TB").
@@ -821,8 +1126,14 @@ export interface InitOutput {
     readonly __wbg_wasmbreachcheck_free: (a: number, b: number) => void;
     readonly __wbg_wasmchunkdecryptor_free: (a: number, b: number) => void;
     readonly __wbg_wasmchunkencryptor_free: (a: number, b: number) => void;
+    readonly __wbg_wasmdirectdiscoverycache_free: (a: number, b: number) => void;
+    readonly __wbg_wasmdirecthealth_free: (a: number, b: number) => void;
+    readonly __wbg_wasmdownloadplanner_free: (a: number, b: number) => void;
     readonly __wbg_wasmsearchindex_free: (a: number, b: number) => void;
+    readonly __wbg_wasmsignedurl_free: (a: number, b: number) => void;
     readonly __wbg_wasmsignupceremony_free: (a: number, b: number) => void;
+    readonly checkStorageUrl: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly classifyDirectAnswer: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
     readonly compute_recovery_check: (a: number, b: number, c: number) => void;
     readonly decompress_gzip: (a: number, b: number, c: number) => void;
     readonly decrypt_chunk: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
@@ -842,6 +1153,8 @@ export interface InitOutput {
     readonly derive_share_key: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly derive_x25519_private: (a: number, b: number, c: number) => void;
     readonly derive_x25519_public: (a: number, b: number, c: number) => void;
+    readonly directDownloadGrantsPath: (a: number, b: number, c: number) => void;
+    readonly directTransferConstants: (a: number) => void;
     readonly encrypt_chunk: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly encrypt_metadata: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly encrypt_name_for: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
@@ -864,6 +1177,8 @@ export interface InitOutput {
     readonly opaque_registration_finish: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly opaque_registration_start: (a: number, b: number, c: number) => void;
     readonly open_request_upload: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
+    readonly parseDirectDiscovery: (a: number, b: number, c: number) => void;
+    readonly pinnedRetryDecision: (a: number, b: number, c: number, d: number) => void;
     readonly plan_base_storage_bytes: (a: number, b: number) => bigint;
     readonly plan_can_add_storage: (a: number, b: number) => number;
     readonly plan_chunks: (a: number, b: bigint, c: number, d: number) => void;
@@ -871,8 +1186,13 @@ export interface InitOutput {
     readonly plan_max_extra_tb: (a: number, b: number) => bigint;
     readonly plan_monthly_cost_cents: (a: number, b: number, c: bigint, d: bigint) => bigint;
     readonly recover_from_phrase: (a: number, b: number, c: number) => void;
+    readonly redactUrl: (a: number, b: number, c: number) => void;
+    readonly resumeTransport: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly scrubText: (a: number, b: number, c: number) => void;
     readonly seal_to_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly searchIndexSyncPlan: (a: number, b: number, c: number, d: number) => void;
+    readonly storageGetTotalMs: (a: number, b: number) => void;
+    readonly storagePutTotalMs: (a: number, b: number) => void;
     readonly storage_format_si: (a: number, b: bigint) => void;
     readonly transfer_decrypt: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly transfer_derive_key: (a: number, b: number, c: number, d: number, e: number) => void;
@@ -902,6 +1222,31 @@ export interface InitOutput {
     readonly wasmchunkencryptor_resumePolicy: (a: number, b: number, c: number) => void;
     readonly wasmchunkencryptor_withChunkSize: (a: number, b: number, c: number, d: number, e: number, f: bigint, g: bigint) => void;
     readonly wasmchunkencryptor_withRecordedPin: (a: number, b: number, c: number) => void;
+    readonly wasmdirectdiscoverycache_lookup: (a: number, b: number, c: number) => void;
+    readonly wasmdirectdiscoverycache_new: () => number;
+    readonly wasmdirectdiscoverycache_record: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly wasmdirecthealth_gaveUp: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly wasmdirecthealth_lastGaveUpMs: (a: number, b: number, c: number, d: number) => void;
+    readonly wasmdirecthealth_mayStart: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly wasmdirecthealth_mayStartFile: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly wasmdirecthealth_new: () => number;
+    readonly wasmdirecthealth_restore: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly wasmdownloadplanner_apiFetchFailed: (a: number, b: number, c: number) => void;
+    readonly wasmdownloadplanner_chunkUnauthentic: (a: number, b: number, c: number) => void;
+    readonly wasmdownloadplanner_consumed: (a: number, b: number, c: number) => void;
+    readonly wasmdownloadplanner_consumedCount: (a: number) => number;
+    readonly wasmdownloadplanner_fetchFailed: (a: number, b: number, c: number, d: number) => void;
+    readonly wasmdownloadplanner_fetchOk: (a: number, b: number, c: number) => void;
+    readonly wasmdownloadplanner_geometry: (a: number, b: number) => void;
+    readonly wasmdownloadplanner_inFlight: (a: number) => number;
+    readonly wasmdownloadplanner_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly wasmdownloadplanner_pinnedVersion: (a: number, b: number) => void;
+    readonly wasmdownloadplanner_poll: (a: number, b: number, c: number) => void;
+    readonly wasmdownloadplanner_setMaxInFlightBytes: (a: number, b: number, c: number) => void;
+    readonly wasmdownloadplanner_storageGivenUp: (a: number) => number;
+    readonly wasmdownloadplanner_windowAnswered: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly wasmdownloadplanner_windowFailed: (a: number, b: number, c: number, d: number) => void;
+    readonly wasmdownloadplanner_windowMalformed: (a: number) => void;
     readonly wasmsearchindex_build: (a: number, b: number, c: number) => void;
     readonly wasmsearchindex_encryptBuckets: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly wasmsearchindex_encryptShards: (a: number, b: number, c: number, d: number) => void;
@@ -912,6 +1257,8 @@ export interface InitOutput {
     readonly wasmsearchindex_query: (a: number, b: number, c: number, d: number) => void;
     readonly wasmsearchindex_remove: (a: number, b: number, c: number, d: number) => void;
     readonly wasmsearchindex_upsert: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly wasmsignedurl_raw: (a: number, b: number) => void;
+    readonly wasmsignedurl_redacted: (a: number, b: number) => void;
     readonly wasmsignupceremony_abandon: (a: number) => void;
     readonly wasmsignupceremony_accountCreated: (a: number, b: number) => void;
     readonly wasmsignupceremony_acknowledgePhrase: (a: number, b: number) => void;
@@ -932,6 +1279,8 @@ export interface InitOutput {
     readonly wasmsignupceremony_step: (a: number, b: number) => void;
     readonly wrap_request_private: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly x25519_shared_secret: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly wasmsignedurl_toJSON: (a: number, b: number) => void;
+    readonly wasmsignedurl_toString: (a: number, b: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;
