@@ -91,7 +91,7 @@ import { useSearchIndex } from '../hooks/use-search-index'
 import { EmptyDrive } from '../components/empty-states/empty-drive'
 import { RestoreFromEraseOffer } from '../components/restore-from-erase'
 import { formatBytes } from '../lib/format'
-import { cacheFileList, getCachedFileList, invalidateFileListCache } from '../lib/offline-cache'
+import { cacheFileList, getCachedFileList, invalidateFileListCache, getOfflineCacheScope, isCurrentOfflineCacheScope } from '../lib/offline-cache'
 import { decideSyncRows, EMPTY_CONFIRM_MS } from '../lib/sync-rows'
 import { createScopedTimer } from '../lib/scoped-timer'
 import { hashFile, checkDuplicate, recordUpload } from '../lib/upload-dedup'
@@ -514,6 +514,8 @@ export function Drive() {
   // stale data when SSE may have missed events for the revisited folder.
   const fetchFiles = useCallback(async () => {
     if (!isUnlocked) return
+    const cacheScope = getOfflineCacheScope()
+    if (!isCurrentOfflineCacheScope(cacheScope)) return
     const trashed = location.pathname === '/trash'
 
     if (syncReadyRef.current && !trashed) {
@@ -537,6 +539,7 @@ export function Drive() {
 
     try {
       const data = withKnownLargeThumbs(await listAllFiles(currentParentId ?? undefined, { trashed }))
+      if (!isCurrentOfflineCacheScope(cacheScope)) return
       if (syncReadyRef.current) {
         learnPoolLocations(poolLocationsRef.current, sync.children(currentParentId ?? null), data)
       }
@@ -562,6 +565,7 @@ export function Drive() {
       }
       setSyncedAgo(0)
     } catch (err) {
+      if (!isCurrentOfflineCacheScope(cacheScope)) return
       console.error('[Drive] Failed to load files:', err)
       // 4xx errors are real failures (auth, permission, not found) — surface
       // them. Network errors (status 0, TypeError, offline navigator) and
@@ -579,6 +583,7 @@ export function Drive() {
         : null
       // Treat stale entries as missing — task spec says > 7d entries become a
       // "couldn't load files" error rather than misleadingly old data.
+      if (!isCurrentOfflineCacheScope(cacheScope)) return
       if (cached && !cached.stale) {
         setFiles(withKnownLargeThumbs(cached.files))
         setDriveOffline(true)
@@ -596,7 +601,7 @@ export function Drive() {
         setDriveOffline(false)
       }
     } finally {
-      setLoading(false)
+      if (isCurrentOfflineCacheScope(cacheScope)) setLoading(false)
     }
   // sync.ready intentionally read via syncReadyRef to avoid infinite re-fetch
   // loop: listing sync.ready as a dep would recreate fetchFiles on every sync

@@ -4,6 +4,7 @@
 
 import * as Comlink from 'comlink'
 import type * as WasmTypes from 'beebeeb-wasm'
+import { requireWasmIntegrity } from '../lib/wasm-integrity'
 import {
   applyRecordedPinInRegistry,
   createContentOps,
@@ -161,15 +162,16 @@ async function ensureWasm(): Promise<typeof WasmTypes> {
         throw new Error(`WASM integrity verification failed: could not load SRI manifest (${e})`)
       }
 
-      if (!manifest.integrity) {
-        throw new Error('WASM integrity verification failed: SRI manifest missing integrity hash')
-      }
+      const integrity = requireWasmIntegrity(manifest)
 
       // fetch() with integrity= enforces SHA-384 — browser throws on mismatch
       const wasmResp = await fetch(wasmUrl, {
-        integrity: manifest.integrity,
+        integrity,
         credentials: 'same-origin',
       })
+      if (!wasmResp.ok) {
+        throw new Error(`WASM integrity verification failed: binary returned HTTP ${wasmResp.status}`)
+      }
       const wasmBuffer = await wasmResp.arrayBuffer()
       const init = await mod.default(wasmBuffer)
       wasmMemory = init.memory
