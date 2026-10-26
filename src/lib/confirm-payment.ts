@@ -29,13 +29,14 @@ export interface ConfirmPaymentFields {
  * `trialing` row with a parseable date counts: a stale field on any other
  * status is ignored.
  */
-export function confirmPaymentBy(sub: ConfirmPaymentFields | null | undefined, now: number = Date.now()): string | null {
+export function confirmPaymentBy(sub: ConfirmPaymentFields | null | undefined): string | null {
   if (!sub || sub.status !== 'trialing') return null
   const iso = sub.confirm_payment_by
   if (typeof iso !== 'string' || iso.length === 0) return null
   const at = new Date(iso).getTime()
-  // A deadline already past is not a hold: the server lapses the trial at that instant.
-  return Number.isNaN(at) || at <= now ? null : iso
+  // The server clears the hold after its lapse job completes, which can be delayed.
+  // An elapsed deadline must never turn a held trial into an automatic-charge promise.
+  return Number.isNaN(at) ? null : iso
 }
 
 /**
