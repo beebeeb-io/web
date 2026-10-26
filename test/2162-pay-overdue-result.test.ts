@@ -8,7 +8,7 @@
  * SUBSCRIPTION (the webhook's settlement flips past_due -> active); it cannot tell a decline from
  * a cancel, and says so.
  */
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, spyOn, test } from 'bun:test'
 import fs from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createElement } from 'react'
@@ -94,11 +94,21 @@ describe('item 4: the hold-date formatter after cancelling', () => {
   })
 })
 
-describe('item 4: confirmPaymentBy ignores a deadline already past', () => {
+describe('confirmPaymentBy follows the server hold until the server clears it', () => {
   const now = Date.parse('2026-10-26T00:00:00Z')
-  test('past deadline -> not held; future deadline -> held', () => {
-    expect(confirmPaymentBy({ status: 'trialing', confirm_payment_by: '2026-10-25T22:59:59Z' }, now)).toBeNull()
-    expect(confirmPaymentBy({ status: 'trialing', confirm_payment_by: '2026-10-27T22:59:59Z' }, now)).toBe('2026-10-27T22:59:59Z')
+  test('past, equal, and future deadlines remain held while the server sends the field', () => {
+    const clock = spyOn(Date, 'now').mockReturnValue(now)
+    try {
+      // Server trial::confirm_payment_hold_sql checks an unfinished lapse job, not wall time.
+      for (const at of [now - 1, now, now + 1]) {
+        const deadline = new Date(at).toISOString()
+        expect(confirmPaymentBy({ status: 'trialing', confirm_payment_by: deadline })).toBe(deadline)
+      }
+      expect(confirmPaymentBy({ status: 'trialing', confirm_payment_by: null })).toBeNull()
+      expect(confirmPaymentBy({ status: 'cancelled', confirm_payment_by: '2026-10-25T22:59:59Z' })).toBeNull()
+    } finally {
+      clock.mockRestore()
+    }
   })
 })
 
