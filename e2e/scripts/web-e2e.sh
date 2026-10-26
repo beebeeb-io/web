@@ -40,6 +40,7 @@ PG_USER=beebeeb
 PG_PASS=beebeeb_dev
 DB_NAME="${E2E_DB_NAME:-beebeeb_web_e2e_3003}"
 BLOB_DIR="$(mktemp -d /tmp/bb-web-e2e-blobs-XXXXXX)"
+E2E_STORAGE_ENV=(BLOB_STORE=local "BLOB_STORE_PATH=$BLOB_DIR")
 # Per-RUN log paths. These used to be the fixed /tmp/bb-web-e2e-{api,vite}.log,
 # shared by every concurrent shard/lane on this machine — so the "see
 # /tmp/bb-web-e2e-api.log" hint on a boot failure pointed at ANOTHER run's log.
@@ -53,6 +54,7 @@ WORKERS="${E2E_WORKERS:-1}"
 REPEAT="${E2E_REPEAT:-1}"
 
 WEB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$WEB_DIR/e2e/scripts/direct-storage-env.sh"
 # Resolve the beebeeb.io WORKSPACE root via git's COMMON dir, not a fixed
 # "../.." offset from this script's own location (task 1406 — the previous
 # `$WEB_DIR/../..` only worked when this script's checkout WAS the primary
@@ -348,7 +350,7 @@ SQL
   local _cwd="$PWD"; cd "$BLOB_DIR" || return 3
   DATABASE_URL="$DATABASE_URL" BB_PORT="$API_PORT" \
     CORS_ORIGINS="http://localhost:$VITE_PORT" \
-    BLOB_STORE=local BLOB_STORE_PATH="$BLOB_DIR" \
+    "${E2E_STORAGE_ENV[@]}" \
     AUDIT_SIGNING_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
     SHARE_WRAPPING_KEY=0000000000000000000000000000000000000000000000000000000000000002 \
     OPAQUE_SERVER_SETUP="$OPAQUE_SETUP" \

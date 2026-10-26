@@ -24,7 +24,7 @@
   ],
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build && node gen-wasm-sri.mjs",
+    "build": "tsc --noEmit && vite build && node gen-wasm-sri.mjs && bun scripts/check-storage-csp.ts --check",
     "preview": "vite preview",
     "test": "bun test",
     "test:order": "bash scripts/test-order-guard.sh",
