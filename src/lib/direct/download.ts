@@ -25,10 +25,15 @@ export async function directChunks(
   fileId: string,
   pin: { versionId: string | null; chunkFormat: number },
   signal: AbortSignal,
-  options?: { session: DirectSession; pairs: Pair[] },
+  options?: { session?: DirectSession; pairs?: Pair[]; openFrame?: (frame: Uint8Array) => Promise<Uint8Array> },
 ): Promise<DirectChunks | null> {
   if (forceApi()) return null
-  const s = options?.session ?? await getDirectSession()
+  let s: DirectSession
+  try { s = options?.session ?? await getDirectSession() }
+  catch (error) {
+    if (signal.aborted || (error instanceof Error && error.name === 'AbortError')) throw error
+    return null
+  }
   assertSession(s, signal)
   if (!s.health.mayStart('download', performance.now())) return null
   const discovery = await discover(s)
@@ -108,7 +113,14 @@ export async function directChunks(
             const bytes = ready.get(index)
             if (bytes) {
               ready.delete(index)
-              yield bytes
+              let opened: Uint8Array
+              try { opened = options?.openFrame ? await options.openFrame(bytes) : bytes }
+              catch {
+                assertSession(s, combined)
+                planner.chunkUnauthentic(index)
+                continue
+              }
+              yield opened
               assertSession(s, combined)
               planner.consumed(index)
               continue
@@ -134,23 +146,48 @@ export async function directChunks(
   } catch (error) { release(); throw error }
 }
 
-/** Gives the existing authenticated streaming reader the same geometry and ciphertext as /download. */
-export async function directResponse(fileId: string, chunkFormat: number, signal: AbortSignal): Promise<Response | null> {
-  const chunks = await directChunks(fileId, { versionId: null, chunkFormat }, signal)
+/** Worker-owned content reader; failed pushes leave its chunk index unchanged. */
+export interface FrameOpener {
+  pushFrame(frame: Uint8Array): Promise<Uint8Array>
+  finish(): Promise<unknown>
+  dispose(): Promise<void>
+}
+/** With an opener, authenticate before consuming each chunk and expose plaintext only. */
+export async function directResponse(
+  fileId: string, chunkFormat: number, signal: AbortSignal,
+  createOpener: () => Promise<FrameOpener>,
+): Promise<Response | null> {
+  let opener: FrameOpener | undefined
+  const chunks = await directChunks(fileId, { versionId: null, chunkFormat }, signal, {
+    openFrame: async frame => {
+      opener ??= await createOpener()
+      return opener.pushFrame(frame)
+    },
+  })
   if (!chunks) return null
   const iterator = chunks[Symbol.asyncIterator]()
   const body = new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
         const next = await iterator.next()
-        if (next.done) controller.close()
+        if (next.done) {
+          if (opener) { const finishing = opener; opener = undefined; await finishing.finish() }
+          controller.close()
+        }
         else controller.enqueue(next.value)
-      } catch (error) { controller.error(error) }
+      } catch (error) {
+        await opener?.dispose(); opener = undefined
+        chunks.cancel(); await iterator.return?.()
+        controller.error(error)
+      }
     },
-    async cancel() { chunks.cancel(); await iterator.return?.() },
+    async cancel() {
+      chunks.cancel(); await iterator.return?.()
+      await opener?.dispose(); opener = undefined
+    },
   }, { highWaterMark: 0 })
   return new Response(body, { headers: {
-    'Content-Length': String(chunks.geometry.encrypted_size),
+    'Content-Length': String(chunks.geometry.original_size),
     'X-Chunk-Count': String(chunks.geometry.chunk_count), 'X-Chunk-Size': String(chunks.geometry.chunk_size),
   } })
 }
