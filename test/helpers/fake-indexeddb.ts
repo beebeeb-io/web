@@ -48,6 +48,10 @@ class FakeObjectStore {
     return FakeIDBRequest.succeed(undefined)
   }
 
+  getAll(): FakeIDBRequest<unknown[]> {
+    return FakeIDBRequest.succeed([...this.rows.values()])
+  }
+
   delete(key: string): FakeIDBRequest<void> {
     this.rows.delete(key)
     return FakeIDBRequest.succeed(undefined)

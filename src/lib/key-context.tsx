@@ -44,6 +44,8 @@ import {
   touchSession,
   initSessionExpiryWatcher,
 } from './session-persist'
+import { clearOfflineCaches, setOfflineCacheAccessCheck } from './offline-cache'
+import { clearThumbnailCache } from './thumbnail'
 import { cacheKeyPersistent, cacheKeySessionOnly } from './key-cache'
 import { setRecoveryCheckIfAbsent, verifyRecoveryCheck } from './api'
 import type { DriveFile } from './api'
@@ -51,7 +53,7 @@ import { useAuth } from './auth-context'
 import { isImpersonationSessionActive, shouldReconcileLock } from './impersonation-context'
 import { isRequestUpload, createRequestKeyResolver, type RequestKeyResolver } from './file-request-crypto'
 import { backfillRecoveryCheckIfAbsent, recoveredKeyMatchesAccount } from './recovery-validation'
-import { setExpectedUserProvider, registerAccountMismatchHandler } from '@beebeeb/shared'
+import { getAuthStamp, setExpectedUserProvider, registerAccountMismatchHandler } from '@beebeeb/shared'
 
 /**
  * Outcome of `unlockVault` (task 1531/1534 P0 continuation, web PR #85).
@@ -217,6 +219,12 @@ export function KeyProvider({ children }: { children: ReactNode }) {
   // it actually zeroes the memory on a confirmed mismatch, which this
   // derived flag alone does not do (defense in depth, not either/or).
   const isUnlocked = isKeyBoundToUser(keyPresent, residentKeyUserIdRef.current, user?.user_id ?? null)
+
+  useEffect(() => {
+    setOfflineCacheAccessCheck(() => masterKeyRef.current !== null &&
+      residentKeyUserIdRef.current === getAuthStamp().userId)
+    return () => setOfflineCacheAccessCheck(() => false)
+  }, [])
 
   // Wrap the master key with the tab's non-extractable session key and persist
   // to IndexedDB. Failures are swallowed — caching is an enhancement; the live
@@ -632,6 +640,8 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     requestResolverRef.current?.clear()
     requestResolverRef.current = null
     clearCachedKey()
+    void clearOfflineCaches()
+    void clearThumbnailCache()
     setKeyPresent(false)
   }, [clearCachedKey])
 
@@ -727,6 +737,8 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     lock()
   }, [user, authLoading, vaultChecked, lock])
 
+  useEffect(() => { void clearThumbnailCache() }, [])
+
   const fullLogout = useCallback(async () => {
     if (masterKeyRef.current) {
       zeroize(masterKeyRef.current)
@@ -736,7 +748,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     requestResolverRef.current?.clear()
     requestResolverRef.current = null
     clearCachedKey()
-    await clearVault()
+    await Promise.all([clearOfflineCaches(), clearThumbnailCache(), clearVault()])
     setVaultExists(false)
     setKeyPresent(false)
   }, [clearCachedKey])
