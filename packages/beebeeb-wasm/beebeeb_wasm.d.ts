@@ -415,29 +415,16 @@ export class WasmSearchIndex {
      */
     encryptBuckets(master_key: Uint8Array, buckets: Uint32Array): any;
     /**
-     * Encrypt only the given buckets under the folder key (incremental sync).
-     */
-    encryptBucketsWithFolderKey(folder_key: Uint8Array, buckets: Uint32Array): any;
-    /**
      * Encrypt every non-empty shard page → `[{bucket, page, blob: Uint8Array}]`.
      */
     encryptShards(master_key: Uint8Array): any;
-    /**
-     * Encrypt every non-empty shard page under the folder key.
-     */
-    encryptShardsWithFolderKey(folder_key: Uint8Array): any;
     /**
      * Reconstruct from encrypted shards (`[{bucket, page, blob: Uint8Array}]`),
      * decrypting each with the 32-byte master key.
      */
     static fromEncryptedShards(master_key: Uint8Array, shards: any, num_shards: number): WasmSearchIndex;
     /**
-     * Reconstruct a shared folder's index from shards sealed under the folder
-     * key (`encryptShardsWithFolderKey` output).
-     */
-    static fromEncryptedShardsWithFolderKey(folder_key: Uint8Array, shards: any, num_shards: number): WasmSearchIndex;
-    /**
-     * Empty index with 1–64 shards (zero is clamped to 1).
+     * Empty index with the given shard count (clamped to ≥ 1).
      */
     constructor(num_shards: number);
     /**
@@ -638,14 +625,6 @@ export function checkStorageUrl(url: string, discovery: any, api_base: string): 
 export function classifyDirectAnswer(call: string, status: number, content_type: string | null | undefined, body: Uint8Array, retry_after?: string | null): any;
 
 /**
- * Combine a folder link's fragment key `K_c` with an optional 32-byte
- * passphrase stretch (task 2237b). Pass `undefined`/`null` for a link without
- * a passphrase. Returns a 32-byte `Uint8Array`: the key that unwraps the
- * link's sealed folder key. Never send the result or `K_c` to the server.
- */
-export function combineFolderLinkKey(k_c: Uint8Array, passphrase_stretch?: Uint8Array | null): Uint8Array;
-
-/**
  * Compute recovery check from master key. Returns 32-byte `Uint8Array`.
  */
 export function compute_recovery_check(master_key: Uint8Array): Uint8Array;
@@ -741,22 +720,6 @@ export function decrypt_note(file_key: Uint8Array, note_encrypted: string): stri
  * file key (thumbnails stored before the switch).
  */
 export function decrypt_thumbnail(file_key: Uint8Array, frame: Uint8Array): Uint8Array;
-
-/**
- * Stretch a folder-link passphrase (Argon2id over the canonical NFC form,
- * token-bound salt). Refuses an empty passphrase. Pass the result to
- * `combineFolderLinkKey`; never send it to the server.
- */
-export function deriveFolderLinkPassphraseStretch(passphrase: string, token: string): Uint8Array;
-
-/**
- * Derive one bucket key of a shared folder's encrypted search index (task
- * 2237b): `HKDF-SHA256(ikm = folder key, salt = none, info =
- * "beebeeb-shared-folder-index-v1" || bucket as u32 LE)`. Returns a 32-byte
- * `Uint8Array`. `bucket` must be below the index's shard count (64 in the
- * standard layout); values of 64 or more are rejected here.
- */
-export function deriveSharedFolderIndexKey(folder_key: Uint8Array, bucket: number): Uint8Array;
 
 /**
  * Derive a per-file encryption key from a master key and file ID via
@@ -970,17 +933,6 @@ export function opaque_registration_finish(client_state: Uint8Array, password: U
 export function opaque_registration_start(password: Uint8Array): any;
 
 /**
- * L9 (task 2255): open a LEGACY invite owner copy and return its key only when
- * core proves it over the folder's rows, in ONE call. `rows` are the server's
- * `GET /shares/invites/{id}/folder-keys` rows verbatim:
- * `[{ file_id: string, encrypted_file_key: string }]`, the key in standard base64.
- * They are read lazily, and core examines at most 64 distinct ids. Returns
- * `undefined` when the copy does not open, holds text, or is not proven; the
- * unproven candidate never reaches JS. Attack B (task 2255) is a named residual.
- */
-export function openLegacyInviteOwnerCopy(master_key: Uint8Array, folder_id: string, legacy_copy: Uint8Array, rows: any): Uint8Array | undefined;
-
-/**
  * Open a sealed request upload (owner decrypt path). Recovers the content key.
  * `r_priv` and `e_pub` are 32 bytes; `file_id` is arbitrary bytes. Returns 32-byte `Uint8Array`.
  */
@@ -1151,71 +1103,10 @@ export function transfer_generate_keypair(): any;
  */
 export function transfer_sas_to_words(sas_bytes: Uint8Array): any;
 
-export function unwrapFolderChild(folder_key: Uint8Array, shared_folder_id: string, item_id: string, kind: number, wrapped: Uint8Array): Uint8Array;
-
-/**
- * Open an L6 custody record. Never accepts a legacy (unbound) owner copy.
- */
-export function unwrapFolderCustody(master_key: Uint8Array, folder_id: string, wrapped: Uint8Array): Uint8Array;
-
-/**
- * Open a purpose-bound invite owner copy; never performs a legacy fallback.
- */
-export function unwrapInviteOwnerCopy(master_key: Uint8Array, folder_id: string, wrapped: Uint8Array): Uint8Array;
-
-/**
- * Open a link's owner copy of K_c. K_c is the deliberate export: JS puts it
- * in the link fragment. The master key never leaves the caller.
- */
-export function unwrapLinkOwnerKey(master_key: Uint8Array, share_id: string, wrapped: Uint8Array): Uint8Array;
-
-/**
- * Open a link's owner copy of its token.
- */
-export function unwrapLinkOwnerToken(master_key: Uint8Array, share_id: string, wrapped: Uint8Array): Uint8Array;
-
-/**
- * Open only an L8 owner file-key record, requiring exactly 32 plaintext bytes.
- */
-export function unwrapOwnerFileKey(master_key: Uint8Array, item_id: string, wrapped: Uint8Array): Uint8Array;
-
 /**
  * Unwrap a request's X25519 private key. Returns 32-byte `Uint8Array`.
  */
 export function unwrap_request_private(master_key: Uint8Array, request_id: Uint8Array, wrapped: Uint8Array, nonce: Uint8Array): Uint8Array;
-
-/**
- * L7 wire = nonce(12) || ciphertext+tag(48); UUID strings bind raw UUID bytes.
- */
-export function wrapFolderChild(folder_key: Uint8Array, shared_folder_id: string, item_id: string, kind: number, child_key: Uint8Array): Uint8Array;
-
-/**
- * Seal a shared folder's key to the owner's master key (L6 custody record).
- */
-export function wrapFolderCustody(master_key: Uint8Array, folder_id: string, folder_key: Uint8Array): Uint8Array;
-
-/**
- * Seal a purpose-bound invite owner copy (L9).
- */
-export function wrapInviteOwnerCopy(master_key: Uint8Array, folder_id: string, folder_key: Uint8Array): Uint8Array;
-
-/**
- * Seal a folder link's fragment key K_c to the owner's master key, bound to
- * the link's share id (so the owner can copy the link again later).
- */
-export function wrapLinkOwnerKey(master_key: Uint8Array, share_id: string, link_key: Uint8Array): Uint8Array;
-
-/**
- * Seal a folder link's raw token to the owner's master key, bound to the
- * link's share id.
- */
-export function wrapLinkOwnerToken(master_key: Uint8Array, share_id: string, token: Uint8Array): Uint8Array;
-
-/**
- * Seal an owner file-key adoption record with its own purpose key and AAD (L8).
- * Item IDs use the exact UTF-8 string bytes used by the L6 exports.
- */
-export function wrapOwnerFileKey(master_key: Uint8Array, item_id: string, file_key: Uint8Array): Uint8Array;
 
 /**
  * Wrap a request's X25519 private key under the owner's master key.
@@ -1243,7 +1134,6 @@ export interface InitOutput {
     readonly __wbg_wasmsignupceremony_free: (a: number, b: number) => void;
     readonly checkStorageUrl: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly classifyDirectAnswer: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
-    readonly combineFolderLinkKey: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly compute_recovery_check: (a: number, b: number, c: number) => void;
     readonly decompress_gzip: (a: number, b: number, c: number) => void;
     readonly decrypt_chunk: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
@@ -1257,8 +1147,6 @@ export interface InitOutput {
     readonly decrypt_names: (a: number, b: number, c: number, d: number) => void;
     readonly decrypt_note: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly decrypt_thumbnail: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly deriveFolderLinkPassphraseStretch: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly deriveSharedFolderIndexKey: (a: number, b: number, c: number, d: number) => void;
     readonly derive_file_key: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly derive_master_key: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly derive_request_wrap_key: (a: number, b: number, c: number, d: number, e: number) => void;
@@ -1288,7 +1176,6 @@ export interface InitOutput {
     readonly opaque_login_start: (a: number, b: number, c: number) => void;
     readonly opaque_registration_finish: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly opaque_registration_start: (a: number, b: number, c: number) => void;
-    readonly openLegacyInviteOwnerCopy: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly open_request_upload: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly parseDirectDiscovery: (a: number, b: number, c: number) => void;
     readonly pinnedRetryDecision: (a: number, b: number, c: number, d: number) => void;
@@ -1313,12 +1200,6 @@ export interface InitOutput {
     readonly transfer_encrypt: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly transfer_generate_keypair: (a: number) => void;
     readonly transfer_sas_to_words: (a: number, b: number, c: number) => void;
-    readonly unwrapFolderChild: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
-    readonly unwrapFolderCustody: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
-    readonly unwrapInviteOwnerCopy: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
-    readonly unwrapLinkOwnerKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
-    readonly unwrapLinkOwnerToken: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
-    readonly unwrapOwnerFileKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly unwrap_request_private: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly wasmbreachcheck_evaluate: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly wasmbreachcheck_new: (a: number, b: number) => number;
@@ -1368,13 +1249,10 @@ export interface InitOutput {
     readonly wasmdownloadplanner_windowMalformed: (a: number) => void;
     readonly wasmsearchindex_build: (a: number, b: number, c: number) => void;
     readonly wasmsearchindex_encryptBuckets: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly wasmsearchindex_encryptBucketsWithFolderKey: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly wasmsearchindex_encryptShards: (a: number, b: number, c: number, d: number) => void;
-    readonly wasmsearchindex_encryptShardsWithFolderKey: (a: number, b: number, c: number, d: number) => void;
     readonly wasmsearchindex_fileCount: (a: number) => number;
     readonly wasmsearchindex_fromEncryptedShards: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly wasmsearchindex_fromEncryptedShardsWithFolderKey: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly wasmsearchindex_new: (a: number, b: number) => void;
+    readonly wasmsearchindex_new: (a: number) => number;
     readonly wasmsearchindex_numShards: (a: number) => number;
     readonly wasmsearchindex_query: (a: number, b: number, c: number, d: number) => void;
     readonly wasmsearchindex_remove: (a: number, b: number, c: number, d: number) => void;
@@ -1399,12 +1277,6 @@ export interface InitOutput {
     readonly wasmsignupceremony_setPasswordUnchecked: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly wasmsignupceremony_startRegistration: (a: number, b: number) => void;
     readonly wasmsignupceremony_step: (a: number, b: number) => void;
-    readonly wrapFolderChild: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
-    readonly wrapFolderCustody: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
-    readonly wrapInviteOwnerCopy: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
-    readonly wrapLinkOwnerKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
-    readonly wrapLinkOwnerToken: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
-    readonly wrapOwnerFileKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly wrap_request_private: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly x25519_shared_secret: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly wasmsignedurl_toJSON: (a: number, b: number) => void;
