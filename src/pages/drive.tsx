@@ -437,6 +437,9 @@ export function Drive() {
     return {
       id: n.id,
       name_encrypted: n.name_encrypted,
+      file_request_id: n.file_request_id,
+      sender_ephemeral_pubkey: n.sender_ephemeral_pubkey,
+      wrapped_content_key: n.wrapped_content_key,
       mime_type: n.mime_type ?? '',
       size_bytes: n.size_bytes,
       is_folder: n.is_folder,

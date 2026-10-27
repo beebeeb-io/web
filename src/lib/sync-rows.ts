@@ -31,6 +31,9 @@ export function rowsSignature(rows: DriveFile[]): string {
     parts.push([
       f.id,
       f.name_encrypted,
+      f.file_request_id ?? '',
+      f.sender_ephemeral_pubkey ?? '',
+      f.wrapped_content_key ?? '',
       String(f.size_bytes),
       f.updated_at,
       f.parent_id ?? '',

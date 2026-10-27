@@ -1532,6 +1532,9 @@ function payloadToNode(
   return {
     id,
     name_encrypted: (payload.name_encrypted as string | undefined) ?? '',
+    file_request_id: (payload.file_request_id as string | null | undefined) ?? null,
+    sender_ephemeral_pubkey: (payload.sender_ephemeral_pubkey as string | null | undefined) ?? null,
+    wrapped_content_key: (payload.wrapped_content_key as string | null | undefined) ?? null,
     parent_id: (payload.parent_id as string | null | undefined) ?? null,
     is_folder: isFolder,
     size_bytes: (payload.size_bytes as number | undefined) ?? 0,
