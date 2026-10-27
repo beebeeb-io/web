@@ -23,6 +23,12 @@ import { withNetworkRetry } from '../lib/net-retry'
 import { formatBytes } from '../lib/format'
 import { formatEur } from '../lib/trial-checkout'
 import { parseShareKey, extractShareKeyToken, decodeShareKeyToken } from '../lib/share-key'
+// Task 2238 — the honest page for a folder link minted before this task.
+import {
+  LEGACY_FOLDER_LINK_COPY,
+  isFolderDownloadRefusal,
+  isFolderTarget,
+} from '../lib/legacy-folder-link'
 
 // ─── Meta tag helpers ─────────────────────────────────────────────────────────
 
@@ -883,6 +889,11 @@ export function ShareViewPage() {
   // Precise key-resolution failure (null = no hard error). Surfaced instead of
   // the generic locked UI so the recipient knows what's actually wrong (0709).
   const [keyError, setKeyError] = useState<KeyErrorKind | null>(null)
+  // Task 2238 — this `file` share points at a folder: a link minted before
+  // folder links existed. Irreparably broken (one wrapper key, no item list),
+  // so the page says so instead of failing a download. Set from the server
+  // metadata when present, else from the download refusal itself.
+  const [legacyFolderLink, setLegacyFolderLink] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
 
   // Recipients are anonymous — we never display the share creator's name.
@@ -992,6 +1003,7 @@ export function ShareViewPage() {
     setPassphrase('')
     setVerifyError(null)
     setDownloadError(null)
+    setLegacyFolderLink(false)
     setUnlockError(null)
     setKeyError(null)
     // Defensive (0709 cross-pollination from mobile 0710): also clear the
@@ -1005,6 +1017,11 @@ export function ShareViewPage() {
     getShare(token)
       .then((data) => {
         setShareData(data)
+        // Task 2238: a `file` share whose target is a folder (a link minted
+        // before folder links existed) cannot download anything. Detect it from
+        // the metadata when the server reports `is_folder`, so the recipient
+        // reads the truth immediately rather than after a failed download.
+        if (isFolderTarget(data)) setLegacyFolderLink(true)
         setLoading(false)
       })
       .catch((e) => {
@@ -1215,6 +1232,14 @@ export function ShareViewPage() {
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
     } catch (err) {
+      // Task 2238: a folder link from before folder links existed. The server
+      // refuses the download itself ("cannot download a folder") — show the
+      // explanation, never the raw refusal. Servers that report `is_folder` in
+      // the metadata already flipped this on load; this covers the rest.
+      if (isFolderDownloadRefusal(err)) {
+        setLegacyFolderLink(true)
+        return
+      }
       // Log the real error so devtools surfaces WASM init failures, size
       // calculation errors, or anything else hiding behind the generic
       // user-facing message below.
@@ -1408,6 +1433,45 @@ export function ShareViewPage() {
     const fragment = getKeyFromFragment()
     const bundleKey = fragment && fragment.length === KEY_BYTES ? fragment : null
     return <BundleShareView token={token} data={shareData} clientKey={bundleKey} />
+  }
+
+  // ── Legacy folder link (task 2238) — a `file` share whose target is a folder.
+  //    Irreparably broken; say what is true instead of failing a download. ────
+  if (legacyFolderLink && token) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-paper relative overflow-hidden py-8">
+        {honeycombBg}
+        <div className="relative w-full max-w-[28rem] mx-4">
+          <div className="text-center mb-4">
+            <BBLogo size={16} />
+            <div className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-amber/30 bg-amber-bg text-[11.5px] font-medium text-amber-deep">
+              <Icon name="lock" size={11} className="shrink-0" />
+              Beebeeb — End-to-end encrypted
+            </div>
+          </div>
+          <div className="bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
+            <div className="px-6 py-4 border-b border-line flex items-center gap-2.5">
+              <Icon name="share" size={14} className="text-ink" />
+              <span className="text-sm font-semibold">Shared folder</span>
+            </div>
+            <div className="p-6" role="status">
+              <div className="flex items-start gap-3">
+                <div className="w-11 h-[52px] border rounded-md flex items-center justify-center shrink-0 bg-amber-bg border-amber-deep/30">
+                  <Icon name="lock" size={18} className="text-amber-deep" />
+                </div>
+                <p className="text-[13px] text-ink leading-relaxed">{LEGACY_FOLDER_LINK_COPY}</p>
+              </div>
+            </div>
+            <div className="px-6 py-3 bg-paper-2 border-t border-line">
+              <div className="flex items-center justify-center gap-1.5 text-[11px] text-ink-3">
+                <Icon name="shield" size={11} className="text-amber-deep" />
+                End-to-end encrypted with Beebeeb
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   // File info view
