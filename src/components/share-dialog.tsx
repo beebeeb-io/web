@@ -32,7 +32,7 @@ import {
 } from '../lib/crypto'
 // Task 2238 — a folder "Share link" is a snapshot bundle of the folder's
 // subtree (no folder row, no folder download). Items show their plain file
-// names: bundles are flat, and a sealed path sidecar would push the link past
+// names: bundles are flat, so
 // what chat apps keep intact.
 import {
   FOLDER_BUNDLE_MAX_ITEMS,
@@ -485,7 +485,9 @@ function InviteSuccess({
 // ─── Main dialog ─────────────────────────────────────
 
 export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolder, bundleFiles, onShareCreated }: ShareDialogProps) {
-  const { getFileKey, getMasterKey, isUnlocked } = useKeys()
+  // getFileKeyForFile (task 2238 review): resolves a row's FileKey whether it is
+  // derived from the master key or sealed under a file-request content key.
+  const { getFileKey, getFileKeyForFile, getMasterKey, isUnlocked } = useKeys()
   // Bundle (task 0417): a single link over N>1 selected files. One file (or
   // none) falls through to the existing single-file/folder flow unchanged.
   const isBundle = (bundleFiles?.length ?? 0) > 1
@@ -574,7 +576,10 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
           decryptName: async (node) => {
             // Legacy plaintext names (iOS before 930c61a) are used verbatim.
             if (!node.name_encrypted.startsWith('{')) return node.name_encrypted
-            const fileKey = await getFileKey(node.id)
+            // getFileKeyForFile, not getFileKey: a row received through a file
+            // request is sealed under a random content key, so the id-derived
+            // key would fail (or decrypt nothing) for exactly those items.
+            const fileKey = await getFileKeyForFile(node)
             try {
               const [row] = await decryptManyNames([
                 { id: node.id, fileKey, nameEncrypted: node.name_encrypted },
@@ -628,9 +633,21 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       // branch: must NOT fall through the single-file path below (that would
       // share the first item's key, or the folder row itself).
       if ((isBundle && bundleFiles) || folderMode) {
-        const selections = folderMode
-          ? folderFiles.map((f, i) => ({ fileId: f.fileId, position: i }))
-          : bundleFiles!.map((f, i) => ({ fileId: f.id, position: i }))
+        // A folder's items resolve their keys through the key context, which
+        // understands BOTH the classic `deriveFileKey(master, id)` shape and the
+        // request-upload envelope (random content key) — wrapping a derived key
+        // for a request upload would publish an undecryptable item.
+        const folderSelections = folderMode
+          ? await Promise.all(
+              folderFiles.map(async (f, i) => ({
+                fileId: f.fileId,
+                position: i,
+                fileKey: await getFileKeyForFile(f.file),
+              })),
+            )
+          : null
+        const selections =
+          folderSelections ?? bundleFiles!.map((f, i) => ({ fileId: f.id, position: i }))
         if (selections.length === 0) {
           setError('Nothing to share yet')
           setLoading(false)
@@ -641,8 +658,15 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
           setLoading(false)
           return
         }
-        const { items, keyForUrl, ownerWrappedKey } =
-          await prepareBundleShareItems(masterKey, selections)
+        let items: CreateBundleShareRequest['items']
+        let keyForUrl: string
+        let ownerWrappedKey: string
+        try {
+          ;({ items, keyForUrl, ownerWrappedKey } = await prepareBundleShareItems(masterKey, selections))
+        } finally {
+          // Supplied keys are ours to clear (the helper never zeroizes them).
+          for (const sel of folderSelections ?? []) sel.fileKey.fill(0)
+        }
 
         const buildRequest = async (): Promise<CreateBundleShareRequest> => {
           const token = await generateShareToken()
@@ -740,7 +764,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
     } finally {
       setLoading(false)
     }
-  }, [fileId, expiryIdx, maxOpensIdx, passphrase, passwordEnabled, isUnlocked, isBundle, bundleFiles, folderMode, folderFiles, getFileKey, getMasterKey, onShareCreated])
+  }, [fileId, expiryIdx, maxOpensIdx, passphrase, passwordEnabled, isUnlocked, isBundle, bundleFiles, folderMode, folderFiles, getFileKey, getFileKeyForFile, getMasterKey, onShareCreated])
 
   const generatePassphrase = useCallback(() => {
     // 8 random alphanumeric characters — easy to type, hard to guess

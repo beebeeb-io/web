@@ -12,12 +12,13 @@ import { anonymousContext } from './helpers/auth'
  * folder's own row, and the public page then failed with the server's
  * `400 cannot download a folder`. Until shared folders ship (spec
  * 2026-10-27 §9) a folder link is a SNAPSHOT BUNDLE of every non-trashed file
- * in the subtree, as it is right now, with each item's name prefixed by its
- * relative path (`Holiday/beach.jpg`).
+ * in the subtree, as it is right now. A bundle is flat, so the public page
+ * lists each item under its own plain file name (a duplicate name in two
+ * subfolders is allowed — the item id tells them apart).
  *
  * This spec proves the whole path end to end against the isolated harness API:
- *   - the dialog states the snapshot copy and mints a bundle (`#key=` only —
- *     no path sidecar, so the link stays short enough for chat apps),
+ *   - the dialog states the snapshot copy and mints a bundle, with the link in
+ *     today's `#key=`-only format,
  *   - the public page lists every file in the subtree, including the one in
  *     the subfolder,
  *   - one item downloads and decrypts to the SAME sha256 as the uploaded bytes,
@@ -126,7 +127,7 @@ function bundleRow(page: Page, displayName: string): Locator {
 test.describe('2238 — folder share link is a snapshot bundle', () => {
   test.describe.configure({ retries: 0 })
 
-  test('folder + subfolder → link lists relative paths → one file decrypts to the same sha256', async ({ page, browser }) => {
+  test('folder + subfolder → link lists every file and one decrypts to the same sha256', async ({ page, browser }) => {
     test.setTimeout(180_000)
 
     await page.goto('/?nodev=1')

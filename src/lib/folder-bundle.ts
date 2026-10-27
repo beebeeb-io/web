@@ -11,10 +11,8 @@
  * Bundles are FLAT and the manifest names each item from its own
  * `files.name_encrypted`, so the guest page lists the plain file names (a
  * duplicate name in two subfolders is allowed — the item id tells them apart).
- * A path sidecar in the link fragment was considered and dropped: up to 256
- * sealed paths make the URL long enough for chat apps to cut it off, and this
- * is an interim fix until 2237 phase 1 ships real folder links. This module
- * only does the walk: deterministic order, the subtree, the bundle item cap.
+ * This is the interim shape until 2237 phase 1 ships real folder links. This
+ * module only does the walk: deterministic order, the subtree, the item cap.
  *
  * Deliberately dependency-free (types + injected callbacks) so the walk is
  * unit-testable without a network, a vault or a DOM. The dialog wires the real
@@ -37,6 +35,13 @@ export interface FolderBundleFile {
   position: number
   /** Decrypted display name, or null when the name could not be decrypted. */
   name: string | null
+  /**
+   * The row itself. Kept so the mint can resolve each item's key with
+   * `getFileKeyForFile(file)`, which understands the request-upload envelope
+   * (a row received through a file request is sealed under a random content
+   * key, not `deriveFileKey(master, id)`).
+   */
+  file: DriveFile
 }
 
 export interface FolderBundleScan {
@@ -68,12 +73,11 @@ export interface FolderBundleDeps {
 
 /**
  * Walk `rootFolderId`'s subtree depth-first and return every non-trashed file
- * in a stable order: children of a folder sorted by decrypted name (falling
- * back to id), files at a level before its subfolders' contents.
+ * in a stable order: each folder's children sorted by decrypted name (falling
+ * back to id), depth-first, so the same folder always yields the same layout.
  *
- * The order is the bundle's `position` order, so the same folder produces the
- * same link layout twice — which is what makes the link's path payload line up
- * with the manifest (`position` is what the manifest orders and paginates by).
+ * The order is the bundle's `position` order — the manifest orders and
+ * paginates by exactly that position.
  *
  * The walk STOPS as soon as it has seen `maxItems + 1` files: the caller only
  * needs to know "it fits" or "it does not", and a 50k-file folder must not be
@@ -112,7 +116,7 @@ export async function collectFolderBundle(
         overCap = true
         return
       }
-      files.push({ fileId: node.id, position: files.length, name })
+      files.push({ fileId: node.id, position: files.length, name, file: node })
     }
   }
 

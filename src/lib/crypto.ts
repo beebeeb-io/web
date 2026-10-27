@@ -1260,6 +1260,16 @@ export interface BundleSelection {
   fileId: string
   /** 0-based ordered position in the bundle. */
   position: number
+  /**
+   * The item's FileKey, when the caller already resolved it (task 2238 review).
+   * REQUIRED for a file received through a file request: such a row is sealed
+   * under a random content key, NOT under `deriveFileKey(master, id)`, so the
+   * derivation below would wrap the wrong key and the recipient would get an
+   * undecryptable item. Callers pass `getFileKeyForFile(file)` — the key
+   * context resolves both shapes. The caller owns (and zeroizes) this buffer;
+   * this helper never zeroizes a supplied key.
+   */
+  fileKey?: Uint8Array
 }
 
 /**
@@ -1295,9 +1305,12 @@ export async function prepareBundleShareItems(
 
   const items: Array<{ file_id: string; position: number; wrapped_file_key: string }> = []
   for (const sel of selections) {
-    const fileKey = await deriveFileKey(masterKey, sel.fileId)
+    // A supplied key (request-upload envelope) is used as-is and stays the
+    // caller's to zeroize; otherwise the classic derivation applies.
+    const supplied = sel.fileKey
+    const fileKey = supplied ?? (await deriveFileKey(masterKey, sel.fileId))
     const wrapped = await wrapKeyForShare(clientKey, fileKey)
-    zeroize(fileKey)
+    if (!supplied) zeroize(fileKey)
     items.push({
       file_id: sel.fileId,
       position: sel.position,
