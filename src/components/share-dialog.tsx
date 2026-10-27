@@ -13,6 +13,7 @@ import {
   resolveSharingContact,
   approveInvite,
   revokeShare,
+  listAllFiles,
   type ShareInfo,
   type ShareOptions,
   type CreateBundleShareRequest,
@@ -21,6 +22,7 @@ import {
   toBase64,
   fromBase64,
   zeroize,
+  decryptManyNames,
   encryptFileKeyForSharing,
   wrapKeyForShare,
   toBase64url,
@@ -28,6 +30,15 @@ import {
   prepareBundleShareItems,
   wrapBundleToken,
 } from '../lib/crypto'
+// Task 2238 — a folder "Share link" is a snapshot bundle of the folder's
+// subtree (no folder row, no folder download). Items show their plain file
+// names: bundles are flat, and a sealed path sidecar would push the link past
+// what chat apps keep intact.
+import {
+  FOLDER_BUNDLE_MAX_ITEMS,
+  collectFolderBundle,
+  type FolderBundleScan,
+} from '../lib/folder-bundle'
 import {
   buildFolderInvite,
   encryptFolderKeyForRecipient,
@@ -488,6 +499,9 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
   const [loading, setLoading] = useState(false)
   const [shareResult, setShareResult] = useState<ShareInfo | null>(null)
   const [decryptionKey, setDecryptionKey] = useState<string>('')
+  // Task 2238 — the folder subtree scan that becomes the bundle's item list.
+  const [folderScan, setFolderScan] = useState<FolderBundleScan | null>(null)
+  const [folderScanError, setFolderScanError] = useState<string | null>(null)
   const [copied, setCopied] = useState<'full-link' | null>(null)
   // Task 1690 (Guus, 2026-10-02): sharing always yields ONE full link — the
   // URL with the decryption key embedded as a #key= fragment. The old
@@ -530,9 +544,57 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       setLoading(false)
       setInviteDone(null)
       setFeedbackOpen(false)
+      setFolderScan(null)
+      setFolderScanError(null)
       // Task 1690: the share is ONE full link — no split/full mode to reset.
     }
   }, [open])
+
+  // Task 2238 — a folder "Share link" is a SNAPSHOT BUNDLE of the folder's files
+  // as they are now, never a `file` share on the folder id (the public page can
+  // only download a file; the server refuses a folder with
+  // `400 cannot download a folder`). Walk the subtree as soon as the dialog
+  // opens so the copy can state the real count, and so the cap is known before
+  // anything is minted.
+  const folderMode = !!isFolder && !isBundle
+  const folderFiles = folderMode ? folderScan?.files ?? [] : []
+  /** Minting is refused while the folder is unread, empty or over the cap. */
+  const folderBlocked =
+    folderMode && (folderScan === null || folderFiles.length === 0 || folderScan.overCap)
+
+  useEffect(() => {
+    if (!open || !folderMode) return
+    let cancelled = false
+    setFolderScan(null)
+    setFolderScanError(null)
+    void (async () => {
+      try {
+        const scan = await collectFolderBundle(fileId, {
+          listChildren: (folderId) => listAllFiles(folderId, { trashed: false }),
+          decryptName: async (node) => {
+            // Legacy plaintext names (iOS before 930c61a) are used verbatim.
+            if (!node.name_encrypted.startsWith('{')) return node.name_encrypted
+            const fileKey = await getFileKey(node.id)
+            try {
+              const [row] = await decryptManyNames([
+                { id: node.id, fileKey, nameEncrypted: node.name_encrypted },
+              ])
+              return typeof row?.name === 'string' ? row.name : null
+            } finally {
+              zeroize(fileKey)
+            }
+          },
+        })
+        if (!cancelled) setFolderScan(scan)
+      } catch (e) {
+        if (!cancelled) setFolderScanError(userFriendlyError(e))
+      }
+    })()
+    return () => { cancelled = true }
+    // The scan is keyed on the dialog opening for this folder; getFileKey is a
+    // stable key-context accessor whose identity is not worth re-scanning for.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, folderMode, fileId])
 
   const handleGenerate = useCallback(async () => {
     setLoading(true)
@@ -560,13 +622,25 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
     try {
       const masterKey = getMasterKey()
 
-      // ── Bundle branch (task 0417) ────────────────────────────────────────
-      // N>1 files selected for "Share with Beebeeb" → ONE link over the ordered
-      // set. EXPLICIT branch: must NOT fall through the single-file path below
-      // (that would share only the first item's key). Reuses the same K_c /
-      // owner-recovery model — each item's FileKey is wrapped under one K_c.
-      if (isBundle && bundleFiles) {
-        const selections = bundleFiles.map((f, i) => ({ fileId: f.id, position: i }))
+      // ── Bundle branch (task 0417 / folder snapshot, task 2238) ───────────
+      // N>1 selected files ("Share with Beebeeb"), or a FOLDER whose whole
+      // subtree becomes the snapshot, → ONE link over the ordered set. EXPLICIT
+      // branch: must NOT fall through the single-file path below (that would
+      // share the first item's key, or the folder row itself).
+      if ((isBundle && bundleFiles) || folderMode) {
+        const selections = folderMode
+          ? folderFiles.map((f, i) => ({ fileId: f.fileId, position: i }))
+          : bundleFiles!.map((f, i) => ({ fileId: f.id, position: i }))
+        if (selections.length === 0) {
+          setError('Nothing to share yet')
+          setLoading(false)
+          return
+        }
+        if (selections.length > FOLDER_BUNDLE_MAX_ITEMS) {
+          setError(`A link covers up to ${FOLDER_BUNDLE_MAX_ITEMS} files. Share fewer files.`)
+          setLoading(false)
+          return
+        }
         const { items, keyForUrl, ownerWrappedKey } =
           await prepareBundleShareItems(masterKey, selections)
 
@@ -601,7 +675,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
 
         if (onShareCreated) {
           const url = buildFullShareLink(window.location.origin, bundleResult.token, keyForUrl)
-          onShareCreated({ fileId: bundleFiles[0].id, shareUrl: url })
+          onShareCreated({ fileId: selections[0].fileId, shareUrl: url })
         }
         setLoading(false)
         return
@@ -666,7 +740,7 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
     } finally {
       setLoading(false)
     }
-  }, [fileId, expiryIdx, maxOpensIdx, passphrase, passwordEnabled, isUnlocked, isBundle, bundleFiles, getFileKey, getMasterKey, onShareCreated])
+  }, [fileId, expiryIdx, maxOpensIdx, passphrase, passwordEnabled, isUnlocked, isBundle, bundleFiles, folderMode, folderFiles, getFileKey, getMasterKey, onShareCreated])
 
   const generatePassphrase = useCallback(() => {
     // 8 random alphanumeric characters — easy to type, hard to guess
@@ -751,7 +825,9 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
             <Icon name="share" size={14} className="text-ink" />
             <span className="text-sm font-semibold text-ink">Send securely</span>
             <BBChip className="max-w-[220px] truncate shrink">
-              {isBundle && bundleFiles
+              {folderMode
+                ? `${folderFiles.length} ${folderFiles.length === 1 ? 'file' : 'files'}`
+                : isBundle && bundleFiles
                 ? `${bundleFiles.length} files · ${formatBytes(bundleFiles.reduce((sum, f) => sum + f.size, 0))}`
                 : `${fileName} · ${formatBytes(fileSize)}`}
             </BBChip>
@@ -994,12 +1070,34 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
                       </div>
                     )}
 
+                    {/* Task 2238 — a folder link is a snapshot of the files
+                        below it: flat, immutable, capped (bundle spec 0417). */}
+                    {folderMode && (
+                      <div
+                        className="border border-line-2 rounded-lg bg-paper-2 px-3.5 py-3 mb-3"
+                        role="status"
+                        data-testid="folder-snapshot-note"
+                      >
+                        <p className="text-[12px] text-ink-2 leading-relaxed">
+                          {folderScanError
+                            ? `Could not read this folder: ${folderScanError}`
+                            : folderScan === null
+                            ? 'Counting the files in this folder…'
+                            : folderScan.files.length === 0
+                            ? 'Nothing to share yet'
+                            : folderScan.overCap
+                            ? `This folder has more than ${FOLDER_BUNDLE_MAX_ITEMS} files. A link covers up to ${FOLDER_BUNDLE_MAX_ITEMS}; select the files you want and share them together.`
+                            : `Shares the ${folderScan.files.length} files in this folder and its subfolders as they are now. Files added later won't appear.`}
+                        </p>
+                      </div>
+                    )}
+
                     <BBButton
                       variant="amber"
                       size="lg"
                       className="w-full justify-center gap-2"
                       onClick={handleGenerate}
-                      disabled={loading}
+                      disabled={loading || folderBlocked}
                     >
                       <Icon name="lock" size={13} />
                       {loading ? 'Generating...' : 'Generate encrypted link'}
