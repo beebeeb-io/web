@@ -390,10 +390,23 @@ describe('rv-web198e P3: on a write, a failed flag read aborts; it is never "off
     await expect(share.custodyFolderKey(MASTER, ROOT)).rejects.toThrow("Couldn't check this account's sharing settings")
   })
 
-  test('an owner upload or move publish aborts instead of skipping', async () => {
+  // Final review P2: the owner publish runs AFTER the upload, folder create or
+  // move committed. There a failed flag read is not a reason to report a
+  // committed write as failed: it skips, as main does, unless the folder sits
+  // under one this device has seen with custody (N2), where it fails.
+  test('after a commit, an unanswered flag read with nothing seen above skips: no request, no throw', async () => {
     flagReadFails = true
-    await expect(publishOwnerUploadKey(MASTER, ROOT, FILE_ID, CHILD_KEY)).rejects.toThrow("Couldn't check this account's sharing settings")
-    await expect(moveOwnerItems({ ids: [FILE_ID], destinationId: ROOT, rows: [{ id: FILE_ID }], masterKey: MASTER, viewerId: null }))
+    await publishOwnerUploadKey(MASTER, SUB, FILE_ID, CHILD_KEY)
+    await moveOwnerItems({ ids: [FILE_ID], destinationId: SUB, rows: [{ id: FILE_ID }], masterKey: MASTER, viewerId: null })
+    expect(published).toEqual([])
+    expect(custodyCalls + parentCalls).toBe(0)
+  })
+
+  test('after a commit, an unanswered flag read under a folder seen with custody still fails', async () => {
+    flagReadFails = true
+    markCustodySeen(ROOT)
+    await expect(publishOwnerUploadKey(MASTER, SUB, FILE_ID, CHILD_KEY)).rejects.toThrow("This folder's keys are unavailable")
+    await expect(moveOwnerItems({ ids: [FILE_ID], destinationId: SUB, rows: [{ id: FILE_ID }], masterKey: MASTER, viewerId: null }))
       .rejects.toThrow(MOVED_BUT_UNPUBLISHED)
     expect(published).toEqual([])
   })
