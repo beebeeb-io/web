@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { loadWasm } from './helpers/wasm-crypto-mirror'
+import { ApiError } from '../src/lib/api'
 
 // Task 2255, decision L9 as corrected on 2026-10-28 (task file "L9 correction").
 // Real vendored core WASM; only the network and the worker hop are injected.
@@ -188,5 +189,114 @@ describe('2255: approval reads only a purpose-bound or proven legacy copy', () =
     const copy = legacyCopy(name)
     const f = fixture(wasm.wrapInviteOwnerCopy(master, folder, trueKey))
     await expect(decryptOwnerFolderKey(master, folder, copy, f.ports)).rejects.toThrow(UNVERIFIED)
+  })
+})
+
+// Review of 2255 (P1-1): the honest server serves a folder's rows only through
+// an APPROVED invite and answers 400 "invite not approved" for any other
+// (server invites.rs, get_folder_keys). Proof rows must come from the newest
+// approved invite; with none, or on that 400, the answer is FOLDER_KEY_UNVERIFIED.
+describe('2255 review: proof rows come only through an approved invite', () => {
+  const at = (h: number) => `2026-10-28T${String(h).padStart(2, '0')}:00:00Z`
+  function honest(f: ReturnType<typeof fixture>, invites: { id: string; status: string; created_at: string; copy: Uint8Array }[]) {
+    const fetched: string[] = []
+    f.ports.getSentInvites = async () =>
+      invites.map((i) => ({ ...f.invite, id: i.id, status: i.status, created_at: i.created_at, encrypted_owner_folder_key: b64(i.copy) }))
+    f.ports.getFolderKeys = async (id: string) => {
+      fetched.push(id)
+      if (invites.find((i) => i.id === id)?.status !== 'approved') throw new ApiError('invite not approved', 400, 'invite not approved')
+      return [ownerRow(child)]
+    }
+    return fetched
+  }
+
+  test('approving a pending legacy invite proves it through the newest APPROVED invite', async () => {
+    const { decryptOwnerFolderKey } = await import('../src/lib/folder-share-crypto')
+    const copy = legacyCopy(trueKey)
+    const f = fixture(copy)
+    const fetched = honest(f, [
+      { id: 'pending', status: 'claimed', created_at: at(12), copy },
+      { id: 'approved-new', status: 'approved', created_at: at(11), copy },
+      { id: 'approved-old', status: 'approved', created_at: at(10), copy },
+    ])
+    expect(Array.from(await decryptOwnerFolderKey(master, folder, copy, f.ports))).toEqual(Array.from(trueKey))
+    expect(fetched).toEqual(['approved-new'])
+  })
+
+  test('a new invite while the newest one is still pending reuses the key through the approved one', async () => {
+    const copy = legacyCopy(trueKey)
+    const f = fixture(copy)
+    const fetched = honest(f, [
+      { id: 'pending', status: 'invited', created_at: at(12), copy },
+      { id: 'approved', status: 'approved', created_at: at(10), copy },
+    ])
+    const r = await build(f)
+    expect(Array.from(r.folderKey)).toEqual(Array.from(trueKey))
+    expect(f.calls.minted).toBe(0)
+    expect(fetched).toEqual(['approved'])
+  })
+
+  test('no approved invite: FOLDER_KEY_UNVERIFIED, and no rows are asked for', async () => {
+    const { decryptOwnerFolderKey } = await import('../src/lib/folder-share-crypto')
+    const copy = legacyCopy(trueKey)
+    const f = fixture(copy)
+    const fetched = honest(f, [
+      { id: 'pending', status: 'claimed', created_at: at(12), copy },
+      { id: 'invited', status: 'invited', created_at: at(11), copy },
+    ])
+    await expect(decryptOwnerFolderKey(master, folder, copy, f.ports)).rejects.toThrow(UNVERIFIED)
+    await expect(build(f)).rejects.toThrow(UNVERIFIED)
+    expect(f.calls.minted).toBe(0)
+    expect(fetched).toEqual([])
+  })
+
+  test('a 400 "invite not approved" from the server maps to FOLDER_KEY_UNVERIFIED', async () => {
+    const { decryptOwnerFolderKey } = await import('../src/lib/folder-share-crypto')
+    const copy = legacyCopy(trueKey)
+    const f = fixture(copy)
+    f.ports.getFolderKeys = async () => {
+      throw new ApiError('invite not approved', 400, 'invite not approved')
+    }
+    await expect(decryptOwnerFolderKey(master, folder, copy, f.ports)).rejects.toThrow(UNVERIFIED)
+    await expect(build(f)).rejects.toThrow(UNVERIFIED)
+    expect(f.calls.minted).toBe(0)
+  })
+})
+
+// Review of 2255 (P3): approval must wipe the key it unwrapped even when
+// sealing it for the recipient fails.
+describe('2255 review: approval zeroizes on failure', () => {
+  const failingPorts = (key: Uint8Array) => ({
+    decryptOwnerFolderKey: async () => key,
+    encryptFolderKeyForRecipient: async () => {
+      throw new Error('bad recipient key')
+    },
+    encryptFileKeyForSharing: async () => {
+      throw new Error('bad recipient key')
+    },
+    fromBase64: unb64,
+    zeroize: (b: Uint8Array) => {
+      b.fill(0)
+    },
+  })
+
+  test('the folder key is zeroized when the recipient wrap throws', async () => {
+    const { buildApprovalKeyBlob } = await import('../src/lib/approve-invite-crypto')
+    const key = trueKey.slice()
+    const invite = { file_id: folder, is_folder_share: true, encrypted_owner_folder_key: b64(legacyCopy(trueKey)) }
+    await expect(
+      buildApprovalKeyBlob(invite as any, master, new Uint8Array(32), async () => new Uint8Array(32), failingPorts(key) as any),
+    ).rejects.toThrow('bad recipient key')
+    expect(Array.from(key)).toEqual(new Array(32).fill(0))
+  })
+
+  test('a single file key is zeroized when the recipient wrap throws', async () => {
+    const { buildApprovalKeyBlob } = await import('../src/lib/approve-invite-crypto')
+    const key = trueKey.slice()
+    const invite = { file_id: child, is_folder_share: false, encrypted_owner_folder_key: null }
+    await expect(
+      buildApprovalKeyBlob(invite as any, master, new Uint8Array(32), async () => key, failingPorts(new Uint8Array(32)) as any),
+    ).rejects.toThrow('bad recipient key')
+    expect(Array.from(key)).toEqual(new Array(32).fill(0))
   })
 })

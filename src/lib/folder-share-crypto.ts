@@ -13,7 +13,7 @@ import {
   unwrapInviteOwnerCopy,
   openLegacyInviteOwnerCopy,
 } from './crypto'
-import { listFilesPage, getSentInvites, getFolderKeys, FILE_LIST_HARD_CAP } from './api'
+import { ApiError, listFilesPage, getSentInvites, getFolderKeys, FILE_LIST_HARD_CAP } from './api'
 import type { ShareInvite } from './api'
 
 /**
@@ -102,10 +102,9 @@ export async function decryptOwnerFolderKey(
   encryptedOwnerFolderKey: Uint8Array,
   ports: ExistingFolderKeyPorts = REAL_EXISTING_FOLDER_KEY_PORTS,
 ): Promise<Uint8Array> {
-  const folderKey = await openOwnerCopy(masterKey, folderId, encryptedOwnerFolderKey, ports, async () => {
-    const active = activeFolderInvites(await ports.getSentInvites(), folderId)
-    return active.length > 0 ? ports.getFolderKeys(active[0].id) : []
-  })
+  const folderKey = await openOwnerCopy(masterKey, folderId, encryptedOwnerFolderKey, ports, async () =>
+    proofRows(activeFolderInvites(await ports.getSentInvites(), folderId), ports),
+  )
   if (!folderKey) throw new Error(FOLDER_KEY_UNVERIFIED)
   return folderKey
 }
@@ -155,6 +154,29 @@ export const REAL_EXISTING_FOLDER_KEY_PORTS: ExistingFolderKeyPorts = {
 export const FOLDER_KEY_UNVERIFIED =
   "Can't check this folder's key. Remove its pending invites, then share again."
 
+/**
+ * The folder's rows for a legacy proof. The server serves them only through
+ * an APPROVED invite and answers 400 "invite not approved" for any other
+ * (server invites.rs get_folder_keys), so they come from the newest approved
+ * one. No approved invite, or that 400, means no proof: FOLDER_KEY_UNVERIFIED.
+ * Any other failure aborts as it is.
+ */
+async function proofRows(
+  active: ShareInvite[],
+  ports: ExistingFolderKeyPorts,
+): Promise<{ file_id: string; encrypted_file_key: string }[]> {
+  const approved = active.find((i) => i.status === 'approved')
+  if (!approved) throw new Error(FOLDER_KEY_UNVERIFIED)
+  try {
+    return await ports.getFolderKeys(approved.id)
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 400 && /invite not approved/i.test(e.message)) {
+      throw new Error(FOLDER_KEY_UNVERIFIED)
+    }
+    throw e
+  }
+}
+
 /** core's authentication failure ("decryption failed: ciphertext is invalid or key is wrong"). */
 function isAuthenticationFailure(e: unknown): boolean {
   return e instanceof Error && /decryption failed/i.test(e.message)
@@ -198,8 +220,9 @@ async function openOwnerCopy(
  * key only when the folder has no active invite (null). Throws, never mints,
  * when the folder has active invites but no blob opens with proof: none of
  * them carries an owner blob, or every blob fails. The folder's rows are
- * fetched once, and only when a legacy blob needs proof (the server keeps one
- * row set per folder). (Rotation on revoke is a separate decision.)
+ * fetched once, through the newest approved invite (see `proofRows`), and
+ * only when a legacy blob needs proof (the server keeps one row set per
+ * folder). (Rotation on revoke is a separate decision.)
  *
  * Returns the blob that opened plus its key. The caller owns (and must
  * zeroize) the key.
@@ -214,8 +237,8 @@ export async function findExistingFolderKey(
   const blobs = uniqueOwnerBlobs(active)
   if (blobs.length === 0) throw new Error(FOLDER_KEY_UNVERIFIED)
 
-  let rows: ReturnType<typeof ports.getFolderKeys> | undefined
-  const folderRows = () => (rows ??= ports.getFolderKeys(active[0].id))
+  let rows: ReturnType<typeof proofRows> | undefined
+  const folderRows = () => (rows ??= proofRows(active, ports))
   for (const b64 of blobs) {
     const folderKey = await openOwnerCopy(masterKey, folderId, ports.fromBase64(b64), ports, folderRows)
     if (folderKey) return { folderKey, encryptedOwnerFolderKeyB64: b64 }

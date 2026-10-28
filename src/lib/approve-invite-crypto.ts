@@ -76,24 +76,22 @@ export async function buildApprovalKeyBlob(
       invite.file_id,
       ports.fromBase64(invite.encrypted_owner_folder_key),
     )
-    const combined = await ports.encryptFolderKeyForRecipient(
-      masterKey,
-      recipientPublicKey,
-      invite.file_id,
-      folderKey,
-    )
-    ports.zeroize(folderKey)
-    return combined
+    // Wiped on every path, also when sealing for the recipient throws (2255 review).
+    try {
+      return await ports.encryptFolderKeyForRecipient(masterKey, recipientPublicKey, invite.file_id, folderKey)
+    } finally {
+      ports.zeroize(folderKey)
+    }
   }
 
   const fileKey = await getFileKey(invite.file_id)
-  const { encryptedFileKey, nonce } = await ports.encryptFileKeyForSharing(
-    masterKey,
-    recipientPublicKey,
-    invite.file_id,
-    fileKey,
-  )
-  ports.zeroize(fileKey)
+  let sealed: Awaited<ReturnType<typeof ports.encryptFileKeyForSharing>>
+  try {
+    sealed = await ports.encryptFileKeyForSharing(masterKey, recipientPublicKey, invite.file_id, fileKey)
+  } finally {
+    ports.zeroize(fileKey)
+  }
+  const { encryptedFileKey, nonce } = sealed
   const combined = new Uint8Array(nonce.length + encryptedFileKey.length)
   combined.set(nonce, 0)
   combined.set(encryptedFileKey, nonce.length)
