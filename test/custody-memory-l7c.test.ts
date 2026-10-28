@@ -103,6 +103,9 @@ function legacyIndex(): Promise<Map<string, string>> {
 }
 
 beforeEach(() => {
+  // Every test starts from an empty device memory (bun --randomize runs the
+  // tests of this file in any order; a test that needs a stored entry writes it).
+  memory.resetCustodyMemoryForTests()
   answer = { kind: 'record' }
   inviteKey = null
   setItemThrows = false

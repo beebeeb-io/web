@@ -37,6 +37,16 @@ type Exports = Record<string, unknown>
  *                   real exports (handy for wrapping a real function)
  * @returns          a snapshot of the REAL exports (untouched by the mock)
  */
+/**
+ * The first REAL snapshot taken of each module path. A second mock of the same
+ * path (in one file, or inside a test) would otherwise snapshot the FIRST mock
+ * as "real", and its afterAll would restore that mock for every later file.
+ * Found by the shuffled order guard on web #198 (seed 427842741): a file that
+ * mocked use-feature-flag twice left its first mock live, and the feature-flag
+ * suite run after it read every flag as on.
+ */
+const originals = new Map<string, Exports>()
+
 export async function mockModuleScoped(
   specifier: string,
   fromDir: string,
@@ -44,8 +54,10 @@ export async function mockModuleScoped(
 ): Promise<Exports> {
   const path = Bun.resolveSync(specifier, fromDir)
   // Snapshot BEFORE mocking: bun rewrites an already-loaded module namespace
-  // in place, so a live reference would start returning the mock too.
-  const real: Exports = { ...(await import(path)) }
+  // in place, so a live reference would start returning the mock too. Only the
+  // first snapshot of a path is real; every later call reuses it.
+  const real: Exports = originals.get(path) ?? { ...(await import(path)) }
+  originals.set(path, real)
   const o = typeof overrides === 'function' ? overrides(real) : overrides
   for (const name of Object.keys(o)) {
     if (!(name in real)) {
