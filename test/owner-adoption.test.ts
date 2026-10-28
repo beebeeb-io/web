@@ -5,7 +5,7 @@
  * worker crossings are replaced, everything else (base64, folder-key unwrap,
  * child-key unwrap) is the shipped code.
  */
-import { describe, expect, test } from 'bun:test'
+import { beforeEach, describe, expect, test } from 'bun:test'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { createContentOps } from '../src/lib/content-crypto'
 import { loadWasm } from './helpers/wasm-crypto-mirror'
@@ -103,6 +103,17 @@ const { needsOwnership, adoptGuestFile, resolveSharedFileKey, openOwnerFile, unw
   await import(
   '../src/lib/owner-adoption'
 )
+
+// Every test starts from no custody record, no invite and an empty lookup
+// cache: a custody record is cached for the session, so without this a test
+// saw whatever an earlier test (in bun's --randomize order) had seeded.
+beforeEach(() => {
+  custody = null
+  inviteFolderKey = null
+  adoptCalls.length = 0
+  adoptResult = { adopted: true }
+  clearSharedFolderLookups()
+})
 
 describe('folderKeyForRoot', () => {
   // Decision L1 (plan C review): the folder key is random and never derived
