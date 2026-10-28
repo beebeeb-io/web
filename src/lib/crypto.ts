@@ -585,6 +585,21 @@ export async function folderKeyId(folderKey: Uint8Array): Promise<Uint8Array> {
   return withProxy((p) => p.folderKeyId(folderKey))
 }
 
+/** Task 2255: purpose-bound folder-invite owner copies, implemented in core. */
+export async function wrapInviteOwnerCopy(masterKey: Uint8Array, folderId: string, folderKey: Uint8Array): Promise<Uint8Array> {
+  return withProxy((p) => p.wrapInviteOwnerCopy(masterKey, folderId, folderKey))
+}
+
+export async function unwrapInviteOwnerCopy(masterKey: Uint8Array, folderId: string, wrapped: Uint8Array): Promise<Uint8Array> {
+  return withProxy((p) => p.unwrapInviteOwnerCopy(masterKey, folderId, wrapped))
+}
+
+export async function verifyLegacyFolderKey(
+  masterKey: Uint8Array, folderId: string, candidate: Uint8Array, ownerChildId: string, childWrap: Uint8Array,
+): Promise<boolean> {
+  return withProxy((p) => p.verifyLegacyFolderKey(masterKey, folderId, candidate, ownerChildId, childWrap))
+}
+
 /**
  * Encrypt a file key for user-to-user sharing.
  * Performs the full X25519 key exchange + AES-256-GCM encryption.
