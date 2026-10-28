@@ -478,7 +478,7 @@ enable_spec_flags() {
   [ -n "$flags" ] || return 0
   for f in $flags; do
     case "$f" in *[!a-z0-9_]*|"") echo "bad e2e-flags entry '$f' in $1"; return 1 ;; esac
-    if [ "$(db_psql -d "$DB_NAME" -tAc "UPDATE feature_flags SET enabled = TRUE WHERE key = '$f' RETURNING key;")" != "$f" ]; then
+    if [ "$(db_psql -d "$DB_NAME" -qtAc "UPDATE feature_flags SET enabled = TRUE WHERE key = '$f' RETURNING key;")" != "$f" ]; then
       echo "e2e-flags: no feature_flags row '$f' in $DB_NAME (needed by $1)"; return 1
     fi
     log "flag $f ON for $1"
