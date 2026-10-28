@@ -1,0 +1,23 @@
+import { GuestShell } from './guest-shell'
+
+/**
+ * One dead-end surface for every way a link can fail, so the page never tells
+ * a visitor whether a token ever existed.
+ */
+export function Unavailable(props: { reason: 'not_available' | 'update_required' }) {
+  const update = props.reason === 'update_required'
+  return (
+    <GuestShell title={update ? 'Update Beebeeb' : "This link isn't available."}>
+      <div className="mx-auto max-w-md rounded-lg border border-line bg-paper-2 p-6 text-center">
+        <h2 className="text-lg font-semibold">
+          {update ? 'Update Beebeeb' : "This link isn't available."}
+        </h2>
+        <p className="mt-2 text-sm text-ink-3">
+          {update
+            ? 'This link needs a newer version of Beebeeb. Update, then open the link again.'
+            : 'It may have been turned off, expired, or the folder was removed. Ask the owner for a new link.'}
+        </p>
+      </div>
+    </GuestShell>
+  )
+}
