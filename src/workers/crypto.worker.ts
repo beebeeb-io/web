@@ -223,6 +223,27 @@ const cryptoWorker = {
     return wasm.derive_file_key(masterKey, fileIdBytes)
   },
 
+  /**
+   * Task 2237b: the link unwrap key, `combine_folder_link_key(K_c, stretch)`.
+   * Exactly one code path — the link module never builds this itself.
+   */
+  async combineFolderLinkKey(
+    linkKey: Uint8Array,
+    passphraseStretch: Uint8Array | null,
+  ): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.combineFolderLinkKey(linkKey, passphraseStretch) as Uint8Array
+  },
+
+  /** Task 2237b: per-bucket key of a shared folder's search index. */
+  async deriveSharedFolderIndexKey(
+    folderKey: Uint8Array,
+    bucket: number,
+  ): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.deriveSharedFolderIndexKey(folderKey, bucket) as Uint8Array
+  },
+
   /** Encrypt a plaintext chunk with AES-256-GCM. Transfers buffers (zero-copy). */
   async encryptChunk(
     fileKey: Uint8Array,

@@ -365,3 +365,13 @@ export async function collectAllChildren(folderId: string): Promise<string[]> {
 
   return ids
 }
+
+// ─── Task 2237b: link helpers for the Share panel ───────────────────────────
+// The dialog imports from this module (folder-share crypto is its home); the
+// link-specific derivation lives in shared-folder-link-crypto.ts.
+export {
+  generateLinkKey,
+  linkKeyFragment,
+  ownerWrappedFolderKey,
+  wrapFolderKeyForLink,
+} from './shared-folder-link-crypto'

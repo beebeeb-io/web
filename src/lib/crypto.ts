@@ -296,6 +296,27 @@ export async function decryptChunk(
   return withProxy((p) => p.decryptChunk(fileKey, nonce, ciphertext))
 }
 
+/**
+ * Task 2237b — `combine_folder_link_key(K_c, stretch)` from core.
+ *
+ * The one place a link's unwrap key is produced. `stretch` is the Argon2id
+ * output for a passphrase link and null for a plain one; the two never mix.
+ */
+export async function combineFolderLinkKey(
+  linkKey: Uint8Array,
+  passphraseStretch: Uint8Array | null = null,
+): Promise<Uint8Array> {
+  return withProxy((p) => p.combineFolderLinkKey(linkKey, passphraseStretch))
+}
+
+/** Task 2237b — the per-bucket key of a shared folder's search index. */
+export async function deriveSharedFolderIndexKey(
+  folderKey: Uint8Array,
+  bucket: number,
+): Promise<Uint8Array> {
+  return withProxy((p) => p.deriveSharedFolderIndexKey(folderKey, bucket))
+}
+
 // ─── File content, metadata pins and notes (core 1908, task 1943) ───────────
 //
 // Core chunk format v2 binds every content frame to its file, its upload and
