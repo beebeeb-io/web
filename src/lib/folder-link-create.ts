@@ -29,6 +29,7 @@
 import {
   createFolderLink,
   getSharedFolder,
+  listLegacyFolderKeys,
   registerSharedFolderKey,
   type SharedFolderInfo,
 } from './api'
@@ -37,6 +38,7 @@ import {
   encryptAllChildrenKeys,
   findExistingFolderKey,
   generateFolderKey,
+  legacyInviteChildKey,
   openFolderCustody,
   sealChildKey,
   sealFolderCustody,
@@ -95,6 +97,10 @@ export interface CreateFolderLinkPorts {
   sealFolderCustody: typeof sealFolderCustody
   /** The legacy invite owner copy, read only to seed custody (L6). */
   findExistingFolderKey: typeof findExistingFolderKey
+  /** L7b (a): a flag-off folder's legacy child rows, listed before its first custody record. */
+  listLegacyFolderKeys: typeof listLegacyFolderKeys
+  /** L7b (a): open one legacy row under the seeded folder key, to re-seal it. */
+  legacyInviteChildKey: typeof legacyInviteChildKey
   /** A fresh RANDOM folder key; only when no custody record and no invite exists. */
   generateFolderKey: () => Promise<Uint8Array>
   /** The root folder's own name key (published under the folder key, below). */
@@ -131,6 +137,8 @@ export const REAL_FOLDER_LINK_PORTS: CreateFolderLinkPorts = {
   openFolderCustody,
   sealFolderCustody,
   findExistingFolderKey,
+  listLegacyFolderKeys,
+  legacyInviteChildKey,
   generateFolderKey,
   deriveFileKey,
   sealChildKey,
@@ -154,6 +162,56 @@ export const REAL_FOLDER_LINK_PORTS: CreateFolderLinkPorts = {
 function errorCode(err: unknown): string | undefined {
   const code = (err as { code?: unknown } | null | undefined)?.code
   return typeof code === 'string' ? code : undefined
+}
+
+/** Shown when a folder's legacy rows do not all open under its key: it stays a legacy share. */
+export const FOLDER_NOT_UPGRADABLE = "This folder can't be upgraded yet."
+
+/**
+ * L7b (a): every legacy child row of a folder about to get its FIRST custody
+ * record, re-sealed under L7 for its own (root, item, kind). Every row must
+ * open under `folderKey` with the legacy invite reader. If ANY does not (a
+ * row under another invite's key that a member may still read), nothing is
+ * re-sealed, no custody is registered and the folder stays legacy: the owner
+ * sees FOLDER_NOT_UPGRADABLE. Only a count is logged, never an id or a name.
+ */
+async function rewrapLegacyRows(
+  folderId: string,
+  folderKey: Uint8Array,
+  ports: CreateFolderLinkPorts,
+): Promise<{ file_id: string; encrypted_file_key: string }[]> {
+  let rows: Awaited<ReturnType<CreateFolderLinkPorts['listLegacyFolderKeys']>>['keys']
+  try {
+    rows = (await ports.listLegacyFolderKeys(folderId)).keys
+  } catch (err) {
+    // Over the server's one-call cap: the folder cannot be upgraded atomically.
+    if ((err as { status?: unknown } | null)?.status === 413) throw new Error(FOLDER_NOT_UPGRADABLE)
+    throw err
+  }
+  const rewrapped: { file_id: string; encrypted_file_key: string }[] = []
+  let unopened = 0
+  for (const row of rows) {
+    let childKey: Uint8Array
+    try {
+      childKey = await ports.legacyInviteChildKey(folderKey, row.encrypted_file_key)
+    } catch {
+      unopened += 1
+      continue
+    }
+    try {
+      rewrapped.push({
+        file_id: row.file_id,
+        encrypted_file_key: await ports.sealChildKey(folderKey, { rootId: folderId, itemId: row.file_id, isFolder: row.is_folder }, childKey),
+      })
+    } finally {
+      childKey.fill(0)
+    }
+  }
+  if (unopened > 0) {
+    console.warn('[folder-link] folder stays legacy: rows that do not open under its key', { count: unopened })
+    throw new Error(FOLDER_NOT_UPGRADABLE)
+  }
+  return rewrapped
 }
 
 function isNotFound(err: unknown): boolean {
@@ -185,6 +243,7 @@ export async function ensureOwnerFolderKey(
   folderId: string,
   masterKey: Uint8Array,
   ports: CreateFolderLinkPorts = REAL_FOLDER_LINK_PORTS,
+  retried = false,
 ): Promise<Uint8Array> {
   const info = await tryReadCustody(folderId, ports)
   if (info?.owner_wrapped_folder_key) {
@@ -209,10 +268,14 @@ export async function ensureOwnerFolderKey(
   const existing = await ports.findExistingFolderKey(masterKey, folderId)
   const folderKey = existing?.folderKey ?? (await ports.generateFolderKey())
   try {
+    // L7b (a): a flag-off folder's legacy rows are re-sealed under L7 in the
+    // same call that creates the custody record, or the folder stays legacy.
+    const rewrap = await rewrapLegacyRows(folderId, folderKey, ports)
     const wrapped = ports.toBase64(await ports.sealFolderCustody(masterKey, folderId, folderKey))
     await ports.registerSharedFolderKey(folderId, {
       owner_wrapped_folder_key: wrapped,
       key_version: 1,
+      ...(rewrap.length > 0 ? { rewrap: { keys: rewrap } } : {}),
     })
     // This tab may have cached "not shared" for the folder a moment ago; the
     // next upload into it must publish its wrap (owner-upload-key.ts).
@@ -223,7 +286,14 @@ export async function ensureOwnerFolderKey(
     // Someone registered a key between our read and our write: their key is
     // the truth. Re-read and open it; never overwrite.
     folderKey.fill(0)
-    if (errorCode(err) !== 'key_version_conflict') throw err
+    // A row was added between the listing and the registration: nothing was
+    // changed, so list and re-seal once more.
+    if (errorCode(err) === 'rewrap_incomplete' && !retried) {
+      return ensureOwnerFolderKey(folderId, masterKey, ports, true)
+    }
+    // Another device registered first (custody_exists after an upgrade):
+    // its record is the truth; open it.
+    if (errorCode(err) !== 'key_version_conflict' && errorCode(err) !== 'custody_exists') throw err
     const reread = await tryReadCustody(folderId, ports)
     if (!reread?.owner_wrapped_folder_key) throw err
     forgetSharedFolderCustody(folderId)

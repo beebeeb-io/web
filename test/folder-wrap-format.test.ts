@@ -224,7 +224,8 @@ describe('L7b: the legacy names are referenced only where it allows', () => {
   // has no custody record).
   const ALLOWED: Record<string, string[]> = {
     legacyInviteChildWrap: ['src/lib/folder-share-crypto.ts'],
-    legacyInviteChildKey: ['src/lib/folder-share-crypto.ts'],
+    // ...and the L7b (a) custody upgrade, which opens a folder's legacy rows to re-seal them.
+    legacyInviteChildKey: ['src/lib/folder-share-crypto.ts', 'src/lib/folder-link-create.ts'],
     legacyInviteOwnerWrap: ['src/lib/folder-share-crypto.ts'],
     legacyInviteOwnerKey: ['src/lib/folder-share-crypto.ts', 'src/lib/approve-invite-crypto.ts'],
   }

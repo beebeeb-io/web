@@ -108,6 +108,11 @@ function fakePorts(overrides: Partial<CreateFolderLinkPorts> = {}) {
       calls.push({ name: 'findExistingFolderKey' })
       return null
     },
+    // L7b (a): by default the folder has no legacy rows to upgrade.
+    listLegacyFolderKeys: async () => ({ keys: [] }),
+    legacyInviteChildKey: async () => {
+      throw new Error('no legacy rows in this fixture')
+    },
     generateFolderKey: async () => {
       calls.push({ name: 'generateFolderKey' })
       return new Uint8Array(FOLDER_KEY)
@@ -557,5 +562,138 @@ describe('L6a — the share id is proposed by the client and both owner copies a
     })
     await expect(createFolderLinkWithKeys(baseInput(), ports)).rejects.toThrow(/taken/)
     expect(attempts).toBe(3)
+  })
+})
+
+describe('L7b (a) — the first custody record upgrades a flag-off folder\'s legacy rows', () => {
+  const ROOT = '11111111-1111-4111-8111-111111111111'
+  const CHILD_FILE = '22222222-2222-4222-8222-222222222222'
+  const CHILD_FOLDER = '33333333-3333-4333-8333-333333333333'
+
+  async function legacyRows(key: Uint8Array, entries: Array<{ id: string; isFolder: boolean; child: Uint8Array }>) {
+    const { legacyInviteChildWrap } = await import('../src/lib/folder-share-crypto')
+    return Promise.all(
+      entries.map(async (e) => ({ file_id: e.id, encrypted_file_key: await legacyInviteChildWrap(key, e.child), is_folder: e.isFolder })),
+    )
+  }
+
+  /** A folder with no custody record whose invite key is FOLDER_KEY, and `rows` already published (legacy). */
+  async function upgradePorts(rows: Array<{ file_id: string; encrypted_file_key: string; is_folder: boolean }>) {
+    const { legacyInviteChildKey, sealChildKey } = await import('../src/lib/folder-share-crypto')
+    const registered: Array<Record<string, unknown>> = []
+    const { ports, calls } = fakePorts({
+      getSharedFolder: async () => {
+        throw Object.assign(new Error('not found'), { status: 404 })
+      },
+      findExistingFolderKey: async () => ({ folderKey: new Uint8Array(FOLDER_KEY), encryptedOwnerFolderKeyB64: 'invite' }),
+      listLegacyFolderKeys: async () => ({ keys: rows }),
+      legacyInviteChildKey,
+      sealChildKey,
+      deriveFileKey: async () => new Uint8Array(32).fill(0x44),
+      encryptAllChildrenKeys: async () => [],
+      registerSharedFolderKey: async (_folderId, body) => {
+        registered.push(body as Record<string, unknown>)
+        return { created: true, key_version: 1 }
+      },
+    })
+    return { ports, calls, registered }
+  }
+
+  test('every legacy row is re-sealed L7 for its own id and kind, in the registering call', async () => {
+    const fileKey = new Uint8Array(32).fill(0x61)
+    const folderNameKey = new Uint8Array(32).fill(0x62)
+    const rows = await legacyRows(FOLDER_KEY, [
+      { id: CHILD_FILE, isFolder: false, child: fileKey },
+      { id: CHILD_FOLDER, isFolder: true, child: folderNameKey },
+    ])
+    const { ports, registered } = await upgradePorts(rows)
+    await createFolderLinkWithKeys(baseInput({ folderId: ROOT }), ports)
+
+    expect(registered).toHaveLength(1)
+    const rewrap = registered[0].rewrap as { keys: Array<{ file_id: string; encrypted_file_key: string }> }
+    expect(rewrap.keys.map((k) => k.file_id).sort()).toEqual([CHILD_FILE, CHILD_FOLDER].sort())
+    const wasm = loadWasm()
+    const byId = new Map(rewrap.keys.map((k) => [k.file_id, fromBase64(k.encrypted_file_key)]))
+    expect(Array.from(wasm.unwrapFolderChild(FOLDER_KEY, ROOT, CHILD_FILE, 1, byId.get(CHILD_FILE)!) as Uint8Array)).toEqual(Array.from(fileKey))
+    expect(Array.from(wasm.unwrapFolderChild(FOLDER_KEY, ROOT, CHILD_FOLDER, 2, byId.get(CHILD_FOLDER)!) as Uint8Array)).toEqual(Array.from(folderNameKey))
+    // Re-sealed under L7, so the legacy reader no longer opens them.
+    const { legacyInviteChildKey } = await import('../src/lib/folder-share-crypto')
+    await expect(legacyInviteChildKey(FOLDER_KEY, rewrap.keys[0].encrypted_file_key)).rejects.toThrow()
+  })
+
+  test('one row under a different key: the folder stays legacy, nothing is registered or created, a count is logged', async () => {
+    const rows = [
+      ...(await legacyRows(FOLDER_KEY, [{ id: CHILD_FILE, isFolder: false, child: new Uint8Array(32).fill(0x61) }])),
+      ...(await legacyRows(new Uint8Array(32).fill(0x77), [{ id: CHILD_FOLDER, isFolder: true, child: new Uint8Array(32).fill(0x62) }])),
+    ]
+    const { ports, calls, registered } = await upgradePorts(rows)
+    const warnings: unknown[][] = []
+    const originalWarn = console.warn
+    console.warn = (...args: unknown[]) => void warnings.push(args)
+    try {
+      await expect(createFolderLinkWithKeys(baseInput({ folderId: ROOT }), ports)).rejects.toThrow("This folder can't be upgraded yet.")
+    } finally {
+      console.warn = originalWarn
+    }
+    expect(registered).toHaveLength(0)
+    expect(names(calls)).not.toContain('createFolderLink')
+    // A count only: never an id or a name.
+    expect(warnings).toHaveLength(1)
+    const logged = JSON.stringify(warnings[0])
+    expect(logged).toContain('"count":1')
+    expect(logged).not.toContain(CHILD_FILE)
+    expect(logged).not.toContain(CHILD_FOLDER)
+  })
+
+  test('a folder with no rows registers custody without a rewrap', async () => {
+    const { ports, registered } = await upgradePorts([])
+    await createFolderLinkWithKeys(baseInput({ folderId: ROOT }), ports)
+    expect(registered).toHaveLength(1)
+    expect('rewrap' in registered[0]).toBe(false)
+  })
+
+  test('409 rewrap_incomplete (a row added meanwhile) lists and re-seals once more, then registers', async () => {
+    const first = await legacyRows(FOLDER_KEY, [{ id: CHILD_FILE, isFolder: false, child: new Uint8Array(32).fill(0x61) }])
+    const second = [...first, ...(await legacyRows(FOLDER_KEY, [{ id: CHILD_FOLDER, isFolder: true, child: new Uint8Array(32).fill(0x62) }]))]
+    let listings = 0
+    const bodies: Array<{ rewrap?: { keys: { file_id: string }[] } }> = []
+    const { ports } = await upgradePorts(first)
+    const racing = {
+      ...ports,
+      listLegacyFolderKeys: async () => ({ keys: listings++ === 0 ? first : second }),
+      registerSharedFolderKey: async (_f: string, body: { rewrap?: { keys: { file_id: string }[] } }) => {
+        bodies.push(body)
+        if (bodies.length === 1) throw Object.assign(new Error('incomplete'), { status: 409, code: 'rewrap_incomplete' })
+        return { created: true, key_version: 1 }
+      },
+    }
+    await createFolderLinkWithKeys(baseInput({ folderId: ROOT }), racing as never)
+    expect(listings).toBe(2)
+    expect(bodies.map((b) => b.rewrap?.keys.length)).toEqual([1, 2])
+  })
+
+  test('409 custody_exists (another device upgraded first) re-reads the record and uses its key', async () => {
+    const rows = await legacyRows(FOLDER_KEY, [{ id: CHILD_FILE, isFolder: false, child: new Uint8Array(32).fill(0x61) }])
+    let reads = 0
+    const { ports, calls } = await upgradePorts(rows)
+    const raced = {
+      ...ports,
+      getSharedFolder: async (folderId: string) => {
+        reads += 1
+        if (reads === 1) throw Object.assign(new Error('not found'), { status: 404 })
+        return { folder_id: folderId, role: 'owner', access_level: 'edit', key_version: 1, owner_wrapped_folder_key: toBase64(new Uint8Array(60)), wrapped_folder_key: null } as never
+      },
+      registerSharedFolderKey: async () => {
+        throw Object.assign(new Error('custody exists'), { status: 409, code: 'custody_exists' })
+      },
+      openFolderCustody: async () => {
+        calls.push({ name: 'openFolderCustody' })
+        return new Uint8Array(FOLDER_KEY)
+      },
+    }
+    await createFolderLinkWithKeys(baseInput({ folderId: ROOT }), raced)
+    expect(reads).toBe(2)
+    expect(names(calls)).toContain('openFolderCustody')
+    expect(names(calls)).toContain('createFolderLink')
   })
 })
