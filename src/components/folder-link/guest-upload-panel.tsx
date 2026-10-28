@@ -6,6 +6,8 @@
  * folder; skipping is remembered for the session.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { BBButton } from '@beebeeb/shared'
+import { Icon } from '../icons'
 import { useBrowseFiles, useBrowseFolders, type FolderFile } from '../upload-zone'
 import type { FolderAccessLevel, Proof } from '../../lib/folder-link-types'
 import {
@@ -14,7 +16,7 @@ import {
   type GuestUploadState,
   type GuestUploadTask,
 } from '../../lib/guest-upload'
-import { readActorName, storeActorName, storeActorNameSkipped } from '../../lib/guest-actor-name'
+import { readActorName, readActorNameCiphertext, storeActorName, storeActorNameSkipped } from '../../lib/guest-actor-name'
 import { ActorNamePrompt } from './actor-name-prompt'
 
 /** The panel does not exist for a view-only link. */
@@ -28,6 +30,21 @@ export function shouldAskActorName(args: {
   asked: boolean
 }): boolean {
   return panelVisible(args.level) && args.storedName === null && !args.asked
+}
+
+/**
+ * What the next batch does: ask for a name first (once per browser and
+ * folder), or upload, carrying the sealed name on EVERY batch so each
+ * contribution is attributed, not only the first one.
+ */
+export function decideBatch(args: {
+  level: FolderAccessLevel
+  storedName: string | null
+  asked: boolean
+  encryptedName: string | null
+}): { kind: 'ask' } | { kind: 'run'; actorNameEncrypted: string | null } {
+  if (shouldAskActorName(args)) return { kind: 'ask' }
+  return { kind: 'run', actorNameEncrypted: args.encryptedName }
 }
 
 /** One label per row state; the rejection copy comes from the engine. */
@@ -63,6 +80,8 @@ export function GuestUploadPanel(props: {
   onUploaded: () => void
   queue: GuestUploadTask[]
   setQueue: (tasks: GuestUploadTask[]) => void
+  /** Files dropped anywhere on the page; each new `seq` starts one batch. */
+  dropped?: { seq: number; tasks: GuestUploadTask[] } | null
 }) {
   const visible = panelVisible(props.level)
   const [rows, setRows] = useState<Map<string, GuestUploadState>>(new Map())
@@ -74,16 +93,21 @@ export function GuestUploadPanel(props: {
   // and pop the prompt again on every reload.
   const nameRead = useRef<Promise<void>>(Promise.resolve())
   const storedNameRef = useRef<string | null>(null)
+  const encryptedNameRef = useRef<string | null>(null)
   const askedRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!visible) return
     let live = true
-    nameRead.current = readActorName(props.folderId, props.folderKey)
-      .then((name) => {
+    nameRead.current = Promise.all([
+      readActorName(props.folderId, props.folderKey),
+      readActorNameCiphertext(props.folderId, props.folderKey),
+    ])
+      .then(([name, encrypted]) => {
         if (!live) return
         storedNameRef.current = name
+        encryptedNameRef.current = encrypted
         if (name !== null) askedRef.current = true
       })
       .catch(() => undefined)
@@ -143,23 +167,34 @@ export function GuestUploadPanel(props: {
       props.setQueue(tasks)
       void (async () => {
         await nameRead.current
-        if (
-          shouldAskActorName({
-            level: props.level,
-            storedName: storedNameRef.current,
-            asked: askedRef.current,
-          })
-        ) {
+        const next = decideBatch({
+          level: props.level,
+          storedName: storedNameRef.current,
+          asked: askedRef.current,
+          encryptedName: encryptedNameRef.current,
+        })
+        if (next.kind === 'ask') {
           // No request is made before the guest answers.
           pending.current = tasks
           setPromptOpen(true)
           return
         }
-        await run(tasks, null)
+        await run(tasks, next.actorNameEncrypted)
       })()
     },
     [visible, props, run],
   )
+
+  // A drop anywhere on the page is the same as picking those files here.
+  const startRef = useRef(start)
+  startRef.current = start
+  const dropSeq = props.dropped?.seq
+  useEffect(() => {
+    if (dropSeq === undefined || !props.dropped) return
+    startRef.current(props.dropped.tasks)
+    // Only a new drop (a new seq) starts a batch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dropSeq])
 
   const nameBrowse = useBrowseFiles((files) => start(tasksFromFiles(files)))
   const folderBrowse = useBrowseFolders((entries) => start(tasksFromFolderFiles(entries)))
@@ -175,63 +210,83 @@ export function GuestUploadPanel(props: {
         onSubmit={(name) => {
           setPromptOpen(false)
           askedRef.current = true
+          storedNameRef.current = name
           void storeActorName(props.folderId, props.folderKey, name).then((encrypted) => {
+            encryptedNameRef.current = encrypted
             void run(pending.current, encrypted)
           })
         }}
         onSkip={() => {
           setPromptOpen(false)
           askedRef.current = true
+          storedNameRef.current = ''
+          encryptedNameRef.current = null
           storeActorNameSkipped(props.folderId)
           void run(pending.current, null)
         }}
       />
 
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={nameBrowse.browse}
-          disabled={busy}
-          className="rounded-lg border border-line px-3 py-1.5 text-sm font-medium disabled:opacity-60"
-        >
-          Upload
-        </button>
-        <button
-          type="button"
-          onClick={folderBrowse.browseFolder}
-          disabled={busy}
-          className="rounded-lg border border-line px-3 py-1.5 text-sm font-medium disabled:opacity-60"
-        >
-          Upload folder
-        </button>
-        <p className="text-xs text-ink-3">Drop files or a folder to add them here.</p>
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-lg border border-dashed border-line-2 bg-paper-2 px-3 py-2.5 md:px-4">
+        <p className="flex min-w-0 items-center gap-2 text-[12px] text-ink-3">
+          <Icon name="upload" size={13} className="shrink-0 text-ink-3" />
+          <span>Drop files or a folder to add them here.</span>
+        </p>
+        <div className="flex items-center gap-2">
+          <BBButton
+            type="button"
+            onClick={folderBrowse.browseFolder}
+            disabled={busy}
+            className="min-h-11 gap-1.5 text-[13px] disabled:opacity-60 md:min-h-9"
+          >
+            <Icon name="folder" size={13} />
+            Upload folder
+          </BBButton>
+          <BBButton
+            type="button"
+            variant="amber"
+            onClick={nameBrowse.browse}
+            disabled={busy}
+            className="min-h-11 gap-1.5 text-[13px] disabled:opacity-60 md:min-h-9"
+          >
+            <Icon name="upload" size={13} />
+            Upload
+          </BBButton>
+        </div>
       </div>
       <nameBrowse.HiddenInput />
       <folderBrowse.HiddenFolderInput />
 
       {error ? (
-        <p role="alert" className="text-sm text-ink-3">
+        <p role="alert" className="text-[13px] text-ink-3">
           {error}
         </p>
       ) : null}
 
       {rowKeys.length > 0 ? (
-        <ul className="divide-y divide-line rounded-lg border border-line bg-paper">
+        <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-paper" aria-label="Uploads">
           {queue.map((task, index) => {
             const state = rows.get(rowKeys[index]) ?? { name: 'queued' as const }
             const rejected = state.name === 'rejected'
             return (
               <li
                 key={`${rowKeys[index]}-${index}`}
-                className="flex items-center justify-between gap-3 px-3 py-2 text-sm"
+                className="relative flex items-center justify-between gap-3 px-3 py-2 text-[13px] md:px-4"
                 data-state={state.name}
               >
-                <span className="min-w-0 truncate">
-                  {task.relativePath ?? task.file.name}
+                <span className="flex min-w-0 items-center gap-2">
+                  <Icon name={state.name === 'added' ? 'check' : 'file'} size={13} className={state.name === 'added' ? 'shrink-0 text-green' : 'shrink-0 text-ink-3'} />
+                  <span className="min-w-0 truncate">{task.relativePath ?? task.file.name}</span>
                 </span>
-                <span className={rejected ? 'shrink-0 text-ink-3' : 'shrink-0 font-mono text-xs text-ink-3'}>
+                <span className={rejected ? 'shrink-0 text-ink-2' : 'shrink-0 font-mono text-[11px] tabular-nums text-ink-3'}>
                   {rowLabel(state)}
                 </span>
+                {state.name === 'uploading' ? (
+                  <span
+                    aria-hidden="true"
+                    className="absolute bottom-0 left-0 h-[2px] bg-amber transition-[width] duration-200"
+                    style={{ width: `${state.percent}%` }}
+                  />
+                ) : null}
               </li>
             )
           })}

@@ -276,3 +276,48 @@ describe('rendered views', () => {
     expect(list.indexOf('>A</button>') < list.indexOf('>B</button>')).toBe(true)
   })
 })
+
+test('C guest grid uses 80px squares and full-name titles', () => {
+  const node = { item: item({ id: 'small' }), name: 'A long report name.txt', fileKey: new Uint8Array(32), mimeType: 'text/plain' }
+  const grid = renderToStaticMarkup(<GuestGrid nodes={[node]} onOpenFolder={() => undefined} onPreview={() => undefined} />)
+  expect(grid).toContain('80px')
+  expect(grid).toContain('title="A long report name.txt"')
+})
+
+test('C guest list exposes the Files Name Size Modified columns', () => {
+  const list = renderToStaticMarkup(<GuestList nodes={[]} onOpenFolder={() => undefined} onPreview={() => undefined} />)
+  for (const column of ['Name', 'Size', 'Modified']) expect(list).toContain(column)
+})
+
+describe('C design pass (Guus 2026-10-28: "alike ... as files"; "More towards 80px")', () => {
+  test('a grid tile is an 80 px square, many per row', async () => {
+    const { GUEST_GRID_TILE_PX } = await import('../src/components/folder-link/guest-grid')
+    expect(GUEST_GRID_TILE_PX).toBe(80)
+    const node = { item: item({ id: 'tile' }), name: 'photo.jpg', fileKey: new Uint8Array(32), mimeType: 'image/jpeg' }
+    const grid = renderToStaticMarkup(<GuestGrid nodes={[node, node]} onOpenFolder={() => undefined} onPreview={() => undefined} />)
+    expect(grid).toContain('repeat(auto-fill, 80px)')
+    expect(grid).toContain('width:80px')
+    expect(grid).toContain('aspect-square')
+    // One line with an ellipsis; the full name is on the tile's title.
+    expect(grid).toContain('truncate')
+  })
+
+  test('the list is built from the Files row surface and header labels', async () => {
+    const { FILE_HEADER_LABEL } = await import('../src/components/file-browser-row')
+    const node = { item: item({ id: 'r1' }), name: 'report.pdf', fileKey: new Uint8Array(32), mimeType: 'application/pdf' }
+    const list = renderToStaticMarkup(<GuestList nodes={[node]} onOpenFolder={() => undefined} onPreview={() => undefined} />)
+    expect(list).toContain('file-row')
+    expect(list).toContain(FILE_HEADER_LABEL)
+    expect(list).toContain('min-h-11')
+    // The extension badge, as Files shows it.
+    expect(list).toContain('>PDF<')
+  })
+
+  test('the shell names no owner and never clips the title', async () => {
+    const { GuestShell } = await import('../src/components/folder-link/guest-shell')
+    const html = renderToStaticMarkup(<GuestShell title="A very long shared folder name that wraps">x</GuestShell>)
+    expect(html).toContain('break-words')
+    expect(html).not.toMatch(/<h1[^>]*truncate/)
+    expect(html).not.toMatch(/@|owner/i)
+  })
+})

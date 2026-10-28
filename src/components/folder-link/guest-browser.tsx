@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
+import { BBButton } from '@beebeeb/shared'
 import { Breadcrumb } from '../breadcrumb'
+import { EncryptionStatus } from '../encryption-status'
+import { FILE_STATUS_BAR } from '../file-browser-row'
+import { Icon } from '../icons'
 import { fetchAllFolderItems, fetchFolderThumbnail } from '../../lib/folder-link-public'
 import { decryptThumbnailBlob } from '../../lib/thumbnail'
 import { decryptFileMetadata } from '../../lib/crypto'
+import { decryptChildFileKey } from '../../lib/folder-share-crypto'
 import type { FolderAccessLevel, Proof } from '../../lib/folder-link-types'
 import { GuestGrid } from './guest-grid'
 import { GuestPreview } from './guest-preview'
@@ -46,10 +51,16 @@ export function GuestBrowser(props: {
   proof: Proof | null
   /** Ciphertext of the folder's own name, as returned by the root route. */
   rootName?: string
+  /** The root's own name key wrapped under the folder key (see PublicFolderRoot). */
+  rootWrappedKey?: string | null
   onOpenFile: (node: GuestNode) => void
   onPreview: (node: GuestNode) => void
   refreshKey?: number
   onNames?: (parentId: string | null, names: string[]) => void
+  /** The decrypted name of the shared folder itself, once known (page title). */
+  onRootName?: (name: string) => void
+  /** The folder the guest is looking at (uploads land here). */
+  onLocationChange?: (parentId: string | null) => void
 }) {
   const [stack, setStack] = useState<Crumb[]>([{ id: null, name: 'Shared folder' }])
   const parentId = stack[stack.length - 1]?.id ?? null
@@ -66,6 +77,7 @@ export function GuestBrowser(props: {
   const [thumbnails, setThumbnails] = useState<Map<string, string>>(new Map())
   const [previewIndex, setPreviewIndex] = useState<number | null>(null)
   const [zipBusy, setZipBusy] = useState(false)
+  const [zipMessage, setZipMessage] = useState<string | null>(null)
   const [index, setIndex] = useState<SharedSearchIndex | null>(null)
   const [indexCount, setIndexCount] = useState(0)
   const [term, setTerm] = useState('')
@@ -75,16 +87,31 @@ export function GuestBrowser(props: {
   useEffect(() => {
     let live = true
     if (!props.rootName) return
-    void decryptFileMetadata(props.folderKey, props.rootName)
+    const rootName = props.rootName
+    void (async () => {
+      // The root's own name key when the owner published it (random folder
+      // key, decision L1); an older link sealed the name under the folder key.
+      if (props.rootWrappedKey) {
+        const nameKey = await decryptChildFileKey(props.folderKey, props.rootWrappedKey)
+        try {
+          return await decryptFileMetadata(nameKey, rootName)
+        } finally {
+          nameKey.fill(0)
+        }
+      }
+      return decryptFileMetadata(props.folderKey, rootName)
+    })()
       .then((meta) => {
         // Only the root crumb is renamed; deeper crumbs keep their own names.
-        if (live) setStack((current) => [{ id: null, name: meta.name }, ...current.slice(1)])
+        if (!live) return
+        setStack((current) => [{ id: null, name: meta.name }, ...current.slice(1)])
+        props.onRootName?.(meta.name)
       })
       .catch(() => undefined)
     return () => {
       live = false
     }
-  }, [props.rootName, props.folderKey])
+  }, [props.rootName, props.rootWrappedKey, props.folderKey])
 
   useEffect(() => {
     let live = true
@@ -123,6 +150,11 @@ export function GuestBrowser(props: {
   }, [listing.nodes, props.token, props.proof])
 
   const sorted = useMemo(() => sortGuestNodes(listing.nodes, sort), [listing.nodes, sort])
+
+  const onLocationChange = props.onLocationChange
+  useEffect(() => {
+    onLocationChange?.(parentId)
+  }, [parentId, onLocationChange])
 
   // The shared index is loaded once per link; search stays read-only on it.
   useEffect(() => {
@@ -237,113 +269,122 @@ export function GuestBrowser(props: {
     if (zipBusy) return
     const rootName = stack[0]?.name ?? 'Shared folder'
     setZipBusy(true)
+    setZipMessage(null)
     try {
-      const { files } = await collectGuestZipEntries({
+      const { files, errorCount } = await collectGuestZipEntries({
         token: props.token,
         folderKey: props.folderKey,
         proof: props.proof,
         rootPath: rootName,
       })
-      if (files.length > 0) await downloadGuestZip(files, `${rootName}.zip`)
+      const result = files.length > 0 ? await downloadGuestZip(files, `${rootName}.zip`) : null
+      const failures = errorCount + (result?.errorCount ?? 0)
+      if (failures > 0) setZipMessage(`${failures} item${failures === 1 ? '' : 's'} could not be downloaded. Try downloading them individually.`)
+    } catch (error) {
+      setZipMessage(error instanceof Error ? error.message : 'The download did not finish.')
     } finally {
       setZipBusy(false)
     }
   }
 
+  const itemCount = listing.nodes.length
+  const viewButton = (mode: GuestViewMode, label: string, first: boolean) => (
+    <button
+      type="button"
+      aria-pressed={view === mode}
+      onClick={() => changeView(mode)}
+      className={`min-h-11 min-w-11 px-2.5 text-[12px] transition-colors md:min-h-8 ${first ? '' : 'border-l border-line'} ${view === mode ? 'bg-paper-2 font-medium text-ink' : 'text-ink-3 hover:text-ink'}`}
+    >
+      {label}
+    </button>
+  )
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <Breadcrumb items={stack} onNavigate={navigate} />
-        </div>
-        <select
-          aria-label="Sort"
-          value={sort}
-          onChange={(event) => {
-            const next = event.target.value as GuestSortKey
-            setSort(next)
-            writeGuestSort(next)
-          }}
-          className="rounded-lg border border-line bg-paper px-2 py-1.5 text-sm"
-        >
-          {GUEST_SORT_OPTIONS.map((option) => (
-            <option key={option.key} value={option.key}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-        <div
-          role="group"
-          aria-label="View"
-          className="flex overflow-hidden rounded-lg border border-line"
-        >
-          <button
-            type="button"
-            aria-pressed={view === 'grid'}
-            onClick={() => changeView('grid')}
-            className={`px-2.5 py-1.5 text-sm ${view === 'grid' ? 'bg-paper-2 font-medium' : 'text-ink-3'}`}
-          >
-            Grid
-          </button>
-          <button
-            type="button"
-            aria-pressed={view === 'list'}
-            onClick={() => changeView('list')}
-            className={`border-l border-line px-2.5 py-1.5 text-sm ${view === 'list' ? 'bg-paper-2 font-medium' : 'text-ink-3'}`}
-          >
-            List
-          </button>
-        </div>
-        {hasFiles ? (
-          <button
-            type="button"
-            onClick={() => void downloadAll()}
-            disabled={zipBusy}
-            className="rounded-lg border border-line px-3 py-1.5 text-sm font-medium disabled:opacity-60"
-          >
-            {zipBusy ? 'Preparing zip…' : 'Download all'}
-          </button>
-        ) : null}
-      </div>
-
-      <GuestSearch
-        onQuery={setTerm}
-        partial={results?.partial ?? false}
-        busy={searchBusy}
-      />
-
-      {listing.error ? (
-        <p role="alert" className="text-sm text-ink-3">
-          This link isn&apos;t available.
+    <div className="flex flex-col gap-3">
+      {zipMessage ? (
+        <p role="alert" className="rounded-md border border-line bg-paper-2 px-3 py-2 text-[13px] text-ink-2">
+          {zipMessage}
         </p>
       ) : null}
 
-      {empty ? (
-        <GuestEmpty level={props.level} />
-      ) : searching && !searchBusy && visible.length === 0 ? (
-        <GuestSearchNoResults term={term} />
-      ) : view === 'grid' ? (
-        <GuestGrid
-          nodes={visible}
-          onOpenFolder={openFolder}
-          onPreview={openPreview}
-          thumbnails={thumbnails}
-        />
-      ) : (
-        <GuestList nodes={visible} onOpenFolder={openFolder} onPreview={openPreview} />
-      )}
-
-      {listing.hasMore ? (
-        <div className="text-center">
-          <button
-            type="button"
-            onClick={listing.loadMore}
-            className="rounded-lg border border-line px-3 py-1.5 text-sm font-medium"
-          >
-            Load more
-          </button>
+      <section className="overflow-hidden rounded-lg border border-line bg-paper">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line px-3 py-2 md:px-5">
+          <div className="min-w-0 flex-1 basis-full overflow-x-auto md:basis-auto">
+            <Breadcrumb items={stack} onNavigate={navigate} />
+          </div>
+          <div className="min-w-0 flex-1 basis-full md:max-w-[260px] md:basis-[220px]">
+            <GuestSearch onQuery={setTerm} partial={results?.partial ?? false} busy={searchBusy} />
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              aria-label="Sort"
+              value={sort}
+              onChange={(event) => {
+                const next = event.target.value as GuestSortKey
+                setSort(next)
+                writeGuestSort(next)
+              }}
+              className="min-h-11 rounded-md border border-line bg-paper px-2 text-[12px] text-ink-2 md:min-h-8"
+            >
+              {GUEST_SORT_OPTIONS.map((option) => (
+                <option key={option.key} value={option.key}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <div role="group" aria-label="View" className="flex overflow-hidden rounded-md border border-line">
+              {viewButton('grid', 'Grid', true)}
+              {viewButton('list', 'List', false)}
+            </div>
+            {hasFiles ? (
+              <BBButton
+                size="sm"
+                onClick={() => void downloadAll()}
+                disabled={zipBusy}
+                className="min-h-11 gap-1.5 text-[12px] disabled:opacity-60 md:min-h-8"
+              >
+                <Icon name="download" size={12} />
+                {zipBusy ? 'Preparing zip…' : 'Download all'}
+              </BBButton>
+            ) : null}
+          </div>
         </div>
-      ) : null}
+
+        {listing.error ? (
+          <p role="alert" className="px-5 py-10 text-center text-[13px] text-ink-3">
+            This link isn&apos;t available.
+          </p>
+        ) : empty ? (
+          <GuestEmpty level={props.level} />
+        ) : searching && !searchBusy && visible.length === 0 ? (
+          <GuestSearchNoResults term={term} />
+        ) : listing.loading && listing.nodes.length === 0 ? (
+          <p role="status" className="px-5 py-10 text-center text-[13px] text-ink-3">
+            Decrypting folder…
+          </p>
+        ) : view === 'grid' ? (
+          <GuestGrid nodes={visible} onOpenFolder={openFolder} onPreview={openPreview} thumbnails={thumbnails} />
+        ) : (
+          <GuestList nodes={visible} onOpenFolder={openFolder} onPreview={openPreview} thumbnails={thumbnails} />
+        )}
+
+        {listing.hasMore ? (
+          <div className="border-t border-line px-3 py-3 text-center">
+            <BBButton size="sm" onClick={listing.loadMore} className="min-h-11 md:min-h-8">
+              Load more
+            </BBButton>
+          </div>
+        ) : null}
+
+        <div className={FILE_STATUS_BAR}>
+          <span className="font-mono">
+            {itemCount} item{itemCount === 1 ? '' : 's'}
+            {listing.hasMore ? '+' : ''}
+          </span>
+          <span>·</span>
+          <EncryptionStatus />
+        </div>
+      </section>
 
       {previewNode ? (
         <GuestPreview
@@ -369,12 +410,21 @@ export function GuestBrowser(props: {
 
 /** The empty state, exported so its copy can be asserted without a DOM. */
 export function GuestEmpty(props: { level: FolderAccessLevel }) {
+  const canAdd = props.level === 'add' || props.level === 'edit'
   return (
-    <div className="rounded-lg border border-line bg-paper-2 p-6 text-center text-sm text-ink-3">
-      <p>This folder is empty.</p>
-      {props.level === 'add' || props.level === 'edit' ? (
-        <p className="mt-1">Drop files here, or use Upload.</p>
-      ) : null}
+    <div className="flex flex-col items-center justify-center px-5 py-14 text-center">
+      <div
+        className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl"
+        style={{ background: 'var(--color-paper-2)', border: '1.5px dashed var(--color-line-2)' }}
+      >
+        <Icon name="folder" size={24} className="text-ink-3" />
+      </div>
+      <h2 className="mb-1.5 text-[15px] font-semibold text-ink">This folder is empty.</h2>
+      <p className="max-w-[340px] text-[13px] leading-relaxed text-ink-3">
+        {canAdd
+          ? 'Drop files here, or use Upload.'
+          : 'Nothing has been added yet. Check back later, or ask the person who shared it.'}
+      </p>
     </div>
   )
 }

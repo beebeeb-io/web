@@ -10,11 +10,12 @@ import { useParams } from 'react-router-dom'
 import { GuestShell } from '../components/folder-link/guest-shell'
 import { Unavailable } from '../components/folder-link/unavailable'
 import { GuestBrowser } from '../components/folder-link/guest-browser'
-import { GuestDropZone } from '../components/folder-link/guest-drop-zone'
-import { GuestUploadPanel } from '../components/folder-link/guest-upload-panel'
+import { GuestUploadPanel, tasksFromFiles, tasksFromFolderFiles } from '../components/folder-link/guest-upload-panel'
+import { UploadZone } from '../components/upload-zone'
 import type { GuestUploadTask } from '../lib/guest-upload'
 import {
   FolderNotAvailableError,
+  FOLDER_PROOF_REQUIRED_EVENT,
   clearProof,
   readProof,
   resolveFolderLink,
@@ -23,10 +24,12 @@ import {
 } from '../lib/folder-link-public'
 import type { FolderAccessLevel, Proof, PublicFolderRoot } from '../lib/folder-link-types'
 import {
+  EmptyLinkPassphraseError,
   deriveLinkPassphraseKey,
   resolveGuestFolderKey,
 } from '../lib/shared-folder-link-crypto'
 import { ApiError } from '../lib/api'
+import { BBButton, Icon } from '@beebeeb/shared'
 
 export type GuestState =
   | { name: 'loading' }
@@ -78,6 +81,10 @@ export async function resolveGuestState(args: {
         return { name: 'not_available' }
     }
   } catch (err) {
+    if (err instanceof ApiError && err.status === 401 && err.code === 'passphrase_required') {
+      clearProof(args.token)
+      return { name: 'passphrase_required' }
+    }
     if (err instanceof FolderNotAvailableError) return { name: 'not_available' }
     return { name: 'not_available' }
   }
@@ -104,6 +111,9 @@ export async function openWithPassphrase(args: {
     })
     return { state, error: state.name === 'passphrase_required' ? WRONG_PASSPHRASE : null }
   } catch (err) {
+    if (err instanceof EmptyLinkPassphraseError) {
+      return { state: { name: 'passphrase_required' }, error: err.message }
+    }
     if (err instanceof ApiError && err.status === 403) {
       return { state: { name: 'passphrase_required' }, error: WRONG_PASSPHRASE }
     }
@@ -132,9 +142,11 @@ export function FolderLinkView(props: {
   if (state.name === 'loading') {
     return (
       <GuestShell title="Shared folder">
-        <p role="status" className="text-sm text-ink-3">
-          Opening folder…
-        </p>
+        <div className="rounded-lg border border-line bg-paper px-5 py-12 text-center">
+          <p role="status" className="text-[13px] text-ink-3">
+            Opening folder…
+          </p>
+        </div>
       </GuestShell>
     )
   }
@@ -147,34 +159,41 @@ export function FolderLinkView(props: {
     return (
       <GuestShell title="Shared folder">
         <form
-          className="mx-auto max-w-sm rounded-lg border border-line bg-paper-2 p-6"
+          className="mx-auto mt-4 w-full max-w-sm rounded-lg border border-line bg-paper p-6 shadow-1"
           onSubmit={(event) => {
             event.preventDefault()
             props.onSubmit()
           }}
         >
-          <h2 className="text-lg font-semibold">This folder is protected</h2>
-          <label className="mt-4 block text-sm text-ink-3" htmlFor="folder-link-passphrase">
+          <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-xl bg-amber-bg">
+            <Icon name="lock" size={18} className="text-amber-deep" />
+          </div>
+          <h2 className="text-[17px] font-semibold">This folder is protected</h2>
+          <p className="mt-1 text-[13px] text-ink-3">
+            Enter the passphrase you were given. It opens the folder in this browser only.
+          </p>
+          <label className="mt-4 block text-[12px] font-medium text-ink-2" htmlFor="folder-link-passphrase">
             Passphrase
           </label>
           <input
             id="folder-link-passphrase"
             type="password"
             autoComplete="current-password"
-            className="mt-1 w-full rounded-lg border border-line bg-paper px-3 py-2 text-sm"
+            className="mt-1 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-[14px] focus:outline-none focus-visible:ring-2 focus-visible:ring-amber"
             value={props.passphrase}
             onChange={(event) => props.onPassphraseChange(event.target.value)}
           />
           {props.passphraseError ? (
-            <p className="mt-2 text-sm text-red-600">{props.passphraseError}</p>
+            <p role="alert" className="mt-2 text-[13px] text-red">{props.passphraseError}</p>
           ) : null}
-          <button
+          <BBButton
             type="submit"
+            variant="amber"
             disabled={props.busy || props.passphrase.length === 0}
-            className="mt-4 w-full rounded-lg bg-amber px-3 py-2 text-sm font-semibold text-ink disabled:opacity-50"
+            className="mt-4 min-h-11 w-full font-semibold disabled:opacity-50"
           >
             {props.busy ? 'Opening…' : 'Open folder'}
-          </button>
+          </BBButton>
         </form>
       </GuestShell>
     )
@@ -192,6 +211,16 @@ export function FolderLinkView(props: {
   )
 }
 
+/** What this link lets a guest do, in one plain line under the title. */
+export function accessLine(level: FolderAccessLevel): string {
+  // Only what this page offers: renaming and deleting from a link are not
+  // in the guest UI yet, so an edit link reads the same as an add link.
+  return level === 'add' || level === 'edit'
+    ? 'Shared with you. You can view, download and add files.'
+    : 'Shared with you. You can view and download.'
+
+}
+
 function FolderLinkBody(props: {
   token: string
   root: PublicFolderRoot
@@ -202,47 +231,66 @@ function FolderLinkBody(props: {
   const canUpload = props.level === 'add' || props.level === 'edit'
   const [queue, setQueue] = useState<GuestUploadTask[]>([])
   const [refresh, setRefresh] = useState(0)
+  const [title, setTitle] = useState('Shared folder')
+  // Uploads land in the folder the guest is looking at, not always the root.
+  const [location, setLocation] = useState<string | null>(null)
+  const [dropped, setDropped] = useState<{ seq: number; tasks: GuestUploadTask[] } | null>(null)
   const siblingNames = useRef<Map<string, string>>(new Map())
   const rememberNames = useCallback((parentId: string | null, names: string[]) => {
     for (const name of names) {
       siblingNames.current.set(`${parentId ?? 'root'}:${name.toLowerCase()}`, name)
     }
   }, [])
+  const drop = useCallback((tasks: GuestUploadTask[]) => {
+    if (tasks.length === 0) return
+    setDropped((current) => ({ seq: (current?.seq ?? 0) + 1, tasks }))
+  }, [])
+
+  const browser = (
+    <GuestBrowser
+      token={props.token}
+      folderKey={props.folderKey}
+      level={props.level}
+      proof={props.proof}
+      rootName={props.root.root_name_encrypted}
+      rootWrappedKey={props.root.root_wrapped_key ?? null}
+      onNames={rememberNames}
+      onOpenFile={() => undefined}
+      onPreview={() => undefined}
+      onRootName={setTitle}
+      onLocationChange={setLocation}
+      refreshKey={refresh}
+    />
+  )
 
   return (
-    <GuestShell title="Shared folder">
-      <GuestDropZone
-        disabled={!canUpload}
-        onTasks={(tasks) => setQueue(tasks)}
-      >
-        {canUpload ? (
-          <div className="mb-3 space-y-3">
+    <GuestShell title={title} subtitle={accessLine(props.level)}>
+      {canUpload ? (
+        // The same drop zone as Files: drop anywhere on the folder to add.
+        <UploadZone
+          onFiles={(files) => drop(tasksFromFiles(files))}
+          onFolderFiles={(entries) => drop(tasksFromFolderFiles(entries))}
+        >
+          <div className="mb-3">
             <GuestUploadPanel
               token={props.token}
               folderId={props.root.folder_id}
               folderKey={props.folderKey}
               proof={props.proof}
               level={props.level}
-              parentId={null}
+              parentId={location}
               siblingNames={siblingNames.current}
               onUploaded={() => setRefresh((value) => value + 1)}
               queue={queue}
               setQueue={setQueue}
+              dropped={dropped}
             />
           </div>
-        ) : null}
-        <GuestBrowser
-          token={props.token}
-          folderKey={props.folderKey}
-          level={props.level}
-          proof={props.proof}
-          rootName={props.root.root_name_encrypted}
-          onNames={rememberNames}
-          onOpenFile={() => undefined}
-          onPreview={() => undefined}
-          refreshKey={refresh}
-        />
-      </GuestDropZone>
+          {browser}
+        </UploadZone>
+      ) : (
+        browser
+      )}
     </GuestShell>
   )
 }
@@ -262,6 +310,17 @@ export function FolderLinkPage() {
     return () => {
       live = false
     }
+  }, [token])
+
+  useEffect(() => {
+    const expired = (event: Event) => {
+      if ((event as CustomEvent<string>).detail !== token) return
+      setState({ name: 'passphrase_required' })
+      setPassphrase('')
+      setPassphraseError(null)
+    }
+    window.addEventListener(FOLDER_PROOF_REQUIRED_EVENT, expired)
+    return () => window.removeEventListener(FOLDER_PROOF_REQUIRED_EVENT, expired)
   }, [token])
 
   const submit = useCallback(() => {

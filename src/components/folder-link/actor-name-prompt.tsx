@@ -45,7 +45,7 @@ export function ActorNamePrompt(props: {
           value={name}
           maxLength={ACTOR_NAME_MAX_LENGTH}
           onChange={(event) => setName(event.target.value)}
-          className="w-full max-w-xs rounded-lg border border-line bg-paper px-3 py-2 text-sm"
+          className="w-full max-w-xs min-h-11 rounded-lg border border-line bg-paper px-3 py-2 text-sm"
         />
         <button
           type="submit"
@@ -56,7 +56,7 @@ export function ActorNamePrompt(props: {
         <button
           type="button"
           onClick={props.onSkip}
-          className="rounded-lg border border-line px-3 py-2 text-sm font-medium"
+          className="min-h-11 rounded-lg border border-line px-3 py-2 text-sm font-medium"
         >
           Skip
         </button>

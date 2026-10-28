@@ -11,6 +11,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { ActorNamePrompt, ACTOR_NAME_MAX_LENGTH } from '../src/components/folder-link/actor-name-prompt'
 import {
   GuestUploadPanel,
+  decideBatch,
   panelVisible,
   rowLabel,
   shouldAskActorName,
@@ -131,5 +132,31 @@ describe('the queue', () => {
     expect(rejectMessage('cap')).toBe('That folder is full.')
     const rejected = plain(renderToStaticMarkup(panel({ queue: [task('full.bin')] })))
     expect(rejected).toContain('full.bin')
+  })
+})
+
+describe('every batch carries the guest name (2237b review B)', () => {
+  test('the first batch asks; every later batch sends the sealed name, not only the first', () => {
+    expect(decideBatch({ level: 'add', storedName: null, asked: false, encryptedName: null })).toEqual({ kind: 'ask' })
+    for (let batch = 2; batch <= 4; batch++) {
+      expect(decideBatch({ level: 'add', storedName: 'Mum', asked: true, encryptedName: 'sealed-mum' })).toEqual({
+        kind: 'run',
+        actorNameEncrypted: 'sealed-mum',
+      })
+    }
+  })
+
+  test('a guest who skipped stays anonymous on every batch', () => {
+    expect(decideBatch({ level: 'add', storedName: '', asked: true, encryptedName: null })).toEqual({
+      kind: 'run',
+      actorNameEncrypted: null,
+    })
+  })
+
+  test('a name stored on an earlier visit is sent without asking again', () => {
+    expect(decideBatch({ level: 'edit', storedName: 'Sam', asked: false, encryptedName: 'sealed-sam' })).toEqual({
+      kind: 'run',
+      actorNameEncrypted: 'sealed-sam',
+    })
   })
 })

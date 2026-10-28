@@ -44,7 +44,7 @@ export function GuestSearch(props: {
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-1">
       <div className="flex items-center gap-2">
         <label className="relative flex min-w-0 flex-1 items-center">
           <span className="sr-only">Search this folder</span>
@@ -61,22 +61,22 @@ export function GuestSearch(props: {
               if (event.key === 'Escape') clear()
             }}
             placeholder="Search this folder"
-            className="w-full rounded-lg border border-line bg-paper py-1.5 pl-8 pr-2 text-sm"
+            className="min-h-11 w-full rounded-md border border-line bg-paper pl-8 pr-2 text-[13px] placeholder:text-ink-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber md:min-h-8 md:text-[12px]"
           />
         </label>
-        {props.busy ? <span className="text-xs text-ink-3">Searching…</span> : null}
+        {props.busy ? <span className="shrink-0 text-[11px] text-ink-3">Searching…</span> : null}
         {term.trim() !== '' ? (
           <button
             type="button"
             onClick={clear}
-            className="rounded-lg border border-line px-2.5 py-1.5 text-sm"
+            className="min-h-11 shrink-0 rounded-md border border-line px-2.5 text-[12px] text-ink-2 hover:bg-paper-2 md:min-h-8"
           >
             Clear
           </button>
         ) : null}
       </div>
       {props.partial ? (
-        <p role="status" className="text-xs text-ink-3">
+        <p role="status" className="text-[11px] text-ink-3">
           {partialBannerText()}
         </p>
       ) : null}
@@ -87,7 +87,7 @@ export function GuestSearch(props: {
 /** Shown in the grid body when a search term matches nothing. */
 export function GuestSearchNoResults(props: { term: string }) {
   return (
-    <div className="rounded-lg border border-line bg-paper-2 p-6 text-center text-sm text-ink-3">
+    <div className="px-5 py-12 text-center text-[13px] text-ink-3">
       {noResultsText(props.term)}
     </div>
   )
