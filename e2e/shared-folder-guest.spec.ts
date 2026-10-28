@@ -1,3 +1,4 @@
+// e2e-flags: shared_folders_v1
 import type { Browser, Download, Page } from '@playwright/test'
 import { test, expect } from '@playwright/test'
 import { signupAndUnlock, uniqueEmail } from './helpers/signup'
@@ -34,9 +35,13 @@ async function guestContext(browser: Browser) {
   return context
 }
 
+/**
+ * Design-review screenshots of each guest state at a laptop and a phone size.
+ * Default: test-results/2237b-guest-screens/ (kept, and copied back by the
+ * remote harness); E2E_GUEST_SCREENSHOTS=<prefix> writes them elsewhere.
+ */
 async function captureGuest(page: Page, state: string) {
-  const prefix = process.env.E2E_GUEST_SCREENSHOTS
-  if (!prefix) return
+  const prefix = process.env.E2E_GUEST_SCREENSHOTS ?? 'test-results/2237b-guest-screens/2237b-guest'
   for (const [label, width, height] of [['desktop', 1280, 720], ['phone', 390, 844]] as const) {
     await page.setViewportSize({ width, height })
     await page.screenshot({ path: `${prefix}-${state}-${label}.png` })

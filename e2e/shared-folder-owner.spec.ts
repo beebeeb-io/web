@@ -1,3 +1,4 @@
+// e2e-flags: shared_folders_v1
 import { test, expect } from '@playwright/test'
 import { signupAndUnlock, uniqueEmail } from './helpers/signup'
 import { anonymousContext } from './helpers/auth'

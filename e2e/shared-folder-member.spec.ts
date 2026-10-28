@@ -1,3 +1,4 @@
+// e2e-flags: shared_folders_v1
 import { test, expect, type Browser, type Page } from '@playwright/test'
 import { uniqueEmail, signupAndUnlock } from './helpers/signup'
 import {
