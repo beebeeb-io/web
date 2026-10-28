@@ -86,6 +86,7 @@ export const unwrapFolderCustody: (a: number, b: number, c: number, d: number, e
 export const unwrapInviteOwnerCopy: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const unwrapLinkOwnerKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const unwrapLinkOwnerToken: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+export const unwrapOwnerFileKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const unwrap_request_private: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
 export const verifyLegacyFolderKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
 export const wasmbreachcheck_evaluate: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
@@ -172,6 +173,7 @@ export const wrapFolderCustody: (a: number, b: number, c: number, d: number, e: 
 export const wrapInviteOwnerCopy: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const wrapLinkOwnerKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const wrapLinkOwnerToken: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+export const wrapOwnerFileKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const wrap_request_private: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const x25519_shared_secret: (a: number, b: number, c: number, d: number, e: number) => void;
 export const wasmsignedurl_toJSON: (a: number, b: number) => void;
