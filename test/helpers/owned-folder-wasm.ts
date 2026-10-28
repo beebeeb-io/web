@@ -64,3 +64,17 @@ export function ownedFolderCrypto() {
     },
   }
 }
+
+/**
+ * The LEGACY folder-invite owner copy that flag-off invites wrote before task
+ * 2255: the folder key sealed under derive_file_key(master, folder_id) (the
+ * folder's own name key), no AAD. Product code no longer writes it (2255 writes
+ * core's purpose-bound copy); existing invites still carry it, so tests build
+ * it here.
+ */
+export function legacyOwnerCopy(masterKey: Uint8Array, folderId: string, folderKey: Uint8Array): Uint8Array {
+  const w = loadWasm()
+  const nameKey = w.derive_file_key(masterKey, new TextEncoder().encode(folderId)) as Uint8Array
+  const sealed = w.encrypt_chunk(nameKey, folderKey) as { nonce: Uint8Array; ciphertext: Uint8Array }
+  return new Uint8Array([...sealed.nonce, ...sealed.ciphertext])
+}

@@ -11,30 +11,36 @@ const inv = (o: Record<string, unknown>) =>
   ({ id: 'i', file_id: 'F', status: 'approved', created_at: '2026-10-22T10:00:00Z', is_folder_share: true, ...o }) as never
 
 // Fake blob: 12 filler chars + the key name, e.g. "000000000000K1". A key
-// named bad* "does not open".
+// named new:* is a purpose-bound copy that opens on its own; any other name is
+// a LEGACY copy that core opens with proof, except bad*, which core refuses.
+// Task 2255 moved the legacy open and its proof into core (one call over the
+// folder's rows), so web derives no wrapping key and holds no candidate.
 const blob = (k: string) => '0'.repeat(12) + k
 const enc = (s: string) => new TextEncoder().encode(s)
 const dec = (b: Uint8Array) => new TextDecoder().decode(b)
+const AUTH_FAILURE = 'decryption failed: ciphertext is invalid or key is wrong'
 
-function makePorts(invites: unknown[]) {
-  const zeroized: Uint8Array[] = []
-  const derives: number[] = []
+function makePorts(invites: unknown[], rows: unknown[] = [{ file_id: 'C', encrypted_file_key: 'proof' }]) {
+  const calls = { rowFetches: [] as string[], legacyOpens: [] as { key: string; rows: number }[] }
   const ports = {
     getSentInvites: async () => invites as never,
-    deriveFileKey: async () => {
-      derives.push(1)
-      return enc('wrapping')
+    getFolderKeys: async (inviteId: string) => {
+      calls.rowFetches.push(inviteId)
+      return rows as never
     },
-    decryptChunk: async (_k: Uint8Array, _n: Uint8Array, ct: Uint8Array) => {
-      if (dec(ct).startsWith('bad')) throw new Error('decryption failed: ciphertext is invalid or key is wrong')
-      return enc(dec(ct))
+    unwrapInviteOwnerCopy: async (_m: Uint8Array, _f: string, b: Uint8Array) => {
+      const k = dec(b).slice(12)
+      if (k.startsWith('new:')) return enc(k.slice(4))
+      throw new Error(AUTH_FAILURE)
+    },
+    openLegacyInviteOwnerCopy: async (_m: Uint8Array, _f: string, b: Uint8Array, r: unknown[]) => {
+      const k = dec(b).slice(12)
+      calls.legacyOpens.push({ key: k, rows: r.length })
+      return k.startsWith('bad') ? null : enc(k)
     },
     fromBase64: (s: string) => enc(s),
-    zeroize: (b: Uint8Array) => {
-      zeroized.push(b)
-    },
   }
-  return { ports, zeroized, derives }
+  return { ports, calls }
 }
 
 describe('ownerFolderKeyBlobs: active by status only', () => {
@@ -94,7 +100,7 @@ describe('findExistingFolderKey', () => {
     expect(dec(r!.folderKey)).toBe('K5')
   })
 
-  test('abort: active blobs exist but none opens -> throws a short message, never null', async () => {
+  test('abort: active blobs exist but none opens with proof -> throws a short message, never null (2255: never a split key)', async () => {
     const { findExistingFolderKey, FOLDER_KEY_UNVERIFIED } = await import('../src/lib/folder-share-crypto')
     expect(FOLDER_KEY_UNVERIFIED.length).toBeLessThanOrEqual(80)
     const none = makePorts([
@@ -102,13 +108,16 @@ describe('findExistingFolderKey', () => {
       inv({ id: 'b', encrypted_owner_folder_key: blob('bad2'), status: 'claimed' }),
     ])
     await expect(findExistingFolderKey(new Uint8Array(32), 'F', none.ports)).rejects.toThrow(FOLDER_KEY_UNVERIFIED)
+    expect(none.calls.legacyOpens.map((o) => o.key)).toEqual(['bad1', 'bad2'])
   })
 
   test('P3-1: active invites exist but NONE has an owner blob -> abort, never mint', async () => {
     const { findExistingFolderKey, FOLDER_KEY_UNVERIFIED } = await import('../src/lib/folder-share-crypto')
-    const { ports, derives } = makePorts([inv({ id: 'a' }), inv({ id: 'b', status: 'claimed', encrypted_owner_folder_key: '' })])
+    const { ports, calls } = makePorts([inv({ id: 'a' }), inv({ id: 'b', status: 'claimed', encrypted_owner_folder_key: '' })])
     await expect(findExistingFolderKey(new Uint8Array(32), 'F', ports)).rejects.toThrow(FOLDER_KEY_UNVERIFIED)
-    expect(derives.length).toBe(0) // nothing to open: no wrapping key was derived
+    // nothing to open: no rows fetched, no core call
+    expect(calls.rowFetches.length).toBe(0)
+    expect(calls.legacyOpens.length).toBe(0)
   })
 
   test('P3-2: only an authentication failure skips a blob; any other error aborts', async () => {
@@ -119,7 +128,7 @@ describe('findExistingFolderKey', () => {
     ])
     const crashing = {
       ...ports,
-      decryptChunk: async () => {
+      unwrapInviteOwnerCopy: async () => {
         throw new Error('worker crashed')
       },
     }
@@ -127,12 +136,11 @@ describe('findExistingFolderKey', () => {
     await expect(findExistingFolderKey(new Uint8Array(32), 'F', crashing)).rejects.toThrow('worker crashed')
   })
 
-  test('a crash still zeroizes the wrapping key', async () => {
+  test('a crash in the legacy open aborts too', async () => {
     const { findExistingFolderKey } = await import('../src/lib/folder-share-crypto')
     const m = makePorts([inv({ id: 'a', encrypted_owner_folder_key: blob('K1') })])
-    const crashing = { ...m.ports, decryptChunk: async () => { throw new Error('worker crashed') } }
-    await findExistingFolderKey(new Uint8Array(32), 'F', crashing).catch(() => {})
-    expect(m.zeroized.filter((z) => dec(z) === 'wrapping').length).toBe(1)
+    const crashing = { ...m.ports, openLegacyInviteOwnerCopy: async () => { throw new Error('worker crashed') } }
+    await expect(findExistingFolderKey(new Uint8Array(32), 'F', crashing)).rejects.toThrow('worker crashed')
   })
 
   // rv-web198d: the message used to send the owner to "remove its pending
@@ -156,20 +164,35 @@ describe('findExistingFolderKey', () => {
     expect(dec((await findExistingFolderKey(new Uint8Array(32), 'F', ports))!.folderKey)).toBe('K1')
   })
 
-  test('the wrapping key is derived once and zeroized on success, failed opens and abort', async () => {
+  test('a purpose-bound copy opens without fetching rows or a legacy open', async () => {
     const { findExistingFolderKey } = await import('../src/lib/folder-share-crypto')
-    const ok = makePorts([
-      inv({ id: 'a', encrypted_owner_folder_key: blob('bad1'), created_at: '2026-10-22T11:00:00Z' }),
-      inv({ id: 'b', encrypted_owner_folder_key: blob('bad2'), created_at: '2026-10-22T10:00:00Z' }),
-      inv({ id: 'c', encrypted_owner_folder_key: blob('K1'), created_at: '2026-10-22T09:00:00Z' }),
-    ])
-    await findExistingFolderKey(new Uint8Array(32), 'F', ok.ports)
-    expect(ok.derives.length).toBe(1)
-    expect(ok.zeroized.filter((z) => dec(z) === 'wrapping').length).toBe(1)
+    const { ports, calls } = makePorts([inv({ id: 'a', encrypted_owner_folder_key: blob('new:K3') })])
+    expect(dec((await findExistingFolderKey(new Uint8Array(32), 'F', ports))!.folderKey)).toBe('K3')
+    expect(calls.rowFetches.length).toBe(0)
+    expect(calls.legacyOpens.length).toBe(0)
+  })
 
-    const bad = makePorts([inv({ id: 'a', encrypted_owner_folder_key: blob('bad1') })])
-    await findExistingFolderKey(new Uint8Array(32), 'F', bad.ports).catch(() => {})
-    expect(bad.derives.length).toBe(1)
-    expect(bad.zeroized.filter((z) => dec(z) === 'wrapping').length).toBe(1)
+  test('2255: rows are fetched once, from the newest active invite, and every legacy blob gets ALL of them', async () => {
+    const { findExistingFolderKey } = await import('../src/lib/folder-share-crypto')
+    const rows = [
+      { file_id: 'C1', encrypted_file_key: 'w1' },
+      { file_id: 'C2', encrypted_file_key: 'w2' },
+      { file_id: 'C3', encrypted_file_key: 'w3' },
+    ]
+    const { ports, calls } = makePorts(
+      [
+        inv({ id: 'a', encrypted_owner_folder_key: blob('bad1'), created_at: '2026-10-22T11:00:00Z' }),
+        inv({ id: 'b', encrypted_owner_folder_key: blob('bad2'), created_at: '2026-10-22T10:00:00Z' }),
+        inv({ id: 'c', encrypted_owner_folder_key: blob('K1'), created_at: '2026-10-22T09:00:00Z' }),
+      ],
+      rows,
+    )
+    expect(dec((await findExistingFolderKey(new Uint8Array(32), 'F', ports))!.folderKey)).toBe('K1')
+    expect(calls.rowFetches).toEqual(['a'])
+    expect(calls.legacyOpens).toEqual([
+      { key: 'bad1', rows: 3 },
+      { key: 'bad2', rows: 3 },
+      { key: 'K1', rows: 3 },
+    ])
   })
 })

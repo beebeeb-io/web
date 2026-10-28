@@ -179,7 +179,7 @@ describe('L7b: a custody folder is strictly L7 on every path', () => {
         expect(format).toBe('l7')
         return [{ file_id: FILE_ID, encrypted_file_key: await share.sealFolderChild(format, key, { rootId: folderId, itemId: FILE_ID, isFolder: false }, FILE_KEY) }]
       },
-      legacyInviteOwnerWrap: async () => {
+      encryptOwnerFolderKey: async () => {
         legacyOwnerCalls += 1
         return new Uint8Array(60)
       },
@@ -210,7 +210,7 @@ describe('L7b: a custody folder is strictly L7 on every path', () => {
         format = f
         return []
       },
-      legacyInviteOwnerWrap: async () => new Uint8Array(60),
+      encryptOwnerFolderKey: async () => new Uint8Array(60),
       deriveFileKey: async () => {
         throw new Error('the legacy path publishes no root name-key wrap')
       },
@@ -229,7 +229,7 @@ describe('L7b: a custody folder is strictly L7 on every path', () => {
       findExistingFolderKey: async () => null,
       generateFolderKey: async () => new Uint8Array(FOLDER_KEY),
       encryptAllChildrenKeys: async () => [],
-      legacyInviteOwnerWrap: async () => new Uint8Array(60),
+      encryptOwnerFolderKey: async () => new Uint8Array(60),
       deriveFileKey: async () => new Uint8Array(32),
       sealChildKey: async () => 'never',
       folderKeyId: async () => 'id',
@@ -246,8 +246,11 @@ describe('L7b: the legacy names are referenced only where it allows', () => {
   const ALLOWED: Record<string, string[]> = {
     legacyInviteChildWrap: ['src/lib/folder-share-crypto.ts'],
     legacyInviteChildKey: ['src/lib/folder-share-crypto.ts'],
-    legacyInviteOwnerWrap: ['src/lib/folder-share-crypto.ts'],
-    legacyInviteOwnerKey: ['src/lib/folder-share-crypto.ts', 'src/lib/approve-invite-crypto.ts'],
+    // Task 2255: the legacy owner copy is no longer written, and is read only
+    // with core's proof (openLegacyInviteOwnerCopy); no unverified reader or
+    // legacy writer exists anywhere in src/.
+    legacyInviteOwnerWrap: [],
+    legacyInviteOwnerKey: [],
   }
 
   function sources(dir: string): string[] {

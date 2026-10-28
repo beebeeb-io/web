@@ -13,11 +13,14 @@ import {
   unwrapFolderChild,
   wrapFolderCustody,
   unwrapFolderCustody,
+  wrapInviteOwnerCopy,
+  unwrapInviteOwnerCopy,
+  openLegacyInviteOwnerCopy,
   FOLDER_CHILD_FILE,
   FOLDER_CHILD_FOLDER,
   type FolderChildKind,
 } from './crypto'
-import { listFilesPage, getFile, getSentInvites, getSharedFolder, FILE_LIST_HARD_CAP } from './api'
+import { ApiError, listFilesPage, getFile, getFolderKeys, getSentInvites, getSharedFolder, FILE_LIST_HARD_CAP } from './api'
 import { assertNoSeenAncestor, markCustodySeen } from './custody-memory'
 import { sharedFoldersEnabled, sharedFoldersEnabledForWrite } from './use-feature-flag'
 import type { ShareInvite, SharedFolderInfo } from './api'
@@ -25,8 +28,10 @@ import type { ShareInvite, SharedFolderInfo } from './api'
 /**
  * The wire form of a folder key's id (task 2133, design K): standard base64
  * (with padding) of core's 32-byte `folder_key_id`. No JS HKDF: the id is
- * derived by the core WASM export. The server compares it to refuse a second,
- * different key for a folder that is already keyed.
+ * derived by the core WASM export. Design K has the server compare it and
+ * refuse a second, different key for a folder that is already keyed; server
+ * main does not check it yet (found in the task 2255 review), so today only
+ * the client rules in `findExistingFolderKey` keep one key per folder.
  */
 export async function folderKeyId(
   folderKey: Uint8Array,
@@ -110,41 +115,45 @@ export async function openFolderCustody(
   return unwrapFolderCustody(masterKey, folderId, custody)
 }
 
-// ─── Decision L7b: the legacy invite format ──────────────────────────────────
+// ─── Task 2255 (L9): the invite owner copy ───────────────────────────────────
+// A folder invite carries the owner's own copy of the folder key
+// (`encrypted_owner_folder_key`). It is written in core's purpose-bound format
+// only; a legacy copy (sealed under derive_file_key(master, folder_id), the
+// same key as the folder's name) is read only with core's proof over the
+// folder's rows (`openOwnerCopy`), never on its own.
+//
+// ─── Decision L7b: the legacy child format ───────────────────────────────────
 // A folder shared only by a flag-off invite (the 2238 bundle path) has NO
-// custody record. Its invite's owner copy (`encrypted_owner_folder_key`) and its
-// child wraps were sealed before L6/L7: the owner copy under
-// derive_file_key(master, folder_id), the children with an empty AAD. Those
-// rows stay readable, and the flag-off path keeps writing them, ONLY through
-// the four functions below. A folder with custody never reaches them (test:
-// folder-wrap-format.test.ts). The owner copy also seeds custody (L6).
+// custody record. Its child wraps were sealed before L7, with an empty AAD.
+// Those rows stay readable, and the flag-off path keeps writing them, ONLY
+// through `legacyInviteChildWrap` / `legacyInviteChildKey` below. A folder
+// with custody never reaches them (test: folder-wrap-format.test.ts).
 
-/** Legacy invite owner copy (`encrypted_owner_folder_key`), flag-off path only. */
-export async function legacyInviteOwnerWrap(
+/** The owner's copy of the folder key on an invite: core's purpose-bound format (2255). */
+export async function encryptOwnerFolderKey(
   masterKey: Uint8Array,
   folderId: string,
   folderKey: Uint8Array,
 ): Promise<Uint8Array> {
-  const folderDerivedKey = await deriveFileKey(masterKey, folderId)
-  const result = await encryptChunk(folderDerivedKey, folderKey)
-  zeroize(folderDerivedKey)
-  const combined = new Uint8Array(result.nonce.length + result.ciphertext.length)
-  combined.set(result.nonce, 0)
-  combined.set(result.ciphertext, result.nonce.length)
-  return combined
+  return wrapInviteOwnerCopy(masterKey, folderId, folderKey)
 }
 
-/** Open a legacy invite owner copy: to seed custody, or for a flag-off folder. */
-export async function legacyInviteOwnerKey(
+/**
+ * The folder key behind one invite's owner copy, for approving that invite.
+ * The same L9 rule as `findExistingFolderKey`: the purpose-bound format, or a
+ * legacy copy only with core's proof. It never substitutes another invite's
+ * key, and it throws FOLDER_KEY_UNVERIFIED when the copy can't be proven.
+ */
+export async function decryptOwnerFolderKey(
   masterKey: Uint8Array,
   folderId: string,
   encryptedOwnerFolderKey: Uint8Array,
+  ports: ExistingFolderKeyPorts = REAL_EXISTING_FOLDER_KEY_PORTS,
 ): Promise<Uint8Array> {
-  const folderDerivedKey = await deriveFileKey(masterKey, folderId)
-  const nonce = encryptedOwnerFolderKey.slice(0, 12)
-  const ciphertext = encryptedOwnerFolderKey.slice(12)
-  const folderKey = await decryptChunk(folderDerivedKey, nonce, ciphertext)
-  zeroize(folderDerivedKey)
+  const folderKey = await openOwnerCopy(masterKey, folderId, encryptedOwnerFolderKey, ports, async () =>
+    proofRows(activeFolderInvites(await ports.getSentInvites(), folderId), ports),
+  )
+  if (!folderKey) throw new Error(FOLDER_KEY_UNVERIFIED)
   return folderKey
 }
 
@@ -173,29 +182,54 @@ export function ownerFolderKeyBlobs(invites: ShareInvite[], folderId: string): s
 
 export interface ExistingFolderKeyPorts {
   getSentInvites: () => Promise<ShareInvite[]>
-  deriveFileKey: typeof deriveFileKey
-  decryptChunk: typeof decryptChunk
+  getFolderKeys: typeof getFolderKeys
+  unwrapInviteOwnerCopy: typeof unwrapInviteOwnerCopy
+  openLegacyInviteOwnerCopy: typeof openLegacyInviteOwnerCopy
   fromBase64: typeof fromBase64
-  zeroize: typeof zeroize
 }
 
 // Each port resolves its function at call time (not when this module first
 // loads), so a module mock registered later always applies.
 export const REAL_EXISTING_FOLDER_KEY_PORTS: ExistingFolderKeyPorts = {
   getSentInvites: () => getSentInvites(),
-  deriveFileKey: (...a) => deriveFileKey(...a),
-  decryptChunk: (...a) => decryptChunk(...a),
+  getFolderKeys: (...a) => getFolderKeys(...a),
+  unwrapInviteOwnerCopy: (...a) => unwrapInviteOwnerCopy(...a),
+  openLegacyInviteOwnerCopy: (...a) => openLegacyInviteOwnerCopy(...a),
   fromBase64: (...a) => fromBase64(...a),
-  zeroize: (...a) => zeroize(...a),
 }
 
 // Must stay <= 80 characters so userFriendlyError shows it (SHORT_MESSAGE_MAX).
 // rv-web198d: it used to send the owner to "remove its pending invites, then
 // share again". That was never a way out: cancel and deny keep the folder's
 // child rows, so a fresh key over them leaves every existing item unreadable
-// to the people it is shared with. It now says only what is true.
+// to the people it is shared with. It now says only what is true, for both
+// callers: an owner copy core can't prove (2255), and the custody upgrade
+// while no folder key can be proven (web #199).
 export const FOLDER_KEY_UNVERIFIED =
-  "Can't open this folder's existing sharing key, so no one new can be added."
+  "Can't verify this folder's existing sharing key, so no one new can be added."
+
+/**
+ * The folder's rows for a legacy proof. The server serves them only through
+ * an APPROVED invite and answers 400 "invite not approved" for any other
+ * (server invites.rs get_folder_keys), so they come from the newest approved
+ * one. No approved invite, or that 400, means no proof: FOLDER_KEY_UNVERIFIED.
+ * Any other failure aborts as it is.
+ */
+async function proofRows(
+  active: ShareInvite[],
+  ports: ExistingFolderKeyPorts,
+): Promise<{ file_id: string; encrypted_file_key: string }[]> {
+  const approved = active.find((i) => i.status === 'approved')
+  if (!approved) throw new Error(FOLDER_KEY_UNVERIFIED)
+  try {
+    return await ports.getFolderKeys(approved.id)
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 400 && /invite not approved/i.test(e.message)) {
+      throw new Error(FOLDER_KEY_UNVERIFIED)
+    }
+    throw e
+  }
+}
 
 /** core's authentication failure ("decryption failed: ciphertext is invalid or key is wrong"). */
 function isAuthenticationFailure(e: unknown): boolean {
@@ -203,37 +237,53 @@ function isAuthenticationFailure(e: unknown): boolean {
 }
 
 /**
+ * Open one owner copy (task 2255, L9 as corrected 2026-10-28): the
+ * purpose-bound format opens on its own; a LEGACY copy opens only when core
+ * proves it over the folder's rows, in one bounded call (a text candidate is
+ * refused, any row counts, each id once, at most 64). Null when neither
+ * opens with proof. Only an authentication failure of the purpose-bound open
+ * falls through to the legacy path; any other error aborts.
+ * Residual (attack B): a server that knows the folder's own name key (a
+ * pre-2238 folder link, a colluding member of an enclosing shared folder) can
+ * forge a legacy copy that passes. P3-3: no key version is bound either.
+ */
+async function openOwnerCopy(
+  masterKey: Uint8Array,
+  folderId: string,
+  blob: Uint8Array,
+  ports: ExistingFolderKeyPorts,
+  folderRows: () => Promise<{ file_id: string; encrypted_file_key: string }[]>,
+): Promise<Uint8Array | null> {
+  try {
+    return await ports.unwrapInviteOwnerCopy(masterKey, folderId, blob)
+  } catch (e) {
+    if (!isAuthenticationFailure(e)) throw e
+  }
+  return ports.openLegacyInviteOwnerCopy(masterKey, folderId, blob, await folderRows())
+}
+
+/**
  * Task 2133: the folder's key is minted at its first invite, and every later
  * invite while the folder has an active invite reuses it. The server keeps
- * one wrapped child key per (folder, file) and upserts on every invite, so a
- * fresh key per invite re-wraps every child under a key the earlier members
- * never received and locks them out.
+ * the FIRST wrapped child key per (folder, file), so a second key would
+ * silently and permanently split the folder between earlier and later members.
  *
- * The rule: reuse the NEWEST owner blob that opens, among this folder's
- * invites that are active by status only (invited/claimed/approved; denied
- * excluded, expires_at ignored); mint a new key only when the folder has no
- * active invite. We do NOT trial-decrypt stored child wraps: the server
- * returns them unordered and keeps rows of trashed/moved-out children under
- * older keys, so an arbitrary row can pick an older key and lock out the
- * current member. Exact verification arrives with the server-side key
- * fingerprint (task 2133, design K: folder_key_id, refused on mismatch).
- * (Rotation on revoke is a separate design decision, not done here.)
+ * The rule: reuse the NEWEST owner blob that opens (see `openOwnerCopy`),
+ * among this folder's invites that are active by status only
+ * (invited/claimed/approved; denied excluded, expires_at ignored). Mint a new
+ * key only when the folder has no active invite (null). Throws, never mints,
+ * when the folder has active invites but no blob opens with proof: none of
+ * them carries an owner blob, or every blob fails. The folder's rows are
+ * fetched once, through the newest approved invite (see `proofRows`), and
+ * only when a legacy blob needs proof (the server keeps one row set per
+ * folder). (Rotation on revoke is a separate decision.)
  *
- * The owner's own copy of the key travels with every folder invite
- * (`encrypted_owner_folder_key`, sealed under the owner's master key).
+ * Returns the blob that opened plus its key. The caller owns (and must
+ * zeroize) the key.
  *
- * These owner blobs are the LEGACY invite format (L7b): this reader is the
- * custody seed for a folder that has no custody record yet, never a custody
- * reader (that is `openFolderCustody`).
- *
- * Returns the blob to send again verbatim plus the unwrapped key, or null
- * when the folder has no active invite (the caller mints). Throws, never
- * mints, when the folder has active invites but no blob opens: none of them
- * carries an owner blob, or every blob fails authentication. Only an
- * authentication failure counts as "does not open"; any other error (the
- * worker crashed, a malformed blob) propagates as an abort. Minting would lock
- * out the members who hold the existing key. The caller owns (and must
- * zeroize) the returned key.
+ * L7b: it is read only for a folder with NO custody record (a flag-off invite
+ * share); it never seeds custody (rv-web198c P1-2) and never reads a custody
+ * record (that is `openFolderCustody`).
  */
 export async function findExistingFolderKey(
   masterKey: Uint8Array,
@@ -245,19 +295,11 @@ export async function findExistingFolderKey(
   const blobs = uniqueOwnerBlobs(active)
   if (blobs.length === 0) throw new Error(FOLDER_KEY_UNVERIFIED)
 
-  const wrappingKey = await ports.deriveFileKey(masterKey, folderId)
-  try {
-    for (const b64 of blobs) {
-      try {
-        const blob = ports.fromBase64(b64)
-        const folderKey = await ports.decryptChunk(wrappingKey, blob.slice(0, 12), blob.slice(12))
-        return { folderKey, encryptedOwnerFolderKeyB64: b64 }
-      } catch (e) {
-        if (!isAuthenticationFailure(e)) throw e
-      }
-    }
-  } finally {
-    ports.zeroize(wrappingKey)
+  let rows: ReturnType<typeof proofRows> | undefined
+  const folderRows = () => (rows ??= proofRows(active, ports))
+  for (const b64 of blobs) {
+    const folderKey = await openOwnerCopy(masterKey, folderId, ports.fromBase64(b64), ports, folderRows)
+    if (folderKey) return { folderKey, encryptedOwnerFolderKeyB64: b64 }
   }
   throw new Error(FOLDER_KEY_UNVERIFIED)
 }
@@ -361,8 +403,8 @@ export interface FolderInvitePorts {
   findExistingFolderKey: (masterKey: Uint8Array, folderId: string) => ReturnType<typeof findExistingFolderKey>
   generateFolderKey: () => Promise<Uint8Array>
   encryptAllChildrenKeys: typeof encryptAllChildrenKeys
-  /** The legacy owner copy, for a folder with no custody record (flag-off invite). */
-  legacyInviteOwnerWrap: typeof legacyInviteOwnerWrap
+  /** The owner's copy for a folder with no custody record, purpose-bound (2255). */
+  encryptOwnerFolderKey: typeof encryptOwnerFolderKey
   /** The root's own name key, published under the folder key for a custody folder (L7). */
   deriveFileKey: typeof deriveFileKey
   /** L7: the root's name-key wrap, bound to (root, root, folder). */
@@ -375,7 +417,7 @@ export const REAL_FOLDER_INVITE_PORTS: FolderInvitePorts = {
   findExistingFolderKey: (m, f) => findExistingFolderKey(m, f),
   generateFolderKey,
   encryptAllChildrenKeys: (...a) => encryptAllChildrenKeys(...a),
-  legacyInviteOwnerWrap,
+  encryptOwnerFolderKey: (...a) => encryptOwnerFolderKey(...a),
   deriveFileKey,
   sealChildKey: (k, ref, child) => sealChildKey(k, ref, child),
   folderKeyId: (k) => folderKeyId(k),
@@ -384,8 +426,9 @@ export const REAL_FOLDER_INVITE_PORTS: FolderInvitePorts = {
 /**
  * Everything a folder invite carries (task 2133): the folder's key (reused
  * from an earlier invite, minted only when none is active), every child's key
- * wrapped under it, the owner's own sealed copy, and the key's id for the
- * server's mismatch check. The caller owns the returned `folderKey` and must
+ * wrapped under it, the owner's own copy (always written in the purpose-bound
+ * format, so a proven legacy key is upgraded), and the key's id (see
+ * `folderKeyId`). The caller owns the returned `folderKey` and must
  * zeroize it (also needed for the recipient wrap on auto-approve); on a throw
  * the key made here is already zeroized.
  *
@@ -393,7 +436,8 @@ export const REAL_FOLDER_INVITE_PORTS: FolderInvitePorts = {
  * (shared under the flag; a flag-on invite registers custody before calling
  * this) gets L7 child wraps, the root's own name-key wrap, and the custody
  * record as the owner copy. A folder WITHOUT custody is a flag-off invite-only
- * share and keeps the legacy format, through the named legacy functions.
+ * share: legacy child wraps (the named legacy functions) and a purpose-bound
+ * owner copy (2255).
  */
 export async function buildFolderInvite(
   masterKey: Uint8Array,
@@ -423,9 +467,12 @@ export async function buildFolderInvite(
         zeroize(rootNameKey)
       }
     }
-    const encOwner =
-      existing?.encryptedOwnerFolderKeyB64 ??
-      toBase64(await ports.legacyInviteOwnerWrap(masterKey, folderId, folderKey))
+    // A custody folder's owner copy is its custody record. Any other folder's
+    // is written fresh in the purpose-bound format (2255), never an earlier
+    // invite's copy sent again, so a proven legacy key is upgraded.
+    const encOwner = custody
+      ? custody.encryptedOwnerFolderKeyB64
+      : toBase64(await ports.encryptOwnerFolderKey(masterKey, folderId, folderKey))
     const payload: FolderInvitePayload = {
       is_folder_share: true,
       encrypted_folder_key: '',

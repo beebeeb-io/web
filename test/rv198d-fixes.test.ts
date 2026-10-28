@@ -17,7 +17,7 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { preserveGlobals, setGlobal } from './helpers/scoped-global'
-import { ownedFolderCrypto } from './helpers/owned-folder-wasm'
+import { legacyOwnerCopy, ownedFolderCrypto } from './helpers/owned-folder-wasm'
 import { loadWasm } from './helpers/wasm-crypto-mirror'
 import { createContentOps } from '../src/lib/content-crypto'
 
@@ -125,7 +125,7 @@ const { resetCustodyMemoryForTests, hasSeenCustody, markCustodySeen } = await im
 const b64 = (b: Uint8Array) => real.toBase64(b) as string
 async function legacyInviteRows(status: string) {
   return [{ id: 'inv', is_folder_share: true, file_id: ROOT, status, created_at: '2026-10-01T00:00:00Z',
-    encrypted_owner_folder_key: b64(await share.legacyInviteOwnerWrap(MASTER, ROOT, LEGACY_KEY)) }]
+    encrypted_owner_folder_key: b64(legacyOwnerCopy(MASTER, ROOT, LEGACY_KEY)) }]
 }
 
 beforeEach(() => {
@@ -341,7 +341,7 @@ describe('L7d: legacy is refused when ANY ancestor is in the set, not only the r
   // so the root walk stops at SUB. ROOT, above it, was seen with custody.
   async function subInvite() {
     return [{ id: 'sub-inv', is_folder_share: true, file_id: SUB, status: 'approved', created_at: '2026-10-01T00:00:00Z',
-      encrypted_owner_folder_key: b64(await share.legacyInviteOwnerWrap(MASTER, SUB, LEGACY_KEY)) }]
+      encrypted_owner_folder_key: b64(legacyOwnerCopy(MASTER, SUB, LEGACY_KEY)) }]
   }
 
   test('control: with nothing seen above it, SUB is a legacy invite-only folder as before', async () => {

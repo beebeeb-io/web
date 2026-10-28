@@ -14,7 +14,7 @@
  */
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
-import { ownedFolderCrypto } from './helpers/owned-folder-wasm'
+import { legacyOwnerCopy, ownedFolderCrypto } from './helpers/owned-folder-wasm'
 import { loadWasm } from './helpers/wasm-crypto-mirror'
 
 const wasm = loadWasm()
@@ -73,7 +73,7 @@ const { resetCustodyMemoryForTests } = await import('../src/lib/custody-memory')
 const { forgetFeatureFlags } = await import('../src/lib/use-feature-flag')
 
 async function legacyInvite(status = 'approved') {
-  const legacyOwner = real.toBase64(await share.legacyInviteOwnerWrap(MASTER, ROOT, FOLDER_KEY))
+  const legacyOwner = real.toBase64(legacyOwnerCopy(MASTER, ROOT, FOLDER_KEY))
   return [{ id: 'inv', is_folder_share: true, file_id: ROOT, status, created_at: '2026-10-01T00:00:00Z', encrypted_owner_folder_key: legacyOwner }]
 }
 

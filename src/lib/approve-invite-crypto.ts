@@ -5,7 +5,7 @@
 import type { ShareInvite } from './api'
 import {
   custodyFolderKey as realCustodyFolderKey,
-  legacyInviteOwnerKey as realLegacyInviteOwnerKey,
+  decryptOwnerFolderKey as realDecryptOwnerFolderKey,
   encryptFolderKeyForRecipient as realEncryptFolderKeyForRecipient,
 } from './folder-share-crypto'
 import {
@@ -17,8 +17,8 @@ import {
 export interface ApproveKeyCryptoPorts {
   /** L6: the folder key from its custody record, or null when it has none. */
   custodyFolderKey: typeof realCustodyFolderKey
-  /** The legacy invite owner copy, for a folder with no custody record (L7b). */
-  legacyInviteOwnerKey: typeof realLegacyInviteOwnerKey
+  /** A folder with no custody record: its invite's owner copy, by the 2255 rule. */
+  decryptOwnerFolderKey: typeof realDecryptOwnerFolderKey
   encryptFolderKeyForRecipient: typeof realEncryptFolderKeyForRecipient
   encryptFileKeyForSharing: typeof realEncryptFileKeyForSharing
   fromBase64: typeof realFromBase64
@@ -27,7 +27,7 @@ export interface ApproveKeyCryptoPorts {
 
 export const REAL_APPROVE_KEY_CRYPTO_PORTS: ApproveKeyCryptoPorts = {
   custodyFolderKey: realCustodyFolderKey,
-  legacyInviteOwnerKey: realLegacyInviteOwnerKey,
+  decryptOwnerFolderKey: realDecryptOwnerFolderKey,
   encryptFolderKeyForRecipient: realEncryptFolderKeyForRecipient,
   encryptFileKeyForSharing: realEncryptFileKeyForSharing,
   fromBase64: realFromBase64,
@@ -80,31 +80,32 @@ export async function buildApprovalKeyBlob(
         'This folder share is missing its owner folder key and cannot be approved. Ask the recipient to request a new share.',
       )
     }
+    // A folder without custody: its invite's owner copy, opened by the 2255
+    // rule (the purpose-bound format, or a legacy copy only with core's proof
+    // over the folder's rows); FOLDER_KEY_UNVERIFIED when it can't be proven.
     const folderKey =
       custody?.folderKey ??
-      (await ports.legacyInviteOwnerKey(
+      (await ports.decryptOwnerFolderKey(
         masterKey,
         invite.file_id,
         ports.fromBase64(invite.encrypted_owner_folder_key as string),
       ))
-    const combined = await ports.encryptFolderKeyForRecipient(
-      masterKey,
-      recipientPublicKey,
-      invite.file_id,
-      folderKey,
-    )
-    ports.zeroize(folderKey)
-    return combined
+    // Wiped on every path, also when sealing for the recipient throws (2255 review).
+    try {
+      return await ports.encryptFolderKeyForRecipient(masterKey, recipientPublicKey, invite.file_id, folderKey)
+    } finally {
+      ports.zeroize(folderKey)
+    }
   }
 
   const fileKey = await getFileKey(invite.file_id)
-  const { encryptedFileKey, nonce } = await ports.encryptFileKeyForSharing(
-    masterKey,
-    recipientPublicKey,
-    invite.file_id,
-    fileKey,
-  )
-  ports.zeroize(fileKey)
+  let sealed: Awaited<ReturnType<typeof ports.encryptFileKeyForSharing>>
+  try {
+    sealed = await ports.encryptFileKeyForSharing(masterKey, recipientPublicKey, invite.file_id, fileKey)
+  } finally {
+    ports.zeroize(fileKey)
+  }
+  const { encryptedFileKey, nonce } = sealed
   const combined = new Uint8Array(nonce.length + encryptedFileKey.length)
   combined.set(nonce, 0)
   combined.set(encryptedFileKey, nonce.length)

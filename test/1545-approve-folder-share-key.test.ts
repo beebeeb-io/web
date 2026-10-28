@@ -32,7 +32,7 @@ function throwingPort(name: string) {
 
 describe('buildApprovalKeyBlob — folder-share branch (1545#1)', () => {
   test('recovers the REAL folder key via the legacy invite owner copy (no custody record) and wraps THAT for the recipient — never derives from getFileKey', async () => {
-    const legacyInviteOwnerKey = mock(async (mk: Uint8Array, fid: string, blob: Uint8Array) => {
+    const decryptOwnerFolderKey = mock(async (mk: Uint8Array, fid: string, blob: Uint8Array) => {
       expect(mk).toBe(masterKey)
       expect(fid).toBe(folderId)
       expect(Array.from(blob)).toEqual(Array.from(ownerEncryptedFolderKeyBytes))
@@ -56,7 +56,7 @@ describe('buildApprovalKeyBlob — folder-share branch (1545#1)', () => {
 
     const ports: ApproveKeyCryptoPorts = {
       custodyFolderKey: mock(async () => null),
-      legacyInviteOwnerKey,
+      decryptOwnerFolderKey,
       encryptFolderKeyForRecipient,
       encryptFileKeyForSharing: throwingPort('encryptFileKeyForSharing'),
       fromBase64: (b64: string) => {
@@ -79,7 +79,7 @@ describe('buildApprovalKeyBlob — folder-share branch (1545#1)', () => {
     )
 
     expect(getFileKey).not.toHaveBeenCalled()
-    expect(legacyInviteOwnerKey).toHaveBeenCalledTimes(1)
+    expect(decryptOwnerFolderKey).toHaveBeenCalledTimes(1)
     expect(encryptFolderKeyForRecipient).toHaveBeenCalledTimes(1)
     expect(Array.from(result)).toEqual([9, 9, 9, 9])
   })
@@ -90,7 +90,7 @@ describe('buildApprovalKeyBlob — folder-share branch (1545#1)', () => {
     })
     const ports: ApproveKeyCryptoPorts = {
       custodyFolderKey: mock(async () => null),
-      legacyInviteOwnerKey: throwingPort('legacyInviteOwnerKey'),
+      decryptOwnerFolderKey: throwingPort('decryptOwnerFolderKey'),
       encryptFolderKeyForRecipient: throwingPort('encryptFolderKeyForRecipient'),
       encryptFileKeyForSharing: throwingPort('encryptFileKeyForSharing'),
       fromBase64: () => new Uint8Array(),
@@ -122,7 +122,7 @@ describe('buildApprovalKeyBlob — folder-share branch (1545#1)', () => {
         expect(fid).toBe(folderId)
         return { folderKey: custodyKey.slice(), encryptedOwnerFolderKeyB64: 'custody' }
       }),
-      legacyInviteOwnerKey: throwingPort('legacyInviteOwnerKey'),
+      decryptOwnerFolderKey: throwingPort('decryptOwnerFolderKey'),
       encryptFolderKeyForRecipient,
       encryptFileKeyForSharing: throwingPort('encryptFileKeyForSharing'),
       fromBase64: () => new Uint8Array(),
@@ -161,7 +161,7 @@ describe('buildApprovalKeyBlob — single-file branch (unchanged, regression gua
     )
     const ports: ApproveKeyCryptoPorts = {
       custodyFolderKey: throwingPort('custodyFolderKey'),
-      legacyInviteOwnerKey: throwingPort('legacyInviteOwnerKey'),
+      decryptOwnerFolderKey: throwingPort('decryptOwnerFolderKey'),
       encryptFolderKeyForRecipient: throwingPort('encryptFolderKeyForRecipient'),
       encryptFileKeyForSharing,
       fromBase64: () => new Uint8Array(),
@@ -191,7 +191,7 @@ describe('buildApprovalKeyBlob — single-file branch (unchanged, regression gua
     }))
     const ports: ApproveKeyCryptoPorts = {
       custodyFolderKey: throwingPort('custodyFolderKey'),
-      legacyInviteOwnerKey: throwingPort('legacyInviteOwnerKey'),
+      decryptOwnerFolderKey: throwingPort('decryptOwnerFolderKey'),
       encryptFolderKeyForRecipient: throwingPort('encryptFolderKeyForRecipient'),
       encryptFileKeyForSharing,
       fromBase64: () => new Uint8Array(),

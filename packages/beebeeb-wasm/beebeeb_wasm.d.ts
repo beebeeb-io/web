@@ -970,6 +970,17 @@ export function opaque_registration_finish(client_state: Uint8Array, password: U
 export function opaque_registration_start(password: Uint8Array): any;
 
 /**
+ * L9 (task 2255): open a LEGACY invite owner copy and return its key only when
+ * core proves it over the folder's rows, in ONE call. `rows` are the server's
+ * `GET /shares/invites/{id}/folder-keys` rows verbatim:
+ * `[{ file_id: string, encrypted_file_key: string }]`, the key in standard base64.
+ * They are read lazily, and core examines at most 64 distinct ids. Returns
+ * `undefined` when the copy does not open, holds text, or is not proven; the
+ * unproven candidate never reaches JS. Attack B (task 2255) is a named residual.
+ */
+export function openLegacyInviteOwnerCopy(master_key: Uint8Array, folder_id: string, legacy_copy: Uint8Array, rows: any): Uint8Array | undefined;
+
+/**
  * Open a sealed request upload (owner decrypt path). Recovers the content key.
  * `r_priv` and `e_pub` are 32 bytes; `file_id` is arbitrary bytes. Returns 32-byte `Uint8Array`.
  */
@@ -1148,6 +1159,11 @@ export function unwrapFolderChild(folder_key: Uint8Array, shared_folder_id: stri
 export function unwrapFolderCustody(master_key: Uint8Array, folder_id: string, wrapped: Uint8Array): Uint8Array;
 
 /**
+ * Open a purpose-bound invite owner copy; never performs a legacy fallback.
+ */
+export function unwrapInviteOwnerCopy(master_key: Uint8Array, folder_id: string, wrapped: Uint8Array): Uint8Array;
+
+/**
  * Open a link's owner copy of K_c. K_c is the deliberate export: JS puts it
  * in the link fragment. The master key never leaves the caller.
  */
@@ -1177,6 +1193,11 @@ export function wrapFolderChild(folder_key: Uint8Array, shared_folder_id: string
  * Seal a shared folder's key to the owner's master key (L6 custody record).
  */
 export function wrapFolderCustody(master_key: Uint8Array, folder_id: string, folder_key: Uint8Array): Uint8Array;
+
+/**
+ * Seal a purpose-bound invite owner copy (L9).
+ */
+export function wrapInviteOwnerCopy(master_key: Uint8Array, folder_id: string, folder_key: Uint8Array): Uint8Array;
 
 /**
  * Seal a folder link's fragment key K_c to the owner's master key, bound to
@@ -1267,6 +1288,7 @@ export interface InitOutput {
     readonly opaque_login_start: (a: number, b: number, c: number) => void;
     readonly opaque_registration_finish: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly opaque_registration_start: (a: number, b: number, c: number) => void;
+    readonly openLegacyInviteOwnerCopy: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly open_request_upload: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly parseDirectDiscovery: (a: number, b: number, c: number) => void;
     readonly pinnedRetryDecision: (a: number, b: number, c: number, d: number) => void;
@@ -1293,6 +1315,7 @@ export interface InitOutput {
     readonly transfer_sas_to_words: (a: number, b: number, c: number) => void;
     readonly unwrapFolderChild: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
     readonly unwrapFolderCustody: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly unwrapInviteOwnerCopy: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly unwrapLinkOwnerKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly unwrapLinkOwnerToken: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly unwrapOwnerFileKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
@@ -1378,6 +1401,7 @@ export interface InitOutput {
     readonly wasmsignupceremony_step: (a: number, b: number) => void;
     readonly wrapFolderChild: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
     readonly wrapFolderCustody: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly wrapInviteOwnerCopy: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly wrapLinkOwnerKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly wrapLinkOwnerToken: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly wrapOwnerFileKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
