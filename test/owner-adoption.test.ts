@@ -210,6 +210,28 @@ describe('resolveSharedFileKey', () => {
     expect(key && Array.from(key)).toEqual(Array.from(FILE_KEY))
   })
 
+  test("a guest-created FOLDER opens with its folder-kind wrap; a file-kind wrap on it is refused (L7)", async () => {
+    seedCustody()
+    clearSharedFolderLookups()
+    seedCustody()
+    const folderRow = { ...seedFile(), id: '44444444-4444-4444-8444-444444444444', is_folder: true }
+    const asFolder = real.toBase64(wasm.wrapFolderChild(FOLDER_KEY, FOLDER_ID, folderRow.id, 2, FILE_KEY) as Uint8Array) as string
+    const opened = await resolveSharedFileKey({
+      masterKey: MASTER,
+      folderId: FOLDER_ID,
+      file: folderRow,
+      keyIndexPromise: Promise.resolve(new Map([[folderRow.id, asFolder]])),
+    })
+    expect(opened && Array.from(opened)).toEqual(Array.from(FILE_KEY))
+    const refused = await resolveSharedFileKey({
+      masterKey: MASTER,
+      folderId: FOLDER_ID,
+      file: folderRow,
+      keyIndexPromise: Promise.resolve(new Map([[folderRow.id, l7(folderRow.id)]])),
+    })
+    expect(refused).toBeNull()
+  })
+
   test('L7b: a custody folder refuses a legacy wrap and a wrap made for another row', async () => {
     seedCustody()
     const file = seedFile()

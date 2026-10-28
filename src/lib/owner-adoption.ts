@@ -135,6 +135,8 @@ export interface AdoptableFile {
   id: string
   name_encrypted?: string
   parent_id: string | null
+  /** A folder's wrap is bound as kind folder (L7); a guest can add folders too. */
+  is_folder?: boolean
   /** Set on a file added through a folder link. */
   acted_via_share_id?: string | null
   /** Set on a file added by a signed-in member. */
@@ -261,7 +263,7 @@ export async function adoptGuestFile(args: {
   if (!root) throw new Error('The folder key is not available on this device.')
   let fileKey: Uint8Array
   try {
-    fileKey = await openFolderChild(root.format, root.folderKey, { rootId: folderId, itemId: file.id, isFolder: false }, encryptedFileKeyB64)
+    fileKey = await openFolderChild(root.format, root.folderKey, { rootId: folderId, itemId: file.id, isFolder: !!file.is_folder }, encryptedFileKeyB64)
   } finally { zeroize(root.folderKey) }
   // A write-once owner wrap must never preserve an unverified or stale key.
   try {
@@ -312,7 +314,7 @@ export async function resolveSharedFileKey(args: {
   const root = await rootKeyAndFormat(masterKey, folderId)
   if (!root) return null
   try {
-    return await openFolderChild(root.format, root.folderKey, { rootId: folderId, itemId: file.id, isFolder: false }, encrypted)
+    return await openFolderChild(root.format, root.folderKey, { rootId: folderId, itemId: file.id, isFolder: !!file.is_folder }, encrypted)
   } catch {
     return null
   } finally { zeroize(root.folderKey) }
