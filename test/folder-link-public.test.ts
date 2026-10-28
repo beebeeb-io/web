@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { preserveGlobals, setGlobal } from './helpers/scoped-global'
 import {
   FolderNotAvailableError,
   FolderShapeError,
@@ -9,15 +10,14 @@ import {
   storeProof,
 } from '../src/lib/folder-link-public'
 
-// sessionStorage stub — the module only ever uses get/set/removeItem.
+// sessionStorage stub — the module only ever uses get/set/removeItem. Scoped
+// to this file (writable, restored in afterAll): see helpers/scoped-global.ts.
+preserveGlobals('sessionStorage', 'fetch')
 const store = new Map<string, string>()
-Object.defineProperty(globalThis, 'sessionStorage', {
-  configurable: true,
-  value: {
-    getItem: (key: string) => store.get(key) ?? null,
-    setItem: (key: string, value: string) => void store.set(key, value),
-    removeItem: (key: string) => void store.delete(key),
-  },
+setGlobal('sessionStorage', {
+  getItem: (key: string) => store.get(key) ?? null,
+  setItem: (key: string, value: string) => void store.set(key, value),
+  removeItem: (key: string) => void store.delete(key),
 })
 
 let calls: Array<{ url: string; init: RequestInit }> = []

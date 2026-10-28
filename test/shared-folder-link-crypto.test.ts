@@ -2,6 +2,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { loadWasm } from './helpers/wasm-crypto-mirror'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { ownedFolderCrypto } from './helpers/owned-folder-wasm'
+import { preserveGlobals, setGlobal } from './helpers/scoped-global'
+
+// sessionStorage, location and fetch are replaced for this file only
+// (writable, restored in afterAll): see helpers/scoped-global.ts.
+preserveGlobals('sessionStorage', 'location', 'fetch')
 
 // Run the passphrase stretch and combineFolderLinkKey against the committed
 // WASM build; the worker hop is the only thing skipped.
@@ -24,19 +29,12 @@ const {
 } = await import('../src/lib/shared-folder-link-crypto')
 
 const store = new Map<string, string>()
-Object.defineProperty(globalThis, 'sessionStorage', {
-  configurable: true,
-  value: {
-    getItem: (key: string) => store.get(key) ?? null,
-    setItem: (key: string, value: string) => void store.set(key, value),
-    removeItem: (key: string) => void store.delete(key),
-  },
+setGlobal('sessionStorage', {
+  getItem: (key: string) => store.get(key) ?? null,
+  setItem: (key: string, value: string) => void store.set(key, value),
+  removeItem: (key: string) => void store.delete(key),
 })
-Object.defineProperty(globalThis, 'location', {
-  configurable: true,
-  writable: true,
-  value: { hash: '' },
-})
+setGlobal('location', { hash: '' })
 
 function hex(bytes: Uint8Array): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')

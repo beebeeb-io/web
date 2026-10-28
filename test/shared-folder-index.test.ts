@@ -7,6 +7,10 @@
  */
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
+import { preserveGlobals } from './helpers/scoped-global'
+
+// The transports block replaces fetch per test; restored after this file.
+preserveGlobals('fetch')
 import type { IndexTransport, ShardCoord, ShardRef } from '../src/lib/shared-folder-index-shards'
 
 let proxyFileCount = 0

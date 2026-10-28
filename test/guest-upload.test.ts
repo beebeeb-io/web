@@ -12,6 +12,10 @@ import { beforeEach, describe, expect, test } from 'bun:test'
 import { loadWasm } from './helpers/wasm-crypto-mirror'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { ownedFolderCrypto } from './helpers/owned-folder-wasm'
+import { preserveGlobals, setGlobal } from './helpers/scoped-global'
+
+// fetch and localStorage are replaced for this file only (helpers/scoped-global.ts).
+preserveGlobals('fetch', 'localStorage')
 
 const ROOT = '11111111-1111-4111-8111-111111111111'
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
@@ -183,7 +187,7 @@ function storageStub(): Storage {
   }
 }
 
-globalThis.localStorage = storageStub()
+setGlobal('localStorage', storageStub())
 
 beforeEach(() => {
   calls = []

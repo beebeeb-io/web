@@ -7,6 +7,7 @@
  */
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { installWasmCryptoMirror } from './helpers/wasm-crypto-mirror'
+import { preserveGlobals } from './helpers/scoped-global'
 import type { PublicFolderItem } from '../src/lib/folder-link-types'
 
 const mirror = await installWasmCryptoMirror()
@@ -82,6 +83,8 @@ beforeEach(() => {
 })
 
 // Installed once; each test sets the body it wants the download route to serve.
+// Restored after this file (helpers/scoped-global.ts).
+preserveGlobals('fetch')
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const headers = (init?.headers ?? {}) as Record<string, string>
   calls.push({ url: String(input), headers })

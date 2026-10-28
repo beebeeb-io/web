@@ -9,7 +9,13 @@ import { beforeEach, describe, expect, test } from 'bun:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
+import { preserveGlobals, setGlobal } from './helpers/scoped-global'
 import type { PublicFolderItem } from '../src/lib/folder-link-types'
+
+// The per-test localStorage stub below is scoped to this file: writable, and
+// the original restored in afterAll (a non-writable define broke every later
+// file that assigns globalThis.localStorage; see helpers/scoped-global.ts).
+preserveGlobals('localStorage')
 
 type ListCall = { parentId: string | null; cursor?: string | null; limit?: number }
 
@@ -100,7 +106,7 @@ function storageStub() {
       return map.size
     },
   }
-  Object.defineProperty(globalThis, 'localStorage', { value: stub, configurable: true })
+  setGlobal('localStorage', stub)
 }
 
 /** React escapes apostrophes in static markup; compare against plain text. */
