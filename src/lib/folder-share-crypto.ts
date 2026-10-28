@@ -17,10 +17,10 @@ import {
   FOLDER_CHILD_FOLDER,
   type FolderChildKind,
 } from './crypto'
-import { listFilesPage, getSentInvites, getSharedFolder, FILE_LIST_HARD_CAP } from './api'
-import { assertNeverSawCustody, markCustodySeen } from './custody-memory'
+import { listFilesPage, getFile, getSentInvites, getSharedFolder, FILE_LIST_HARD_CAP } from './api'
+import { assertNoSeenAncestor, markCustodySeen } from './custody-memory'
 import { sharedFoldersEnabled } from './use-feature-flag'
-import type { ShareInvite } from './api'
+import type { ShareInvite, SharedFolderInfo } from './api'
 
 /**
  * The wire form of a folder key's id (task 2133, design K): standard base64
@@ -297,29 +297,61 @@ export async function custodyFolderKey(
   folderId: string,
 ): Promise<{ folderKey: Uint8Array; encryptedOwnerFolderKeyB64: string } | null> {
   // rv-web198c P2-1: with the flag off no custody request is made at all (the
-  // app before shared folders); a folder seen with custody still refuses (L7c).
+  // app before shared folders); a folder seen with custody still refuses (L7c),
+  // and so does any folder under one (L7d).
   if (!(await sharedFoldersEnabled())) {
-    assertNeverSawCustody(folderId)
+    await assertNoSeenAncestor(folderId, parentOfFile)
     return null
   }
   let wrapped: string | null
   try {
     wrapped = (await getSharedFolder(folderId)).owner_wrapped_folder_key
   } catch (e) {
-    // L7c: "no record" means legacy only for a folder never seen with custody.
+    // L7c/L7d: "no record" means legacy only when neither the folder nor any
+    // ancestor was ever seen with custody.
     if (noCustodyRecord(e)) {
-      assertNeverSawCustody(folderId)
+      await assertNoSeenAncestor(folderId, parentOfFile)
       return null
     }
     throw e
   }
   if (!wrapped) {
-    assertNeverSawCustody(folderId)
+    await assertNoSeenAncestor(folderId, parentOfFile)
     return null
   }
   const folderKey = await openFolderCustody(masterKey, folderId, fromBase64(wrapped))
   markCustodySeen(folderId)
   return { folderKey, encryptedOwnerFolderKeyB64: wrapped }
+}
+
+/** A folder's parent, for the L7d ancestor walk. */
+async function parentOfFile(id: string): Promise<string | null> {
+  return (await getFile(id)).parent_id ?? null
+}
+
+/**
+ * The member page's custody read (shared-folder.tsx). Only a definite "no
+ * record" (404; 405 without the route; 501 with the flag off) means a legacy
+ * invite-only folder; anything else throws, so the format is never guessed
+ * (L7b). With the flag off no custody request is made at all (rv-web198c
+ * P2-1). Legacy only when neither `folderId` nor any ancestor of the folder
+ * being browsed was seen with custody (L7c/L7d).
+ */
+export async function memberFolderCustody(
+  folderId: string,
+  fromFolderId: string = folderId,
+): Promise<{ shared: SharedFolderInfo | null; flagOn: boolean }> {
+  const flagOn = await sharedFoldersEnabled()
+  if (flagOn) {
+    try {
+      return { shared: await getSharedFolder(folderId), flagOn }
+    } catch (e) {
+      if (!noCustodyRecord(e)) throw e
+    }
+  }
+  if (fromFolderId !== folderId) await assertNoSeenAncestor(folderId, parentOfFile)
+  await assertNoSeenAncestor(fromFolderId, parentOfFile)
+  return { shared: null, flagOn }
 }
 
 export interface FolderInvitePorts {

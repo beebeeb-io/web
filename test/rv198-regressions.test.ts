@@ -68,7 +68,7 @@ const share = await import('../src/lib/folder-share-crypto')
 const adoption = await import('../src/lib/owner-adoption')
 const { publishOwnerUploadKey, createOwnerFolder } = await import('../src/lib/owner-upload-key')
 const { ensureOwnerFolderKey, FOLDER_NEEDS_UPGRADE } = await import('../src/lib/folder-link-create')
-const { clearCustodyMemory } = await import('../src/lib/custody-memory')
+const { resetCustodyMemoryForTests } = await import('../src/lib/custody-memory')
 const { forgetFeatureFlags } = await import('../src/lib/use-feature-flag')
 
 async function legacyInvite(status = 'approved') {
@@ -78,7 +78,7 @@ async function legacyInvite(status = 'approved') {
 
 beforeEach(() => {
   adoption.clearSharedFolderLookups()
-  clearCustodyMemory()
+  resetCustodyMemoryForTests()
   forgetFeatureFlags()
   flagOn = true
   custodyCalls = 0

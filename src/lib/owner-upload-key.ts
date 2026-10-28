@@ -38,7 +38,7 @@ export async function publishOwnerUploadKey(
   }
   const root = await sharedRootFor(parentId, parentId)
   if (!root) return
-  if ((await folderWrapFormat(root)) !== 'l7') return
+  if ((await folderWrapFormat(root, parentId)) !== 'l7') return
   const folderKey = await folderKeyForRoot(masterKey, root)
   if (!folderKey) throw new Error('The shared folder key is not available on this device.')
   try {
@@ -136,7 +136,7 @@ async function publishMovedItems(
   }
   const root = await sharedRootFor(destinationId, destinationId)
   if (!root) return
-  if ((await folderWrapFormat(root)) !== 'l7') return
+  if ((await folderWrapFormat(root, destinationId)) !== 'l7') return
   const byId: ReadonlyMap<string, MovableRow> = Array.isArray(rows)
     ? new Map(rows.map((row) => [row.id, row]))
     : (rows ?? new Map())

@@ -14,7 +14,7 @@
  *    copy opens under the folder-name key, so a server can forge one). No
  *    owner-side legacy read until task 2255 brings a verified one.
  */
-import { afterAll, beforeEach, describe, expect, test } from 'bun:test'
+import { beforeEach, describe, expect, test } from 'bun:test'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { preserveGlobals, setGlobal } from './helpers/scoped-global'
 import { ownedFolderCrypto } from './helpers/owned-folder-wasm'
@@ -113,10 +113,8 @@ const { publishOwnerUploadKey, moveOwnerItems, MOVED_BUT_UNPUBLISHED } = await i
 const { ensureOwnerFolderKey, REAL_FOLDER_LINK_PORTS } = await import('../src/lib/folder-link-create')
 const { FolderNeedsUpgradeError, FOLDER_NEEDS_UPGRADE } = await import('../src/lib/folder-upgrade')
 const { userFriendlyError } = await import('../src/lib/user-friendly-error')
-const { clearCustodyMemory, hasSeenCustody, markCustodySeen, setCustodyAccountProvider } = await import('../src/lib/custody-memory')
+const { resetCustodyMemoryForTests, hasSeenCustody, markCustodySeen } = await import('../src/lib/custody-memory')
 
-setCustodyAccountProvider(() => 'acct-owner')
-afterAll(() => setCustodyAccountProvider(null))
 
 const b64 = (b: Uint8Array) => real.toBase64(b) as string
 async function legacyInviteRows(status: string) {
@@ -126,7 +124,7 @@ async function legacyInviteRows(status: string) {
 
 beforeEach(() => {
   adoption.clearSharedFolderLookups()
-  clearCustodyMemory()
+  resetCustodyMemoryForTests()
   flagOn = true; custody = 404; custodyCalls = 0; parentCalls = 0; sentInvites = []
   serverRows = 0; sentInviteReads = 0
   registered.length = 0; published.length = 0; adopted.length = 0
@@ -329,5 +327,45 @@ describe('R1: no owner-side shared-folder walk with the flag off, anywhere in sr
     const body = text.slice(text.indexOf('const resolveFileKey'), text.indexOf('sharedRootFor(folderId'))
     expect(body.length).toBeGreaterThan(0)
     expect(body).toContain('await sharedFoldersEnabled()')
+  })
+})
+
+describe('L7d: legacy is refused when ANY ancestor is in the set, not only the root the walk found', () => {
+  // The server answers "no custody" for SUB and offers an active invite ON SUB,
+  // so the root walk stops at SUB. ROOT, above it, was seen with custody.
+  async function subInvite() {
+    return [{ id: 'sub-inv', is_folder_share: true, file_id: SUB, status: 'approved', created_at: '2026-10-01T00:00:00Z',
+      encrypted_owner_folder_key: b64(await share.legacyInviteOwnerWrap(MASTER, SUB, LEGACY_KEY)) }]
+  }
+
+  test('control: with nothing seen above it, SUB is a legacy invite-only folder as before', async () => {
+    sentInvites = await subInvite()
+    expect(await adoption.folderWrapFormat(SUB)).toBe('legacy_invite')
+  })
+
+  test('the format oracle for SUB refuses', async () => {
+    markCustodySeen(ROOT)
+    sentInvites = await subInvite()
+    await expect(adoption.folderWrapFormat(SUB)).rejects.toThrow("This folder's keys are unavailable")
+  })
+
+  test('an owner upload into SUB throws instead of skipping its publish (flag on)', async () => {
+    markCustodySeen(ROOT)
+    sentInvites = await subInvite()
+    await expect(publishOwnerUploadKey(MASTER, SUB, FILE_ID, CHILD_KEY)).rejects.toThrow("This folder's keys are unavailable")
+    expect(published).toEqual([])
+  })
+
+  test('an invite of SUB, or its approval, refuses (custodyFolderKey)', async () => {
+    markCustodySeen(ROOT)
+    await expect(share.custodyFolderKey(MASTER, SUB)).rejects.toThrow("This folder's keys are unavailable")
+  })
+
+  test('the member page for SUB, browsing inside it, refuses', async () => {
+    markCustodySeen(ROOT)
+    await expect(share.memberFolderCustody(SUB, FILE_ID)).rejects.toThrow("This folder's keys are unavailable")
+    // ...and with nothing seen it is the legacy answer as before.
+    resetCustodyMemoryForTests()
+    expect(await share.memberFolderCustody(SUB, FILE_ID)).toEqual({ shared: null, flagOn: true })
   })
 })

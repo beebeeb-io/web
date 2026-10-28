@@ -177,12 +177,12 @@ function names(calls: Call[]): string[] {
   return calls.map((c) => c.name)
 }
 
-const { clearCustodyMemory } = await import('../src/lib/custody-memory')
+const { resetCustodyMemoryForTests } = await import('../src/lib/custody-memory')
 
 beforeEach(() => {
   // Every test builds its own ports; the one global is the L7c custody memory
   // (a folder registered by one test must not refuse "no record" in the next).
-  clearCustodyMemory()
+  resetCustodyMemoryForTests()
 })
 
 describe('folder-link-create — custody order (2237b)', () => {
@@ -319,7 +319,7 @@ describe('folder-link-create — the link itself (2237b)', () => {
     const first = fakePorts()
     const second = fakePorts()
     const a = await createFolderLinkWithKeys(baseInput({ passphrase: 'hunter2' }), first.ports)
-    clearCustodyMemory() // the second fake server starts with no record: another device
+    resetCustodyMemoryForTests() // the second fake server starts with no record: another device
     const b = await createFolderLinkWithKeys(baseInput({ passphrase: 'correct horse' }), second.ports)
     const wa = (first.calls.find((c) => c.name === 'createFolderLink')?.arg as { wrapped_folder_key: string })
       .wrapped_folder_key
@@ -459,7 +459,7 @@ describe('L2 — a link keeps the owner\'s copy of K_c and can be copied again l
 
   test('after the panel is closed the same URL is rebuilt from the stored row', async () => {
     for (const passphrase of [null, 'hunter2']) {
-      clearCustodyMemory() // each round's fake server starts with no record: another device
+      resetCustodyMemoryForTests() // each round's fake server starts with no record: another device
       const { ports, calls } = fakePorts()
       const created = await createFolderLinkWithKeys(baseInput({ passphrase }), ports)
       const body = calls.find((c) => c.name === 'createFolderLink')?.arg as {
@@ -488,7 +488,7 @@ describe('L2 — a link keeps the owner\'s copy of K_c and can be copied again l
     const one = fakePorts()
     const two = fakePorts()
     await createFolderLinkWithKeys(baseInput(), one.ports)
-    clearCustodyMemory() // the second fake server starts with no record: another device
+    resetCustodyMemoryForTests() // the second fake server starts with no record: another device
     await createFolderLinkWithKeys(baseInput(), two.ports)
     const a = one.calls.find((c) => c.name === 'createFolderLink')?.arg as Record<string, string>
     const b = two.calls.find((c) => c.name === 'createFolderLink')?.arg as Record<string, string>

@@ -70,7 +70,7 @@ const apiReal = await mockModuleScoped('../src/lib/api', import.meta.dir, (r) =>
 void apiReal
 
 const share = await import('../src/lib/folder-share-crypto')
-const { clearCustodyMemory } = await import('../src/lib/custody-memory')
+const { resetCustodyMemoryForTests } = await import('../src/lib/custody-memory')
 const adoption = await import('../src/lib/owner-adoption')
 const { publishOwnerUploadKey } = await import('../src/lib/owner-upload-key')
 
@@ -84,7 +84,7 @@ async function legacyWrapOfFileKey(): Promise<string> {
 }
 
 function reset(answer: CustodyAnswer) {
-  clearCustodyMemory()
+  resetCustodyMemoryForTests()
   custodyAnswer = answer
   published.length = 0
   sentInvites = []

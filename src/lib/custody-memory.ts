@@ -1,5 +1,6 @@
 /**
- * Decision L7c (plan C): custody is monotonic per client.
+ * Decision L7c (plan C): custody is monotonic per client. Decision L7d: the
+ * memory belongs to the DEVICE, and nothing the server says can shrink it.
  *
  * The server is untrusted. A folder's wrap format follows its custody record
  * (L7b): a record means L7, no record means a flag-off invite-only share read
@@ -10,19 +11,24 @@
  *
  * So once this client has seen a VALID custody record for a folder (the
  * owner's copy opened under the L6 key, or a member's custody answer that
- * resolved its folder key), the folder id is remembered DURABLY (localStorage,
- * read on every call, so it survives a reload). From then on a "no record"
- * answer for it is FolderKeysUnavailableError, never the legacy reader.
+ * resolved its folder key), the folder id is remembered DURABLY. From then on
+ * "no record" for it, or for any folder under it, is FolderKeysUnavailableError,
+ * never the legacy reader.
  *
- * Per account (rv-web198d P3, L7c "never shared across accounts"): each account
- * has its own entry, keyed by the id of the account whose master key opened the
- * record (key-context registers that id as the provider). Every id is also kept
- * in memory for the page load, so a storage failure (full, private mode) still
- * leaves the folder L7 until a reload. Entries are cleared with the keys on
- * sign-out and on an account switch. Nothing secret is stored: folder ids only.
+ * L7d: one localStorage key (`beebeeb.custodySeen.v1`), a JSON array of
+ * canonical (lower-case) folder UUIDs, shared by every account on this device.
+ * Per account it could be emptied by the server: a forced sign-out, a
+ * re-login, or another account id would start an empty memory and allow the
+ * downgrade (proven on mobile and CLI). So sign-out, sign-in and an account
+ * switch never clear it; only the user clearing site data does. A stored value
+ * that can't be read is treated as "every folder seen" (refuse) and is never
+ * overwritten. Every id is also kept in memory for the page load, so a storage
+ * write failure still leaves the folder L7 until a reload. Nothing secret is
+ * stored: folder ids only.
  */
 
-const STORAGE_PREFIX = 'beebeeb.custodySeen.v1:'
+const STORAGE_KEY = 'beebeeb.custodySeen.v1'
+const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 /** The error for a folder this client has seen custody for, now answered as "no record". */
 export class FolderKeysUnavailableError extends Error {
@@ -32,59 +38,50 @@ export class FolderKeysUnavailableError extends Error {
   }
 }
 
-let accountProvider: (() => string | null) | null = null
+/** This page load's copy (canonical ids), persisted or not. */
+const inMemory = new Set<string>()
+
+function canonical(folderId: string): string {
+  return folderId.toLowerCase()
+}
 
 /**
- * The account whose keys are resident (key-context). A custody record only
- * opens under a master key, so a read or mark without an account cannot happen
- * in the app; if it does, the id lives in memory only, under no account.
+ * The durable set. `unreadable` is a stored value that is not an array of
+ * canonical UUIDs: it might have held any folder, so it counts as all of them.
+ * Storage that can't be reached at all (blocked) has no stored value, so the
+ * in-memory copy is all there is.
  */
-export function setCustodyAccountProvider(fn: (() => string | null) | null): void {
-  accountProvider = fn
-}
-
-function currentAccount(): string | null {
-  return accountProvider?.() ?? null
-}
-
-/** This page load's copy, per account ('' = no account known). */
-const inMemory = new Map<string, Set<string>>()
-
-function memoryFor(account: string | null): Set<string> {
-  const slot = account ?? ''
-  let set = inMemory.get(slot)
-  if (!set) {
-    set = new Set()
-    inMemory.set(slot, set)
-  }
-  return set
-}
-
-function readStored(account: string | null): Set<string> {
-  if (!account) return new Set()
+function readStored(): { ids: Set<string>; unreadable: boolean } {
+  let raw: string | null | undefined
   try {
-    const raw = globalThis.localStorage?.getItem(STORAGE_PREFIX + account)
-    const parsed: unknown = raw ? JSON.parse(raw) : []
-    return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : [])
+    raw = globalThis.localStorage?.getItem(STORAGE_KEY)
   } catch {
-    return new Set()
+    return { ids: new Set(), unreadable: false }
   }
-}
-
-function seenBy(account: string | null): Set<string> {
-  return new Set([...readStored(account), ...memoryFor(account)])
-}
-
-/** Remember that `folderId` has a valid custody record. */
-export function markCustodySeen(folderId: string): void {
-  const account = currentAccount()
-  memoryFor(account).add(folderId)
-  if (!account) return
-  const stored = readStored(account)
-  if (stored.has(folderId)) return
-  stored.add(folderId)
+  if (raw === null || raw === undefined) return { ids: new Set(), unreadable: false }
   try {
-    globalThis.localStorage?.setItem(STORAGE_PREFIX + account, JSON.stringify([...stored]))
+    const parsed: unknown = JSON.parse(raw)
+    if (Array.isArray(parsed) && parsed.every((id) => typeof id === 'string' && CANONICAL_UUID.test(id))) {
+      return { ids: new Set(parsed as string[]), unreadable: false }
+    }
+  } catch {
+    // fall through: unreadable
+  }
+  return { ids: new Set(), unreadable: true }
+}
+
+/** Remember that `folderId` has a valid custody record. Only ever adds. */
+export function markCustodySeen(folderId: string): void {
+  const id = canonical(folderId)
+  inMemory.add(id)
+  // Only canonical folder UUIDs are stored, so the stored set stays readable.
+  if (!CANONICAL_UUID.test(id)) return
+  const stored = readStored()
+  // An unreadable value is never replaced: that could shrink the set.
+  if (stored.unreadable || stored.ids.has(id)) return
+  stored.ids.add(id)
+  try {
+    globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify([...stored.ids].sort()))
   } catch {
     // Storage full or unavailable: the in-memory copy keeps the folder L7 for
     // this page load; only the cross-reload memory is lost.
@@ -92,12 +89,16 @@ export function markCustodySeen(folderId: string): void {
 }
 
 export function hasSeenCustody(folderId: string): boolean {
-  return seenBy(currentAccount()).has(folderId)
+  if (inMemory.has(canonical(folderId))) return true
+  const stored = readStored()
+  return stored.unreadable || stored.ids.has(canonical(folderId))
 }
 
-/** Whether this account has seen custody for any folder at all. */
+/** Whether this device has seen custody for any folder at all. */
 export function hasSeenAnyCustody(): boolean {
-  return seenBy(currentAccount()).size > 0
+  if (inMemory.size > 0) return true
+  const stored = readStored()
+  return stored.unreadable || stored.ids.size > 0
 }
 
 /**
@@ -108,15 +109,45 @@ export function assertNeverSawCustody(folderId: string): void {
   if (hasSeenCustody(folderId)) throw new FolderKeysUnavailableError()
 }
 
+/** How far up the ancestor walk goes; a deeper chain can't be cleared, so it refuses. */
+const MAX_ANCESTOR_WALK = 64
+
 /**
- * Sign-out and account switch: forget every folder of `account` (by default the
- * resident one), together with its keys. Other accounts are left alone.
+ * L7d: legacy is refused when ANY ancestor of the item is in the set, not only
+ * the root a shared-root walk stopped at (a server can make that walk stop
+ * early, e.g. with an invite on an inner folder). Walks up from `startId`
+ * (the item's folder, or the root itself) through every parent. A parent this
+ * account can't see (403 / 404: above a member's shared root) ends the walk;
+ * any other failure refuses. With nothing in the set, it asks nothing.
  */
-export function clearCustodyMemory(account: string | null = currentAccount()): void {
-  inMemory.delete(account ?? '')
-  if (!account) return
+export async function assertNoSeenAncestor(
+  startId: string,
+  parentOf: (id: string) => Promise<string | null>,
+): Promise<void> {
+  if (!hasSeenAnyCustody()) return
+  let cursor: string | null = startId
+  for (let depth = 0; cursor; depth += 1) {
+    if (depth >= MAX_ANCESTOR_WALK || hasSeenCustody(cursor)) throw new FolderKeysUnavailableError()
+    try {
+      cursor = await parentOf(cursor)
+    } catch (error) {
+      const status = (error as { status?: unknown } | null | undefined)?.status
+      if (status === 403 || status === 404) return
+      throw error
+    }
+  }
+}
+
+/** Test hook only: what a page reload does to this module (the durable set stays). */
+export function forgetPageMemoryForTests(): void {
+  inMemory.clear()
+}
+
+/** Test hook only. No product code shrinks the set (L7d); a guard test pins it. */
+export function resetCustodyMemoryForTests(): void {
+  inMemory.clear()
   try {
-    globalThis.localStorage?.removeItem(STORAGE_PREFIX + account)
+    globalThis.localStorage?.removeItem(STORAGE_KEY)
   } catch {
     // ignore
   }

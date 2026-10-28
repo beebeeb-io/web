@@ -49,9 +49,8 @@ import { clearThumbnailCache } from './thumbnail'
 import { cacheKeyPersistent, cacheKeySessionOnly } from './key-cache'
 import { ApiError, getFolderKeys, getSentInvites, listFolderLinks, listSharedFolderKeys, setRecoveryCheckIfAbsent, verifyRecoveryCheck } from './api'
 import type { DriveFile } from './api'
-import { clearCustodyMemory, setCustodyAccountProvider } from './custody-memory'
-import { forgetFeatureFlags, sharedFoldersEnabled } from './use-feature-flag'
-import { clearSharedFolderLookups, foreignRowKey, folderKeyForRoot, openOwnerFile } from './owner-adoption'
+import { sharedFoldersEnabled } from './use-feature-flag'
+import { forgetSharedFolderSession, foreignRowKey, folderKeyForRoot, openOwnerFile } from './owner-adoption'
 import { createSharedFolderKeyCache } from './shared-folder-key-cache'
 import { activeFolderInvites } from './folder-share-crypto'
 import { decryptActorName } from './guest-actor-name'
@@ -732,9 +731,9 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     requestResolverRef.current = null
     sharedFolderCacheRef.current.clear()
     sharedFolderLabelsRef.current.clear()
-    clearSharedFolderLookups()
-    // rv-web198c P3: the flag is evaluated per user; re-ask after a lock.
-    forgetFeatureFlags()
+    // The session's lookups and the per-user flag (rv-web198c P3), never the
+    // custody memory: that belongs to the device (L7d).
+    forgetSharedFolderSession()
     clearCachedKey()
     void clearOfflineCaches()
     void clearThumbnailCache()
@@ -829,18 +828,13 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     // A key IS resident, bound to a DIFFERENT (or no) account than the one
     // now authenticated — cross-account confusion. Clear it; the normal
     // escrow/PRF/password/phrase unlock path takes over and loads the
-    // REAL key for currentUserId. L7c: the custody memory of the account the
-    // key belonged to goes with it.
-    clearCustodyMemory(residentKeyUserIdRef.current)
+    // REAL key for currentUserId. The custody memory stays (L7d).
     lock()
   }, [user, authLoading, vaultChecked, lock])
 
   useEffect(() => { void clearThumbnailCache() }, [])
 
   const fullLogout = useCallback(async () => {
-    // L7c: the custody memory goes with the keys on sign-out, for the account
-    // signing out (the resident one, else the session's, if the vault is locked).
-    const signingOut = residentKeyUserIdRef.current ?? getAuthStamp().userId
     if (masterKeyRef.current) {
       zeroize(masterKeyRef.current)
       masterKeyRef.current = null
@@ -850,9 +844,9 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     requestResolverRef.current = null
     sharedFolderCacheRef.current.clear()
     sharedFolderLabelsRef.current.clear()
-    clearSharedFolderLookups()
-    clearCustodyMemory(signingOut)
-    forgetFeatureFlags()
+    // L7d: sign-out never clears the custody memory; it belongs to the device,
+    // and a server-forced sign-out must not be a way to empty it.
+    forgetSharedFolderSession()
     clearCachedKey()
     await Promise.all([clearOfflineCaches(), clearThumbnailCache(), clearVault()])
     setVaultExists(false)
@@ -875,13 +869,6 @@ export function KeyProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setExpectedUserProvider(() => residentKeyUserIdRef.current)
     return () => setExpectedUserProvider(null)
-  }, [])
-
-  // L7c memory is per account: keyed by the account whose master key is
-  // resident, the one that opened (and so verified) each custody record.
-  useEffect(() => {
-    setCustodyAccountProvider(() => residentKeyUserIdRef.current)
-    return () => setCustodyAccountProvider(null)
   }, [])
 
   // Task 1531 (web #85 round 2): the server's 409 `account_mismatch`

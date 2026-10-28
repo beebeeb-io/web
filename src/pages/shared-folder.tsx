@@ -18,7 +18,6 @@ import {
   getSharedFolder,
   type DriveFile,
   type ShareInvite,
-  type SharedFolderInfo,
 } from '../lib/api'
 import { parseFolderAccessLevel, type FolderAccessLevel } from '../lib/folder-link-types'
 import type { MemberContext } from '../lib/member-write'
@@ -26,8 +25,8 @@ import { memberRename, memberTrash, memberUploadFiles, writeErrorAction } from '
 import { useKeys } from '../lib/key-context'
 import { useAuth } from '../lib/auth-context'
 import { decryptFileMetadata, zeroize } from '../lib/crypto'
-import { noCustodyRecord, openFolderChild, type FolderWrapFormat } from '../lib/folder-share-crypto'
-import { assertNeverSawCustody, markCustodySeen } from '../lib/custody-memory'
+import { memberFolderCustody, openFolderChild, type FolderWrapFormat } from '../lib/folder-share-crypto'
+import { markCustodySeen } from '../lib/custody-memory'
 import { sharedFoldersEnabled } from '../lib/use-feature-flag'
 import { resolveRecipientFolderKey } from '../lib/recipient-folder-key'
 import { encryptedDownload } from '../lib/encrypted-download'
@@ -355,23 +354,9 @@ export function SharedFolder() {
         listSharedFolderFiles(folderId, parentId),
         getFolderKeys(inviteId),
         getFolderMembers(folderId).catch(() => ({ members: [], owner_id: '' })),
-        // Only a definite "no custody record" (404; 405 without the route;
-        // 501 with the flag off) means a legacy invite-only folder. Anything
-        // else fails the load: the format must never be guessed (L7b). With
-        // the flag off no custody request is made at all (rv-web198c P2-1).
-        (async (): Promise<{ shared: SharedFolderInfo | null; flagOn: boolean }> => {
-          const on = await sharedFoldersEnabled()
-          if (on) {
-            try {
-              return { shared: await getSharedFolder(folderId), flagOn: on }
-            } catch (e) {
-              if (!noCustodyRecord(e)) throw e
-            }
-          }
-          // L7c: legacy only for a folder this client never saw with custody.
-          assertNeverSawCustody(folderId)
-          return { shared: null, flagOn: on }
-        })(),
+        // The format is never guessed (L7b), and legacy only when neither this
+        // folder nor any ancestor was seen with custody (L7c/L7d).
+        memberFolderCustody(folderId, parentId ?? folderId),
       ])
       const format: FolderWrapFormat = shared ? 'l7' : 'legacy_invite'
       setWrapFormat(format)

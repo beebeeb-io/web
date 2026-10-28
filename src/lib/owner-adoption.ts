@@ -19,8 +19,8 @@ import {
   wrapOwnerFileKey as coreWrapOwnerFileKey,
 } from './crypto'
 import { adoptOwnerFileKey, getFile, getSentInvites, getSharedFolder, type ShareInvite, type SharedFolderInfo } from './api'
-import { assertNeverSawCustody, FolderKeysUnavailableError, hasSeenAnyCustody, hasSeenCustody, markCustodySeen } from './custody-memory'
-import { sharedFoldersEnabled } from './use-feature-flag'
+import { assertNeverSawCustody, assertNoSeenAncestor, markCustodySeen } from './custody-memory'
+import { forgetFeatureFlags, sharedFoldersEnabled } from './use-feature-flag'
 import {
   activeFolderInvites,
   noCustodyRecord,
@@ -88,14 +88,17 @@ export async function sharedFolderCustody(folderId: string): Promise<SharedFolde
  * it has one, `legacy_invite` when it definitely has none (a flag-off
  * invite-only share, or a server without the route). STRICT: any other failure
  * throws, so a write never falls back to the legacy format by accident.
+ *
+ * L7c/L7d: legacy only when neither the root nor ANY ancestor of `fromFolderId`
+ * (the item's folder; the root by default) was seen with custody.
  */
-export async function folderWrapFormat(rootId: string): Promise<FolderWrapFormat> {
+export async function folderWrapFormat(rootId: string, fromFolderId: string = rootId): Promise<FolderWrapFormat> {
   // sharedFolderCustody is strict (a non-definitive failure throws) and caches
   // the definitive answers, so a flag-off or legacy folder is not re-asked on
   // every upload.
   if (await sharedFolderCustody(rootId)) return 'l7'
-  // L7c: legacy only for a folder this client never saw with custody.
   assertNeverSawCustody(rootId)
+  await assertNoSeenAncestor(fromFolderId, parentOf)
   return 'legacy_invite'
 }
 
@@ -135,7 +138,17 @@ export function forgetSharedFolderCustody(folderId?: string): void {
   sentInvitesCache = null
 }
 
-/** Lock / sign-out: forget every cached lookup. */
+/**
+ * Lock, sign-out, sign-in and an account switch (key-context): forget this
+ * session's shared-folder lookups and the per-user flag. The custody memory is
+ * deliberately NOT part of it (L7d): it belongs to the device and only grows.
+ */
+export function forgetSharedFolderSession(): void {
+  clearSharedFolderLookups()
+  forgetFeatureFlags()
+}
+
+/** Forget every cached lookup. */
 export function clearSharedFolderLookups(): void {
   custodyCache.clear()
   parentCache.clear()
@@ -411,16 +424,12 @@ export async function foreignRowKey(args: {
  * owner write under a folder this client has seen with custody must not be
  * skipped as "not shared": its wrap would never be published and the write
  * would report success. This walks up from `folderId` through the custody
- * memory only (no custody request) and throws for such a folder. With nothing
- * in the memory, which is every flag-off account today, it asks nothing.
+ * memory only (no custody request) and throws for such a folder (L7d: any
+ * ancestor). With nothing in the memory, which is every flag-off device today,
+ * it asks nothing.
  */
 export async function assertNoSeenCustodyAbove(folderId: string): Promise<void> {
-  if (!hasSeenAnyCustody()) return
-  let cursor: string | null = folderId
-  for (let depth = 0; depth < MAX_ROOT_WALK && cursor; depth++) {
-    if (hasSeenCustody(cursor)) throw new FolderKeysUnavailableError()
-    cursor = await parentOf(cursor)
-  }
+  await assertNoSeenAncestor(folderId, parentOf)
 }
 
 /**

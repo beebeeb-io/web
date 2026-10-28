@@ -10,7 +10,7 @@
  * client has never seen custody for keeps the L7b rule: no record means a
  * flag-off invite-only share, read with the legacy reader.
  */
-import { afterAll, beforeEach, describe, expect, test } from 'bun:test'
+import { beforeEach, describe, expect, test } from 'bun:test'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { preserveGlobals, setGlobal } from './helpers/scoped-global'
 import { ownedFolderCrypto } from './helpers/owned-folder-wasm'
@@ -47,13 +47,11 @@ setGlobal('localStorage', {
     return storage.size
   },
 })
-// L7c memory is per account (rv-web198d P3): one storage key per account id.
-const ACCOUNT_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
-const ACCOUNT_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
-const KEY_A = `beebeeb.custodySeen.v1:${ACCOUNT_A}`
-const KEY_B = `beebeeb.custodySeen.v1:${ACCOUNT_B}`
-storage.set(KEY_A, JSON.stringify([PRESEEN]))
-let account: string | null = ACCOUNT_A
+// L7d (lead, 2026-10-28): the memory belongs to the DEVICE, not to an account.
+// One key, a monotonic set of canonical folder UUIDs, seeded before the module
+// under test is imported, as a previous page load (of any account) left it.
+const KEY = 'beebeeb.custodySeen.v1'
+storage.set(KEY, JSON.stringify([PRESEEN]))
 /** When set, localStorage.setItem throws (storage full, private mode). */
 let setItemThrows = false
 
@@ -94,8 +92,6 @@ await mockModuleScoped('../src/lib/folder-share-crypto', import.meta.dir, (r) =>
 const memory = await import('../src/lib/custody-memory')
 const adoption = await import('../src/lib/owner-adoption')
 const share = await import('../src/lib/folder-share-crypto')
-memory.setCustodyAccountProvider(() => account)
-afterAll(() => memory.setCustodyAccountProvider(null))
 
 function legacyIndex(): Promise<Map<string, string>> {
   return share.legacyInviteChildWrap(FOLDER_KEY, FILE_KEY).then((wrap) => new Map([[FILE_ID, wrap]]))
@@ -104,7 +100,6 @@ function legacyIndex(): Promise<Map<string, string>> {
 beforeEach(() => {
   answer = { kind: 'record' }
   inviteKey = null
-  account = ACCOUNT_A
   setItemThrows = false
   adoption.clearSharedFolderLookups()
 })
@@ -113,21 +108,21 @@ describe('L7c: custody is monotonic per client', () => {
   test('the memory survives a reload: an entry written by an earlier page load is honoured', () => {
     // What an earlier page load left in the durable store (the module keeps
     // no in-memory copy, so this is exactly what a reload sees).
-    storage.set(KEY_A, JSON.stringify([PRESEEN]))
+    storage.set(KEY, JSON.stringify([PRESEEN]))
     expect(memory.hasSeenCustody(PRESEEN)).toBe(true)
     expect(memory.hasSeenCustody(ROOT)).toBe(false)
   })
 
   test('a valid custody record (its owner copy opens under the L6 key) is remembered durably', async () => {
-    memory.clearCustodyMemory()
+    memory.resetCustodyMemoryForTests()
     const root = await adoption.rootKeyAndFormat(MASTER, ROOT)
     expect(root?.format).toBe('l7')
     expect(memory.hasSeenCustody(ROOT)).toBe(true)
-    expect(JSON.parse(storage.get(KEY_A) ?? '[]')).toContain(ROOT)
+    expect(JSON.parse(storage.get(KEY) ?? '[]')).toContain(ROOT)
   })
 
   test('seen, then the server answers 404 / 405 / 501: an error, never the legacy reader, and nothing opens', async () => {
-    memory.clearCustodyMemory()
+    memory.resetCustodyMemoryForTests()
     await adoption.rootKeyAndFormat(MASTER, ROOT) // seen
     // The invite's legacy copy and an unbound wrap are what a downgrade would use.
     inviteKey = { folderKey: new Uint8Array(FOLDER_KEY), encryptedOwnerFolderKeyB64: 'invite' }
@@ -148,7 +143,7 @@ describe('L7c: custody is monotonic per client', () => {
   })
 
   test('never seen, 501 (flag off): the folder is a legacy invite-only share and its legacy rows still read', async () => {
-    memory.clearCustodyMemory()
+    memory.resetCustodyMemoryForTests()
     answer = { kind: 'status', status: 501 }
     inviteKey = { folderKey: new Uint8Array(FOLDER_KEY), encryptedOwnerFolderKeyB64: 'invite' }
     const format = await adoption.folderWrapFormat(ROOT)
@@ -172,54 +167,87 @@ describe('L7c: custody is monotonic per client', () => {
   })
 
   test('a record whose owner copy does NOT open under the L6 key is not remembered', async () => {
-    memory.clearCustodyMemory()
+    memory.resetCustodyMemoryForTests()
     // Another account's master key: the 200 is not a valid custody record for us.
     expect(await adoption.rootKeyAndFormat(new Uint8Array(32).fill(9), ROOT)).toBeNull()
     expect(memory.hasSeenCustody(ROOT)).toBe(false)
   })
 
-  test('clearCustodyMemory forgets every folder of the account (sign-out, account switch)', () => {
-    storage.set(KEY_A, JSON.stringify([PRESEEN]))
+  test('the test reset forgets every folder (product code has no way to)', () => {
+    storage.set(KEY, JSON.stringify([PRESEEN]))
     memory.markCustodySeen(ROOT)
-    memory.clearCustodyMemory()
+    memory.resetCustodyMemoryForTests()
     expect(memory.hasSeenCustody(ROOT)).toBe(false)
     expect(memory.hasSeenCustody(PRESEEN)).toBe(false)
-    expect(storage.has(KEY_A)).toBe(false)
+    expect(storage.has(KEY)).toBe(false)
   })
 })
 
-describe('L7c memory is per account and survives a storage failure (rv-web198d P3)', () => {
-  test("account A's folders are not account B's: separate storage keys, and B starts with none", () => {
-    memory.clearCustodyMemory(ACCOUNT_A)
-    memory.clearCustodyMemory(ACCOUNT_B)
-    memory.markCustodySeen(ROOT)
-    expect(JSON.parse(storage.get(KEY_A) ?? '[]')).toEqual([ROOT])
-    account = ACCOUNT_B
-    expect(memory.hasSeenCustody(ROOT)).toBe(false)
+describe('L7d: the memory belongs to the device and only grows', () => {
+  test('one key, no account in it: a JSON array of canonical (lower-case) folder UUIDs', () => {
+    memory.resetCustodyMemoryForTests()
+    memory.markCustodySeen(ROOT.toUpperCase())
     memory.markCustodySeen(PRESEEN)
-    expect(JSON.parse(storage.get(KEY_B) ?? '[]')).toEqual([PRESEEN])
-    expect(JSON.parse(storage.get(KEY_A) ?? '[]')).toEqual([ROOT])
-    // No unscoped key is written for anyone.
-    expect(storage.has('beebeeb.custodySeen.v1')).toBe(false)
+    expect([...storage.keys()].filter((k) => k.startsWith('beebeeb.custodySeen'))).toEqual([KEY])
+    expect(JSON.parse(storage.get(KEY)!).sort()).toEqual([ROOT, PRESEEN].sort())
+    // Looked up the same way, whatever the case the server sends.
+    expect(memory.hasSeenCustody(ROOT.toUpperCase())).toBe(true)
   })
 
-  test('clearing one account (its sign-out) leaves the other account untouched', () => {
-    memory.clearCustodyMemory(ACCOUNT_A)
-    memory.clearCustodyMemory(ACCOUNT_B)
-    memory.markCustodySeen(ROOT)
-    account = ACCOUNT_B
-    memory.markCustodySeen(ROOT)
-    memory.clearCustodyMemory(ACCOUNT_B)
-    expect(memory.hasSeenCustody(ROOT)).toBe(false)
-    account = ACCOUNT_A
-    expect(memory.hasSeenCustody(ROOT)).toBe(true)
+  test('seen, then sign-out, then sign-in as the same or another account: a custody 404 still refuses', async () => {
+    memory.resetCustodyMemoryForTests()
+    await adoption.rootKeyAndFormat(MASTER, ROOT) // seen
+    // What fullLogout, a lock, a sign-in and an account switch run (key-context).
+    adoption.forgetSharedFolderSession() // sign-out
+    adoption.forgetSharedFolderSession() // sign-in as the same account
+    adoption.forgetSharedFolderSession() // sign-in as another account
+    memory.forgetPageMemoryForTests() // and a reload: only the durable set is left
+    answer = { kind: 'status', status: 404 }
+    inviteKey = { folderKey: new Uint8Array(FOLDER_KEY), encryptedOwnerFolderKeyB64: 'invite' }
+    await expect(adoption.folderWrapFormat(ROOT)).rejects.toThrow("This folder's keys are unavailable")
+    await expect(share.custodyFolderKey(MASTER, ROOT)).rejects.toThrow("This folder's keys are unavailable")
+    expect(JSON.parse(storage.get(KEY) ?? '[]')).toContain(ROOT)
+  })
+
+  test('no product module can shrink it: key-context clears nothing, and only the test hook resets', async () => {
+    const { readdirSync, readFileSync, statSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const root = join(import.meta.dir, '..', 'src')
+    const files = (dir: string): string[] =>
+      readdirSync(dir).flatMap((name) => {
+        const path = join(dir, name)
+        return statSync(path).isDirectory() ? files(path) : /\.(ts|tsx)$/.test(name) ? [path] : []
+      })
+    const offenders: string[] = []
+    for (const file of files(root)) {
+      const text = readFileSync(file, 'utf8')
+      if (file.endsWith('custody-memory.ts')) continue
+      if (/resetCustodyMemoryForTests|forgetPageMemoryForTests|clearCustodyMemory|removeItem\(['"]beebeeb\.custodySeen/.test(text)) offenders.push(file.slice(root.length + 1))
+    }
+    expect(offenders).toEqual([])
+    expect('clearCustodyMemory' in memory).toBe(false)
+    // Sign-out, lock and an account switch forget the session, never the memory.
+    expect(readFileSync(join(root, 'lib/key-context.tsx'), 'utf8')).toContain('forgetSharedFolderSession()')
+  })
+
+  test('an unreadable stored value refuses legacy for every folder, and is never overwritten', async () => {
+    for (const raw of ['{not json', '"x"', '[1, 2]', '["not-a-uuid"]', '{}']) {
+      memory.resetCustodyMemoryForTests()
+      storage.set(KEY, raw)
+      expect(memory.hasSeenCustody(ROOT)).toBe(true)
+      answer = { kind: 'status', status: 404 }
+      adoption.clearSharedFolderLookups()
+      await expect(adoption.folderWrapFormat(ROOT)).rejects.toThrow("This folder's keys are unavailable")
+      memory.markCustodySeen(PRESEEN)
+      expect(storage.get(KEY)).toBe(raw)
+    }
   })
 
   test('setItem throws (storage full, private mode): the folder is still remembered for this page load', async () => {
-    memory.clearCustodyMemory()
+    memory.resetCustodyMemoryForTests()
     setItemThrows = true
     await adoption.rootKeyAndFormat(MASTER, ROOT) // a valid record: seen
-    expect(storage.has(KEY_A)).toBe(false)
+    expect(storage.has(KEY)).toBe(false)
     expect(memory.hasSeenCustody(ROOT)).toBe(true)
     // ... so a later "no record" still refuses instead of reading legacy.
     answer = { kind: 'status', status: 404 }

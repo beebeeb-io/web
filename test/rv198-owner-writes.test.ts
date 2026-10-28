@@ -90,7 +90,7 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, () => ({
 const { moveOwnerItems, MOVED_BUT_UNPUBLISHED } = await import('../src/lib/owner-upload-key')
 const { renameKeyFor, RENAME_KEY_UNAVAILABLE } = await import('../src/lib/owner-rename')
 const { clearSharedFolderLookups } = await import('../src/lib/owner-adoption')
-const { clearCustodyMemory } = await import('../src/lib/custody-memory')
+const { resetCustodyMemoryForTests } = await import('../src/lib/custody-memory')
 
 beforeEach(() => {
   flagOn = true
@@ -99,7 +99,7 @@ beforeEach(() => {
   published.length = 0
   requests = 0
   clearSharedFolderLookups()
-  clearCustodyMemory()
+  resetCustodyMemoryForTests()
 })
 
 const rows = [
