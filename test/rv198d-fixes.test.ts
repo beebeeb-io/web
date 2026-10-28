@@ -53,6 +53,8 @@ let sentInvites: unknown[] = []
 let sentInviteReads = 0
 /** How many shared_folder_keys rows the server holds for ROOT (contract §2). */
 let serverRows = 0
+/** Custody upgrades sent (web #199): 0 while no key can be proven. */
+let upgradesSent = 0
 const registered: string[] = []
 const published: string[] = []
 const adopted: { id: string; wrap: string }[] = []
@@ -104,6 +106,11 @@ const api = await mockModuleScoped('../src/lib/api', import.meta.dir, (r) => {
       registered.push(body.owner_wrapped_folder_key)
       return { created: true, key_version: 1 }
     },
+    listLegacyFolderKeys: async () => [],
+    upgradeSharedFolderCustody: async () => {
+      upgradesSent += 1
+      return { created: true, key_version: 1 }
+    },
     adoptOwnerFileKey: async (id: string, wrap: string) => {
       adopted.push({ id, wrap })
       return { adopted: true }
@@ -117,7 +124,7 @@ const share = await import('../src/lib/folder-share-crypto')
 const adoption = await import('../src/lib/owner-adoption')
 const { publishOwnerUploadKey, moveOwnerItems, MOVED_BUT_UNPUBLISHED } = await import('../src/lib/owner-upload-key')
 const { ensureOwnerFolderKey, REAL_FOLDER_LINK_PORTS } = await import('../src/lib/folder-link-create')
-const { FolderNeedsUpgradeError, FOLDER_NEEDS_UPGRADE } = await import('../src/lib/folder-upgrade')
+const { FolderNeedsUpgradeError, FolderUpgradeRefusedError, FOLDER_NEEDS_UPGRADE } = await import('../src/lib/folder-upgrade')
 const { userFriendlyError } = await import('../src/lib/user-friendly-error')
 const { resetCustodyMemoryForTests, hasSeenCustody, markCustodySeen } = await import('../src/lib/custody-memory')
 
@@ -132,33 +139,48 @@ beforeEach(() => {
   adoption.clearSharedFolderLookups()
   resetCustodyMemoryForTests()
   flagOn = true; flagReadFails = false; custody = 404; custodyCalls = 0; parentCalls = 0; sentInvites = []
-  serverRows = 0; sentInviteReads = 0
+  serverRows = 0; sentInviteReads = 0; upgradesSent = 0
   registered.length = 0; published.length = 0; adopted.length = 0
 })
 
-describe('rv198d N1 / contract §2: a folder with legacy rows needs the upgrade, as a typed answer', () => {
-  test('control: an approved flag-off invite is refused before anything is minted, with the typed error', async () => {
+describe('rv198d N1 / contract §2: a folder with legacy rows needs the upgrade, and the upgrade refuses honestly', () => {
+  // Web #199: "needs the upgrade" now runs the upgrade (the real ports wire
+  // it). Its one key source is a key this client can prove; until task 2255's
+  // verified read lands the verifier refuses, so the outcome is the honest
+  // FOLDER_KEY_UNVERIFIED refusal and nothing at all is written.
+  test('control: an approved flag-off invite: the upgrade runs and refuses; nothing minted, registered or sent', async () => {
     sentInvites = await legacyInviteRows('approved')
     serverRows = 1
     const err = await ensureOwnerFolderKey(ROOT, MASTER, REAL_FOLDER_LINK_PORTS).catch((e: unknown) => e)
-    expect(err).toBeInstanceOf(FolderNeedsUpgradeError)
-    expect((err as Error).message).toBe(FOLDER_NEEDS_UPGRADE)
+    expect(err).toBeInstanceOf(FolderUpgradeRefusedError)
+    expect((err as Error).message).toBe(share.FOLDER_KEY_UNVERIFIED)
     expect(registered.length).toBe(0)
+    expect(upgradesSent).toBe(0)
   })
 
   for (const label of ['denied', 'cancelled (row deleted)']) {
-    test(`flag-off invites ${label}: the server's 409 upgrade_required is "needs the upgrade", and nothing is written`, async () => {
+    test(`flag-off invites ${label}: the server's 409 upgrade_required runs the upgrade, never a legacy write`, async () => {
       sentInvites = label === 'denied' ? await legacyInviteRows('denied') : []
       // Cancel and deny never delete the rows (server invites.rs).
       serverRows = 1
       const err = await ensureOwnerFolderKey(ROOT, MASTER, REAL_FOLDER_LINK_PORTS).catch((e: unknown) => e)
-      expect(err).toBeInstanceOf(FolderNeedsUpgradeError)
+      expect(err).toBeInstanceOf(FolderUpgradeRefusedError)
       expect(registered.length).toBe(0)
+      expect(upgradesSent).toBe(0)
       // Never a legacy fallback: no key published, no custody remembered.
       expect(published.length).toBe(0)
       expect(hasSeenCustody(ROOT)).toBe(false)
     })
   }
+
+  test('without the hook (a port set that has none) it is still the typed "needs the upgrade" error', async () => {
+    sentInvites = await legacyInviteRows('approved')
+    const { upgradeLegacyFolder: _wired, ...unwired } = REAL_FOLDER_LINK_PORTS
+    void _wired
+    const err = await ensureOwnerFolderKey(ROOT, MASTER, unwired).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(FolderNeedsUpgradeError)
+    expect((err as Error).message).toBe(FOLDER_NEEDS_UPGRADE)
+  })
 
   test('the copy is the upgrade notice: never generic, never "remove its pending invites"', () => {
     const ApiErrorClass = api.ApiError as unknown as new (m: string, s: number, code?: string) => Error

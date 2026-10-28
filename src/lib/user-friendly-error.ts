@@ -12,7 +12,7 @@ import { ApiError } from './api'
 import { consumeAccountDeletedNotice, type NoticeStorage } from './account-deleted-notice'
 import { ACCOUNT_INACTIVE_NOTICE } from './account-inactive'
 import { UploadRestartFailedError } from './upload-session-reinit'
-import { FOLDER_NEEDS_UPGRADE, needsFolderUpgrade } from './folder-upgrade'
+import { FOLDER_NEEDS_UPGRADE, FolderUpgradeRefusedError, needsFolderUpgrade } from './folder-upgrade'
 import { strictRefusalMessage } from './storage-regions'
 import { shareRefusalCopy, startTrialErrorCopy, trialBillingRefusalCopy } from './no-card-trial'
 
@@ -126,6 +126,8 @@ export function userFriendlyError(err: unknown): string {
   // Contract 2237 §2: a folder with legacy rows needs the upgrade before it can
   // get a link or a new invite. Its own sentence, never a generic conflict.
   if (needsFolderUpgrade(err)) return FOLDER_NEEDS_UPGRADE
+  // ...and a refused upgrade says why in its own sentence.
+  if (err instanceof FolderUpgradeRefusedError) return err.message
 
   // Network / offline takes priority — a 5xx during a flaky connection is
   // really "you have no connection", not "the server is down".

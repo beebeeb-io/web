@@ -623,3 +623,47 @@ describe('contract 2237 §2: 409 upgrade_required means "this folder needs the u
     expect(createLinkErrorMessage(new Error('boom'))).toBe('Could not create the link. Try again.')
   })
 })
+
+describe('web #199: "needs the upgrade" runs the custody upgrade', () => {
+  test('the real ports wire the upgrade runner into the refusal path', async () => {
+    const { REAL_FOLDER_LINK_PORTS } = await import('../src/lib/folder-link-create')
+    expect(typeof REAL_FOLDER_LINK_PORTS.upgradeLegacyFolder).toBe('function')
+  })
+
+  test('an upgrade refusal stops the link: nothing minted, registered or created, and the form shows its sentence', async () => {
+    const { FolderUpgradeRefusedError } = await import('../src/lib/folder-upgrade')
+    const { createLinkErrorMessage } = await import('../src/components/folder-share/create-link-form')
+    const { FOLDER_KEY_UNVERIFIED } = await import('../src/lib/folder-share-crypto')
+    const { ports, calls } = fakePorts({
+      hasActiveLegacyInvites: async () => true,
+      upgradeLegacyFolder: async () => {
+        throw new FolderUpgradeRefusedError('key_unverified', FOLDER_KEY_UNVERIFIED)
+      },
+    })
+    const err = await createFolderLinkWithKeys(baseInput(), ports).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(FolderUpgradeRefusedError)
+    expect(names(calls)).not.toContain('generateFolderKey')
+    expect(names(calls)).not.toContain('registerSharedFolderKey')
+    expect(names(calls)).not.toContain('createFolderLink')
+    expect(createLinkErrorMessage(err)).toBe(FOLDER_KEY_UNVERIFIED)
+  })
+
+  test('a successful upgrade: the link is created under the upgraded key, and no fresh custody is registered', async () => {
+    const { ports, calls } = fakePorts({
+      registerSharedFolderKey: async () => {
+        calls.push({ name: 'registerSharedFolderKey' })
+        throw Object.assign(new Error('upgrade required'), { status: 409, code: 'upgrade_required' })
+      },
+      upgradeLegacyFolder: async () => {
+        calls.push({ name: 'upgradeLegacyFolder' })
+        return new Uint8Array(FOLDER_KEY)
+      },
+    })
+    await createFolderLinkWithKeys(baseInput(), ports)
+    expect(names(calls)).toContain('upgradeLegacyFolder')
+    expect(names(calls)).toContain('createFolderLink')
+    const children = calls.find((c) => c.name === 'encryptAllChildrenKeys')?.arg as { folderKey: Uint8Array; format: string }
+    expect(Array.from(children.folderKey)).toEqual(Array.from(FOLDER_KEY))
+    expect(children.format).toBe('l7')
+  })
+})

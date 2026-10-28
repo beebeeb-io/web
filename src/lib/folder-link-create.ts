@@ -53,6 +53,7 @@ import {
 import { buildFullShareLink } from './share-full-link'
 import { assertNeverSawCustody, markCustodySeen } from './custody-memory'
 import { FolderNeedsUpgradeError, isUpgradeRequired, type FolderUpgradeRunner } from './folder-upgrade'
+import { createCustodyUpgrade } from './folder-custody-upgrade'
 import {
   deriveLinkPassphraseKey,
   generateFolderLinkToken,
@@ -103,8 +104,9 @@ export interface CreateFolderLinkPorts {
    */
   hasActiveLegacyInvites: (folderId: string) => Promise<boolean>
   /**
-   * Contract §2: runs the custody upgrade of a folder with legacy rows. Absent
-   * until web #199 provides it; then the owner is told the folder needs it.
+   * Contract §2: runs the custody upgrade of a folder with legacy rows (web
+   * #199, folder-custody-upgrade.ts). Without one, the owner is told the
+   * folder needs it (FolderNeedsUpgradeError); never a legacy write.
    */
   upgradeLegacyFolder?: FolderUpgradeRunner
   /** A fresh RANDOM folder key; only when no custody record and no invite exists. */
@@ -145,6 +147,10 @@ export const REAL_FOLDER_LINK_PORTS: CreateFolderLinkPorts = {
   openFolderCustody: (...a) => openFolderCustody(...a),
   sealFolderCustody: (...a) => sealFolderCustody(...a),
   hasActiveLegacyInvites: async (folderId) => activeFolderInvites(await getSentInvites(), folderId).length > 0,
+  // Web #199: "needs the upgrade" runs the upgrade. Its one key source is a
+  // key core proves (task 2255); without proof it refuses with
+  // FOLDER_KEY_UNVERIFIED and writes nothing.
+  upgradeLegacyFolder: (folderId, masterKey) => createCustodyUpgrade()(folderId, masterKey),
   generateFolderKey: () => generateFolderKey(),
   deriveFileKey: (...a) => deriveFileKey(...a),
   sealChildKey: (...a) => sealChildKey(...a),
@@ -217,11 +223,12 @@ export async function ensureOwnerFolderKey(
   // because the server now says "no record".
   assertNeverSawCustody(folderId)
 
-  // No custody row yet. rv-web198c P1-2: custody is NEVER seeded from a
+  // No custody row yet. rv-web198c P1-2: fresh custody is NEVER seeded from a
   // legacy invite's owner copy. That copy is opened under the folder-name key,
   // so a server can pass the folder's own name blob off as one, and the name
-  // JSON would become the permanent folder key (task [P1] 2255 lands a core
-  // verifier with proof of possession; until then nothing is seeded).
+  // JSON would become the permanent folder key. A folder that has such a copy
+  // goes through the upgrade below, whose only key source is core's proof
+  // (task 2255).
   // Contract §2 (rv-web198d P1-3): a folder that already has legacy rows gets
   // no fresh custody: the server refuses with 409 upgrade_required, whatever
   // its invites' status, and active flag-off invites are refused here first.

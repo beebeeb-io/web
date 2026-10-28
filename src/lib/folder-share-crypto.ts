@@ -263,6 +263,22 @@ async function openOwnerCopy(
 }
 
 /**
+ * Web #199, the custody upgrade: the same rule as `openOwnerCopy`, over rows
+ * the caller already holds (the folder's legacy rows, listed for the upgrade
+ * by the owner-only route), so no row fetch through an invite is needed. Null
+ * when the copy is neither purpose-bound nor proven by core over `rows`.
+ */
+export async function openOwnerCopyOverRows(
+  masterKey: Uint8Array,
+  folderId: string,
+  blob: Uint8Array,
+  rows: { file_id: string; encrypted_file_key: string }[],
+  ports: ExistingFolderKeyPorts = REAL_EXISTING_FOLDER_KEY_PORTS,
+): Promise<Uint8Array | null> {
+  return openOwnerCopy(masterKey, folderId, blob, ports, async () => rows)
+}
+
+/**
  * Task 2133: the folder's key is minted at its first invite, and every later
  * invite while the folder has an active invite reuses it. The server keeps
  * the FIRST wrapped child key per (folder, file), so a second key would

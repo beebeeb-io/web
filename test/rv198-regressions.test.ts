@@ -30,6 +30,8 @@ let custodyCalls = 0
 let sentInvites: unknown[] = []
 let flagOn = true
 const registered: string[] = []
+/** Custody upgrades sent (web #199): must stay 0 while no key can be proven. */
+let upgradesSent = 0
 
 await mockModuleScoped('../src/lib/use-feature-flag', import.meta.dir, (r) => ({
   ...r,
@@ -63,12 +65,17 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, (r) => ({
     registered.push(body.owner_wrapped_folder_key)
     return { created: true, key_version: 1 }
   },
+  listLegacyFolderKeys: async () => [],
+  upgradeSharedFolderCustody: async () => {
+    upgradesSent += 1
+    return { created: true, key_version: 1 }
+  },
 }))
 
 const share = await import('../src/lib/folder-share-crypto')
 const adoption = await import('../src/lib/owner-adoption')
 const { publishOwnerUploadKey, createOwnerFolder } = await import('../src/lib/owner-upload-key')
-const { ensureOwnerFolderKey, FOLDER_NEEDS_UPGRADE } = await import('../src/lib/folder-link-create')
+const { ensureOwnerFolderKey } = await import('../src/lib/folder-link-create')
 const { resetCustodyMemoryForTests } = await import('../src/lib/custody-memory')
 const { forgetFeatureFlags } = await import('../src/lib/use-feature-flag')
 
@@ -125,18 +132,23 @@ describe('P1-2 / P1-3: custody is never seeded from a legacy invite copy', () =>
     const nameBlob = wasm.encrypt_metadata(nameKey, JSON.stringify({ name: 'Docs', mime_type: null })) as { nonce: Uint8Array; ciphertext: Uint8Array }
     const forged = real.toBase64(new Uint8Array([...nameBlob.nonce, ...nameBlob.ciphertext]))
     sentInvites = [{ id: 'fake', is_folder_share: true, file_id: ROOT, status: 'invited', created_at: '2026-10-28T00:00:00Z', encrypted_owner_folder_key: forged }]
-    await expect(ensureOwnerFolderKey(ROOT, MASTER)).rejects.toThrow(FOLDER_NEEDS_UPGRADE)
+    // Web #199: the folder needs the upgrade, and the upgrade's only key source
+    // is a proven one; the forged owner copy is never it (FOLDER_KEY_UNVERIFIED
+    // until task 2255's verified read lands).
+    await expect(ensureOwnerFolderKey(ROOT, MASTER)).rejects.toThrow(share.FOLDER_KEY_UNVERIFIED)
     expect(registered).toHaveLength(0)
+    expect(upgradesSent).toBe(0)
   })
 
-  test('a folder with an active flag-off invite is refused with the typed upgrade error; nothing registered', async () => {
+  test('a folder with an active flag-off invite runs the upgrade, which refuses honestly today; nothing written', async () => {
     custodyStatus = 404
     sentInvites = await legacyInvite()
-    const { FolderNeedsUpgradeError } = await import('../src/lib/folder-upgrade')
+    const { FolderUpgradeRefusedError } = await import('../src/lib/folder-upgrade')
     const err = await ensureOwnerFolderKey(ROOT, MASTER).catch((e: unknown) => e)
-    expect(err).toBeInstanceOf(FolderNeedsUpgradeError)
-    expect((err as Error).message).toBe(FOLDER_NEEDS_UPGRADE)
+    expect(err).toBeInstanceOf(FolderUpgradeRefusedError)
+    expect((err as Error).message).toBe(share.FOLDER_KEY_UNVERIFIED)
     expect(registered).toHaveLength(0)
+    expect(upgradesSent).toBe(0)
   })
 
   test('with no custody and no active invite, a fresh RANDOM key is minted and registered (never the legacy copy)', async () => {
