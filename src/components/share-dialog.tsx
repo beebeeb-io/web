@@ -49,7 +49,8 @@ import { userFriendlyError } from '../lib/user-friendly-error'
 import { isTypedRefusal } from '../lib/no-card-trial'
 import { buildFullShareLink } from '../lib/share-full-link'
 import { SHARED_FOLDERS_FLAG } from '../lib/flags'
-import { useFeatureFlag } from '../lib/use-feature-flag'
+import { sharedFoldersEnabled, useFeatureFlag } from '../lib/use-feature-flag'
+import { FOLDER_NEEDS_UPGRADE } from '../lib/folder-upgrade'
 import { FolderSharePanel } from './folder-share/folder-share-panel'
 
 interface ShareDialogProps {
@@ -229,9 +230,6 @@ function InviteForm({
   onRateLimitFeedback: () => void
 }) {
   const { getMasterKey, getFileKey } = useKeys()
-  // L7b: with shared folders on, a folder invite registers the folder's
-  // custody record first, so the invite and every later share are L7.
-  const sharedFolders = useFeatureFlag(SHARED_FOLDERS_FLAG)
   const [email, setEmail] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -249,9 +247,6 @@ function InviteForm({
   }
 
   const handleInvite = useCallback(async () => {
-    // rv-web198c P3: a folder invite waits for the flag; sent while it is still
-    // loading it would be a legacy invite on a flag-on account.
-    if (isFolder && sharedFolders.loading) return
     const raw = email.trim()
     if (!raw) {
       setError('Enter a valid email address.')
@@ -285,7 +280,12 @@ function InviteForm({
         // the server can refuse a different key for an already-keyed folder.
         const masterKey = getMasterKey()
         setProgress('Checking folder key...')
-        if (sharedFolders.enabled) {
+        // L7b: with shared folders on, a folder invite registers the folder's
+        // custody record first, so the invite and every later share are L7.
+        // The flag is read here, at send time (rv-web198c P3: never a legacy
+        // invite from a click made while it loads), and that read is bounded
+        // (rv-web198d P3), so the invite never waits on it for good.
+        if (await sharedFoldersEnabled()) {
           const registered = await ensureOwnerFolderKey(fileId, masterKey)
           registered.fill(0)
         }
@@ -358,7 +358,7 @@ function InviteForm({
       setLoading(false)
       setProgress(null)
     }
-  }, [email, fileId, isFolder, onSuccess, getMasterKey, getFileKey, sharedFolders.enabled, sharedFolders.loading])
+  }, [email, fileId, isFolder, onSuccess, getMasterKey, getFileKey])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -424,7 +424,15 @@ function InviteForm({
       )}
 
       {error && (
-        <div className="mb-4 px-3 py-2 bg-red/10 border border-red/20 rounded-md text-xs text-red">
+        // Contract 2237 §2: "needs the upgrade" is a fact about the folder, not
+        // a failed action, so it reads as a notice rather than an error.
+        <div
+          className={
+            error === FOLDER_NEEDS_UPGRADE
+              ? 'mb-4 px-3 py-2 bg-paper-2 border border-line rounded-md text-xs text-ink-2'
+              : 'mb-4 px-3 py-2 bg-red/10 border border-red/20 rounded-md text-xs text-red'
+          }
+        >
           {error}
         </div>
       )}
@@ -450,7 +458,7 @@ function InviteForm({
         size="lg"
         className="w-full justify-center gap-2"
         onClick={handleInvite}
-        disabled={loading || (!!isFolder && sharedFolders.loading)}
+        disabled={loading}
       >
         <Icon name="mail" size={13} />
         {loading ? 'Sending...' : 'Send invite'}

@@ -141,12 +141,22 @@ describe('the page frame', () => {
 
 describe('member level fallback', () => {
   test('custody wins when the folder has one', () => {
-    expect(memberAccessLevel({ access_level: 'edit' }, { permission: 'read' })).toBe('edit')
+    expect(memberAccessLevel({ access_level: 'edit' }, { permission: 'read' }, true)).toBe('edit')
   })
 
-  test('a legacy invite grants its own permission when custody 404s', () => {
-    expect(memberAccessLevel(null, { permission: 'add' })).toBe('add')
-    expect(memberAccessLevel(null, { permission: 'admin' })).toBe('view')
-    expect(memberAccessLevel(null, null)).toBe('view')
+  test('a legacy invite grants its own permission when custody 404s (flag on)', () => {
+    expect(memberAccessLevel(null, { permission: 'add' }, true)).toBe('add')
+    expect(memberAccessLevel(null, { permission: 'admin' }, true)).toBe('view')
+    expect(memberAccessLevel(null, null, true)).toBe('view')
+  })
+
+  // rv-web198d P2-1 residual: with the flag off the member page is the page
+  // main has, read only. An `add` invite must not bring back write actions.
+  test('flag off: a legacy invite is read only, whatever its permission', () => {
+    expect(memberAccessLevel(null, { permission: 'add' }, false)).toBe('view')
+    expect(memberAccessLevel(null, { permission: 'write' }, false)).toBe('view')
+    const html = screen({ level: memberAccessLevel(null, { permission: 'add' }, false) })
+    expect(html).not.toContain('data-testid="member-actions"')
+    expect(html).not.toContain('data-testid="member-upload"')
   })
 })

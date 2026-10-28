@@ -1907,6 +1907,8 @@ export async function createInvite(
     folder_keys: { file_id: string; encrypted_file_key: string }[]
     /** base64 of core's folder_key_id for the key used (task 2133). */
     folder_key_id: string
+    /** Contract 2237 §1: `l7` exactly when `folder_keys` are L7 wraps. */
+    format?: 'l7'
   },
 ): Promise<{ invite_id: string; status: string; recipient_public_key?: string | null }> {
   return request('/api/v1/shares/invites', {
@@ -3168,10 +3170,12 @@ export async function addFolderKeys(
   inviteId: string,
   keys: { file_id: string; encrypted_file_key: string }[],
   folderKeyId: string,
+  /** Contract 2237 §1: `l7` exactly when `keys` are L7 wraps; absent for legacy. */
+  format?: 'l7',
 ): Promise<void> {
   await request(`/api/v1/shares/invites/${inviteId}/folder-keys`, {
     method: 'POST',
-    body: JSON.stringify({ keys, folder_key_id: folderKeyId }),
+    body: JSON.stringify(format ? { keys, folder_key_id: folderKeyId, format } : { keys, folder_key_id: folderKeyId }),
   })
 }
 
@@ -4509,13 +4513,17 @@ export async function listSharedFolderKeys(
   )
 }
 
-/** Owner-only insert of per-file wraps; existing rows remain unchanged. */
+/**
+ * Owner-only insert of per-file wraps; existing rows remain unchanged. The
+ * route serves custody folders only, so its wraps are always L7 and say so
+ * (contract 2237 §1).
+ */
 export async function publishSharedFolderKeys(
   folderId: string,
   keys: { file_id: string; encrypted_file_key: string }[],
 ): Promise<{ written: number; skipped: number }> {
   return request(`/api/v1/shared-folders/${encodeURIComponent(folderId)}/keys`, {
-    method: 'POST', body: JSON.stringify({ keys }),
+    method: 'POST', body: JSON.stringify({ keys, format: 'l7' }),
   })
 }
 

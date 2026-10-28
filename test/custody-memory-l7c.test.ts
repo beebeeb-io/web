@@ -10,7 +10,7 @@
  * client has never seen custody for keeps the L7b rule: no record means a
  * flag-off invite-only share, read with the legacy reader.
  */
-import { beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, beforeEach, describe, expect, test } from 'bun:test'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { preserveGlobals, setGlobal } from './helpers/scoped-global'
 import { ownedFolderCrypto } from './helpers/owned-folder-wasm'
@@ -36,7 +36,10 @@ const storage = new Map<string, string>()
 preserveGlobals('localStorage')
 setGlobal('localStorage', {
   getItem: (key: string) => storage.get(key) ?? null,
-  setItem: (key: string, value: string) => void storage.set(key, String(value)),
+  setItem: (key: string, value: string) => {
+    if (setItemThrows) throw new Error('QuotaExceededError')
+    storage.set(key, String(value))
+  },
   removeItem: (key: string) => void storage.delete(key),
   clear: () => storage.clear(),
   key: (index: number) => [...storage.keys()][index] ?? null,
@@ -44,7 +47,15 @@ setGlobal('localStorage', {
     return storage.size
   },
 })
-storage.set('beebeeb.custodySeen.v1', JSON.stringify([PRESEEN]))
+// L7c memory is per account (rv-web198d P3): one storage key per account id.
+const ACCOUNT_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+const ACCOUNT_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+const KEY_A = `beebeeb.custodySeen.v1:${ACCOUNT_A}`
+const KEY_B = `beebeeb.custodySeen.v1:${ACCOUNT_B}`
+storage.set(KEY_A, JSON.stringify([PRESEEN]))
+let account: string | null = ACCOUNT_A
+/** When set, localStorage.setItem throws (storage full, private mode). */
+let setItemThrows = false
 
 type CustodyAnswer = { kind: 'record' } | { kind: 'status'; status: number }
 let answer: CustodyAnswer = { kind: 'record' }
@@ -83,6 +94,8 @@ await mockModuleScoped('../src/lib/folder-share-crypto', import.meta.dir, (r) =>
 const memory = await import('../src/lib/custody-memory')
 const adoption = await import('../src/lib/owner-adoption')
 const share = await import('../src/lib/folder-share-crypto')
+memory.setCustodyAccountProvider(() => account)
+afterAll(() => memory.setCustodyAccountProvider(null))
 
 function legacyIndex(): Promise<Map<string, string>> {
   return share.legacyInviteChildWrap(FOLDER_KEY, FILE_KEY).then((wrap) => new Map([[FILE_ID, wrap]]))
@@ -91,6 +104,8 @@ function legacyIndex(): Promise<Map<string, string>> {
 beforeEach(() => {
   answer = { kind: 'record' }
   inviteKey = null
+  account = ACCOUNT_A
+  setItemThrows = false
   adoption.clearSharedFolderLookups()
 })
 
@@ -98,7 +113,7 @@ describe('L7c: custody is monotonic per client', () => {
   test('the memory survives a reload: an entry written by an earlier page load is honoured', () => {
     // What an earlier page load left in the durable store (the module keeps
     // no in-memory copy, so this is exactly what a reload sees).
-    storage.set('beebeeb.custodySeen.v1', JSON.stringify([PRESEEN]))
+    storage.set(KEY_A, JSON.stringify([PRESEEN]))
     expect(memory.hasSeenCustody(PRESEEN)).toBe(true)
     expect(memory.hasSeenCustody(ROOT)).toBe(false)
   })
@@ -108,7 +123,7 @@ describe('L7c: custody is monotonic per client', () => {
     const root = await adoption.rootKeyAndFormat(MASTER, ROOT)
     expect(root?.format).toBe('l7')
     expect(memory.hasSeenCustody(ROOT)).toBe(true)
-    expect(JSON.parse(storage.get('beebeeb.custodySeen.v1') ?? '[]')).toContain(ROOT)
+    expect(JSON.parse(storage.get(KEY_A) ?? '[]')).toContain(ROOT)
   })
 
   test('seen, then the server answers 404 / 405 / 501: an error, never the legacy reader, and nothing opens', async () => {
@@ -136,15 +151,23 @@ describe('L7c: custody is monotonic per client', () => {
     memory.clearCustodyMemory()
     answer = { kind: 'status', status: 501 }
     inviteKey = { folderKey: new Uint8Array(FOLDER_KEY), encryptedOwnerFolderKeyB64: 'invite' }
-    expect(await adoption.folderWrapFormat(ROOT)).toBe('legacy_invite')
+    const format = await adoption.folderWrapFormat(ROOT)
+    expect(format).toBe('legacy_invite')
     expect(await share.custodyFolderKey(MASTER, ROOT)).toBeNull()
-    const opened = await adoption.resolveSharedFileKey({
+    // The member reader (shared-folder page, sidebar) opens a legacy row in
+    // that format with the key its invite carries.
+    const [, wrap] = [...(await legacyIndex())][0]
+    const opened = await share.openFolderChild(format, FOLDER_KEY, { rootId: ROOT, itemId: FILE_ID, isFolder: false }, wrap)
+    expect(Array.from(opened)).toEqual(Array.from(FILE_KEY))
+    // rv-web198d R1: the OWNER has no legacy read (task 2255 brings a verified
+    // one); its open of the same row is null, not the legacy key.
+    const ownerOpen = await adoption.resolveSharedFileKey({
       masterKey: MASTER,
       folderId: ROOT,
       file: { id: FILE_ID, parent_id: ROOT, acted_via_share_id: 'share' },
       keyIndexPromise: legacyIndex(),
     })
-    expect(opened && Array.from(opened)).toEqual(Array.from(FILE_KEY))
+    expect(ownerOpen).toBeNull()
     expect(memory.hasSeenCustody(ROOT)).toBe(false)
   })
 
@@ -155,12 +178,52 @@ describe('L7c: custody is monotonic per client', () => {
     expect(memory.hasSeenCustody(ROOT)).toBe(false)
   })
 
-  test('clearCustodyMemory forgets every folder (sign-out, account switch)', () => {
-    storage.set('beebeeb.custodySeen.v1', JSON.stringify([PRESEEN]))
+  test('clearCustodyMemory forgets every folder of the account (sign-out, account switch)', () => {
+    storage.set(KEY_A, JSON.stringify([PRESEEN]))
     memory.markCustodySeen(ROOT)
     memory.clearCustodyMemory()
     expect(memory.hasSeenCustody(ROOT)).toBe(false)
     expect(memory.hasSeenCustody(PRESEEN)).toBe(false)
+    expect(storage.has(KEY_A)).toBe(false)
+  })
+})
+
+describe('L7c memory is per account and survives a storage failure (rv-web198d P3)', () => {
+  test("account A's folders are not account B's: separate storage keys, and B starts with none", () => {
+    memory.clearCustodyMemory(ACCOUNT_A)
+    memory.clearCustodyMemory(ACCOUNT_B)
+    memory.markCustodySeen(ROOT)
+    expect(JSON.parse(storage.get(KEY_A) ?? '[]')).toEqual([ROOT])
+    account = ACCOUNT_B
+    expect(memory.hasSeenCustody(ROOT)).toBe(false)
+    memory.markCustodySeen(PRESEEN)
+    expect(JSON.parse(storage.get(KEY_B) ?? '[]')).toEqual([PRESEEN])
+    expect(JSON.parse(storage.get(KEY_A) ?? '[]')).toEqual([ROOT])
+    // No unscoped key is written for anyone.
     expect(storage.has('beebeeb.custodySeen.v1')).toBe(false)
+  })
+
+  test('clearing one account (its sign-out) leaves the other account untouched', () => {
+    memory.clearCustodyMemory(ACCOUNT_A)
+    memory.clearCustodyMemory(ACCOUNT_B)
+    memory.markCustodySeen(ROOT)
+    account = ACCOUNT_B
+    memory.markCustodySeen(ROOT)
+    memory.clearCustodyMemory(ACCOUNT_B)
+    expect(memory.hasSeenCustody(ROOT)).toBe(false)
+    account = ACCOUNT_A
+    expect(memory.hasSeenCustody(ROOT)).toBe(true)
+  })
+
+  test('setItem throws (storage full, private mode): the folder is still remembered for this page load', async () => {
+    memory.clearCustodyMemory()
+    setItemThrows = true
+    await adoption.rootKeyAndFormat(MASTER, ROOT) // a valid record: seen
+    expect(storage.has(KEY_A)).toBe(false)
+    expect(memory.hasSeenCustody(ROOT)).toBe(true)
+    // ... so a later "no record" still refuses instead of reading legacy.
+    answer = { kind: 'status', status: 404 }
+    adoption.clearSharedFolderLookups()
+    await expect(adoption.folderWrapFormat(ROOT)).rejects.toThrow("This folder's keys are unavailable")
   })
 })

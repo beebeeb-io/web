@@ -196,6 +196,8 @@ describe('L7b: a custody folder is strictly L7 on every path', () => {
     expect(Array.from(rootNameKey)).toEqual(Array.from(wasm.derive_file_key(MASTER, encoder.encode(ROOT)) as Uint8Array))
     const child = payload.folder_keys.find((k) => k.file_id === FILE_ID)!
     await expect(share.legacyInviteChildKey(FOLDER_KEY, child.encrypted_file_key)).rejects.toThrow()
+    // Contract 2237 §1: the invite declares its L7 wraps.
+    expect(payload.format).toBe('l7')
   })
 
   test('invite build on a folder WITHOUT custody stays legacy (the flag-off path)', async () => {
@@ -219,6 +221,21 @@ describe('L7b: a custody folder is strictly L7 on every path', () => {
     })
     folderKey.fill(0)
     expect(format).toBe('legacy_invite')
+  })
+
+  test('contract 2237 §1: a legacy (no-custody) invite sends no format field at all', async () => {
+    const { payload, folderKey } = await share.buildFolderInvite(MASTER, ROOT, undefined, {
+      custodyFolderKey: async () => null,
+      findExistingFolderKey: async () => null,
+      generateFolderKey: async () => new Uint8Array(FOLDER_KEY),
+      encryptAllChildrenKeys: async () => [],
+      legacyInviteOwnerWrap: async () => new Uint8Array(60),
+      deriveFileKey: async () => new Uint8Array(32),
+      sealChildKey: async () => 'never',
+      folderKeyId: async () => 'id',
+    })
+    folderKey.fill(0)
+    expect('format' in payload).toBe(false)
   })
 })
 

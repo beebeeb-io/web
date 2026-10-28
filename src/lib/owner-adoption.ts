@@ -19,11 +19,10 @@ import {
   wrapOwnerFileKey as coreWrapOwnerFileKey,
 } from './crypto'
 import { adoptOwnerFileKey, getFile, getSentInvites, getSharedFolder, type ShareInvite, type SharedFolderInfo } from './api'
-import { assertNeverSawCustody, hasSeenCustody, markCustodySeen } from './custody-memory'
+import { assertNeverSawCustody, FolderKeysUnavailableError, hasSeenAnyCustody, hasSeenCustody, markCustodySeen } from './custody-memory'
 import { sharedFoldersEnabled } from './use-feature-flag'
 import {
   activeFolderInvites,
-  findExistingFolderKey,
   noCustodyRecord,
   openFolderChild,
   openFolderCustody,
@@ -202,10 +201,9 @@ export async function unwrapOwnerFileKey(
 /**
  * The shared folder's key, unwrapped from its permanent custody record
  * (`shared_folders.owner_wrapped_folder_key`), the key's one source (decision
- * L1). A folder shared only with members has no custody record yet; its key is
- * the one its active invites carry. Null when neither exists: the folder key is
- * minted at random and is NEVER derived from the master key, so there is
- * nothing to fall back to.
+ * L1). Null when the folder has no custody record: the folder key is minted at
+ * random and is NEVER derived from the master key, and the owner has no legacy
+ * read (below), so there is nothing to fall back to.
  */
 export async function folderKeyForRoot(
   masterKey: Uint8Array,
@@ -215,33 +213,31 @@ export async function folderKeyForRoot(
 }
 
 /**
- * The root's folder key and its wrap format (L7b). With a custody record the
- * key comes from it (L6) and every child wrap is L7. Without one, the folder is
- * a flag-off invite-only share: the key comes from its invite's legacy owner
- * copy and its child wraps are the legacy invite format.
+ * The root's folder key and its wrap format (L7b), for the OWNER. With a
+ * custody record the key comes from it (L6) and every child wrap is L7.
+ *
+ * Without one (a flag-off invite-only share) this is null (rv-web198d R1). The
+ * only owner copy such a folder has is its invite's legacy
+ * `encrypted_owner_folder_key`, sealed under the folder-NAME key: a server can
+ * pass the folder's own name blob off as one, forge an unbound child row under
+ * that server-known key, and adoption would store the forged key for good.
+ * Main never read it on the owner side either. Task 2255 brings a legacy
+ * opener with proof of possession (L9); until then there is no owner-side
+ * legacy read. Members keep reading legacy folders with the key their own
+ * invite carries.
  */
 export async function rootKeyAndFormat(
   masterKey: Uint8Array,
   folderId: string,
 ): Promise<{ folderKey: Uint8Array; format: FolderWrapFormat } | null> {
   const custody = await sharedFolderCustody(folderId)
-  if (custody) {
-    const wrapped = custody.owner_wrapped_folder_key
-    if (!wrapped) return null
-    try {
-      const folderKey = await openFolderCustody(masterKey, folderId, fromBase64(wrapped))
-      markCustodySeen(folderId)
-      return { folderKey, format: 'l7' }
-    } catch {
-      return null
-    }
-  }
-  // L7c: a folder this client once saw with custody is never read legacy,
-  // whatever the server answers now.
-  if (hasSeenCustody(folderId)) return null
+  if (!custody) return null
+  const wrapped = custody.owner_wrapped_folder_key
+  if (!wrapped) return null
   try {
-    const existing = await findExistingFolderKey(masterKey, folderId)
-    return existing ? { folderKey: existing.folderKey, format: 'legacy_invite' } : null
+    const folderKey = await openFolderCustody(masterKey, folderId, fromBase64(wrapped))
+    markCustodySeen(folderId)
+    return { folderKey, format: 'l7' }
   } catch {
     return null
   }
@@ -344,14 +340,15 @@ export async function openOwnerFile(args: {
   const { masterKey, folderId, file, keyIndexPromise, labelFor } = args
   const fileKey = await resolveSharedFileKey({ masterKey, folderId, file, keyIndexPromise })
   if (fileKey) {
-    // Best effort and write-once; a refusal must not undo the open.
+    // Best effort and write-once; a refusal must not undo the open. The
+    // adoption route is a flag-on route: with the flag off nothing is posted.
     try {
       let index: Map<string, string> | null = null
       if (!file.owner_wrapped_file_key) {
         index = await keyIndexPromise
       }
       const encrypted = index?.get(file.id)
-      if (encrypted && !file.owner_wrapped_file_key) {
+      if (encrypted && !file.owner_wrapped_file_key && (await sharedFoldersEnabled())) {
         const adopted = await adoptGuestFile({ masterKey, folderId, file, encryptedFileKeyB64: encrypted })
         zeroize(adopted.fileKey)
       }
@@ -372,6 +369,60 @@ export async function openOwnerFile(args: {
   return { kind: 'cannot_open', shareLabel: label }
 }
 
+/** Deepest folder nesting the walk follows before it gives up. */
+const MAX_ROOT_WALK = 16
+
+/**
+ * getFileKeyForFile's half for a row the owner did not create (a guest's or
+ * another member's): its L8 owner wrap, else its wrap in the shared folder it
+ * sits in. Null for the owner's own rows, when nothing opens, and for EVERY row
+ * with the flag off (rv-web198d R1): then no shared-folder request is made and
+ * the caller derives the key, as the app before shared folders did. A
+ * server-supplied owner wrap is never tried on the owner's own rows
+ * (rv-web198c P2-2).
+ */
+export async function foreignRowKey(args: {
+  masterKey: Uint8Array
+  file: AdoptableFile
+  viewerId: string | null
+  keyIndexFor: (rootId: string, fileId: string) => Promise<Map<string, string>>
+}): Promise<Uint8Array | null> {
+  const { masterKey, file, viewerId, keyIndexFor } = args
+  if (!needsOwnership(file, viewerId)) return null
+  if (!(await sharedFoldersEnabled())) return null
+  if (file.owner_wrapped_file_key) {
+    const owned = await unwrapOwnerFileKey(masterKey, file.id, file.owner_wrapped_file_key)
+    if (owned) return owned
+  }
+  const root = await sharedRootFor(file.parent_id ?? null, file.id)
+  if (!root) return null
+  const opened = await openOwnerFile({
+    masterKey,
+    folderId: root,
+    file,
+    keyIndexPromise: keyIndexFor(root, file.id),
+    labelFor: async () => null,
+  })
+  return opened.kind === 'ok' ? opened.fileKey : null
+}
+
+/**
+ * rv-web198d N2: with the flag reading off (a failed read, or a rollback), an
+ * owner write under a folder this client has seen with custody must not be
+ * skipped as "not shared": its wrap would never be published and the write
+ * would report success. This walks up from `folderId` through the custody
+ * memory only (no custody request) and throws for such a folder. With nothing
+ * in the memory, which is every flag-off account today, it asks nothing.
+ */
+export async function assertNoSeenCustodyAbove(folderId: string): Promise<void> {
+  if (!hasSeenAnyCustody()) return
+  let cursor: string | null = folderId
+  for (let depth = 0; depth < MAX_ROOT_WALK && cursor; depth++) {
+    if (hasSeenCustody(cursor)) throw new FolderKeysUnavailableError()
+    cursor = await parentOf(cursor)
+  }
+}
+
 /**
  * True when `folderId` is the root of a shared folder: it has a custody record
  * (shared through a link, or since), or an active folder invite (shared with
@@ -385,9 +436,6 @@ async function isSharedRoot(folderId: string): Promise<boolean> {
     return false
   }
 }
-
-/** Deepest folder nesting the walk follows before it gives up. */
-const MAX_ROOT_WALK = 16
 
 /** The nearest shared root at or above `folderId`, or null. */
 async function rootFromFolder(folderId: string): Promise<string | null> {

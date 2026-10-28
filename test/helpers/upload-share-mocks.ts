@@ -24,7 +24,7 @@ export const cap = {
   savedStates: [] as Array<{ fileId: string; upload_session_id?: string | null }>,
   removedStates: [] as string[],
   encryptedMetadataKeys: [] as number[],
-  addFolderKeysCalls: [] as Array<{ inviteId: string; keys: unknown[]; folderKeyId: string }>,
+  addFolderKeysCalls: [] as Array<{ inviteId: string; keys: unknown[]; folderKeyId: string; format?: string }>,
 }
 export function resetCaptures(): void {
   cap.ownerKeys.length = 0
@@ -112,8 +112,8 @@ export async function installMocks(): Promise<void> {
       mime_type: null, size_bytes: 4, chunk_count: 1, is_folder: false, is_uploading: false,
       created_at: '2026-05-08T00:00:00.000Z', updated_at: '2026-05-08T00:00:00.000Z',
     }),
-    addFolderKeys: async (inviteId: string, keys: unknown[], folderKeyId: string) => {
-      cap.addFolderKeysCalls.push({ inviteId, keys, folderKeyId })
+    addFolderKeys: async (inviteId: string, keys: unknown[], folderKeyId: string, format?: string) => {
+      cap.addFolderKeysCalls.push({ inviteId, keys, folderKeyId, format })
     },
     publishSharedFolderKeys: async (folderId: string, keys: unknown[]) => {
       cap.ownerKeys.push({ folderId, keys })

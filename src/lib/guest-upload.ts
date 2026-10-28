@@ -201,6 +201,8 @@ export async function uploadGuestFolder(
         parent_id: parentId,
         name_encrypted: nameEncrypted,
         wrapped_name_key: await sealChildKey(folderKey, { rootId, itemId: id, isFolder: true }, nameKey),
+        // Contract 2237 §1: a guest's wraps are always L7.
+        format: 'l7',
       }
       if (actorNameEncrypted !== null) body.actor_name_encrypted = actorNameEncrypted
       return fetch(`${API_URL}/api/v1/f/${encodeURIComponent(token)}/folders`, {
@@ -327,6 +329,8 @@ export async function uploadGuestFiles(args: {
             name_encrypted: nameEncrypted,
             // L7: bound to (root, this file's id, file).
             wrapped_key: await sealChildKey(parent.key, { rootId: args.rootId, itemId: id, isFolder: false }, fileKey),
+            // Contract 2237 §1: a guest's wraps are always L7.
+            format: 'l7',
           }
           if (args.actorNameEncrypted !== null) {
             metadata.actor_name_encrypted = args.actorNameEncrypted

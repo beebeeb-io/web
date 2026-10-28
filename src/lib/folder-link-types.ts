@@ -73,6 +73,11 @@ export interface CreateFolderLinkRequest {
    * whole subtree's wraps (server writes them once, never replacing).
    */
   folder_keys?: { file_id: string; encrypted_file_key: string }[]
+  /**
+   * Contract 2237 §1: declares the `folder_keys` wraps as L7. A link exists
+   * only for a folder with custody, so a create always sends it.
+   */
+  format?: 'l7'
 }
 
 export interface UpdateFolderLinkRequest {

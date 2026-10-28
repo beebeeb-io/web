@@ -608,7 +608,7 @@ async function uploadFile(
 
   // If uploading to a shared folder, register the file key under the folder_key
   if (sharedFolderContext) {
-    const { sealFolderChild, folderKeyId } = await import('./folder-share-crypto')
+    const { sealFolderChild, folderKeyId, wireWrapFormat } = await import('./folder-share-crypto')
     const { addFolderKeys } = await import('./api')
     // Bound to (shared root, this file, file) for a custody folder (L7); the
     // legacy invite format only for a flag-off invite-only folder (L7b).
@@ -621,7 +621,7 @@ async function uploadFile(
     await addFolderKeys(sharedFolderContext.inviteId, [{
       file_id: serverFileId,
       encrypted_file_key: encryptedKey,
-    }], await folderKeyId(sharedFolderContext.folderKey))
+    }], await folderKeyId(sharedFolderContext.folderKey), wireWrapFormat(sharedFolderContext.format))
   }
 
   if (!sharedFolderContext && parentId) {

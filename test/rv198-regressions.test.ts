@@ -110,7 +110,10 @@ describe('P1-1: a non-definitive custody answer is an error, never "no custody"'
   test('a definitive "no record" (404) is still the legacy answer for a folder never seen with custody', async () => {
     custodyStatus = 404
     sentInvites = await legacyInvite()
-    expect((await adoption.rootKeyAndFormat(MASTER, ROOT))?.format).toBe('legacy_invite')
+    expect(await adoption.folderWrapFormat(ROOT)).toBe('legacy_invite')
+    // rv-web198d R1: but the owner has no legacy read (task 2255 brings a
+    // verified one), so there is no owner-side key for it.
+    expect(await adoption.rootKeyAndFormat(MASTER, ROOT)).toBeNull()
   })
 })
 
@@ -125,10 +128,13 @@ describe('P1-2 / P1-3: custody is never seeded from a legacy invite copy', () =>
     expect(registered).toHaveLength(0)
   })
 
-  test('a folder with an active flag-off invite is refused with the plain upgrade message; nothing registered', async () => {
+  test('a folder with an active flag-off invite is refused with the typed upgrade error; nothing registered', async () => {
     custodyStatus = 404
     sentInvites = await legacyInvite()
-    await expect(ensureOwnerFolderKey(ROOT, MASTER)).rejects.toThrow("This folder is shared with an older link format. Upgrade it first.")
+    const { FolderNeedsUpgradeError } = await import('../src/lib/folder-upgrade')
+    const err = await ensureOwnerFolderKey(ROOT, MASTER).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(FolderNeedsUpgradeError)
+    expect((err as Error).message).toBe(FOLDER_NEEDS_UPGRADE)
     expect(registered).toHaveLength(0)
   })
 

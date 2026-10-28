@@ -190,10 +190,12 @@ export const REAL_EXISTING_FOLDER_KEY_PORTS: ExistingFolderKeyPorts = {
 }
 
 // Must stay <= 80 characters so userFriendlyError shows it (SHORT_MESSAGE_MAX).
-// It tells the owner the one way out: with no active invite the key is minted
-// fresh, so removing the pending invites lets the next share start clean.
+// rv-web198d: it used to send the owner to "remove its pending invites, then
+// share again". That was never a way out: cancel and deny keep the folder's
+// child rows, so a fresh key over them leaves every existing item unreadable
+// to the people it is shared with. It now says only what is true.
 export const FOLDER_KEY_UNVERIFIED =
-  "Can't check this folder's key. Remove its pending invites, then share again."
+  "Can't open this folder's existing sharing key, so no one new can be added."
 
 /** core's authentication failure ("decryption failed: ciphertext is invalid or key is wrong"). */
 function isAuthenticationFailure(e: unknown): boolean {
@@ -267,6 +269,8 @@ export interface FolderInvitePayload {
   folder_keys: { file_id: string; encrypted_file_key: string }[]
   /** base64 of core's folder_key_id for the key used (task 2133, design K). */
   folder_key_id: string
+  /** Contract 2237 §1: present (`l7`) exactly when `folder_keys` are L7 wraps. */
+  format?: WireWrapFormat
 }
 
 /**
@@ -389,16 +393,16 @@ export async function buildFolderInvite(
     const encOwner =
       existing?.encryptedOwnerFolderKeyB64 ??
       toBase64(await ports.legacyInviteOwnerWrap(masterKey, folderId, folderKey))
-    return {
-      folderKey,
-      payload: {
-        is_folder_share: true,
-        encrypted_folder_key: '',
-        encrypted_owner_folder_key: encOwner,
-        folder_keys: folderKeys,
-        folder_key_id: await ports.folderKeyId(folderKey),
-      },
+    const payload: FolderInvitePayload = {
+      is_folder_share: true,
+      encrypted_folder_key: '',
+      encrypted_owner_folder_key: encOwner,
+      folder_keys: folderKeys,
+      folder_key_id: await ports.folderKeyId(folderKey),
     }
+    const wire = wireWrapFormat(format)
+    if (wire) payload.format = wire
+    return { folderKey, payload }
   } catch (e) {
     zeroize(folderKey)
     throw e
@@ -471,6 +475,20 @@ export async function legacyInviteChildKey(
  * flag-off invite-only share. It is never chosen by trying one and falling back.
  */
 export type FolderWrapFormat = 'l7' | 'legacy_invite'
+
+/**
+ * Frozen contract 2237 §1: every write that inserts a shared_folder_keys row
+ * sends `format: "l7"` exactly when its wraps are L7 (a folder with custody),
+ * and nothing for a legacy write. A custody folder refuses a write without it
+ * (409 upgrade_required), so a pre-upgrade writer can never land a legacy row
+ * in it. `l7` is the only value the server accepts.
+ */
+export type WireWrapFormat = 'l7'
+
+/** The `format` field for a write sealed in `format`, or undefined for legacy. */
+export function wireWrapFormat(format: FolderWrapFormat): WireWrapFormat | undefined {
+  return format === 'l7' ? 'l7' : undefined
+}
 
 /** Seal a child key in the folder's format. */
 export async function sealFolderChild(

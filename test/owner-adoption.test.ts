@@ -141,12 +141,15 @@ describe('folderKeyForRoot', () => {
     expect(key).toBeNull()
   })
 
-  test('an invite-only folder opens with the key the sent invite carries', async () => {
+  // rv-web198d R1: this test used to open an invite-only folder through its
+  // invite's legacy owner copy. That copy opens under the folder-NAME key, so a
+  // server can forge one; the owner has no legacy read until task 2255 lands a
+  // verified one. Main never had an owner-side legacy read either.
+  test('an invite-only folder has no owner-side key, even when an invite carries one (R1)', async () => {
     custody = null
     inviteFolderKey = { folderKey: FOLDER_KEY, encryptedOwnerFolderKeyB64: 'x' }
     try {
-      const key = await folderKeyForRoot(MASTER, FOLDER_ID)
-      expect(Array.from(key!)).toEqual(Array.from(FOLDER_KEY))
+      expect(await folderKeyForRoot(MASTER, FOLDER_ID)).toBeNull()
     } finally {
       inviteFolderKey = null
     }
@@ -273,7 +276,7 @@ describe('resolveSharedFileKey', () => {
     }
   })
 
-  test('L7b: an invite-only folder (no custody record) opens its legacy wrap', async () => {
+  test('L7b + R1: an invite-only folder (no custody record) does not open its legacy wrap for the owner', async () => {
     custody = null
     clearSharedFolderLookups() // a custody record is cached for the session
     inviteFolderKey = { folderKey: FOLDER_KEY, encryptedOwnerFolderKeyB64: 'x' }
@@ -285,7 +288,7 @@ describe('resolveSharedFileKey', () => {
         file,
         keyIndexPromise: Promise.resolve(new Map([[file.id, seal(FOLDER_KEY, FILE_KEY)]])),
       })
-      expect(key && Array.from(key)).toEqual(Array.from(FILE_KEY))
+      expect(key).toBeNull()
     } finally {
       inviteFolderKey = null
     }

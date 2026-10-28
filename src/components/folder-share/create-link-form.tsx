@@ -15,6 +15,18 @@ import {
 } from '../../lib/folder-link-create'
 import { EmptyLinkPassphraseError } from '../../lib/link-passphrase'
 import type { FolderAccessLevel } from '../../lib/folder-link-types'
+import { FOLDER_NEEDS_UPGRADE, needsFolderUpgrade } from '../../lib/folder-upgrade'
+
+/**
+ * The line a failed create shows. A folder that needs the custody upgrade
+ * (contract 2237 §2) gets its own sentence, never the generic retry line:
+ * retrying can't help it.
+ */
+export function createLinkErrorMessage(err: unknown): string {
+  if (err instanceof EmptyLinkPassphraseError) return err.message
+  if (needsFolderUpgrade(err)) return FOLDER_NEEDS_UPGRADE
+  return folderLinkActionError(err)?.message || 'Could not create the link. Try again.'
+}
 
 export function createDisabledReason(linkCount: number): string | null {
   return linkCount >= MAX_FOLDER_LINKS ? `A folder can have at most ${MAX_FOLDER_LINKS} links.` : null
@@ -85,12 +97,7 @@ export function CreateLinkForm({ folderId, masterKey, linkCount, onCreated }: Cr
       setForm(EMPTY_CREATE_FORM)
       onCreated(created)
     } catch (e) {
-      if (e instanceof EmptyLinkPassphraseError) {
-        setError(e.message)
-        return
-      }
-      const refusal = folderLinkActionError(e)
-      setError(refusal?.message || 'Could not create the link. Try again.')
+      setError(createLinkErrorMessage(e))
     } finally {
       setBusy(false)
     }
@@ -165,7 +172,8 @@ export function CreateLinkForm({ folderId, masterKey, linkCount, onCreated }: Cr
         />
       </label>
       {error && (
-        <p role="alert" className="mt-2 text-xs text-red">
+        // The upgrade notice is a fact about the folder, not a failed action.
+        <p role="alert" className={`mt-2 text-xs ${error === FOLDER_NEEDS_UPGRADE ? 'text-ink-2' : 'text-red'}`}>
           {error}
         </p>
       )}

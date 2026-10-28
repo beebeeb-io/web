@@ -6,21 +6,59 @@
  * endpoint is answered once per page session and cached at module level, so a
  * screen with several consumers still makes one request.
  *
- * Fail closed: a network error, a malformed body or a disabled flag all yield
- * `enabled: false`. The hook never throws.
+ * Fail closed: a network error, a malformed body, a request that takes longer
+ * than FLAG_REQUEST_TIMEOUT_MS or a disabled flag all yield `enabled: false`.
+ * The hook never throws. Only a real answer is cached (rv-web198d N2): a failed
+ * read is no answer, so the next read asks again instead of keeping "off" for
+ * the whole page session on an account that has the flag.
  */
 import { useEffect, useState } from 'react'
 import { getEvaluateFlags } from './api'
 import { SHARED_FOLDERS_FLAG } from './flags'
 
+/**
+ * How long a flag read may take before it counts as failed (rv-web198d P3). A
+ * folder invite waits on this read, so it must end.
+ */
+export const FLAG_REQUEST_TIMEOUT_MS = 5_000
+let flagRequestTimeoutMs = FLAG_REQUEST_TIMEOUT_MS
+
 let flagsPromise: Promise<Record<string, boolean>> | null = null
+
+function readFlags(): Promise<Record<string, boolean>> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('feature flags timed out')), flagRequestTimeoutMs)
+    let request: ReturnType<typeof getEvaluateFlags>
+    try {
+      request = getEvaluateFlags()
+    } catch (error) {
+      clearTimeout(timer)
+      reject(error)
+      return
+    }
+    request.then(
+      (response) => {
+        clearTimeout(timer)
+        if (response && typeof response.flags === 'object' && response.flags) resolve(response.flags)
+        else reject(new Error('malformed feature flags'))
+      },
+      (error: unknown) => {
+        clearTimeout(timer)
+        reject(error)
+      },
+    )
+  })
+}
 
 /** One request per page session; every caller shares the same promise. */
 export function loadFeatureFlagsOnce(): Promise<Record<string, boolean>> {
   if (!flagsPromise) {
-    flagsPromise = getEvaluateFlags()
-      .then((response) => (response && typeof response.flags === 'object' && response.flags) || {})
-      .catch(() => ({}))
+    const pending: Promise<Record<string, boolean>> = readFlags().catch(() => {
+      // This caller fails closed; the next one asks again.
+      if (flagsPromise === pending) flagsPromise = null
+      return {}
+    })
+    flagsPromise = pending
   }
   return flagsPromise
 }
@@ -28,6 +66,11 @@ export function loadFeatureFlagsOnce(): Promise<Record<string, boolean>> {
 /** Test hook: forget the cached evaluate result. */
 export function resetFeatureFlagCacheForTests(): void {
   flagsPromise = null
+}
+
+/** Test hook: the bound on one flag read, so a test need not wait seconds. */
+export function setFlagRequestTimeoutForTests(ms: number): void {
+  flagRequestTimeoutMs = ms
 }
 
 /**

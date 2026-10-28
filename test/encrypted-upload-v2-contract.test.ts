@@ -89,6 +89,8 @@ describe('L7b: a member upload seals its file key in the shared folder\'s format
     await upload('l7')
     expect(cap.addFolderKeysCalls).toHaveLength(1)
     expect(cap.addFolderKeysCalls[0].keys).toEqual([{ file_id: 'server-file-id', encrypted_file_key: btoa('l7|shared-root|server-file-id|1|9') }])
+    // Contract 2237 §1: an L7 member write says so.
+    expect(cap.addFolderKeysCalls[0].format).toBe('l7')
     expect(cap.ownerKeys).toHaveLength(0)
   })
 
@@ -96,6 +98,8 @@ describe('L7b: a member upload seals its file key in the shared folder\'s format
     await upload('legacy_invite')
     // The stub seal is a zero nonce followed by the plaintext key.
     expect(cap.addFolderKeysCalls[0].keys).toEqual([{ file_id: 'server-file-id', encrypted_file_key: 'AAAAAAAAAAAAAAAACQ==' }])
+    // Contract 2237 §1: a legacy write sends no format.
+    expect(cap.addFolderKeysCalls[0].format).toBeUndefined()
   })
 
   test('no format is a failed upload, never a legacy write', async () => {

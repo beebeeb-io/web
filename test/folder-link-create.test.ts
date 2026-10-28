@@ -559,3 +559,66 @@ describe('L6a — the share id is proposed by the client and both owner copies a
     expect(attempts).toBe(3)
   })
 })
+
+// Frozen contract 2237 (~/code/bb-gate-logs/fullspeed/contract-2237-format-l7.md).
+describe('contract 2237 §1: a link create declares its L7 wraps', () => {
+  test('the create body carries format "l7" next to folder_keys (its wraps are always L7)', async () => {
+    const { ports, calls } = fakePorts()
+    await createFolderLinkWithKeys(baseInput(), ports)
+    const body = calls.find((c) => c.name === 'createFolderLink')?.arg as { format?: unknown; folder_keys?: unknown[] }
+    expect(body.format).toBe('l7')
+    expect(body.folder_keys?.length).toBeGreaterThan(0)
+  })
+})
+
+describe('contract 2237 §2: 409 upgrade_required means "this folder needs the upgrade"', () => {
+  const upgradeRequired = () => Object.assign(new Error('upgrade required'), { status: 409, code: 'upgrade_required' })
+
+  test('the custody PUT answers 409 upgrade_required: the typed error, no link, nothing re-sent', async () => {
+    const { FolderNeedsUpgradeError } = await import('../src/lib/folder-upgrade')
+    let registers = 0
+    const { ports, calls } = fakePorts({
+      registerSharedFolderKey: async () => {
+        registers += 1
+        throw upgradeRequired()
+      },
+    })
+    const err = await createFolderLinkWithKeys(baseInput(), ports).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(FolderNeedsUpgradeError)
+    expect(registers).toBe(1)
+    expect(names(calls)).not.toContain('createFolderLink')
+    expect(names(calls)).not.toContain('encryptAllChildrenKeys')
+  })
+
+  test('the link create answers 409 upgrade_required: the typed error, sent once, never under another format', async () => {
+    const { FolderNeedsUpgradeError } = await import('../src/lib/folder-upgrade')
+    const bodies: Array<{ format?: unknown }> = []
+    const { ports } = fakePorts({
+      createFolderLink: async (body) => {
+        bodies.push(body as never)
+        throw upgradeRequired()
+      },
+    })
+    const err = await createFolderLinkWithKeys(baseInput(), ports).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(FolderNeedsUpgradeError)
+    expect(bodies).toHaveLength(1)
+    expect(bodies[0].format).toBe('l7')
+  })
+
+  test('a folder with active flag-off invites is refused with the same typed error before anything is minted', async () => {
+    const { FolderNeedsUpgradeError } = await import('../src/lib/folder-upgrade')
+    const { ports, calls } = fakePorts({ hasActiveLegacyInvites: async () => true })
+    const err = await createFolderLinkWithKeys(baseInput(), ports).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(FolderNeedsUpgradeError)
+    expect(names(calls)).not.toContain('generateFolderKey')
+    expect(names(calls)).not.toContain('registerSharedFolderKey')
+  })
+
+  test("the link form shows the upgrade notice for it, never 'Could not create the link'", async () => {
+    const { createLinkErrorMessage } = await import('../src/components/folder-share/create-link-form')
+    const { FolderNeedsUpgradeError, FOLDER_NEEDS_UPGRADE } = await import('../src/lib/folder-upgrade')
+    expect(createLinkErrorMessage(new FolderNeedsUpgradeError(FOLDER_ID))).toBe(FOLDER_NEEDS_UPGRADE)
+    expect(createLinkErrorMessage(upgradeRequired())).toBe(FOLDER_NEEDS_UPGRADE)
+    expect(createLinkErrorMessage(new Error('boom'))).toBe('Could not create the link. Try again.')
+  })
+})

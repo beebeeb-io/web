@@ -10,7 +10,7 @@
  */
 import { ApiError, createFolder, publishSharedFolderKeys, updateFile, type DriveFile } from './api'
 import { collectAllChildItems, sealChildKey } from './folder-share-crypto'
-import { folderKeyForRoot, folderWrapFormat, needsOwnership, sharedRootFor } from './owner-adoption'
+import { assertNoSeenCustodyAbove, folderKeyForRoot, folderWrapFormat, needsOwnership, sharedRootFor } from './owner-adoption'
 import { deriveFileKey, zeroize } from './crypto'
 import { sharedFoldersEnabled } from './use-feature-flag'
 
@@ -30,7 +30,12 @@ export async function publishOwnerUploadKey(
 ): Promise<void> {
   // rv-web198c P2-1: with the flag off there is nothing to publish to, and the
   // walk below must not run (or fail) after an upload already committed.
-  if (!(await sharedFoldersEnabled())) return
+  // rv-web198d N2: except under a folder this client has seen with custody,
+  // where "off" (a failed read, a rollback) must fail loudly, never skip.
+  if (!(await sharedFoldersEnabled())) {
+    await assertNoSeenCustodyAbove(parentId)
+    return
+  }
   const root = await sharedRootFor(parentId, parentId)
   if (!root) return
   if ((await folderWrapFormat(root)) !== 'l7') return
@@ -124,7 +129,11 @@ async function publishMovedItems(
   rows: ReadonlyMap<string, MovableRow> | MovableRow[] | undefined,
   viewerId: string | null,
 ): Promise<void> {
-  if (!(await sharedFoldersEnabled())) return
+  if (!(await sharedFoldersEnabled())) {
+    // rv-web198d N2, as for an upload: never a silent skip under custody.
+    await assertNoSeenCustodyAbove(destinationId)
+    return
+  }
   const root = await sharedRootFor(destinationId, destinationId)
   if (!root) return
   if ((await folderWrapFormat(root)) !== 'l7') return

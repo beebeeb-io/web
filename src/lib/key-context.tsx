@@ -49,9 +49,9 @@ import { clearThumbnailCache } from './thumbnail'
 import { cacheKeyPersistent, cacheKeySessionOnly } from './key-cache'
 import { ApiError, getFolderKeys, getSentInvites, listFolderLinks, listSharedFolderKeys, setRecoveryCheckIfAbsent, verifyRecoveryCheck } from './api'
 import type { DriveFile } from './api'
-import { clearCustodyMemory } from './custody-memory'
+import { clearCustodyMemory, setCustodyAccountProvider } from './custody-memory'
 import { forgetFeatureFlags, sharedFoldersEnabled } from './use-feature-flag'
-import { clearSharedFolderLookups, needsOwnership, sharedRootFor, unwrapOwnerFileKey, folderKeyForRoot, openOwnerFile } from './owner-adoption'
+import { clearSharedFolderLookups, foreignRowKey, folderKeyForRoot, openOwnerFile } from './owner-adoption'
 import { createSharedFolderKeyCache } from './shared-folder-key-cache'
 import { activeFolderInvites } from './folder-share-crypto'
 import { decryptActorName } from './guest-actor-name'
@@ -643,33 +643,19 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       if (!requestResolverRef.current) requestResolverRef.current = createRequestKeyResolver()
       return requestResolverRef.current.resolveFileKey(file, key)
     }
-    // rv-web198c P2-2: an owner copy is read only for a row the owner did not
-    // create, and only with the flag on. On any other row a server-supplied
-    // owner_wrapped_file_key must never be tried (without L8 a folder's own
-    // name blob opens as one).
-    const foreign = needsOwnership(file, residentKeyUserIdRef.current)
-    if (file.owner_wrapped_file_key && foreign && (await sharedFoldersEnabled())) {
-      const owned = await unwrapOwnerFileKey(key, file.id, file.owner_wrapped_file_key)
-      if (owned) return owned
-    }
     // Task 2237b: a row a link guest or another member added to a shared
     // folder is not sealed under a key we derive. Every caller (download, zip,
     // rename, versions, thumbnails), not only the listing, must take the
     // shared-folder path for it; a row that does not open there falls through
-    // to the derived key and fails its own integrity check honestly.
-    if (foreign) {
-      const root = await sharedRootFor(file.parent_id ?? null, file.id)
-      if (root) {
-        const opened = await openOwnerFile({
-          masterKey: key,
-          folderId: root,
-          file,
-          keyIndexPromise: sharedFolderCacheRef.current.forFile(root, file.id),
-          labelFor: async () => null,
-        })
-        if (opened.kind === 'ok') return opened.fileKey
-      }
-    }
+    // to the derived key and fails its own integrity check honestly. Only with
+    // the flag on (rv-web198d R1): with it off this asks nothing, as on main.
+    const shared = await foreignRowKey({
+      masterKey: key,
+      file,
+      viewerId: residentKeyUserIdRef.current,
+      keyIndexFor: (root, fileId) => sharedFolderCacheRef.current.forFile(root, fileId),
+    })
+    if (shared) return shared
     return deriveFileKey(key, file.id)
   }, [isBoundTo])
 
@@ -843,14 +829,18 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     // A key IS resident, bound to a DIFFERENT (or no) account than the one
     // now authenticated — cross-account confusion. Clear it; the normal
     // escrow/PRF/password/phrase unlock path takes over and loads the
-    // REAL key for currentUserId. L7c: the custody memory goes with it.
-    clearCustodyMemory()
+    // REAL key for currentUserId. L7c: the custody memory of the account the
+    // key belonged to goes with it.
+    clearCustodyMemory(residentKeyUserIdRef.current)
     lock()
   }, [user, authLoading, vaultChecked, lock])
 
   useEffect(() => { void clearThumbnailCache() }, [])
 
   const fullLogout = useCallback(async () => {
+    // L7c: the custody memory goes with the keys on sign-out, for the account
+    // signing out (the resident one, else the session's, if the vault is locked).
+    const signingOut = residentKeyUserIdRef.current ?? getAuthStamp().userId
     if (masterKeyRef.current) {
       zeroize(masterKeyRef.current)
       masterKeyRef.current = null
@@ -861,8 +851,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     sharedFolderCacheRef.current.clear()
     sharedFolderLabelsRef.current.clear()
     clearSharedFolderLookups()
-    // L7c: the custody memory goes with the keys on sign-out.
-    clearCustodyMemory()
+    clearCustodyMemory(signingOut)
     forgetFeatureFlags()
     clearCachedKey()
     await Promise.all([clearOfflineCaches(), clearThumbnailCache(), clearVault()])
@@ -886,6 +875,13 @@ export function KeyProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setExpectedUserProvider(() => residentKeyUserIdRef.current)
     return () => setExpectedUserProvider(null)
+  }, [])
+
+  // L7c memory is per account: keyed by the account whose master key is
+  // resident, the one that opened (and so verified) each custody record.
+  useEffect(() => {
+    setCustodyAccountProvider(() => residentKeyUserIdRef.current)
+    return () => setCustodyAccountProvider(null)
   }, [])
 
   // Task 1531 (web #85 round 2): the server's 409 `account_mismatch`

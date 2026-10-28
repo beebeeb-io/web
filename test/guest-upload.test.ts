@@ -543,3 +543,38 @@ describe('L7 and L7a: every guest write is bound to the id it proposes', () => {
     expect(() => loadWasm().unwrapFolderChild(FOLDER_KEY, ROOT, String(folder.id), 1, wrap)).toThrow(/decryption failed/)
   })
 })
+
+// Frozen contract 2237 §1: every guest write inserts a shared_folder_keys row
+// sealed with L7, so it says so. The upload's metadata part still comes first.
+describe('contract 2237 §1: guest writes declare format "l7"', () => {
+  test('the upload metadata (the first part) carries format "l7"', async () => {
+    await uploadGuestFiles({
+      token: 'tok',
+      rootId: ROOT,
+      folderKey: FOLDER_KEY,
+      proof: null,
+      parentId: null,
+      tasks: [{ file: fileOf('a.txt', 10), relativePath: null }],
+      siblingNames: new Map(),
+      actorNameEncrypted: null,
+      onEvent: () => undefined,
+    })
+    expect([...calls[0].form.keys()][0]).toBe('metadata')
+    expect((await metadataOf(calls[0].form)).format).toBe('l7')
+  })
+
+  test('a guest folder create carries format "l7"', async () => {
+    await uploadGuestFiles({
+      token: 'tok',
+      rootId: ROOT,
+      folderKey: FOLDER_KEY,
+      proof: null,
+      parentId: null,
+      tasks: [{ file: fileOf('a.txt', 10), relativePath: 'Trip/a.txt' }],
+      siblingNames: new Map(),
+      actorNameEncrypted: null,
+      onEvent: () => undefined,
+    })
+    expect(folderBodies[0].format).toBe('l7')
+  })
+})

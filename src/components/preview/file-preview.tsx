@@ -23,6 +23,7 @@ import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useKeys } from '../../lib/key-context'
 import { needsOwnership, sharedRootFor } from '../../lib/owner-adoption'
+import { sharedFoldersEnabled } from '../../lib/use-feature-flag'
 import { useAuth } from '../../lib/auth-context'
 import { decryptFileMetadata } from '../../lib/crypto'
 import { checkEditability, editabilityNotice, type EditabilityResult } from '../../lib/text-editability'
@@ -552,6 +553,9 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
    *  a guest- or member-added row goes through the shared-folder resolver. */
   const resolveFileKey = useCallback(async (): Promise<Uint8Array> => {
     if (!sharedFile) return getFileKeyForFile(file)
+    // rv-web198d R1: with the flag off there is no shared-folder walk for the
+    // owner (no invites read, no link route asked); the key is derived, as on main.
+    if (!(await sharedFoldersEnabled())) return getFileKeyForFile(file)
     const root = await sharedRootFor(folderId ?? null, file.id)
     const key = root ? await getFileKeyForSharedFile(file, root) : null
     if (key) return key

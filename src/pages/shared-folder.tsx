@@ -37,12 +37,18 @@ import { formatBytes } from '../lib/format'
  * The level a member page may offer. Custody is authoritative when the folder
  * has one; a legacy invite predates it, so its `permission` is the next best
  * evidence and the server still makes the final call on every write.
+ *
+ * With shared folders off the page is the one main has: read only, whatever
+ * the invite's permission (rv-web198d P2-1). An `add` invite must not bring
+ * member writes to a flag-off account.
  */
 export function memberAccessLevel(
   shared: { access_level: string } | null,
   invite: { permission?: string } | null,
+  sharedFoldersOn: boolean,
 ): FolderAccessLevel {
   if (shared) return parseFolderAccessLevel(shared.access_level)
+  if (!sharedFoldersOn) return 'view'
   return parseFolderAccessLevel(invite?.permission)
 }
 
@@ -345,7 +351,7 @@ export function SharedFolder() {
         if (inv) setInvite(inv)
       }
 
-      const [fileList, keys, members, shared] = await Promise.all([
+      const [fileList, keys, members, { shared, flagOn }] = await Promise.all([
         listSharedFolderFiles(folderId, parentId),
         getFolderKeys(inviteId),
         getFolderMembers(folderId).catch(() => ({ members: [], owner_id: '' })),
@@ -353,17 +359,18 @@ export function SharedFolder() {
         // 501 with the flag off) means a legacy invite-only folder. Anything
         // else fails the load: the format must never be guessed (L7b). With
         // the flag off no custody request is made at all (rv-web198c P2-1).
-        (async (): Promise<SharedFolderInfo | null> => {
-          if (await sharedFoldersEnabled()) {
+        (async (): Promise<{ shared: SharedFolderInfo | null; flagOn: boolean }> => {
+          const on = await sharedFoldersEnabled()
+          if (on) {
             try {
-              return await getSharedFolder(folderId)
+              return { shared: await getSharedFolder(folderId), flagOn: on }
             } catch (e) {
               if (!noCustodyRecord(e)) throw e
             }
           }
           // L7c: legacy only for a folder this client never saw with custody.
           assertNeverSawCustody(folderId)
-          return null
+          return { shared: null, flagOn: on }
         })(),
       ])
       const format: FolderWrapFormat = shared ? 'l7' : 'legacy_invite'
@@ -374,8 +381,9 @@ export function SharedFolder() {
         setLevel(parseFolderAccessLevel(shared.access_level))
       } else if (inv) {
         // A legacy folder invite predates the custody row, so the custody route
-        // 404s; the invite itself carries the grant the server enforces.
-        setLevel(memberAccessLevel(null, inv))
+        // 404s; the invite itself carries the grant the server enforces (and
+        // with the flag off, the page stays read only).
+        setLevel(memberAccessLevel(null, inv, flagOn))
       }
 
       let fk = folderKeyCache
@@ -472,7 +480,7 @@ export function SharedFolder() {
         setRole(fresh.role)
         setLevel(parseFolderAccessLevel(fresh.access_level))
       } catch {
-        setLevel(memberAccessLevel(null, invite))
+        setLevel(memberAccessLevel(null, invite, await sharedFoldersEnabled()))
       }
       setActionError("You don't have permission to change this folder.")
       return

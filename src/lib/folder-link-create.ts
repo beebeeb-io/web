@@ -52,6 +52,7 @@ import {
 } from './folder-link-types'
 import { buildFullShareLink } from './share-full-link'
 import { assertNeverSawCustody, markCustodySeen } from './custody-memory'
+import { FolderNeedsUpgradeError, isUpgradeRequired, type FolderUpgradeRunner } from './folder-upgrade'
 import {
   deriveLinkPassphraseKey,
   generateFolderLinkToken,
@@ -96,9 +97,16 @@ export interface CreateFolderLinkPorts {
   sealFolderCustody: typeof sealFolderCustody
   /**
    * Whether the folder still has active flag-off invites (rv-web198c P1-3).
-   * Such a folder is refused until its legacy rows can be upgraded.
+   * Such a folder needs the upgrade; asking first saves minting a key the
+   * server would refuse anyway (contract §2 is the authority: it also counts
+   * rows from cancelled and denied invites).
    */
   hasActiveLegacyInvites: (folderId: string) => Promise<boolean>
+  /**
+   * Contract §2: runs the custody upgrade of a folder with legacy rows. Absent
+   * until web #199 provides it; then the owner is told the folder needs it.
+   */
+  upgradeLegacyFolder?: FolderUpgradeRunner
   /** A fresh RANDOM folder key; only when no custody record and no invite exists. */
   generateFolderKey: () => Promise<Uint8Array>
   /** The root folder's own name key (published under the folder key, below). */
@@ -162,8 +170,8 @@ function errorCode(err: unknown): string | undefined {
   return typeof code === 'string' ? code : undefined
 }
 
-/** rv-web198c P1-3: shown for a folder that still has flag-off invites. */
-export const FOLDER_NEEDS_UPGRADE = 'This folder is shared with an older link format. Upgrade it first.'
+/** rv-web198c P1-3, contract §2: the copy for a folder that needs the upgrade. */
+export { FOLDER_NEEDS_UPGRADE } from './folder-upgrade'
 
 function isNotFound(err: unknown): boolean {
   const status = (err as { status?: unknown } | null | undefined)?.status
@@ -214,12 +222,21 @@ export async function ensureOwnerFolderKey(
   // so a server can pass the folder's own name blob off as one, and the name
   // JSON would become the permanent folder key (task [P1] 2255 lands a core
   // verifier with proof of possession; until then nothing is seeded).
-  // P1-3: a folder that still has active flag-off invites is refused: custody
-  // over its legacy rows would leave every existing child unreadable to its
-  // members and guests. Otherwise the folder key is minted at RANDOM
-  // (decision L1), never derived from the master key, and registered as the
-  // custody record, its one source for every client from then on.
-  if (await ports.hasActiveLegacyInvites(folderId)) throw new Error(FOLDER_NEEDS_UPGRADE)
+  // Contract §2 (rv-web198d P1-3): a folder that already has legacy rows gets
+  // no fresh custody: the server refuses with 409 upgrade_required, whatever
+  // its invites' status, and active flag-off invites are refused here first.
+  // That is "this folder needs the upgrade", never a legacy fallback.
+  // Otherwise the folder key is minted at RANDOM (decision L1), never derived
+  // from the master key, and registered as the custody record, its one source
+  // for every client from then on.
+  const needsUpgrade = async (): Promise<Uint8Array> => {
+    if (!ports.upgradeLegacyFolder) throw new FolderNeedsUpgradeError(folderId)
+    const upgraded = await ports.upgradeLegacyFolder(folderId, masterKey)
+    forgetSharedFolderCustody(folderId)
+    markCustodySeen(folderId)
+    return upgraded
+  }
+  if (await ports.hasActiveLegacyInvites(folderId)) return needsUpgrade()
   const folderKey = await ports.generateFolderKey()
   try {
     const wrapped = ports.toBase64(await ports.sealFolderCustody(masterKey, folderId, folderKey))
@@ -233,9 +250,10 @@ export async function ensureOwnerFolderKey(
     markCustodySeen(folderId)
     return folderKey
   } catch (err) {
+    folderKey.fill(0)
+    if (isUpgradeRequired(err)) return needsUpgrade()
     // Someone registered a key between our read and our write: their key is
     // the truth. Re-read and open it; never overwrite.
-    folderKey.fill(0)
     if (errorCode(err) !== 'key_version_conflict') throw err
     const reread = await tryReadCustody(folderId, ports)
     if (!reread?.owner_wrapped_folder_key) throw err
@@ -318,6 +336,8 @@ export async function createFolderLinkWithKeys(
           owner_wrapped_key: await ports.ownerWrappedLinkKey(input.masterKey, id, kc),
           owner_wrapped_token: await ports.ownerWrappedLinkToken(input.masterKey, id, token),
           folder_keys: folderKeys,
+          // Contract §1: every wrap here is L7 (a link exists only with custody).
+          format: 'l7',
         }
         if (labelEncrypted) body.label_encrypted = labelEncrypted
         if (input.expiresInHours !== null) body.expires_in_hours = input.expiresInHours
@@ -330,6 +350,8 @@ export async function createFolderLinkWithKeys(
           created = await ports.createFolderLink(body)
         } catch (err) {
           if (isIdTaken(err) && attempt < LINK_ID_ATTEMPTS) continue
+          // Contract §2: the folder needs the upgrade. Never re-sent, never legacy.
+          if (isUpgradeRequired(err)) throw new FolderNeedsUpgradeError(input.folderId)
           throw err
         }
         // The owner copies are bound to `id`: a server that stored another id
