@@ -14,20 +14,26 @@ const inv = (o: Record<string, unknown>) =>
 // named bad* "does not open".
 const blob = (k: string) => '0'.repeat(12) + k
 const enc = (s: string) => new TextEncoder().encode(s)
-const dec = (b: Uint8Array) => new TextDecoder().decode(b)
+const dec = (b: Uint8Array) => new TextDecoder().decode(b).replace(/\0+$/, '')
 
 function makePorts(invites: unknown[]) {
   const zeroized: Uint8Array[] = []
   const derives: number[] = []
   const ports = {
     getSentInvites: async () => invites as never,
+    getFolderKeys: async () => [{ file_id: 'C', encrypted_file_key: 'proof' }],
+    listFilesPage: async () => ({ files: [{ id: 'C', parent_id: 'F' } as never], next_cursor: null }),
+    unwrapInviteOwnerCopy: async () => { throw new Error('decryption failed') },
+    verifyLegacyFolderKey: async () => true,
     deriveFileKey: async () => {
       derives.push(1)
       return enc('wrapping')
     },
     decryptChunk: async (_k: Uint8Array, _n: Uint8Array, ct: Uint8Array) => {
       if (dec(ct).startsWith('bad')) throw new Error('decryption failed: ciphertext is invalid or key is wrong')
-      return enc(dec(ct))
+      const key = new Uint8Array(32)
+      key.set(enc(dec(ct)))
+      return key
     },
     fromBase64: (s: string) => enc(s),
     zeroize: (b: Uint8Array) => {
@@ -74,7 +80,7 @@ describe('findExistingFolderKey', () => {
     expect(await findExistingFolderKey(new Uint8Array(32), 'F', ports)).toBeNull()
   })
 
-  test('newest active blob wins over an older one (leftover wrap rows play no part)', async () => {
+  test('newest verified active blob wins over an older one', async () => {
     const { findExistingFolderKey } = await import('../src/lib/folder-share-crypto')
     const { ports } = makePorts([
       inv({ id: 'new', encrypted_owner_folder_key: blob('K2'), created_at: '2026-10-22T11:00:00Z' }),
@@ -94,20 +100,20 @@ describe('findExistingFolderKey', () => {
     expect(dec(r!.folderKey)).toBe('K5')
   })
 
-  test('abort: active blobs exist but none opens -> throws a short message, never null', async () => {
+  test('L9: active blobs exist but none opens -> null, the caller mints', async () => {
     const { findExistingFolderKey, FOLDER_KEY_UNVERIFIED } = await import('../src/lib/folder-share-crypto')
     expect(FOLDER_KEY_UNVERIFIED.length).toBeLessThanOrEqual(80)
     const none = makePorts([
       inv({ id: 'a', encrypted_owner_folder_key: blob('bad1') }),
       inv({ id: 'b', encrypted_owner_folder_key: blob('bad2'), status: 'claimed' }),
     ])
-    await expect(findExistingFolderKey(new Uint8Array(32), 'F', none.ports)).rejects.toThrow(FOLDER_KEY_UNVERIFIED)
+    expect(await findExistingFolderKey(new Uint8Array(32), 'F', none.ports)).toBeNull()
   })
 
-  test('P3-1: active invites exist but NONE has an owner blob -> abort, never mint', async () => {
+  test('L9: active invites with no owner blob provide no proof -> null', async () => {
     const { findExistingFolderKey, FOLDER_KEY_UNVERIFIED } = await import('../src/lib/folder-share-crypto')
     const { ports, derives } = makePorts([inv({ id: 'a' }), inv({ id: 'b', status: 'claimed', encrypted_owner_folder_key: '' })])
-    await expect(findExistingFolderKey(new Uint8Array(32), 'F', ports)).rejects.toThrow(FOLDER_KEY_UNVERIFIED)
+    expect(await findExistingFolderKey(new Uint8Array(32), 'F', ports)).toBeNull()
     expect(derives.length).toBe(0) // nothing to open: no wrapping key was derived
   })
 

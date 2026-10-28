@@ -131,3 +131,35 @@ describe('2255: owner proof before legacy folder key reuse', () => {
     expect(f.calls.minted).toBe(0)
   })
 })
+
+describe('2255: approval reads only a purpose-bound or verified legacy copy', () => {
+  test('opens a new owner copy without consulting legacy rows', async () => {
+    const { decryptOwnerFolderKey } = await import('../src/lib/folder-share-crypto')
+    const copy = wasm.wrapInviteOwnerCopy(master, folder, trueKey)
+    const f = fixture(copy)
+    f.ports.getSentInvites = async () => { throw new Error('legacy lookup forbidden') }
+    expect(Array.from(await decryptOwnerFolderKey(master, folder, copy, f.ports))).toEqual(Array.from(trueKey))
+  })
+
+  test('opens a verified legitimate legacy approval copy', async () => {
+    const { decryptOwnerFolderKey } = await import('../src/lib/folder-share-crypto')
+    const copy = legacyCopy(trueKey)
+    const f = fixture(copy)
+    expect(Array.from(await decryptOwnerFolderKey(master, folder, copy, f.ports))).toEqual(Array.from(trueKey))
+    expect(f.calls.proofs).toBe(1)
+  })
+
+  test('rejects a name blob at approval too', async () => {
+    const { decryptOwnerFolderKey } = await import('../src/lib/folder-share-crypto')
+    const copy = legacyCopy(name)
+    const f = fixture(copy)
+    await expect(decryptOwnerFolderKey(master, folder, copy, f.ports)).rejects.toThrow("Can't check this folder's key")
+  })
+
+  test('cannot substitute another invite key for the copy being approved', async () => {
+    const { decryptOwnerFolderKey } = await import('../src/lib/folder-share-crypto')
+    const copy = legacyCopy(name)
+    const f = fixture(wasm.wrapInviteOwnerCopy(master, folder, trueKey))
+    await expect(decryptOwnerFolderKey(master, folder, copy, f.ports)).rejects.toThrow("Can't check this folder's key")
+  })
+})

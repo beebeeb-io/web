@@ -49,14 +49,15 @@ describe('buildFolderInvite carries the id of the key it used', () => {
     expect(calls.sealed).toEqual(['K-first'])
   })
 
-  test('later invite: the REUSED key and its id, nothing minted, owner blob re-sent verbatim', async () => {
+  test('later invite: the REUSED key and its id, nothing minted, owner copy upgraded', async () => {
     const { buildFolderInvite } = await import('../src/lib/folder-share-crypto')
     const { ports, calls } = makeInvitePorts({ existing: { key: 'K-reused', blob: 'blob-1' }, minted: 'K-other' })
     const { payload } = await buildFolderInvite(new Uint8Array(32), 'F', undefined, ports)
     expect(calls.minted).toBe(0)
     expect(payload.folder_key_id).toBe(idB64('K-reused'))
     expect(payload.folder_key_id).not.toBe(idB64('K-other'))
-    expect(payload.encrypted_owner_folder_key).toBe('blob-1')
+    expect(payload.encrypted_owner_folder_key).toBe(btoa('sealed-K-reused'))
+    expect(calls.sealed).toEqual(['K-reused'])
     expect(payload.is_folder_share).toBe(true)
   })
 
