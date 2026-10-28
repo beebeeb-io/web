@@ -35,6 +35,7 @@ const {
   FolderSharePanelBody,
   memberRows,
   memberLabel,
+  missingMembersFallback,
 } = await import('../src/components/folder-share/folder-share-panel')
 const { createDisabledReason } = await import('../src/components/folder-share/create-link-form')
 const {
@@ -231,5 +232,17 @@ describe('the list (2237b)', () => {
     )
     expect(html).toContain('Create link')
     expect(html).toContain('20 links')
+  })
+})
+
+describe('a folder with no invites yet', () => {
+  test('treats the member-list 404 as "nobody yet" and keeps any other error', () => {
+    // Task 17 caught this in the browser: the member list 404s until the
+    // folder has one approved invite, and the panel was dying on it before the
+    // create form could render, so the owner could never mint the first link.
+    expect(missingMembersFallback({ status: 404 })).toEqual({ members: [], owner_id: '' })
+    expect(missingMembersFallback(new Error('not found'))).toBeNull()
+    expect(missingMembersFallback({ status: 500 })).toBeNull()
+    expect(missingMembersFallback(null)).toBeNull()
   })
 })

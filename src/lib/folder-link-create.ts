@@ -19,12 +19,12 @@ import {
   registerSharedFolderKey,
   type SharedFolderInfo,
 } from './api'
-import { fromBase64, generateShareToken, toBase64 } from './crypto'
+import { deriveFileKey, fromBase64, toBase64 } from './crypto'
 import {
   decryptOwnerFolderKey,
+  encryptAllChildrenKeys,
   encryptOwnerFolderKey,
   findExistingFolderKey,
-  generateFolderKey,
 } from './folder-share-crypto'
 import { encryptActorName } from './guest-actor-name'
 import {
@@ -36,6 +36,7 @@ import {
 import { buildFullShareLink } from './share-full-link'
 import {
   deriveLinkPassphraseKey,
+  generateFolderLinkToken,
   generateLinkKey,
   linkKeyFragment,
   linkUnwrapKey,
@@ -73,10 +74,14 @@ export interface CreateFolderLinkPorts {
   decryptOwnerFolderKey: typeof decryptOwnerFolderKey
   encryptOwnerFolderKey: typeof encryptOwnerFolderKey
   findExistingFolderKey: typeof findExistingFolderKey
-  generateFolderKey: typeof generateFolderKey
+  /** The folder's own deterministic key — the one its name and children use. */
+  deriveFileKey: typeof deriveFileKey
+  /** Wrap every child key in the subtree under the folder key. */
+  encryptAllChildrenKeys: typeof encryptAllChildrenKeys
   registerSharedFolderKey: typeof registerSharedFolderKey
   createFolderLink: typeof createFolderLink
-  generateShareToken: typeof generateShareToken
+  /** A fresh 32-byte link token, URL-safe base64 with no padding. */
+  generateShareToken: () => Promise<string>
   generateLinkKey: typeof generateLinkKey
   deriveLinkPassphraseKey: typeof deriveLinkPassphraseKey
   linkUnwrapKey: typeof linkUnwrapKey
@@ -99,10 +104,11 @@ export const REAL_FOLDER_LINK_PORTS: CreateFolderLinkPorts = {
   decryptOwnerFolderKey,
   encryptOwnerFolderKey,
   findExistingFolderKey,
-  generateFolderKey,
+  deriveFileKey,
+  encryptAllChildrenKeys,
   registerSharedFolderKey,
   createFolderLink,
-  generateShareToken,
+  generateShareToken: async () => generateFolderLinkToken(),
   generateLinkKey,
   deriveLinkPassphraseKey,
   linkUnwrapKey,
@@ -164,7 +170,11 @@ async function ensureOwnerFolderKey(
   const existing = await ports.findExistingFolderKey(masterKey, folderId)
   if (existing) return existing.folderKey
 
-  const folderKey = await ports.generateFolderKey()
+  // No custody and no invite: this is an ordinary folder of the owner's own
+  // drive, whose key IS deriveFileKey(masterKey, folderId) — the key its name
+  // and every child file key already derive from. Minting a random key here
+  // would publish a key that opens nothing the owner already stored.
+  const folderKey = await ports.deriveFileKey(masterKey, folderId)
   const wrapped = ports.toBase64(await ports.encryptOwnerFolderKey(masterKey, folderId, folderKey))
   try {
     await ports.registerSharedFolderKey(folderId, {
@@ -211,6 +221,11 @@ export async function createFolderLinkWithKeys(
       owner_wrapped_key: await ports.ownerWrappedFolderKey(input.masterKey, folderKey),
       owner_wrapped_token: await ports.ownerWrappedLinkToken(input.masterKey, token),
     }
+    // A guest can only read names and bytes for files whose key the owner has
+    // published under this folder key. Publishing happens once per subtree;
+    // the server keeps the first wrap and ignores later ones.
+    const folderKeys = await ports.encryptAllChildrenKeys(input.masterKey, folderKey, input.folderId)
+    if (folderKeys.length > 0) body.folder_keys = folderKeys
     if (input.label) body.label_encrypted = await ports.encryptLabel(folderKey, input.label)
     if (input.expiresInHours !== null) body.expires_in_hours = input.expiresInHours
     if (input.maxOpens !== null) body.max_opens = input.maxOpens

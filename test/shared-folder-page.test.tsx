@@ -16,7 +16,7 @@ await mockModuleScoped('../src/components/drive-layout', import.meta.dir, {
   DriveLayout: ({ children }: { children: unknown }) => createElement('div', null, children as never),
 })
 
-const { SharedFolderScreen } = await import('../src/pages/shared-folder')
+const { SharedFolderScreen, memberAccessLevel } = await import('../src/pages/shared-folder')
 const { writeErrorAction } = await import('../src/lib/member-write')
 const { ApiError } = await import('../src/lib/api')
 
@@ -136,5 +136,17 @@ describe('the page frame', () => {
     expect(html).toContain('big.zip')
     expect(html).toContain('42%')
     expect(html.indexOf('big.zip')).toBeLessThan(html.indexOf('note.txt'))
+  })
+})
+
+describe('member level fallback', () => {
+  test('custody wins when the folder has one', () => {
+    expect(memberAccessLevel({ access_level: 'edit' }, { permission: 'read' })).toBe('edit')
+  })
+
+  test('a legacy invite grants its own permission when custody 404s', () => {
+    expect(memberAccessLevel(null, { permission: 'add' })).toBe('add')
+    expect(memberAccessLevel(null, { permission: 'admin' })).toBe('view')
+    expect(memberAccessLevel(null, null)).toBe('view')
   })
 })

@@ -203,6 +203,11 @@ function FolderLinkBody(props: {
   const [queue, setQueue] = useState<GuestUploadTask[]>([])
   const [refresh, setRefresh] = useState(0)
   const siblingNames = useRef<Map<string, string>>(new Map())
+  const rememberNames = useCallback((parentId: string | null, names: string[]) => {
+    for (const name of names) {
+      siblingNames.current.set(`${parentId ?? 'root'}:${name.toLowerCase()}`, name)
+    }
+  }, [])
 
   return (
     <GuestShell title="Shared folder">
@@ -232,6 +237,7 @@ function FolderLinkBody(props: {
           level={props.level}
           proof={props.proof}
           rootName={props.root.root_name_encrypted}
+          onNames={rememberNames}
           onOpenFile={() => undefined}
           onPreview={() => undefined}
           refreshKey={refresh}

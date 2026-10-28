@@ -47,9 +47,10 @@ import {
 import { clearOfflineCaches, setOfflineCacheAccessCheck } from './offline-cache'
 import { clearThumbnailCache } from './thumbnail'
 import { cacheKeyPersistent, cacheKeySessionOnly } from './key-cache'
-import { listFolderLinks, listSharedFolderKeys, setRecoveryCheckIfAbsent, verifyRecoveryCheck } from './api'
+import { getFolderKeys, getSentInvites, listFolderLinks, listSharedFolderKeys, setRecoveryCheckIfAbsent, verifyRecoveryCheck } from './api'
 import type { DriveFile } from './api'
 import { folderKeyForRoot, openOwnerFile } from './owner-adoption'
+import { activeFolderInvites } from './folder-share-crypto'
 import { decryptActorName } from './guest-actor-name'
 import { useAuth } from './auth-context'
 import { isImpersonationSessionActive, shouldReconcileLock } from './impersonation-context'
@@ -617,13 +618,26 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     if (existing) return existing
     const keys = (async () => {
       const map = new Map<string, string>()
-      let cursor: string | null = null
-      do {
-        const page = await listSharedFolderKeys(folderId, { limit: 500, cursor })
-        for (const row of page.keys) map.set(row.file_id, row.encrypted_file_key)
-        cursor = page.next_cursor
-      } while (cursor)
-      return map
+      try {
+        let cursor: string | null = null
+        do {
+          const page = await listSharedFolderKeys(folderId, { limit: 500, cursor })
+          for (const row of page.keys) map.set(row.file_id, row.encrypted_file_key)
+          cursor = page.next_cursor
+        } while (cursor)
+        return map
+      } catch {
+        // A folder shared only through an invite has no custody row, so the
+        // owner's index lives on the sent invites instead. Their child keys
+        // are wrapped under the invite's folder key, the same one the member used.
+        const invites = activeFolderInvites(await getSentInvites(), folderId)
+        for (const invite of invites) {
+          for (const row of await getFolderKeys(invite.id)) {
+            if (!map.has(row.file_id)) map.set(row.file_id, row.encrypted_file_key)
+          }
+        }
+        return map
+      }
     })()
     const labels = (async () => {
       const map = new Map<string, string | null>()

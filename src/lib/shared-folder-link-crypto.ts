@@ -25,11 +25,44 @@ import type { FolderAccessLevel, Proof } from './folder-link-types'
 
 export const LINK_PASSPHRASE_SALT_LABEL = 'beebeeb-folder-link-passphrase-v1'
 
+/** Where a protected link's opened folder key waits out a reload. */
+export const FOLDER_KEY_CACHE_PREFIX = 'beebeeb.folderLink.key.'
+
+function cacheFolderKey(token: string, folderKey: Uint8Array): void {
+  try {
+    sessionStorage.setItem(FOLDER_KEY_CACHE_PREFIX + token, toBase64(folderKey))
+  } catch {
+    // Private mode: the next reload asks for the passphrase again.
+  }
+}
+
+function readCachedFolderKey(token: string): Uint8Array | null {
+  try {
+    const stored = sessionStorage.getItem(FOLDER_KEY_CACHE_PREFIX + token)
+    if (!stored) return null
+    const bytes = fromBase64(stored)
+    return bytes.length === SECRET_BYTES ? bytes : null
+  } catch {
+    return null
+  }
+}
+
 const SECRET_BYTES = 32
 
 /** 32 random bytes; the link secret that never reaches the server. */
 export function generateLinkKey(): Uint8Array {
   return crypto.getRandomValues(new Uint8Array(SECRET_BYTES))
+}
+
+/**
+ * The link's own token: 32 random bytes, URL-safe base64 with no padding.
+ *
+ * `generateShareToken()` is the 20-byte file-share shape (27 chars) and the
+ * folder-link route rejects it with 400 — a folder link guards a whole tree,
+ * so the route pins 32 bytes (found by the Task 17 browser run).
+ */
+export function generateFolderLinkToken(): string {
+  return toBase64url(crypto.getRandomValues(new Uint8Array(SECRET_BYTES)))
 }
 
 /** The `#key=` fragment value (base64url, no padding). */
@@ -158,11 +191,24 @@ export async function resolveGuestFolderKey(
       root.wrapped_folder_key,
       await linkUnwrapKey(kc, passphraseStretch),
     )
+    // A protected link's wrap needs the passphrase stretch. Keeping the opened
+    // key in sessionStorage for the proof's lifetime is what lets a reload
+    // carry on without asking again (the proof alone cannot unwrap it).
+    if (root.passphrase_protected) cacheFolderKey(token, folderKey)
     return {
       kind: 'unlocked',
       value: { folderKey, keyVersion: root.key_version, level: root.access_level },
     }
   } catch {
+    if (root.passphrase_protected) {
+      const cached = readCachedFolderKey(token)
+      if (cached) {
+        return {
+          kind: 'unlocked',
+          value: { folderKey: cached, keyVersion: root.key_version, level: root.access_level },
+        }
+      }
+    }
     return { kind: 'not_available' }
   }
 }

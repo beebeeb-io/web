@@ -94,10 +94,13 @@ describe('resolveFolderLink (2237b)', () => {
 })
 
 describe('listFolderItems (2237b)', () => {
-  test('sends parent_id and the default limit, and no proof header without a proof', async () => {
+  test('omits parent_id at the link root and sends the default limit, with no proof header', async () => {
+    // An empty parent_id is not a Uuid, so axum rejects the whole query with
+    // 400 — the guest listing died on exactly that in the Task 17 run.
     next = () => Response.json({ items: [], next_cursor: null })
     await listFolderItems('tok', { parentId: null })
-    expect(calls[0].url).toContain('/api/v1/f/tok/items?parent_id=&limit=200')
+    expect(calls[0].url).toContain('/api/v1/f/tok/items?limit=200')
+    expect(calls[0].url).not.toContain('parent_id')
     expect(headersOf()['x-folder-link-proof']).toBeUndefined()
   })
 

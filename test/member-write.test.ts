@@ -170,6 +170,17 @@ describe('memberUploadFiles', () => {
     expect(progress).toEqual(['note.txt'])
   })
 
+  test('a top-level upload lands inside the shared folder, not the member drive', async () => {
+    uploadCalls.length = 0
+    await memberUploadFiles(
+      context('add'),
+      null,
+      [new File([new Uint8Array(5)], 'root.txt', { type: 'text/plain' })],
+      () => undefined,
+    )
+    expect(uploadCalls[0].args[4]).toBe(FOLDER_ID)
+  })
+
   test('a failed file is counted and does not stop the batch', async () => {
     uploadCalls.length = 0
     uploadFails = 1

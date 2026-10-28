@@ -12,7 +12,11 @@
  */
 import { decryptChunk, deriveFileKey, encryptChunk, fromBase64, toBase64, zeroize } from './crypto'
 import { adoptOwnerFileKey, getFile, getSharedFolder } from './api'
-import { decryptChildFileKey, decryptOwnerFolderKey } from './folder-share-crypto'
+import {
+  decryptChildFileKey,
+  decryptOwnerFolderKey,
+  findExistingFolderKey,
+} from './folder-share-crypto'
 
 export interface AdoptableFile {
   id: string
@@ -82,18 +86,44 @@ export async function unwrapOwnerFileKey(
  * (`shared_folders.owner_wrapped_folder_key`). Null when this client has no
  * copy — a member before the owner has registered one, or a folder that is
  * gone.
+ *
+ * With no custody record the folder is the viewer's own (custody only exists
+ * once a folder is shared), and its key is the deterministic key every folder
+ * in this vault is created with, so deriving it keeps the owner able to open
+ * rows that arrived through an invite-only share.
  */
 export async function folderKeyForRoot(
   masterKey: Uint8Array,
   folderId: string,
 ): Promise<Uint8Array | null> {
+  let wrapped: string | null | undefined
   try {
     const custody = await getSharedFolder(folderId)
-    const wrapped = custody?.owner_wrapped_folder_key
-    if (!wrapped) return null
-    const bytes = fromBase64(wrapped)
-    if (bytes.length <= 12) return null
-    return await decryptOwnerFolderKey(masterKey, folderId, bytes)
+    wrapped = custody?.owner_wrapped_folder_key
+  } catch {
+    wrapped = undefined
+  }
+  if (wrapped) {
+    try {
+      const bytes = fromBase64(wrapped)
+      if (bytes.length <= 12) return null
+      return await decryptOwnerFolderKey(masterKey, folderId, bytes)
+    } catch {
+      return null
+    }
+  }
+  // A folder shared only through an invite has no custody row; the owner's
+  // copy of a minted folder key lives in that invite's `encrypted_owner_folder_key`.
+  // Recovering it first keeps this client on the same key the member used.
+  try {
+    const existing = await findExistingFolderKey(masterKey, folderId)
+    if (existing) return existing.folderKey
+  } catch {
+    /* no invite opened with this master key — fall back to the derived key */
+  }
+  try {
+    const derived = await deriveFileKey(masterKey, folderId)
+    return derived
   } catch {
     return null
   }

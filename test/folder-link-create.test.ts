@@ -97,8 +97,10 @@ function fakePorts(overrides: Partial<CreateFolderLinkPorts> = {}) {
       calls.push({ name: 'findExistingFolderKey' })
       return null
     },
-    generateFolderKey: async () => {
-      calls.push({ name: 'generateFolderKey' })
+    deriveFileKey: async (masterKey: Uint8Array, fileId: string) => {
+      calls.push({ name: 'deriveFileKey' })
+      void masterKey
+      void fileId
       return FOLDER_KEY
     },
     registerSharedFolderKey: async (folderId, body) => {
@@ -128,6 +130,10 @@ function fakePorts(overrides: Partial<CreateFolderLinkPorts> = {}) {
         owner_wrapped_key: null,
         owner_wrapped_token: null,
       } as never
+    },
+    encryptAllChildrenKeys: async (_masterKey: Uint8Array, folderKey: Uint8Array, folderId: string) => {
+      calls.push({ name: 'encryptAllChildrenKeys', arg: { folderId, folderKey } })
+      return [{ file_id: 'file-1', encrypted_file_key: 'enc-child-1' }]
     },
     generateShareToken: async () => 'tok_2237b',
     ...linkCrypto,
@@ -160,8 +166,9 @@ describe('folder-link-create — custody order (2237b)', () => {
     expect(names(calls)).toEqual([
       'getSharedFolder',
       'findExistingFolderKey',
-      'generateFolderKey',
+      'deriveFileKey',
       'registerSharedFolderKey',
+      'encryptAllChildrenKeys',
       'createFolderLink',
     ])
     const register = calls.find((c) => c.name === 'registerSharedFolderKey')?.arg as {
@@ -186,7 +193,7 @@ describe('folder-link-create — custody order (2237b)', () => {
     await createFolderLinkWithKeys(baseInput(), ports)
 
     expect(names(calls)).not.toContain('registerSharedFolderKey')
-    expect(names(calls)).not.toContain('generateFolderKey')
+    expect(names(calls)).not.toContain('deriveFileKey')
     expect(names(calls)).toContain('decryptOwnerFolderKey')
   })
 
@@ -220,6 +227,22 @@ describe('folder-link-create — the link itself (2237b)', () => {
     expect(body.token).toBe('tok_2237b')
     expect(body.owner_wrapped_key).toBe('owner-folder-wrap')
     expect(body.owner_wrapped_token).toBe('owner-token-wrap')
+  })
+
+  test('a link publishes the subtree child keys the guest needs', async () => {
+    const { ports, calls } = fakePorts()
+    await createFolderLinkWithKeys(baseInput(), ports)
+
+    const body = calls.find((c) => c.name === 'createFolderLink')?.arg as {
+      folder_keys?: { file_id: string; encrypted_file_key: string }[]
+    }
+    expect(body.folder_keys).toEqual([{ file_id: 'file-1', encrypted_file_key: 'enc-child-1' }])
+    const encrypt = calls.find((c) => c.name === 'encryptAllChildrenKeys')?.arg as {
+      folderId: string
+      folderKey: Uint8Array
+    }
+    expect(encrypt.folderId).toBe(FOLDER_ID)
+    expect(Array.from(encrypt.folderKey)).toEqual(Array.from(FOLDER_KEY))
   })
 
   test('a plain link opens with K_c alone', async () => {

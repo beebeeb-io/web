@@ -52,7 +52,15 @@ await mockModuleScoped('../src/lib/crypto', import.meta.dir, {
   readNameMetadata: async (key: Uint8Array, serialized: string) => {
     const parsed = JSON.parse(serialized) as { nonce: number[]; ciphertext: number[] }
     const plain = await open(key, Uint8Array.from(parsed.nonce), Uint8Array.from(parsed.ciphertext))
-    return { name: new TextDecoder().decode(plain), mimeType: null }
+    const text = new TextDecoder().decode(plain)
+    // Real records are JSON name metadata; a bare string is a legacy name.
+    try {
+      const meta = JSON.parse(text) as { name?: string; mime_type?: string | null }
+      if (typeof meta.name === 'string') return { name: meta.name, mimeType: meta.mime_type ?? null }
+    } catch {
+      // fall through
+    }
+    return { name: text, mimeType: null }
   },
   encryptFileMetadata: async (key: Uint8Array, name: string, mimeType?: string | null) => {
     const json = JSON.stringify({ name, mime_type: mimeType ?? null })
@@ -89,6 +97,7 @@ const {
   encryptActorName,
   readActorName,
   storeActorName,
+  storeActorNameSkipped,
 } = await import('../src/lib/guest-actor-name')
 
 type UploadCall = { url: string; proof: string | null; form: FormData }
@@ -330,5 +339,11 @@ describe('actor name', () => {
 
   test('readActorName is null when nothing was stored', async () => {
     expect(await readActorName('folder-2', FOLDER_KEY)).toBeNull()
+  })
+
+  test('a skipped prompt stays remembered as empty, not as never asked', async () => {
+    storeActorNameSkipped('folder-3')
+    expect(await readActorName('folder-3', FOLDER_KEY)).toBe('')
+    expect(localStorage.getItem(ACTOR_NAME_STORAGE_PREFIX + 'folder-3')).toBe('')
   })
 })

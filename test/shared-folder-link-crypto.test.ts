@@ -175,6 +175,41 @@ describe('resolveGuestFolderKey (2237b)', () => {
     expect(await resolveGuestFolderKey('tok', null)).toEqual({ kind: 'not_available' })
   })
 
+  test('a protected link keeps its opened key so a reload does not ask again', async () => {
+    ;(globalThis as unknown as { location: { hash: string } }).location.hash =
+      `#key=${linkKeyFragment(KC)}`
+    const folderKey = new Uint8Array(32).fill(0x11)
+    const wrap = await wrapFolderKeyForLink(folderKey, await linkUnwrapKey(KC, STRETCH))
+    next = () =>
+      Response.json({
+        folder_id: 'folder',
+        root_name_encrypted: 'enc',
+        access_level: 'view',
+        label_encrypted: null,
+        expires_at: null,
+        passphrase_protected: true,
+        wrapped_folder_key: wrap,
+        key_version: 1,
+        cap_bytes: null,
+        cap_used_bytes: 0,
+      })
+
+    const first = await resolveGuestFolderKey('tok', null, STRETCH)
+    expect(first.kind).toBe('unlocked')
+
+    // A reload has the proof but not the passphrase stretch: the key cached
+    // under sessionStorage is the only thing that opens the wrap.
+    const second = await resolveGuestFolderKey('tok', null, null)
+    expect(second.kind).toBe('unlocked')
+    if (second.kind === 'unlocked') {
+      expect(Array.from(second.value.folderKey)).toEqual(Array.from(folderKey))
+    }
+    // Proof that the wrap alone cannot be opened with K_c: a plain K_c unwrap
+    // of the same blob is a different key, so the cache is doing the work.
+    const plain = await unwrapFolderKeyFromLink(wrap, await linkUnwrapKey(KC, null)).catch(() => null)
+    expect(plain === null || Array.from(plain).join() !== Array.from(folderKey).join()).toBe(true)
+  })
+
   test('a missing fragment key is not_available before any request', async () => {
     expect(await resolveGuestFolderKey('tok', null)).toEqual({ kind: 'not_available' })
     expect(calls.length).toBe(0)

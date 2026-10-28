@@ -85,6 +85,19 @@ export function memberLabel(row: ShareMemberRow): string {
   return row.isOwner ? 'You (owner)' : row.email
 }
 
+/**
+ * The member list answers 404 until the folder has its first approved invite,
+ * so "no invites yet" must read as an empty list, not as a panel failure —
+ * otherwise the owner never sees the create form for the FIRST link (caught by
+ * the Task 17 browser run). Every other error still surfaces.
+ */
+export function missingMembersFallback(
+  err: unknown,
+): { members: ShareMemberRow[]; owner_id: string } | null {
+  const status = (err as { status?: unknown } | null | undefined)?.status
+  return status === 404 ? { members: [], owner_id: '' } : null
+}
+
 export function FolderSharePanelBody({
   folderName,
   members,
@@ -200,7 +213,11 @@ function FolderSharePanelLive({ open, folderId, folderName, onClose }: FolderSha
     void (async () => {
       try {
         const [memberResponse, linkRows, custody] = await Promise.all([
-          getFolderMembers(folderId),
+          getFolderMembers(folderId).catch((err) => {
+            const empty = missingMembersFallback(err)
+            if (empty) return empty
+            throw err
+          }),
           listFolderLinks(folderId),
           getSharedFolder(folderId).catch(() => null),
         ])

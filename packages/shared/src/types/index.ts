@@ -389,6 +389,8 @@ export interface ShareInvite {
   is_folder_share?: boolean
   encrypted_folder_key?: string
   encrypted_owner_folder_key?: string
+  /** The grant the server enforces (read | add | write | admin). */
+  permission?: string
 }
 
 export interface InviteActivity {

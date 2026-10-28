@@ -100,10 +100,11 @@ export async function describeGuestItem(
   folderKey: Uint8Array,
 ): Promise<GuestNode> {
   try {
-    const fileKey =
-      item.is_folder || !item.wrapped_file_key
-        ? null
-        : await decryptChildFileKey(folderKey, item.wrapped_file_key)
+    const fileKey = item.wrapped_file_key
+      ? await decryptChildFileKey(folderKey, item.wrapped_file_key)
+      : null
+    // Every item's name is sealed under its OWN key — a child folder included,
+    // so a guest needs the wrap the owner published for it just like a file.
     const meta = await decryptFileMetadata(fileKey ?? folderKey, item.name_encrypted)
     return { item, name: meta.name, fileKey, mimeType: meta.mimeType }
   } catch {
@@ -161,6 +162,11 @@ export function useGuestListing(args: {
   pageSize?: number
   /** Bumped by the page after an upload to re-read the first page. */
   refreshKey?: number
+  /**
+   * Reports the names visible in the current folder so the upload engine can
+   * apply the owner-style " (2)" suffix instead of creating a duplicate name.
+   */
+  onNames?: (parentId: string | null, names: string[]) => void
 }): GuestListing {
   const pageSize = args.pageSize ?? 200
   const [nodes, setNodes] = useState<GuestNode[]>([])
@@ -196,6 +202,12 @@ export function useGuestListing(args: {
       live = false
     }
   }, [args.token, args.folderKey, args.parentId, args.proof?.proof, pageSize, args.refreshKey])
+
+  useEffect(() => {
+    if (!args.onNames || nodes.length === 0) return
+    const names = nodes.map((node) => node.name).filter((name): name is string => name !== null)
+    args.onNames(args.parentId, names)
+  }, [nodes, args.parentId, args.onNames])
 
   const [loadingMore, setLoadingMore] = useState(false)
   const loadMore = useCallback(() => {

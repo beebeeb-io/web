@@ -49,6 +49,7 @@ export function GuestBrowser(props: {
   onOpenFile: (node: GuestNode) => void
   onPreview: (node: GuestNode) => void
   refreshKey?: number
+  onNames?: (parentId: string | null, names: string[]) => void
 }) {
   const [stack, setStack] = useState<Crumb[]>([{ id: null, name: 'Shared folder' }])
   const parentId = stack[stack.length - 1]?.id ?? null
@@ -58,6 +59,7 @@ export function GuestBrowser(props: {
     parentId,
     proof: props.proof,
     refreshKey: props.refreshKey,
+    onNames: props.onNames,
   })
   const [view, setView] = useState<GuestViewMode>(readGuestView)
   const [sort, setSort] = useState<GuestSortKey>(readGuestSort)
@@ -143,6 +145,10 @@ export function GuestBrowser(props: {
     }
   }, [props.token, props.folderKey, props.proof?.proof])
 
+  // An index with no entries has never been written for this folder; the
+  // listing walk is the honest source (and is bounded inside the searcher).
+  const usableIndex = indexCount > 0 ? index : null
+
   // A term filters the folder body. The index answers when it loaded; the
   // listing walk is the bounded fallback inside `searchGuestFolder`.
   useEffect(() => {
@@ -155,7 +161,7 @@ export function GuestBrowser(props: {
     setSearchBusy(true)
     void searchGuestFolder({
       term,
-      index,
+      index: usableIndex,
       folderKey: props.folderKey,
       entryCount: indexCount,
       listAll: async () => {

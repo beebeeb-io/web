@@ -61,6 +61,12 @@ export interface CreateFolderLinkRequest {
   owner_wrapped_key?: string
   owner_wrapped_token?: string
   token?: string
+  /**
+   * Child file keys wrapped under the folder key. The public listing can only
+   * give a guest the keys the owner published, so the first link carries the
+   * whole subtree's wraps (server writes them once, never replacing).
+   */
+  folder_keys?: { file_id: string; encrypted_file_key: string }[]
 }
 
 export interface UpdateFolderLinkRequest {
@@ -140,7 +146,8 @@ export interface PublicFolderRoot {
   access_level: FolderAccessLevel
   label_encrypted: string | null
   expires_at: string | null
-  passphrase_protected: false
+  /** True when this link needs a passphrase before its wrap opens. */
+  passphrase_protected: boolean
   wrapped_folder_key: string
   key_version: number
   cap_bytes: number | null

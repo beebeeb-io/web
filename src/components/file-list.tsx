@@ -9,6 +9,7 @@ import { getBadgeStyle } from '../lib/file-colors'
 import { ContextMenu } from './context-menu'
 import { FileRowSkeleton } from '@beebeeb/shared'
 import { useKeys } from '../lib/key-context'
+import { useAuth } from '../lib/auth-context'
 import { decryptManyNames, encryptFilename, serializeEncryptedBlob } from '../lib/crypto'
 import { onDecrypted } from '../lib/decrypt-events'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
@@ -97,6 +98,19 @@ function dateGroup(dateStr: string): string {
 }
 
 // ─── Props ───────────────────────────────────────────
+
+/**
+ * True when the row was added by a different account than the viewer — a member
+ * upload into a shared folder (task 2237b). Such rows carry no usable
+ * master-key derivation for the viewer, so their names open through the
+ * folder-key wrap instead.
+ */
+export function addedBySomeoneElse(
+  file: { uploaded_by?: string | null },
+  viewerId: string | null,
+): boolean {
+  return !!file.uploaded_by && !!viewerId && file.uploaded_by !== viewerId
+}
 
 export interface FileListProps {
   files: DriveFile[]
@@ -205,7 +219,8 @@ export function FileList({
   parentId,
   onRefresh,
 }: FileListProps) {
-  const { getFileKey, getFileKeyForFile, isUnlocked } = useKeys()
+  const { getFileKey, getFileKeyForFile, getFileKeyForSharedFile, isUnlocked } = useKeys()
+  const { user } = useAuth()
   const { showToast } = useToast()
 
   // ─── Active-share lookup ───────────────────────────
@@ -327,7 +342,14 @@ export function FileList({
         return { id: file.id, status: 'plaintext', name: file.name_encrypted }
       }
       try {
-        const fileKey = await getFileKeyForFile(file)
+        // A file another person added to a shared folder is sealed under ITS
+        // author's file key (derived from that person's master key), which this
+        // account cannot derive. The owner opens it through the folder-key
+        // wrap in `shared_folder_keys` instead (task 2237b).
+        const sharedAdded = !!parentId && addedBySomeoneElse(file, user?.user_id ?? null)
+        const fileKey = sharedAdded
+          ? (await getFileKeyForSharedFile(file, parentId)) ?? (await getFileKeyForFile(file))
+          : await getFileKeyForFile(file)
         return { id: file.id, status: 'ok', fileKey, nameEncrypted: file.name_encrypted }
       } catch (err) {
         return { id: file.id, status: 'error', error: err }

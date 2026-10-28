@@ -147,7 +147,9 @@ export async function listFolderItems(
     )
   }
   const query = new URLSearchParams()
-  query.set('parent_id', params.parentId ?? '')
+  // The link root has no parent id, and `?parent_id=` is not a Uuid: sending an
+  // empty value makes axum reject the whole query with 400.
+  if (params.parentId) query.set('parent_id', params.parentId)
   query.set('limit', String(limit))
   if (params.cursor) query.set('cursor', params.cursor)
   return guestJson<PublicFolderPage>(token, `/items?${query.toString()}`, { proof })

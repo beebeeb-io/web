@@ -14,7 +14,7 @@ import {
   type GuestUploadState,
   type GuestUploadTask,
 } from '../../lib/guest-upload'
-import { readActorName, storeActorName } from '../../lib/guest-actor-name'
+import { readActorName, storeActorName, storeActorNameSkipped } from '../../lib/guest-actor-name'
 import { ActorNamePrompt } from './actor-name-prompt'
 
 /** The panel does not exist for a view-only link. */
@@ -68,19 +68,25 @@ export function GuestUploadPanel(props: {
   const [rows, setRows] = useState<Map<string, GuestUploadState>>(new Map())
   const [busy, setBusy] = useState(false)
   const [promptOpen, setPromptOpen] = useState(false)
-  const [asked, setAsked] = useState(false)
-  const [storedName, setStoredName] = useState<string | null>(null)
   const pending = useRef<GuestUploadTask[]>([])
+  // The stored name is read from localStorage asynchronously; a drop that
+  // arrives before the read resolves must not be mistaken for a first visit
+  // and pop the prompt again on every reload.
+  const nameRead = useRef<Promise<void>>(Promise.resolve())
+  const storedNameRef = useRef<string | null>(null)
+  const askedRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!visible) return
     let live = true
-    void readActorName(props.folderId, props.folderKey).then((name) => {
-      if (!live) return
-      setStoredName(name)
-      if (name !== null) setAsked(true)
-    })
+    nameRead.current = readActorName(props.folderId, props.folderKey)
+      .then((name) => {
+        if (!live) return
+        storedNameRef.current = name
+        if (name !== null) askedRef.current = true
+      })
+      .catch(() => undefined)
     return () => {
       live = false
     }
@@ -135,15 +141,24 @@ export function GuestUploadPanel(props: {
     (tasks: GuestUploadTask[]) => {
       if (!visible || tasks.length === 0) return
       props.setQueue(tasks)
-      if (shouldAskActorName({ level: props.level, storedName, asked })) {
-        // No request is made before the guest answers.
-        pending.current = tasks
-        setPromptOpen(true)
-        return
-      }
-      void run(tasks, null)
+      void (async () => {
+        await nameRead.current
+        if (
+          shouldAskActorName({
+            level: props.level,
+            storedName: storedNameRef.current,
+            asked: askedRef.current,
+          })
+        ) {
+          // No request is made before the guest answers.
+          pending.current = tasks
+          setPromptOpen(true)
+          return
+        }
+        await run(tasks, null)
+      })()
     },
-    [visible, props, storedName, asked, run],
+    [visible, props, run],
   )
 
   const nameBrowse = useBrowseFiles((files) => start(tasksFromFiles(files)))
@@ -159,15 +174,15 @@ export function GuestUploadPanel(props: {
         open={promptOpen}
         onSubmit={(name) => {
           setPromptOpen(false)
-          setAsked(true)
-          setStoredName(name)
+          askedRef.current = true
           void storeActorName(props.folderId, props.folderKey, name).then((encrypted) => {
             void run(pending.current, encrypted)
           })
         }}
         onSkip={() => {
           setPromptOpen(false)
-          setAsked(true)
+          askedRef.current = true
+          storeActorNameSkipped(props.folderId)
           void run(pending.current, null)
         }}
       />

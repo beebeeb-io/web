@@ -17,6 +17,12 @@ const FOLDER_ID = '11111111-1111-4111-8111-111111111111'
 const FOLDER_KEY = new Uint8Array(32).fill(0x5a)
 const FILE_KEY = new Uint8Array(32).fill(0x11)
 
+let inviteFolderKey: { folderKey: Uint8Array; encryptedOwnerFolderKeyB64: string } | null = null
+await mockModuleScoped('../src/lib/folder-share-crypto', import.meta.dir, (r) => ({
+  ...r,
+  findExistingFolderKey: async () => inviteFolderKey,
+}))
+
 /** Every POST /files/{id}/owner-key this file's fake API saw. */
 const adoptCalls: Array<{ fileId: string; wrapped: string }> = []
 let adoptResult: { adopted: boolean } = { adopted: true }
@@ -81,9 +87,30 @@ function seedFile() {
   }
 }
 
-const { needsOwnership, adoptGuestFile, resolveSharedFileKey, openOwnerFile, unwrapOwnerFileKey } = await import(
+const { needsOwnership, adoptGuestFile, resolveSharedFileKey, openOwnerFile, unwrapOwnerFileKey, folderKeyForRoot } =
+  await import(
   '../src/lib/owner-adoption'
 )
+
+describe('folderKeyForRoot', () => {
+  test('an invite-only folder with no custody record still opens with its own derived key', async () => {
+    custody = null
+    const key = await folderKeyForRoot(MASTER, FOLDER_ID)
+    expect(key).not.toBeNull()
+    expect(Array.from(key!)).toEqual(Array.from(wasm.derive_file_key(MASTER, encoder.encode(FOLDER_ID))))
+  })
+
+  test('an invite-only folder opens with the key the sent invite carries', async () => {
+    custody = null
+    inviteFolderKey = { folderKey: FOLDER_KEY, encryptedOwnerFolderKeyB64: 'x' }
+    try {
+      const key = await folderKeyForRoot(MASTER, FOLDER_ID)
+      expect(Array.from(key!)).toEqual(Array.from(FOLDER_KEY))
+    } finally {
+      inviteFolderKey = null
+    }
+  })
+})
 
 describe('needsOwnership', () => {
   test('a guest or member row needs owning, a plain row does not', () => {

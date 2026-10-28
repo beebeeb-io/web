@@ -38,9 +38,12 @@ await mockModuleScoped('../src/lib/folder-share-crypto', import.meta.dir, {
 })
 
 await mockModuleScoped('../src/lib/crypto', import.meta.dir, {
-  decryptFileMetadata: async (_key: Uint8Array, nameEncrypted: string) => {
+  decryptFileMetadata: async (key: Uint8Array, nameEncrypted: string) => {
     if (nameEncrypted === 'bad') throw new Error('metadata failed')
-    return { name: nameEncrypted.replace(/^enc:/, ''), mimeType: 'text/plain' }
+    // `child:` names were sealed under the child's own key, so decrypting them
+    // with anything else must fail — that is how a guest sees a name at all.
+    if (nameEncrypted.startsWith('child:') && key[0] !== 7) throw new Error('wrong key')
+    return { name: nameEncrypted.replace(/^(enc:|child:)/, ''), mimeType: 'text/plain' }
   },
 })
 
@@ -209,12 +212,22 @@ describe('unreadable rows', () => {
     expect(html).toContain('disabled')
   })
 
-  test('a readable folder decrypts with the folder key and is clickable', async () => {
+  test('a folder decrypts with its own wrapped key, like a file', async () => {
     const node = await describeGuestItem(
-      item({ id: 'd', is_folder: true, name_encrypted: 'enc:Receipts', wrapped_file_key: null }),
+      item({ id: 'd', is_folder: true, name_encrypted: 'child:Receipts', wrapped_file_key: 'wrap' }),
       new Uint8Array(32),
     )
     expect(node.name).toBe('Receipts')
+    expect(node.fileKey).not.toBeNull()
+    expect(isNodeClickable(node)).toBe(true)
+  })
+
+  test('a folder with no published wrap falls back to the folder key', async () => {
+    const node = await describeGuestItem(
+      item({ id: 'd', is_folder: true, name_encrypted: 'enc:Legacy', wrapped_file_key: null }),
+      new Uint8Array(32),
+    )
+    expect(node.name).toBe('Legacy')
     expect(node.fileKey).toBeNull()
     expect(isNodeClickable(node)).toBe(true)
   })

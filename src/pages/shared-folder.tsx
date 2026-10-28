@@ -30,6 +30,19 @@ import { resolveRecipientFolderKey } from '../lib/recipient-folder-key'
 import { encryptedDownload } from '../lib/encrypted-download'
 import { formatBytes } from '../lib/format'
 
+/**
+ * The level a member page may offer. Custody is authoritative when the folder
+ * has one; a legacy invite predates it, so its `permission` is the next best
+ * evidence and the server still makes the final call on every write.
+ */
+export function memberAccessLevel(
+  shared: { access_level: string } | null,
+  invite: { permission?: string } | null,
+): FolderAccessLevel {
+  if (shared) return parseFolderAccessLevel(shared.access_level)
+  return parseFolderAccessLevel(invite?.permission)
+}
+
 export interface SharedFolderRow {
   file: DriveFile
   name: string
@@ -337,6 +350,10 @@ export function SharedFolder() {
       if (shared) {
         setRole(shared.role)
         setLevel(parseFolderAccessLevel(shared.access_level))
+      } else if (inv) {
+        // A legacy folder invite predates the custody row, so the custody route
+        // 404s; the invite itself carries the grant the server enforces.
+        setLevel(memberAccessLevel(null, inv))
       }
 
       let fk = folderKeyCache
@@ -426,13 +443,13 @@ export function SharedFolder() {
         setRole(fresh.role)
         setLevel(parseFolderAccessLevel(fresh.access_level))
       } catch {
-        setLevel('view')
+        setLevel(memberAccessLevel(null, invite))
       }
       setActionError("You don't have permission to change this folder.")
       return
     }
     setActionError(err instanceof Error ? err.message : 'That change did not go through.')
-  }, [folderId])
+  }, [folderId, invite])
 
   const handleUpload = useCallback(async (picked: File[]) => {
     if (!memberContext || picked.length === 0) return

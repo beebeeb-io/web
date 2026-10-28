@@ -58,11 +58,22 @@ export async function storeActorName(
   return encrypted
 }
 
+/**
+ * A skipped prompt is remembered too: an empty value means "this browser was
+ * already asked and chose to stay anonymous", which is different from "never
+ * asked" (no value at all).
+ */
+export function storeActorNameSkipped(folderId: string): void {
+  storageSet(ACTOR_NAME_STORAGE_PREFIX + folderId, '')
+}
+
 export async function readActorName(
   folderId: string,
   folderKey: Uint8Array,
 ): Promise<string | null> {
   const stored = storageGet(ACTOR_NAME_STORAGE_PREFIX + folderId)
-  if (!stored) return null
-  return decryptActorName(folderKey, stored)
+  if (stored === null) return null
+  if (stored === '') return ''
+  const name = await decryptActorName(folderKey, stored)
+  return name ?? ''
 }

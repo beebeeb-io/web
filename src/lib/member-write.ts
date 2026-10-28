@@ -98,7 +98,9 @@ export async function memberUploadFiles(
         fileId,
         fileKey,
         ctx.masterKey,
-        parentId ?? undefined,
+        // The shared folder's own id is the root parent: a member uploading at
+        // the top level must land inside the folder, never in their own drive.
+        parentId ?? ctx.folderId,
         (p) => onProgress(file.name, p),
         undefined,
         sharedFolderContext,
