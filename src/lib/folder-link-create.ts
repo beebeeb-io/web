@@ -148,7 +148,8 @@ export const REAL_FOLDER_LINK_PORTS: CreateFolderLinkPorts = {
   sealFolderCustody: (...a) => sealFolderCustody(...a),
   hasActiveLegacyInvites: async (folderId) => activeFolderInvites(await getSentInvites(), folderId).length > 0,
   // Web #199: "needs the upgrade" runs the upgrade. Its one key source is a
-  // proven key, so until task 2255 lands it refuses with FOLDER_KEY_UNVERIFIED.
+  // key core proves (task 2255); without proof it refuses with
+  // FOLDER_KEY_UNVERIFIED and writes nothing.
   upgradeLegacyFolder: (folderId, masterKey) => createCustodyUpgrade()(folderId, masterKey),
   generateFolderKey: () => generateFolderKey(),
   deriveFileKey: (...a) => deriveFileKey(...a),
@@ -222,11 +223,12 @@ export async function ensureOwnerFolderKey(
   // because the server now says "no record".
   assertNeverSawCustody(folderId)
 
-  // No custody row yet. rv-web198c P1-2: custody is NEVER seeded from a
+  // No custody row yet. rv-web198c P1-2: fresh custody is NEVER seeded from a
   // legacy invite's owner copy. That copy is opened under the folder-name key,
   // so a server can pass the folder's own name blob off as one, and the name
-  // JSON would become the permanent folder key (task [P1] 2255 lands a core
-  // verifier with proof of possession; until then nothing is seeded).
+  // JSON would become the permanent folder key. A folder that has such a copy
+  // goes through the upgrade below, whose only key source is core's proof
+  // (task 2255).
   // Contract §2 (rv-web198d P1-3): a folder that already has legacy rows gets
   // no fresh custody: the server refuses with 409 upgrade_required, whatever
   // its invites' status, and active flag-off invites are refused here first.

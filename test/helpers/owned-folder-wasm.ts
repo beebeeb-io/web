@@ -40,6 +40,18 @@ export function ownedFolderCrypto() {
       w.wrapOwnerFileKey(masterKey, itemId, fileKey) as Uint8Array,
     unwrapOwnerFileKey: async (masterKey: Uint8Array, itemId: string, wrapped: Uint8Array) =>
       w.unwrapOwnerFileKey(masterKey, itemId, wrapped) as Uint8Array,
+    // Task 2255 (L9): purpose-bound invite owner copies, and a legacy copy
+    // opened only with core's proof over the folder's rows.
+    wrapInviteOwnerCopy: async (masterKey: Uint8Array, folderId: string, folderKey: Uint8Array) =>
+      w.wrapInviteOwnerCopy(masterKey, folderId, folderKey) as Uint8Array,
+    unwrapInviteOwnerCopy: async (masterKey: Uint8Array, folderId: string, wrapped: Uint8Array) =>
+      w.unwrapInviteOwnerCopy(masterKey, folderId, wrapped) as Uint8Array,
+    openLegacyInviteOwnerCopy: async (
+      masterKey: Uint8Array,
+      folderId: string,
+      legacyCopy: Uint8Array,
+      rows: { file_id: string; encrypted_file_key: string }[],
+    ) => (w.openLegacyInviteOwnerCopy(masterKey, folderId, legacyCopy, rows) as Uint8Array | undefined) ?? null,
     deriveFolderLinkPassphraseStretch: async (passphrase: string, token: string) =>
       w.deriveFolderLinkPassphraseStretch(passphrase, token) as Uint8Array,
     // The generic seal the legacy invite format (L7b) still uses.

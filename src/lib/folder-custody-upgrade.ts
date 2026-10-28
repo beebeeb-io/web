@@ -7,13 +7,13 @@
  * #353), so the owner, members and guests keep reading every existing item.
  *
  * The folder key is the risky part. Members already hold it, so the upgrade
- * must keep it, and the only copy the owner has is the legacy invite owner
- * copy, opened under the folder-NAME key: a server can pass the folder's own
- * name blob off as one (rv-web198c P1-2). So this module never trusts that
- * copy. Its ONE key source is `verifyLegacyFolderKey`, a key this client can
- * PROVE. Task 2255 (decision L9) provides that proof in core; until it lands
- * the verifier refuses with FOLDER_KEY_UNVERIFIED and no upgrade runs. That
- * refusal is the residual 2255 closes.
+ * must keep it, and the owner's copy on a flag-off invite is the legacy one,
+ * opened under the folder-NAME key: a server can pass the folder's own name
+ * blob off as one (rv-web198c P1-2). So this module never trusts that copy on
+ * its own. Its ONE key source is `verifyLegacyFolderKey`: one of the folder's
+ * invite owner copies that opens in core's purpose-bound format, or a legacy
+ * copy that core PROVES over the folder's rows (task 2255, decision L9,
+ * openLegacyInviteOwnerCopy). No proof, no upgrade: FOLDER_KEY_UNVERIFIED.
  *
  * Nothing is ever written unless every row opens under the proven key: a row
  * under another key may be another invite's, which a member can still read.
@@ -23,10 +23,12 @@
  */
 import {
   getFile,
+  getSentInvites,
   getSharedFolder,
   listLegacyFolderKeys,
   upgradeSharedFolderCustody,
   type LegacyFolderKeyRow,
+  type ShareInvite,
   type SharedFolderInfo,
 } from './api'
 import { fromBase64, toBase64, zeroize } from './crypto'
@@ -34,6 +36,7 @@ import {
   FOLDER_KEY_UNVERIFIED,
   legacyInviteChildKey,
   openFolderCustody,
+  openOwnerCopyOverRows,
   sealChildKey,
   sealFolderCustody,
 } from './folder-share-crypto'
@@ -60,14 +63,53 @@ export type LegacyFolderKeyVerifier = (
   rows: readonly LegacyFolderKeyRow[],
 ) => Promise<Uint8Array>
 
-/**
- * Today's verifier: no key can be proven yet (task 2255 lands core's verified
- * read), so it refuses, and the upgrade refuses with it. Honest, and nothing is
- * written. Replace it with the 2255 verifier; nothing else here changes.
- */
-export const verifyLegacyFolderKeyUnavailable: LegacyFolderKeyVerifier = async () => {
-  throw new FolderUpgradeRefusedError('key_unverified', FOLDER_KEY_UNVERIFIED)
+export interface CoreVerifierPorts {
+  getSentInvites: () => Promise<ShareInvite[]>
+  /** The 2255 rule over the given rows (folder-share-crypto `openOwnerCopyOverRows`). */
+  openOwnerCopy: (
+    masterKey: Uint8Array,
+    folderId: string,
+    blob: Uint8Array,
+    rows: { file_id: string; encrypted_file_key: string }[],
+  ) => Promise<Uint8Array | null>
 }
+
+/**
+ * The verifier on core (task 2255, L9): the owner copies of this folder's
+ * invites, newest first and of any status (proof, not status, decides, and a
+ * denied invite's copy is still the folder's key), each opened by the 2255
+ * rule over the folder's legacy rows. The first that opens is the key. None:
+ * FolderUpgradeRefusedError('key_unverified'). Core reads at most 64 distinct
+ * row ids, so a folder whose first 64 listed rows hold no owner-written row
+ * can't be proven and stays legacy (refused, nothing written).
+ */
+export function createCoreLegacyFolderKeyVerifier(overrides: Partial<CoreVerifierPorts> = {}): LegacyFolderKeyVerifier {
+  const ports: CoreVerifierPorts = {
+    getSentInvites: () => getSentInvites(),
+    openOwnerCopy: (...a) => openOwnerCopyOverRows(...a),
+    ...overrides,
+  }
+  return async (masterKey, folderId, rows) => {
+    const copies = [
+      ...new Set(
+        (await ports.getSentInvites())
+          .filter((i) => i.is_folder_share && i.file_id === folderId && !!i.encrypted_owner_folder_key)
+          .sort((x, y) => (x.created_at < y.created_at ? 1 : x.created_at > y.created_at ? -1 : 0))
+          .map((i) => i.encrypted_owner_folder_key as string),
+      ),
+    ]
+    // Core reads exactly these two fields of each row.
+    const proofRows = rows.map(({ file_id, encrypted_file_key }) => ({ file_id, encrypted_file_key }))
+    for (const b64 of copies) {
+      const key = await ports.openOwnerCopy(masterKey, folderId, fromBase64(b64), proofRows)
+      if (key) return key
+    }
+    throw new FolderUpgradeRefusedError('key_unverified', FOLDER_KEY_UNVERIFIED)
+  }
+}
+
+/** The real verifier (REAL_CUSTODY_UPGRADE_PORTS). */
+export const verifyLegacyFolderKeyWithCore: LegacyFolderKeyVerifier = createCoreLegacyFolderKeyVerifier()
 
 export interface CustodyUpgradePorts {
   verifyLegacyFolderKey: LegacyFolderKeyVerifier
@@ -80,7 +122,7 @@ export interface CustodyUpgradePorts {
 
 // Resolved at call time, so a module mock registered later always applies.
 export const REAL_CUSTODY_UPGRADE_PORTS: CustodyUpgradePorts = {
-  verifyLegacyFolderKey: verifyLegacyFolderKeyUnavailable,
+  verifyLegacyFolderKey: verifyLegacyFolderKeyWithCore,
   listLegacyFolderKeys: (...a) => listLegacyFolderKeys(...a),
   upgradeSharedFolderCustody: (...a) => upgradeSharedFolderCustody(...a),
   getSharedFolder: (...a) => getSharedFolder(...a),

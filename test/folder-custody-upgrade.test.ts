@@ -13,13 +13,13 @@ import { beforeEach, describe, expect, test } from 'bun:test'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { ownedFolderCrypto } from './helpers/owned-folder-wasm'
 import { loadWasm } from './helpers/wasm-crypto-mirror'
+import { legacyOwnerCopy } from './helpers/owned-folder-wasm'
 
 const wasm = loadWasm()
 await mockModuleScoped('../src/lib/crypto', import.meta.dir, (r) => ({ ...r, ...ownedFolderCrypto() }))
 
-const { createCustodyUpgrade, REAL_CUSTODY_UPGRADE_PORTS, verifyLegacyFolderKeyUnavailable } = await import(
-  '../src/lib/folder-custody-upgrade'
-)
+const { createCustodyUpgrade, REAL_CUSTODY_UPGRADE_PORTS, createCoreLegacyFolderKeyVerifier, verifyLegacyFolderKeyWithCore } =
+  await import('../src/lib/folder-custody-upgrade')
 type CustodyUpgradePorts = import('../src/lib/folder-custody-upgrade').CustodyUpgradePorts
 type LegacyFolderKeyRow = import('../src/lib/folder-custody-upgrade').LegacyFolderKeyRow
 const { FolderUpgradeRefusedError } = await import('../src/lib/folder-upgrade')
@@ -89,21 +89,76 @@ beforeEach(async () => {
   verifiedKeys = []
 })
 
-describe('the upgrade has one key source, a key this client can prove (P1-2 / task 2255)', () => {
-  test('today the real verifier refuses: FOLDER_KEY_UNVERIFIED, nothing sealed, nothing sent', async () => {
-    const run = createCustodyUpgrade(ports({ verifyLegacyFolderKey: verifyLegacyFolderKeyUnavailable }))
-    const err = await run(ROOT, MASTER).catch((e: unknown) => e)
+describe('the upgrade has one key source, a key core proves (P1-2 / task 2255)', () => {
+  const OWNER_CHILD = '55555555-5555-4555-8555-555555555555'
+  // Core refuses a candidate key that is valid UTF-8 text (that is how a name
+  // blob is caught), so a real folder key here must not be text: 0x80 can't
+  // start a UTF-8 sequence (the 2255 tests do the same).
+  const TRUE_KEY = Uint8Array.from({ length: 32 }, (_, i) => 0x80 + i)
+  const derived = (id: string) => wasm.derive_file_key(MASTER, new TextEncoder().encode(id)) as Uint8Array
+  /** A row the owner wrote: its own derived key under the folder key (core's proof needs one). */
+  const ownerRow = async () => legacyRow(FOLDER_KEY, OWNER_CHILD, false, derived(OWNER_CHILD))
+  const invite = (copy: Uint8Array, status = 'denied') => ({
+    id: 'inv', file_id: ROOT, is_folder_share: true, status, created_at: '2026-10-01T00:00:00Z',
+    encrypted_owner_folder_key: toBase64(copy),
+  })
+  const verifier = (invites: unknown[]) => createCoreLegacyFolderKeyVerifier({ getSentInvites: async () => invites as never })
+
+  test('the real ports use core\'s verifier', () => {
+    expect(REAL_CUSTODY_UPGRADE_PORTS.verifyLegacyFolderKey).toBe(verifyLegacyFolderKeyWithCore)
+  })
+
+  test("a legacy owner copy proven by core over the folder's rows: the upgrade runs under that key", async () => {
+    listings = [[
+      await legacyRow(TRUE_KEY, CHILD_FILE, false, FILE_KEY),
+      await legacyRow(TRUE_KEY, OWNER_CHILD, false, derived(OWNER_CHILD)),
+    ]]
+    const key = await createCustodyUpgrade(ports({ verifyLegacyFolderKey: verifier([invite(legacyOwnerCopy(MASTER, ROOT, TRUE_KEY))]) }))(ROOT, MASTER)
+    expect(Array.from(key)).toEqual(Array.from(TRUE_KEY))
+    expect(sent).toHaveLength(1)
+    // Both rows re-sealed L7 under the proven key, for their own ids.
+    const byId = new Map(sent[0].keys.map((k) => [k.file_id, fromBase64(k.encrypted_file_key)]))
+    expect(Array.from(wasm.unwrapFolderChild(TRUE_KEY, ROOT, CHILD_FILE, 1, byId.get(CHILD_FILE)!) as Uint8Array)).toEqual(Array.from(FILE_KEY))
+    expect(byId.has(OWNER_CHILD)).toBe(true)
+  })
+
+  test('a purpose-bound owner copy (2255 format) opens on its own, with no owner row needed', async () => {
+    const copy = wasm.wrapInviteOwnerCopy(MASTER, ROOT, FOLDER_KEY) as Uint8Array
+    const key = await createCustodyUpgrade(ports({ verifyLegacyFolderKey: verifier([invite(copy)]) }))(ROOT, MASTER)
+    expect(Array.from(key)).toEqual(Array.from(FOLDER_KEY))
+    expect(sent).toHaveLength(1)
+  })
+
+  test("the folder's NAME blob passed off as an owner copy is not proven: refused, nothing sent", async () => {
+    const nameKey = derived(ROOT)
+    const nb = wasm.encrypt_metadata(nameKey, JSON.stringify({ name: 'Docs', mime_type: null })) as { nonce: Uint8Array; ciphertext: Uint8Array }
+    listings = [[...listings[0], await ownerRow()]]
+    const err = await createCustodyUpgrade(ports({ verifyLegacyFolderKey: verifier([invite(new Uint8Array([...nb.nonce, ...nb.ciphertext]))]) }))(ROOT, MASTER)
+      .catch((e: unknown) => e)
     expect(err).toBeInstanceOf(FolderUpgradeRefusedError)
-    expect((err as InstanceType<typeof FolderUpgradeRefusedError>).reason).toBe('key_unverified')
     expect((err as Error).message).toBe(share.FOLDER_KEY_UNVERIFIED)
     expect(sent).toHaveLength(0)
   })
 
-  test('the real ports use that refusing verifier (nothing seeds custody from the legacy owner copy)', () => {
-    expect(REAL_CUSTODY_UPGRADE_PORTS.verifyLegacyFolderKey).toBe(verifyLegacyFolderKeyUnavailable)
+  test('a legacy copy with no owner-written row among the rows is not proven: refused', async () => {
+    // A real (non-text) key, and rows that open under it, but none the owner wrote.
+    listings = [[
+      await legacyRow(TRUE_KEY, CHILD_FILE, false, FILE_KEY),
+      await legacyRow(TRUE_KEY, CHILD_FOLDER, true, NAME_KEY),
+    ]]
+    const err = await createCustodyUpgrade(ports({ verifyLegacyFolderKey: verifier([invite(legacyOwnerCopy(MASTER, ROOT, TRUE_KEY))]) }))(ROOT, MASTER)
+      .catch((e: unknown) => e)
+    expect((err as InstanceType<typeof FolderUpgradeRefusedError>).reason).toBe('key_unverified')
+    expect(sent).toHaveLength(0)
   })
 
-  test('the verifier gets the listed rows, so 2255 can prove the key against them in one call', async () => {
+  test("no invite of the folder carries an owner copy (all cancelled): refused, nothing sent", async () => {
+    const err = await createCustodyUpgrade(ports({ verifyLegacyFolderKey: verifier([]) }))(ROOT, MASTER).catch((e: unknown) => e)
+    expect((err as InstanceType<typeof FolderUpgradeRefusedError>).reason).toBe('key_unverified')
+    expect(sent).toHaveLength(0)
+  })
+
+  test('the verifier gets the listed rows, so core proves the key against them in one call', async () => {
     await createCustodyUpgrade(ports())(ROOT, MASTER)
     expect(verifierCalls).toHaveLength(1)
     expect(verifierCalls[0].folderId).toBe(ROOT)
