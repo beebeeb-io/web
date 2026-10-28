@@ -30,6 +30,21 @@ export function resetFeatureFlagCacheForTests(): void {
   flagsPromise = null
 }
 
+/**
+ * Library code (not a hook): is `shared_folders_v1` on for this session?
+ * Fails closed. Every shared-folder request outside the flag-gated panels
+ * (custody reads, key publishes, the activity feed) asks this first, so a
+ * flag-off session behaves exactly like the app before shared folders.
+ */
+export async function sharedFoldersEnabled(): Promise<boolean> {
+  return (await loadFeatureFlagsOnce())[SHARED_FOLDERS_FLAG] === true
+}
+
+/** Sign-out and account switch: the flag is evaluated per user, so forget it. */
+export function forgetFeatureFlags(): void {
+  flagsPromise = null
+}
+
 export function useFeatureFlag(flag: typeof SHARED_FOLDERS_FLAG): {
   enabled: boolean
   loading: boolean

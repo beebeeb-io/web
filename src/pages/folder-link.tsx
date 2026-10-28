@@ -104,11 +104,17 @@ export async function openWithPassphrase(args: {
     }
     const proof = storeProof(args.token, verified.proof, verified.proof_expires_at)
     const stretch = await deriveLinkPassphraseKey(args.passphrase, args.token)
-    const state = await resolveGuestState({
-      token: args.token,
-      proof,
-      passphraseStretch: stretch,
-    })
+    let state: Awaited<ReturnType<typeof resolveGuestState>>
+    try {
+      state = await resolveGuestState({
+        token: args.token,
+        proof,
+        passphraseStretch: stretch,
+      })
+    } finally {
+      // rv-web198c P3: the stretch is not needed once the folder key is open.
+      stretch.fill(0)
+    }
     return { state, error: state.name === 'passphrase_required' ? WRONG_PASSPHRASE : null }
   } catch (err) {
     if (err instanceof EmptyLinkPassphraseError) {

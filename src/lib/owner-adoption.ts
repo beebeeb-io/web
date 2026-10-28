@@ -10,9 +10,17 @@
  * server and best effort on the client: failing to adopt must never stop the
  * owner opening the file through the folder key.
  */
-import { decryptChunk, readFileMetadata, deriveFileKey, encryptChunk, fromBase64, toBase64, zeroize } from './crypto'
-import { ApiError, adoptOwnerFileKey, getFile, getSentInvites, getSharedFolder, type ShareInvite, type SharedFolderInfo } from './api'
+import {
+  readFileMetadata,
+  fromBase64,
+  toBase64,
+  zeroize,
+  unwrapOwnerFileKey as coreUnwrapOwnerFileKey,
+  wrapOwnerFileKey as coreWrapOwnerFileKey,
+} from './crypto'
+import { adoptOwnerFileKey, getFile, getSentInvites, getSharedFolder, type ShareInvite, type SharedFolderInfo } from './api'
 import { assertNeverSawCustody, hasSeenCustody, markCustodySeen } from './custody-memory'
+import { sharedFoldersEnabled } from './use-feature-flag'
 import {
   activeFolderInvites,
   findExistingFolderKey,
@@ -46,23 +54,33 @@ function fresh<T>(entry: Timed<T> | undefined, keepForever: (value: T) => boolea
   )
 }
 
-/** The folder's custody record, or null when it is not a shared folder. */
+/**
+ * The folder's custody record, or null when it definitely has none.
+ *
+ * STRICT (rv-web198c P1-1): only a definitive "no record" (404 / 405 / 501) is
+ * null. Anything else (5xx, 429, offline) THROWS: read as "no custody" it put a
+ * custody folder on the legacy unbound reader. A null answer is cached for
+ * CUSTODY_RECHECK_MS, a record for the session; a failure is never cached.
+ * With the flag off no request is made at all (rv-web198c P2-1): null.
+ */
 export async function sharedFolderCustody(folderId: string): Promise<SharedFolderInfo | null> {
+  if (!(await sharedFoldersEnabled())) return null
   const cached = fresh(custodyCache.get(folderId), (value) => value !== null)
   if (cached) {
-    try { return await cached } catch { /* stale: refetch below */ }
+    try { return await cached } catch { /* stale or failed: refetch below */ }
   }
   const value = getSharedFolder(folderId).then(
     (info) => info,
     (error: unknown) => {
-      // Only a definite "no custody record" is remembered; anything else
-      // (offline, 5xx, 429) is retried by the next caller.
-      if (error instanceof ApiError && noCustodyRecord(error)) return null
-      if (custodyCache.get(folderId)?.value === value) custodyCache.delete(folderId)
-      return null
+      // By status, not by class: only 404 / 405 / 501 mean "no record".
+      if (noCustodyRecord(error)) return null
+      throw error
     },
   )
   custodyCache.set(folderId, { at: Date.now(), value })
+  value.catch(() => {
+    if (custodyCache.get(folderId)?.value === value) custodyCache.delete(folderId)
+  })
   return value
 }
 
@@ -73,24 +91,13 @@ export async function sharedFolderCustody(folderId: string): Promise<SharedFolde
  * throws, so a write never falls back to the legacy format by accident.
  */
 export async function folderWrapFormat(rootId: string): Promise<FolderWrapFormat> {
-  const cached = fresh(custodyCache.get(rootId), (value) => value !== null)
-  if (cached) {
-    try {
-      if ((await cached) !== null) return 'l7'
-    } catch { /* stale: re-read below */ }
-  }
-  try {
-    const info = await getSharedFolder(rootId)
-    custodyCache.set(rootId, { at: Date.now(), value: Promise.resolve(info) })
-    return 'l7'
-  } catch (error) {
-    if (noCustodyRecord(error)) {
-      // L7c: legacy only for a folder this client never saw with custody.
-      assertNeverSawCustody(rootId)
-      return 'legacy_invite'
-    }
-    throw error
-  }
+  // sharedFolderCustody is strict (a non-definitive failure throws) and caches
+  // the definitive answers, so a flag-off or legacy folder is not re-asked on
+  // every upload.
+  if (await sharedFolderCustody(rootId)) return 'l7'
+  // L7c: legacy only for a folder this client never saw with custody.
+  assertNeverSawCustody(rootId)
+  return 'legacy_invite'
 }
 
 async function parentOf(id: string): Promise<string | null> {
@@ -134,6 +141,8 @@ export function clearSharedFolderLookups(): void {
   custodyCache.clear()
   parentCache.clear()
   sentInvitesCache = null
+  // rv-web198c P3: the adoption bookkeeping is per account too.
+  adoptedThisSession.clear()
 }
 
 export interface AdoptableFile {
@@ -162,44 +171,29 @@ export function needsOwnership(
 }
 
 /**
- * The wire form of an owner wrap: base64 of `nonce || ciphertext`, sealed
- * under `derive_file_key(master_key, file_id)` — the same derivation every
- * normal file key uses, so any owner client can open it without new core
- * support.
+ * The wire form of an owner wrap (`owner_wrapped_file_key`): base64 of core's
+ * L8 record, sealed under its own purpose key and AAD bound to the item id
+ * (core wrapOwnerFileKey). Not the derive_file_key seal it once was: under
+ * that key a folder's own name blob or an item's v1 content frame opened as
+ * an "owner wrap" (rv-web198c).
  */
 export async function wrapFileKeyToMaster(
   masterKey: Uint8Array,
   fileId: string,
   fileKey: Uint8Array,
 ): Promise<string> {
-  const derived = await deriveFileKey(masterKey, fileId)
-  try {
-    const { nonce, ciphertext } = await encryptChunk(derived, fileKey)
-    const combined = new Uint8Array(nonce.length + ciphertext.length)
-    combined.set(nonce, 0)
-    combined.set(ciphertext, nonce.length)
-    return toBase64(combined)
-  } finally {
-    zeroize(derived)
-  }
+  return toBase64(await coreWrapOwnerFileKey(masterKey, fileId, fileKey))
 }
 
-/** Open an owner wrap. Returns null when it does not open with this master key. */
+/** Open an L8 owner wrap. Null when it does not open (any other blob is refused by core). */
 export async function unwrapOwnerFileKey(
   masterKey: Uint8Array,
   fileId: string,
   ownerWrappedFileKey: string | number[],
 ): Promise<Uint8Array | null> {
   try {
-    const derived = await deriveFileKey(masterKey, fileId)
-    try {
-      const bytes = typeof ownerWrappedFileKey === 'string' ? fromBase64(ownerWrappedFileKey) : Uint8Array.from(ownerWrappedFileKey)
-      if (bytes.length <= 12) return null
-      const fileKey = await decryptChunk(derived, bytes.slice(0, 12), bytes.slice(12))
-      return fileKey.length === 32 ? fileKey : null
-    } finally {
-      zeroize(derived)
-    }
+    const bytes = typeof ownerWrappedFileKey === 'string' ? fromBase64(ownerWrappedFileKey) : Uint8Array.from(ownerWrappedFileKey)
+    return await coreUnwrapOwnerFileKey(masterKey, fileId, bytes)
   } catch {
     return null
   }

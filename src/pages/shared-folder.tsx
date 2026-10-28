@@ -28,6 +28,7 @@ import { useAuth } from '../lib/auth-context'
 import { decryptFileMetadata, zeroize } from '../lib/crypto'
 import { noCustodyRecord, openFolderChild, type FolderWrapFormat } from '../lib/folder-share-crypto'
 import { assertNeverSawCustody, markCustodySeen } from '../lib/custody-memory'
+import { sharedFoldersEnabled } from '../lib/use-feature-flag'
 import { resolveRecipientFolderKey } from '../lib/recipient-folder-key'
 import { encryptedDownload } from '../lib/encrypted-download'
 import { formatBytes } from '../lib/format'
@@ -350,15 +351,20 @@ export function SharedFolder() {
         getFolderMembers(folderId).catch(() => ({ members: [], owner_id: '' })),
         // Only a definite "no custody record" (404; 405 without the route;
         // 501 with the flag off) means a legacy invite-only folder. Anything
-        // else fails the load: the format must never be guessed (L7b).
-        getSharedFolder(folderId).catch((e: unknown): SharedFolderInfo | null => {
-          if (noCustodyRecord(e)) {
-            // L7c: legacy only for a folder this client never saw with custody.
-            assertNeverSawCustody(folderId)
-            return null
+        // else fails the load: the format must never be guessed (L7b). With
+        // the flag off no custody request is made at all (rv-web198c P2-1).
+        (async (): Promise<SharedFolderInfo | null> => {
+          if (await sharedFoldersEnabled()) {
+            try {
+              return await getSharedFolder(folderId)
+            } catch (e) {
+              if (!noCustodyRecord(e)) throw e
+            }
           }
-          throw e
-        }),
+          // L7c: legacy only for a folder this client never saw with custody.
+          assertNeverSawCustody(folderId)
+          return null
+        })(),
       ])
       const format: FolderWrapFormat = shared ? 'l7' : 'legacy_invite'
       setWrapFormat(format)

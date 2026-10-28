@@ -249,6 +249,9 @@ function InviteForm({
   }
 
   const handleInvite = useCallback(async () => {
+    // rv-web198c P3: a folder invite waits for the flag; sent while it is still
+    // loading it would be a legacy invite on a flag-on account.
+    if (isFolder && sharedFolders.loading) return
     const raw = email.trim()
     if (!raw) {
       setError('Enter a valid email address.')
@@ -355,7 +358,7 @@ function InviteForm({
       setLoading(false)
       setProgress(null)
     }
-  }, [email, fileId, isFolder, onSuccess, getMasterKey, getFileKey, sharedFolders.enabled])
+  }, [email, fileId, isFolder, onSuccess, getMasterKey, getFileKey, sharedFolders.enabled, sharedFolders.loading])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -447,7 +450,7 @@ function InviteForm({
         size="lg"
         className="w-full justify-center gap-2"
         onClick={handleInvite}
-        disabled={loading}
+        disabled={loading || (!!isFolder && sharedFolders.loading)}
       >
         <Icon name="mail" size={13} />
         {loading ? 'Sending...' : 'Send invite'}

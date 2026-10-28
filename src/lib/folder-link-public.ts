@@ -237,19 +237,6 @@ export async function fetchFolderThumbnail(
   return new Uint8Array(await response.arrayBuffer())
 }
 
-export async function createGuestFolder(
-  token: string,
-  body: {
-    parent_id: string | null
-    name_encrypted: string
-    wrapped_name_key: string
-    actor_name_encrypted?: string | null
-  },
-  proof: Proof | null,
-): Promise<{ id: string; parent_id: string | null; name_encrypted: string }> {
-  return guestJson(token, '/folders', { method: 'POST', body: JSON.stringify(body), proof })
-}
-
 export async function patchGuestItem(
   token: string,
   itemId: string,

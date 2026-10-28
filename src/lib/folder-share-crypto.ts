@@ -19,6 +19,7 @@ import {
 } from './crypto'
 import { listFilesPage, getSentInvites, getSharedFolder, FILE_LIST_HARD_CAP } from './api'
 import { assertNeverSawCustody, markCustodySeen } from './custody-memory'
+import { sharedFoldersEnabled } from './use-feature-flag'
 import type { ShareInvite } from './api'
 
 /**
@@ -178,12 +179,14 @@ export interface ExistingFolderKeyPorts {
   zeroize: typeof zeroize
 }
 
+// Each port resolves its function at call time (not when this module first
+// loads), so a module mock registered later always applies.
 export const REAL_EXISTING_FOLDER_KEY_PORTS: ExistingFolderKeyPorts = {
-  getSentInvites,
-  deriveFileKey,
-  decryptChunk,
-  fromBase64,
-  zeroize,
+  getSentInvites: () => getSentInvites(),
+  deriveFileKey: (...a) => deriveFileKey(...a),
+  decryptChunk: (...a) => decryptChunk(...a),
+  fromBase64: (...a) => fromBase64(...a),
+  zeroize: (...a) => zeroize(...a),
 }
 
 // Must stay <= 80 characters so userFriendlyError shows it (SHORT_MESSAGE_MAX).
@@ -289,6 +292,12 @@ export async function custodyFolderKey(
   masterKey: Uint8Array,
   folderId: string,
 ): Promise<{ folderKey: Uint8Array; encryptedOwnerFolderKeyB64: string } | null> {
+  // rv-web198c P2-1: with the flag off no custody request is made at all (the
+  // app before shared folders); a folder seen with custody still refuses (L7c).
+  if (!(await sharedFoldersEnabled())) {
+    assertNeverSawCustody(folderId)
+    return null
+  }
   let wrapped: string | null
   try {
     wrapped = (await getSharedFolder(folderId)).owner_wrapped_folder_key
@@ -538,9 +547,17 @@ export async function collectAllChildren(folderId: string): Promise<string[]> {
   return (await collectAllChildItems(folderId)).map((child) => child.id)
 }
 
+/** One descendant: its id, whether it is a folder (the L7 kind), and who added it. */
+export interface ChildItem {
+  id: string
+  isFolder: boolean
+  uploadedBy?: string | null
+  actedViaShareId?: string | null
+}
+
 /** Every descendant of `folderId`, with whether it is a folder (the L7 kind). */
-export async function collectAllChildItems(folderId: string): Promise<{ id: string; isFolder: boolean }[]> {
-  const ids: { id: string; isFolder: boolean }[] = []
+export async function collectAllChildItems(folderId: string): Promise<ChildItem[]> {
+  const ids: ChildItem[] = []
   const queue: string[] = [folderId]
 
   while (queue.length > 0) {
@@ -554,7 +571,12 @@ export async function collectAllChildItems(folderId: string): Promise<{ id: stri
         throw new Error(TOO_LARGE_TO_SHARE)
       }
       for (const child of page.files) {
-        ids.push({ id: child.id, isFolder: !!child.is_folder })
+        ids.push({
+          id: child.id,
+          isFolder: !!child.is_folder,
+          uploadedBy: child.uploaded_by ?? null,
+          actedViaShareId: child.acted_via_share_id ?? null,
+        })
         if (child.is_folder) queue.push(child.id)
         if (ids.length > FILE_LIST_HARD_CAP) throw new Error(TOO_LARGE_TO_SHARE)
       }

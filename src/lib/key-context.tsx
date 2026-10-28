@@ -50,6 +50,7 @@ import { cacheKeyPersistent, cacheKeySessionOnly } from './key-cache'
 import { ApiError, getFolderKeys, getSentInvites, listFolderLinks, listSharedFolderKeys, setRecoveryCheckIfAbsent, verifyRecoveryCheck } from './api'
 import type { DriveFile } from './api'
 import { clearCustodyMemory } from './custody-memory'
+import { forgetFeatureFlags, sharedFoldersEnabled } from './use-feature-flag'
 import { clearSharedFolderLookups, needsOwnership, sharedRootFor, unwrapOwnerFileKey, folderKeyForRoot, openOwnerFile } from './owner-adoption'
 import { createSharedFolderKeyCache } from './shared-folder-key-cache'
 import { activeFolderInvites } from './folder-share-crypto'
@@ -597,6 +598,8 @@ export function KeyProvider({ children }: { children: ReactNode }) {
   const sharedFolderCacheRef = useRef(createSharedFolderKeyCache(async (folderId) => {
     const map = new Map<string, string>()
     try {
+      // rv-web198c P2-1: the custody keys route exists only with the flag on.
+      if (!(await sharedFoldersEnabled())) throw new ApiError('shared folders are off', 404)
       let cursor: string | null = null
       do {
         const page = await listSharedFolderKeys(folderId, { limit: 500, cursor })
@@ -640,7 +643,12 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       if (!requestResolverRef.current) requestResolverRef.current = createRequestKeyResolver()
       return requestResolverRef.current.resolveFileKey(file, key)
     }
-    if (file.owner_wrapped_file_key) {
+    // rv-web198c P2-2: an owner copy is read only for a row the owner did not
+    // create, and only with the flag on. On any other row a server-supplied
+    // owner_wrapped_file_key must never be tried (without L8 a folder's own
+    // name blob opens as one).
+    const foreign = needsOwnership(file, residentKeyUserIdRef.current)
+    if (file.owner_wrapped_file_key && foreign && (await sharedFoldersEnabled())) {
       const owned = await unwrapOwnerFileKey(key, file.id, file.owner_wrapped_file_key)
       if (owned) return owned
     }
@@ -649,7 +657,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     // rename, versions, thumbnails), not only the listing, must take the
     // shared-folder path for it; a row that does not open there falls through
     // to the derived key and fails its own integrity check honestly.
-    if (needsOwnership(file, residentKeyUserIdRef.current)) {
+    if (foreign) {
       const root = await sharedRootFor(file.parent_id ?? null, file.id)
       if (root) {
         const opened = await openOwnerFile({
@@ -739,6 +747,8 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     sharedFolderCacheRef.current.clear()
     sharedFolderLabelsRef.current.clear()
     clearSharedFolderLookups()
+    // rv-web198c P3: the flag is evaluated per user; re-ask after a lock.
+    forgetFeatureFlags()
     clearCachedKey()
     void clearOfflineCaches()
     void clearThumbnailCache()
@@ -853,6 +863,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     clearSharedFolderLookups()
     // L7c: the custody memory goes with the keys on sign-out.
     clearCustodyMemory()
+    forgetFeatureFlags()
     clearCachedKey()
     await Promise.all([clearOfflineCaches(), clearThumbnailCache(), clearVault()])
     setVaultExists(false)

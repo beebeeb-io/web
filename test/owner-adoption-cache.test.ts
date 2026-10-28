@@ -11,6 +11,10 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
 
+// shared_folders_v1 ON for this file (the paths under test are flag-on ones).
+await mockModuleScoped('../src/lib/use-feature-flag', import.meta.dir, { sharedFoldersEnabled: async () => true })
+
+
 const custodyCalls: string[] = []
 const fileCalls: string[] = []
 const shared = new Set<string>()
@@ -100,10 +104,10 @@ test('forgetting a folder makes the very next lookup see its new custody', async
   expect(await sharedRootFor('plain', 'plain')).toBe('plain')
 })
 
-test('a transient failure is not cached as "not shared"', async () => {
+test('a transient failure is an error, never "not shared", and is not cached (rv-web198c P1-1)', async () => {
   shared.add('root')
   transient = true
-  expect(await sharedRootFor('root', 'f')).toBeNull()
+  await expect(sharedRootFor('root', 'f')).rejects.toThrow('offline')
   transient = false
   // No window to wait out: the failure was never remembered.
   expect(await sharedRootFor('root', 'f')).toBe('root')

@@ -28,14 +28,15 @@
  */
 import {
   createFolderLink,
+  getSentInvites,
   getSharedFolder,
   registerSharedFolderKey,
   type SharedFolderInfo,
 } from './api'
 import { deriveFileKey, fromBase64, toBase64, zeroize } from './crypto'
 import {
+  activeFolderInvites,
   encryptAllChildrenKeys,
-  findExistingFolderKey,
   generateFolderKey,
   openFolderCustody,
   sealChildKey,
@@ -93,8 +94,11 @@ export interface CreateFolderLinkPorts {
   openFolderCustody: typeof openFolderCustody
   /** L6: seal a new custody record. */
   sealFolderCustody: typeof sealFolderCustody
-  /** The legacy invite owner copy, read only to seed custody (L6). */
-  findExistingFolderKey: typeof findExistingFolderKey
+  /**
+   * Whether the folder still has active flag-off invites (rv-web198c P1-3).
+   * Such a folder is refused until its legacy rows can be upgraded.
+   */
+  hasActiveLegacyInvites: (folderId: string) => Promise<boolean>
   /** A fresh RANDOM folder key; only when no custody record and no invite exists. */
   generateFolderKey: () => Promise<Uint8Array>
   /** The root folder's own name key (published under the folder key, below). */
@@ -126,17 +130,19 @@ function browserOrigin(): string {
   return loc?.origin ?? 'https://app.beebeeb.io'
 }
 
+// The network and crypto ports resolve their function at call time (not when
+// this module first loads), so a module mock registered later always applies.
 export const REAL_FOLDER_LINK_PORTS: CreateFolderLinkPorts = {
-  getSharedFolder,
-  openFolderCustody,
-  sealFolderCustody,
-  findExistingFolderKey,
-  generateFolderKey,
-  deriveFileKey,
-  sealChildKey,
-  encryptAllChildrenKeys,
-  registerSharedFolderKey,
-  createFolderLink,
+  getSharedFolder: (...a) => getSharedFolder(...a),
+  openFolderCustody: (...a) => openFolderCustody(...a),
+  sealFolderCustody: (...a) => sealFolderCustody(...a),
+  hasActiveLegacyInvites: async (folderId) => activeFolderInvites(await getSentInvites(), folderId).length > 0,
+  generateFolderKey: () => generateFolderKey(),
+  deriveFileKey: (...a) => deriveFileKey(...a),
+  sealChildKey: (...a) => sealChildKey(...a),
+  encryptAllChildrenKeys: (...a) => encryptAllChildrenKeys(...a),
+  registerSharedFolderKey: (...a) => registerSharedFolderKey(...a),
+  createFolderLink: (...a) => createFolderLink(...a),
   generateShareToken: async () => generateFolderLinkToken(),
   generateLinkId: () => crypto.randomUUID(),
   generateLinkKey,
@@ -155,6 +161,9 @@ function errorCode(err: unknown): string | undefined {
   const code = (err as { code?: unknown } | null | undefined)?.code
   return typeof code === 'string' ? code : undefined
 }
+
+/** rv-web198c P1-3: shown for a folder that still has flag-off invites. */
+export const FOLDER_NEEDS_UPGRADE = 'This folder is shared with an older link format. Upgrade it first.'
 
 function isNotFound(err: unknown): boolean {
   const status = (err as { status?: unknown } | null | undefined)?.status
@@ -200,14 +209,18 @@ export async function ensureOwnerFolderKey(
   // because the server now says "no record".
   assertNeverSawCustody(folderId)
 
-  // No custody row yet. An active folder invite still carries the key that
-  // members hold: reuse it, so they keep opening everything. Only with no
-  // invite either is a folder key minted, at RANDOM (decision L1); it is never
-  // derived from the master key. Either way the key is registered as the
-  // custody record, which from then on is its one source for every client,
-  // and every existing child's key is wrapped under it when the link is made.
-  const existing = await ports.findExistingFolderKey(masterKey, folderId)
-  const folderKey = existing?.folderKey ?? (await ports.generateFolderKey())
+  // No custody row yet. rv-web198c P1-2: custody is NEVER seeded from a
+  // legacy invite's owner copy. That copy is opened under the folder-name key,
+  // so a server can pass the folder's own name blob off as one, and the name
+  // JSON would become the permanent folder key (task [P1] 2255 lands a core
+  // verifier with proof of possession; until then nothing is seeded).
+  // P1-3: a folder that still has active flag-off invites is refused: custody
+  // over its legacy rows would leave every existing child unreadable to its
+  // members and guests. Otherwise the folder key is minted at RANDOM
+  // (decision L1), never derived from the master key, and registered as the
+  // custody record, its one source for every client from then on.
+  if (await ports.hasActiveLegacyInvites(folderId)) throw new Error(FOLDER_NEEDS_UPGRADE)
+  const folderKey = await ports.generateFolderKey()
   try {
     const wrapped = ports.toBase64(await ports.sealFolderCustody(masterKey, folderId, folderKey))
     await ports.registerSharedFolderKey(folderId, {
@@ -262,6 +275,9 @@ export async function createFolderLinkWithKeys(
     // stretch for a plain link — so the owner must wrap under that same key.
     const unwrapKey = await ports.linkUnwrapKey(kc, stretch)
     const wrappedFolderKey = await ports.wrapFolderKeyForLink(folderKey, unwrapKey)
+    // rv-web198c P3: the stretch and the combined key are not needed again.
+    unwrapKey.fill(0)
+    stretch?.fill(0)
 
     // A guest can only read names and bytes for files whose key the owner has
     // published under this folder key. Publishing happens once per subtree;
@@ -288,45 +304,50 @@ export async function createFolderLinkWithKeys(
     // L6a: the share id is proposed here and both owner copies are sealed under
     // it. A taken id (a UUIDv4 collision) is answered 409 and nothing is
     // stored, so the copies are re-sealed under a fresh id and sent again.
-    for (let attempt = 1; ; attempt += 1) {
-      const id = ports.generateLinkId()
-      const body: CreateFolderLinkRequest = {
-        id,
-        folder_id: input.folderId,
-        token,
-        access_level: input.accessLevel,
-        wrapped_folder_key: wrappedFolderKey,
-        // L2: the owner's copy of K_c (not of the folder key), so the link can be
-        // copied again later from the owner's devices.
-        owner_wrapped_key: await ports.ownerWrappedLinkKey(input.masterKey, id, kc),
-        owner_wrapped_token: await ports.ownerWrappedLinkToken(input.masterKey, id, token),
-        folder_keys: folderKeys,
-      }
-      if (labelEncrypted) body.label_encrypted = labelEncrypted
-      if (input.expiresInHours !== null) body.expires_in_hours = input.expiresInHours
-      if (input.maxOpens !== null) body.max_opens = input.maxOpens
-      if (input.capBytes !== null) body.cap_bytes = input.capBytes
-      if (passphrase) body.passphrase = passphrase
+    try {
+      for (let attempt = 1; ; attempt += 1) {
+        const id = ports.generateLinkId()
+        const body: CreateFolderLinkRequest = {
+          id,
+          folder_id: input.folderId,
+          token,
+          access_level: input.accessLevel,
+          wrapped_folder_key: wrappedFolderKey,
+          // L2: the owner's copy of K_c (not of the folder key), so the link can be
+          // copied again later from the owner's devices.
+          owner_wrapped_key: await ports.ownerWrappedLinkKey(input.masterKey, id, kc),
+          owner_wrapped_token: await ports.ownerWrappedLinkToken(input.masterKey, id, token),
+          folder_keys: folderKeys,
+        }
+        if (labelEncrypted) body.label_encrypted = labelEncrypted
+        if (input.expiresInHours !== null) body.expires_in_hours = input.expiresInHours
+        if (input.maxOpens !== null) body.max_opens = input.maxOpens
+        if (input.capBytes !== null) body.cap_bytes = input.capBytes
+        if (passphrase) body.passphrase = passphrase
 
-      let created: Awaited<ReturnType<CreateFolderLinkPorts['createFolderLink']>>
-      try {
-        created = await ports.createFolderLink(body)
-      } catch (err) {
-        if (isIdTaken(err) && attempt < LINK_ID_ATTEMPTS) continue
-        throw err
-      }
-      // The owner copies are bound to `id`: a server that stored another id
-      // would leave a link its owner can never copy again.
-      if (created.id !== id) throw new Error('The server stored this link under a different id.')
+        let created: Awaited<ReturnType<CreateFolderLinkPorts['createFolderLink']>>
+        try {
+          created = await ports.createFolderLink(body)
+        } catch (err) {
+          if (isIdTaken(err) && attempt < LINK_ID_ATTEMPTS) continue
+          throw err
+        }
+        // The owner copies are bound to `id`: a server that stored another id
+        // would leave a link its owner can never copy again.
+        if (created.id !== id) throw new Error('The server stored this link under a different id.')
 
-      return {
-        id: created.id,
-        token,
-        url: buildFullShareLink(ports.origin(), token, linkKeyFragment(kc), 'f'),
-        level: created.access_level ?? input.accessLevel,
-        passphraseProtected: passphrase !== null,
-        keyVersion: created.key_version,
+        return {
+          id: created.id,
+          token,
+          url: buildFullShareLink(ports.origin(), token, linkKeyFragment(kc), 'f'),
+          level: created.access_level ?? input.accessLevel,
+          passphraseProtected: passphrase !== null,
+          keyVersion: created.key_version,
+        }
       }
+    } finally {
+      // K_c lives on only in the URL handed back and in the owner copies.
+      kc.fill(0)
     }
   } finally {
     folderKey.fill(0)

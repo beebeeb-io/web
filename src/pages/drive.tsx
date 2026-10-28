@@ -67,7 +67,7 @@ import {
   type StorageUsage,
   type SyncNode,
 } from '../lib/api'
-import { createOwnerFolder } from '../lib/owner-upload-key'
+import { createOwnerFolder, moveOwnerItems } from '../lib/owner-upload-key'
 import { userFriendlyError } from '../lib/user-friendly-error'
 import { usePlanBlock } from '../hooks/use-plan-block'
 import { noCardTrialStatus, trialCapShortfallNotice } from '../lib/no-card-trial'
@@ -95,7 +95,8 @@ import {
   removeUploadState,
   type UploadState,
 } from '../lib/upload-resume'
-import { encryptFilename, encryptFileMetadata, serializeEncryptedBlob, decryptFileMetadata } from '../lib/crypto'
+import { encryptFilename, encryptFileMetadata, serializeEncryptedBlob, decryptFileMetadata, readFileMetadata } from '../lib/crypto'
+import { renameKeyFor } from '../lib/owner-rename'
 import { useSearchIndex } from '../hooks/use-search-index'
 import { EmptyDrive } from '../components/empty-states/empty-drive'
 import { RestoreFromEraseOffer } from '../components/restore-from-erase'
@@ -2071,7 +2072,7 @@ export function Drive() {
       const result = await createOwnerFolder({ nameEncrypted, folderId })
 
       // Move all matching files into it
-      await Promise.all(filesToMove.map((f) => updateFile(f.id, { parent_id: result.id })))
+      await moveOwnerItems({ ids: filesToMove.map((f) => f.id), destinationId: result.id, rows: filesToMove, masterKey: getMasterKey(), viewerId: user?.user_id ?? null })
 
       showToast({
         icon: 'folder',
@@ -2364,7 +2365,8 @@ export function Drive() {
   async function handleMoveConfirm(destinationId: string | null, _mode: 'move' | 'copy') {
     if (!moveFileId) return
     try {
-      await updateFile(moveFileId, { parent_id: destinationId })
+      // rv-web198c P2-5: a move into a shared folder publishes its wraps.
+      await moveOwnerItems({ ids: [moveFileId], destinationId, rows: files, masterKey: isUnlocked ? getMasterKey() : undefined, viewerId: user?.user_id ?? null })
       reindexAfterMove([moveFileId], destinationId)
       showToast({ icon: 'folder', title: 'File moved', description: 'Moved successfully.' })
       fetchFiles()
@@ -2394,7 +2396,16 @@ export function Drive() {
       return
     }
     try {
-      const fileKey = await getFileKey(renameFileId)
+      // rv-web198c P2-4: a guest's or member's row is renamed under ITS key,
+      // proven to open its current name; otherwise the rename is refused.
+      const fileKey = await renameKeyFor({
+        fileId: renameFileId,
+        file: files.find((f) => f.id === renameFileId),
+        viewerId: user?.user_id ?? null,
+        getFileKey,
+        getFileKeyForFile,
+        readName: readFileMetadata,
+      })
       const enc = await encryptFilename(fileKey, newName)
       const nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
       await updateFile(renameFileId, { name_encrypted: nameEncrypted })
@@ -2479,7 +2490,7 @@ export function Drive() {
     // folders that may not be in the current `files` list / decryptedNames map).
     const targetName = knownFolderName || displayName(targetFolder) || 'folder'
     try {
-      await Promise.all(ids.map((id) => updateFile(id, { parent_id: targetFolder.id })))
+      await moveOwnerItems({ ids, destinationId: targetFolder.id, rows: files, masterKey: isUnlocked ? getMasterKey() : undefined, viewerId: user?.user_id ?? null })
       reindexAfterMove(ids, targetFolder.id)
       if (ids.length === 1) {
         const movedFile = files.find((f) => f.id === ids[0])
@@ -2559,7 +2570,7 @@ export function Drive() {
     const ids = bulkMoveIds
     const count = ids.length
     try {
-      await Promise.all(ids.map((id) => updateFile(id, { parent_id: destinationId })))
+      await moveOwnerItems({ ids, destinationId, rows: files, masterKey: isUnlocked ? getMasterKey() : undefined, viewerId: user?.user_id ?? null })
       reindexAfterMove(ids, destinationId)
       showToast({ icon: 'folder', title: 'Files moved', description: `${count} file${count !== 1 ? 's' : ''} moved successfully.` })
       fetchFiles()

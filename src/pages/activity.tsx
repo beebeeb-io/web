@@ -22,6 +22,8 @@ import { useKeys } from '../lib/key-context'
 import type { SharedFolderActivityRow } from '../lib/folder-link-types'
 import { EmptyActivity } from '../components/empty-states/empty-activity'
 import { useWsEventAll } from '../lib/ws-context'
+import { SHARED_FOLDERS_FLAG } from '../lib/flags'
+import { useFeatureFlag } from '../lib/use-feature-flag'
 
 // ── Shared folder activity (task 2237b) ──────────────────────────
 /**
@@ -275,6 +277,7 @@ function wsToActivity(wsEvent: { type: string; data: Record<string, unknown>; ti
 const LIVE_GLOW_DURATION = 4000 // ms the new-event highlight lasts
 
 export function Activity() {
+  const sharedFolders = useFeatureFlag(SHARED_FOLDERS_FLAG)
   const navigate = useNavigate()
   const [events, setEvents] = useState<ActivityEvent[]>([])
   const [total, setTotal] = useState(0)
@@ -342,7 +345,8 @@ export function Activity() {
 
   return (
     <div className="min-h-screen flex flex-col items-center gap-4 bg-paper p-4 pt-12">
-      <SharedFolderActivitySection />
+      {/* rv-web198c P2-1: shared-folder activity exists only with the flag on. */}
+      {sharedFolders.enabled && <SharedFolderActivitySection />}
       <div className="bg-paper rounded-xl border border-line overflow-hidden shadow-1 w-full max-w-[780px]">
 
         {/* ── Header ──────────────────────────────── */}

@@ -226,17 +226,21 @@ export async function resolveGuestFolderKey(
   // A reload intentionally re-prompts: the opened key lives only in page memory.
   try { sessionStorage.removeItem('beebeeb.folderLink.key.' + token) } catch { /* unavailable */ }
   if (root.passphrase_protected && !passphraseStretch) return { kind: 'passphrase_required' }
+  let unwrapKey: Uint8Array | null = null
   try {
-    const folderKey = await unwrapFolderKeyFromLink(
-      root.wrapped_folder_key,
-      await linkUnwrapKey(kc, passphraseStretch),
-    )
+    unwrapKey = await linkUnwrapKey(kc, passphraseStretch)
+    const folderKey = await unwrapFolderKeyFromLink(root.wrapped_folder_key, unwrapKey)
     return {
       kind: 'unlocked',
       value: { folderKey, keyVersion: root.key_version, level: root.access_level },
     }
   } catch {
     return { kind: 'not_available' }
+  } finally {
+    // rv-web198c P3: K_c and the combined unwrap key are not needed again
+    // (K_c stays in the URL fragment; the folder key is what the page keeps).
+    unwrapKey?.fill(0)
+    kc.fill(0)
   }
 }
 

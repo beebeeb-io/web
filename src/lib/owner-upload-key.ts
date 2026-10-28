@@ -8,10 +8,11 @@
  * invite to hang it on (`POST /shared-folders/:id/keys`, owner only,
  * insert-only).
  */
-import { ApiError, createFolder, publishSharedFolderKeys, type DriveFile } from './api'
-import { sealChildKey } from './folder-share-crypto'
-import { folderKeyForRoot, folderWrapFormat, sharedRootFor } from './owner-adoption'
-import { zeroize } from './crypto'
+import { ApiError, createFolder, publishSharedFolderKeys, updateFile, type DriveFile } from './api'
+import { collectAllChildItems, sealChildKey } from './folder-share-crypto'
+import { folderKeyForRoot, folderWrapFormat, needsOwnership, sharedRootFor } from './owner-adoption'
+import { deriveFileKey, zeroize } from './crypto'
+import { sharedFoldersEnabled } from './use-feature-flag'
 
 /**
  * Publish the wrap of an item the owner just added under its shared root: a
@@ -27,6 +28,9 @@ export async function publishOwnerUploadKey(
   fileKey: Uint8Array,
   isFolder = false,
 ): Promise<void> {
+  // rv-web198c P2-1: with the flag off there is nothing to publish to, and the
+  // walk below must not run (or fail) after an upload already committed.
+  if (!(await sharedFoldersEnabled())) return
   const root = await sharedRootFor(parentId, parentId)
   if (!root) return
   if ((await folderWrapFormat(root)) !== 'l7') return
@@ -71,4 +75,101 @@ export async function createOwnerFolder(args: {
     await publishOwnerUploadKey(args.masterKey, args.parentId, created.id, args.nameKey, true)
   }
   return created
+}
+
+/** The server takes at most this many key rows per publish call. */
+const PUBLISH_BATCH = 1000
+
+/** Thrown after the move itself succeeded, when its wraps could not be published. */
+export const MOVED_BUT_UNPUBLISHED = "Moved, but it isn't readable in the shared folder yet. Try moving it again."
+
+/** A moved row: enough to know its kind and who added it. */
+export type MovableRow = Pick<DriveFile, 'id'> & Partial<Pick<DriveFile, 'is_folder' | 'uploaded_by' | 'acted_via_share_id'>>
+
+/**
+ * rv-web198c P2-5: move items (the drive's "copy" is a move too) and, when the
+ * destination is inside a custody folder, publish the wrap of every moved item
+ * and everything under it, as an upload or a folder create does. Without it a
+ * moved-in item stayed unreadable to the folder's guests and members.
+ *
+ * Only rows the owner created are sealed: their key is derived from the master
+ * key. A row a guest or member added keeps the wrap it already has; it is never
+ * re-sealed under a derived key that is not its key. The one route that moves
+ * a row in the web client: a guard test pins it.
+ */
+export async function moveOwnerItems(args: {
+  ids: string[]
+  destinationId: string | null
+  /** The listed rows by id, for their kind and uploader. */
+  rows?: ReadonlyMap<string, MovableRow> | MovableRow[]
+  masterKey?: Uint8Array
+  viewerId?: string | null
+}): Promise<void> {
+  await Promise.all(args.ids.map((id) => updateFile(id, { parent_id: args.destinationId })))
+  if (!args.destinationId || !args.masterKey) return
+  try {
+    await publishMovedItems(args.masterKey, args.destinationId, args.ids, args.rows, args.viewerId ?? null)
+  } catch (error) {
+    console.warn('[move] shared-folder keys not published after a move', {
+      status: error instanceof ApiError ? error.status : undefined,
+    })
+    throw new Error(MOVED_BUT_UNPUBLISHED)
+  }
+}
+
+async function publishMovedItems(
+  masterKey: Uint8Array,
+  destinationId: string,
+  ids: string[],
+  rows: ReadonlyMap<string, MovableRow> | MovableRow[] | undefined,
+  viewerId: string | null,
+): Promise<void> {
+  if (!(await sharedFoldersEnabled())) return
+  const root = await sharedRootFor(destinationId, destinationId)
+  if (!root) return
+  if ((await folderWrapFormat(root)) !== 'l7') return
+  const byId: ReadonlyMap<string, MovableRow> = Array.isArray(rows)
+    ? new Map(rows.map((row) => [row.id, row]))
+    : (rows ?? new Map())
+
+  // The moved rows, then every descendant of a moved folder.
+  const items: { id: string; isFolder: boolean; foreign: boolean }[] = []
+  for (const id of ids) {
+    const row = byId.get(id)
+    const isFolder = !!row?.is_folder
+    // A row the caller did not list is treated as someone else's: never sealed.
+    items.push({ id, isFolder, foreign: !row || needsOwnership(row, viewerId) })
+    if (isFolder) {
+      for (const child of await collectAllChildItems(id)) {
+        items.push({
+          id: child.id,
+          isFolder: child.isFolder,
+          foreign: needsOwnership({ acted_via_share_id: child.actedViaShareId, uploaded_by: child.uploadedBy }, viewerId),
+        })
+      }
+    }
+  }
+
+  const folderKey = await folderKeyForRoot(masterKey, root)
+  if (!folderKey) throw new Error('The shared folder key is not available on this device.')
+  try {
+    const entries: { file_id: string; encrypted_file_key: string }[] = []
+    for (const item of items) {
+      if (item.foreign) continue
+      const key = await deriveFileKey(masterKey, item.id)
+      try {
+        entries.push({
+          file_id: item.id,
+          encrypted_file_key: await sealChildKey(folderKey, { rootId: root, itemId: item.id, isFolder: item.isFolder }, key),
+        })
+      } finally {
+        zeroize(key)
+      }
+    }
+    for (let start = 0; start < entries.length; start += PUBLISH_BATCH) {
+      await publishSharedFolderKeys(root, entries.slice(start, start + PUBLISH_BATCH))
+    }
+  } finally {
+    zeroize(folderKey)
+  }
 }

@@ -104,9 +104,9 @@ function fakePorts(overrides: Partial<CreateFolderLinkPorts> = {}) {
       return new Uint8Array(FOLDER_KEY)
     },
     sealFolderCustody: async () => new Uint8Array(60).fill(3),
-    findExistingFolderKey: async () => {
-      calls.push({ name: 'findExistingFolderKey' })
-      return null
+    hasActiveLegacyInvites: async () => {
+      calls.push({ name: 'hasActiveLegacyInvites' })
+      return false
     },
     generateFolderKey: async () => {
       calls.push({ name: 'generateFolderKey' })
@@ -192,7 +192,7 @@ describe('folder-link-create — custody order (2237b)', () => {
 
     expect(names(calls)).toEqual([
       'getSharedFolder',
-      'findExistingFolderKey',
+      'hasActiveLegacyInvites',
       'generateFolderKey',
       'registerSharedFolderKey',
       'encryptAllChildrenKeys',

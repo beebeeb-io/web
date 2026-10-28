@@ -11,6 +11,10 @@ import { createContentOps } from '../src/lib/content-crypto'
 import { loadWasm } from './helpers/wasm-crypto-mirror'
 import { ownedFolderCrypto } from './helpers/owned-folder-wasm'
 
+// shared_folders_v1 ON for this file (the paths under test are flag-on ones).
+await mockModuleScoped('../src/lib/use-feature-flag', import.meta.dir, { sharedFoldersEnabled: async () => true })
+
+
 const wasm = loadWasm()
 const encoder = new TextEncoder()
 
@@ -32,9 +36,11 @@ let custody: { owner_wrapped_folder_key: string } | null = null
 
 const real = await mockModuleScoped('../src/lib/crypto', import.meta.dir, (r) => ({
   ...r,
-  // L6 custody and L7 child wraps: core, in process.
+  // L6 custody, L7 child wraps and L8 owner wraps: core, in process.
   unwrapFolderCustody: ownedFolderCrypto().unwrapFolderCustody,
   unwrapFolderChild: ownedFolderCrypto().unwrapFolderChild,
+  wrapOwnerFileKey: ownedFolderCrypto().wrapOwnerFileKey,
+  unwrapOwnerFileKey: ownedFolderCrypto().unwrapOwnerFileKey,
   readFileMetadata: async (key: Uint8Array, name: string) => createContentOps(wasm).readFileMetadata(key, name),
   deriveFileKey: async (masterKey: Uint8Array, fileId: string) =>
     wasm.derive_file_key(masterKey, encoder.encode(fileId)),
@@ -48,7 +54,9 @@ const real = await mockModuleScoped('../src/lib/crypto', import.meta.dir, (r) =>
 
 await mockModuleScoped('../src/lib/api', import.meta.dir, {
   getSharedFolder: async () => {
-    if (!custody) throw new Error('not_found')
+    // A definitive "no custody record" is the server's 404 (anything else is
+    // an error the client must not read as "not shared": rv-web198c P1-1).
+    if (!custody) throw Object.assign(new Error('not found'), { status: 404 })
     return {
       folder_id: FOLDER_ID,
       role: 'owner',
@@ -82,6 +90,11 @@ function derive(master: Uint8Array, id: string): Uint8Array {
 /** The owner's custody record for the folder (what the owner's device publishes): L6. */
 function seedCustody() {
   custody = { owner_wrapped_folder_key: real.toBase64(wasm.wrapFolderCustody(MASTER, FOLDER_ID, FOLDER_KEY) as Uint8Array) as string }
+}
+
+/** The owner's own copy of a file key: L8, bound to the item id. */
+function l8(fileId: string, key: Uint8Array = FILE_KEY): string {
+  return real.toBase64(wasm.wrapOwnerFileKey(MASTER, fileId, key) as Uint8Array) as string
 }
 
 /** A child wrap in a custody folder: L7, bound to (root, this file, file). */
@@ -188,7 +201,7 @@ describe('adoptGuestFile', () => {
   test('a row that already carries an owner wrap is not posted again', async () => {
     seedCustody()
     adoptCalls.length = 0
-    const file = { ...seedFile(), owner_wrapped_file_key: seal(derive(MASTER, seedFile().id), FILE_KEY) }
+    const file = { ...seedFile(), owner_wrapped_file_key: l8(seedFile().id) }
     const res = await adoptGuestFile({
       masterKey: MASTER,
       folderId: FOLDER_ID,
@@ -320,7 +333,35 @@ test('B adoption verifies metadata with the candidate key before a write-once st
 })
 
 test('B owner wrap read accepts the server byte-array representation', async () => {
-  const wire = seal(derive(MASTER, seedFile().id), FILE_KEY)
+  const wire = l8(seedFile().id)
   const bytes = Array.from(real.fromBase64(wire) as Uint8Array)
   expect(await unwrapOwnerFileKey(MASTER, seedFile().id, bytes as any)).toEqual(FILE_KEY)
+})
+
+describe('L8: an owner wrap is core\'s purpose-bound record, and nothing else opens as one', () => {
+  test("the folder's own name blob is REJECTED as owner_wrapped_file_key", async () => {
+    const folderId = '55555555-5555-4555-8555-555555555555'
+    const json = JSON.stringify({ name: 'Docs', mime_type: null }) // exactly 32 bytes
+    expect(new TextEncoder().encode(json).length).toBe(32)
+    const nameBlob = wasm.encrypt_metadata(derive(MASTER, folderId), json) as { nonce: Uint8Array; ciphertext: Uint8Array }
+    const forged = real.toBase64(new Uint8Array([...nameBlob.nonce, ...nameBlob.ciphertext])) as string
+    expect(await unwrapOwnerFileKey(MASTER, folderId, forged)).toBeNull()
+  })
+
+  test("an item's v1 content frame (32 plaintext bytes under its derived key) is REJECTED", async () => {
+    const fileId = seedFile().id
+    const frame = seal(derive(MASTER, fileId), new Uint8Array(32).fill(0x33))
+    expect(await unwrapOwnerFileKey(MASTER, fileId, frame)).toBeNull()
+  })
+
+  test('the adoption record written is L8: it opens for this item, not for another', async () => {
+    adoptCalls.length = 0
+    seedCustody()
+    const file = seedFile()
+    await adoptGuestFile({ masterKey: MASTER, folderId: FOLDER_ID, file: { ...file }, encryptedFileKeyB64: l7(file.id) })
+    expect(adoptCalls).toHaveLength(1)
+    const bytes = real.fromBase64(adoptCalls[0].wrapped) as Uint8Array
+    expect(Array.from(wasm.unwrapOwnerFileKey(MASTER, file.id, bytes) as Uint8Array)).toEqual(Array.from(FILE_KEY))
+    expect(() => wasm.unwrapOwnerFileKey(MASTER, '66666666-6666-4666-8666-666666666666', bytes)).toThrow()
+  })
 })

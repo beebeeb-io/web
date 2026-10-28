@@ -39,7 +39,6 @@ describe('the generic chunk decrypt is used for key unwrapping only', () => {
     expect(filesMatching(/\bdecryptChunk\(/)).toEqual([
       'src/lib/crypto.ts', //                 the definition (main-thread proxy)
       'src/lib/folder-share-crypto.ts', //    folder key + child file key unwrap
-      'src/lib/owner-adoption.ts', //         2237b: unwrap an owner's own copy of a guest file key
       'src/pages/shared.tsx', //              user-to-user share: file key unwrap
       'src/workers/crypto.worker.ts', //      the definition (worker pass-through)
     ])

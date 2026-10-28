@@ -11,7 +11,8 @@ import { needsOwnership } from '../lib/owner-adoption'
 import { ContextMenu } from './context-menu'
 import { FileRowSkeleton } from '@beebeeb/shared'
 import { useKeys } from '../lib/key-context'
-import { decryptManyNames, encryptFilename, serializeEncryptedBlob } from '../lib/crypto'
+import { decryptManyNames, encryptFilename, readFileMetadata, serializeEncryptedBlob } from '../lib/crypto'
+import { renameKeyFor } from '../lib/owner-rename'
 import { onDecrypted } from '../lib/decrypt-events'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { isPreviewable } from '../lib/preview'
@@ -968,7 +969,16 @@ export function FileList({
     try {
       // Use the content key for request-uploaded files so the renamed name stays
       // decryptable via the same (request-key) path that reads it.
-      const fileKey = await getFileKeyForFile(file)
+      // rv-web198c P2-4: a guest's or member's row is renamed under ITS key,
+      // proven to open its current name (never the derived fall-through).
+      const fileKey = await renameKeyFor({
+        fileId: file.id,
+        file,
+        viewerId: null,
+        getFileKey: async () => getFileKeyForFile(file),
+        getFileKeyForFile,
+        readName: readFileMetadata,
+      })
       const enc = await encryptFilename(fileKey, newName)
       const nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
       await updateFile(file.id, { name_encrypted: nameEncrypted })
