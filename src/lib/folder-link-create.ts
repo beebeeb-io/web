@@ -50,6 +50,7 @@ import {
   type FolderLinkErrorCode,
 } from './folder-link-types'
 import { buildFullShareLink } from './share-full-link'
+import { assertNeverSawCustody, markCustodySeen } from './custody-memory'
 import {
   deriveLinkPassphraseKey,
   generateFolderLinkToken,
@@ -187,12 +188,17 @@ export async function ensureOwnerFolderKey(
 ): Promise<Uint8Array> {
   const info = await tryReadCustody(folderId, ports)
   if (info?.owner_wrapped_folder_key) {
-    return ports.openFolderCustody(
+    const key = await ports.openFolderCustody(
       masterKey,
       folderId,
       ports.fromBase64(info.owner_wrapped_folder_key),
     )
+    markCustodySeen(folderId)
+    return key
   }
+  // L7c: a folder seen with custody before is never re-seeded or re-minted
+  // because the server now says "no record".
+  assertNeverSawCustody(folderId)
 
   // No custody row yet. An active folder invite still carries the key that
   // members hold: reuse it, so they keep opening everything. Only with no
@@ -211,6 +217,7 @@ export async function ensureOwnerFolderKey(
     // This tab may have cached "not shared" for the folder a moment ago; the
     // next upload into it must publish its wrap (owner-upload-key.ts).
     forgetSharedFolderCustody(folderId)
+    markCustodySeen(folderId)
     return folderKey
   } catch (err) {
     // Someone registered a key between our read and our write: their key is
@@ -220,11 +227,13 @@ export async function ensureOwnerFolderKey(
     const reread = await tryReadCustody(folderId, ports)
     if (!reread?.owner_wrapped_folder_key) throw err
     forgetSharedFolderCustody(folderId)
-    return ports.openFolderCustody(
+    const key = await ports.openFolderCustody(
       masterKey,
       folderId,
       ports.fromBase64(reread.owner_wrapped_folder_key),
     )
+    markCustodySeen(folderId)
+    return key
   }
 }
 

@@ -27,6 +27,7 @@ import { useKeys } from '../lib/key-context'
 import { useAuth } from '../lib/auth-context'
 import { decryptFileMetadata, zeroize } from '../lib/crypto'
 import { noCustodyRecord, openFolderChild, type FolderWrapFormat } from '../lib/folder-share-crypto'
+import { assertNeverSawCustody, markCustodySeen } from '../lib/custody-memory'
 import { resolveRecipientFolderKey } from '../lib/recipient-folder-key'
 import { encryptedDownload } from '../lib/encrypted-download'
 import { formatBytes } from '../lib/format'
@@ -351,7 +352,11 @@ export function SharedFolder() {
         // 501 with the flag off) means a legacy invite-only folder. Anything
         // else fails the load: the format must never be guessed (L7b).
         getSharedFolder(folderId).catch((e: unknown): SharedFolderInfo | null => {
-          if (noCustodyRecord(e)) return null
+          if (noCustodyRecord(e)) {
+            // L7c: legacy only for a folder this client never saw with custody.
+            assertNeverSawCustody(folderId)
+            return null
+          }
           throw e
         }),
       ])
@@ -374,6 +379,7 @@ export function SharedFolder() {
           fk = resolved.folderKey
           setFolderKeyCache(fk)
           setKeyMissing(false)
+          if (format === 'l7') markCustodySeen(folderId)
         } else {
           setKeyMissing(true)
         }

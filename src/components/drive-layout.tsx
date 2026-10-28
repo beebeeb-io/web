@@ -20,6 +20,7 @@ import { useDriveData } from '../lib/drive-data-context'
 import { SidebarStorageFooter } from './sidebar-storage-footer'
 import { openFolderChild } from '../lib/folder-share-crypto'
 import { folderWrapFormat } from '../lib/owner-adoption'
+import { markCustodySeen } from '../lib/custody-memory'
 import { resolveRecipientFolderKey } from '../lib/recipient-folder-key'
 import { decryptFileMetadata } from '../lib/crypto'
 import { useSync } from '../lib/sync-context'
@@ -405,6 +406,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
             return { ...invite, decryptedName: 'Shared folder' }
           }
           const folderKey = resolved.folderKey
+          if (format === 'l7') markCustodySeen(invite.file_id)
           const folderEntry = keys.find(k => k.file_id === invite.file_id)
           if (folderEntry) {
             const fileKey = await openFolderChild(

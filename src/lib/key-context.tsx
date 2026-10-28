@@ -49,6 +49,7 @@ import { clearThumbnailCache } from './thumbnail'
 import { cacheKeyPersistent, cacheKeySessionOnly } from './key-cache'
 import { ApiError, getFolderKeys, getSentInvites, listFolderLinks, listSharedFolderKeys, setRecoveryCheckIfAbsent, verifyRecoveryCheck } from './api'
 import type { DriveFile } from './api'
+import { clearCustodyMemory } from './custody-memory'
 import { clearSharedFolderLookups, needsOwnership, sharedRootFor, unwrapOwnerFileKey, folderKeyForRoot, openOwnerFile } from './owner-adoption'
 import { createSharedFolderKeyCache } from './shared-folder-key-cache'
 import { activeFolderInvites } from './folder-share-crypto'
@@ -832,7 +833,8 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     // A key IS resident, bound to a DIFFERENT (or no) account than the one
     // now authenticated — cross-account confusion. Clear it; the normal
     // escrow/PRF/password/phrase unlock path takes over and loads the
-    // REAL key for currentUserId.
+    // REAL key for currentUserId. L7c: the custody memory goes with it.
+    clearCustodyMemory()
     lock()
   }, [user, authLoading, vaultChecked, lock])
 
@@ -849,6 +851,8 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     sharedFolderCacheRef.current.clear()
     sharedFolderLabelsRef.current.clear()
     clearSharedFolderLookups()
+    // L7c: the custody memory goes with the keys on sign-out.
+    clearCustodyMemory()
     clearCachedKey()
     await Promise.all([clearOfflineCaches(), clearThumbnailCache(), clearVault()])
     setVaultExists(false)

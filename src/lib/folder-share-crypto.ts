@@ -18,6 +18,7 @@ import {
   type FolderChildKind,
 } from './crypto'
 import { listFilesPage, getSentInvites, getSharedFolder, FILE_LIST_HARD_CAP } from './api'
+import { assertNeverSawCustody, markCustodySeen } from './custody-memory'
 import type { ShareInvite } from './api'
 
 /**
@@ -292,11 +293,19 @@ export async function custodyFolderKey(
   try {
     wrapped = (await getSharedFolder(folderId)).owner_wrapped_folder_key
   } catch (e) {
-    if (noCustodyRecord(e)) return null
+    // L7c: "no record" means legacy only for a folder never seen with custody.
+    if (noCustodyRecord(e)) {
+      assertNeverSawCustody(folderId)
+      return null
+    }
     throw e
   }
-  if (!wrapped) return null
+  if (!wrapped) {
+    assertNeverSawCustody(folderId)
+    return null
+  }
   const folderKey = await openFolderCustody(masterKey, folderId, fromBase64(wrapped))
+  markCustodySeen(folderId)
   return { folderKey, encryptedOwnerFolderKeyB64: wrapped }
 }
 

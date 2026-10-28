@@ -107,7 +107,10 @@ const { needsOwnership, adoptGuestFile, resolveSharedFileKey, openOwnerFile, unw
 // Every test starts from no custody record, no invite and an empty lookup
 // cache: a custody record is cached for the session, so without this a test
 // saw whatever an earlier test (in bun's --randomize order) had seeded.
+const { clearCustodyMemory } = await import('../src/lib/custody-memory')
+
 beforeEach(() => {
+  clearCustodyMemory()
   custody = null
   inviteFolderKey = null
   adoptCalls.length = 0

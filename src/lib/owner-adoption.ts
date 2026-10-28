@@ -12,6 +12,7 @@
  */
 import { decryptChunk, readFileMetadata, deriveFileKey, encryptChunk, fromBase64, toBase64, zeroize } from './crypto'
 import { ApiError, adoptOwnerFileKey, getFile, getSentInvites, getSharedFolder, type ShareInvite, type SharedFolderInfo } from './api'
+import { assertNeverSawCustody, hasSeenCustody, markCustodySeen } from './custody-memory'
 import {
   activeFolderInvites,
   findExistingFolderKey,
@@ -83,7 +84,11 @@ export async function folderWrapFormat(rootId: string): Promise<FolderWrapFormat
     custodyCache.set(rootId, { at: Date.now(), value: Promise.resolve(info) })
     return 'l7'
   } catch (error) {
-    if (noCustodyRecord(error)) return 'legacy_invite'
+    if (noCustodyRecord(error)) {
+      // L7c: legacy only for a folder this client never saw with custody.
+      assertNeverSawCustody(rootId)
+      return 'legacy_invite'
+    }
     throw error
   }
 }
@@ -230,11 +235,16 @@ export async function rootKeyAndFormat(
     const wrapped = custody.owner_wrapped_folder_key
     if (!wrapped) return null
     try {
-      return { folderKey: await openFolderCustody(masterKey, folderId, fromBase64(wrapped)), format: 'l7' }
+      const folderKey = await openFolderCustody(masterKey, folderId, fromBase64(wrapped))
+      markCustodySeen(folderId)
+      return { folderKey, format: 'l7' }
     } catch {
       return null
     }
   }
+  // L7c: a folder this client once saw with custody is never read legacy,
+  // whatever the server answers now.
+  if (hasSeenCustody(folderId)) return null
   try {
     const existing = await findExistingFolderKey(masterKey, folderId)
     return existing ? { folderKey: existing.folderKey, format: 'legacy_invite' } : null

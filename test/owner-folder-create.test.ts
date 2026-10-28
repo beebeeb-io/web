@@ -66,8 +66,10 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, (r) => ({
 
 const { createOwnerFolder } = await import('../src/lib/owner-upload-key')
 const { clearSharedFolderLookups } = await import('../src/lib/owner-adoption')
+const { clearCustodyMemory } = await import('../src/lib/custody-memory')
 
 beforeEach(() => {
+  clearCustodyMemory()
   custodyOn = true
   created.length = 0
   published.length = 0
