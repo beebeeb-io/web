@@ -91,13 +91,17 @@ export function GuestList(props: {
                         {ext.toUpperCase()}
                       </span>
                     ) : null}
-                    {node.item.is_folder ? <span>Folder</span> : null}
-                    {!node.item.is_folder ? (
+                    {node.item.is_folder ? (
+                      <>
+                        <span>Folder</span>
+                        <span className="text-line-2 md:hidden">·</span>
+                      </>
+                    ) : (
                       <>
                         <span className="font-mono tabular-nums md:hidden">{size}</span>
                         <span className="text-line-2 md:hidden">·</span>
                       </>
-                    ) : null}
+                    )}
                     <span className="md:hidden">{timeAgo(node.item.updated_at)}</span>
                   </div>
                 </div>

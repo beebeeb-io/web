@@ -43,6 +43,9 @@ async function guestContext(browser: Browser) {
  */
 async function captureGuest(page: Page, state: string) {
   const prefix = process.env.E2E_GUEST_SCREENSHOTS ?? 'e2e-artifacts/2237b-guest-screens/2237b-guest'
+  // The first-visit cookie notice would cover the page in every shot.
+  const consent = page.getByRole('button', { name: 'Essential only' })
+  if (await consent.isVisible().catch(() => false)) await consent.click()
   for (const [label, width, height] of [['desktop', 1280, 720], ['phone', 390, 844]] as const) {
     await page.setViewportSize({ width, height })
     await page.screenshot({ path: `${prefix}-${state}-${label}.png` })
