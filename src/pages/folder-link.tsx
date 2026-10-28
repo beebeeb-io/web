@@ -5,11 +5,14 @@
  * are pure enough to test without a DOM. The page component is a thin wrapper:
  * resolve on mount, submit a passphrase, render one of five states.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { GuestShell } from '../components/folder-link/guest-shell'
 import { Unavailable } from '../components/folder-link/unavailable'
 import { GuestBrowser } from '../components/folder-link/guest-browser'
+import { GuestDropZone } from '../components/folder-link/guest-drop-zone'
+import { GuestUploadPanel } from '../components/folder-link/guest-upload-panel'
+import type { GuestUploadTask } from '../lib/guest-upload'
 import {
   FolderNotAvailableError,
   clearProof,
@@ -178,49 +181,63 @@ export function FolderLinkView(props: {
   }
 
   const { root, folderKey, level, proof } = state
-  const canUpload = level === 'add' || level === 'edit'
   return (
-    <GuestShell
-      title="Shared folder"
-      toolbar={
-        canUpload ? (
-          <button
-            type="button"
-            className="rounded-lg border border-line px-3 py-1.5 text-sm font-medium"
-          >
-            Upload
-          </button>
-        ) : undefined
-      }
-    >
-      {canUpload ? <NamePrompt /> : null}
-      <GuestBrowser
-        token={props.token}
-        folderKey={folderKey}
-        level={level}
-        proof={proof}
-        rootName={root.root_name_encrypted}
-        onOpenFile={() => undefined}
-        onPreview={() => undefined}
-      />
-    </GuestShell>
+    <FolderLinkBody
+      token={props.token}
+      root={root}
+      folderKey={folderKey}
+      level={level}
+      proof={proof}
+    />
   )
 }
 
-/** Asked once, before the first upload; Task 13 wires it to the engine. */
-function NamePrompt() {
+function FolderLinkBody(props: {
+  token: string
+  root: PublicFolderRoot
+  folderKey: Uint8Array
+  level: FolderAccessLevel
+  proof: Proof | null
+}) {
+  const canUpload = props.level === 'add' || props.level === 'edit'
+  const [queue, setQueue] = useState<GuestUploadTask[]>([])
+  const [refresh, setRefresh] = useState(0)
+  const siblingNames = useRef<Map<string, string>>(new Map())
+
   return (
-    <div className="mb-4 rounded-lg border border-line bg-paper-2 p-3">
-      <label className="block text-sm text-ink-3" htmlFor="folder-link-actor-name">
-        Your name
-      </label>
-      <input
-        id="folder-link-actor-name"
-        type="text"
-        className="mt-1 w-full max-w-xs rounded-lg border border-line bg-paper px-3 py-2 text-sm"
-        placeholder="Shown to the folder owner"
-      />
-    </div>
+    <GuestShell title="Shared folder">
+      <GuestDropZone
+        disabled={!canUpload}
+        onTasks={(tasks) => setQueue(tasks)}
+      >
+        {canUpload ? (
+          <div className="mb-3 space-y-3">
+            <GuestUploadPanel
+              token={props.token}
+              folderId={props.root.folder_id}
+              folderKey={props.folderKey}
+              proof={props.proof}
+              level={props.level}
+              parentId={null}
+              siblingNames={siblingNames.current}
+              onUploaded={() => setRefresh((value) => value + 1)}
+              queue={queue}
+              setQueue={setQueue}
+            />
+          </div>
+        ) : null}
+        <GuestBrowser
+          token={props.token}
+          folderKey={props.folderKey}
+          level={props.level}
+          proof={props.proof}
+          rootName={props.root.root_name_encrypted}
+          onOpenFile={() => undefined}
+          onPreview={() => undefined}
+          refreshKey={refresh}
+        />
+      </GuestDropZone>
+    </GuestShell>
   )
 }
 

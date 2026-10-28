@@ -159,6 +159,8 @@ export function useGuestListing(args: {
   parentId: string | null
   proof: Proof | null
   pageSize?: number
+  /** Bumped by the page after an upload to re-read the first page. */
+  refreshKey?: number
 }): GuestListing {
   const pageSize = args.pageSize ?? 200
   const [nodes, setNodes] = useState<GuestNode[]>([])
@@ -193,7 +195,7 @@ export function useGuestListing(args: {
     return () => {
       live = false
     }
-  }, [args.token, args.folderKey, args.parentId, args.proof?.proof, pageSize])
+  }, [args.token, args.folderKey, args.parentId, args.proof?.proof, pageSize, args.refreshKey])
 
   const [loadingMore, setLoadingMore] = useState(false)
   const loadMore = useCallback(() => {

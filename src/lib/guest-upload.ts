@@ -57,13 +57,13 @@ export type GuestUploadState =
 export function rejectMessage(reason: GuestRejectReason): string {
   switch (reason) {
     case 'quota':
-      return 'This folder is out of space. Ask the owner to free some up.'
+      return 'This folder is out of space.'
     case 'cap':
-      return 'This link has reached its upload limit.'
+      return 'That folder is full.'
     case 'paused':
       return 'Uploads to this link are paused right now.'
     case 'rate':
-      return 'Too many uploads just now. Wait a moment and try again.'
+      return 'Too many uploads right now. Try again in a minute.'
     case 'too_large':
       return 'This file is too large to upload here.'
     case 'folder_gone':

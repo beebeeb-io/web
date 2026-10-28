@@ -147,7 +147,7 @@ describe('folder link page states (2237b)', () => {
     expect(html).not.toContain('Your name')
   })
 
-  test('level add shows upload and the name prompt', () => {
+  test('level add shows upload; the name prompt waits for the first upload', () => {
     const html = render({
       name: 'listed',
       root: { root_name_encrypted: 'r' } as never,
@@ -156,6 +156,8 @@ describe('folder link page states (2237b)', () => {
       proof: null,
     })
     expect(html).toContain('>Upload<')
-    expect(html).toContain('Your name')
+    expect(html).toContain('Drop files or a folder to add them here.')
+    // The actor-name prompt is raised on the first upload, not at load.
+    expect(html).not.toContain('What should we call you?')
   })
 })

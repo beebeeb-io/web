@@ -57,6 +57,7 @@ export function GuestBrowser(props: {
     folderKey: props.folderKey,
     parentId,
     proof: props.proof,
+    refreshKey: props.refreshKey,
   })
   const [view, setView] = useState<GuestViewMode>(readGuestView)
   const [sort, setSort] = useState<GuestSortKey>(readGuestSort)
