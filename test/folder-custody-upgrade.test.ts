@@ -65,6 +65,9 @@ function ports(overrides: Partial<CustodyUpgradePorts> = {}): CustodyUpgradePort
       if (answer !== 'ok') throw Object.assign(new Error(answer), { status: 409, code: answer })
       return { created: true, key_version: 1, rewrapped: body.keys.length }
     },
+    // Never the real parent lookup (a GET to the API base): the folder has no
+    // parent here unless a test says otherwise (final review P3-2).
+    parentOf: async () => null,
     getSharedFolder: async (folderId) => ({
       folder_id: folderId,
       role: 'owner',
@@ -77,7 +80,12 @@ function ports(overrides: Partial<CustodyUpgradePorts> = {}): CustodyUpgradePort
   }
 }
 
+const { resetCustodyMemoryForTests } = await import('../src/lib/custody-memory')
+
 beforeEach(async () => {
+  // Another file may have left the device's custody memory set (final review
+  // P3-2); a set memory makes the upgrade walk the folder's ancestors.
+  resetCustodyMemoryForTests()
   listings = [[
     await legacyRow(FOLDER_KEY, CHILD_FILE, false, FILE_KEY),
     await legacyRow(FOLDER_KEY, CHILD_FOLDER, true, NAME_KEY),

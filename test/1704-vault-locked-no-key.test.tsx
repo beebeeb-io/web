@@ -360,6 +360,10 @@ describe('task 1704 SLICE 2: ProtectedRoute routes the fresh-password/no-key cas
         user_id: TARGET, email: 'target@example.com', email_verified: true,
         created_at: '2026-01-01T00:00:00Z', totp_enabled: false,
       }),
+      // The locked screen reads its erase status on mount (task 1918). Left
+      // real, that read went to the default API base, which is production
+      // (found by the no-prod-network preload, web #199 final review P3-2).
+      getEraseRequest: async () => ({ request: null, live_items: 3, cooldown_hours: 72, trash_retention_days: 30, last_executed: null }),
     }))
     await mockModuleScoped('../src/lib/auth-context.tsx', import.meta.dir, (real: Record<string, unknown>) => ({
       ...real,
