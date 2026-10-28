@@ -244,32 +244,43 @@ describe('L7d: the memory belongs to the device and only grows', () => {
       answer = { kind: 'status', status: 404 }
       adoption.clearSharedFolderLookups()
       await expect(adoption.folderWrapFormat(ROOT)).rejects.toThrow("This folder's keys are unavailable")
-      // Recording a new folder can't happen without overwriting it: refused.
-      expect(() => memory.markCustodySeen(PRESEEN)).toThrow("This device couldn't save this folder's sharing state")
+      // Recording a folder never overwrites it: the id goes to memory only,
+      // and its custody key can still be used (L7 is the safe direction).
+      memory.markCustodySeen(PRESEEN)
       expect(storage.get(KEY)).toBe(raw)
     }
   })
 
-  // Plan C L7d, as merged: "Written before any key from the custody record is
-  // used. A failed write, or an unreadable set, refuses."
-  test('a failed write refuses the key (nothing is used that the device could not record); memory still refuses legacy', async () => {
+  // L7d on web (lead clarification, 2026-10-28): storage that can't be used
+  // (blocked, private mode, quota) means no DURABLE memory, the new-device
+  // residual. The id is recorded in memory, the key is used, nothing refuses.
+  // Only a stored value that exists but is not a canonical set refuses.
+  test('setItem throws (quota, private mode): recorded in memory, the custody key works, legacy stays refused this page load', async () => {
     memory.resetCustodyMemoryForTests()
     setItemThrows = true
-    expect(await adoption.rootKeyAndFormat(MASTER, ROOT)).toBeNull()
-    await expect(share.custodyFolderKey(MASTER, ROOT)).rejects.toThrow()
+    expect((await adoption.rootKeyAndFormat(MASTER, ROOT))?.format).toBe('l7')
+    expect(await share.custodyFolderKey(MASTER, ROOT)).not.toBeNull()
     expect(storage.has(KEY)).toBe(false)
-    // The in-memory copy survives the throw: a later "no record" still refuses.
     expect(memory.hasSeenCustody(ROOT)).toBe(true)
     answer = { kind: 'status', status: 404 }
     adoption.clearSharedFolderLookups()
     await expect(adoption.folderWrapFormat(ROOT)).rejects.toThrow("This folder's keys are unavailable")
   })
 
-  test('blocked storage (getItem throws) is an unreadable set: legacy is refused', async () => {
+  test('getItem throws (storage blocked): a legacy read is allowed, the custody key works, and the page remembers it', async () => {
     memory.resetCustodyMemoryForTests()
     getItemThrows = true
-    expect(memory.hasSeenCustody(ROOT)).toBe(true)
+    // Nothing seen on this page: a "no record" folder reads legacy, as on a new device.
     answer = { kind: 'status', status: 404 }
+    expect(memory.hasSeenCustody(ROOT)).toBe(false)
+    expect(await adoption.folderWrapFormat(ROOT)).toBe('legacy_invite')
+    // A custody record opens and is used.
+    answer = { kind: 'record' }
+    adoption.clearSharedFolderLookups()
+    expect((await adoption.rootKeyAndFormat(MASTER, ROOT))?.format).toBe('l7')
+    // ...and for the rest of this page load that folder refuses legacy.
+    answer = { kind: 'status', status: 404 }
+    adoption.clearSharedFolderLookups()
     await expect(adoption.folderWrapFormat(ROOT)).rejects.toThrow("This folder's keys are unavailable")
   })
 

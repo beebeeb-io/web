@@ -22,11 +22,16 @@
  * downgrade (proven on mobile and CLI). So sign-out, sign-in and an account
  * switch never clear it; only the user clearing site data does.
  *
- * As merged in plan C: the id is written BEFORE any key from the custody
- * record is used, and a failed write refuses (the caller does not use the
- * key). An unreadable set (a stored value that is not an array of canonical
- * UUIDs, or storage that can't be read at all) counts as "every folder seen":
- * legacy is refused, and the value is never overwritten. Ids are stored and
+ * The id is recorded BEFORE any key from the custody record is used. On web
+ * (lead clarification of L7d, 2026-10-28), storage that can't be used
+ * (blocked by browser policy or private mode, or full) means no DURABLE
+ * memory: the id is kept in memory, the key is used, and nothing refuses. A
+ * browser that can't persist the set can be downgraded after a reload
+ * whatever this does (the new-device residual), so refusing would gain no
+ * security and break every shared folder for those users. Only a stored value
+ * that exists but is not an array of canonical UUIDs refuses: that could be
+ * local tampering, and it might have held any folder, so it counts as all of
+ * them (legacy refused) and is never overwritten. Ids are stored and
  * looked up in their canonical lower-case hyphenated form, whatever form the
  * server sent; an id that is no UUID refuses. Every id is also kept in memory
  * for the page load, so after a failed write the folder still refuses legacy
@@ -41,15 +46,6 @@ export class FolderKeysUnavailableError extends Error {
   constructor() {
     super("This folder's keys are unavailable.")
     this.name = 'FolderKeysUnavailableError'
-  }
-}
-
-/** The custody record was valid, but this device could not record it: its key is not used. */
-export class CustodyMemoryWriteError extends FolderKeysUnavailableError {
-  constructor() {
-    super()
-    this.message = "This device couldn't save this folder's sharing state, so it won't open it."
-    this.name = 'CustodyMemoryWriteError'
   }
 }
 
@@ -76,16 +72,17 @@ function parseFolderId(folderId: string): string | null {
 }
 
 /**
- * The durable set. `unreadable` is storage that can't be read (blocked), or a
- * stored value that is not an array of canonical UUIDs: it might have held
- * any folder, so it counts as all of them.
+ * The durable set. `unreadable` is a stored value that exists but is not an
+ * array of canonical UUIDs: it might have held any folder, so it counts as
+ * all of them. Storage that can't be read at all (blocked) has no durable set:
+ * the in-memory copy is all there is, as on a new device.
  */
 function readStored(): { ids: Set<string>; unreadable: boolean } {
   let raw: string | null | undefined
   try {
     raw = globalThis.localStorage?.getItem(STORAGE_KEY)
   } catch {
-    return { ids: new Set(), unreadable: true }
+    return { ids: new Set(), unreadable: false }
   }
   if (raw === null || raw === undefined) return { ids: new Set(), unreadable: false }
   try {
@@ -101,28 +98,23 @@ function readStored(): { ids: Set<string>; unreadable: boolean } {
 
 /**
  * Remember that `folderId` has a valid custody record. Only ever adds. Call it
- * BEFORE the record's key is used: it throws CustodyMemoryWriteError when the
- * device can't record it durably (then the key must not be used), and
- * FolderKeysUnavailableError for an id that is not a canonical folder UUID.
+ * BEFORE the record's key is used. It throws FolderKeysUnavailableError only
+ * for an id that is no UUID (never stored). When storage can't take the id
+ * (blocked, full) or holds an unreadable value (never overwritten), the id is
+ * kept in memory only and the caller goes on.
  */
 export function markCustodySeen(folderId: string): void {
   const id = parseFolderId(folderId)
   if (!id) throw new FolderKeysUnavailableError()
-  // First in memory: even if the durable write fails, legacy stays refused.
   inMemory.add(id)
-  // No storage API at all (tests, server-side render): memory is all there is.
-  const store = globalThis.localStorage
-  if (!store) return
   const stored = readStored()
-  // An unreadable set is never replaced (that could shrink it), so the id
-  // can't be recorded: refuse.
-  if (stored.unreadable) throw new CustodyMemoryWriteError()
-  if (stored.ids.has(id)) return
+  if (stored.unreadable || stored.ids.has(id)) return
   stored.ids.add(id)
   try {
-    store.setItem(STORAGE_KEY, JSON.stringify([...stored.ids].sort()))
+    globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify([...stored.ids].sort()))
   } catch {
-    throw new CustodyMemoryWriteError()
+    // No durable memory on this browser: the in-memory copy keeps the folder
+    // L7 for this page load (the new-device residual after a reload).
   }
 }
 
