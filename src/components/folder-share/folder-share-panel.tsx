@@ -28,6 +28,7 @@ import type { FolderLink } from '../../lib/folder-link-types'
 import { useKeys } from '../../lib/key-context'
 import { useFeatureFlag } from '../../lib/use-feature-flag'
 import { createDisabledReason, CreateLinkForm } from './create-link-form'
+import { FolderActivityTab } from './folder-activity-tab'
 import { FolderLinkRow } from './folder-link-row'
 
 export interface FolderSharePanelProps {
@@ -189,6 +190,7 @@ function FolderSharePanelLive({ open, folderId, folderName, onClose }: FolderSha
   const [error, setError] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [confirmingRevokeId, setConfirmingRevokeId] = useState<string | null>(null)
+  const [tab, setTab] = useState<'people' | 'activity'>('people')
 
   useEffect(() => {
     if (!open) return
@@ -325,6 +327,23 @@ function FolderSharePanelLive({ open, folderId, folderName, onClose }: FolderSha
           <Icon name="x" size={14} />
         </button>
       </div>
+      <div role="tablist" aria-label="Share panel sections" className="mb-3 flex gap-1 rounded-md bg-paper-2 p-1">
+        {(['people', 'activity'] as const).map((key) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            aria-selected={tab === key}
+            onClick={() => setTab(key)}
+            className={`flex-1 rounded px-2 py-1 text-xs ${tab === key ? 'bg-paper text-ink shadow-sm' : 'text-ink-3'}`}
+          >
+            {key === 'people' ? 'People & links' : 'Activity'}
+          </button>
+        ))}
+      </div>
+      {tab === 'activity' ? (
+        <FolderActivityTab folderId={folderId} />
+      ) : (
       <FolderSharePanelBody
         folderName={folderName}
         members={members}
@@ -340,6 +359,7 @@ function FolderSharePanelLive({ open, folderId, folderName, onClose }: FolderSha
         onCopy={copy}
         onRevoke={(link) => void revoke(link)}
       />
+      )}
     </div>
   )
 }

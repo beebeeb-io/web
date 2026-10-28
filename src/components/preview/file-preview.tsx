@@ -22,6 +22,7 @@ import { ZipListingPreview } from './zip-listing-preview'
 import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useKeys } from '../../lib/key-context'
+import { needsOwnership, sharedRootFor } from '../../lib/owner-adoption'
 import { decryptFileMetadata } from '../../lib/crypto'
 import { checkEditability, editabilityNotice, type EditabilityResult } from '../../lib/text-editability'
 import { FileEditor, type FileEditorHandle } from '../editor/file-editor'
@@ -44,6 +45,10 @@ interface FilePreviewProps {
   /** Open straight into the text editor once the file is known editable —
    *  set for a file just created from Drive's "+ New" menu (task 1582). */
   startInEditMode?: boolean
+  /** The folder being browsed, so a guest-added row can find its shared root. */
+  folderId?: string
+  /** Trash this file — offered on the "can't open" card so the row is actionable. */
+  onDelete?: (file: DriveFile) => void | Promise<void>
 }
 
 function formatSize(bytes: number): string {
@@ -443,8 +448,8 @@ function resolveEditableKind(
   return null
 }
 
-export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, onVersionRestored, onPrev, onNext, hasPrev, hasNext, startInEditMode }: FilePreviewProps) {
-  const { getFileKeyForFile, isUnlocked } = useKeys()
+export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, onVersionRestored, onPrev, onNext, hasPrev, hasNext, startInEditMode, folderId, onDelete }: FilePreviewProps) {
+  const { getFileKeyForFile, getFileKeyForSharedFile, getSharedFileOrigin, isUnlocked } = useKeys()
   const [blob, setBlob] = useState<Blob | null>(null)
   /** True when `blob` holds the full original (non-image / fallback / version
    *  paths). False when `blob` is only a thumbnail (the thumbnail-first image
@@ -535,6 +540,23 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   // Bumped on every successful blob swap so the canvas key changes and
   // the renderer re-mounts with the decrypt-fade-in animation.
   const [renderKey, setRenderKey] = useState(0)
+  // Task 2237b: set when this row was added through a folder link and neither
+  // the owner wrap nor the folder key opens it. `undefined` = not applicable,
+  // `null` = cannot open with no known label.
+  const [shareOrigin, setShareOrigin] = useState<string | null | undefined>(undefined)
+  const sharedFile = needsOwnership(file)
+
+  /** Every load path asks here: an ordinary file derives from the master key,
+   *  a guest- or member-added row goes through the shared-folder resolver. */
+  const resolveFileKey = useCallback(async (): Promise<Uint8Array> => {
+    if (!sharedFile) return getFileKeyForFile(file)
+    const root = await sharedRootFor(folderId ?? null, file.id)
+    const key = root ? await getFileKeyForSharedFile(file, root) : null
+    if (key) return key
+    const label = root ? await getSharedFileOrigin(file, root) : null
+    setShareOrigin(label)
+    throw new Error(label ? `Can't open this file (added via ${label})` : "Can't open this file")
+  }, [sharedFile, getFileKeyForFile, getFileKeyForSharedFile, getSharedFileOrigin, file, folderId])
 
   // Display name: use prop, then locally decrypted, then raw
   const name = decryptedNameProp ?? localDecryptedName ?? file.name_encrypted
@@ -549,7 +571,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     let cancelled = false
     async function decrypt() {
       try {
-        const fileKey = await getFileKeyForFile(file)
+        const fileKey = await resolveFileKey()
         const { name, mimeType } = await decryptFileMetadata(fileKey, file.name_encrypted)
         if (!cancelled) {
           setLocalDecryptedName(name)
@@ -561,7 +583,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     }
     decrypt()
     return () => { cancelled = true }
-  }, [file.id, file.name_encrypted, decryptedNameProp, isUnlocked, getFileKeyForFile, file])
+  }, [file.id, file.name_encrypted, decryptedNameProp, isUnlocked, getFileKeyForFile, resolveFileKey, file])
 
   // Fetch the version list once per file (only if there's actually history).
   useEffect(() => {
@@ -615,7 +637,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
 
     async function loadAndDecrypt() {
       try {
-        const fileKey = await getFileKeyForFile(file)
+        const fileKey = await resolveFileKey()
 
         // Thumbnail-first path for images (current version only)
         if (isImageFile && selectedVersionId === null) {
@@ -731,7 +753,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
       cancelled = true
     }
     // `versions` is intentionally NOT a dependency — see versionsRef above.
-  }, [file.id, file.name_encrypted, file.mime_type, file.chunk_count, file.size_bytes, isUnlocked, getFileKeyForFile, file, selectedVersionId, effectiveMime, name])
+  }, [file.id, file.name_encrypted, file.mime_type, file.chunk_count, file.size_bytes, isUnlocked, getFileKeyForFile, resolveFileKey, file, selectedVersionId, effectiveMime, name])
 
   const handleRestore = useCallback(async () => {
     if (selectedVersionId === null) return
@@ -941,7 +963,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     }
     try {
       setDownloading(true)
-      const fileKey = await getFileKeyForFile(file)
+      const fileKey = await resolveFileKey()
       let original: Blob
       if (selectedVersionId === null) {
         const res = await decryptToBlob(
@@ -1115,11 +1137,23 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
       {/* Error state */}
       {error && (
         <div className="flex flex-col items-center gap-3 text-center">
-          <Icon name="shield" size={32} className="text-red" />
+          <Icon name={shareOrigin !== undefined ? 'lock' : 'shield'} size={32} className="text-red" />
           <p className="text-sm font-medium text-ink">{error}</p>
-          <BBButton variant="default" size="sm" onClick={requestClose}>
-            Close
-          </BBButton>
+          {shareOrigin !== undefined && onDelete && (
+            <p className="max-w-[320px] text-xs text-ink-3">
+              You can remove the item from this folder, or ask the person who added it for a copy.
+            </p>
+          )}
+          <div className="flex items-center gap-2">
+            <BBButton variant="default" size="sm" onClick={requestClose}>
+              Close
+            </BBButton>
+            {shareOrigin !== undefined && onDelete && (
+              <BBButton variant="danger" size="sm" onClick={() => void onDelete(file)}>
+                Delete
+              </BBButton>
+            )}
+          </div>
         </div>
       )}
 

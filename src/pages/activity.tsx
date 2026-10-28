@@ -13,10 +13,107 @@ import { useNavigate } from 'react-router-dom'
 import { Icon } from '@beebeeb/shared'
 import type { IconName } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
-import { listActivity } from '../lib/api'
+import { getSentInvites, getSharedFolderActivity, listActivity } from '../lib/api'
 import type { ActivityEvent } from '../lib/api'
+import { decryptActorName } from '../lib/guest-actor-name'
+import { folderKeyForRoot } from '../lib/owner-adoption'
+import { describeActivity } from '../components/folder-share/folder-activity-tab'
+import { useKeys } from '../lib/key-context'
+import type { SharedFolderActivityRow } from '../lib/folder-link-types'
 import { EmptyActivity } from '../components/empty-states/empty-activity'
 import { useWsEventAll } from '../lib/ws-context'
+
+// ── Shared folder activity (task 2237b) ──────────────────────────
+/**
+ * The release-blocker view: what guests and members changed in the folders the
+ * user owns, newest first. There is no "list my shared folders" endpoint, so
+ * the folder ids come from the folder-share invites this user sent — the same
+ * set the owner's own sidebar is built from.
+ */
+function SharedFolderActivitySection() {
+  const { isUnlocked, getMasterKey } = useKeys()
+  const [lines, setLines] = useState<{ id: string; text: string; at: string }[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!isUnlocked) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const sent = await getSentInvites()
+        const folderIds = [...new Set(sent.filter((i) => i.is_folder_share).map((i) => i.file_id))]
+        const perFolder = await Promise.all(
+          folderIds.map(async (folderId) => {
+            const res = await getSharedFolderActivity(folderId, 50).catch(() => ({ activity: [] }))
+            const folderKey = await folderKeyForRoot(getMasterKey(), folderId)
+            const rows: SharedFolderActivityRow[] = res.activity
+            const names = await Promise.all(
+              rows.map(async (row) => {
+                const label =
+                  row.share_label_encrypted && folderKey
+                    ? await decryptActorName(folderKey, row.share_label_encrypted).catch(() => null)
+                    : null
+                const actor =
+                  row.actor_name_encrypted && folderKey
+                    ? await decryptActorName(folderKey, row.actor_name_encrypted).catch(() => null)
+                    : null
+                return { row, label, actor }
+              }),
+            )
+            if (folderKey) folderKey.fill(0)
+            return names
+          }),
+        )
+        if (cancelled) return
+        const flat = perFolder
+          .flat()
+          .sort((a, b) => b.row.last_at.localeCompare(a.row.last_at))
+          .slice(0, 10)
+          .map(({ row, label, actor }) => ({
+            id: row.id,
+            text: describeActivity(row, label, actor),
+            at: row.last_at,
+          }))
+        setLines(flat)
+      } catch {
+        if (!cancelled) setLines([])
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [isUnlocked, getMasterKey])
+
+  if (!isUnlocked || (!loading && lines.length === 0)) return null
+
+  return (
+    <div className="bg-paper rounded-xl border border-line overflow-hidden shadow-1 w-full max-w-[780px]">
+      <div className="flex items-center gap-2.5 px-5 py-3.5 border-b border-line">
+        <Icon name="folder" size={14} className="text-ink shrink-0" />
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-ink">Shared folder activity</h2>
+          <p className="text-[11px] text-ink-3">Changes made through your folder links and members</p>
+        </div>
+      </div>
+      {loading ? (
+        <p className="px-5 py-4 text-xs text-ink-3">Loading activity…</p>
+      ) : (
+        <ul data-testid="activity-shared-folders" className="divide-y divide-line">
+          {lines.map((line) => (
+            <li key={line.id} className="flex items-baseline gap-3 px-5 py-2.5">
+              <span className="min-w-0 flex-1 text-[13px] text-ink">{line.text}</span>
+              <span className="shrink-0 font-mono text-[11px] text-ink-3">
+                {new Date(line.at).toLocaleDateString()}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
 
 // ── Security event types ─────────────────────────────────────────
 
@@ -244,7 +341,8 @@ export function Activity() {
   const hasMore = events.length < total
 
   return (
-    <div className="min-h-screen flex items-start justify-center bg-paper p-4 pt-12">
+    <div className="min-h-screen flex flex-col items-center gap-4 bg-paper p-4 pt-12">
+      <SharedFolderActivitySection />
       <div className="bg-paper rounded-xl border border-line overflow-hidden shadow-1 w-full max-w-[780px]">
 
         {/* ── Header ──────────────────────────────── */}

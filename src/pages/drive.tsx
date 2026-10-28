@@ -3214,6 +3214,8 @@ export function Drive() {
               closePreview()
             }}
             startInEditMode={previewEditFileId === previewFile.id}
+            folderId={currentParentId ?? undefined}
+            onDelete={(f) => performSingleTrash(f)}
             hasPrev={hasPrev}
             hasNext={hasNext}
             onPrev={hasPrev ? () => openPreview(files[previewIdx - 1]) : undefined}

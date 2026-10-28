@@ -47,8 +47,10 @@ import {
 import { clearOfflineCaches, setOfflineCacheAccessCheck } from './offline-cache'
 import { clearThumbnailCache } from './thumbnail'
 import { cacheKeyPersistent, cacheKeySessionOnly } from './key-cache'
-import { setRecoveryCheckIfAbsent, verifyRecoveryCheck } from './api'
+import { listFolderLinks, listSharedFolderKeys, setRecoveryCheckIfAbsent, verifyRecoveryCheck } from './api'
 import type { DriveFile } from './api'
+import { folderKeyForRoot, openOwnerFile } from './owner-adoption'
+import { decryptActorName } from './guest-actor-name'
 import { useAuth } from './auth-context'
 import { isImpersonationSessionActive, shouldReconcileLock } from './impersonation-context'
 import { isRequestUpload, createRequestKeyResolver, type RequestKeyResolver } from './file-request-crypto'
@@ -143,6 +145,15 @@ interface KeyState {
    *  getFileKey wherever the full file object is available (naming, preview,
    *  download). `expectedUserId` — see `getFileKey`. */
   getFileKeyForFile: (file: DriveFile, expectedUserId?: string) => Promise<Uint8Array>
+  /** Task 2237b: the key for a file the owner did not upload (a guest- or
+   *  member-added row in a shared folder). Resolves the owner wrap or the
+   *  folder key's copy of the file key, adopting the file on first sight.
+   *  Returns null when neither opens, so the caller can show the origin
+   *  ("Can't open this file (added via …)") instead of a generic failure. */
+  getFileKeyForSharedFile: (file: DriveFile, folderId: string) => Promise<Uint8Array | null>
+  /** Task 2237b: the link label a shared file came through, for the
+   *  "Can't open this file (added via …)" card. Null when unknown. */
+  getSharedFileOrigin: (file: DriveFile, folderId: string) => Promise<string | null>
   /** Get the raw master key (for X25519 key exchange in sharing).
    *  `expectedUserId` — see `getFileKey`; throws if the resident key is not
    *  bound to the resolved target (task 1531/1534 P0 continuation). */
@@ -591,6 +602,76 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     return deriveFileKey(key, file.id)
   }, [isBoundTo])
 
+  // Task 2237b: per-folder key index and link labels for the shared-file path,
+  // fetched at most once per drive session and dropped on lock/logout.
+  const sharedFolderCacheRef = useRef<
+    Map<string, { keys: Promise<Map<string, string>>; labels: Promise<Map<string, string | null>> }>
+  >(new Map())
+
+  const sharedFolderCache = useCallback((folderId: string): {
+    keys: Promise<Map<string, string>>
+    labels: Promise<Map<string, string | null>>
+  } => {
+    const cache = sharedFolderCacheRef.current
+    const existing = cache.get(folderId)
+    if (existing) return existing
+    const keys = (async () => {
+      const map = new Map<string, string>()
+      let cursor: string | null = null
+      do {
+        const page = await listSharedFolderKeys(folderId, { limit: 500, cursor })
+        for (const row of page.keys) map.set(row.file_id, row.encrypted_file_key)
+        cursor = page.next_cursor
+      } while (cursor)
+      return map
+    })()
+    const labels = (async () => {
+      const map = new Map<string, string | null>()
+      try {
+        const links = await listFolderLinks(folderId)
+        const folderKey = folderKeyForRoot(masterKeyRef.current as Uint8Array, folderId)
+        const key = await folderKey
+        for (const link of links) {
+          if (!link.label_encrypted) continue
+          map.set(link.id, key ? await decryptActorName(key, link.label_encrypted) : null)
+        }
+      } catch {
+        /* labels are decoration; the row still opens or reports without one */
+      }
+      return map
+    })()
+    const entry = { keys, labels }
+    cache.set(folderId, entry)
+    return entry
+  }, [])
+
+  const getFileKeyForSharedFile = useCallback(async (file: DriveFile, folderId: string): Promise<Uint8Array | null> => {
+    if (!isBoundTo()) {
+      throw new Error('Vault is locked — unlock first')
+    }
+    const masterKey = masterKeyRef.current as Uint8Array
+    const cache = sharedFolderCache(folderId)
+    const result = await openOwnerFile({
+      masterKey,
+      folderId,
+      file,
+      keyIndexPromise: cache.keys,
+      labelFor: async (shareId) => (shareId ? ((await cache.labels).get(shareId) ?? null) : null),
+    })
+    return result.kind === 'ok' ? result.fileKey : null
+  }, [isBoundTo, sharedFolderCache])
+
+  const getSharedFileOrigin = useCallback(async (file: DriveFile, folderId: string): Promise<string | null> => {
+    const shareId = file.acted_via_share_id ?? null
+    if (!shareId) return null
+    try {
+      const cache = sharedFolderCache(folderId)
+      return (await cache.labels).get(shareId) ?? null
+    } catch {
+      return null
+    }
+  }, [sharedFolderCache])
+
   const getMasterKey = useCallback((expectedUserId?: string): Uint8Array => {
     if (!isBoundTo(expectedUserId)) {
       throw new Error('Vault is locked — unlock first')
@@ -639,6 +720,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     residentKeyUserIdRef.current = null
     requestResolverRef.current?.clear()
     requestResolverRef.current = null
+    sharedFolderCacheRef.current.clear()
     clearCachedKey()
     void clearOfflineCaches()
     void clearThumbnailCache()
@@ -747,6 +829,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     residentKeyUserIdRef.current = null
     requestResolverRef.current?.clear()
     requestResolverRef.current = null
+    sharedFolderCacheRef.current.clear()
     clearCachedKey()
     await Promise.all([clearOfflineCaches(), clearThumbnailCache(), clearVault()])
     setVaultExists(false)
@@ -824,12 +907,14 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       getResidentUserId,
       getFileKey,
       getFileKeyForFile,
+      getFileKeyForSharedFile,
+      getSharedFileOrigin,
       getMasterKey,
       discardStalePasswordVault,
       lock,
       fullLogout,
     }),
-    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, vaultExists, vaultChecked, setMasterKey, setMasterKeyDirect, setMasterKeyFromPasskey, unlockVault, unlockVaultWithPasskey, unlock, isUnlockedFor, getResidentUserId, getFileKey, getFileKeyForFile, getMasterKey, discardStalePasswordVault, lock, fullLogout],
+    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, vaultExists, vaultChecked, setMasterKey, setMasterKeyDirect, setMasterKeyFromPasskey, unlockVault, unlockVaultWithPasskey, unlock, isUnlockedFor, getResidentUserId, getFileKey, getFileKeyForFile, getFileKeyForSharedFile, getSharedFileOrigin, getMasterKey, discardStalePasswordVault, lock, fullLogout],
   )
 
   return <KeyContext.Provider value={value}>{children}</KeyContext.Provider>
