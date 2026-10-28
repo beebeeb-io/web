@@ -56,8 +56,12 @@ const streamed: string[] = []
 const encoder = new TextEncoder()
 
 await mockModuleScoped('../src/lib/guest-bytes', import.meta.dir, {
+  // The whole-file decrypt the archive uses (rv-web198c P2-6): `cut*` dies
+  // part-way (some chunks already authenticated), `gone*` before any.
   fetchGuestDownloadBlob: async (args: { item: PublicFolderItem }) => {
     downloaded.push(args.item.id)
+    if (args.item.id.startsWith('gone')) throw new Error('This file is no longer available.')
+    if (args.item.id.startsWith('cut')) throw new Error('network dropped')
     return new Blob([`plain:${args.item.id}`], { type: 'application/octet-stream' })
   },
   // Two chunks per file; `cut*` dies after its first chunk, `gone*` before any.
@@ -281,7 +285,7 @@ describe('downloadGuestZip', () => {
 test('B zip collection keeps metadata only, never all plaintext blobs', async () => {
   reset()
   pages.root = { items: [row('a', 'a.txt'), row('b', 'b.txt')], next_cursor: null }
-  const { files } = await collectGuestZipEntries({ token: 'tok', folderKey, proof, rootPath: 'Root' })
+  const { files } = await collectGuestZipEntries({ token: 'tok', folderKey, rootId: ROOT, proof, rootPath: 'Root' })
   expect(files).toHaveLength(2)
   expect(downloaded).toHaveLength(0)
 })
@@ -309,24 +313,25 @@ function memorySink(buffered: boolean) {
   }
 }
 
-test('B streaming sink: every file goes in chunk by chunk, no whole-file blob, no size cap', async () => {
+test('B streaming sink: each file goes in as ONE whole, authenticated entry; no size cap (rv-web198c P2-6)', async () => {
   reset()
   pages.root = { items: [row('big', 'big.jpg', { size_bytes: 200 * 1024 ** 2 })], next_cursor: null }
-  const { files } = await collectGuestZipEntries({ token: 'tok', folderKey, proof, rootPath: 'Root' })
+  const { files } = await collectGuestZipEntries({ token: 'tok', folderKey, rootId: ROOT, proof, rootPath: 'Root' })
   const out = memorySink(false)
   const result = await downloadGuestZip(files, 'Root.zip', { sink: out.sink })
   expect(result.errorCount).toBe(0)
-  expect(streamed).toEqual(['big'])
-  expect(downloaded).toHaveLength(0)
+  // Never streamed chunk by chunk into an entry: a stream cannot take back a
+  // partial entry when a later chunk fails.
+  expect(streamed).toEqual([])
+  expect(downloaded).toEqual(['big'])
   expect(out.text()).toContain('Root/big.jpg')
-  // .jpg is stored, not deflated: the two pushed chunks are in the archive.
   expect(out.text()).toContain('plain:big')
 })
 
 test('B buffered sink: more than 128 MiB is refused with the message before anything is fetched', async () => {
   reset()
   pages.root = { items: [row('large', 'large.jpg', { size_bytes: 128 * 1024 ** 2 + 1 })], next_cursor: null }
-  const { files } = await collectGuestZipEntries({ token: 'tok', folderKey, proof, rootPath: 'Root' })
+  const { files } = await collectGuestZipEntries({ token: 'tok', folderKey, rootId: ROOT, proof, rootPath: 'Root' })
   const out = memorySink(true)
   await expect(downloadGuestZip(files, 'Root.zip', { sink: out.sink })).rejects.toThrow(/128 MiB/)
   expect(streamed).toHaveLength(0)
@@ -337,7 +342,7 @@ test('B buffered sink: more than 128 MiB is refused with the message before anyt
 test('B buffered sink under the bound still builds the zip', async () => {
   reset()
   pages.root = { items: [row('small', 'small.jpg')], next_cursor: null }
-  const { files } = await collectGuestZipEntries({ token: 'tok', folderKey, proof, rootPath: 'Root' })
+  const { files } = await collectGuestZipEntries({ token: 'tok', folderKey, rootId: ROOT, proof, rootPath: 'Root' })
   const out = memorySink(true)
   const result = await downloadGuestZip(files, 'Root.zip', { sink: out.sink })
   expect(result.errorCount).toBe(0)
@@ -350,16 +355,17 @@ test('B a file that fails is reported in the zip and the count, never silently d
     items: [row('cut', 'cut.jpg'), row('gone', 'gone.jpg'), row('ok', 'ok.jpg')],
     next_cursor: null,
   }
-  const { files } = await collectGuestZipEntries({ token: 'tok', folderKey, proof, rootPath: 'Root' })
+  const { files } = await collectGuestZipEntries({ token: 'tok', folderKey, rootId: ROOT, proof, rootPath: 'Root' })
   const out = memorySink(false)
   const result = await downloadGuestZip(files, 'Root.zip', { sink: out.sink })
   expect(result.errorCount).toBe(2)
   const archive = unzipSync(out.bytes())
-  expect(Object.keys(archive).sort()).toEqual(['Root/cut.jpg', 'Root/ok.jpg', '_errors.txt'])
+  // rv-web198c P2-6: the file that failed part-way leaves NO entry (none of
+  // its plaintext is in the archive); both failures are named in the manifest.
+  expect(Object.keys(archive).sort()).toEqual(['Root/ok.jpg', '_errors.txt'])
   expect(strFromU8(archive['Root/ok.jpg'])).toBe('plain:ok')
-  // The file cut off mid-stream is named as incomplete; the one that never
-  // started is named too and has no entry of its own.
+  expect(out.text()).not.toContain('plain:cut')
   const errors = strFromU8(archive['_errors.txt'])
-  expect(errors).toContain('Root/cut.jpg: incomplete in this zip (network dropped)')
+  expect(errors).toContain('Root/cut.jpg: network dropped')
   expect(errors).toContain('Root/gone.jpg: This file is no longer available.')
 })

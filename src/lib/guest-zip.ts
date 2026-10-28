@@ -18,7 +18,7 @@ import {
 import { decryptFileMetadata } from './crypto'
 import { listFolderItems } from './folder-link-public'
 import { openChildKey } from './folder-share-crypto'
-import { fetchGuestDownloadBlob, streamGuestPlaintext } from './guest-bytes'
+import { fetchGuestDownloadBlob } from './guest-bytes'
 import type { Proof, PublicFolderItem } from './folder-link-types'
 
 /** The public listing route's page size. */
@@ -140,34 +140,32 @@ export async function collectGuestZipEntries(
 
   for (const entry of entries) {
     if (signal?.aborted) throw new DOMException('Download cancelled', 'AbortError')
+    let key: Uint8Array | null = null
     try {
-      const key = await ports.getFileKey(entry.file)
+      key = await ports.getFileKey(entry.file)
       const { name } = await decryptFileMetadata(key, entry.file.name_encrypted)
       const path = uniqueZipPath(zipPathFor(entry.prefix, name), used)
       files.push({
         path, fileId: entry.file.id, sizeBytes: entry.file.size_bytes,
         pathFor: () => path,
         fallbackName: name,
+        // rv-web198c P2-6: an entry is written only once its WHOLE plaintext
+        // has authenticated. A stream cannot take back bytes already in the
+        // archive, so a decrypt that failed midway left a truncated entry;
+        // now a failed file contributes nothing but its error line.
         load: async () => {
           if (signal?.aborted) throw new DOMException('Download cancelled', 'AbortError')
           const fileKey = await ports.getFileKey(entry.file)
           try { return await ports.decryptToBlob(entry.file, fileKey) }
           finally { fileKey.fill(0) }
         },
-        streamTo: {
-          filename: name,
-          open: async (push) => {
-            if (signal?.aborted) throw new DOMException('Download cancelled', 'AbortError')
-            const item = itemsById.get(entry.file.id)
-            if (!item) throw new Error('This file is no longer in the listing.')
-            const fileKey = await ports.getFileKey(entry.file)
-            try { await streamGuestPlaintext({ token, item, fileKey, proof, signal }, push) }
-            finally { fileKey.fill(0) }
-          },
-        },
       })
-      key.fill(0)
-    } catch { errorCount++ }
+    } catch {
+      errorCount++
+    } finally {
+      // rv-web198c P3: zeroized on the error path too.
+      key?.fill(0)
+    }
   }
 
   return { files, errorCount }
