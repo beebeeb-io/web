@@ -98,8 +98,14 @@ export async function throwFolderResponseError(token: string, response: Response
   const error = await toApiError(response)
   if (error.status === 401 && error.code === 'passphrase_required') {
     clearProof(token)
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent(FOLDER_PROOF_REQUIRED_EVENT, { detail: token }))
+    // Tell the page to ask again. Never let the notification replace the real
+    // error (a non-browser host may have no event target).
+    try {
+      if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+        window.dispatchEvent(new CustomEvent(FOLDER_PROOF_REQUIRED_EVENT, { detail: token }))
+      }
+    } catch {
+      /* the caller still gets the passphrase_required error below */
     }
   }
   throw error
