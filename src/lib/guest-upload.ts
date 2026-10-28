@@ -1,0 +1,309 @@
+/**
+ * Task 2237b — uploads through a folder link.
+ *
+ * The server assigns the file id, so the client cannot derive the file key
+ * from it. Every file gets a fresh random content key, its metadata is sealed
+ * under that key, and the key itself is wrapped under the link's folder key
+ * (`wrapped_key`). Folders work the same way: the name is sealed under the
+ * parent key and the new folder's own key is sent wrapped under it.
+ *
+ * Uploads are sequential on purpose: one file in memory at a time, and the
+ * per-link rate limit is respected.
+ */
+import {
+  encryptChunk,
+  encryptFileMetadata,
+  serializeEncryptedBlob,
+  toBase64,
+  wrapKeyForShare,
+} from './crypto'
+import type { Proof } from './folder-link-types'
+import { API_URL } from './api'
+
+export const MAX_GUEST_CHUNKS = 1024
+export const MIN_GUEST_CHUNK_BYTES = 65_536
+
+/** Chunk ladder for anonymous uploads: every non-final chunk is at least 64 KiB. */
+export function planGuestChunks(sizeBytes: number): { chunkSize: number; chunkCount: number } {
+  if (!Number.isFinite(sizeBytes) || sizeBytes < 0) {
+    throw new Error('size must be a non-negative number')
+  }
+  if (sizeBytes <= MIN_GUEST_CHUNK_BYTES) {
+    return { chunkSize: MIN_GUEST_CHUNK_BYTES, chunkCount: 1 }
+  }
+  const chunkSize = Math.max(
+    MIN_GUEST_CHUNK_BYTES,
+    Math.ceil(sizeBytes / MAX_GUEST_CHUNKS),
+  )
+  return { chunkSize, chunkCount: Math.max(1, Math.ceil(sizeBytes / chunkSize)) }
+}
+
+export type GuestRejectReason =
+  | 'quota'
+  | 'cap'
+  | 'paused'
+  | 'rate'
+  | 'too_large'
+  | 'folder_gone'
+  | 'level'
+  | 'network'
+
+export type GuestUploadState =
+  | { name: 'queued' }
+  | { name: 'uploading'; percent: number }
+  | { name: 'added'; fileId: string }
+  | { name: 'rejected'; reason: GuestRejectReason; message: string }
+
+export function rejectMessage(reason: GuestRejectReason): string {
+  switch (reason) {
+    case 'quota':
+      return 'This folder is out of space. Ask the owner to free some up.'
+    case 'cap':
+      return 'This link has reached its upload limit.'
+    case 'paused':
+      return 'Uploads to this link are paused right now.'
+    case 'rate':
+      return 'Too many uploads just now. Wait a moment and try again.'
+    case 'too_large':
+      return 'This file is too large to upload here.'
+    case 'folder_gone':
+      return 'This folder is no longer available.'
+    case 'level':
+      return "This link can't add files."
+    case 'network':
+      return "The upload didn't finish. Check your connection and try again."
+  }
+}
+
+export interface GuestUploadTask {
+  file: File
+  /** Path inside the shared folder, e.g. "Trip/2019/a.jpg"; null for a bare file. */
+  relativePath: string | null
+}
+
+function siblingKey(parentId: string | null, name: string): string {
+  return `${parentId ?? 'root'}:${name.toLowerCase()}`
+}
+
+/**
+ * Applies the owner-style " (2)" suffix. `existing` is keyed by
+ * `siblingKey(parentId, name)` and is updated by the caller as files land.
+ */
+export async function resolveGuestName(
+  parentId: string | null,
+  desired: string,
+  existing: Map<string, string>,
+): Promise<string> {
+  if (!existing.has(siblingKey(parentId, desired))) return desired
+  const dot = desired.lastIndexOf('.')
+  const stem = dot > 0 ? desired.slice(0, dot) : desired
+  const ext = dot > 0 ? desired.slice(dot) : ''
+  for (let counter = 2; counter < 10_000; counter += 1) {
+    const candidate = `${stem} (${counter})${ext}`
+    if (!existing.has(siblingKey(parentId, candidate))) return candidate
+  }
+  return `${stem} (${Date.now()})${ext}`
+}
+
+function proofHeaders(proof: Proof | null): Record<string, string> {
+  return proof ? { 'x-folder-link-proof': proof.proof } : {}
+}
+
+function rejectFor(status: number, code: string | undefined): GuestRejectReason {
+  if (status === 403) return 'level'
+  if (status === 404 || status === 410) return 'folder_gone'
+  if (status === 413) return 'quota'
+  if (status === 429) return 'rate'
+  if (status === 409) return code === 'link_paused' ? 'paused' : 'cap'
+  return 'network'
+}
+
+async function responseCode(response: Response): Promise<string | undefined> {
+  try {
+    const body = (await response.clone().json()) as { error?: unknown }
+    return typeof body.error === 'string' ? body.error : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Create one folder under `parentId` and return its own key for its children. */
+export async function uploadGuestFolder(
+  token: string,
+  parentFolderKey: Uint8Array,
+  proof: Proof | null,
+  parentId: string | null,
+  name: string,
+  actorNameEncrypted: string | null,
+): Promise<{ id: string; folderKey: Uint8Array }> {
+  const folderKey = crypto.getRandomValues(new Uint8Array(32))
+  const meta = await encryptFileMetadata(parentFolderKey, name, null)
+  const nameEncrypted = serializeEncryptedBlob(meta.nonce, meta.ciphertext)
+  const wrapped = toBase64(await wrapKeyForShare(parentFolderKey, folderKey))
+  const body: Record<string, unknown> = {
+    parent_id: parentId,
+    name_encrypted: nameEncrypted,
+    wrapped_name_key: wrapped,
+  }
+  if (actorNameEncrypted !== null) body.actor_name_encrypted = actorNameEncrypted
+
+  const response = await fetch(
+    `${API_URL}/api/v1/f/${encodeURIComponent(token)}/folders`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...proofHeaders(proof) },
+      body: JSON.stringify(body),
+    },
+  )
+  if (!response.ok) {
+    const code = await responseCode(response)
+    throw new GuestUploadError(rejectFor(response.status, code))
+  }
+  const created = (await response.json()) as { id?: unknown }
+  if (typeof created.id !== 'string') throw new GuestUploadError('network')
+  return { id: created.id, folderKey }
+}
+
+export class GuestUploadError extends Error {
+  readonly reason: GuestRejectReason
+
+  constructor(reason: GuestRejectReason) {
+    super(rejectMessage(reason))
+    this.name = 'GuestUploadError'
+    this.reason = reason
+  }
+}
+
+export async function uploadGuestFiles(args: {
+  token: string
+  folderKey: Uint8Array
+  proof: Proof | null
+  parentId: string | null
+  tasks: GuestUploadTask[]
+  siblingNames: Map<string, string>
+  actorNameEncrypted: string | null
+  onEvent: (task: {
+    relativePath: string | null
+    name: string
+    state: GuestUploadState
+  }) => void
+  signal?: AbortSignal
+}): Promise<{ added: number; rejected: number }> {
+  const directories = new Map<string, { id: string; key: Uint8Array }>()
+
+  const ensureDirectory = async (path: string): Promise<{ id: string | null; key: Uint8Array }> => {
+    if (path === '') return { id: args.parentId, key: args.folderKey }
+    const known = directories.get(path)
+    if (known) return known
+    const slash = path.lastIndexOf('/')
+    const parentPath = slash >= 0 ? path.slice(0, slash) : ''
+    const name = path.slice(slash + 1)
+    const parent = await ensureDirectory(parentPath)
+    const resolved = await resolveGuestName(parent.id, name, args.siblingNames)
+    const created = await uploadGuestFolder(
+      args.token,
+      parent.key,
+      args.proof,
+      parent.id,
+      resolved,
+      args.actorNameEncrypted,
+    )
+    args.siblingNames.set(siblingKey(parent.id, resolved), created.id)
+    directories.set(path, { id: created.id, key: created.folderKey })
+    return { id: created.id, key: created.folderKey }
+  }
+
+  let added = 0
+  let rejected = 0
+
+  for (const task of args.tasks) {
+    if (args.signal?.aborted) {
+      args.onEvent({
+        relativePath: task.relativePath,
+        name: task.file.name,
+        state: { name: 'rejected', reason: 'network', message: rejectMessage('network') },
+      })
+      rejected += 1
+      continue
+    }
+
+    const relative = task.relativePath ?? task.file.name
+    const slash = relative.lastIndexOf('/')
+    const dirPath = slash >= 0 ? relative.slice(0, slash) : ''
+    const desired = slash >= 0 ? relative.slice(slash + 1) : relative
+    const report = (state: GuestUploadState) =>
+      args.onEvent({ relativePath: task.relativePath, name: desired, state })
+
+    try {
+      const parent = await ensureDirectory(dirPath)
+      const name = await resolveGuestName(parent.id, desired, args.siblingNames)
+      const plan = planGuestChunks(task.file.size)
+      report({ name: 'uploading', percent: 0 })
+
+      const fileKey = crypto.getRandomValues(new Uint8Array(32))
+      const meta = await encryptFileMetadata(fileKey, name, task.file.type || null)
+      const nameEncrypted = serializeEncryptedBlob(meta.nonce, meta.ciphertext)
+      const wrappedKey = toBase64(await wrapKeyForShare(parent.key, fileKey))
+
+      const form = new FormData()
+      for (let index = 0; index < plan.chunkCount; index += 1) {
+        if (args.signal?.aborted) throw new GuestUploadError('network')
+        const start = index * plan.chunkSize
+        const end = Math.min(start + plan.chunkSize, task.file.size)
+        const plaintext = new Uint8Array(await task.file.slice(start, end).arrayBuffer())
+        const encrypted = await encryptChunk(fileKey, plaintext)
+        const frame = new Uint8Array(encrypted.nonce.length + encrypted.ciphertext.length)
+        frame.set(encrypted.nonce, 0)
+        frame.set(encrypted.ciphertext, encrypted.nonce.length)
+        form.append(`chunk_${index}`, new Blob([frame as BlobPart], { type: 'application/octet-stream' }))
+        report({
+          name: 'uploading',
+          percent: Math.floor(((index + 1) / plan.chunkCount) * 100),
+        })
+      }
+
+      const metadata: Record<string, unknown> = {
+        parent_id: parent.id,
+        name_encrypted: nameEncrypted,
+        wrapped_key: wrappedKey,
+      }
+      if (args.actorNameEncrypted !== null) {
+        metadata.actor_name_encrypted = args.actorNameEncrypted
+      }
+      form.append('metadata', JSON.stringify(metadata))
+
+      const response = await fetch(
+        `${API_URL}/api/v1/f/${encodeURIComponent(args.token)}/upload`,
+        {
+          method: 'POST',
+          headers: proofHeaders(args.proof),
+          body: form,
+          signal: args.signal,
+        },
+      )
+      if (!response.ok) {
+        const code = await responseCode(response)
+        throw new GuestUploadError(rejectFor(response.status, code))
+      }
+      const result = (await response.json()) as { file_id?: unknown }
+      if (typeof result.file_id !== 'string') throw new GuestUploadError('network')
+
+      args.siblingNames.set(siblingKey(parent.id, name), result.file_id)
+      added += 1
+      report({ name: 'added', fileId: result.file_id })
+    } catch (error) {
+      const reason =
+        error instanceof GuestUploadError
+          ? error.reason
+          : (error as { name?: string })?.name === 'AbortError'
+            ? 'network'
+            : 'network'
+      rejected += 1
+      report({ name: 'rejected', reason, message: rejectMessage(reason) })
+    } finally {
+      // nothing to zero: the content key is scoped to this iteration
+    }
+  }
+
+  return { added, rejected }
+}
