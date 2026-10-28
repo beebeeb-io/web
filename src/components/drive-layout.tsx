@@ -404,6 +404,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
           const folderKey = resolved.folderKey
           const folderEntry = keys.find(k => k.file_id === invite.file_id)
           if (folderEntry) {
+            // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
             const fileKey = await decryptChildFileKey(folderKey, folderEntry.encrypted_file_key)
             const { name } = await decryptFileMetadata(fileKey, invite.file_name_encrypted)
             return { ...invite, decryptedName: name }

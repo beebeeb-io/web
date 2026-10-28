@@ -111,6 +111,7 @@ export async function resolveRecipientFolderKey(
 
     if (verifier) {
       try {
+        // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
         const childKey = await ports.decryptChildFileKey(folderKey, verifier.encrypted_file_key)
         ports.zeroize(childKey)
       } catch {

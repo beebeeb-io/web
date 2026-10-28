@@ -387,6 +387,7 @@ export function SharedFolder() {
           try {
             const encKey = keysMap[file.id]
             if (encKey && file.name_encrypted) {
+              // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
               const fileKey = await decryptChildFileKey(fk, encKey)
               // name_encrypted carries the JSON metadata envelope
               // ({name, mime_type}); decryptFileMetadata unwraps it like the
@@ -537,6 +538,7 @@ export function SharedFolder() {
     try {
       const encKey = fileKeysMap[row.file.id]
       if (!encKey) throw new Error('No key for this file')
+      // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
       const fileKey = await decryptChildFileKey(folderKeyCache, encKey)
       await encryptedDownload(
         row.file.id,

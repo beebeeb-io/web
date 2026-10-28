@@ -110,6 +110,7 @@ export async function collectGuestZipEntries(
         if (file.is_folder) return folderKey
         throw new Error('This file has no folder key.')
       }
+      // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
       return decryptChildFileKey(folderKey, item.wrapped_file_key)
     },
     decryptToBlob: async (file, fileKey) => {

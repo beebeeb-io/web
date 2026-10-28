@@ -254,6 +254,7 @@ export async function createFolderLinkWithKeys(
     try {
       folderKeys.unshift({
         file_id: input.folderId,
+        // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
         encrypted_file_key: await ports.encryptChildFileKey(folderKey, rootNameKey),
       })
     } finally {

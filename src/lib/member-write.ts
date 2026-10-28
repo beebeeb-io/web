@@ -65,6 +65,7 @@ export function writeErrorAction(err: unknown): 'refetch' | 'report' {
 
 /** The item's own key: the wrapped child key when we have it, else our derive. */async function itemFileKey(ctx: MemberContext, item: DriveFile): Promise<Uint8Array> {
   const wrapped = ctx.fileKeys?.[item.id]
+  // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
   if (wrapped) return decryptChildFileKey(ctx.folderKey, wrapped)
   throw new Error("This file's key isn't available, so it can't be changed here.")
 }

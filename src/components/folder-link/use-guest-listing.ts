@@ -101,6 +101,7 @@ export async function describeGuestItem(
 ): Promise<GuestNode> {
   try {
     const fileKey = item.wrapped_file_key
+      // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
       ? await decryptChildFileKey(folderKey, item.wrapped_file_key)
       : null
     // Every item's name is sealed under its OWN key — a child folder included,

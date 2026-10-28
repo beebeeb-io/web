@@ -312,6 +312,14 @@ export async function buildFolderInvite(
   }
 }
 
+// TODO(core#44-L7): decision L7 (core #45 review, P1 proven red). Every child
+// key sealed under a folder key (a file key, or a sub-folder's name key) must go
+// through core's wrap_folder_child / unwrap_folder_child with
+// AAD = "beebeeb-folder-child-v1" || shared ROOT id (16 B) || item id (16 B) ||
+// kind (0x01 file, 0x02 folder). Today this is the generic empty-AAD seal, so a
+// server can move item A's wrap, name and content onto item B's row. Replace
+// these two and every call site marked TODO(core#44-L7) in ONE follow-up when
+// core #44 merges; no fallback to the unbound format after that.
 export async function encryptChildFileKey(
   folderKey: Uint8Array,
   fileKey: Uint8Array,
@@ -347,6 +355,7 @@ export async function encryptAllChildrenKeys(
     const fileKey = await deriveFileKey(masterKey, childId)
     let encrypted: string
     try {
+      // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
       encrypted = await encryptChildFileKey(folderKey, fileKey)
     } finally {
       zeroize(fileKey)

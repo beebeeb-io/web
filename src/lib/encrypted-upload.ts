@@ -608,6 +608,7 @@ async function uploadFile(
   if (sharedFolderContext) {
     const { encryptChildFileKey, folderKeyId } = await import('./folder-share-crypto')
     const { addFolderKeys } = await import('./api')
+    // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
     const encryptedKey = await encryptChildFileKey(sharedFolderContext.folderKey, activeFileKey)
     await addFolderKeys(sharedFolderContext.inviteId, [{
       file_id: serverFileId,

@@ -223,6 +223,7 @@ export async function adoptGuestFile(args: {
   const folderKey = await folderKeyForRoot(masterKey, folderId)
   if (!folderKey) throw new Error('The folder key is not available on this device.')
   let fileKey: Uint8Array
+  // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
   try { fileKey = await decryptChildFileKey(folderKey, encryptedFileKeyB64) }
   finally { zeroize(folderKey) }
   // A write-once owner wrap must never preserve an unverified or stale key.
@@ -274,6 +275,7 @@ export async function resolveSharedFileKey(args: {
   const folderKey = await folderKeyForRoot(masterKey, folderId)
   if (!folderKey) return null
   try {
+    // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
     return await decryptChildFileKey(folderKey, encrypted)
   } catch {
     return null

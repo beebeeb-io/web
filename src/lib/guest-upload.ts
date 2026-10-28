@@ -134,6 +134,7 @@ export async function uploadGuestFolder(
   const folderKey = crypto.getRandomValues(new Uint8Array(32))
   const meta = await encryptFileMetadata(folderKey, name, null)
   const nameEncrypted = serializeEncryptedBlob(meta.nonce, meta.ciphertext)
+  // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
   const wrapped = toBase64(await wrapKeyForShare(parentFolderKey, folderKey))
   const body: Record<string, unknown> = {
     parent_id: parentId,
@@ -239,6 +240,7 @@ export async function uploadGuestFiles(args: {
       const fileKey = crypto.getRandomValues(new Uint8Array(32))
       const meta = await encryptFileMetadata(fileKey, name, task.file.type || null)
       const nameEncrypted = serializeEncryptedBlob(meta.nonce, meta.ciphertext)
+      // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
       const wrappedKey = toBase64(await wrapKeyForShare(parent.key, fileKey))
 
       const form = new FormData()

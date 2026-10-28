@@ -92,6 +92,7 @@ export function GuestBrowser(props: {
       // The root's own name key when the owner published it (random folder
       // key, decision L1); an older link sealed the name under the folder key.
       if (props.rootWrappedKey) {
+        // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
         const nameKey = await decryptChildFileKey(props.folderKey, props.rootWrappedKey)
         try {
           return await decryptFileMetadata(nameKey, rootName)

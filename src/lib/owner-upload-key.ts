@@ -27,6 +27,7 @@ export async function publishOwnerUploadKey(
   try {
     await publishSharedFolderKeys(root, [{
       file_id: fileId,
+      // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
       encrypted_file_key: await encryptChildFileKey(folderKey, fileKey),
     }])
   } catch (error) {
