@@ -12,8 +12,15 @@ await mockModuleScoped('../src/lib/api', import.meta.dir, {
   },
 })
 
-const { loadFeatureFlagsOnce, resetFeatureFlagCacheForTests, sharedFoldersEnabled, setFlagRequestTimeoutForTests, FLAG_REQUEST_TIMEOUT_MS } =
-  await import('../src/lib/use-feature-flag')
+const {
+  loadFeatureFlagsOnce,
+  resetFeatureFlagCacheForTests,
+  sharedFoldersEnabled,
+  sharedFoldersEnabledForWrite,
+  FeatureFlagsUnavailableError,
+  setFlagRequestTimeoutForTests,
+  FLAG_REQUEST_TIMEOUT_MS,
+} = await import('../src/lib/use-feature-flag')
 
 describe('feature flags (2237b)', () => {
   beforeEach(() => {
@@ -91,5 +98,40 @@ describe('feature flags (2237b)', () => {
   test('the production bound is a few seconds, not unbounded', () => {
     expect(FLAG_REQUEST_TIMEOUT_MS).toBeGreaterThan(0)
     expect(FLAG_REQUEST_TIMEOUT_MS).toBeLessThanOrEqual(10_000)
+  })
+
+  // rv-web198e P3: on a WRITE a failed flag read aborts; it is never "off".
+  // Two failed reads used to turn a flag-on custody-folder invite into a
+  // legacy invite.
+  test('for a write, a failed read throws FeatureFlagsUnavailableError instead of answering off', async () => {
+    evaluateImpl = async () => {
+      throw new Error('offline')
+    }
+    await expect(sharedFoldersEnabledForWrite()).rejects.toBeInstanceOf(FeatureFlagsUnavailableError)
+    // Reads still fail closed.
+    expect(await sharedFoldersEnabled()).toBe(false)
+    evaluateImpl = async () => ({ flags: { shared_folders_v1: true } })
+    expect(await sharedFoldersEnabledForWrite()).toBe(true)
+  })
+
+  test('for a write, a malformed body and a read that never answers both throw', async () => {
+    evaluateImpl = async () => ({ flags: null }) as never
+    await expect(sharedFoldersEnabledForWrite()).rejects.toBeInstanceOf(FeatureFlagsUnavailableError)
+    setFlagRequestTimeoutForTests(30)
+    evaluateImpl = () => new Promise(() => {})
+    await expect(sharedFoldersEnabledForWrite()).rejects.toBeInstanceOf(FeatureFlagsUnavailableError)
+  })
+
+  test('for a write, a real "off" answer is off, and one answer serves reads and writes', async () => {
+    evaluateImpl = async () => ({ flags: { shared_folders_v1: false } })
+    expect(await sharedFoldersEnabledForWrite()).toBe(false)
+    expect(await sharedFoldersEnabled()).toBe(false)
+    expect(evaluateCalls).toBe(1)
+  })
+
+  test("the write error's copy fits the short-message limit and says nothing changed", () => {
+    const message = new FeatureFlagsUnavailableError().message
+    expect(message.length).toBeLessThanOrEqual(80)
+    expect(message).toMatch(/nothing changed/i)
   })
 })

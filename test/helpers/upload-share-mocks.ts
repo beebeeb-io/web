@@ -82,7 +82,10 @@ export async function installMocks(): Promise<void> {
   })
 
   // shared_folders_v1 ON: the owner-upload publish under test is a flag-on path.
-  await mockModuleScoped('../../src/lib/use-feature-flag', here, { sharedFoldersEnabled: async () => true })
+  await mockModuleScoped('../../src/lib/use-feature-flag', here, {
+    sharedFoldersEnabled: async () => true,
+    sharedFoldersEnabledForWrite: async () => true,
+  })
 
   // net-retry passthrough — no retry back-off inside the contract tests.
   await mockModuleScoped('../../src/lib/net-retry', here, {

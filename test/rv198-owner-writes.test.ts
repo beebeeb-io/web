@@ -38,6 +38,7 @@ let requests = 0
 await mockModuleScoped('../src/lib/use-feature-flag', import.meta.dir, (r) => ({
   ...r,
   sharedFoldersEnabled: async () => flagOn,
+  sharedFoldersEnabledForWrite: async () => flagOn,
 }))
 const real = await mockModuleScoped('../src/lib/crypto', import.meta.dir, (r) => ({
   ...r,

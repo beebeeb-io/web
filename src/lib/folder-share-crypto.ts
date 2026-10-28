@@ -19,7 +19,7 @@ import {
 } from './crypto'
 import { listFilesPage, getFile, getSentInvites, getSharedFolder, FILE_LIST_HARD_CAP } from './api'
 import { assertNoSeenAncestor, markCustodySeen } from './custody-memory'
-import { sharedFoldersEnabled } from './use-feature-flag'
+import { sharedFoldersEnabled, sharedFoldersEnabledForWrite } from './use-feature-flag'
 import type { ShareInvite, SharedFolderInfo } from './api'
 
 /**
@@ -298,8 +298,9 @@ export async function custodyFolderKey(
 ): Promise<{ folderKey: Uint8Array; encryptedOwnerFolderKeyB64: string } | null> {
   // rv-web198c P2-1: with the flag off no custody request is made at all (the
   // app before shared folders); a folder seen with custody still refuses (L7c),
-  // and so does any folder under one (L7d).
-  if (!(await sharedFoldersEnabled())) {
+  // and so does any folder under one (L7d). Only invite builds and approvals
+  // (writes) ask this, so a failed flag read aborts (rv-web198e P3).
+  if (!(await sharedFoldersEnabledForWrite())) {
     await assertNoSeenAncestor(folderId, parentOfFile)
     return null
   }

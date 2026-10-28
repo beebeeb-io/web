@@ -12,7 +12,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
 
 // shared_folders_v1 ON for this file (the paths under test are flag-on ones).
-await mockModuleScoped('../src/lib/use-feature-flag', import.meta.dir, { sharedFoldersEnabled: async () => true })
+await mockModuleScoped('../src/lib/use-feature-flag', import.meta.dir, { sharedFoldersEnabled: async () => true, sharedFoldersEnabledForWrite: async () => true })
 
 
 const custodyCalls: string[] = []

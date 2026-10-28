@@ -6,11 +6,17 @@
  * endpoint is answered once per page session and cached at module level, so a
  * screen with several consumers still makes one request.
  *
- * Fail closed: a network error, a malformed body, a request that takes longer
- * than FLAG_REQUEST_TIMEOUT_MS or a disabled flag all yield `enabled: false`.
- * The hook never throws. Only a real answer is cached (rv-web198d N2): a failed
- * read is no answer, so the next read asks again instead of keeping "off" for
- * the whole page session on an account that has the flag.
+ * Reads fail closed: a network error, a malformed body, a request that takes
+ * longer than FLAG_REQUEST_TIMEOUT_MS or a disabled flag all yield
+ * `enabled: false`. The hook never throws. Only a real answer is cached
+ * (rv-web198d N2): a failed read is no answer, so the next read asks again
+ * instead of keeping "off" for the whole page session on an account that has
+ * the flag.
+ *
+ * Writes don't (rv-web198e P3): `sharedFoldersEnabledForWrite` throws when
+ * there is no answer. "Off" picks the legacy format or skips a key publish,
+ * so a failed read taken as "off" turned a flag-on custody-folder invite into
+ * a legacy one. A write without an answer is aborted instead.
  */
 import { useEffect, useState } from 'react'
 import { getEvaluateFlags } from './api'
@@ -50,17 +56,32 @@ function readFlags(): Promise<Record<string, boolean>> {
   })
 }
 
-/** One request per page session; every caller shares the same promise. */
-export function loadFeatureFlagsOnce(): Promise<Record<string, boolean>> {
+/**
+ * The server's answer: one request per page session, shared by every caller.
+ * Rejects when there is none; a failure is forgotten, so the next read asks again.
+ */
+function flagsAnswer(): Promise<Record<string, boolean>> {
   if (!flagsPromise) {
-    const pending: Promise<Record<string, boolean>> = readFlags().catch(() => {
-      // This caller fails closed; the next one asks again.
-      if (flagsPromise === pending) flagsPromise = null
-      return {}
-    })
+    const pending = readFlags()
     flagsPromise = pending
+    pending.catch(() => {
+      if (flagsPromise === pending) flagsPromise = null
+    })
   }
   return flagsPromise
+}
+
+/** For reads: the answer, or no flags at all (fail closed). */
+export function loadFeatureFlagsOnce(): Promise<Record<string, boolean>> {
+  return flagsAnswer().catch(() => ({}))
+}
+
+/** A write that needed the flag and got no answer. Nothing was written. */
+export class FeatureFlagsUnavailableError extends Error {
+  constructor() {
+    super("Couldn't check this account's sharing settings, so nothing changed. Try again.")
+    this.name = 'FeatureFlagsUnavailableError'
+  }
 }
 
 /** Test hook: forget the cached evaluate result. */
@@ -81,6 +102,21 @@ export function setFlagRequestTimeoutForTests(ms: number): void {
  */
 export async function sharedFoldersEnabled(): Promise<boolean> {
   return (await loadFeatureFlagsOnce())[SHARED_FOLDERS_FLAG] === true
+}
+
+/**
+ * For a write that picks a format or decides whether to publish a key: the
+ * flag, or FeatureFlagsUnavailableError when the read failed (rv-web198e P3).
+ * Never "off" without an answer.
+ */
+export async function sharedFoldersEnabledForWrite(): Promise<boolean> {
+  let flags: Record<string, boolean>
+  try {
+    flags = await flagsAnswer()
+  } catch {
+    throw new FeatureFlagsUnavailableError()
+  }
+  return flags[SHARED_FOLDERS_FLAG] === true
 }
 
 /** Sign-out and account switch: the flag is evaluated per user, so forget it. */

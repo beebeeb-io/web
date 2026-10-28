@@ -49,7 +49,7 @@ import { userFriendlyError } from '../lib/user-friendly-error'
 import { isTypedRefusal } from '../lib/no-card-trial'
 import { buildFullShareLink } from '../lib/share-full-link'
 import { SHARED_FOLDERS_FLAG } from '../lib/flags'
-import { sharedFoldersEnabled, useFeatureFlag } from '../lib/use-feature-flag'
+import { sharedFoldersEnabledForWrite, useFeatureFlag } from '../lib/use-feature-flag'
 import { FOLDER_NEEDS_UPGRADE } from '../lib/folder-upgrade'
 import { FolderSharePanel } from './folder-share/folder-share-panel'
 
@@ -284,8 +284,9 @@ function InviteForm({
         // custody record first, so the invite and every later share are L7.
         // The flag is read here, at send time (rv-web198c P3: never a legacy
         // invite from a click made while it loads), and that read is bounded
-        // (rv-web198d P3), so the invite never waits on it for good.
-        if (await sharedFoldersEnabled()) {
+        // (rv-web198d P3), so the invite never waits on it for good. A failed
+        // read aborts the invite; it is never taken as "off" (rv-web198e P3).
+        if (await sharedFoldersEnabledForWrite()) {
           const registered = await ensureOwnerFolderKey(fileId, masterKey)
           registered.fill(0)
         }

@@ -57,9 +57,15 @@ const registered: string[] = []
 const published: string[] = []
 const adopted: { id: string; wrap: string }[] = []
 
+/** A write's flag read that failed (rv-web198e P3); reads still see `flagOn`. */
+let flagReadFails = false
 await mockModuleScoped('../src/lib/use-feature-flag', import.meta.dir, (r) => ({
   ...r,
-  sharedFoldersEnabled: async () => flagOn,
+  sharedFoldersEnabled: async () => (flagReadFails ? false : flagOn),
+  sharedFoldersEnabledForWrite: async () => {
+    if (flagReadFails) throw new (r.FeatureFlagsUnavailableError as new () => Error)()
+    return flagOn
+  },
 }))
 const real = await mockModuleScoped('../src/lib/crypto', import.meta.dir, (r) => ({
   ...r,
@@ -125,7 +131,7 @@ async function legacyInviteRows(status: string) {
 beforeEach(() => {
   adoption.clearSharedFolderLookups()
   resetCustodyMemoryForTests()
-  flagOn = true; custody = 404; custodyCalls = 0; parentCalls = 0; sentInvites = []
+  flagOn = true; flagReadFails = false; custody = 404; custodyCalls = 0; parentCalls = 0; sentInvites = []
   serverRows = 0; sentInviteReads = 0
   registered.length = 0; published.length = 0; adopted.length = 0
 })
@@ -367,5 +373,44 @@ describe('L7d: legacy is refused when ANY ancestor is in the set, not only the r
     // ...and with nothing seen it is the legacy answer as before.
     resetCustodyMemoryForTests()
     expect(await share.memberFolderCustody(SUB, FILE_ID)).toEqual({ shared: null, flagOn: true })
+  })
+})
+
+describe('rv-web198e P3: on a write, a failed flag read aborts; it is never "off"', () => {
+  // Two failed reads (the invite's custody-first check, then buildFolderInvite's
+  // custody read) used to turn a flag-on custody-folder invite into a legacy one.
+  test('a folder invite build aborts: no payload, so no legacy invite', async () => {
+    flagReadFails = true
+    await expect(share.buildFolderInvite(MASTER, ROOT)).rejects.toThrow("Couldn't check this account's sharing settings")
+    expect(custodyCalls).toBe(0)
+  })
+
+  test("an approval's custody read aborts the same way", async () => {
+    flagReadFails = true
+    await expect(share.custodyFolderKey(MASTER, ROOT)).rejects.toThrow("Couldn't check this account's sharing settings")
+  })
+
+  test('an owner upload or move publish aborts instead of skipping', async () => {
+    flagReadFails = true
+    await expect(publishOwnerUploadKey(MASTER, ROOT, FILE_ID, CHILD_KEY)).rejects.toThrow("Couldn't check this account's sharing settings")
+    await expect(moveOwnerItems({ ids: [FILE_ID], destinationId: ROOT, rows: [{ id: FILE_ID }], masterKey: MASTER, viewerId: null }))
+      .rejects.toThrow(MOVED_BUT_UNPUBLISHED)
+    expect(published).toEqual([])
+  })
+
+  test('control: a real "off" answer is still off for writes (nothing asked, legacy invite build as on main)', async () => {
+    flagOn = false
+    expect(await share.custodyFolderKey(MASTER, ROOT)).toBeNull()
+    await publishOwnerUploadKey(MASTER, ROOT, FILE_ID, CHILD_KEY)
+    expect(custodyCalls).toBe(0)
+  })
+
+  test("the invite form asks the write read before it decides custody-first (share-dialog)", async () => {
+    const { readFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const text = readFileSync(join(import.meta.dir, '..', 'src/components/share-dialog.tsx'), 'utf8')
+    const body = text.slice(text.indexOf('const handleInvite'), text.indexOf('ensureOwnerFolderKey(fileId'))
+    expect(body).toContain('await sharedFoldersEnabledForWrite()')
+    expect(body).not.toContain('await sharedFoldersEnabled()')
   })
 })
