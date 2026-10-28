@@ -31,6 +31,7 @@ type Call = { url: string; headers: Record<string, string> }
 let calls: Call[] = []
 let bodyFor: () => Uint8Array = () => new Uint8Array()
 let status = 200
+let serverChunkSize: number | null = null
 
 function encryptedFrames(fileId: string, chunkSize = CHUNK_SIZE): Uint8Array {
   const encryptor = mirror.wasm.WasmChunkEncryptor.withChunkSize(
@@ -77,6 +78,7 @@ const proof = { token: 't', proof: 'proof-value', expiresAt: Date.now() + 60_000
 beforeEach(() => {
   calls = []
   status = 200
+  serverChunkSize = null
 })
 
 // Installed once; each test sets the body it wants the download route to serve.
@@ -84,7 +86,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const headers = (init?.headers ?? {}) as Record<string, string>
   calls.push({ url: String(input), headers })
   if (status !== 200) return new Response('nope', { status })
-  return new Response(new Blob([bodyFor() as BlobPart]).stream(), { status: 200 })
+  return new Response(new Blob([bodyFor() as BlobPart]).stream(), { status: 200, headers: serverChunkSize ? { 'X-Chunk-Size': String(serverChunkSize) } : {} })
 }) as typeof fetch
 
 describe('fetchGuestPlaintextBlob', () => {
@@ -155,4 +157,13 @@ describe('fetchGuestPlaintextBlob', () => {
     expect(error).toBeInstanceOf(GuestPreviewTooLargeError)
     expect(calls).toHaveLength(0)
   })
+})
+
+
+test('A2 server chunk header drives preview framing without a caller override', async () => {
+  const id = '66666666-6666-4666-8666-666666666666'
+  serverChunkSize = 8
+  bodyFor = () => encryptedFrames(id, 8)
+  const blob = await fetchGuestPlaintextBlob({ token: 'tok', item: item(id), fileKey: fileKeyFor(id), proof })
+  expect(new Uint8Array(await blob.arrayBuffer())).toEqual(PLAINTEXT)
 })

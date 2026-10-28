@@ -12,21 +12,33 @@ import {
   uniqueZipPath,
   type BulkDownloadOptions,
   type BulkDownloadPorts,
+  type ZipSource,
+  type BulkDownloadResult,
 } from './bulk-download'
 import { decryptFileMetadata } from './crypto'
 import { listFolderItems } from './folder-link-public'
 import { decryptChildFileKey } from './folder-share-crypto'
-import { fetchGuestDownloadBlob } from './guest-bytes'
+import { fetchGuestDownloadBlob, streamGuestPlaintext } from './guest-bytes'
 import type { Proof, PublicFolderItem } from './folder-link-types'
 
 /** The public listing route's page size. */
 export const GUEST_ZIP_PAGE_LIMIT = 200
 
-export interface GuestZipFile {
+/**
+ * "Download all" streams every file into the zip chunk by chunk, and the zip
+ * goes to disk through the service worker, so memory stays at about one chunk
+ * whatever the folder's size. A browser without that streaming path has to
+ * build the zip in memory; there, a folder above this bound is refused before
+ * anything is fetched, with a plain message.
+ */
+export const GUEST_ZIP_MAX_BYTES = 128 * 1024 * 1024
+export const GUEST_ZIP_LIMIT_MESSAGE =
+  "This browser can't stream a zip to disk, so Download all is limited to 128 MiB here. Download the files one by one, or use another browser."
+
+export interface GuestZipFile extends ZipSource {
   path: string
   fileId: string
   sizeBytes: number
-  blob: Blob
 }
 
 /** One segment under `parentPath`; a name that carries separators keeps only its last segment. */
@@ -62,14 +74,14 @@ export interface CollectGuestZipArgs {
 }
 
 /**
- * Walk the shared tree and decrypt every file into an archive entry.
+ * Walk the shared tree and describe every file into an archive entry.
  * Unreadable folders and files are counted, never fatal: a partial archive is
  * still useful to the person downloading it.
  */
 export async function collectGuestZipEntries(
   args: CollectGuestZipArgs,
 ): Promise<{ files: GuestZipFile[]; errorCount: number }> {
-  const { token, folderKey, proof, rootPath, signal, onProgress } = args
+  const { token, folderKey, proof, rootPath, signal } = args
   const itemsById = new Map<string, PublicFolderItem>()
 
   async function listAll(parentId: string | null): Promise<DriveFile[]> {
@@ -93,9 +105,11 @@ export async function collectGuestZipEntries(
   const ports: BulkDownloadPorts = {
     listChildren: (folderId) => listAll(folderId),
     getFileKey: async (file) => {
-      if (file.is_folder) return folderKey
       const item = itemsById.get(file.id)
-      if (!item?.wrapped_file_key) throw new Error('This file has no folder key.')
+      if (!item?.wrapped_file_key) {
+        if (file.is_folder) return folderKey
+        throw new Error('This file has no folder key.')
+      }
       return decryptChildFileKey(folderKey, item.wrapped_file_key)
     },
     decryptToBlob: async (file, fileKey) => {
@@ -121,25 +135,36 @@ export async function collectGuestZipEntries(
     },
   )
 
-  for (let i = 0; i < entries.length; i++) {
-    if (signal?.aborted) break
-    const entry = entries[i]
-    onProgress?.(i, entries.length, entry.file.name_encrypted)
+  for (const entry of entries) {
+    if (signal?.aborted) throw new DOMException('Download cancelled', 'AbortError')
     try {
-      const fileKey = await ports.getFileKey(entry.file)
-      const { plaintext, filename } = await ports.decryptToBlob(entry.file, fileKey)
-      const path = uniqueZipPath(zipPathFor(entry.prefix, filename), used)
+      const key = await ports.getFileKey(entry.file)
+      const { name } = await decryptFileMetadata(key, entry.file.name_encrypted)
+      const path = uniqueZipPath(zipPathFor(entry.prefix, name), used)
       files.push({
-        path,
-        fileId: entry.file.id,
-        sizeBytes: entry.file.size_bytes,
-        blob: plaintext,
+        path, fileId: entry.file.id, sizeBytes: entry.file.size_bytes,
+        pathFor: () => path,
+        fallbackName: name,
+        load: async () => {
+          if (signal?.aborted) throw new DOMException('Download cancelled', 'AbortError')
+          const fileKey = await ports.getFileKey(entry.file)
+          try { return await ports.decryptToBlob(entry.file, fileKey) }
+          finally { fileKey.fill(0) }
+        },
+        streamTo: {
+          filename: name,
+          open: async (push) => {
+            if (signal?.aborted) throw new DOMException('Download cancelled', 'AbortError')
+            const item = itemsById.get(entry.file.id)
+            if (!item) throw new Error('This file is no longer in the listing.')
+            const fileKey = await ports.getFileKey(entry.file)
+            try { await streamGuestPlaintext({ token, item, fileKey, proof, signal }, push) }
+            finally { fileKey.fill(0) }
+          },
+        },
       })
-      onProgress?.(i + 1, entries.length, filename)
-    } catch {
-      errorCount += 1
-      onProgress?.(i + 1, entries.length, entry.file.name_encrypted)
-    }
+      key.fill(0)
+    } catch { errorCount++ }
   }
 
   return { files, errorCount }
@@ -150,20 +175,15 @@ export async function downloadGuestZip(
   entries: GuestZipFile[],
   zipFilename: string,
   options: BulkDownloadOptions = {},
-): Promise<void> {
-  await packageZip(
-    entries.map((entry) => ({
-      pathFor: () => entry.path,
-      fallbackName: entry.path.split('/').pop() ?? entry.path,
-      load: async () => ({
-        plaintext: entry.blob,
-        filename: entry.path.split('/').pop() ?? entry.path,
-      }),
-    })),
+): Promise<BulkDownloadResult> {
+  return packageZip(
+    entries,
     {
       ...options,
       zipFilename,
       totalEstimatedBytes: entries.reduce((total, entry) => total + entry.sizeBytes, 0),
+      bufferedLimitBytes: GUEST_ZIP_MAX_BYTES,
+      bufferedLimitMessage: GUEST_ZIP_LIMIT_MESSAGE,
     },
   )
 }

@@ -166,6 +166,8 @@ export function uniqueZipPath(path: string, used: Set<string>): string {
  * buffered Blob fallback (chunks accumulate in memory, anchor click at end).
  */
 export interface ZipSink {
+  /** True when the archive accumulates in memory (no streaming to disk). */
+  buffered?: boolean
   /** Write a chunk of ZIP bytes. */
   write(chunk: Uint8Array): Promise<void>
   /** Mark the archive complete. */
@@ -294,6 +296,7 @@ function createBlobSink(filename: string, mimeType: string): ZipSink {
   const chunks: Uint8Array[] = []
   let aborted = false
   return {
+    buffered: true,
     async write(chunk) {
       if (!aborted) chunks.push(chunk)
     },
@@ -326,11 +329,36 @@ export interface ZipSource {
   fallbackName: string
   /** Resolve the plaintext at write time so only one file is held at a time. */
   load: () => Promise<{ plaintext: Blob; filename: string }>
+  /**
+   * Optional: stream the plaintext into the archive chunk by chunk instead of
+   * loading the whole file, so memory stays at about one chunk. The filename
+   * must be known up front (it names the entry before any byte is written).
+   */
+  streamTo?: {
+    filename: string
+    open: (push: (chunk: Uint8Array) => Promise<void>) => Promise<void>
+  }
 }
 
 export interface PackageZipOptions extends BulkDownloadOptions {
-  /** Caller's size estimate, used only for the 1 GiB warning. */
+  /** Caller's size estimate, used for the 1 GiB warning and `bufferedLimitBytes`. */
   totalEstimatedBytes?: number
+  /**
+   * Refuse, before anything is fetched, an archive larger than this when the
+   * only available sink buffers the whole zip in memory (no service-worker
+   * streaming in this browser). Unset: no limit (the owner drive's behaviour).
+   */
+  bufferedLimitBytes?: number
+  /** The message of the `ZipTooLargeError` thrown for `bufferedLimitBytes`. */
+  bufferedLimitMessage?: string
+}
+
+/** The archive is over `bufferedLimitBytes` and this browser cannot stream it. */
+export class ZipTooLargeError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ZipTooLargeError'
+  }
 }
 
 /**
@@ -348,6 +376,8 @@ export async function packageZip(
     zipFilename = 'beebeeb-files.zip',
     sink: overrideSink,
     totalEstimatedBytes = 0,
+    bufferedLimitBytes,
+    bufferedLimitMessage,
   } = options
 
   if (sources.length === 0) {
@@ -361,6 +391,13 @@ export async function packageZip(
     overrideSink ??
     (await createSwSink(zipFilename, 'application/zip').catch(() => null)) ??
     createBlobSink(zipFilename, 'application/zip')
+
+  if (bufferedLimitBytes !== undefined && sink.buffered && totalEstimatedBytes > bufferedLimitBytes) {
+    await sink.abort('too-large').catch(() => {})
+    throw new ZipTooLargeError(
+      bufferedLimitMessage ?? 'This archive is too large to build in this browser.',
+    )
+  }
 
   // ── Streaming ZIP assembly ───────────────────────────────────────────────
   // fflate's `Zip` emits chunks via `ondata(err, chunk, final)` as files are
@@ -433,6 +470,58 @@ export async function packageZip(
     })
   }
 
+  /** Stream one source into a fresh entry, chunk by chunk, waiting for the
+   *  sink after every chunk so at most about one chunk is in flight. The entry
+   *  is created on the first chunk: a wrong key or a gone file (which fail
+   *  before any plaintext) leaves no partial entry behind. */
+  async function streamEntry(
+    source: ZipSource & { streamTo: NonNullable<ZipSource['streamTo']> },
+  ): Promise<void> {
+    const filename = source.streamTo.filename
+    const zipPath = uniqueZipPath(source.pathFor(filename), usedZipPaths)
+    const compress = !INCOMPRESSIBLE_EXT.test(filename)
+    let entry: ZipDeflate | ZipPassThrough | null = null
+    let finished: Promise<void> | null = null
+    const begin = (): ZipDeflate | ZipPassThrough => {
+      const created = compress ? new ZipDeflate(zipPath, { level: 1 }) : new ZipPassThrough(zipPath)
+      archive.add(created)
+      finished = new Promise<void>((resolve, reject) => {
+        const wrapped = created.ondata
+        created.ondata = (err, dat, final) => {
+          wrapped.call(created, err, dat, final)
+          if (err) reject(err)
+          else if (final) resolve()
+        }
+      })
+      entry = created
+      return created
+    }
+    try {
+      await source.streamTo.open(async (chunk) => {
+        const target = entry ?? begin()
+        target.push(chunk, false)
+        await sinkChain
+        if (zipError) throw zipError
+      })
+      const target = entry ?? begin()
+      target.push(new Uint8Array(0), true)
+      await finished
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error'
+      const started = entry as ZipDeflate | ZipPassThrough | null
+      if (started) {
+        // Bytes already went out: close the entry so the archive stays valid,
+        // and say plainly that this copy is cut short.
+        try {
+          started.push(new Uint8Array(0), true)
+          await finished
+        } catch { /* the error manifest below still names it */ }
+        throw new Error(`incomplete in this zip (${msg})`)
+      }
+      throw err
+    }
+  }
+
   // ── Decrypt + write each file sequentially ───────────────────────────────
   for (let i = 0; i < sources.length; i++) {
     if (zipError) break
@@ -441,6 +530,18 @@ export async function packageZip(
     // Placeholder name while we decrypt
     const fallbackPath = source.pathFor(source.fallbackName)
     onProgress?.(i, sources.length, source.fallbackName)
+
+    if (source.streamTo) {
+      try {
+        await streamEntry(source as ZipSource & { streamTo: NonNullable<ZipSource['streamTo']> })
+        onProgress?.(i + 1, sources.length, source.streamTo.filename)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Unknown error'
+        errors.push(`${fallbackPath}: ${msg}`)
+        onProgress?.(i + 1, sources.length, source.fallbackName)
+      }
+      continue
+    }
 
     try {
       const { plaintext, filename } = await source.load()

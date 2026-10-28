@@ -134,3 +134,22 @@ describe('proof storage (2237b)', () => {
     expect(readProof('t')).toBeNull()
   })
 })
+
+
+test('B a server passphrase_required 401 clears the cached proof', async () => {
+  const proof = storeProof('tok', 'old-proof', new Date(Date.now()+60_000).toISOString())
+  next = () => Response.json({ error: 'passphrase_required' }, { status: 401 })
+  await expect(listFolderItems('tok', { parentId: null }, proof)).rejects.toMatchObject({ status: 401, code: 'passphrase_required' })
+  expect(readProof('tok')).toBeNull()
+})
+
+
+test('verify sends the passphrase in NFC and refuses an empty one without a request', async () => {
+  const { verifyFolderLinkPassphrase } = await import('../src/lib/folder-link-public')
+  next = () => Response.json({ wrapped_folder_key: 'w', key_version: 1, proof: 'p', proof_expires_at: new Date(Date.now() + 60_000).toISOString() })
+  await verifyFolderLinkPassphrase('tok', 'cafe\u0301')
+  expect(JSON.parse(String(calls[calls.length - 1].init.body))).toEqual({ passphrase: 'caf\u00e9' })
+  const before = calls.length
+  await expect(verifyFolderLinkPassphrase('tok', '   ')).rejects.toThrow(/empty/)
+  expect(calls).toHaveLength(before)
+})

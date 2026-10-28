@@ -12,30 +12,25 @@
  */
 import {
   encryptChunk,
+  planChunks,
   encryptFileMetadata,
   serializeEncryptedBlob,
   toBase64,
   wrapKeyForShare,
 } from './crypto'
 import type { Proof } from './folder-link-types'
+import { throwFolderResponseError } from './folder-link-public'
 import { API_URL } from './api'
 
 export const MAX_GUEST_CHUNKS = 1024
-export const MIN_GUEST_CHUNK_BYTES = 65_536
+export const MIN_GUEST_CHUNK_BYTES = 4 * 1024 * 1024
 
-/** Chunk ladder for anonymous uploads: every non-final chunk is at least 64 KiB. */
-export function planGuestChunks(sizeBytes: number): { chunkSize: number; chunkCount: number } {
-  if (!Number.isFinite(sizeBytes) || sizeBytes < 0) {
-    throw new Error('size must be a non-negative number')
-  }
-  if (sizeBytes <= MIN_GUEST_CHUNK_BYTES) {
-    return { chunkSize: MIN_GUEST_CHUNK_BYTES, chunkCount: 1 }
-  }
-  const chunkSize = Math.max(
-    MIN_GUEST_CHUNK_BYTES,
-    Math.ceil(sizeBytes / MAX_GUEST_CHUNKS),
-  )
-  return { chunkSize, chunkCount: Math.max(1, Math.ceil(sizeBytes / chunkSize)) }
+/** Legacy guest rows have no object version: downloads infer core's desktop plan. */
+export async function planGuestChunks(sizeBytes: number): Promise<{ chunkSize: number; chunkCount: number }> {
+  if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) throw new Error('size must be a non-negative integer')
+  const plan = await planChunks(sizeBytes, 'desktop')
+  if (plan.chunk_count > MAX_GUEST_CHUNKS) throw new GuestUploadError('too_large')
+  return { chunkSize: plan.chunk_size_bytes, chunkCount: plan.chunk_count }
 }
 
 export type GuestRejectReason =
@@ -137,7 +132,7 @@ export async function uploadGuestFolder(
   actorNameEncrypted: string | null,
 ): Promise<{ id: string; folderKey: Uint8Array }> {
   const folderKey = crypto.getRandomValues(new Uint8Array(32))
-  const meta = await encryptFileMetadata(parentFolderKey, name, null)
+  const meta = await encryptFileMetadata(folderKey, name, null)
   const nameEncrypted = serializeEncryptedBlob(meta.nonce, meta.ciphertext)
   const wrapped = toBase64(await wrapKeyForShare(parentFolderKey, folderKey))
   const body: Record<string, unknown> = {
@@ -156,12 +151,13 @@ export async function uploadGuestFolder(
     },
   )
   if (!response.ok) {
+    if (response.status === 401) await throwFolderResponseError(token, response)
     const code = await responseCode(response)
     throw new GuestUploadError(rejectFor(response.status, code))
   }
   const created = (await response.json()) as { id?: unknown }
   if (typeof created.id !== 'string') throw new GuestUploadError('network')
-  return { id: created.id, folderKey }
+  return { id: created.id, folderKey: parentFolderKey }
 }
 
 export class GuestUploadError extends Error {
@@ -237,7 +233,7 @@ export async function uploadGuestFiles(args: {
     try {
       const parent = await ensureDirectory(dirPath)
       const name = await resolveGuestName(parent.id, desired, args.siblingNames)
-      const plan = planGuestChunks(task.file.size)
+      const plan = await planGuestChunks(task.file.size)
       report({ name: 'uploading', percent: 0 })
 
       const fileKey = crypto.getRandomValues(new Uint8Array(32))
@@ -282,6 +278,7 @@ export async function uploadGuestFiles(args: {
         },
       )
       if (!response.ok) {
+        if (response.status === 401) await throwFolderResponseError(args.token, response)
         const code = await responseCode(response)
         throw new GuestUploadError(rejectFor(response.status, code))
       }

@@ -7,6 +7,7 @@
  *    on the class instead of on a message string.
  */
 import { API_URL, ApiError } from './api'
+import { normalizeLinkPassphrase } from './link-passphrase'
 import type {
   Proof,
   PublicFolderItem,
@@ -29,6 +30,8 @@ export class FolderShapeError extends ApiError {
     this.name = 'FolderShapeError'
   }
 }
+
+export const FOLDER_PROOF_REQUIRED_EVENT = 'beebeeb:folder-proof-required'
 
 const PROOF_KEY_PREFIX = 'beebeeb.folderLink.proof.'
 export const FOLDER_LINK_PAGE_LIMIT = 200
@@ -66,6 +69,7 @@ export function storeProof(token: string, proof: string, proofExpiresAt: string)
 export function clearProof(token: string): void {
   try {
     sessionStorage.removeItem(PROOF_KEY_PREFIX + token)
+    sessionStorage.removeItem('beebeeb.folderLink.key.' + token)
   } catch {
     // ignore
   }
@@ -89,6 +93,18 @@ async function toApiError(response: Response): Promise<ApiError> {
   return new ApiError(message, response.status, code)
 }
 
+/** All public transports share proof invalidation, including raw upload/download fetches. */
+export async function throwFolderResponseError(token: string, response: Response): Promise<never> {
+  const error = await toApiError(response)
+  if (error.status === 401 && error.code === 'passphrase_required') {
+    clearProof(token)
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(FOLDER_PROOF_REQUIRED_EVENT, { detail: token }))
+    }
+  }
+  throw error
+}
+
 async function guestJson<T>(
   token: string,
   path: string,
@@ -103,7 +119,7 @@ async function guestJson<T>(
       ...(rest.headers as Record<string, string> | undefined),
     },
   })
-  if (!response.ok) throw await toApiError(response)
+  if (!response.ok) return throwFolderResponseError(token, response)
   return (await response.json()) as T
 }
 
@@ -116,7 +132,10 @@ export async function resolveFolderLink(
     '',
     { proof },
   )
-  if (body.passphrase_required === true) return { kind: 'passphrase_required' }
+  if (body.passphrase_required === true) {
+    clearProof(token)
+    return { kind: 'passphrase_required' }
+  }
   if (typeof body.wrapped_folder_key !== 'string' || body.wrapped_folder_key.length === 0) {
     throw new FolderShapeError()
   }
@@ -127,9 +146,10 @@ export async function verifyFolderLinkPassphrase(
   token: string,
   passphrase: string,
 ): Promise<PublicFolderVerify> {
+  // The same NFC form the owner's link was made with (see normalizeLinkPassphrase).
   return guestJson<PublicFolderVerify>(token, '/verify', {
     method: 'POST',
-    body: JSON.stringify({ passphrase }),
+    body: JSON.stringify({ passphrase: normalizeLinkPassphrase(passphrase) }),
   })
 }
 
@@ -181,14 +201,19 @@ export async function fetchFolderItemBytes(
   itemId: string,
   proof: Proof | null,
   signal?: AbortSignal,
-): Promise<ReadableStream<Uint8Array>> {
+): Promise<{ stream: ReadableStream<Uint8Array>; chunkSize: number | null }> {
   const response = await fetch(
     `${API_URL}/api/v1/f/${encodeURIComponent(token)}/items/${encodeURIComponent(itemId)}/download`,
     { headers: proofHeaders(proof), signal },
   )
-  if (!response.ok) throw await toApiError(response)
+  if (!response.ok) return throwFolderResponseError(token, response)
   if (!response.body) throw new FolderShapeError('The download response had no body.')
-  return response.body
+  const header = response.headers.get('X-Chunk-Size')
+  const size = header === null ? null : Number(header)
+  if (size !== null && (!Number.isSafeInteger(size) || size <= 0)) {
+    throw new FolderShapeError('The download chunk size was invalid.')
+  }
+  return { stream: response.body, chunkSize: size }
 }
 
 export async function fetchFolderThumbnail(
@@ -202,7 +227,7 @@ export async function fetchFolderThumbnail(
     { headers: proofHeaders(proof) },
   )
   if (response.status === 404) return null
-  if (!response.ok) throw await toApiError(response)
+  if (!response.ok) return throwFolderResponseError(token, response)
   return new Uint8Array(await response.arrayBuffer())
 }
 

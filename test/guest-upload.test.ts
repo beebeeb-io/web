@@ -7,6 +7,7 @@
  * wire bytes can be decrypted in the test.
  */
 import { beforeEach, describe, expect, test } from 'bun:test'
+import { loadWasm } from './helpers/wasm-crypto-mirror'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
 
 const subtle = crypto.subtle
@@ -46,6 +47,7 @@ function unb64(value: string): Uint8Array {
 }
 
 await mockModuleScoped('../src/lib/crypto', import.meta.dir, {
+  planChunks: async (size: number, profile: string) => loadWasm().plan_chunks(BigInt(size), profile),
   encryptChunk: seal,
   encryptFilename: (key: Uint8Array, name: string) =>
     seal(key, new TextEncoder().encode(name)),
@@ -96,6 +98,7 @@ const {
   decryptActorName,
   encryptActorName,
   readActorName,
+  readActorNameCiphertext,
   storeActorName,
   storeActorNameSkipped,
 } = await import('../src/lib/guest-actor-name')
@@ -103,6 +106,7 @@ const {
 type UploadCall = { url: string; proof: string | null; form: FormData }
 let calls: UploadCall[] = []
 let folderSeq = 0
+let folderBodies: Record<string, unknown>[] = []
 let nextResponse: () => Response = () =>
   Response.json({ file_id: `file-${calls.length}` }, { status: 201 })
 
@@ -110,6 +114,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input)
   const headers = new Headers(init?.headers)
   if (url.includes('/folders')) {
+    folderBodies.push(JSON.parse(String(init?.body)))
     folderSeq += 1
     return Response.json({ id: `folder-${folderSeq}` }, { status: 201 })
   }
@@ -160,22 +165,23 @@ globalThis.localStorage = storageStub()
 beforeEach(() => {
   calls = []
   folderSeq = 0
+  folderBodies = []
   nextResponse = () => Response.json({ file_id: `file-${calls.length}` }, { status: 201 })
   localStorage.clear()
 })
 
 describe('planGuestChunks', () => {
-  test('a zero-byte file and a 64 KiB file are one 64 KiB chunk', () => {
-    expect(planGuestChunks(0)).toEqual({ chunkSize: MIN_GUEST_CHUNK_BYTES, chunkCount: 1 })
-    expect(planGuestChunks(65_536)).toEqual({ chunkSize: 65_536, chunkCount: 1 })
+  test('a zero-byte file and a 64 KiB file use the desktop floor', async () => {
+    expect(await planGuestChunks(0)).toEqual({ chunkSize: MIN_GUEST_CHUNK_BYTES, chunkCount: 1 })
+    expect(await planGuestChunks(65_536)).toEqual({ chunkSize: MIN_GUEST_CHUNK_BYTES, chunkCount: 1 })
   })
 
-  test('a 10 GiB file plans at most 1024 chunks and every non-final chunk is at least 64 KiB', () => {
-    expect(planGuestChunks(10 * 1024 ** 3).chunkCount).toBeLessThanOrEqual(MAX_GUEST_CHUNKS)
+  test('a 10 GiB file plans at most 1024 chunks with the desktop floor', async () => {
+    expect((await planGuestChunks(10 * 1024 ** 3)).chunkCount).toBeLessThanOrEqual(MAX_GUEST_CHUNKS)
     expect(MAX_GUEST_CHUNKS).toBe(1024)
 
     for (const size of [1, 65_535, 65_536, 1e6, 5e9, 2e10]) {
-      const plan = planGuestChunks(size)
+      const plan = await planGuestChunks(size)
       expect(plan.chunkSize).toBeGreaterThanOrEqual(MIN_GUEST_CHUNK_BYTES)
       expect(plan.chunkCount).toBeLessThanOrEqual(MAX_GUEST_CHUNKS)
       const nonFinalChunks = Math.max(0, plan.chunkCount - 1)
@@ -184,8 +190,8 @@ describe('planGuestChunks', () => {
     }
   })
 
-  test('rejects a negative size', () => {
-    expect(() => planGuestChunks(-1)).toThrow()
+  test('rejects a negative size', async () => {
+    await expect(planGuestChunks(-1)).rejects.toThrow()
   })
 })
 
@@ -197,7 +203,7 @@ describe('uploadGuestFiles', () => {
       folderKey: FOLDER_KEY,
       proof: { token: 'tok', proof: 'proof-value', expiresAt: Date.now() + 60_000 },
       parentId: null,
-      tasks: [{ file: fileOf('notes.txt', 70_000), relativePath: null }],
+      tasks: [{ file: fileOf('notes.txt', 5 * 1024**2), relativePath: null }],
       siblingNames: new Map(),
       actorNameEncrypted: null,
       onEvent: (event) => {
@@ -345,5 +351,39 @@ describe('actor name', () => {
     storeActorNameSkipped('folder-3')
     expect(await readActorName('folder-3', FOLDER_KEY)).toBe('')
     expect(localStorage.getItem(ACTOR_NAME_STORAGE_PREFIX + 'folder-3')).toBe('')
+  })
+
+  test('the sealed name for a later batch is the stored ciphertext, null when skipped or foreign', async () => {
+    const encrypted = await storeActorName('folder-4', FOLDER_KEY, 'Mum')
+    expect(await readActorNameCiphertext('folder-4', FOLDER_KEY)).toBe(encrypted)
+    storeActorNameSkipped('folder-5')
+    expect(await readActorNameCiphertext('folder-5', FOLDER_KEY)).toBeNull()
+    expect(await readActorNameCiphertext('folder-6', FOLDER_KEY)).toBeNull()
+    // Sealed under another folder key: never sent as this folder's name.
+    expect(await readActorNameCiphertext('folder-4', new Uint8Array(32).fill(8))).toBeNull()
+  })
+})
+
+
+describe('2237b review regressions', () => {
+  test('A1 guest chunks match server desktop inference at every ladder boundary', async () => {
+    const wasm = loadWasm()
+    for (const size of [0, 65537, 5 * 1024**2 + 1, 129 * 1024**2, 2 * 1024**3, 10 * 1024**3]) {
+      const expected = wasm.plan_chunks(BigInt(size), 'desktop')
+      expect(await planGuestChunks(size)).toEqual({ chunkSize: Number(expected.chunk_size_bytes), chunkCount: Number(expected.chunk_count) })
+    }
+  })
+
+  test('A3 nested folder name and all descendant keys open under the shared root', async () => {
+    await uploadGuestFiles({ token: 'tok', folderKey: FOLDER_KEY, proof: null, parentId: null,
+      tasks: [{ file: fileOf('a.txt', 17), relativePath: 'Trip/2019/a.txt' }],
+      siblingNames: new Map(), actorNameEncrypted: null, onEvent: () => undefined })
+    expect(folderBodies).toHaveLength(2)
+    for (const [i, body] of folderBodies.entries()) {
+      const meta = await decryptName(String(body.name_encrypted), String(body.wrapped_name_key), FOLDER_KEY)
+      expect(meta.name).toBe(['Trip', '2019'][i])
+    }
+    const body = await metadataOf(calls[0].form)
+    expect((await decryptName(String(body.name_encrypted), String(body.wrapped_key), FOLDER_KEY)).name).toBe('a.txt')
   })
 })

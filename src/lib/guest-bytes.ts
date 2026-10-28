@@ -2,7 +2,8 @@
  * Task 2237b — guest plaintext bytes.
  *
  * Previews are in-memory, so they are capped well below what a download can
- * stream. The cap is checked before the network is touched.
+ * stream. The cap is checked before the network is touched. "Download all"
+ * streams each file into the zip through `streamGuestPlaintext`.
  */
 import { CHUNK_SIZE } from './crypto'
 import { openFileMetadata, pipeDecryptedChunks } from './encrypted-download'
@@ -29,31 +30,44 @@ interface GuestBytesArgs {
   chunkSize?: number
 }
 
-async function readGuestBlob(args: GuestBytesArgs): Promise<Blob> {
+/**
+ * Decrypt a guest file chunk by chunk into `onChunk`. The frame size comes
+ * from the server's `X-Chunk-Size` (desktop, CLI and mobile uploads use larger
+ * chunks than the web default, and big files scale them further); the
+ * caller's `chunkSize` and the client default are only fallbacks for a server
+ * that sends no header.
+ */
+export async function streamGuestPlaintext(
+  args: GuestBytesArgs,
+  onChunk: (chunk: Uint8Array) => Promise<void>,
+): Promise<{ mimeType: string | null }> {
   const meta = await openFileMetadata(args.item.id, args.fileKey, args.item.name_encrypted)
-  const stream = await fetchFolderItemBytes(
+  const { stream, chunkSize } = await fetchFolderItemBytes(
     args.token,
     args.item.id,
     args.proof,
     args.signal,
   )
-  const chunks: Uint8Array[] = []
   await pipeDecryptedChunks(
     stream,
     args.fileKey,
     meta.content,
     args.item.chunk_count,
     args.item.size_bytes,
-    args.chunkSize ?? CHUNK_SIZE,
+    chunkSize ?? args.chunkSize ?? CHUNK_SIZE,
     args.signal,
-    async (chunk) => {
-      chunks.push(chunk)
-    },
+    onChunk,
     undefined,
   )
-  return new Blob(chunks as BlobPart[], {
-    type: meta.mimeType ?? 'application/octet-stream',
+  return { mimeType: meta.mimeType ?? null }
+}
+
+async function readGuestBlob(args: GuestBytesArgs): Promise<Blob> {
+  const chunks: Uint8Array[] = []
+  const { mimeType } = await streamGuestPlaintext(args, async (chunk) => {
+    chunks.push(chunk)
   })
+  return new Blob(chunks as BlobPart[], { type: mimeType ?? 'application/octet-stream' })
 }
 
 export async function fetchGuestPlaintextBlob(args: GuestBytesArgs): Promise<Blob> {

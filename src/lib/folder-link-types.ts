@@ -152,6 +152,13 @@ export interface PublicFolderRoot {
   key_version: number
   cap_bytes: number | null
   cap_used_bytes: number
+  /**
+   * The shared root's own name key wrapped under the folder key (base64), so
+   * the guest can read the folder's name: the folder key is random (decision
+   * L1), not the root's own key. Null for links made before owners published
+   * it; absent from an older server.
+   */
+  root_wrapped_key?: string | null
 }
 
 export interface PublicFolderVerify {

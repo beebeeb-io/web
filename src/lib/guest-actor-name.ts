@@ -77,3 +77,17 @@ export async function readActorName(
   const name = await decryptActorName(folderKey, stored)
   return name ?? ''
 }
+
+/**
+ * The sealed name to send with an upload batch: the stored ciphertext when it
+ * still opens under this folder's key, else null (never asked, skipped, or a
+ * value left from another key). Every batch carries it, not only the first.
+ */
+export async function readActorNameCiphertext(
+  folderId: string,
+  folderKey: Uint8Array,
+): Promise<string | null> {
+  const stored = storageGet(ACTOR_NAME_STORAGE_PREFIX + folderId)
+  if (!stored) return null
+  return (await decryptActorName(folderKey, stored)) !== null ? stored : null
+}
