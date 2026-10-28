@@ -461,7 +461,10 @@ export async function sealFolderChild(
   ref: FolderChildRef,
   childKey: Uint8Array,
 ): Promise<string> {
-  return format === 'l7' ? sealChildKey(folderKey, ref, childKey) : legacyInviteChildWrap(folderKey, childKey)
+  if (format === 'l7') return sealChildKey(folderKey, ref, childKey)
+  if (format === 'legacy_invite') return legacyInviteChildWrap(folderKey, childKey)
+  // A missing or unknown format is a bug, never a reason to write legacy.
+  throw new Error(`unknown folder wrap format: ${String(format)}`)
 }
 
 /** Open a child wrap in the folder's format. An L7 folder never opens a legacy wrap. */
@@ -471,7 +474,9 @@ export async function openFolderChild(
   ref: FolderChildRef,
   wrappedB64: string,
 ): Promise<Uint8Array> {
-  return format === 'l7' ? openChildKey(folderKey, ref, wrappedB64) : legacyInviteChildKey(folderKey, wrappedB64)
+  if (format === 'l7') return openChildKey(folderKey, ref, wrappedB64)
+  if (format === 'legacy_invite') return legacyInviteChildKey(folderKey, wrappedB64)
+  throw new Error(`unknown folder wrap format: ${String(format)}`)
 }
 
 export async function encryptAllChildrenKeys(

@@ -6,6 +6,7 @@
 import { describe, expect, test } from 'bun:test'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { loadWasm } from './helpers/wasm-crypto-mirror'
+import { ownedFolderCrypto } from './helpers/owned-folder-wasm'
 
 const wasm = loadWasm()
 const encoder = new TextEncoder()
@@ -18,6 +19,7 @@ const FILE_ID = '22222222-2222-4222-8222-222222222222'
 
 const real = await mockModuleScoped('../src/lib/crypto', import.meta.dir, (r) => ({
   ...r,
+  unwrapFolderChild: ownedFolderCrypto().unwrapFolderChild,
   deriveFileKey: async (masterKey: Uint8Array, fileId: string) =>
     wasm.derive_file_key(masterKey, encoder.encode(fileId)),
   encryptChunk: async (key: Uint8Array, plaintext: Uint8Array) => {
@@ -95,11 +97,16 @@ const {
   memberTrash,
 } = await import('../src/lib/member-write')
 
-function context(level: 'view' | 'add' | 'edit', fileKeys?: Record<string, string>) {
+function context(
+  level: 'view' | 'add' | 'edit',
+  fileKeys?: Record<string, string>,
+  format: 'l7' | 'legacy_invite' = 'legacy_invite',
+) {
   return {
     folderId: FOLDER_ID,
     inviteId: INVITE_ID,
     folderKey: FOLDER_KEY,
+    format,
     level,
     displayName: 'Sam',
     masterKey: MEMBER_MASTER,
@@ -166,8 +173,19 @@ describe('memberUploadFiles', () => {
     const args = uploadCalls[0].args
     expect(args[4]).toBe(FOLDER_ID)
     expect(args[6]).toBeUndefined()
-    expect(args[7]).toMatchObject({ folderKey: FOLDER_KEY, sharedFolderId: FOLDER_ID, inviteId: INVITE_ID })
+    expect(args[7]).toMatchObject({ folderKey: FOLDER_KEY, sharedFolderId: FOLDER_ID, inviteId: INVITE_ID, format: 'legacy_invite' })
     expect(progress).toEqual(['note.txt'])
+  })
+
+  test('L7b: in a custody folder the upload is handed the L7 format (also after a flag rollback: the custody read still answers)', async () => {
+    uploadCalls.length = 0
+    await memberUploadFiles(
+      context('add', undefined, 'l7'),
+      FOLDER_ID,
+      [new File([new Uint8Array(5)], 'note.txt', { type: 'text/plain' })],
+      () => undefined,
+    )
+    expect(uploadCalls[0].args[7]).toMatchObject({ format: 'l7', sharedFolderId: FOLDER_ID })
   })
 
   test('a top-level upload lands inside the shared folder, not the member drive', async () => {
@@ -217,6 +235,30 @@ describe('memberRename', () => {
     expect(() =>
       wasm.decrypt_chunk(FOLDER_KEY, new Uint8Array(blob.nonce), new Uint8Array(blob.ciphertext)),
     ).toThrow()
+  })
+
+  test('L7b: in a custody folder the item key comes from its L7 wrap; a legacy wrap on the row is refused', async () => {
+    const fileKey = wasm.derive_file_key(MEMBER_MASTER, encoder.encode(FILE_ID))
+    const l7 = real.toBase64(wasm.wrapFolderChild(FOLDER_KEY, FOLDER_ID, FILE_ID, 1, fileKey) as Uint8Array) as string
+    patches.length = 0
+    await memberRename(context('edit', { [FILE_ID]: l7 }, 'l7'), file({ name_encrypted: 'x' }), 'L7 notes.txt')
+    expect(patches).toHaveLength(1)
+    const blob = JSON.parse((patches[0].body as { name_encrypted: string }).name_encrypted) as { nonce: number[]; ciphertext: number[] }
+    expect(new TextDecoder().decode(wasm.decrypt_chunk(fileKey, new Uint8Array(blob.nonce), new Uint8Array(blob.ciphertext)))).toBe('L7 notes.txt')
+
+    patches.length = 0
+    await expect(
+      memberRename(context('edit', { [FILE_ID]: seal(FOLDER_KEY, fileKey) }, 'l7'), file({ name_encrypted: 'x' }), 'nope.txt'),
+    ).rejects.toThrow()
+    expect(patches).toHaveLength(0)
+  })
+
+  test('a context with no format is refused, never read as legacy', async () => {
+    const fileKey = wasm.derive_file_key(MEMBER_MASTER, encoder.encode(FILE_ID))
+    const ctx = { ...context('edit', { [FILE_ID]: seal(FOLDER_KEY, fileKey) }), format: undefined as never }
+    patches.length = 0
+    await expect(memberRename(ctx, file({ name_encrypted: 'x' }), 'nope.txt')).rejects.toThrow(/unknown folder wrap format/)
+    expect(patches).toHaveLength(0)
   })
 })
 
