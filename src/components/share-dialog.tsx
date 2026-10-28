@@ -43,10 +43,15 @@ import {
   buildFolderInvite,
   encryptFolderKeyForRecipient,
 } from '../lib/folder-share-crypto'
+import { ensureOwnerFolderKey } from '../lib/folder-link-create'
 import { useKeys } from '../lib/key-context'
 import { userFriendlyError } from '../lib/user-friendly-error'
 import { isTypedRefusal } from '../lib/no-card-trial'
 import { buildFullShareLink } from '../lib/share-full-link'
+import { SHARED_FOLDERS_FLAG } from '../lib/flags'
+import { sharedFoldersEnabledForWrite, useFeatureFlag } from '../lib/use-feature-flag'
+import { FOLDER_NEEDS_UPGRADE } from '../lib/folder-upgrade'
+import { FolderSharePanel } from './folder-share/folder-share-panel'
 
 interface ShareDialogProps {
   open: boolean
@@ -275,6 +280,16 @@ function InviteForm({
         // the server can refuse a different key for an already-keyed folder.
         const masterKey = getMasterKey()
         setProgress('Checking folder key...')
+        // L7b: with shared folders on, a folder invite registers the folder's
+        // custody record first, so the invite and every later share are L7.
+        // The flag is read here, at send time (rv-web198c P3: never a legacy
+        // invite from a click made while it loads), and that read is bounded
+        // (rv-web198d P3), so the invite never waits on it for good. A failed
+        // read aborts the invite; it is never taken as "off" (rv-web198e P3).
+        if (await sharedFoldersEnabledForWrite()) {
+          const registered = await ensureOwnerFolderKey(fileId, masterKey)
+          registered.fill(0)
+        }
         const { folderKey, payload } = await buildFolderInvite(masterKey, fileId, (_s, done, total) =>
           setProgress(`Encrypting keys: ${done}/${total}`),
         )
@@ -410,7 +425,15 @@ function InviteForm({
       )}
 
       {error && (
-        <div className="mb-4 px-3 py-2 bg-red/10 border border-red/20 rounded-md text-xs text-red">
+        // Contract 2237 §2: "needs the upgrade" is a fact about the folder, not
+        // a failed action, so it reads as a notice rather than an error.
+        <div
+          className={
+            error === FOLDER_NEEDS_UPGRADE
+              ? 'mb-4 px-3 py-2 bg-paper-2 border border-line rounded-md text-xs text-ink-2'
+              : 'mb-4 px-3 py-2 bg-red/10 border border-red/20 rounded-md text-xs text-red'
+          }
+        >
           {error}
         </div>
       )}
@@ -484,7 +507,7 @@ function InviteSuccess({
 
 // ─── Main dialog ─────────────────────────────────────
 
-export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolder, bundleFiles, onShareCreated }: ShareDialogProps) {
+function ShareDialogBundleBody({ open, onClose, fileId, fileName, fileSize, isFolder, bundleFiles, onShareCreated }: ShareDialogProps) {
   // getFileKeyForFile (task 2238 review): resolves a row's FileKey whether it is
   // derived from the master key or sealed under a file-request content key.
   const { getFileKey, getFileKeyForFile, getMasterKey, isUnlocked } = useKeys()
@@ -1149,4 +1172,28 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       />
     </>
   )
+}
+
+/**
+ * Task 2237b — a shared FOLDER gets its own panel (members + live links).
+ *
+ * The wrapper is deliberately thin: it only decides WHICH body to render. The
+ * 2238 snapshot-bundle body below is untouched byte for byte and is what a
+ * disabled (or still-loading) `shared_folders_v1` flag falls back to.
+ */
+export function ShareDialog(props: ShareDialogProps) {
+  const flag = useFeatureFlag(SHARED_FOLDERS_FLAG)
+  const folderMode = !!props.isFolder && (props.bundleFiles?.length ?? 0) <= 1
+  if (props.open && folderMode && flag.enabled) {
+    return (
+      <FolderSharePanel
+        open
+        folderId={props.fileId}
+        folderName={props.fileName}
+        onClose={props.onClose}
+        bundleFallback={() => <ShareDialogBundleBody {...props} />}
+      />
+    )
+  }
+  return <ShareDialogBundleBody {...props} />
 }

@@ -67,6 +67,7 @@ const SurveyPage     = lazyNamed(() => import('./pages/survey'),         'Survey
 const EraseRequestCancelPage = lazyNamed(() => import('./pages/erase-request-cancel'), 'EraseRequestCancelPage')
 const EraseRequestVerifyPage = lazyNamed(() => import('./pages/erase-request-verify'), 'EraseRequestVerifyPage')
 const ShareViewPage  = lazyNamed(() => import('./pages/share-view'),     'ShareViewPage')
+const FolderLinkPage = lazyNamed(() => import('./pages/folder-link'),    'FolderLinkPage')
 const ForgotPassword = lazyNamed(() => import('./pages/forgot-password'),'ForgotPassword')
 const ResetPassword  = lazyNamed(() => import('./pages/reset-password'), 'ResetPassword')
 const SetPassword    = lazyNamed(() => import('./pages/set-password'),   'SetPassword')
@@ -860,6 +861,9 @@ export function App() {
               query string is the credential. See task 0161. */}
           <Route path="/auth/impersonate" element={<ImpersonateRedeem />} />
           <Route path="/s/:token" element={<ShareViewPage />} />
+          {/* Task 2237b: a shared folder link. Public; the fragment carries the
+              link key and never reaches a server. */}
+          <Route path="/f/:token" element={<FolderLinkPage />} />
           {/* Public user profile — no auth required */}
           <Route path="/p/:username" element={<PublicProfilePage />} />
           <Route path="/join/:code" element={<JoinPage />} />

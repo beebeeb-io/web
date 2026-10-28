@@ -30,3 +30,10 @@ export const FEATURE_OFFICE_EDITOR = import.meta.env.VITE_FEATURE_OFFICE_EDITOR 
  * document still falls back to the legacy page (spec 5.8 rule 6).
  */
 export const FEATURE_ONBOARDING_DOCUMENT = import.meta.env.VITE_FEATURE_ONBOARDING_DOCUMENT === 'true';
+
+/**
+ * SHARED_FOLDERS_FLAG — the *name* of a runtime flag, not a build-time value.
+ * The server decides it in `GET /api/v1/feature-flags/evaluate` (task 2237b);
+ * read it with `useFeatureFlag(SHARED_FOLDERS_FLAG)`, never from import.meta.
+ */
+export const SHARED_FOLDERS_FLAG = 'shared_folders_v1';

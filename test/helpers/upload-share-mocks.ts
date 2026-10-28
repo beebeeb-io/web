@@ -17,15 +17,17 @@ import { mockModuleScoped } from './scoped-module-mock'
 // ── Shared state ─────────────────────────────────────────────────────────────
 // Upload-contract captures (the contract suite asserts on these).
 export const cap = {
+  ownerKeys: [] as { folderId: string; keys: unknown[] }[],
   initCalls: [] as unknown[],
   uploadedChunks: [] as Array<{ fileId: string; index: number; firstByte: number; uploadSessionId: string | null | undefined }>,
   updatedFiles: [] as Array<{ fileId: string; nameEncrypted: string }>,
   savedStates: [] as Array<{ fileId: string; upload_session_id?: string | null }>,
   removedStates: [] as string[],
   encryptedMetadataKeys: [] as number[],
-  addFolderKeysCalls: [] as Array<{ inviteId: string; keys: unknown[]; folderKeyId: string }>,
+  addFolderKeysCalls: [] as Array<{ inviteId: string; keys: unknown[]; folderKeyId: string; format?: string }>,
 }
 export function resetCaptures(): void {
+  cap.ownerKeys.length = 0
   cap.initCalls.length = 0
   cap.uploadedChunks.length = 0
   cap.updatedFiles.length = 0
@@ -68,11 +70,21 @@ export async function installMocks(): Promise<void> {
     // Task 2133: the folder key id and the child-key wrap, stubbed (the WASM
     // worker is not loadable under bun test). The id is the key's bytes.
     folderKeyId: async (folderKey: Uint8Array) => Uint8Array.from(folderKey),
+    // Task 2237b L7: the child wrap, stubbed to spell out its binding so a
+    // contract test can assert exactly which (root, item, kind) it was sealed to.
+    wrapFolderChild: async (_folderKey: Uint8Array, rootId: string, itemId: string, kind: number, childKey: Uint8Array) =>
+      new TextEncoder().encode(`l7|${rootId}|${itemId}|${kind}|${childKey[0]}`),
     encryptChunk: async (_k: Uint8Array, plaintext: Uint8Array) => ({
       nonce: new Uint8Array(12), ciphertext: Uint8Array.from(plaintext),
     }),
     serializeEncryptedBlob: (nonce: Uint8Array, ciphertext: Uint8Array) =>
       JSON.stringify({ nonce: Array.from(nonce), ciphertext: Array.from(ciphertext) }),
+  })
+
+  // shared_folders_v1 ON: the owner-upload publish under test is a flag-on path.
+  await mockModuleScoped('../../src/lib/use-feature-flag', here, {
+    sharedFoldersEnabled: async () => true,
+    sharedFoldersEnabledForWrite: async () => true,
   })
 
   // net-retry passthrough — no retry back-off inside the contract tests.
@@ -103,8 +115,12 @@ export async function installMocks(): Promise<void> {
       mime_type: null, size_bytes: 4, chunk_count: 1, is_folder: false, is_uploading: false,
       created_at: '2026-05-08T00:00:00.000Z', updated_at: '2026-05-08T00:00:00.000Z',
     }),
-    addFolderKeys: async (inviteId: string, keys: unknown[], folderKeyId: string) => {
-      cap.addFolderKeysCalls.push({ inviteId, keys, folderKeyId })
+    addFolderKeys: async (inviteId: string, keys: unknown[], folderKeyId: string, format?: string) => {
+      cap.addFolderKeysCalls.push({ inviteId, keys, folderKeyId, format })
+    },
+    publishSharedFolderKeys: async (folderId: string, keys: unknown[]) => {
+      cap.ownerKeys.push({ folderId, keys })
+      return { written: keys.length, skipped: 0 }
     },
     getUploadStatus: async () => ({ uploaded_chunks: [] }),
     updateFile: async (fileId: string, updates: { name_encrypted?: string }) => {

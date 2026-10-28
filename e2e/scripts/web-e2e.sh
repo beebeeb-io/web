@@ -468,6 +468,23 @@ backend_alive() {
       -H 'Content-Type: application/json' -d '{"email":"dev@beebeeb.dev"}'
 }
 
+# Feature flags a spec needs ON (task 2237b). Migrations seed every flag OFF,
+# and each spec file gets a fresh DB, so a spec declares what it needs with a
+# line `// e2e-flags: <key> [<key> ...]` and the flags are switched on in that
+# spec's DB before Playwright starts. Specs without the line see the defaults.
+enable_spec_flags() {
+  local flags f
+  flags="$(sed -n 's#^// e2e-flags: ##p' "$1" | head -1)"
+  [ -n "$flags" ] || return 0
+  for f in $flags; do
+    case "$f" in *[!a-z0-9_]*|"") echo "bad e2e-flags entry '$f' in $1"; return 1 ;; esac
+    if [ "$(db_psql -d "$DB_NAME" -qtAc "UPDATE feature_flags SET enabled = TRUE WHERE key = '$f' RETURNING key;")" != "$f" ]; then
+      echo "e2e-flags: no feature_flags row '$f' in $DB_NAME (needed by $1)"; return 1
+    fi
+    log "flag $f ON for $1"
+  done
+}
+
 rc=0
 FAILED=()
 first=1
@@ -525,6 +542,7 @@ for spec in "${SPECS[@]}"; do
       [ "$restarted" -eq 1 ] || { echo "BACKEND DOWN: :$API_PORT API never came up healthy for $spec after 3 attempts — infra, not a test failure."; rc=2; break 2; }
     fi
     first=0
+    enable_spec_flags "$spec" || { rc=2; break 2; }
     rm -rf playwright/.auth 2>/dev/null || true   # re-auth against the fresh account
     log "playwright $spec ${spec_config:+(own config: $spec_config) }(run $run/$REPEAT, workers=$WORKERS)"
     if ! backend_alive; then

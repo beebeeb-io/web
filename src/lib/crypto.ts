@@ -296,6 +296,27 @@ export async function decryptChunk(
   return withProxy((p) => p.decryptChunk(fileKey, nonce, ciphertext))
 }
 
+/**
+ * Task 2237b — `combine_folder_link_key(K_c, stretch)` from core.
+ *
+ * The one place a link's unwrap key is produced. `stretch` is the Argon2id
+ * output for a passphrase link and null for a plain one; the two never mix.
+ */
+export async function combineFolderLinkKey(
+  linkKey: Uint8Array,
+  passphraseStretch: Uint8Array | null = null,
+): Promise<Uint8Array> {
+  return withProxy((p) => p.combineFolderLinkKey(linkKey, passphraseStretch))
+}
+
+/** Task 2237b — the per-bucket key of a shared folder's search index. */
+export async function deriveSharedFolderIndexKey(
+  folderKey: Uint8Array,
+  bucket: number,
+): Promise<Uint8Array> {
+  return withProxy((p) => p.deriveSharedFolderIndexKey(folderKey, bucket))
+}
+
 // ─── File content, metadata pins and notes (core 1908, task 1943) ───────────
 //
 // Core chunk format v2 binds every content frame to its file, its upload and
@@ -583,6 +604,89 @@ export async function deriveShareKey(
  */
 export async function folderKeyId(folderKey: Uint8Array): Promise<Uint8Array> {
   return withProxy((p) => p.folderKeyId(folderKey))
+}
+
+// ─── Task 2237b, decisions L6 and L7: owned-folder wraps (core) ──────────────
+// The only way the web seals or opens a folder child, a custody record or a
+// link's owner copies. No client-side sealing, and no unbound fallback: the
+// legacy invite format has its own named functions in folder-share-crypto.ts.
+
+/** `kind` of an L7 child wrap: 1 for a file, 2 for a folder. */
+export const FOLDER_CHILD_FILE = 1
+export const FOLDER_CHILD_FOLDER = 2
+export type FolderChildKind = typeof FOLDER_CHILD_FILE | typeof FOLDER_CHILD_FOLDER
+
+/** L7: `nonce || ct` (60 bytes) of `childKey` under `folderKey`, bound to the shared ROOT id, the item id and its kind. */
+export async function wrapFolderChild(
+  folderKey: Uint8Array,
+  rootId: string,
+  itemId: string,
+  kind: FolderChildKind,
+  childKey: Uint8Array,
+): Promise<Uint8Array> {
+  return withProxy((p) => p.wrapFolderChild(folderKey, rootId, itemId, kind, childKey))
+}
+
+/** L7: open a child wrap. A wrap made for another root, item or kind is refused. */
+export async function unwrapFolderChild(
+  folderKey: Uint8Array,
+  rootId: string,
+  itemId: string,
+  kind: FolderChildKind,
+  wrapped: Uint8Array,
+): Promise<Uint8Array> {
+  return withProxy((p) => p.unwrapFolderChild(folderKey, rootId, itemId, kind, wrapped))
+}
+
+/** L6: the folder key's custody record (`shared_folders.owner_wrapped_folder_key`). */
+export async function wrapFolderCustody(
+  masterKey: Uint8Array,
+  folderId: string,
+  folderKey: Uint8Array,
+): Promise<Uint8Array> {
+  return withProxy((p) => p.wrapFolderCustody(masterKey, folderId, folderKey))
+}
+
+/** L6: open a custody record. A legacy (unbound) owner copy is refused. */
+export async function unwrapFolderCustody(
+  masterKey: Uint8Array,
+  folderId: string,
+  wrapped: Uint8Array,
+): Promise<Uint8Array> {
+  return withProxy((p) => p.unwrapFolderCustody(masterKey, folderId, wrapped))
+}
+
+/** L6: a link's `owner_wrapped_key` (K_c), bound to the share id. */
+export async function wrapLinkOwnerKey(masterKey: Uint8Array, shareId: string, linkKey: Uint8Array): Promise<Uint8Array> {
+  return withProxy((p) => p.wrapLinkOwnerKey(masterKey, shareId, linkKey))
+}
+
+export async function unwrapLinkOwnerKey(masterKey: Uint8Array, shareId: string, wrapped: Uint8Array): Promise<Uint8Array> {
+  return withProxy((p) => p.unwrapLinkOwnerKey(masterKey, shareId, wrapped))
+}
+
+/** L6: a link's `owner_wrapped_token`, bound to the share id. */
+export async function wrapLinkOwnerToken(masterKey: Uint8Array, shareId: string, token: Uint8Array): Promise<Uint8Array> {
+  return withProxy((p) => p.wrapLinkOwnerToken(masterKey, shareId, token))
+}
+
+export async function unwrapLinkOwnerToken(masterKey: Uint8Array, shareId: string, wrapped: Uint8Array): Promise<Uint8Array> {
+  return withProxy((p) => p.unwrapLinkOwnerToken(masterKey, shareId, wrapped))
+}
+
+/** L8: the owner's own copy of a guest or member file key (`owner_wrapped_file_key`), bound to the item id. */
+export async function wrapOwnerFileKey(masterKey: Uint8Array, itemId: string, fileKey: Uint8Array): Promise<Uint8Array> {
+  return withProxy((p) => p.wrapOwnerFileKey(masterKey, itemId, fileKey))
+}
+
+/** L8: open an owner file-key record. A folder name blob or a content frame is refused. */
+export async function unwrapOwnerFileKey(masterKey: Uint8Array, itemId: string, wrapped: Uint8Array): Promise<Uint8Array> {
+  return withProxy((p) => p.unwrapOwnerFileKey(masterKey, itemId, wrapped))
+}
+
+/** The link passphrase stretch, in core (NFC, empty refused, token-bound salt). */
+export async function deriveFolderLinkPassphraseStretch(passphrase: string, token: string): Promise<Uint8Array> {
+  return withProxy((p) => p.deriveFolderLinkPassphraseStretch(passphrase, token))
 }
 
 /** Task 2255: purpose-bound folder-invite owner copies, implemented in core. */
@@ -877,6 +981,19 @@ export class SearchIndexProxy {
     return withProxy((p) => p.searchIndexEncryptBuckets(this.#handle, masterKey, buckets))
   }
 
+  /** Encrypt every non-empty shard page under a shared folder key (2237b). */
+  async encryptShardsWithFolderKey(folderKey: Uint8Array): Promise<CoreEncryptedShard[]> {
+    return withProxy((p) => p.searchIndexEncryptShardsWithFolderKey(this.#handle, folderKey))
+  }
+
+  /** Encrypt only the dirty buckets under a shared folder key (2237b). */
+  async encryptBucketsWithFolderKey(
+    folderKey: Uint8Array,
+    buckets: number[],
+  ): Promise<CoreEncryptedShard[]> {
+    return withProxy((p) => p.searchIndexEncryptBucketsWithFolderKey(this.#handle, folderKey, buckets))
+  }
+
   /** Bucket count of this index. */
   async numShards(): Promise<number> {
     return withProxy((p) => p.searchIndexNumShards(this.#handle))
@@ -924,6 +1041,33 @@ export async function searchIndexFromShards(
   numShards: number,
 ): Promise<SearchIndexProxy> {
   const handle = await withProxy((p) => p.searchIndexFromShards(masterKey, shards, numShards))
+  return new SearchIndexProxy(handle)
+}
+
+/**
+ * A fresh shared-folder index built from `[{fileId, name}]` pairs (2237b).
+ * The names come from decrypted listings, so no key is needed to build; the
+ * shards are encrypted under the folder key on push.
+ */
+export async function createSharedSearchIndex(
+  files: Array<{ fileId: string; name: string }>,
+  numShards: number,
+): Promise<SearchIndexProxy> {
+  return buildSearchIndex(files, numShards)
+}
+
+/**
+ * Reconstruct a shared-folder index from shards encrypted under its folder key
+ * (2237b). Mirrors `searchIndexFromShards`, which is master-key only.
+ */
+export async function sharedSearchIndexFromShards(
+  folderKey: Uint8Array,
+  shards: CoreEncryptedShard[],
+  numShards: number,
+): Promise<SearchIndexProxy> {
+  const handle = await withProxy((p) =>
+    p.searchIndexFromShardsWithFolderKey(folderKey, shards, numShards),
+  )
   return new SearchIndexProxy(handle)
 }
 

@@ -25,13 +25,16 @@ function makeInvitePorts(opts: { existing: { key: string; blob: string } | null;
         calls.minted++
         return enc(opts.minted ?? 'MINTED')
       },
-      encryptAllChildrenKeys: async (_m: Uint8Array, key: Uint8Array) => [
-        { file_id: 'c1', encrypted_file_key: 'wrapped-under-' + dec(key) },
+      encryptAllChildrenKeys: async (_m: Uint8Array, key: Uint8Array, _f: string, format: string) => [
+        { file_id: 'c1', encrypted_file_key: `${format}-wrapped-under-` + dec(key) },
       ],
       encryptOwnerFolderKey: async (_m: Uint8Array, _f: string, key: Uint8Array) => {
         calls.sealed.push(dec(key))
         return enc('sealed-' + dec(key))
       },
+      deriveFileKey: async () => enc('root-name-key'),
+      sealChildKey: async (key: Uint8Array, ref: { rootId: string; itemId: string; isFolder: boolean }, child: Uint8Array) =>
+        `l7-root-${ref.rootId}-${ref.itemId}-${ref.isFolder}-${dec(child)}-under-${dec(key)}`,
       folderKeyId: async (k: Uint8Array) => btoa(dec(await fakeId(k))),
     },
   }
@@ -45,7 +48,8 @@ describe('buildFolderInvite carries the id of the key it used', () => {
     expect(calls.minted).toBe(1)
     expect(dec(folderKey)).toBe('K-first')
     expect(payload.folder_key_id).toBe(idB64('K-first'))
-    expect(payload.folder_keys[0].encrypted_file_key).toBe('wrapped-under-K-first')
+    // No custody record: the legacy invite format (L7b), no root entry.
+    expect(payload.folder_keys).toEqual([{ file_id: 'c1', encrypted_file_key: 'legacy_invite-wrapped-under-K-first' }])
     expect(calls.sealed).toEqual(['K-first'])
   })
 
@@ -100,7 +104,8 @@ describe('the shared-folder upload registers its child key with the id of ITS fo
     const file = new File([new Uint8Array([1, 2, 3, 4])], 'in-shared.txt', { type: 'text/plain' })
     await encryptedUpload(
       file, 'client-id', new Uint8Array([1]), new Uint8Array([9]), undefined, undefined, undefined,
-      { folderKey: enc('K-ctx'), sharedFolderId: 'F', inviteId: 'inv-7' },
+      // An invite-only folder (L7b legacy format); the format must be named.
+      { folderKey: enc('K-ctx'), sharedFolderId: 'F', inviteId: 'inv-7', format: 'legacy_invite' },
       undefined,
       async () => new Uint8Array([9]),
     )
@@ -109,5 +114,42 @@ describe('the shared-folder upload registers its child key with the id of ITS fo
     // The mocked ./crypto folderKeyId returns the key bytes, so the id sent is
     // base64 of the context's key (the real derivation is core's, pinned by the KAT).
     expect(cap.addFolderKeysCalls[0].folderKeyId).toBe(btoa('K-ctx'))
+  })
+})
+
+describe('L1: an invite after a link uses the custody record, the key\'s one source', () => {
+  test('the custody key wins over an invite key and nothing is minted', async () => {
+    const { buildFolderInvite } = await import('../src/lib/folder-share-crypto')
+    const { ports, calls } = makeInvitePorts({ existing: { key: 'K-invite', blob: 'blob-invite' }, minted: 'K-new' })
+    let invitesAsked = 0
+    const { payload } = await buildFolderInvite(new Uint8Array(32), 'F', undefined, {
+      ...ports,
+      custodyFolderKey: async () => ({ folderKey: enc('K-custody'), encryptedOwnerFolderKeyB64: 'blob-custody' }),
+      findExistingFolderKey: async () => {
+        invitesAsked++
+        return { folderKey: enc('K-invite'), encryptedOwnerFolderKeyB64: 'blob-invite' }
+      },
+    })
+    expect(calls.minted).toBe(0)
+    expect(invitesAsked).toBe(0)
+    expect(payload.folder_key_id).toBe(idB64('K-custody'))
+    // A custody folder is L7 (L7b): the root's own name-key wrap first, then the children.
+    expect(payload.folder_keys).toEqual([
+      { file_id: 'F', encrypted_file_key: 'l7-root-F-F-true-root-name-key-under-K-custody' },
+      { file_id: 'c1', encrypted_file_key: 'l7-wrapped-under-K-custody' },
+    ])
+    expect(payload.encrypted_owner_folder_key).toBe('blob-custody')
+    expect(calls.sealed).toEqual([])
+  })
+
+  test('no custody record: the invite key is reused, as before', async () => {
+    const { buildFolderInvite } = await import('../src/lib/folder-share-crypto')
+    const { ports, calls } = makeInvitePorts({ existing: { key: 'K-invite', blob: 'blob-invite' } })
+    const { payload } = await buildFolderInvite(new Uint8Array(32), 'F', undefined, {
+      ...ports,
+      custodyFolderKey: async () => null,
+    })
+    expect(calls.minted).toBe(0)
+    expect(payload.folder_key_id).toBe(idB64('K-invite'))
   })
 })

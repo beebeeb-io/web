@@ -85,7 +85,8 @@ async function build(f: ReturnType<typeof fixture>) {
   })
 }
 
-const UNVERIFIED = "Can't check this folder's key"
+// One copy for both callers (web #198 / #199): read from the module, never hard-coded.
+const { FOLDER_KEY_UNVERIFIED: UNVERIFIED } = await import('../src/lib/folder-share-crypto')
 
 describe('2255: a legacy owner copy is reused only when core proves it', () => {
   test('the folder name blob is refused, and no second key is minted', async () => {
@@ -267,6 +268,8 @@ describe('2255 review: proof rows come only through an approved invite', () => {
 // sealing it for the recipient fails.
 describe('2255 review: approval zeroizes on failure', () => {
   const failingPorts = (key: Uint8Array) => ({
+    // A folder without custody (web #198 reads custody first).
+    custodyFolderKey: async () => null,
     decryptOwnerFolderKey: async () => key,
     encryptFolderKeyForRecipient: async () => {
       throw new Error('bad recipient key')

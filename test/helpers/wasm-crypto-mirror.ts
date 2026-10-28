@@ -104,7 +104,7 @@ export type Vector = Record<string, any>
 
 /** The vendored copy of core's test-vectors/vectors.json (byte-identical; see core-vectors-kat.test.ts). */
 export function loadVectors(): Record<string, Vector> {
-  const path = fileURLToPath(new URL('../vectors/core-vectors.v7.json', import.meta.url))
+  const path = fileURLToPath(new URL('../vectors/core-vectors.v12.json', import.meta.url))
   const root = JSON.parse(readFileSync(path, 'utf8')) as { version: number; vectors: Vector[] }
   return Object.fromEntries(root.vectors.map((v) => [v.name as string, v]))
 }

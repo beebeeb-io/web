@@ -76,6 +76,8 @@ export interface UploadProgress {
  */
 export interface SharedFolderUploadContext {
   folderKey: Uint8Array
+  /** L7b: the shared folder's wrap format, from its custody record. */
+  format: import('./folder-share-crypto').FolderWrapFormat
   sharedFolderId: string
   inviteId: string
 }
@@ -606,13 +608,25 @@ async function uploadFile(
 
   // If uploading to a shared folder, register the file key under the folder_key
   if (sharedFolderContext) {
-    const { encryptChildFileKey, folderKeyId } = await import('./folder-share-crypto')
+    const { sealFolderChild, folderKeyId, wireWrapFormat } = await import('./folder-share-crypto')
     const { addFolderKeys } = await import('./api')
-    const encryptedKey = await encryptChildFileKey(sharedFolderContext.folderKey, activeFileKey)
+    // Bound to (shared root, this file, file) for a custody folder (L7); the
+    // legacy invite format only for a flag-off invite-only folder (L7b).
+    const encryptedKey = await sealFolderChild(
+      sharedFolderContext.format,
+      sharedFolderContext.folderKey,
+      { rootId: sharedFolderContext.sharedFolderId, itemId: serverFileId, isFolder: false },
+      activeFileKey,
+    )
     await addFolderKeys(sharedFolderContext.inviteId, [{
       file_id: serverFileId,
       encrypted_file_key: encryptedKey,
-    }], await folderKeyId(sharedFolderContext.folderKey))
+    }], await folderKeyId(sharedFolderContext.folderKey), wireWrapFormat(sharedFolderContext.format))
+  }
+
+  if (!sharedFolderContext && parentId) {
+    const { publishOwnerUploadKey } = await import('./owner-upload-key')
+    await publishOwnerUploadKey(masterKey, parentId, serverFileId, activeFileKey)
   }
 
   // Generate and upload encrypted thumbnails for image files (medium + large)

@@ -144,3 +144,43 @@ follow.
   (drive rows are `name_encrypted` ciphertext — a list of unidentifiable
   deletions is not self-service). The surface says so in plain copy instead
   of hiding the gap; full detail in the task-file Notes entry.
+
+
+## Task 2237b — shared-folder guest page (Guus's rulings, 2026-10-28)
+
+There is no hi-fi artefact for the shared-folder guest page; these verbal
+rulings are the design, recorded verbatim and applied in the same commit:
+
+- "share a folder becomes different than a single file or bunch of files …
+  has an alike folder and file overview as files has right now"
+- "On the screenshots i think the grid items are too big, so make it smaller"
+  → "More towards 80px"
+
+What that means in code:
+
+- **Files primitives, not a look-alike.** The guest list is built from the
+  Files row surface and header (`src/components/file-browser-row.tsx`:
+  `FileBrowserRow`, `FILE_HEADER_BAR`, `FILE_HEADER_LABEL`, `FILE_STATUS_BAR`;
+  `file-list.tsx` and `drive.tsx` now use the same constants), the Files
+  `FileIcon`, extension badge and `timeAgo`, the same "All encrypted ·
+  AES-256-GCM" status line (`EncryptionStatus`, shared with the drive footer),
+  and the Files drop zone (`UploadZone`). Columns: name / size / modified; on a
+  phone size and age fold under the name, as in Files.
+- **Grid tiles are 80 px** (`GUEST_GRID_TILE_PX`): an 80 px square, the name on
+  one line with an ellipsis and the full name as the tile's `title`, size
+  below. This overrides any Files grid size. At 390 px wide four tiles fit per
+  row (6 px gaps, 8 px card padding); a laptop fits a dozen or more. Every tap
+  target is at least 44 px (tiles are 80 × ~112 px; buttons, inputs and the
+  sort/view controls are `min-h-11` on phones).
+- **Slim Beebeeb header, no sidebar, no owner identity** anywhere on the page.
+  The folder title has its own line under the bar and wraps instead of
+  truncating, so it is never clipped under the top edge.
+- **States:** passphrase prompt, opening, listed (grid or list), empty
+  (different copy for view and add links), no search results, unavailable link.
+- **Deviation, flagged:** an edit link reads "You can view, download and add
+  files", the same as an add link, because rename and delete are not offered
+  in the guest UI yet; the page says only what it does.
+- **"Download all"** streams each file into the zip chunk by chunk and the zip
+  to disk through the service worker (no size cap). A browser without that
+  streaming path builds the zip in memory, so there a folder over 128 MiB is
+  refused up front with a plain message (`GUEST_ZIP_MAX_BYTES`).

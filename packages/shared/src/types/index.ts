@@ -99,6 +99,16 @@ export interface DriveFile {
   file_request_id?: string | null
   sender_ephemeral_pubkey?: string | null
   wrapped_content_key?: string | null
+  /** Task 2237b: a guest- or member-added row in a shared folder. The owner's
+   *  own copy of the file key, wrapped to the master key; null until an owner
+   *  client adopts the file. */
+  owner_wrapped_file_key?: string | null
+  /** The folder link the guest used, for "added via {label}" attribution. */
+  acted_via_share_id?: string | null
+  /** The guest's chosen display name, sealed under the folder key. */
+  actor_name_encrypted?: string | null
+  /** The signed-in member who added the file, when it was not a guest. */
+  uploaded_by?: string | null
   created_at: string
   updated_at: string
 }
@@ -379,6 +389,8 @@ export interface ShareInvite {
   is_folder_share?: boolean
   encrypted_folder_key?: string
   encrypted_owner_folder_key?: string
+  /** The grant the server enforces (read | add | write | admin). */
+  permission?: string
 }
 
 export interface InviteActivity {

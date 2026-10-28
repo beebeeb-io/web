@@ -4,6 +4,7 @@
 // (defaulting to the real implementations for production use).
 import type { ShareInvite } from './api'
 import {
+  custodyFolderKey as realCustodyFolderKey,
   decryptOwnerFolderKey as realDecryptOwnerFolderKey,
   encryptFolderKeyForRecipient as realEncryptFolderKeyForRecipient,
 } from './folder-share-crypto'
@@ -14,6 +15,9 @@ import {
 } from './crypto'
 
 export interface ApproveKeyCryptoPorts {
+  /** L6: the folder key from its custody record, or null when it has none. */
+  custodyFolderKey: typeof realCustodyFolderKey
+  /** A folder with no custody record: its invite's owner copy, by the 2255 rule. */
   decryptOwnerFolderKey: typeof realDecryptOwnerFolderKey
   encryptFolderKeyForRecipient: typeof realEncryptFolderKeyForRecipient
   encryptFileKeyForSharing: typeof realEncryptFileKeyForSharing
@@ -22,6 +26,7 @@ export interface ApproveKeyCryptoPorts {
 }
 
 export const REAL_APPROVE_KEY_CRYPTO_PORTS: ApproveKeyCryptoPorts = {
+  custodyFolderKey: realCustodyFolderKey,
   decryptOwnerFolderKey: realDecryptOwnerFolderKey,
   encryptFolderKeyForRecipient: realEncryptFolderKeyForRecipient,
   encryptFileKeyForSharing: realEncryptFileKeyForSharing,
@@ -38,14 +43,14 @@ export const REAL_APPROVE_KEY_CRYPTO_PORTS: ApproveKeyCryptoPorts = {
  * `getFileKey(invite.file_id)` — a deterministic `deriveFileKey(masterKey,
  * fileId)` — even for folder-share invites, instead of the random
  * `folderKey` generated at invite-creation time that every child file's key
- * is actually wrapped under (see encryptChildFileKey / decryptChildFileKey
+ * is actually wrapped under (see sealFolderChild / openFolderChild
  * in folder-share-crypto.ts). That made a manually-approved folder share
  * permanently undecryptable for the recipient.
  *
  * This function branches on `invite.is_folder_share`: for a folder share it
  * recovers the REAL folder key from `encrypted_owner_folder_key` (written at
  * invite-creation time, decryptable by the owner via their own masterKey —
- * see encryptOwnerFolderKey in share-dialog.tsx) and wraps THAT for the
+ * see the legacy invite owner copy in folder-share-crypto.ts) and wraps THAT for the
  * recipient, exactly like the auto-approve branch in share-dialog.tsx does.
  *
  * NOTE — known remaining gap (server-side, out of scope for the web repo):
@@ -66,16 +71,25 @@ export async function buildApprovalKeyBlob(
   ports: ApproveKeyCryptoPorts = REAL_APPROVE_KEY_CRYPTO_PORTS,
 ): Promise<Uint8Array> {
   if (invite.is_folder_share) {
-    if (!invite.encrypted_owner_folder_key) {
+    // L1/L6: a folder with a custody record has exactly one key, read from
+    // that record. Only a flag-off invite-only folder (no record) falls to its
+    // invite's legacy owner copy (L7b).
+    const custody = await ports.custodyFolderKey(masterKey, invite.file_id)
+    if (!custody && !invite.encrypted_owner_folder_key) {
       throw new Error(
         'This folder share is missing its owner folder key and cannot be approved. Ask the recipient to request a new share.',
       )
     }
-    const folderKey = await ports.decryptOwnerFolderKey(
-      masterKey,
-      invite.file_id,
-      ports.fromBase64(invite.encrypted_owner_folder_key),
-    )
+    // A folder without custody: its invite's owner copy, opened by the 2255
+    // rule (the purpose-bound format, or a legacy copy only with core's proof
+    // over the folder's rows); FOLDER_KEY_UNVERIFIED when it can't be proven.
+    const folderKey =
+      custody?.folderKey ??
+      (await ports.decryptOwnerFolderKey(
+        masterKey,
+        invite.file_id,
+        ports.fromBase64(invite.encrypted_owner_folder_key as string),
+      ))
     // Wiped on every path, also when sealing for the recipient throws (2255 review).
     try {
       return await ports.encryptFolderKeyForRecipient(masterKey, recipientPublicKey, invite.file_id, folderKey)

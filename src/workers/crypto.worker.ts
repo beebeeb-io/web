@@ -223,6 +223,27 @@ const cryptoWorker = {
     return wasm.derive_file_key(masterKey, fileIdBytes)
   },
 
+  /**
+   * Task 2237b: the link unwrap key, `combine_folder_link_key(K_c, stretch)`.
+   * Exactly one code path — the link module never builds this itself.
+   */
+  async combineFolderLinkKey(
+    linkKey: Uint8Array,
+    passphraseStretch: Uint8Array | null,
+  ): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.combineFolderLinkKey(linkKey, passphraseStretch) as Uint8Array
+  },
+
+  /** Task 2237b: per-bucket key of a shared folder's search index. */
+  async deriveSharedFolderIndexKey(
+    folderKey: Uint8Array,
+    bucket: number,
+  ): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.deriveSharedFolderIndexKey(folderKey, bucket) as Uint8Array
+  },
+
   /** Encrypt a plaintext chunk with AES-256-GCM. Transfers buffers (zero-copy). */
   async encryptChunk(
     fileKey: Uint8Array,
@@ -471,6 +492,84 @@ const cryptoWorker = {
     return wasm.folder_key_id(folderKey) as Uint8Array
   },
 
+  // ── Task 2237b, decisions L6 and L7: owned-folder wraps. Thin pass-throughs;
+  // every byte of the format lives in core. ──────────────────────────────────
+
+  /** L7: a child key sealed under the folder key, bound to (root id, item id, kind). 60 bytes. */
+  async wrapFolderChild(
+    folderKey: Uint8Array,
+    rootId: string,
+    itemId: string,
+    kind: number,
+    childKey: Uint8Array,
+  ): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.wrapFolderChild(folderKey, rootId, itemId, kind, childKey) as Uint8Array
+  },
+
+  /** L7: open a child wrap; any other root, item or kind is refused. */
+  async unwrapFolderChild(
+    folderKey: Uint8Array,
+    rootId: string,
+    itemId: string,
+    kind: number,
+    wrapped: Uint8Array,
+  ): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.unwrapFolderChild(folderKey, rootId, itemId, kind, wrapped) as Uint8Array
+  },
+
+  /** L6: the folder key's custody record, bound to the folder id. */
+  async wrapFolderCustody(masterKey: Uint8Array, folderId: string, folderKey: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.wrapFolderCustody(masterKey, folderId, folderKey) as Uint8Array
+  },
+
+  async unwrapFolderCustody(masterKey: Uint8Array, folderId: string, wrapped: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.unwrapFolderCustody(masterKey, folderId, wrapped) as Uint8Array
+  },
+
+  /** L6: a link's K_c, sealed to the owner and bound to the share id. */
+  async wrapLinkOwnerKey(masterKey: Uint8Array, shareId: string, linkKey: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.wrapLinkOwnerKey(masterKey, shareId, linkKey) as Uint8Array
+  },
+
+  async unwrapLinkOwnerKey(masterKey: Uint8Array, shareId: string, wrapped: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.unwrapLinkOwnerKey(masterKey, shareId, wrapped) as Uint8Array
+  },
+
+  /** L6: a link's token, sealed to the owner and bound to the share id. */
+  async wrapLinkOwnerToken(masterKey: Uint8Array, shareId: string, token: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.wrapLinkOwnerToken(masterKey, shareId, token) as Uint8Array
+  },
+
+  async unwrapLinkOwnerToken(masterKey: Uint8Array, shareId: string, wrapped: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.unwrapLinkOwnerToken(masterKey, shareId, wrapped) as Uint8Array
+  },
+
+  /** L8: the owner's own copy of a guest or member file key, bound to the item id. 60 bytes. */
+  async wrapOwnerFileKey(masterKey: Uint8Array, itemId: string, fileKey: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.wrapOwnerFileKey(masterKey, itemId, fileKey) as Uint8Array
+  },
+
+  /** L8: open only an owner file-key record for this item (a name blob or a content frame is refused). */
+  async unwrapOwnerFileKey(masterKey: Uint8Array, itemId: string, wrapped: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.unwrapOwnerFileKey(masterKey, itemId, wrapped) as Uint8Array
+  },
+
+  /** The link passphrase stretch (Argon2id over the NFC passphrase, token-bound salt). */
+  async deriveFolderLinkPassphraseStretch(passphrase: string, token: string): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.deriveFolderLinkPassphraseStretch(passphrase, token) as Uint8Array
+  },
+
   /** Plan chunks for a file using the core adaptive chunk-size ladder. */
   async planChunks(fileSizeBytes: number, profile: string): Promise<{ chunk_size_bytes: number; chunk_count: number }> {
     const wasm = await ensureWasm()
@@ -646,6 +745,22 @@ const cryptoWorker = {
     return handle
   },
 
+  /**
+   * Reconstruct an index from shards encrypted under a shared folder's key
+   * (task 2237b). Same handle contract as `searchIndexFromShards`.
+   */
+  async searchIndexFromShardsWithFolderKey(
+    folderKey: Uint8Array,
+    shards: EncryptedShardJs[],
+    numShards: number,
+  ): Promise<number> {
+    const wasm = await ensureWasm()
+    const idx = wasm.WasmSearchIndex.fromEncryptedShardsWithFolderKey(folderKey, shards, numShards)
+    const handle = nextSearchIndexHandle++
+    liveSearchIndexes.set(handle, idx)
+    return handle
+  },
+
   /** Insert/update a file. Returns the dirty bucket set as a plain number[]. */
   searchIndexUpsert(handle: number, fileId: string, name: string): number[] {
     const idx = liveSearchIndexes.get(handle)
@@ -683,6 +798,27 @@ const cryptoWorker = {
     const idx = liveSearchIndexes.get(handle)
     if (!idx) throw new Error(`No live search index for handle ${handle}`)
     return idx.encryptBuckets(masterKey, Uint32Array.from(buckets)) as EncryptedShardJs[]
+  },
+
+  /** Encrypt every non-empty page under the shared folder key. */
+  searchIndexEncryptShardsWithFolderKey(
+    handle: number,
+    folderKey: Uint8Array,
+  ): EncryptedShardJs[] {
+    const idx = liveSearchIndexes.get(handle)
+    if (!idx) throw new Error(`No live search index for handle ${handle}`)
+    return idx.encryptShardsWithFolderKey(folderKey) as EncryptedShardJs[]
+  },
+
+  /** Encrypt only the dirty buckets under the shared folder key. */
+  searchIndexEncryptBucketsWithFolderKey(
+    handle: number,
+    folderKey: Uint8Array,
+    buckets: number[],
+  ): EncryptedShardJs[] {
+    const idx = liveSearchIndexes.get(handle)
+    if (!idx) throw new Error(`No live search index for handle ${handle}`)
+    return idx.encryptBucketsWithFolderKey(folderKey, Uint32Array.from(buckets)) as EncryptedShardJs[]
   },
 
   /** Number of buckets this index uses. */

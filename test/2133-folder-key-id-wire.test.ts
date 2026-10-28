@@ -47,5 +47,34 @@ describe('request bodies on the wire', () => {
     expect(bodies[0].url).toContain('/api/v1/shares/invites/inv-9/folder-keys')
     expect(bodies[0].body).toEqual({ keys: [{ file_id: 'c', encrypted_file_key: 'k' }], folder_key_id: 'BBBB' })
   })
-})
 
+  // Frozen contract 2237 §1: `format: "l7"` on every shared_folder_keys write
+  // whose wraps are L7, and on no other.
+  test('a member key publish for a custody folder carries format "l7"; a legacy one carries none', async () => {
+    const { addFolderKeys } = await import('../src/lib/api')
+    await addFolderKeys('inv-9', [{ file_id: 'c', encrypted_file_key: 'k' }], 'BBBB', 'l7')
+    expect(bodies[0].body).toEqual({ keys: [{ file_id: 'c', encrypted_file_key: 'k' }], folder_key_id: 'BBBB', format: 'l7' })
+    await addFolderKeys('inv-9', [{ file_id: 'c', encrypted_file_key: 'k' }], 'BBBB')
+    expect('format' in bodies[1].body).toBe(false)
+  })
+
+  test('the owner keys publish (custody folders only, always L7) carries format "l7"', async () => {
+    const { publishSharedFolderKeys } = await import('../src/lib/api')
+    await publishSharedFolderKeys('F', [{ file_id: 'c', encrypted_file_key: 'k' }])
+    expect(bodies[0].url).toContain('/api/v1/shared-folders/F/keys')
+    expect(bodies[0].body).toEqual({ keys: [{ file_id: 'c', encrypted_file_key: 'k' }], format: 'l7' })
+  })
+
+  test('a folder invite sends the format its payload declares', async () => {
+    const { createInvite } = await import('../src/lib/api')
+    await createInvite('F', 'a@beebeeb.io', {
+      is_folder_share: true,
+      encrypted_folder_key: '',
+      encrypted_owner_folder_key: 'blob',
+      folder_keys: [],
+      folder_key_id: 'AAAA',
+      format: 'l7',
+    })
+    expect(bodies[0].body.format).toBe('l7')
+  })
+})

@@ -50,3 +50,19 @@ describe('buildFullShareLink — always embeds the key as #key= (1690)', () => {
     expect(url).toBe('http://localhost:5173/s/abc#key=xyz')
   })
 })
+
+describe('buildFullShareLink — folder links (2237b)', () => {
+  test('the default path stays /s/ and is byte-identical', () => {
+    expect(buildFullShareLink('https://x', 't', 'k')).toBe('https://x/s/t#key=k')
+  })
+
+  test('path "f" builds a live folder link with the same fragment rule', () => {
+    expect(buildFullShareLink('https://x', 't', 'k', 'f')).toBe('https://x/f/t#key=k')
+  })
+
+  test('a passphrase folder link still carries #key= — the passphrase never replaces K_c', () => {
+    const url = buildFullShareLink(ORIGIN, 'tok', 'Kc_Kc_Kc', 'f')
+    expect(url).toContain('/f/tok#key=')
+    expect(url.endsWith('#key=Kc_Kc_Kc')).toBe(true)
+  })
+})

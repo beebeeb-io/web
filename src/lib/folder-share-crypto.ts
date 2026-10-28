@@ -9,12 +9,21 @@ import {
   toBase64,
   zeroize,
   folderKeyId as coreFolderKeyId,
+  wrapFolderChild,
+  unwrapFolderChild,
+  wrapFolderCustody,
+  unwrapFolderCustody,
   wrapInviteOwnerCopy,
   unwrapInviteOwnerCopy,
   openLegacyInviteOwnerCopy,
+  FOLDER_CHILD_FILE,
+  FOLDER_CHILD_FOLDER,
+  type FolderChildKind,
 } from './crypto'
-import { ApiError, listFilesPage, getSentInvites, getFolderKeys, FILE_LIST_HARD_CAP } from './api'
-import type { ShareInvite } from './api'
+import { ApiError, listFilesPage, getFile, getFolderKeys, getSentInvites, getSharedFolder, FILE_LIST_HARD_CAP } from './api'
+import { assertNoSeenAncestor, markCustodySeen } from './custody-memory'
+import { sharedFoldersEnabled, sharedFoldersEnabledForWrite } from './use-feature-flag'
+import type { ShareInvite, SharedFolderInfo } from './api'
 
 /**
  * The wire form of a folder key's id (task 2133, design K): standard base64
@@ -82,6 +91,45 @@ export async function decryptFolderKey(
   return folderKey
 }
 
+// ─── Decision L6: the folder key's custody record ────────────────────────────
+// `shared_folders.owner_wrapped_folder_key` is sealed by core under a purpose
+// key HKDF(master, "beebeeb-folder-custody-v1" || folder_id) with that context
+// as AAD. It is never the folder-name key, so a server cannot pass a name blob
+// off as custody, and the reader refuses the legacy unbound owner copy.
+
+/** L6: seal a custody record for `folderId` (nonce || ct). */
+export async function sealFolderCustody(
+  masterKey: Uint8Array,
+  folderId: string,
+  folderKey: Uint8Array,
+): Promise<Uint8Array> {
+  return wrapFolderCustody(masterKey, folderId, folderKey)
+}
+
+/** L6: open a custody record for `folderId`. A legacy owner copy does not open. */
+export async function openFolderCustody(
+  masterKey: Uint8Array,
+  folderId: string,
+  custody: Uint8Array,
+): Promise<Uint8Array> {
+  return unwrapFolderCustody(masterKey, folderId, custody)
+}
+
+// ─── Task 2255 (L9): the invite owner copy ───────────────────────────────────
+// A folder invite carries the owner's own copy of the folder key
+// (`encrypted_owner_folder_key`). It is written in core's purpose-bound format
+// only; a legacy copy (sealed under derive_file_key(master, folder_id), the
+// same key as the folder's name) is read only with core's proof over the
+// folder's rows (`openOwnerCopy`), never on its own.
+//
+// ─── Decision L7b: the legacy child format ───────────────────────────────────
+// A folder shared only by a flag-off invite (the 2238 bundle path) has NO
+// custody record. Its child wraps were sealed before L7, with an empty AAD.
+// Those rows stay readable, and the flag-off path keeps writing them, ONLY
+// through `legacyInviteChildWrap` / `legacyInviteChildKey` below. A folder
+// with custody never reaches them (test: folder-wrap-format.test.ts).
+
+/** The owner's copy of the folder key on an invite: core's purpose-bound format (2255). */
 export async function encryptOwnerFolderKey(
   masterKey: Uint8Array,
   folderId: string,
@@ -140,19 +188,25 @@ export interface ExistingFolderKeyPorts {
   fromBase64: typeof fromBase64
 }
 
+// Each port resolves its function at call time (not when this module first
+// loads), so a module mock registered later always applies.
 export const REAL_EXISTING_FOLDER_KEY_PORTS: ExistingFolderKeyPorts = {
-  getSentInvites,
-  getFolderKeys,
-  unwrapInviteOwnerCopy,
-  openLegacyInviteOwnerCopy,
-  fromBase64,
+  getSentInvites: () => getSentInvites(),
+  getFolderKeys: (...a) => getFolderKeys(...a),
+  unwrapInviteOwnerCopy: (...a) => unwrapInviteOwnerCopy(...a),
+  openLegacyInviteOwnerCopy: (...a) => openLegacyInviteOwnerCopy(...a),
+  fromBase64: (...a) => fromBase64(...a),
 }
 
 // Must stay <= 80 characters so userFriendlyError shows it (SHORT_MESSAGE_MAX).
-// It tells the owner the one way out: with no active invite the key is minted
-// fresh, so removing the pending invites lets the next share start clean.
+// rv-web198d: it used to send the owner to "remove its pending invites, then
+// share again". That was never a way out: cancel and deny keep the folder's
+// child rows, so a fresh key over them leaves every existing item unreadable
+// to the people it is shared with. It now says only what is true, for both
+// callers: an owner copy core can't prove (2255), and the custody upgrade
+// while no folder key can be proven (web #199).
 export const FOLDER_KEY_UNVERIFIED =
-  "Can't check this folder's key. Remove its pending invites, then share again."
+  "Can't verify this folder's existing sharing key, so no one new can be added."
 
 /**
  * The folder's rows for a legacy proof. The server serves them only through
@@ -226,6 +280,10 @@ async function openOwnerCopy(
  *
  * Returns the blob that opened plus its key. The caller owns (and must
  * zeroize) the key.
+ *
+ * L7b: it is read only for a folder with NO custody record (a flag-off invite
+ * share); it never seeds custody (rv-web198c P1-2) and never reads a custody
+ * record (that is `openFolderCustody`).
  */
 export async function findExistingFolderKey(
   masterKey: Uint8Array,
@@ -253,21 +311,115 @@ export interface FolderInvitePayload {
   folder_keys: { file_id: string; encrypted_file_key: string }[]
   /** base64 of core's folder_key_id for the key used (task 2133, design K). */
   folder_key_id: string
+  /** Contract 2237 §1: present (`l7`) exactly when `folder_keys` are L7 wraps. */
+  format?: WireWrapFormat
+}
+
+/**
+ * True when a custody lookup definitely found no record the caller can see:
+ * 404 (no record), 405 (a server without the route) or 501 (the
+ * `shared_folders_v1` gate is off, which is how every flag-off client sees
+ * it). Any other failure is not an answer and must abort, never mint or pick
+ * the legacy format.
+ */
+export function noCustodyRecord(e: unknown): boolean {
+  const status = (e as { status?: unknown } | null)?.status
+  return status === 404 || status === 405 || status === 501
+}
+
+/**
+ * The folder key from its custody record (`shared_folders`), when one exists:
+ * decision L1 makes that record the key's one source, so an invite made after
+ * a link reuses the link's key instead of minting a second one (members and
+ * guests must open the same files). A 404 means "no record"; any other failure
+ * aborts, because minting on a transient error would split the folder's key.
+ */
+export async function custodyFolderKey(
+  masterKey: Uint8Array,
+  folderId: string,
+): Promise<{ folderKey: Uint8Array; encryptedOwnerFolderKeyB64: string } | null> {
+  // rv-web198c P2-1: with the flag off no custody request is made at all (the
+  // app before shared folders); a folder seen with custody still refuses (L7c),
+  // and so does any folder under one (L7d). Only invite builds and approvals
+  // (writes) ask this, so a failed flag read aborts (rv-web198e P3).
+  if (!(await sharedFoldersEnabledForWrite())) {
+    await assertNoSeenAncestor(folderId, parentOfFile)
+    return null
+  }
+  let wrapped: string | null
+  try {
+    wrapped = (await getSharedFolder(folderId)).owner_wrapped_folder_key
+  } catch (e) {
+    // L7c/L7d: "no record" means legacy only when neither the folder nor any
+    // ancestor was ever seen with custody.
+    if (noCustodyRecord(e)) {
+      await assertNoSeenAncestor(folderId, parentOfFile)
+      return null
+    }
+    throw e
+  }
+  if (!wrapped) {
+    await assertNoSeenAncestor(folderId, parentOfFile)
+    return null
+  }
+  const folderKey = await openFolderCustody(masterKey, folderId, fromBase64(wrapped))
+  markCustodySeen(folderId)
+  return { folderKey, encryptedOwnerFolderKeyB64: wrapped }
+}
+
+/** A folder's parent, for the L7d ancestor walk. */
+async function parentOfFile(id: string): Promise<string | null> {
+  return (await getFile(id)).parent_id ?? null
+}
+
+/**
+ * The member page's custody read (shared-folder.tsx). Only a definite "no
+ * record" (404; 405 without the route; 501 with the flag off) means a legacy
+ * invite-only folder; anything else throws, so the format is never guessed
+ * (L7b). With the flag off no custody request is made at all (rv-web198c
+ * P2-1). Legacy only when neither `folderId` nor any ancestor of the folder
+ * being browsed was seen with custody (L7c/L7d).
+ */
+export async function memberFolderCustody(
+  folderId: string,
+  fromFolderId: string = folderId,
+): Promise<{ shared: SharedFolderInfo | null; flagOn: boolean }> {
+  const flagOn = await sharedFoldersEnabled()
+  if (flagOn) {
+    try {
+      return { shared: await getSharedFolder(folderId), flagOn }
+    } catch (e) {
+      if (!noCustodyRecord(e)) throw e
+    }
+  }
+  if (fromFolderId !== folderId) await assertNoSeenAncestor(folderId, parentOfFile)
+  await assertNoSeenAncestor(fromFolderId, parentOfFile)
+  return { shared: null, flagOn }
 }
 
 export interface FolderInvitePorts {
+  /** Optional so a test can leave the custody record out; the real ports read it first. */
+  custodyFolderKey?: (masterKey: Uint8Array, folderId: string) => ReturnType<typeof custodyFolderKey>
   findExistingFolderKey: (masterKey: Uint8Array, folderId: string) => ReturnType<typeof findExistingFolderKey>
   generateFolderKey: () => Promise<Uint8Array>
   encryptAllChildrenKeys: typeof encryptAllChildrenKeys
+  /** The owner's copy for a folder with no custody record, purpose-bound (2255). */
   encryptOwnerFolderKey: typeof encryptOwnerFolderKey
+  /** The root's own name key, published under the folder key for a custody folder (L7). */
+  deriveFileKey: typeof deriveFileKey
+  /** L7: the root's name-key wrap, bound to (root, root, folder). */
+  sealChildKey: (folderKey: Uint8Array, ref: FolderChildRef, childKey: Uint8Array) => Promise<string>
   folderKeyId: (folderKey: Uint8Array) => Promise<string>
 }
 
 export const REAL_FOLDER_INVITE_PORTS: FolderInvitePorts = {
+  custodyFolderKey: (m, f) => custodyFolderKey(m, f),
   findExistingFolderKey: (m, f) => findExistingFolderKey(m, f),
   generateFolderKey,
   encryptAllChildrenKeys: (...a) => encryptAllChildrenKeys(...a),
-  encryptOwnerFolderKey,
+  encryptOwnerFolderKey: (...a) => encryptOwnerFolderKey(...a),
+  deriveFileKey,
+  sealChildKey: (k, ref, child) => sealChildKey(k, ref, child),
   folderKeyId: (k) => folderKeyId(k),
 }
 
@@ -279,6 +431,13 @@ export const REAL_FOLDER_INVITE_PORTS: FolderInvitePorts = {
  * `folderKeyId`). The caller owns the returned `folderKey` and must
  * zeroize it (also needed for the recipient wrap on auto-approve); on a throw
  * the key made here is already zeroized.
+ *
+ * L7b: the folder's format follows its custody record. A folder WITH custody
+ * (shared under the flag; a flag-on invite registers custody before calling
+ * this) gets L7 child wraps, the root's own name-key wrap, and the custody
+ * record as the owner copy. A folder WITHOUT custody is a flag-off invite-only
+ * share: legacy child wraps (the named legacy functions) and a purpose-bound
+ * owner copy (2255).
  */
 export async function buildFolderInvite(
   masterKey: Uint8Array,
@@ -286,41 +445,101 @@ export async function buildFolderInvite(
   onProgress?: (stage: 'children', done: number, total: number) => void,
   ports: FolderInvitePorts = REAL_FOLDER_INVITE_PORTS,
 ): Promise<{ folderKey: Uint8Array; payload: FolderInvitePayload }> {
-  const existing = await ports.findExistingFolderKey(masterKey, folderId)
+  // L1: the custody record first, then an active invite's key; mint (at
+  // random) only when the folder has neither.
+  const custody = ports.custodyFolderKey ? await ports.custodyFolderKey(masterKey, folderId) : null
+  const format: FolderWrapFormat = custody ? 'l7' : 'legacy_invite'
+  const existing = custody ?? (await ports.findExistingFolderKey(masterKey, folderId))
   const folderKey = existing?.folderKey ?? (await ports.generateFolderKey())
   try {
-    const folderKeys = await ports.encryptAllChildrenKeys(masterKey, folderKey, folderId, (d, t) =>
+    const folderKeys = await ports.encryptAllChildrenKeys(masterKey, folderKey, folderId, format, (d, t) =>
       onProgress?.('children', d, t),
     )
-    const encOwner = toBase64(await ports.encryptOwnerFolderKey(masterKey, folderId, folderKey))
-    return {
-      folderKey,
-      payload: {
-        is_folder_share: true,
-        encrypted_folder_key: '',
-        encrypted_owner_folder_key: encOwner,
-        folder_keys: folderKeys,
-        folder_key_id: await ports.folderKeyId(folderKey),
-      },
+    if (format === 'l7') {
+      // The root's own name key, so a member can read the folder's name.
+      const rootNameKey = await ports.deriveFileKey(masterKey, folderId)
+      try {
+        folderKeys.unshift({
+          file_id: folderId,
+          encrypted_file_key: await ports.sealChildKey(folderKey, { rootId: folderId, itemId: folderId, isFolder: true }, rootNameKey),
+        })
+      } finally {
+        zeroize(rootNameKey)
+      }
     }
+    // A custody folder's owner copy is its custody record. Any other folder's
+    // is written fresh in the purpose-bound format (2255), never an earlier
+    // invite's copy sent again, so a proven legacy key is upgraded.
+    const encOwner = custody
+      ? custody.encryptedOwnerFolderKeyB64
+      : toBase64(await ports.encryptOwnerFolderKey(masterKey, folderId, folderKey))
+    const payload: FolderInvitePayload = {
+      is_folder_share: true,
+      encrypted_folder_key: '',
+      encrypted_owner_folder_key: encOwner,
+      folder_keys: folderKeys,
+      folder_key_id: await ports.folderKeyId(folderKey),
+    }
+    const wire = wireWrapFormat(format)
+    if (wire) payload.format = wire
+    return { folderKey, payload }
   } catch (e) {
     zeroize(folderKey)
     throw e
   }
 }
 
-export async function encryptChildFileKey(
+// ─── Decision L7: child wraps bound to (shared root, item, kind) ──────────────
+// Every child key sealed under a folder key (a file key, or a folder's name key)
+// goes through core's wrapFolderChild / unwrapFolderChild, with AAD
+// "beebeeb-folder-child-v1" || shared ROOT id || item id || kind. A server can no
+// longer move item A's wrap onto item B's row, under another shared folder, or
+// as the other kind. `rootId` is the SHARED folder's id, never the item's
+// current parent: a move inside the tree keeps the wrap.
+
+/** Where a child wrap sits: the shared root, the item, and whether it is a folder. */
+export interface FolderChildRef {
+  rootId: string
+  itemId: string
+  isFolder: boolean
+}
+
+export function childKind(isFolder: boolean): FolderChildKind {
+  return isFolder ? FOLDER_CHILD_FOLDER : FOLDER_CHILD_FILE
+}
+
+/** L7: base64 of core's child wrap. Strict: there is no other format here. */
+export async function sealChildKey(
   folderKey: Uint8Array,
-  fileKey: Uint8Array,
+  ref: FolderChildRef,
+  childKey: Uint8Array,
 ): Promise<string> {
-  const result = await encryptChunk(folderKey, fileKey)
+  return toBase64(await wrapFolderChild(folderKey, ref.rootId, ref.itemId, childKind(ref.isFolder), childKey))
+}
+
+/** L7: open a child wrap for exactly this (root, item, kind). No fallback. */
+export async function openChildKey(
+  folderKey: Uint8Array,
+  ref: FolderChildRef,
+  wrappedB64: string,
+): Promise<Uint8Array> {
+  return unwrapFolderChild(folderKey, ref.rootId, ref.itemId, childKind(ref.isFolder), fromBase64(wrappedB64))
+}
+
+/** Legacy invite child wrap (empty AAD). L7b: a folder with no custody record only. */
+export async function legacyInviteChildWrap(
+  folderKey: Uint8Array,
+  childKey: Uint8Array,
+): Promise<string> {
+  const result = await encryptChunk(folderKey, childKey)
   const combined = new Uint8Array(result.nonce.length + result.ciphertext.length)
   combined.set(result.nonce, 0)
   combined.set(result.ciphertext, result.nonce.length)
   return toBase64(combined)
 }
 
-export async function decryptChildFileKey(
+/** Open a legacy invite child wrap. L7b: a folder with no custody record only. */
+export async function legacyInviteChildKey(
   folderKey: Uint8Array,
   encryptedFileKeyB64: string,
 ): Promise<Uint8Array> {
@@ -330,25 +549,72 @@ export async function decryptChildFileKey(
   return decryptChunk(folderKey, nonce, ciphertext)
 }
 
+/**
+ * L7b: a folder's wrap format is a fact about the folder, read before any key
+ * work: `l7` when it has a custody record, `legacy_invite` when it is a
+ * flag-off invite-only share. It is never chosen by trying one and falling back.
+ */
+export type FolderWrapFormat = 'l7' | 'legacy_invite'
+
+/**
+ * Frozen contract 2237 §1: every write that inserts a shared_folder_keys row
+ * sends `format: "l7"` exactly when its wraps are L7 (a folder with custody),
+ * and nothing for a legacy write. A custody folder refuses a write without it
+ * (409 upgrade_required), so a pre-upgrade writer can never land a legacy row
+ * in it. `l7` is the only value the server accepts.
+ */
+export type WireWrapFormat = 'l7'
+
+/** The `format` field for a write sealed in `format`, or undefined for legacy. */
+export function wireWrapFormat(format: FolderWrapFormat): WireWrapFormat | undefined {
+  return format === 'l7' ? 'l7' : undefined
+}
+
+/** Seal a child key in the folder's format. */
+export async function sealFolderChild(
+  format: FolderWrapFormat,
+  folderKey: Uint8Array,
+  ref: FolderChildRef,
+  childKey: Uint8Array,
+): Promise<string> {
+  if (format === 'l7') return sealChildKey(folderKey, ref, childKey)
+  if (format === 'legacy_invite') return legacyInviteChildWrap(folderKey, childKey)
+  // A missing or unknown format is a bug, never a reason to write legacy.
+  throw new Error(`unknown folder wrap format: ${String(format)}`)
+}
+
+/** Open a child wrap in the folder's format. An L7 folder never opens a legacy wrap. */
+export async function openFolderChild(
+  format: FolderWrapFormat,
+  folderKey: Uint8Array,
+  ref: FolderChildRef,
+  wrappedB64: string,
+): Promise<Uint8Array> {
+  if (format === 'l7') return openChildKey(folderKey, ref, wrappedB64)
+  if (format === 'legacy_invite') return legacyInviteChildKey(folderKey, wrappedB64)
+  throw new Error(`unknown folder wrap format: ${String(format)}`)
+}
+
 export async function encryptAllChildrenKeys(
   masterKey: Uint8Array,
   folderKey: Uint8Array,
   folderId: string,
+  format: FolderWrapFormat,
   onProgress?: (done: number, total: number) => void,
 ): Promise<{ file_id: string; encrypted_file_key: string }[]> {
-  const allChildren = await collectAllChildren(folderId)
+  const allChildren = await collectAllChildItems(folderId)
   const result: { file_id: string; encrypted_file_key: string }[] = []
 
   for (let i = 0; i < allChildren.length; i++) {
-    const childId = allChildren[i]
-    const fileKey = await deriveFileKey(masterKey, childId)
+    const child = allChildren[i]
+    const fileKey = await deriveFileKey(masterKey, child.id)
     let encrypted: string
     try {
-      encrypted = await encryptChildFileKey(folderKey, fileKey)
+      encrypted = await sealFolderChild(format, folderKey, { rootId: folderId, itemId: child.id, isFolder: child.isFolder }, fileKey)
     } finally {
       zeroize(fileKey)
     }
-    result.push({ file_id: childId, encrypted_file_key: encrypted })
+    result.push({ file_id: child.id, encrypted_file_key: encrypted })
     onProgress?.(i + 1, allChildren.length)
   }
 
@@ -376,7 +642,20 @@ const TOO_LARGE_TO_SHARE =
   'This folder is too large to share in one link right now. Share a smaller subfolder, or contact support.'
 
 export async function collectAllChildren(folderId: string): Promise<string[]> {
-  const ids: string[] = []
+  return (await collectAllChildItems(folderId)).map((child) => child.id)
+}
+
+/** One descendant: its id, whether it is a folder (the L7 kind), and who added it. */
+export interface ChildItem {
+  id: string
+  isFolder: boolean
+  uploadedBy?: string | null
+  actedViaShareId?: string | null
+}
+
+/** Every descendant of `folderId`, with whether it is a folder (the L7 kind). */
+export async function collectAllChildItems(folderId: string): Promise<ChildItem[]> {
+  const ids: ChildItem[] = []
   const queue: string[] = [folderId]
 
   while (queue.length > 0) {
@@ -390,7 +669,12 @@ export async function collectAllChildren(folderId: string): Promise<string[]> {
         throw new Error(TOO_LARGE_TO_SHARE)
       }
       for (const child of page.files) {
-        ids.push(child.id)
+        ids.push({
+          id: child.id,
+          isFolder: !!child.is_folder,
+          uploadedBy: child.uploaded_by ?? null,
+          actedViaShareId: child.acted_via_share_id ?? null,
+        })
         if (child.is_folder) queue.push(child.id)
         if (ids.length > FILE_LIST_HARD_CAP) throw new Error(TOO_LARGE_TO_SHARE)
       }
@@ -400,3 +684,13 @@ export async function collectAllChildren(folderId: string): Promise<string[]> {
 
   return ids
 }
+
+// ─── Task 2237b: link helpers for the Share panel ───────────────────────────
+// The dialog imports from this module (folder-share crypto is its home); the
+// link-specific derivation lives in shared-folder-link-crypto.ts.
+export {
+  generateLinkKey,
+  linkKeyFragment,
+  ownerWrappedLinkKey,
+  wrapFolderKeyForLink,
+} from './shared-folder-link-crypto'

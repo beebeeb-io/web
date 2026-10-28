@@ -24,6 +24,21 @@ import {
   derive_request_wrap_key,
   unwrap_request_private,
   open_request_upload,
+  combineFolderLinkKey as combine_folder_link_key,
+  deriveSharedFolderIndexKey as derive_shared_folder_index_key,
+  wrapFolderChild,
+  unwrapFolderChild,
+  wrapOwnerFileKey,
+  unwrapOwnerFileKey,
+  wrapFolderCustody,
+  unwrapFolderCustody,
+  wrapLinkOwnerKey,
+  unwrapLinkOwnerKey,
+  wrapLinkOwnerToken,
+  unwrapLinkOwnerToken,
+  wrapInviteOwnerCopy,
+  unwrapInviteOwnerCopy,
+  deriveFolderLinkPassphraseStretch,
 } from 'beebeeb-wasm'
 import { unwrapKeyFromShare } from '../src/lib/crypto'
 import { decryptThumbnailBlob } from '../src/lib/thumbnail'
@@ -37,7 +52,7 @@ import { decryptThumbnailBlob } from '../src/lib/thumbnail'
 // relate to this one).
 //
 // ── Vendoring + refresh procedure ───────────────────────────────────────────
-// The vendored copy lives at test/vectors/core-vectors.v7.json and MUST be a
+// The vendored copy lives at test/vectors/core-vectors.v12.json and MUST be a
 // byte-for-byte copy of repos/core/test-vectors/vectors.json (so the drift
 // check below is a real sha256 comparison, not a comparison against a
 // modified copy). To refresh after core bumps the vector file:
@@ -80,16 +95,27 @@ import { decryptThumbnailBlob } from '../src/lib/thumbnail'
 // never touch the worker — so those ARE called directly, exactly as the app
 // calls them.
 
-const VENDORED_PATH = fileURLToPath(new URL('./vectors/core-vectors.v7.json', import.meta.url))
+const VENDORED_PATH = fileURLToPath(new URL('./vectors/core-vectors.v12.json', import.meta.url))
 // Sibling core checkout (present on developer machines / worktrees that keep
 // `core` next to `web`; absent in a bare CI checkout of web alone).
 const CORE_SIBLING_PATH = fileURLToPath(new URL('../../core/test-vectors/vectors.json', import.meta.url))
 
-// Pin from: shasum -a 256 test/vectors/core-vectors.v7.json
-// v5 = core dd7bd76 (core#29, task 1943): adds chunk_v2_stream,
-// chunk_v2_single_frame and metadata_v2_name (core#28, task 1908).
-const PINNED_SHA256 = 'bddcb7d8f3c5f752efb3d342da3af8b4d5b310b5f1f683ddf491468c3dacad65'
-const EXPECTED_VERSION = 7
+// Pin from: shasum -a 256 test/vectors/core-vectors.v12.json
+// v12 = core 26094b3 (core#49, task 2255 L9; the same file at core main
+// 3831a05, whose WASM web vendors): adds invite_owner_copy_v1, the
+// purpose-bound folder-invite owner copy;
+// v11 at core c08defc (core#48, decision L8): owner_wrapped_file_key re-pinned
+// to the purpose-bound owner wrap (same version number, new bytes);
+// v11 = core a245a54 (core#45, task 2237d): adds owner_wrapped_file_key,
+// owner_wrapped_folder_key and folder_wrapped_file_key (owned-key resolution KATs);
+// v10 = core 640edab2 (core#44 + core#46, task 2237b decisions L6 and L7): adds
+// folder_child_file_v1, folder_child_folder_v1, folder_custody_v1,
+// link_owner_key_v1, link_owner_token_v1, folder_link_passphrase(_nfd) and
+// key_wrap_v1 (the legacy unbound shape, pinned so a reader can prove it refuses it);
+// v9 = core 9cbf856 (core#42, task 2237b): adds combine_folder_link_key;
+// v8 = core edf7cd4 (core#41, task 2237): adds shared_folder_index_key.
+const PINNED_SHA256 = '9f426bb10fe48466c5c10bd6bd8bd20b42ceaae3f1dc8c9c04ee8babd1f7d67e'
+const EXPECTED_VERSION = 12
 
 function hexToBytes(hex: string): Uint8Array {
   const out = new Uint8Array(hex.length / 2)
@@ -122,7 +148,7 @@ beforeAll(() => {
 // ─── 1. Vendored-file checksum guard ────────────────────────────────────────
 
 describe('vendored vector checksum guard', () => {
-  test('test/vectors/core-vectors.v7.json matches the pinned sha256', () => {
+  test('test/vectors/core-vectors.v12.json matches the pinned sha256', () => {
     const buf = readFileSync(VENDORED_PATH)
     expect(sha256Hex(buf)).toBe(PINNED_SHA256)
   })
@@ -164,6 +190,20 @@ const IMPLEMENTED_FAMILIES = new Set([
   'metadata_v2_name_filekey',
   'metadata_v1_name_filekey',
   'folder_key_id',
+  'shared_folder_index_key',
+  'combine_folder_link_key',
+  'folder_child_file_v1',
+  'folder_child_folder_v1',
+  'folder_custody_v1',
+  'link_owner_key_v1',
+  'link_owner_token_v1',
+  'folder_link_passphrase',
+  'folder_link_passphrase_nfd',
+  'key_wrap_v1',
+  'owner_wrapped_file_key',
+  'owner_wrapped_folder_key',
+  'folder_wrapped_file_key',
+  'invite_owner_copy_v1',
 ])
 
 const SKIPPED_FAMILIES: Record<string, string> = {
@@ -513,5 +553,170 @@ describe('core vectors KAT — chunk format v2 and v2 name metadata', () => {
   test('folder_key_id — a key that is not 32 bytes is an error, not an id', () => {
     expect(() => folder_key_id(new Uint8Array(31))).toThrow()
     expect(() => folder_key_id(new Uint8Array(33))).toThrow()
+  })
+
+  test('shared_folder_index_key — the WASM export derives every pinned bucket (task 2237)', () => {
+    const v = vectors.shared_folder_index_key
+    const folderKey = hexToBytes(v.folder_key_hex)
+    for (const { bucket, expected_hex } of v.buckets) {
+      expect(toHex(derive_shared_folder_index_key(folderKey, bucket))).toBe(expected_hex)
+    }
+    expect(() => derive_shared_folder_index_key(folderKey, 64)).toThrow()
+  })
+
+  test('combine_folder_link_key — both modes match the pinned vectors (task 2237b)', () => {
+    const v = vectors.combine_folder_link_key
+    const kc = hexToBytes(v.k_c_hex)
+    expect(toHex(combine_folder_link_key(kc))).toBe(v.expected_without_passphrase_hex)
+    expect(toHex(combine_folder_link_key(kc, hexToBytes(v.passphrase_stretch_hex)))).toBe(
+      v.expected_with_passphrase_hex,
+    )
+    expect(() => combine_folder_link_key(new Uint8Array(31))).toThrow()
+    expect(() => combine_folder_link_key(kc, new Uint8Array(31))).toThrow()
+  })
+})
+
+// ─── 4. Task 2237b decisions L6 and L7 — the owned-folder wraps ────────────
+// The app reaches these through crypto.worker.ts thin pass-throughs (see the
+// note at the top), so the WASM export IS the production path.
+
+describe('core vectors KAT — L7 folder child wraps (2237b)', () => {
+  for (const family of ['folder_child_file_v1', 'folder_child_folder_v1'] as const) {
+    test(`${family} — unwrapFolderChild opens the pinned wrap; the same key re-wraps and opens`, () => {
+      const v = vectors[family]
+      const kind = Number(v.kind)
+      const folderKey = hexToBytes(v.folder_key_hex)
+      const opened = unwrapFolderChild(folderKey, v.shared_folder_id, v.item_id, kind, hexToBytes(v.wrapped_hex))
+      expect(toHex(opened)).toBe(v.child_key_hex)
+      const again = wrapFolderChild(folderKey, v.shared_folder_id, v.item_id, kind, hexToBytes(v.child_key_hex))
+      expect(again.length).toBe(60)
+      expect(toHex(unwrapFolderChild(folderKey, v.shared_folder_id, v.item_id, kind, again))).toBe(v.child_key_hex)
+    })
+  }
+
+  test('a wrap is bound to its root, its item and its kind: every substitution is refused', () => {
+    const v = vectors.folder_child_file_v1
+    const folderKey = hexToBytes(v.folder_key_hex)
+    const wrapped = hexToBytes(v.wrapped_hex)
+    const otherId = '2237c000-0000-4000-8000-0000000000ff'
+    // A's wrap on B's row (the swap), under another root, and as the other kind.
+    expect(() => unwrapFolderChild(folderKey, v.shared_folder_id, otherId, 1, wrapped)).toThrow(/decryption failed/)
+    expect(() => unwrapFolderChild(folderKey, otherId, v.item_id, 1, wrapped)).toThrow(/decryption failed/)
+    expect(() => unwrapFolderChild(folderKey, v.shared_folder_id, v.item_id, 2, wrapped)).toThrow(/decryption failed/)
+  })
+
+  test('the legacy unbound wrap (key_wrap_v1, no AAD) is refused as a folder child', () => {
+    const v = vectors.key_wrap_v1
+    const child = vectors.folder_child_file_v1
+    // Same key, nonce and plaintext as the L7 vector; only the AAD differs.
+    expect(v.wrapper_key_hex).toBe(child.folder_key_hex)
+    expect(v.inner_key_hex).toBe(child.child_key_hex)
+    expect(() =>
+      unwrapFolderChild(hexToBytes(v.wrapper_key_hex), child.shared_folder_id, child.item_id, 1, hexToBytes(v.wrapped_hex)),
+    ).toThrow(/decryption failed/)
+  })
+
+  test('kind must be 1 or 2, ids must be UUIDs, keys must be 32 bytes, wraps 60 bytes', () => {
+    const v = vectors.folder_child_file_v1
+    const folderKey = hexToBytes(v.folder_key_hex)
+    const child = hexToBytes(v.child_key_hex)
+    expect(() => wrapFolderChild(folderKey, v.shared_folder_id, v.item_id, 3, child)).toThrow()
+    expect(() => wrapFolderChild(folderKey, 'not-a-uuid', v.item_id, 1, child)).toThrow(/invalid root UUID/)
+    expect(() => wrapFolderChild(folderKey, v.shared_folder_id, 'nope', 1, child)).toThrow(/invalid item UUID/)
+    expect(() => wrapFolderChild(new Uint8Array(31), v.shared_folder_id, v.item_id, 1, child)).toThrow(/32 bytes/)
+    expect(() => unwrapFolderChild(folderKey, v.shared_folder_id, v.item_id, 1, new Uint8Array(59))).toThrow(/60 bytes/)
+  })
+})
+
+describe('core vectors KAT — L6 custody and link-owner wraps (2237b)', () => {
+  const cases = [
+    { family: 'folder_custody_v1', wrap: wrapFolderCustody, unwrap: unwrapFolderCustody },
+    { family: 'link_owner_key_v1', wrap: wrapLinkOwnerKey, unwrap: unwrapLinkOwnerKey },
+    { family: 'link_owner_token_v1', wrap: wrapLinkOwnerToken, unwrap: unwrapLinkOwnerToken },
+    // v12, task 2255 (L9): the folder-invite owner copy, the same pattern.
+    { family: 'invite_owner_copy_v1', wrap: wrapInviteOwnerCopy, unwrap: unwrapInviteOwnerCopy },
+  ] as const
+  for (const { family, wrap, unwrap } of cases) {
+    test(`${family} — opens the pinned wrap, re-wraps, and refuses another record id`, () => {
+      const v = vectors[family]
+      const master = hexToBytes(v.master_key_hex)
+      expect(toHex(unwrap(master, v.record_id, hexToBytes(v.wrapped_hex)))).toBe(v.plaintext_hex)
+      const again = wrap(master, v.record_id, hexToBytes(v.plaintext_hex))
+      expect(toHex(unwrap(master, v.record_id, again))).toBe(v.plaintext_hex)
+      expect(() => unwrap(master, `${v.record_id}-other`, again)).toThrow(/decryption failed/)
+    })
+  }
+
+  test('the three purposes never open each other, and the legacy unbound shape is not custody', () => {
+    const custody = vectors.folder_custody_v1
+    const master = hexToBytes(custody.master_key_hex)
+    const key = hexToBytes(custody.plaintext_hex)
+    const asOwnerKey = wrapLinkOwnerKey(master, custody.record_id, key)
+    expect(() => unwrapFolderCustody(master, custody.record_id, asOwnerKey)).toThrow(/decryption failed/)
+    expect(() => unwrapLinkOwnerToken(master, custody.record_id, asOwnerKey)).toThrow(/decryption failed/)
+    const legacy = vectors.key_wrap_v1
+    expect(() =>
+      unwrapFolderCustody(hexToBytes(legacy.wrapper_key_hex), custody.record_id, hexToBytes(legacy.wrapped_hex)),
+    ).toThrow(/decryption failed/)
+  })
+
+  test('invite_owner_copy_v1 — an invite owner copy is not a custody record, and a custody record is not an owner copy', () => {
+    const v = vectors.invite_owner_copy_v1
+    const master = hexToBytes(v.master_key_hex)
+    const key = hexToBytes(v.plaintext_hex)
+    expect(() => unwrapFolderCustody(master, v.record_id, hexToBytes(v.wrapped_hex))).toThrow(/decryption failed/)
+    expect(() => unwrapInviteOwnerCopy(master, v.record_id, wrapFolderCustody(master, v.record_id, key))).toThrow(/decryption failed/)
+  })
+})
+
+describe('core vectors KAT — the link passphrase stretch (2237b)', () => {
+  test('key_wrap_v1 — the legacy no-AAD shape still opens through unwrapKeyFromShare (seed read only)', async () => {
+    const v = vectors.key_wrap_v1
+    const opened = await unwrapKeyFromShare(hexToBytes(v.wrapper_key_hex), hexToBytes(v.wrapped_hex))
+    expect(toHex(opened)).toBe(v.inner_key_hex)
+  })
+
+  for (const family of ['folder_link_passphrase', 'folder_link_passphrase_nfd'] as const) {
+    test(`${family} — deriveFolderLinkPassphraseStretch then combineFolderLinkKey give the pinned link key`, () => {
+      const v = vectors[family]
+      const stretch = deriveFolderLinkPassphraseStretch(v.passphrase, v.token)
+      expect(toHex(stretch)).toBe(v.stretch_hex)
+      expect(toHex(combine_folder_link_key(hexToBytes(v.k_c_hex), stretch))).toBe(v.link_key_hex)
+    })
+  }
+
+  test('an empty passphrase is refused', () => {
+    expect(() => deriveFolderLinkPassphraseStretch('', 'token')).toThrow(/must not be empty/)
+  })
+})
+
+describe('core vectors KAT — owned-key resolution (2237d, v11)', () => {
+  test('owner_wrapped_file_key — L8: unwrapOwnerFileKey (src/lib/owner-adoption.ts) opens the pinned record for its item only', () => {
+    const v = vectors.owner_wrapped_file_key
+    const master = hexToBytes(v.master_key_hex)
+    const frame = hexToBytes(v.expected_frame_hex)
+    expect(toHex(unwrapOwnerFileKey(master, v.file_id, frame))).toBe(v.child_key_hex)
+    expect(() => unwrapOwnerFileKey(master, v.folder_id, frame)).toThrow(/decryption failed/)
+    // The pre-L8 shape (no purpose key: decrypt under derive_file_key) does not open it.
+    const derived = derive_file_key(master, new TextEncoder().encode(v.file_id)) as Uint8Array
+    expect(() => decrypt_chunk(derived, frame.slice(0, 12), frame.slice(12))).toThrow()
+    const again = wrapOwnerFileKey(master, v.file_id, hexToBytes(v.child_key_hex))
+    expect(toHex(unwrapOwnerFileKey(master, v.file_id, again))).toBe(v.child_key_hex)
+  })
+
+  test('owner_wrapped_folder_key — the L6 custody record opens with unwrapFolderCustody for its folder only', () => {
+    const v = vectors.owner_wrapped_folder_key
+    const master = hexToBytes(v.master_key_hex)
+    const frame = hexToBytes(v.expected_frame_hex)
+    expect(toHex(unwrapFolderCustody(master, v.folder_id, frame))).toBe(v.folder_key_hex)
+    expect(() => unwrapFolderCustody(master, v.file_id, frame)).toThrow(/decryption failed/)
+  })
+
+  test('folder_wrapped_file_key — the L7 child wrap opens with unwrapFolderChild for (root, item, file) only', () => {
+    const v = vectors.folder_wrapped_file_key
+    const folderKey = hexToBytes(v.folder_key_hex)
+    const frame = hexToBytes(v.expected_frame_hex)
+    expect(toHex(unwrapFolderChild(folderKey, v.shared_folder_id, v.file_id, Number(v.kind), frame))).toBe(v.child_key_hex)
+    expect(() => unwrapFolderChild(folderKey, v.shared_folder_id, v.file_id, 2, frame)).toThrow(/decryption failed/)
   })
 })

@@ -11,7 +11,9 @@ import { RenameDialog } from '../components/rename-dialog'
 import { useFilePreview } from '../hooks/use-file-preview'
 import { useToast } from '../components/toast'
 import { useKeys } from '../lib/key-context'
-import { encryptFilename, serializeEncryptedBlob } from '../lib/crypto'
+import { encryptFilename, readFileMetadata, serializeEncryptedBlob } from '../lib/crypto'
+import { renameKeyFor } from '../lib/owner-rename'
+import { moveOwnerItems } from '../lib/owner-upload-key'
 import { encryptedDownload } from '../lib/encrypted-download'
 import {
   listFiles,
@@ -27,7 +29,7 @@ import { userFriendlyError } from '../lib/user-friendly-error'
 import { EmptyStarred } from '../components/empty-states/empty-starred'
 
 export function Starred() {
-  const { getFileKey, getFileKeyForFile, isUnlocked, cryptoReady } = useKeys()
+  const { getFileKey, getFileKeyForFile, getMasterKey, isUnlocked, cryptoReady } = useKeys()
   const { showToast } = useToast()
   const { setNodeStarred } = useSync()
   const navigate = useNavigate()
@@ -100,7 +102,8 @@ export function Starred() {
   async function handleMoveConfirm(destinationId: string | null) {
     if (!moveFileId) return
     try {
-      await updateFile(moveFileId, { parent_id: destinationId })
+      // rv-web198c P2-5: a move into a shared folder publishes its wraps.
+      await moveOwnerItems({ ids: [moveFileId], destinationId, rows: files, masterKey: isUnlocked ? getMasterKey() : undefined, viewerId: null })
       showToast({ icon: 'folder', title: 'File moved', description: 'Moved successfully.' })
       fetchFiles()
     } catch (err) {
@@ -113,7 +116,8 @@ export function Starred() {
   async function handleRenameConfirm(newName: string) {
     if (!renameFileId || !isUnlocked || !cryptoReady) return
     try {
-      const fileKey = await getFileKey(renameFileId)
+      // rv-web198c P2-4: a guest's or member's row is renamed under ITS key.
+      const fileKey = await renameKeyFor({ fileId: renameFileId, file: files.find((f) => f.id === renameFileId), viewerId: null, getFileKey, getFileKeyForFile, readName: readFileMetadata })
       const enc = await encryptFilename(fileKey, newName)
       await updateFile(renameFileId, { name_encrypted: serializeEncryptedBlob(enc.nonce, enc.ciphertext) })
       showToast({ icon: 'check', title: 'Renamed', description: `Renamed to "${newName}".` })

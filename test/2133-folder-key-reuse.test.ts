@@ -143,10 +143,15 @@ describe('findExistingFolderKey', () => {
     await expect(findExistingFolderKey(new Uint8Array(32), 'F', crashing)).rejects.toThrow('worker crashed')
   })
 
-  test('P3-4: the abort message tells the owner what to do, within 80 characters', async () => {
+  // rv-web198d: the message used to send the owner to "remove its pending
+  // invites, then share again". Cancel and deny keep the folder's rows, so that
+  // was never a way out (a fresh key over them locks out everyone it is shared
+  // with). It now says only what is true, still within 80 characters.
+  test('P3-4: the abort message says what is true, within 80 characters, and gives no false way out', async () => {
     const { FOLDER_KEY_UNVERIFIED } = await import('../src/lib/folder-share-crypto')
     expect(FOLDER_KEY_UNVERIFIED.length).toBeLessThanOrEqual(80)
-    expect(FOLDER_KEY_UNVERIFIED).toMatch(/Remove its pending invites/)
+    expect(FOLDER_KEY_UNVERIFIED).not.toMatch(/pending invites|share again/i)
+    expect(FOLDER_KEY_UNVERIFIED).toMatch(/can't be|no one new/i)
   })
 
   test('newest-first fallback: the newest blob does not open, the next one does', async () => {

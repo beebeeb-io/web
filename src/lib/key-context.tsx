@@ -47,8 +47,13 @@ import {
 import { clearOfflineCaches, setOfflineCacheAccessCheck } from './offline-cache'
 import { clearThumbnailCache } from './thumbnail'
 import { cacheKeyPersistent, cacheKeySessionOnly } from './key-cache'
-import { setRecoveryCheckIfAbsent, verifyRecoveryCheck } from './api'
+import { ApiError, getFolderKeys, getSentInvites, listFolderLinks, listSharedFolderKeys, setRecoveryCheckIfAbsent, verifyRecoveryCheck } from './api'
 import type { DriveFile } from './api'
+import { sharedFoldersEnabled } from './use-feature-flag'
+import { forgetSharedFolderSession, foreignRowKey, folderKeyForRoot, openOwnerFile } from './owner-adoption'
+import { createSharedFolderKeyCache } from './shared-folder-key-cache'
+import { activeFolderInvites } from './folder-share-crypto'
+import { decryptActorName } from './guest-actor-name'
 import { useAuth } from './auth-context'
 import { isImpersonationSessionActive, shouldReconcileLock } from './impersonation-context'
 import { isRequestUpload, createRequestKeyResolver, type RequestKeyResolver } from './file-request-crypto'
@@ -143,6 +148,15 @@ interface KeyState {
    *  getFileKey wherever the full file object is available (naming, preview,
    *  download). `expectedUserId` — see `getFileKey`. */
   getFileKeyForFile: (file: DriveFile, expectedUserId?: string) => Promise<Uint8Array>
+  /** Task 2237b: the key for a file the owner did not upload (a guest- or
+   *  member-added row in a shared folder). Resolves the owner wrap or the
+   *  folder key's copy of the file key, adopting the file on first sight.
+   *  Returns null when neither opens, so the caller can show the origin
+   *  ("Can't open this file (added via …)") instead of a generic failure. */
+  getFileKeyForSharedFile: (file: DriveFile, folderId: string) => Promise<Uint8Array | null>
+  /** Task 2237b: the link label a shared file came through, for the
+   *  "Can't open this file (added via …)" card. Null when unknown. */
+  getSharedFileOrigin: (file: DriveFile, folderId: string) => Promise<string | null>
   /** Get the raw master key (for X25519 key exchange in sharing).
    *  `expectedUserId` — see `getFileKey`; throws if the resident key is not
    *  bound to the resolved target (task 1531/1534 P0 continuation). */
@@ -579,6 +593,46 @@ export function KeyProvider({ children }: { children: ReactNode }) {
   // request list + unwrapped R_priv per request for the drive session.
   const requestResolverRef = useRef<RequestKeyResolver | null>(null)
 
+  // Successful key indexes are reused; misses refresh once, rejected fetches are evicted.
+  const sharedFolderCacheRef = useRef(createSharedFolderKeyCache(async (folderId) => {
+    const map = new Map<string, string>()
+    try {
+      // rv-web198c P2-1: the custody keys route exists only with the flag on.
+      if (!(await sharedFoldersEnabled())) throw new ApiError('shared folders are off', 404)
+      let cursor: string | null = null
+      do {
+        const page = await listSharedFolderKeys(folderId, { limit: 500, cursor })
+        for (const row of page.keys) map.set(row.file_id, row.encrypted_file_key)
+        cursor = page.next_cursor
+      } while (cursor)
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 404) throw error
+      const invites = activeFolderInvites(await getSentInvites(), folderId)
+      for (const invite of invites) {
+        for (const row of await getFolderKeys(invite.id)) {
+          if (!map.has(row.file_id)) map.set(row.file_id, row.encrypted_file_key)
+        }
+      }
+    }
+    return map
+  }))
+
+  // Link labels per shared folder ("added via Family WhatsApp"), decrypted once
+  // per folder and refreshed when a row names a link this index has not seen.
+  const sharedFolderLabelsRef = useRef(createSharedFolderKeyCache<string | null>(async (folderId) => {
+    const labels = new Map<string, string | null>()
+    const links = await listFolderLinks(folderId)
+    const key = await folderKeyForRoot(masterKeyRef.current as Uint8Array, folderId)
+    try {
+      for (const link of links) {
+        labels.set(link.id, key && link.label_encrypted ? await decryptActorName(key, link.label_encrypted) : null)
+      }
+    } finally {
+      if (key) zeroize(key)
+    }
+    return labels
+  }))
+
   const getFileKeyForFile = useCallback(async (file: DriveFile, expectedUserId?: string): Promise<Uint8Array> => {
     if (!isBoundTo(expectedUserId)) {
       throw new Error('Vault is locked — unlock first')
@@ -588,8 +642,44 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       if (!requestResolverRef.current) requestResolverRef.current = createRequestKeyResolver()
       return requestResolverRef.current.resolveFileKey(file, key)
     }
+    // Task 2237b: a row a link guest or another member added to a shared
+    // folder is not sealed under a key we derive. Every caller (download, zip,
+    // rename, versions, thumbnails), not only the listing, must take the
+    // shared-folder path for it; a row that does not open there falls through
+    // to the derived key and fails its own integrity check honestly. Only with
+    // the flag on (rv-web198d R1): with it off this asks nothing, as on main.
+    const shared = await foreignRowKey({
+      masterKey: key,
+      file,
+      viewerId: residentKeyUserIdRef.current,
+      keyIndexFor: (root, fileId) => sharedFolderCacheRef.current.forFile(root, fileId),
+    })
+    if (shared) return shared
     return deriveFileKey(key, file.id)
   }, [isBoundTo])
+
+  const getSharedFileOrigin = useCallback(async (file: DriveFile, folderId: string): Promise<string | null> => {
+    if (!isBoundTo()) throw new Error('Vault is locked — unlock first')
+    const shareId = file.acted_via_share_id
+    if (!shareId) return null
+    try {
+      return (await sharedFolderLabelsRef.current.forFile(folderId, shareId)).get(shareId) ?? null
+    } catch {
+      // Labels are decoration; the row still opens or reports without one.
+      return null
+    }
+  }, [isBoundTo])
+
+  const getFileKeyForSharedFile = useCallback(async (file: DriveFile, folderId: string): Promise<Uint8Array | null> => {
+    if (!isBoundTo()) throw new Error('Vault is locked — unlock first')
+    const masterKey = masterKeyRef.current as Uint8Array
+    const result = await openOwnerFile({
+      masterKey, folderId, file,
+      keyIndexPromise: sharedFolderCacheRef.current.forFile(folderId, file.id),
+      labelFor: async () => getSharedFileOrigin(file, folderId),
+    })
+    return result.kind === 'ok' ? result.fileKey : null
+  }, [isBoundTo, getSharedFileOrigin])
 
   const getMasterKey = useCallback((expectedUserId?: string): Uint8Array => {
     if (!isBoundTo(expectedUserId)) {
@@ -639,6 +729,11 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     residentKeyUserIdRef.current = null
     requestResolverRef.current?.clear()
     requestResolverRef.current = null
+    sharedFolderCacheRef.current.clear()
+    sharedFolderLabelsRef.current.clear()
+    // The session's lookups and the per-user flag (rv-web198c P3), never the
+    // custody memory: that belongs to the device (L7d).
+    forgetSharedFolderSession()
     clearCachedKey()
     void clearOfflineCaches()
     void clearThumbnailCache()
@@ -733,7 +828,7 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     // A key IS resident, bound to a DIFFERENT (or no) account than the one
     // now authenticated — cross-account confusion. Clear it; the normal
     // escrow/PRF/password/phrase unlock path takes over and loads the
-    // REAL key for currentUserId.
+    // REAL key for currentUserId. The custody memory stays (L7d).
     lock()
   }, [user, authLoading, vaultChecked, lock])
 
@@ -747,6 +842,11 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     residentKeyUserIdRef.current = null
     requestResolverRef.current?.clear()
     requestResolverRef.current = null
+    sharedFolderCacheRef.current.clear()
+    sharedFolderLabelsRef.current.clear()
+    // L7d: sign-out never clears the custody memory; it belongs to the device,
+    // and a server-forced sign-out must not be a way to empty it.
+    forgetSharedFolderSession()
     clearCachedKey()
     await Promise.all([clearOfflineCaches(), clearThumbnailCache(), clearVault()])
     setVaultExists(false)
@@ -824,12 +924,14 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       getResidentUserId,
       getFileKey,
       getFileKeyForFile,
+      getFileKeyForSharedFile,
+      getSharedFileOrigin,
       getMasterKey,
       discardStalePasswordVault,
       lock,
       fullLogout,
     }),
-    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, vaultExists, vaultChecked, setMasterKey, setMasterKeyDirect, setMasterKeyFromPasskey, unlockVault, unlockVaultWithPasskey, unlock, isUnlockedFor, getResidentUserId, getFileKey, getFileKeyForFile, getMasterKey, discardStalePasswordVault, lock, fullLogout],
+    [cryptoReady, cryptoLoading, cryptoError, isUnlocked, vaultExists, vaultChecked, setMasterKey, setMasterKeyDirect, setMasterKeyFromPasskey, unlockVault, unlockVaultWithPasskey, unlock, isUnlockedFor, getResidentUserId, getFileKey, getFileKeyForFile, getFileKeyForSharedFile, getSharedFileOrigin, getMasterKey, discardStalePasswordVault, lock, fullLogout],
   )
 
   return <KeyContext.Provider value={value}>{children}</KeyContext.Provider>
