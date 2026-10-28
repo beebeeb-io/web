@@ -20,11 +20,16 @@
  * Per account it could be emptied by the server: a forced sign-out, a
  * re-login, or another account id would start an empty memory and allow the
  * downgrade (proven on mobile and CLI). So sign-out, sign-in and an account
- * switch never clear it; only the user clearing site data does. A stored value
- * that can't be read is treated as "every folder seen" (refuse) and is never
- * overwritten. Every id is also kept in memory for the page load, so a storage
- * write failure still leaves the folder L7 until a reload. Nothing secret is
- * stored: folder ids only.
+ * switch never clear it; only the user clearing site data does.
+ *
+ * As merged in plan C: the id is written BEFORE any key from the custody
+ * record is used, and a failed write refuses (the caller does not use the
+ * key). An unreadable set (a stored value that is not an array of canonical
+ * UUIDs, or storage that can't be read at all) counts as "every folder seen":
+ * legacy is refused, and the value is never overwritten. Only canonical
+ * lower-case hyphenated UUIDs are accepted. Every id is also kept in memory
+ * for the page load, so after a failed write the folder still refuses legacy
+ * until a reload. Nothing secret is stored: folder ids only.
  */
 
 const STORAGE_KEY = 'beebeeb.custodySeen.v1'
@@ -38,6 +43,15 @@ export class FolderKeysUnavailableError extends Error {
   }
 }
 
+/** The custody record was valid, but this device could not record it: its key is not used. */
+export class CustodyMemoryWriteError extends FolderKeysUnavailableError {
+  constructor() {
+    super()
+    this.message = "This device couldn't save this folder's sharing state, so it won't open it."
+    this.name = 'CustodyMemoryWriteError'
+  }
+}
+
 /** This page load's copy (canonical ids), persisted or not. */
 const inMemory = new Set<string>()
 
@@ -46,17 +60,16 @@ function canonical(folderId: string): string {
 }
 
 /**
- * The durable set. `unreadable` is a stored value that is not an array of
- * canonical UUIDs: it might have held any folder, so it counts as all of them.
- * Storage that can't be reached at all (blocked) has no stored value, so the
- * in-memory copy is all there is.
+ * The durable set. `unreadable` is storage that can't be read (blocked), or a
+ * stored value that is not an array of canonical UUIDs: it might have held
+ * any folder, so it counts as all of them.
  */
 function readStored(): { ids: Set<string>; unreadable: boolean } {
   let raw: string | null | undefined
   try {
     raw = globalThis.localStorage?.getItem(STORAGE_KEY)
   } catch {
-    return { ids: new Set(), unreadable: false }
+    return { ids: new Set(), unreadable: true }
   }
   if (raw === null || raw === undefined) return { ids: new Set(), unreadable: false }
   try {
@@ -70,21 +83,30 @@ function readStored(): { ids: Set<string>; unreadable: boolean } {
   return { ids: new Set(), unreadable: true }
 }
 
-/** Remember that `folderId` has a valid custody record. Only ever adds. */
+/**
+ * Remember that `folderId` has a valid custody record. Only ever adds. Call it
+ * BEFORE the record's key is used: it throws CustodyMemoryWriteError when the
+ * device can't record it durably (then the key must not be used), and
+ * FolderKeysUnavailableError for an id that is not a canonical folder UUID.
+ */
 export function markCustodySeen(folderId: string): void {
   const id = canonical(folderId)
+  if (!CANONICAL_UUID.test(id)) throw new FolderKeysUnavailableError()
+  // First in memory: even if the durable write fails, legacy stays refused.
   inMemory.add(id)
-  // Only canonical folder UUIDs are stored, so the stored set stays readable.
-  if (!CANONICAL_UUID.test(id)) return
+  // No storage API at all (tests, server-side render): memory is all there is.
+  const store = globalThis.localStorage
+  if (!store) return
   const stored = readStored()
-  // An unreadable value is never replaced: that could shrink the set.
-  if (stored.unreadable || stored.ids.has(id)) return
+  // An unreadable set is never replaced (that could shrink it), so the id
+  // can't be recorded: refuse.
+  if (stored.unreadable) throw new CustodyMemoryWriteError()
+  if (stored.ids.has(id)) return
   stored.ids.add(id)
   try {
-    globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify([...stored.ids].sort()))
+    store.setItem(STORAGE_KEY, JSON.stringify([...stored.ids].sort()))
   } catch {
-    // Storage full or unavailable: the in-memory copy keeps the folder L7 for
-    // this page load; only the cross-reload memory is lost.
+    throw new CustodyMemoryWriteError()
   }
 }
 

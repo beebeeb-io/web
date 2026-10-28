@@ -39,7 +39,8 @@ const { unwrapKeyFromShare, unwrapLinkOwnerKey, unwrapLinkOwnerToken } = await i
 const { fromBase64, toBase64 } = await import('../src/lib/crypto')
 
 const MASTER = new Uint8Array(32).fill(0x11)
-const FOLDER_ID = 'folder-1'
+// A canonical folder UUID: L7d records only those (any other id is refused).
+const FOLDER_ID = 'f01de001-0000-4000-8000-000000000001'
 const FOLDER_KEY = new Uint8Array(32).fill(0x22)
 
 type Call = { name: string; arg?: unknown }

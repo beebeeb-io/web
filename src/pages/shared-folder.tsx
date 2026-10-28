@@ -375,10 +375,11 @@ export function SharedFolder() {
       if (!fk && inv) {
         const resolved = await resolveRecipientFolderKey(inv, getMasterKey(), keys, format)
         if (resolved.status === 'ok') {
+          // L7d: recorded before the key is used; a failed write refuses.
+          if (format === 'l7') markCustodySeen(folderId)
           fk = resolved.folderKey
           setFolderKeyCache(fk)
           setKeyMissing(false)
-          if (format === 'l7') markCustodySeen(folderId)
         } else {
           setKeyMissing(true)
         }
