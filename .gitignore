@@ -107,3 +107,5 @@ app.json
 /office-bundle-staging/*
 !/office-bundle-staging/.gitkeep
 
+# e2e design-review screenshots (task 2237b)
+e2e-artifacts/

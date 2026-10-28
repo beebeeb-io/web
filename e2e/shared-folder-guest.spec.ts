@@ -37,11 +37,12 @@ async function guestContext(browser: Browser) {
 
 /**
  * Design-review screenshots of each guest state at a laptop and a phone size.
- * Default: test-results/2237b-guest-screens/ (kept, and copied back by the
- * remote harness); E2E_GUEST_SCREENSHOTS=<prefix> writes them elsewhere.
+ * Default: e2e-artifacts/2237b-guest-screens/ (gitignored). Not test-results/:
+ * the harness runs Playwright once per spec file and every run empties
+ * test-results/. E2E_GUEST_SCREENSHOTS=<prefix> writes them elsewhere.
  */
 async function captureGuest(page: Page, state: string) {
-  const prefix = process.env.E2E_GUEST_SCREENSHOTS ?? 'test-results/2237b-guest-screens/2237b-guest'
+  const prefix = process.env.E2E_GUEST_SCREENSHOTS ?? 'e2e-artifacts/2237b-guest-screens/2237b-guest'
   for (const [label, width, height] of [['desktop', 1280, 720], ['phone', 390, 844]] as const) {
     await page.setViewportSize({ width, height })
     await page.screenshot({ path: `${prefix}-${state}-${label}.png` })
