@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Breadcrumb } from '../breadcrumb'
-import { fetchFolderThumbnail } from '../../lib/folder-link-public'
+import { fetchAllFolderItems, fetchFolderThumbnail } from '../../lib/folder-link-public'
 import { decryptThumbnailBlob } from '../../lib/thumbnail'
 import { decryptFileMetadata } from '../../lib/crypto'
 import type { FolderAccessLevel, Proof } from '../../lib/folder-link-types'
@@ -8,8 +8,17 @@ import { GuestGrid } from './guest-grid'
 import { GuestPreview } from './guest-preview'
 import { GuestList } from './guest-list'
 import { collectGuestZipEntries, downloadGuestZip } from '../../lib/guest-zip'
+import { isSearchTerm, searchGuestFolder, type GuestSearchResult } from '../../lib/guest-search'
+import {
+  loadSharedIndex,
+  SEARCH_INDEX_MAX_ENTRIES,
+  type SharedSearchIndex,
+} from '../../lib/shared-folder-index'
+import { publicIndexTransport } from '../../lib/shared-folder-index-shards'
+import { GuestSearch, GuestSearchNoResults } from './guest-search'
 import {
   GUEST_SORT_OPTIONS,
+  describeGuestItem,
   popCrumb,
   pushCrumb,
   readGuestSort,
@@ -54,6 +63,11 @@ export function GuestBrowser(props: {
   const [thumbnails, setThumbnails] = useState<Map<string, string>>(new Map())
   const [previewIndex, setPreviewIndex] = useState<number | null>(null)
   const [zipBusy, setZipBusy] = useState(false)
+  const [index, setIndex] = useState<SharedSearchIndex | null>(null)
+  const [indexCount, setIndexCount] = useState(0)
+  const [term, setTerm] = useState('')
+  const [results, setResults] = useState<GuestSearchResult | null>(null)
+  const [searchBusy, setSearchBusy] = useState(false)
 
   useEffect(() => {
     let live = true
@@ -107,6 +121,86 @@ export function GuestBrowser(props: {
 
   const sorted = useMemo(() => sortGuestNodes(listing.nodes, sort), [listing.nodes, sort])
 
+  // The shared index is loaded once per link; search stays read-only on it.
+  useEffect(() => {
+    let live = true
+    let loaded: SharedSearchIndex | null = null
+    void loadSharedIndex({
+      transport: publicIndexTransport(props.token, props.proof),
+      folderKey: props.folderKey,
+    })
+      .then((result) => {
+        loaded = result.index
+        if (!live) return
+        setIndex(result.index)
+        setIndexCount(result.fileCount)
+      })
+      .catch(() => undefined)
+    return () => {
+      live = false
+      loaded?.dispose()
+    }
+  }, [props.token, props.folderKey, props.proof?.proof])
+
+  // A term filters the folder body. The index answers when it loaded; the
+  // listing walk is the bounded fallback inside `searchGuestFolder`.
+  useEffect(() => {
+    if (!isSearchTerm(term)) {
+      setResults(null)
+      setSearchBusy(false)
+      return
+    }
+    let live = true
+    setSearchBusy(true)
+    void searchGuestFolder({
+      term,
+      index,
+      folderKey: props.folderKey,
+      entryCount: indexCount,
+      listAll: async () => {
+        const items = await fetchAllFolderItems(
+          props.token,
+          parentId,
+          props.proof,
+          SEARCH_INDEX_MAX_ENTRIES + 1,
+        )
+        const rows: { fileId: string; name: string }[] = []
+        for (const item of items) {
+          if (item.is_folder) continue
+          const node = await describeGuestItem(item, props.folderKey)
+          if (node.name !== null) rows.push({ fileId: item.id, name: node.name })
+        }
+        return rows
+      },
+    })
+      .then((result) => {
+        if (live) setResults(result)
+      })
+      .catch(() => {
+        if (live) setResults(null)
+      })
+      .finally(() => {
+        if (live) setSearchBusy(false)
+      })
+    return () => {
+      live = false
+    }
+  }, [term, index, indexCount, props.token, props.folderKey, props.proof?.proof, parentId])
+
+  const searchIds = useMemo(() => {
+    if (!results) return null
+    return results.mode === 'index'
+      ? new Set(results.ids)
+      : new Set(results.names.map((row) => row.fileId))
+  }, [results])
+
+  const visible = useMemo(() => {
+    if (!searchIds) return sorted
+    return sorted.filter((node) => searchIds.has(node.item.id))
+  }, [sorted, searchIds])
+
+  const searching = isSearchTerm(term)
+
   const changeView = (next: GuestViewMode) => {
     setView(next)
     writeGuestView(next)
@@ -122,12 +216,12 @@ export function GuestBrowser(props: {
   }
 
   const openPreview = (node: GuestNode) => {
-    const index = sorted.findIndex((row) => row.item.id === node.item.id)
+    const index = visible.findIndex((row) => row.item.id === node.item.id)
     setPreviewIndex(index >= 0 ? index : null)
     props.onPreview(node)
   }
 
-  const previewNode = previewIndex === null ? null : sorted[previewIndex] ?? null
+  const previewNode = previewIndex === null ? null : visible[previewIndex] ?? null
 
   const empty = !listing.loading && listing.nodes.length === 0 && !listing.error
   const hasFiles = listing.nodes.some((node) => !node.item.is_folder)
@@ -205,6 +299,12 @@ export function GuestBrowser(props: {
         ) : null}
       </div>
 
+      <GuestSearch
+        onQuery={setTerm}
+        partial={results?.partial ?? false}
+        busy={searchBusy}
+      />
+
       {listing.error ? (
         <p role="alert" className="text-sm text-ink-3">
           This link isn&apos;t available.
@@ -213,15 +313,17 @@ export function GuestBrowser(props: {
 
       {empty ? (
         <GuestEmpty level={props.level} />
+      ) : searching && !searchBusy && visible.length === 0 ? (
+        <GuestSearchNoResults term={term} />
       ) : view === 'grid' ? (
         <GuestGrid
-          nodes={sorted}
+          nodes={visible}
           onOpenFolder={openFolder}
           onPreview={openPreview}
           thumbnails={thumbnails}
         />
       ) : (
-        <GuestList nodes={sorted} onOpenFolder={openFolder} onPreview={openPreview} />
+        <GuestList nodes={visible} onOpenFolder={openFolder} onPreview={openPreview} />
       )}
 
       {listing.hasMore ? (
@@ -247,11 +349,11 @@ export function GuestBrowser(props: {
           }
           onNext={() =>
             setPreviewIndex((index) =>
-              index === null ? null : Math.min(sorted.length - 1, index + 1),
+              index === null ? null : Math.min(visible.length - 1, index + 1),
             )
           }
           hasPrev={previewIndex !== null && previewIndex > 0}
-          hasNext={previewIndex !== null && previewIndex < sorted.length - 1}
+          hasNext={previewIndex !== null && previewIndex < visible.length - 1}
         />
       ) : null}
     </div>
