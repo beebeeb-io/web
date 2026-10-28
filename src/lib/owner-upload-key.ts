@@ -9,11 +9,16 @@
  * insert-only).
  */
 import { ApiError, publishSharedFolderKeys } from './api'
-import { encryptChildFileKey } from './folder-share-crypto'
-import { folderKeyForRoot, sharedRootFor } from './owner-adoption'
+import { sealChildKey } from './folder-share-crypto'
+import { folderKeyForRoot, folderWrapFormat, sharedRootFor } from './owner-adoption'
 import { zeroize } from './crypto'
 
-/** Publish an owner upload's wrap under its shared root. No-op outside a shared folder. */
+/**
+ * Publish an owner upload's wrap under its shared root. No-op outside a shared
+ * folder, and for a folder without a custody record (L7b: a flag-off
+ * invite-only share, whose route answers 404 anyway). With custody the wrap is
+ * L7, bound to (root, this file, file).
+ */
 export async function publishOwnerUploadKey(
   masterKey: Uint8Array,
   parentId: string,
@@ -22,13 +27,13 @@ export async function publishOwnerUploadKey(
 ): Promise<void> {
   const root = await sharedRootFor(parentId, parentId)
   if (!root) return
+  if ((await folderWrapFormat(root)) !== 'l7') return
   const folderKey = await folderKeyForRoot(masterKey, root)
   if (!folderKey) throw new Error('The shared folder key is not available on this device.')
   try {
     await publishSharedFolderKeys(root, [{
       file_id: fileId,
-      // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
-      encrypted_file_key: await encryptChildFileKey(folderKey, fileKey),
+      encrypted_file_key: await sealChildKey(folderKey, { rootId: root, itemId: fileId, isFolder: false }, fileKey),
     }])
   } catch (error) {
     // A server without the route (405) or without the custody row (404) cannot

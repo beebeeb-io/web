@@ -50,6 +50,12 @@ export interface FolderLinkCreated extends FolderLink {
 }
 
 export interface CreateFolderLinkRequest {
+  /**
+   * The link's share id, a client-generated UUIDv4 (decision L6a). Both owner
+   * copies are sealed under it, so the server stores exactly this id; a taken
+   * one answers 409 `id_taken`.
+   */
+  id: string
   folder_id: string
   access_level?: FolderAccessLevel
   label_encrypted?: string

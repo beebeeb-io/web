@@ -9,7 +9,7 @@
  */
 import {
   combineFolderLinkKey,
-  deriveKeys,
+  deriveFolderLinkPassphraseStretch,
   encryptChunk,
   decryptChunk,
   fromBase64,
@@ -17,7 +17,11 @@ import {
   toBase64,
   toBase64url,
   unwrapKeyFromShare,
+  unwrapLinkOwnerKey,
+  unwrapLinkOwnerToken,
   wrapKeyForShare,
+  wrapLinkOwnerKey,
+  wrapLinkOwnerToken,
 } from './crypto'
 import { FolderNotAvailableError, resolveFolderLink } from './folder-link-public'
 import { extractShareKeyToken } from './share-key'
@@ -67,26 +71,18 @@ export function readLinkKeyFragment(hash: string): Uint8Array | null {
   }
 }
 
-async function sha256(bytes: Uint8Array): Promise<Uint8Array> {
-  return new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as BufferSource))
-}
-
 /**
- * Argon2id stretch of the passphrase. NEVER used alone as a key: it is always
- * combined with `K_c` through `linkUnwrapKey`.
+ * Argon2id stretch of the passphrase, in core (decision L6): NFC, the
+ * token-bound salt SHA-256(token || LINK_PASSPHRASE_SALT_LABEL)[..16] and the
+ * cost all live there. NEVER used alone as a key: it is always combined with
+ * `K_c` through `linkUnwrapKey`. A blank passphrase is refused here first, so
+ * whitespace never quietly stands in for one.
  */
-// TODO(core#44, decision L6): use core's derive_folder_link_passphrase_stretch
-// through its wasm export once core #44 merges (it pins NFC itself); this is
-// the same salt and Argon2id cost composed here from core primitives.
 export async function deriveLinkPassphraseKey(
   rawPassphrase: string,
   token: string,
 ): Promise<Uint8Array> {
-  const passphrase = normalizeLinkPassphrase(rawPassphrase)
-  const saltInput = new TextEncoder().encode(token + LINK_PASSPHRASE_SALT_LABEL)
-  const salt = (await sha256(saltInput)).slice(0, 16)
-  const { masterKey } = await deriveKeys(passphrase, salt)
-  return masterKey
+  return deriveFolderLinkPassphraseStretch(normalizeLinkPassphrase(rawPassphrase), token)
 }
 
 /** `combine_folder_link_key(K_c, stretch)` via core (wasm). */
@@ -111,31 +107,31 @@ export async function unwrapFolderKeyFromLink(
   return unwrapKeyFromShare(linkKey, fromBase64(wrappedB64))
 }
 
-// TODO(core#44, decision L6): a link's owner_wrapped_key and
-// owner_wrapped_token must be sealed with core's link-owner wraps (a
-// purpose-bound key plus AAD: "beebeeb-link-owner-key-v1" || share_id and
-// "beebeeb-link-owner-token-v1" || share_id), not a bare AES-GCM wrap under the
-// master key. Core #44 is not merged (no wasm export yet), so these two and
-// rebuildFolderLinkUrl still use wrapKeyForShare. Nothing has shipped; the
-// shared_folders_v1 flag is off.
 /**
  * A link's `owner_wrapped_key` (decision L2, spec §6): the link secret K_c
  * sealed to the owner's master key, so the owner can copy the link again later
  * (`rebuildFolderLinkUrl`). It is NOT the folder key; the folder key's only
  * owner copy is the custody record.
+ *
+ * Decision L6/L6a: sealed by core under a purpose key bound to the link's
+ * share id (`"beebeeb-link-owner-key-v1" || share_id`), which the client
+ * proposes at create time. It opens for no other link and as nothing else.
  */
 export async function ownerWrappedLinkKey(
   masterKey: Uint8Array,
+  shareId: string,
   linkKey: Uint8Array,
 ): Promise<string> {
-  return toBase64(await wrapKeyForShare(masterKey, linkKey))
+  return toBase64(await wrapLinkOwnerKey(masterKey, shareId, linkKey))
 }
 
+/** A link's `owner_wrapped_token`, bound to its share id (`"beebeeb-link-owner-token-v1" || share_id`). */
 export async function ownerWrappedLinkToken(
   masterKey: Uint8Array,
+  shareId: string,
   token: string,
 ): Promise<string> {
-  return toBase64(await wrapKeyForShare(masterKey, new TextEncoder().encode(token)))
+  return toBase64(await wrapLinkOwnerToken(masterKey, shareId, new TextEncoder().encode(token)))
 }
 
 /**
@@ -146,6 +142,8 @@ export async function ownerWrappedLinkToken(
  */
 export async function rebuildFolderLinkUrl(
   link: {
+    /** The share id both owner copies are bound to (L6a). */
+    id: string
     owner_wrapped_key: string | null
     owner_wrapped_token: string | null
     wrapped_folder_key?: string | null
@@ -157,7 +155,7 @@ export async function rebuildFolderLinkUrl(
   if (!link.owner_wrapped_key || !link.owner_wrapped_token) return null
   let linkKey: Uint8Array | null = null
   try {
-    linkKey = await unwrapKeyFromShare(masterKey, fromBase64(link.owner_wrapped_key))
+    linkKey = await unwrapLinkOwnerKey(masterKey, link.id, fromBase64(link.owner_wrapped_key))
     if (linkKey.length !== SECRET_BYTES) return null
     // A plain link can be proven before it is handed out: its K_c must open
     // the link's own folder-key wrap. (A passphrase link needs the passphrase
@@ -167,7 +165,7 @@ export async function rebuildFolderLinkUrl(
       opened.fill(0)
     }
     const token = new TextDecoder().decode(
-      await unwrapKeyFromShare(masterKey, fromBase64(link.owner_wrapped_token)),
+      await unwrapLinkOwnerToken(masterKey, link.id, fromBase64(link.owner_wrapped_token)),
     )
     if (!token) return null
     return buildFullShareLink(origin, token, linkKeyFragment(linkKey), 'f')

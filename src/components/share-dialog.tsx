@@ -43,6 +43,7 @@ import {
   buildFolderInvite,
   encryptFolderKeyForRecipient,
 } from '../lib/folder-share-crypto'
+import { ensureOwnerFolderKey } from '../lib/folder-link-create'
 import { useKeys } from '../lib/key-context'
 import { userFriendlyError } from '../lib/user-friendly-error'
 import { isTypedRefusal } from '../lib/no-card-trial'
@@ -228,6 +229,9 @@ function InviteForm({
   onRateLimitFeedback: () => void
 }) {
   const { getMasterKey, getFileKey } = useKeys()
+  // L7b: with shared folders on, a folder invite registers the folder's
+  // custody record first, so the invite and every later share are L7.
+  const sharedFolders = useFeatureFlag(SHARED_FOLDERS_FLAG)
   const [email, setEmail] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -278,6 +282,10 @@ function InviteForm({
         // the server can refuse a different key for an already-keyed folder.
         const masterKey = getMasterKey()
         setProgress('Checking folder key...')
+        if (sharedFolders.enabled) {
+          const registered = await ensureOwnerFolderKey(fileId, masterKey)
+          registered.fill(0)
+        }
         const { folderKey, payload } = await buildFolderInvite(masterKey, fileId, (_s, done, total) =>
           setProgress(`Encrypting keys: ${done}/${total}`),
         )
@@ -347,7 +355,7 @@ function InviteForm({
       setLoading(false)
       setProgress(null)
     }
-  }, [email, fileId, isFolder, onSuccess, getMasterKey, getFileKey])
+  }, [email, fileId, isFolder, onSuccess, getMasterKey, getFileKey, sharedFolders.enabled])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {

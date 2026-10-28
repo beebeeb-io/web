@@ -9,6 +9,7 @@ import { describe, expect, test } from 'bun:test'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { createContentOps } from '../src/lib/content-crypto'
 import { loadWasm } from './helpers/wasm-crypto-mirror'
+import { ownedFolderCrypto } from './helpers/owned-folder-wasm'
 
 const wasm = loadWasm()
 const encoder = new TextEncoder()
@@ -31,6 +32,9 @@ let custody: { owner_wrapped_folder_key: string } | null = null
 
 const real = await mockModuleScoped('../src/lib/crypto', import.meta.dir, (r) => ({
   ...r,
+  // L6 custody and L7 child wraps: core, in process.
+  unwrapFolderCustody: ownedFolderCrypto().unwrapFolderCustody,
+  unwrapFolderChild: ownedFolderCrypto().unwrapFolderChild,
   readFileMetadata: async (key: Uint8Array, name: string) => createContentOps(wasm).readFileMetadata(key, name),
   deriveFileKey: async (masterKey: Uint8Array, fileId: string) =>
     wasm.derive_file_key(masterKey, encoder.encode(fileId)),
@@ -75,9 +79,14 @@ function derive(master: Uint8Array, id: string): Uint8Array {
   return wasm.derive_file_key(master, encoder.encode(id))
 }
 
-/** The owner's custody record for the folder (what the owner's device publishes). */
+/** The owner's custody record for the folder (what the owner's device publishes): L6. */
 function seedCustody() {
-  custody = { owner_wrapped_folder_key: seal(derive(MASTER, FOLDER_ID), FOLDER_KEY) }
+  custody = { owner_wrapped_folder_key: real.toBase64(wasm.wrapFolderCustody(MASTER, FOLDER_ID, FOLDER_KEY) as Uint8Array) as string }
+}
+
+/** A child wrap in a custody folder: L7, bound to (root, this file, file). */
+function l7(fileId: string, key: Uint8Array = FILE_KEY): string {
+  return real.toBase64(wasm.wrapFolderChild(FOLDER_KEY, FOLDER_ID, fileId, 1, key) as Uint8Array) as string
 }
 
 function seedFile() {
@@ -90,7 +99,7 @@ function seedFile() {
   }
 }
 
-const { needsOwnership, adoptGuestFile, resolveSharedFileKey, openOwnerFile, unwrapOwnerFileKey, folderKeyForRoot } =
+const { needsOwnership, adoptGuestFile, resolveSharedFileKey, openOwnerFile, unwrapOwnerFileKey, folderKeyForRoot, clearSharedFolderLookups } =
   await import(
   '../src/lib/owner-adoption'
 )
@@ -132,7 +141,7 @@ describe('adoptGuestFile', () => {
     adoptCalls.length = 0
     adoptResult = { adopted: true }
     const file = seedFile()
-    const encryptedFileKey = seal(FOLDER_KEY, FILE_KEY)
+    const encryptedFileKey = l7(file.id)
 
     const first = await adoptGuestFile({
       masterKey: MASTER,
@@ -170,7 +179,7 @@ describe('adoptGuestFile', () => {
       masterKey: MASTER,
       folderId: FOLDER_ID,
       file,
-      encryptedFileKeyB64: seal(FOLDER_KEY, FILE_KEY),
+      encryptedFileKeyB64: l7(file.id),
     })
     expect(res.adopted).toBe(false)
     expect(adoptCalls).toHaveLength(0)
@@ -196,9 +205,41 @@ describe('resolveSharedFileKey', () => {
       masterKey: MASTER,
       folderId: FOLDER_ID,
       file,
-      keyIndexPromise: Promise.resolve(new Map([[file.id, seal(FOLDER_KEY, FILE_KEY)]])),
+      keyIndexPromise: Promise.resolve(new Map([[file.id, l7(file.id)]])),
     })
     expect(key && Array.from(key)).toEqual(Array.from(FILE_KEY))
+  })
+
+  test('L7b: a custody folder refuses a legacy wrap and a wrap made for another row', async () => {
+    seedCustody()
+    const file = seedFile()
+    for (const wrap of [seal(FOLDER_KEY, FILE_KEY), l7('33333333-3333-4333-8333-333333333333')]) {
+      const key = await resolveSharedFileKey({
+        masterKey: MASTER,
+        folderId: FOLDER_ID,
+        file,
+        keyIndexPromise: Promise.resolve(new Map([[file.id, wrap]])),
+      })
+      expect(key).toBeNull()
+    }
+  })
+
+  test('L7b: an invite-only folder (no custody record) opens its legacy wrap', async () => {
+    custody = null
+    clearSharedFolderLookups() // a custody record is cached for the session
+    inviteFolderKey = { folderKey: FOLDER_KEY, encryptedOwnerFolderKeyB64: 'x' }
+    try {
+      const file = seedFile()
+      const key = await resolveSharedFileKey({
+        masterKey: MASTER,
+        folderId: FOLDER_ID,
+        file,
+        keyIndexPromise: Promise.resolve(new Map([[file.id, seal(FOLDER_KEY, FILE_KEY)]])),
+      })
+      expect(key && Array.from(key)).toEqual(Array.from(FILE_KEY))
+    } finally {
+      inviteFolderKey = null
+    }
   })
 })
 
@@ -224,7 +265,7 @@ describe('openOwnerFile', () => {
       masterKey: MASTER,
       folderId: FOLDER_ID,
       file,
-      keyIndexPromise: Promise.resolve(new Map([[file.id, seal(FOLDER_KEY, FILE_KEY)]])),
+      keyIndexPromise: Promise.resolve(new Map([[file.id, l7(file.id)]])),
       labelFor: async () => 'Family WhatsApp',
     })
     expect(res.kind).toBe('ok')
@@ -238,7 +279,7 @@ test('B adoption verifies metadata with the candidate key before a write-once st
   adoptCalls.length = 0
   await expect(adoptGuestFile({ masterKey: MASTER, folderId: FOLDER_ID,
     file: { ...seedFile(), id: '33333333-3333-4333-8333-333333333333' },
-    encryptedFileKeyB64: seal(FOLDER_KEY, new Uint8Array(32).fill(77)) })).rejects.toThrow()
+    encryptedFileKeyB64: l7('33333333-3333-4333-8333-333333333333', new Uint8Array(32).fill(77)) })).rejects.toThrow()
   expect(adoptCalls).toHaveLength(0)
 })
 

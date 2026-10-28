@@ -1,13 +1,12 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { loadWasm } from './helpers/wasm-crypto-mirror'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
+import { ownedFolderCrypto } from './helpers/owned-folder-wasm'
 
-// Run deriveKeys and combineFolderLinkKey against the committed WASM build;
-// the worker hop is the only thing skipped.
+// Run the passphrase stretch and combineFolderLinkKey against the committed
+// WASM build; the worker hop is the only thing skipped.
 await mockModuleScoped('../src/lib/crypto', import.meta.dir, () => ({
-  deriveKeys: async (password: string, salt: Uint8Array) => ({
-    masterKey: loadWasm().derive_master_key(password, salt).key as Uint8Array,
-  }),
+  ...ownedFolderCrypto(),
   combineFolderLinkKey: async (key: Uint8Array, stretch: Uint8Array | null) =>
     loadWasm().combineFolderLinkKey(key, stretch) as Uint8Array,
 }))
@@ -143,6 +142,21 @@ describe('passphrase stretch (2237b)', () => {
     const c = await deriveLinkPassphraseKey('abc', 'other')
     expect(a.length).toBe(32)
     expect(a).not.toEqual(c)
+  })
+
+  test("is core's stretch (L6): the pinned vector, NFC and NFD alike", async () => {
+    const vectors = JSON.parse(
+      await Bun.file(new URL('./vectors/core-vectors.v11.json', import.meta.url)).text(),
+    ) as { vectors: Array<Record<string, string>> }
+    for (const name of ['folder_link_passphrase', 'folder_link_passphrase_nfd']) {
+      const v = vectors.vectors.find((entry) => entry.name === name)!
+      expect(hex(await deriveLinkPassphraseKey(v.passphrase, v.token))).toBe(v.stretch_hex)
+    }
+  })
+
+  test('a blank passphrase is refused before any stretch', async () => {
+    await expect(deriveLinkPassphraseKey('   ', 'tok')).rejects.toThrow(/empty/)
+    await expect(deriveLinkPassphraseKey('', 'tok')).rejects.toThrow(/empty/)
   })
 })
 

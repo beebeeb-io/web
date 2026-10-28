@@ -76,6 +76,8 @@ export interface UploadProgress {
  */
 export interface SharedFolderUploadContext {
   folderKey: Uint8Array
+  /** L7b: the shared folder's wrap format, from its custody record. */
+  format: import('./folder-share-crypto').FolderWrapFormat
   sharedFolderId: string
   inviteId: string
 }
@@ -606,10 +608,16 @@ async function uploadFile(
 
   // If uploading to a shared folder, register the file key under the folder_key
   if (sharedFolderContext) {
-    const { encryptChildFileKey, folderKeyId } = await import('./folder-share-crypto')
+    const { sealFolderChild, folderKeyId } = await import('./folder-share-crypto')
     const { addFolderKeys } = await import('./api')
-    // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
-    const encryptedKey = await encryptChildFileKey(sharedFolderContext.folderKey, activeFileKey)
+    // Bound to (shared root, this file, file) for a custody folder (L7); the
+    // legacy invite format only for a flag-off invite-only folder (L7b).
+    const encryptedKey = await sealFolderChild(
+      sharedFolderContext.format,
+      sharedFolderContext.folderKey,
+      { rootId: sharedFolderContext.sharedFolderId, itemId: serverFileId, isFolder: false },
+      activeFileKey,
+    )
     await addFolderKeys(sharedFolderContext.inviteId, [{
       file_id: serverFileId,
       encrypted_file_key: encryptedKey,

@@ -21,7 +21,7 @@ import {
   updateFolderLink,
 } from '../../lib/api'
 import { fromBase64 } from '../../lib/crypto'
-import { decryptOwnerFolderKey } from '../../lib/folder-share-crypto'
+import { openFolderCustody } from '../../lib/folder-share-crypto'
 import { decryptActorName } from '../../lib/guest-actor-name'
 import { rebuildFolderLinkUrl } from '../../lib/shared-folder-link-crypto'
 import { SHARED_FOLDERS_FLAG } from '../../lib/flags'
@@ -244,7 +244,7 @@ function FolderSharePanelLive({ open, folderId, folderName, onClose }: FolderSha
         }
 
         const folderKey = custody?.owner_wrapped_folder_key
-          ? await decryptOwnerFolderKey(key, folderId, fromBase64(custody.owner_wrapped_folder_key))
+          ? await openFolderCustody(key, folderId, fromBase64(custody.owner_wrapped_folder_key))
           : null
         if (folderKey) {
           const entries = await Promise.all(

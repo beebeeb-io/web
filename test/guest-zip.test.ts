@@ -28,8 +28,16 @@ await mockModuleScoped('../src/lib/folder-link-public', import.meta.dir, {
   },
 })
 
+const ROOT = '11111111-1111-4111-8111-111111111111'
+/** Every L7 open the archive walk asked for. */
+const opened: Array<{ rootId: string; itemId: string; isFolder: boolean }> = []
 await mockModuleScoped('../src/lib/folder-share-crypto', import.meta.dir, {
-  decryptChildFileKey: async (_folderKey: Uint8Array, wrapped: string) => {
+  openChildKey: async (
+    _folderKey: Uint8Array,
+    ref: { rootId: string; itemId: string; isFolder: boolean },
+    wrapped: string,
+  ) => {
+    opened.push(ref)
     if (wrapped.startsWith('bad:')) throw new Error('unwrap failed')
     return new TextEncoder().encode(`key:${wrapped}`)
   },
@@ -114,19 +122,25 @@ describe('collectGuestZipEntries', () => {
   test('walks the link tree and keeps the decrypted structure', async () => {
     reset()
     pages['root'] = {
-      items: [row('f-dir', '2019', { is_folder: true, wrapped_file_key: null }), row('f-note', 'note.txt')],
+      items: [row('f-dir', '2019', { is_folder: true }), row('f-note', 'note.txt')],
       next_cursor: null,
     }
     pages['f-dir'] = { items: [row('f-photo', 'x.jpg', { parent_id: 'f-dir' })], next_cursor: null }
+    opened.length = 0
 
     const result = await collectGuestZipEntries({
       token: 'tok',
       folderKey,
+      rootId: ROOT,
       proof,
       rootPath: 'Holiday',
     })
 
     expect(result.errorCount).toBe(0)
+    // L7: every wrap opened for (this root, its own id, its kind).
+    expect(opened).toContainEqual({ rootId: ROOT, itemId: 'f-dir', isFolder: true })
+    expect(opened).toContainEqual({ rootId: ROOT, itemId: 'f-note', isFolder: false })
+    expect(opened).toContainEqual({ rootId: ROOT, itemId: 'f-photo', isFolder: false })
     expect(result.files.map((entry) => entry.path)).toEqual([
       'Holiday/2019/x.jpg',
       'Holiday/note.txt',
@@ -148,6 +162,7 @@ describe('collectGuestZipEntries', () => {
     const result = await collectGuestZipEntries({
       token: 'tok',
       folderKey,
+      rootId: ROOT,
       proof,
       rootPath: 'Holiday',
     })
@@ -161,7 +176,7 @@ describe('collectGuestZipEntries', () => {
   test('a 404 mid-walk keeps the entries collected so far and counts one error', async () => {
     reset()
     pages['root'] = {
-      items: [row('f-note', 'note.txt'), row('f-dir', 'later', { is_folder: true, wrapped_file_key: null })],
+      items: [row('f-note', 'note.txt'), row('f-dir', 'later', { is_folder: true })],
       next_cursor: null,
     }
     pages['f-dir'] = new FolderNotAvailableError()
@@ -169,12 +184,38 @@ describe('collectGuestZipEntries', () => {
     const result = await collectGuestZipEntries({
       token: 'tok',
       folderKey,
+      rootId: ROOT,
       proof,
       rootPath: 'Holiday',
     })
 
     expect(result.errorCount).toBe(1)
     expect(result.files.map((entry) => entry.path)).toEqual(['Holiday/note.txt'])
+  })
+
+  test('a folder with no published wrap keeps a placeholder name: never read under the folder key (L7)', async () => {
+    reset()
+    pages['root'] = {
+      items: [row('f-dir', 'later', { is_folder: true, wrapped_file_key: null }), row('f-note', 'note.txt')],
+      next_cursor: null,
+    }
+    pages['f-dir'] = { items: [row('f-inside', 'x.txt', { parent_id: 'f-dir' })], next_cursor: null }
+    opened.length = 0
+
+    const result = await collectGuestZipEntries({
+      token: 'tok',
+      folderKey,
+      rootId: ROOT,
+      proof,
+      rootPath: 'Holiday',
+    })
+
+    // Its own name is unreadable (the fixture would have yielded "later" for
+    // any key), so the archive uses the placeholder; its files still open
+    // through their own wraps.
+    expect(result.errorCount).toBe(0)
+    expect(result.files.map((entry) => entry.path).sort()).toEqual(['Holiday/folder-f-dir/x.txt', 'Holiday/note.txt'])
+    expect(opened.some((ref) => ref.itemId === 'f-dir')).toBe(false)
   })
 
   test('an unwrappable file key is an error, not a broken entry', async () => {
@@ -187,6 +228,7 @@ describe('collectGuestZipEntries', () => {
     const result = await collectGuestZipEntries({
       token: 'tok',
       folderKey,
+      rootId: ROOT,
       proof,
       rootPath: 'Holiday',
     })

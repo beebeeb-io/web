@@ -2,13 +2,20 @@
  * Task 2237b — guest upload engine.
  *
  * The engine talks to the public folder routes exactly as the server expects:
- * `metadata` plus contiguous `chunk_N` parts, no gaps, and a `wrapped_key` that
- * opens with the link's folder key. Crypto is mirrored with WebCrypto so the
- * wire bytes can be decrypted in the test.
+ * `metadata` FIRST (carrying the client-proposed id, L7a) plus contiguous
+ * `chunk_N` parts, no gaps, and a `wrapped_key` that opens with the link's
+ * folder key ONLY for (shared root, that id, file) through core (L7). Chunk and
+ * name crypto is mirrored with WebCrypto so the wire bytes can be decrypted in
+ * the test; the child wraps are core's, in process.
  */
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { loadWasm } from './helpers/wasm-crypto-mirror'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
+import { ownedFolderCrypto } from './helpers/owned-folder-wasm'
+
+const ROOT = '11111111-1111-4111-8111-111111111111'
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+const owned = ownedFolderCrypto()
 
 const subtle = crypto.subtle
 
@@ -75,23 +82,27 @@ await mockModuleScoped('../src/lib/crypto', import.meta.dir, {
       ciphertext: Array.from(ciphertext),
     }),
   toBase64: b64,
-  wrapKeyForShare: async (wrapKey: Uint8Array, keyToWrap: Uint8Array) => {
-    const { nonce, ciphertext } = await seal(wrapKey, keyToWrap)
-    const out = new Uint8Array(nonce.length + ciphertext.length)
-    out.set(nonce, 0)
-    out.set(ciphertext, nonce.length)
-    return out
-  },
+  fromBase64: unb64,
+  wrapFolderChild: owned.wrapFolderChild,
+  unwrapFolderChild: owned.unwrapFolderChild,
 })
 
 const {
   MAX_GUEST_CHUNKS,
   MIN_GUEST_CHUNK_BYTES,
+  SHARE_BUSY_WAITS_MS,
+  guestWriteTiming,
   planGuestChunks,
   rejectMessage,
   resolveGuestName,
   uploadGuestFiles,
 } = await import('../src/lib/guest-upload')
+
+// Busy retries wait in the real app; here they only count.
+const waits: number[] = []
+guestWriteTiming.wait = async (ms: number) => {
+  waits.push(ms)
+}
 
 const {
   ACTOR_NAME_STORAGE_PREFIX,
@@ -105,25 +116,31 @@ const {
 
 type UploadCall = { url: string; proof: string | null; form: FormData }
 let calls: UploadCall[] = []
-let folderSeq = 0
 let folderBodies: Record<string, unknown>[] = []
-let nextResponse: () => Response = () =>
-  Response.json({ file_id: `file-${calls.length}` }, { status: 201 })
+/** The server stores exactly the proposed id (L7a) and answers with it. */
+function echoId(form: FormData): Response {
+  const metadata = JSON.parse(String(form.get('metadata'))) as { id?: string }
+  return Response.json({ file_id: metadata.id }, { status: 201 })
+}
+let nextResponse: (form: FormData) => Response = echoId
+let nextFolderResponse: (body: Record<string, unknown>) => Response = (body) =>
+  Response.json({ id: body.id }, { status: 201 })
 
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input)
   const headers = new Headers(init?.headers)
   if (url.includes('/folders')) {
-    folderBodies.push(JSON.parse(String(init?.body)))
-    folderSeq += 1
-    return Response.json({ id: `folder-${folderSeq}` }, { status: 201 })
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+    folderBodies.push(body)
+    return nextFolderResponse(body)
   }
+  const form = init?.body as FormData
   calls.push({
     url,
     proof: headers.get('x-folder-link-proof'),
-    form: init?.body as FormData,
+    form,
   })
-  return nextResponse()
+  return nextResponse(form)
 }) as typeof fetch
 
 function fileOf(name: string, bytes: number, type = 'text/plain'): File {
@@ -136,9 +153,15 @@ async function metadataOf(form: FormData): Promise<Record<string, unknown>> {
   return JSON.parse(raw) as Record<string, unknown>
 }
 
-async function decryptName(nameEncrypted: string, wrappedKey: string, folderKey: Uint8Array) {
-  const frame = unb64(wrappedKey)
-  const fileKey = await open(folderKey, frame.slice(0, 12), frame.slice(12))
+/** Open a sealed name the way the owner would: core's L7 unwrap for exactly this row. */
+async function decryptName(
+  nameEncrypted: string,
+  wrappedKey: string,
+  folderKey: Uint8Array,
+  itemId: string,
+  isFolder = false,
+) {
+  const fileKey = await owned.unwrapFolderChild(folderKey, ROOT, itemId, isFolder ? 2 : 1, unb64(wrappedKey))
   const meta = JSON.parse(nameEncrypted) as { nonce: number[]; ciphertext: number[] }
   const plain = await open(fileKey, Uint8Array.from(meta.nonce), Uint8Array.from(meta.ciphertext))
   return JSON.parse(new TextDecoder().decode(plain)) as { name: string; mime_type: string | null }
@@ -164,9 +187,10 @@ globalThis.localStorage = storageStub()
 
 beforeEach(() => {
   calls = []
-  folderSeq = 0
   folderBodies = []
-  nextResponse = () => Response.json({ file_id: `file-${calls.length}` }, { status: 201 })
+  waits.length = 0
+  nextResponse = echoId
+  nextFolderResponse = (body) => Response.json({ id: body.id }, { status: 201 })
   localStorage.clear()
 })
 
@@ -200,6 +224,7 @@ describe('uploadGuestFiles', () => {
     const events: number[] = []
     const result = await uploadGuestFiles({
       token: 'tok',
+      rootId: ROOT,
       folderKey: FOLDER_KEY,
       proof: { token: 'tok', proof: 'proof-value', expiresAt: Date.now() + 60_000 },
       parentId: null,
@@ -232,12 +257,19 @@ describe('uploadGuestFiles', () => {
     expect(metadata.parent_id).toBeNull()
     expect(metadata.actor_name_encrypted).toBeUndefined()
     expect('actor_name_encrypted' in metadata).toBe(false)
+    // L7a: the metadata part comes first and names the file's id.
+    expect([...calls[0].form.keys()][0]).toBe('metadata')
+    expect(String(metadata.id)).toMatch(UUID_V4)
   })
 
   test('maps server rejections to reasons', async () => {
     const cases: Array<[number, string | undefined, string]> = [
       [409, 'cap_exceeded', 'cap'],
       [409, 'link_paused', 'paused'],
+      // Retried (nothing was stored), then reported as busy, never as full.
+      [409, 'share_busy', 'busy'],
+      // Re-sealed under fresh ids, then given up on.
+      [409, 'id_taken', 'network'],
       [429, undefined, 'rate'],
       [403, undefined, 'level'],
       [404, undefined, 'folder_gone'],
@@ -251,6 +283,7 @@ describe('uploadGuestFiles', () => {
       const events: Array<{ name: string; reason?: string }> = []
       const result = await uploadGuestFiles({
         token: 'tok',
+        rootId: ROOT,
         folderKey: FOLDER_KEY,
         proof: null,
         parentId: null,
@@ -270,6 +303,7 @@ describe('uploadGuestFiles', () => {
     const siblings = new Map<string, string>()
     await uploadGuestFiles({
       token: 'tok',
+      rootId: ROOT,
       folderKey: FOLDER_KEY,
       proof: null,
       parentId: null,
@@ -288,6 +322,7 @@ describe('uploadGuestFiles', () => {
       String(second.name_encrypted),
       String(second.wrapped_key),
       FOLDER_KEY,
+      String(second.id),
     )
     expect(meta.name).toBe('note (2).txt')
     expect(siblings.has('root:note (2).txt')).toBe(true)
@@ -303,6 +338,7 @@ describe('uploadGuestFiles', () => {
 
     await uploadGuestFiles({
       token: 'tok',
+      rootId: ROOT,
       folderKey: FOLDER_KEY,
       proof: null,
       parentId: null,
@@ -318,7 +354,13 @@ describe('uploadGuestFiles', () => {
       urls.findIndex((url) => url.includes('/upload')),
     )
     const metadata = await metadataOf(calls[0].form)
-    expect(metadata.parent_id).toBe('folder-2')
+    // Each folder carried its own proposed id; the file lands in the second.
+    expect(folderBodies.map((body) => String(body.id))).toEqual([
+      expect.stringMatching(UUID_V4),
+      expect.stringMatching(UUID_V4),
+    ])
+    expect(folderBodies[1].parent_id).toBe(folderBodies[0].id)
+    expect(metadata.parent_id).toBe(folderBodies[1].id)
     globalThis.fetch = original
   })
 
@@ -375,15 +417,125 @@ describe('2237b review regressions', () => {
   })
 
   test('A3 nested folder name and all descendant keys open under the shared root', async () => {
-    await uploadGuestFiles({ token: 'tok', folderKey: FOLDER_KEY, proof: null, parentId: null,
+    await uploadGuestFiles({ token: 'tok', rootId: ROOT, folderKey: FOLDER_KEY, proof: null, parentId: null,
       tasks: [{ file: fileOf('a.txt', 17), relativePath: 'Trip/2019/a.txt' }],
       siblingNames: new Map(), actorNameEncrypted: null, onEvent: () => undefined })
     expect(folderBodies).toHaveLength(2)
     for (const [i, body] of folderBodies.entries()) {
-      const meta = await decryptName(String(body.name_encrypted), String(body.wrapped_name_key), FOLDER_KEY)
+      const meta = await decryptName(String(body.name_encrypted), String(body.wrapped_name_key), FOLDER_KEY, String(body.id), true)
       expect(meta.name).toBe(['Trip', '2019'][i])
     }
     const body = await metadataOf(calls[0].form)
-    expect((await decryptName(String(body.name_encrypted), String(body.wrapped_key), FOLDER_KEY)).name).toBe('a.txt')
+    expect((await decryptName(String(body.name_encrypted), String(body.wrapped_key), FOLDER_KEY, String(body.id))).name).toBe('a.txt')
+  })
+})
+
+describe('L7 and L7a: every guest write is bound to the id it proposes', () => {
+  const upload = (name = 'a.txt') =>
+    uploadGuestFiles({
+      token: 'tok',
+      rootId: ROOT,
+      folderKey: FOLDER_KEY,
+      proof: null,
+      parentId: null,
+      tasks: [{ file: fileOf(name, 10), relativePath: null }],
+      siblingNames: new Map(),
+      actorNameEncrypted: null,
+      onEvent: () => undefined,
+    })
+
+  test("a file's wrap opens for its own id, as a file, under this root only", async () => {
+    await upload()
+    const metadata = await metadataOf(calls[0].form)
+    const id = String(metadata.id)
+    const wrap = unb64(String(metadata.wrapped_key))
+    expect(wrap.length).toBe(60)
+    await owned.unwrapFolderChild(FOLDER_KEY, ROOT, id, 1, wrap)
+    expect(() => loadWasm().unwrapFolderChild(FOLDER_KEY, ROOT, crypto.randomUUID(), 1, wrap)).toThrow(/decryption failed/)
+    expect(() => loadWasm().unwrapFolderChild(FOLDER_KEY, ROOT, id, 2, wrap)).toThrow(/decryption failed/)
+    expect(() => loadWasm().unwrapFolderChild(FOLDER_KEY, crypto.randomUUID(), id, 1, wrap)).toThrow(/decryption failed/)
+  })
+
+  test('409 id_taken: the write is re-sealed under a fresh id, and the stored id is the new one', async () => {
+    let first = true
+    nextResponse = (form) => {
+      if (first) {
+        first = false
+        return Response.json({ error: 'id_taken' }, { status: 409 })
+      }
+      return echoId(form)
+    }
+    const events: Array<{ name: string; fileId?: string }> = []
+    const result = await uploadGuestFiles({
+      token: 'tok',
+      rootId: ROOT,
+      folderKey: FOLDER_KEY,
+      proof: null,
+      parentId: null,
+      tasks: [{ file: fileOf('a.txt', 10), relativePath: null }],
+      siblingNames: new Map(),
+      actorNameEncrypted: null,
+      onEvent: (event) => events.push({ name: event.state.name, fileId: event.state.name === 'added' ? event.state.fileId : undefined }),
+    })
+    expect(result).toEqual({ added: 1, rejected: 0 })
+    expect(calls).toHaveLength(2)
+    const [refused, accepted] = await Promise.all(calls.map((call) => metadataOf(call.form)))
+    expect(accepted.id).not.toBe(refused.id)
+    // The second wrap is bound to the second id, not the refused one.
+    const wrap = unb64(String(accepted.wrapped_key))
+    await owned.unwrapFolderChild(FOLDER_KEY, ROOT, String(accepted.id), 1, wrap)
+    expect(() => loadWasm().unwrapFolderChild(FOLDER_KEY, ROOT, String(refused.id), 1, wrap)).toThrow(/decryption failed/)
+    expect(events.find((event) => event.name === 'added')?.fileId).toBe(String(accepted.id))
+  })
+
+  test('409 share_busy is waited out and retried; nothing is reported as a full folder', async () => {
+    let busy = 2
+    nextResponse = (form) => {
+      if (busy > 0) {
+        busy -= 1
+        return Response.json({ error: 'share_busy' }, { status: 409 })
+      }
+      return echoId(form)
+    }
+    expect(await upload()).toEqual({ added: 1, rejected: 0 })
+    expect(calls).toHaveLength(3)
+    expect(waits).toEqual(SHARE_BUSY_WAITS_MS.slice(0, 2))
+  })
+
+  test('a server that stores another id is refused: that row would be unreadable', async () => {
+    nextResponse = () => Response.json({ file_id: crypto.randomUUID() }, { status: 201 })
+    expect(await upload()).toEqual({ added: 0, rejected: 1 })
+    nextFolderResponse = () => Response.json({ id: crypto.randomUUID() }, { status: 201 })
+    nextResponse = echoId
+    const result = await uploadGuestFiles({
+      token: 'tok',
+      rootId: ROOT,
+      folderKey: FOLDER_KEY,
+      proof: null,
+      parentId: null,
+      tasks: [{ file: fileOf('a.txt', 10), relativePath: 'Trip/a.txt' }],
+      siblingNames: new Map(),
+      actorNameEncrypted: null,
+      onEvent: () => undefined,
+    })
+    expect(result).toEqual({ added: 0, rejected: 1 })
+  })
+
+  test("a guest folder's name-key wrap opens for its own id as a folder only", async () => {
+    await uploadGuestFiles({
+      token: 'tok',
+      rootId: ROOT,
+      folderKey: FOLDER_KEY,
+      proof: null,
+      parentId: null,
+      tasks: [{ file: fileOf('a.txt', 10), relativePath: 'Trip/a.txt' }],
+      siblingNames: new Map(),
+      actorNameEncrypted: null,
+      onEvent: () => undefined,
+    })
+    const folder = folderBodies[0]
+    const wrap = unb64(String(folder.wrapped_name_key))
+    await owned.unwrapFolderChild(FOLDER_KEY, ROOT, String(folder.id), 2, wrap)
+    expect(() => loadWasm().unwrapFolderChild(FOLDER_KEY, ROOT, String(folder.id), 1, wrap)).toThrow(/decryption failed/)
   })
 })

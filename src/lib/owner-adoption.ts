@@ -14,9 +14,11 @@ import { decryptChunk, readFileMetadata, deriveFileKey, encryptChunk, fromBase64
 import { ApiError, adoptOwnerFileKey, getFile, getSentInvites, getSharedFolder, type ShareInvite, type SharedFolderInfo } from './api'
 import {
   activeFolderInvites,
-  decryptChildFileKey,
-  decryptOwnerFolderKey,
   findExistingFolderKey,
+  noCustodyRecord,
+  openFolderChild,
+  openFolderCustody,
+  type FolderWrapFormat,
 } from './folder-share-crypto'
 
 // ─── Custody and root lookups (cached) ─────────────────────────────────────
@@ -54,13 +56,36 @@ export async function sharedFolderCustody(folderId: string): Promise<SharedFolde
     (error: unknown) => {
       // Only a definite "no custody record" is remembered; anything else
       // (offline, 5xx, 429) is retried by the next caller.
-      if (error instanceof ApiError && error.status === 404) return null
+      if (error instanceof ApiError && noCustodyRecord(error)) return null
       if (custodyCache.get(folderId)?.value === value) custodyCache.delete(folderId)
       return null
     },
   )
   custodyCache.set(folderId, { at: Date.now(), value })
   return value
+}
+
+/**
+ * Decision L7b: the folder's wrap format, from its custody record: `l7` when
+ * it has one, `legacy_invite` when it definitely has none (a flag-off
+ * invite-only share, or a server without the route). STRICT: any other failure
+ * throws, so a write never falls back to the legacy format by accident.
+ */
+export async function folderWrapFormat(rootId: string): Promise<FolderWrapFormat> {
+  const cached = fresh(custodyCache.get(rootId), (value) => value !== null)
+  if (cached) {
+    try {
+      if ((await cached) !== null) return 'l7'
+    } catch { /* stale: re-read below */ }
+  }
+  try {
+    const info = await getSharedFolder(rootId)
+    custodyCache.set(rootId, { at: Date.now(), value: Promise.resolve(info) })
+    return 'l7'
+  } catch (error) {
+    if (noCustodyRecord(error)) return 'legacy_invite'
+    throw error
+  }
 }
 
 async function parentOf(id: string): Promise<string | null> {
@@ -185,20 +210,32 @@ export async function folderKeyForRoot(
   masterKey: Uint8Array,
   folderId: string,
 ): Promise<Uint8Array | null> {
+  return (await rootKeyAndFormat(masterKey, folderId))?.folderKey ?? null
+}
+
+/**
+ * The root's folder key and its wrap format (L7b). With a custody record the
+ * key comes from it (L6) and every child wrap is L7. Without one, the folder is
+ * a flag-off invite-only share: the key comes from its invite's legacy owner
+ * copy and its child wraps are the legacy invite format.
+ */
+export async function rootKeyAndFormat(
+  masterKey: Uint8Array,
+  folderId: string,
+): Promise<{ folderKey: Uint8Array; format: FolderWrapFormat } | null> {
   const custody = await sharedFolderCustody(folderId)
-  const wrapped = custody?.owner_wrapped_folder_key
-  if (wrapped) {
+  if (custody) {
+    const wrapped = custody.owner_wrapped_folder_key
+    if (!wrapped) return null
     try {
-      const bytes = fromBase64(wrapped)
-      if (bytes.length <= 12) return null
-      return await decryptOwnerFolderKey(masterKey, folderId, bytes)
+      return { folderKey: await openFolderCustody(masterKey, folderId, fromBase64(wrapped)), format: 'l7' }
     } catch {
       return null
     }
   }
   try {
     const existing = await findExistingFolderKey(masterKey, folderId)
-    return existing?.folderKey ?? null
+    return existing ? { folderKey: existing.folderKey, format: 'legacy_invite' } : null
   } catch {
     return null
   }
@@ -220,12 +257,12 @@ export async function adoptGuestFile(args: {
   encryptedFileKeyB64: string
 }): Promise<{ adopted: boolean; fileKey: Uint8Array }> {
   const { masterKey, folderId, file, encryptedFileKeyB64 } = args
-  const folderKey = await folderKeyForRoot(masterKey, folderId)
-  if (!folderKey) throw new Error('The folder key is not available on this device.')
+  const root = await rootKeyAndFormat(masterKey, folderId)
+  if (!root) throw new Error('The folder key is not available on this device.')
   let fileKey: Uint8Array
-  // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
-  try { fileKey = await decryptChildFileKey(folderKey, encryptedFileKeyB64) }
-  finally { zeroize(folderKey) }
+  try {
+    fileKey = await openFolderChild(root.format, root.folderKey, { rootId: folderId, itemId: file.id, isFolder: false }, encryptedFileKeyB64)
+  } finally { zeroize(root.folderKey) }
   // A write-once owner wrap must never preserve an unverified or stale key.
   try {
     const metadata = file.name_encrypted ?? (await getFile(file.id)).name_encrypted
@@ -272,14 +309,13 @@ export async function resolveSharedFileKey(args: {
   }
   const encrypted = index.get(file.id)
   if (!encrypted) return null
-  const folderKey = await folderKeyForRoot(masterKey, folderId)
-  if (!folderKey) return null
+  const root = await rootKeyAndFormat(masterKey, folderId)
+  if (!root) return null
   try {
-    // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
-    return await decryptChildFileKey(folderKey, encrypted)
+    return await openFolderChild(root.format, root.folderKey, { rootId: folderId, itemId: file.id, isFolder: false }, encrypted)
   } catch {
     return null
-  } finally { zeroize(folderKey) }
+  } finally { zeroize(root.folderKey) }
 }
 
 export type OwnerOpenResult =

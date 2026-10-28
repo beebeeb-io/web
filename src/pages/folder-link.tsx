@@ -253,6 +253,7 @@ function FolderLinkBody(props: {
       level={props.level}
       proof={props.proof}
       rootName={props.root.root_name_encrypted}
+      rootId={props.root.folder_id}
       rootWrappedKey={props.root.root_wrapped_key ?? null}
       onNames={rememberNames}
       onOpenFile={() => undefined}

@@ -9,15 +9,17 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { loadWasm } from './helpers/wasm-crypto-mirror'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
+import { ownedFolderCrypto } from './helpers/owned-folder-wasm'
 
-// `combine_folder_link_key` is core; the worker hop is the only thing skipped.
+// `combine_folder_link_key`, the passphrase stretch and the L6 link-owner
+// wraps are core; the worker hop is the only thing skipped.
 await mockModuleScoped('../src/lib/crypto', import.meta.dir, () => ({
+  ...ownedFolderCrypto(),
   combineFolderLinkKey: async (key: Uint8Array, stretch: Uint8Array | null) =>
     loadWasm().combineFolderLinkKey(key, stretch) as Uint8Array,
-  deriveKeys: async (password: string, salt: Uint8Array) => ({
-    masterKey: loadWasm().derive_master_key(password, salt).key as Uint8Array,
-  }),
 }))
+
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 
 import type { CreateFolderLinkPorts } from '../src/lib/folder-link-create'
 
@@ -33,7 +35,7 @@ const {
   ownerWrappedLinkToken,
   rebuildFolderLinkUrl,
 } = await import('../src/lib/shared-folder-link-crypto')
-const { unwrapKeyFromShare } = await import('../src/lib/crypto')
+const { unwrapKeyFromShare, unwrapLinkOwnerKey, unwrapLinkOwnerToken } = await import('../src/lib/crypto')
 const { fromBase64, toBase64 } = await import('../src/lib/crypto')
 
 const MASTER = new Uint8Array(32).fill(0x11)
@@ -69,7 +71,7 @@ function fakePorts(overrides: Partial<CreateFolderLinkPorts> = {}) {
       const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, cryptoKey, folderKey as BufferSource))
       return toBase64(new Uint8Array([...iv, ...ct]))
     },
-    // The real owner wraps (WebCrypto AES-GCM): L2 is asserted by opening them.
+    // The real owner wraps (core L6, bound to the share id): L2 is asserted by opening them.
     ownerWrappedLinkKey,
     ownerWrappedLinkToken,
   }
@@ -97,11 +99,11 @@ function fakePorts(overrides: Partial<CreateFolderLinkPorts> = {}) {
         wrapped_folder_key: null,
       }
     },
-    decryptOwnerFolderKey: async () => {
-      calls.push({ name: 'decryptOwnerFolderKey' })
+    openFolderCustody: async () => {
+      calls.push({ name: 'openFolderCustody' })
       return new Uint8Array(FOLDER_KEY)
     },
-    encryptOwnerFolderKey: async () => new Uint8Array(60).fill(3),
+    sealFolderCustody: async () => new Uint8Array(60).fill(3),
     findExistingFolderKey: async () => {
       calls.push({ name: 'findExistingFolderKey' })
       return null
@@ -117,8 +119,10 @@ function fakePorts(overrides: Partial<CreateFolderLinkPorts> = {}) {
       void masterKey
       return new Uint8Array(32).fill(0x44)
     },
-    encryptChildFileKey: async (folderKey: Uint8Array, key: Uint8Array) =>
-      `enc:${folderKey[0]}:${key[0]}`,
+    sealChildKey: async (folderKey: Uint8Array, ref: { rootId: string; itemId: string; isFolder: boolean }, key: Uint8Array) => {
+      calls.push({ name: 'sealChildKey', arg: ref })
+      return `enc:${folderKey[0]}:${key[0]}`
+    },
     registerSharedFolderKey: async (folderId, body) => {
       calls.push({ name: 'registerSharedFolderKey', arg: body })
       return { created: true, key_version: body.key_version }
@@ -126,7 +130,7 @@ function fakePorts(overrides: Partial<CreateFolderLinkPorts> = {}) {
     createFolderLink: async (body) => {
       calls.push({ name: 'createFolderLink', arg: body })
       return {
-        id: 'link-1',
+        id: body.id,
         token: body.token ?? '',
         key_version: 1,
         folder_id: folderIdOf(body),
@@ -147,13 +151,14 @@ function fakePorts(overrides: Partial<CreateFolderLinkPorts> = {}) {
         owner_wrapped_token: null,
       } as never
     },
-    encryptAllChildrenKeys: async (_masterKey: Uint8Array, folderKey: Uint8Array, folderId: string) => {
+    encryptAllChildrenKeys: async (_masterKey: Uint8Array, folderKey: Uint8Array, folderId: string, format: string) => {
       // A copy: the caller zeroizes its key afterwards (comparing the live
       // array would compare zeros with zeros).
-      calls.push({ name: 'encryptAllChildrenKeys', arg: { folderId, folderKey: new Uint8Array(folderKey) } })
+      calls.push({ name: 'encryptAllChildrenKeys', arg: { folderId, folderKey: new Uint8Array(folderKey), format } })
       return [{ file_id: 'file-1', encrypted_file_key: 'enc-child-1' }]
     },
     generateShareToken: async () => 'tok_2237b',
+    generateLinkId: () => crypto.randomUUID(),
     ...linkCrypto,
     encryptLabel: async (_key: Uint8Array, label: string) => `enc:${label}`,
     fromBase64,
@@ -188,6 +193,7 @@ describe('folder-link-create — custody order (2237b)', () => {
       'registerSharedFolderKey',
       'encryptAllChildrenKeys',
       'deriveFileKey',
+      'sealChildKey',
       'createFolderLink',
     ])
     const register = calls.find((c) => c.name === 'registerSharedFolderKey')?.arg as {
@@ -213,7 +219,7 @@ describe('folder-link-create — custody order (2237b)', () => {
 
     expect(names(calls)).not.toContain('registerSharedFolderKey')
     expect(names(calls)).not.toContain('generateFolderKey')
-    expect(names(calls)).toContain('decryptOwnerFolderKey')
+    expect(names(calls)).toContain('openFolderCustody')
   })
 
   test('409 key_version_conflict re-reads and uses the key that won the race', async () => {
@@ -229,7 +235,7 @@ describe('folder-link-create — custody order (2237b)', () => {
     expect(names(calls).filter((n) => n === 'getSharedFolder')).toHaveLength(2)
     // The link is created against the re-read key, not the one we minted.
     expect(names(calls)).toContain('createFolderLink')
-    expect(names(calls)).toContain('decryptOwnerFolderKey')
+    expect(names(calls)).toContain('openFolderCustody')
   })
 })
 
@@ -261,11 +267,15 @@ describe('folder-link-create — the link itself (2237b)', () => {
       { file_id: 'file-1', encrypted_file_key: 'enc-child-1' },
     ])
     expect(calls.find((c) => c.name === 'deriveFileKey')?.arg).toBe(FOLDER_ID)
+    // L7: the root's own entry is bound to (root, root, folder).
+    expect(calls.find((c) => c.name === 'sealChildKey')?.arg).toEqual({ rootId: FOLDER_ID, itemId: FOLDER_ID, isFolder: true })
     const encrypt = calls.find((c) => c.name === 'encryptAllChildrenKeys')?.arg as {
       folderId: string
       folderKey: Uint8Array
+      format: string
     }
     expect(encrypt.folderId).toBe(FOLDER_ID)
+    expect(encrypt.format).toBe('l7')
     expect(Array.from(encrypt.folderKey)).toEqual(Array.from(FOLDER_KEY))
   })
 
@@ -360,9 +370,9 @@ function custodyServer() {
       records.set(folderId, body.owner_wrapped_folder_key)
       return { created: true, key_version: body.key_version }
     },
-    // "Sealed" = the key bytes behind a marker; decrypt reverses it.
-    encryptOwnerFolderKey: async (_m: Uint8Array, _f: string, key: Uint8Array) => new Uint8Array([0xee, ...key]),
-    decryptOwnerFolderKey: async (_m: Uint8Array, _f: string, blob: Uint8Array) => blob.slice(1),
+    // "Sealed" = the key bytes behind a marker; open reverses it.
+    sealFolderCustody: async (_m: Uint8Array, _f: string, key: Uint8Array) => new Uint8Array([0xee, ...key]),
+    openFolderCustody: async (_m: Uint8Array, _f: string, blob: Uint8Array) => blob.slice(1),
   }
 }
 
@@ -427,13 +437,19 @@ describe('L1 — the folder key is random and its one source is the custody reco
 })
 
 describe('L2 — a link keeps the owner\'s copy of K_c and can be copied again later', () => {
-  test('owner_wrapped_key opens to K_c, not to the folder key', async () => {
+  test('owner_wrapped_key opens to K_c (not the folder key), under this link\'s share id only (L6)', async () => {
     const { ports, calls } = fakePorts()
     const created = await createFolderLinkWithKeys(baseInput(), ports)
-    const body = calls.find((c) => c.name === 'createFolderLink')?.arg as { owner_wrapped_key: string }
-    const opened = await unwrapKeyFromShare(MASTER, fromBase64(body.owner_wrapped_key))
+    const body = calls.find((c) => c.name === 'createFolderLink')?.arg as { id: string; owner_wrapped_key: string; owner_wrapped_token: string }
+    const opened = await unwrapLinkOwnerKey(MASTER, body.id, fromBase64(body.owner_wrapped_key))
     expect(Array.from(opened)).toEqual(Array.from(readLinkKeyFragment(created.url)!))
     expect(Array.from(opened)).not.toEqual(Array.from(FOLDER_KEY))
+    const token = await unwrapLinkOwnerToken(MASTER, body.id, fromBase64(body.owner_wrapped_token))
+    expect(new TextDecoder().decode(token)).toBe('tok_2237b')
+    // Bound to the share id, and to its purpose: no other link, no generic unwrap.
+    await expect(unwrapLinkOwnerKey(MASTER, crypto.randomUUID(), fromBase64(body.owner_wrapped_key))).rejects.toThrow(/decryption failed/)
+    await expect(unwrapLinkOwnerToken(MASTER, body.id, fromBase64(body.owner_wrapped_key))).rejects.toThrow()
+    await expect(unwrapKeyFromShare(MASTER, fromBase64(body.owner_wrapped_key))).rejects.toThrow()
   })
 
   test('after the panel is closed the same URL is rebuilt from the stored row', async () => {
@@ -441,20 +457,24 @@ describe('L2 — a link keeps the owner\'s copy of K_c and can be copied again l
       const { ports, calls } = fakePorts()
       const created = await createFolderLinkWithKeys(baseInput({ passphrase }), ports)
       const body = calls.find((c) => c.name === 'createFolderLink')?.arg as {
+        id: string
         owner_wrapped_key: string
         owner_wrapped_token: string
         wrapped_folder_key: string
       }
       // What GET /shares/folder-links returns for the owner, later, anywhere.
       const row = {
+        id: body.id,
         owner_wrapped_key: body.owner_wrapped_key,
         owner_wrapped_token: body.owner_wrapped_token,
         wrapped_folder_key: body.wrapped_folder_key,
         passphrase_protected: passphrase !== null,
       }
       expect(await rebuildFolderLinkUrl(row, MASTER, 'https://app.example')).toBe(created.url)
-      // Another account's master key cannot rebuild it.
+      // Another account's master key cannot rebuild it, nor can the copies
+      // served on another link's row (L6: bound to the share id).
       expect(await rebuildFolderLinkUrl(row, new Uint8Array(32).fill(0x99), 'https://app.example')).toBeNull()
+      expect(await rebuildFolderLinkUrl({ ...row, id: crypto.randomUUID() }, MASTER, 'https://app.example')).toBeNull()
     }
   })
 
@@ -466,10 +486,11 @@ describe('L2 — a link keeps the owner\'s copy of K_c and can be copied again l
     const a = one.calls.find((c) => c.name === 'createFolderLink')?.arg as Record<string, string>
     const b = two.calls.find((c) => c.name === 'createFolderLink')?.arg as Record<string, string>
     // K_c of link B pasted onto link A: the plain link proves it does not open.
-    const mixed = { owner_wrapped_key: b.owner_wrapped_key, owner_wrapped_token: a.owner_wrapped_token, wrapped_folder_key: a.wrapped_folder_key, passphrase_protected: false }
+    // Served on A's row with A's id, B's copy is refused before it is ever tried.
+    const mixed = { id: a.id, owner_wrapped_key: b.owner_wrapped_key, owner_wrapped_token: a.owner_wrapped_token, wrapped_folder_key: a.wrapped_folder_key, passphrase_protected: false }
     expect(await rebuildFolderLinkUrl(mixed, MASTER, 'https://app.example')).toBeNull()
     // The pre-L2 shape (the folder key stored as owner_wrapped_key) is refused too.
-    const legacy = { owner_wrapped_key: await ownerWrappedLinkKey(MASTER, FOLDER_KEY), owner_wrapped_token: a.owner_wrapped_token, wrapped_folder_key: a.wrapped_folder_key, passphrase_protected: false }
+    const legacy = { id: a.id, owner_wrapped_key: await ownerWrappedLinkKey(MASTER, a.id, FOLDER_KEY), owner_wrapped_token: a.owner_wrapped_token, wrapped_folder_key: a.wrapped_folder_key, passphrase_protected: false }
     expect(await rebuildFolderLinkUrl(legacy, MASTER, 'https://app.example')).toBeNull()
   })
 })
@@ -478,4 +499,56 @@ test('a whitespace-only passphrase is refused, never turned into a plain link', 
   const { ports, calls } = fakePorts()
   await expect(createFolderLinkWithKeys(baseInput({ passphrase: '   ' }), ports)).rejects.toThrow(/empty/)
   expect(names(calls)).not.toContain('createFolderLink')
+})
+
+describe('L6a — the share id is proposed by the client and both owner copies are sealed under it', () => {
+  test('the create carries a UUIDv4 id and the owner copies open under exactly that id', async () => {
+    const { ports, calls } = fakePorts()
+    const created = await createFolderLinkWithKeys(baseInput(), ports)
+    const body = calls.find((c) => c.name === 'createFolderLink')?.arg as { id: string; owner_wrapped_key: string }
+    expect(body.id).toMatch(UUID_V4)
+    expect(created.id).toBe(body.id)
+    await unwrapLinkOwnerKey(MASTER, body.id, fromBase64(body.owner_wrapped_key))
+  })
+
+  test('409 id_taken: re-sealed under a fresh id and sent again; the stored link is the new id', async () => {
+    const bodies: Array<{ id: string; owner_wrapped_key: string; owner_wrapped_token: string }> = []
+    let refuse = true
+    const { ports } = fakePorts({
+      createFolderLink: async (body) => {
+        bodies.push(body as never)
+        if (refuse) {
+          refuse = false
+          throw Object.assign(new Error('That id is already in use.'), { status: 409, code: 'id_taken' })
+        }
+        return { id: body.id, token: body.token, key_version: 1, access_level: 'view' } as never
+      },
+    })
+    const created = await createFolderLinkWithKeys(baseInput(), ports)
+    expect(bodies).toHaveLength(2)
+    expect(bodies[1].id).not.toBe(bodies[0].id)
+    expect(created.id).toBe(bodies[1].id)
+    // The resent copies are bound to the new id, not to the refused one.
+    await unwrapLinkOwnerKey(MASTER, bodies[1].id, fromBase64(bodies[1].owner_wrapped_key))
+    await expect(unwrapLinkOwnerKey(MASTER, bodies[0].id, fromBase64(bodies[1].owner_wrapped_key))).rejects.toThrow(/decryption failed/)
+  })
+
+  test('a server that stores the link under another id is refused: its owner copies would never open', async () => {
+    const { ports } = fakePorts({
+      createFolderLink: async (body) => ({ id: crypto.randomUUID(), token: body.token, key_version: 1 }) as never,
+    })
+    await expect(createFolderLinkWithKeys(baseInput(), ports)).rejects.toThrow(/different id/)
+  })
+
+  test('id_taken is retried a bounded number of times, then surfaced', async () => {
+    let attempts = 0
+    const { ports } = fakePorts({
+      createFolderLink: async () => {
+        attempts += 1
+        throw Object.assign(new Error('taken'), { status: 409, code: 'id_taken' })
+      },
+    })
+    await expect(createFolderLinkWithKeys(baseInput(), ports)).rejects.toThrow(/taken/)
+    expect(attempts).toBe(3)
+  })
 })

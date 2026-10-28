@@ -70,6 +70,10 @@ export async function installMocks(): Promise<void> {
     // Task 2133: the folder key id and the child-key wrap, stubbed (the WASM
     // worker is not loadable under bun test). The id is the key's bytes.
     folderKeyId: async (folderKey: Uint8Array) => Uint8Array.from(folderKey),
+    // Task 2237b L7: the child wrap, stubbed to spell out its binding so a
+    // contract test can assert exactly which (root, item, kind) it was sealed to.
+    wrapFolderChild: async (_folderKey: Uint8Array, rootId: string, itemId: string, kind: number, childKey: Uint8Array) =>
+      new TextEncoder().encode(`l7|${rootId}|${itemId}|${kind}|${childKey[0]}`),
     encryptChunk: async (_k: Uint8Array, plaintext: Uint8Array) => ({
       nonce: new Uint8Array(12), ciphertext: Uint8Array.from(plaintext),
     }),

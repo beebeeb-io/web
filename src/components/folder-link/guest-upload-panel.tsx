@@ -129,6 +129,7 @@ export function GuestUploadPanel(props: {
       try {
         const result = await uploadGuestFiles({
           token: props.token,
+          rootId: props.folderId,
           folderKey: props.folderKey,
           proof: props.proof,
           parentId: props.parentId,
@@ -153,6 +154,7 @@ export function GuestUploadPanel(props: {
     },
     [
       props.token,
+      props.folderId,
       props.folderKey,
       props.proof,
       props.parentId,

@@ -17,7 +17,7 @@ import {
 } from './bulk-download'
 import { decryptFileMetadata } from './crypto'
 import { listFolderItems } from './folder-link-public'
-import { decryptChildFileKey } from './folder-share-crypto'
+import { openChildKey } from './folder-share-crypto'
 import { fetchGuestDownloadBlob, streamGuestPlaintext } from './guest-bytes'
 import type { Proof, PublicFolderItem } from './folder-link-types'
 
@@ -66,6 +66,8 @@ function toDriveFile(item: PublicFolderItem): DriveFile {
 export interface CollectGuestZipArgs {
   token: string
   folderKey: Uint8Array
+  /** The shared folder's id (the L7 binding of every wrap). */
+  rootId: string
   proof: Proof | null
   /** Decrypted name of the shared root folder; the archive's outer folder. */
   rootPath: string
@@ -81,7 +83,7 @@ export interface CollectGuestZipArgs {
 export async function collectGuestZipEntries(
   args: CollectGuestZipArgs,
 ): Promise<{ files: GuestZipFile[]; errorCount: number }> {
-  const { token, folderKey, proof, rootPath, signal } = args
+  const { token, folderKey, rootId, proof, rootPath, signal } = args
   const itemsById = new Map<string, PublicFolderItem>()
 
   async function listAll(parentId: string | null): Promise<DriveFile[]> {
@@ -106,12 +108,12 @@ export async function collectGuestZipEntries(
     listChildren: (folderId) => listAll(folderId),
     getFileKey: async (file) => {
       const item = itemsById.get(file.id)
+      // L7: a row is read only through the wrap the owner published for it. A
+      // folder without one is unreadable, never decrypted under the folder key.
       if (!item?.wrapped_file_key) {
-        if (file.is_folder) return folderKey
-        throw new Error('This file has no folder key.')
+        throw new Error(file.is_folder ? 'This folder has no folder key.' : 'This file has no folder key.')
       }
-      // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
-      return decryptChildFileKey(folderKey, item.wrapped_file_key)
+      return openChildKey(folderKey, { rootId, itemId: file.id, isFolder: !!file.is_folder }, item.wrapped_file_key)
     },
     decryptToBlob: async (file, fileKey) => {
       const item = itemsById.get(file.id)

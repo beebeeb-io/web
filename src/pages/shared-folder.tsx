@@ -18,6 +18,7 @@ import {
   getSharedFolder,
   type DriveFile,
   type ShareInvite,
+  type SharedFolderInfo,
 } from '../lib/api'
 import { parseFolderAccessLevel, type FolderAccessLevel } from '../lib/folder-link-types'
 import type { MemberContext } from '../lib/member-write'
@@ -25,7 +26,7 @@ import { memberRename, memberTrash, memberUploadFiles, writeErrorAction } from '
 import { useKeys } from '../lib/key-context'
 import { useAuth } from '../lib/auth-context'
 import { decryptFileMetadata, zeroize } from '../lib/crypto'
-import { decryptChildFileKey } from '../lib/folder-share-crypto'
+import { noCustodyRecord, openFolderChild, type FolderWrapFormat } from '../lib/folder-share-crypto'
 import { resolveRecipientFolderKey } from '../lib/recipient-folder-key'
 import { encryptedDownload } from '../lib/encrypted-download'
 import { formatBytes } from '../lib/format'
@@ -292,6 +293,8 @@ export function SharedFolder() {
   // approved with the wrong key): say so instead of listing 'Encrypted file'.
   const [keyMissing, setKeyMissing] = useState(false)
   const [fileKeysMap, setFileKeysMap] = useState<Record<string, string>>({})
+  // L7b: the folder's wrap format, from its custody record (read with the key).
+  const [wrapFormat, setWrapFormat] = useState<FolderWrapFormat | null>(null)
   const [invite, setInvite] = useState<ShareInvite | null>(null)
   const [memberCount, setMemberCount] = useState(0)
   const [ownerEmail, setOwnerEmail] = useState('')
@@ -344,8 +347,16 @@ export function SharedFolder() {
         listSharedFolderFiles(folderId, parentId),
         getFolderKeys(inviteId),
         getFolderMembers(folderId).catch(() => ({ members: [], owner_id: '' })),
-        getSharedFolder(folderId).catch(() => null),
+        // Only a definite "no custody record" (404; 405 without the route;
+        // 501 with the flag off) means a legacy invite-only folder. Anything
+        // else fails the load: the format must never be guessed (L7b).
+        getSharedFolder(folderId).catch((e: unknown): SharedFolderInfo | null => {
+          if (noCustodyRecord(e)) return null
+          throw e
+        }),
       ])
+      const format: FolderWrapFormat = shared ? 'l7' : 'legacy_invite'
+      setWrapFormat(format)
 
       if (shared) {
         setRole(shared.role)
@@ -358,7 +369,7 @@ export function SharedFolder() {
 
       let fk = folderKeyCache
       if (!fk && inv) {
-        const resolved = await resolveRecipientFolderKey(inv, getMasterKey(), keys)
+        const resolved = await resolveRecipientFolderKey(inv, getMasterKey(), keys, format)
         if (resolved.status === 'ok') {
           fk = resolved.folderKey
           setFolderKeyCache(fk)
@@ -387,8 +398,12 @@ export function SharedFolder() {
           try {
             const encKey = keysMap[file.id]
             if (encKey && file.name_encrypted) {
-              // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
-              const fileKey = await decryptChildFileKey(fk, encKey)
+              const fileKey = await openFolderChild(
+                format,
+                fk,
+                { rootId: folderId, itemId: file.id, isFolder: !!file.is_folder },
+                encKey,
+              )
               // name_encrypted carries the JSON metadata envelope
               // ({name, mime_type}); decryptFileMetadata unwraps it like the
               // owner's drive does. decryptFilename would show the raw JSON.
@@ -420,17 +435,18 @@ export function SharedFolder() {
   }, [isUnlocked, folderId, inviteId, currentParent])
 
   const memberContext = useMemo<MemberContext | null>(() => {
-    if (!folderId || !inviteId || !folderKeyCache) return null
+    if (!folderId || !inviteId || !folderKeyCache || !wrapFormat) return null
     return {
       folderId,
       inviteId,
       folderKey: folderKeyCache,
+      format: wrapFormat,
       level,
       displayName: displayName ?? 'You',
       masterKey: getMasterKey(),
       fileKeys: fileKeysMap,
     }
-  }, [folderId, inviteId, folderKeyCache, level, displayName, getMasterKey, fileKeysMap])
+  }, [folderId, inviteId, folderKeyCache, wrapFormat, level, displayName, getMasterKey, fileKeysMap])
 
   /**
    * A refused write re-reads the level instead of retrying: the affordance the
@@ -534,12 +550,16 @@ export function SharedFolder() {
   }
 
   async function handleDownload(row: SharedFolderRow) {
-    if (!folderKeyCache) return
+    if (!folderKeyCache || !wrapFormat || !folderId) return
     try {
       const encKey = fileKeysMap[row.file.id]
       if (!encKey) throw new Error('No key for this file')
-      // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
-      const fileKey = await decryptChildFileKey(folderKeyCache, encKey)
+      const fileKey = await openFolderChild(
+        wrapFormat,
+        folderKeyCache,
+        { rootId: folderId, itemId: row.file.id, isFolder: false },
+        encKey,
+      )
       await encryptedDownload(
         row.file.id,
         fileKey,

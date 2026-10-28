@@ -10,6 +10,8 @@ await installMocks()
 await mockModuleScoped('../src/lib/owner-adoption', import.meta.dir, {
   sharedRootFor: async (parentId: string) => parentId === 'nested-folder' ? 'shared-root' : null,
   folderKeyForRoot: async () => new Uint8Array(32).fill(7),
+  // The root has a custody record, so the published wrap is L7 (L7b).
+  folderWrapFormat: async () => 'l7',
 })
 
 describe('encryptedUpload v2 server file id contract', () => {
@@ -68,6 +70,7 @@ test('B owner upload publishes the actual v2 file key to the shared root without
     async () => new Uint8Array([9]))
   expect(cap.ownerKeys).toHaveLength(1)
   expect(cap.ownerKeys[0].folderId).toBe('shared-root')
-  expect(cap.ownerKeys[0].keys).toEqual([{ file_id: 'server-file-id', encrypted_file_key: 'AAAAAAAAAAAAAAAACQ==' }])
+  // L7: bound to (shared root, the server's file id, file), sealing the real file key.
+  expect(cap.ownerKeys[0].keys).toEqual([{ file_id: 'server-file-id', encrypted_file_key: btoa('l7|shared-root|server-file-id|1|9') }])
   expect(cap.addFolderKeysCalls).toHaveLength(0)
 })

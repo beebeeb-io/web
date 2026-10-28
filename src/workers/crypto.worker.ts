@@ -477,6 +477,72 @@ const cryptoWorker = {
     return wasm.folder_key_id(folderKey) as Uint8Array
   },
 
+  // ── Task 2237b, decisions L6 and L7: owned-folder wraps. Thin pass-throughs;
+  // every byte of the format lives in core. ──────────────────────────────────
+
+  /** L7: a child key sealed under the folder key, bound to (root id, item id, kind). 60 bytes. */
+  async wrapFolderChild(
+    folderKey: Uint8Array,
+    rootId: string,
+    itemId: string,
+    kind: number,
+    childKey: Uint8Array,
+  ): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.wrapFolderChild(folderKey, rootId, itemId, kind, childKey) as Uint8Array
+  },
+
+  /** L7: open a child wrap; any other root, item or kind is refused. */
+  async unwrapFolderChild(
+    folderKey: Uint8Array,
+    rootId: string,
+    itemId: string,
+    kind: number,
+    wrapped: Uint8Array,
+  ): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.unwrapFolderChild(folderKey, rootId, itemId, kind, wrapped) as Uint8Array
+  },
+
+  /** L6: the folder key's custody record, bound to the folder id. */
+  async wrapFolderCustody(masterKey: Uint8Array, folderId: string, folderKey: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.wrapFolderCustody(masterKey, folderId, folderKey) as Uint8Array
+  },
+
+  async unwrapFolderCustody(masterKey: Uint8Array, folderId: string, wrapped: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.unwrapFolderCustody(masterKey, folderId, wrapped) as Uint8Array
+  },
+
+  /** L6: a link's K_c, sealed to the owner and bound to the share id. */
+  async wrapLinkOwnerKey(masterKey: Uint8Array, shareId: string, linkKey: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.wrapLinkOwnerKey(masterKey, shareId, linkKey) as Uint8Array
+  },
+
+  async unwrapLinkOwnerKey(masterKey: Uint8Array, shareId: string, wrapped: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.unwrapLinkOwnerKey(masterKey, shareId, wrapped) as Uint8Array
+  },
+
+  /** L6: a link's token, sealed to the owner and bound to the share id. */
+  async wrapLinkOwnerToken(masterKey: Uint8Array, shareId: string, token: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.wrapLinkOwnerToken(masterKey, shareId, token) as Uint8Array
+  },
+
+  async unwrapLinkOwnerToken(masterKey: Uint8Array, shareId: string, wrapped: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.unwrapLinkOwnerToken(masterKey, shareId, wrapped) as Uint8Array
+  },
+
+  /** The link passphrase stretch (Argon2id over the NFC passphrase, token-bound salt). */
+  async deriveFolderLinkPassphraseStretch(passphrase: string, token: string): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.deriveFolderLinkPassphraseStretch(passphrase, token) as Uint8Array
+  },
+
   /** Plan chunks for a file using the core adaptive chunk-size ladder. */
   async planChunks(fileSizeBytes: number, profile: string): Promise<{ chunk_size_bytes: number; chunk_count: number }> {
     const wasm = await ensureWasm()

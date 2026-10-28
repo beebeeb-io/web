@@ -7,7 +7,7 @@ import { Icon } from '../icons'
 import { fetchAllFolderItems, fetchFolderThumbnail } from '../../lib/folder-link-public'
 import { decryptThumbnailBlob } from '../../lib/thumbnail'
 import { decryptFileMetadata } from '../../lib/crypto'
-import { decryptChildFileKey } from '../../lib/folder-share-crypto'
+import { openChildKey } from '../../lib/folder-share-crypto'
 import type { FolderAccessLevel, Proof } from '../../lib/folder-link-types'
 import { GuestGrid } from './guest-grid'
 import { GuestPreview } from './guest-preview'
@@ -47,6 +47,8 @@ import {
 export function GuestBrowser(props: {
   token: string
   folderKey: Uint8Array
+  /** The shared folder's id: every wrap the guest opens is bound to it (L7). */
+  rootId: string
   level: FolderAccessLevel
   proof: Proof | null
   /** Ciphertext of the folder's own name, as returned by the root route. */
@@ -67,6 +69,7 @@ export function GuestBrowser(props: {
   const listing = useGuestListing({
     token: props.token,
     folderKey: props.folderKey,
+    rootId: props.rootId,
     parentId,
     proof: props.proof,
     refreshKey: props.refreshKey,
@@ -88,19 +91,22 @@ export function GuestBrowser(props: {
     let live = true
     if (!props.rootName) return
     const rootName = props.rootName
+    const rootWrappedKey = props.rootWrappedKey
+    // The root's own name key, published by the owner under the folder key
+    // (random folder key, decision L1) as an L7 wrap bound to (root, root,
+    // folder). Without it the page keeps the generic title.
+    if (!rootWrappedKey) return
     void (async () => {
-      // The root's own name key when the owner published it (random folder
-      // key, decision L1); an older link sealed the name under the folder key.
-      if (props.rootWrappedKey) {
-        // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
-        const nameKey = await decryptChildFileKey(props.folderKey, props.rootWrappedKey)
-        try {
-          return await decryptFileMetadata(nameKey, rootName)
-        } finally {
-          nameKey.fill(0)
-        }
+      const nameKey = await openChildKey(
+        props.folderKey,
+        { rootId: props.rootId, itemId: props.rootId, isFolder: true },
+        rootWrappedKey,
+      )
+      try {
+        return await decryptFileMetadata(nameKey, rootName)
+      } finally {
+        nameKey.fill(0)
       }
-      return decryptFileMetadata(props.folderKey, rootName)
     })()
       .then((meta) => {
         // Only the root crumb is renamed; deeper crumbs keep their own names.
@@ -112,7 +118,7 @@ export function GuestBrowser(props: {
     return () => {
       live = false
     }
-  }, [props.rootName, props.rootWrappedKey, props.folderKey])
+  }, [props.rootName, props.rootWrappedKey, props.folderKey, props.rootId])
 
   useEffect(() => {
     let live = true
@@ -207,7 +213,7 @@ export function GuestBrowser(props: {
         const rows: { fileId: string; name: string }[] = []
         for (const item of items) {
           if (item.is_folder) continue
-          const node = await describeGuestItem(item, props.folderKey)
+          const node = await describeGuestItem(item, props.folderKey, props.rootId)
           if (node.name !== null) rows.push({ fileId: item.id, name: node.name })
         }
         return rows
@@ -275,6 +281,7 @@ export function GuestBrowser(props: {
       const { files, errorCount } = await collectGuestZipEntries({
         token: props.token,
         folderKey: props.folderKey,
+        rootId: props.rootId,
         proof: props.proof,
         rootPath: rootName,
       })

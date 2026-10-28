@@ -25,13 +25,16 @@ function makeInvitePorts(opts: { existing: { key: string; blob: string } | null;
         calls.minted++
         return enc(opts.minted ?? 'MINTED')
       },
-      encryptAllChildrenKeys: async (_m: Uint8Array, key: Uint8Array) => [
-        { file_id: 'c1', encrypted_file_key: 'wrapped-under-' + dec(key) },
+      encryptAllChildrenKeys: async (_m: Uint8Array, key: Uint8Array, _f: string, format: string) => [
+        { file_id: 'c1', encrypted_file_key: `${format}-wrapped-under-` + dec(key) },
       ],
-      encryptOwnerFolderKey: async (_m: Uint8Array, _f: string, key: Uint8Array) => {
+      legacyInviteOwnerWrap: async (_m: Uint8Array, _f: string, key: Uint8Array) => {
         calls.sealed.push(dec(key))
         return enc('sealed-' + dec(key))
       },
+      deriveFileKey: async () => enc('root-name-key'),
+      sealChildKey: async (key: Uint8Array, ref: { rootId: string; itemId: string; isFolder: boolean }, child: Uint8Array) =>
+        `l7-root-${ref.rootId}-${ref.itemId}-${ref.isFolder}-${dec(child)}-under-${dec(key)}`,
       folderKeyId: async (k: Uint8Array) => btoa(dec(await fakeId(k))),
     },
   }
@@ -45,7 +48,8 @@ describe('buildFolderInvite carries the id of the key it used', () => {
     expect(calls.minted).toBe(1)
     expect(dec(folderKey)).toBe('K-first')
     expect(payload.folder_key_id).toBe(idB64('K-first'))
-    expect(payload.folder_keys[0].encrypted_file_key).toBe('wrapped-under-K-first')
+    // No custody record: the legacy invite format (L7b), no root entry.
+    expect(payload.folder_keys).toEqual([{ file_id: 'c1', encrypted_file_key: 'legacy_invite-wrapped-under-K-first' }])
     expect(calls.sealed).toEqual(['K-first'])
   })
 
@@ -127,8 +131,13 @@ describe('L1: an invite after a link uses the custody record, the key\'s one sou
     expect(calls.minted).toBe(0)
     expect(invitesAsked).toBe(0)
     expect(payload.folder_key_id).toBe(idB64('K-custody'))
-    expect(payload.folder_keys[0].encrypted_file_key).toBe('wrapped-under-K-custody')
+    // A custody folder is L7 (L7b): the root's own name-key wrap first, then the children.
+    expect(payload.folder_keys).toEqual([
+      { file_id: 'F', encrypted_file_key: 'l7-root-F-F-true-root-name-key-under-K-custody' },
+      { file_id: 'c1', encrypted_file_key: 'l7-wrapped-under-K-custody' },
+    ])
     expect(payload.encrypted_owner_folder_key).toBe('blob-custody')
+    expect(calls.sealed).toEqual([])
   })
 
   test('no custody record: the invite key is reused, as before', async () => {

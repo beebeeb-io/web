@@ -18,13 +18,15 @@ import { ApiError, bulkTrashFiles, updateFile } from './api'
 import { deriveFileKey, encryptFilename, serializeEncryptedBlob } from './crypto'
 import { encryptedUpload, type SharedFolderUploadContext, type UploadProgress } from './encrypted-upload'
 import { canAdd, canEdit, type FolderAccessLevel } from './folder-link-types'
-import { decryptChildFileKey } from './folder-share-crypto'
+import { openFolderChild, type FolderWrapFormat } from './folder-share-crypto'
 
 export interface MemberContext {
   folderId: string
   inviteId: string
   /** The member's copy of the shared folder key. */
   folderKey: Uint8Array
+  /** L7b: the folder's wrap format, from its custody record. */
+  format: FolderWrapFormat
   level: FolderAccessLevel
   /** The signed-in member's own display name, for the editing strip. */
   displayName: string
@@ -63,10 +65,12 @@ export function writeErrorAction(err: unknown): 'refetch' | 'report' {
   return err instanceof ApiError && err.status === 403 ? 'refetch' : 'report'
 }
 
-/** The item's own key: the wrapped child key when we have it, else our derive. */async function itemFileKey(ctx: MemberContext, item: DriveFile): Promise<Uint8Array> {
+/** The item's own key: the wrapped child key, opened for exactly this row. */
+async function itemFileKey(ctx: MemberContext, item: DriveFile): Promise<Uint8Array> {
   const wrapped = ctx.fileKeys?.[item.id]
-  // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
-  if (wrapped) return decryptChildFileKey(ctx.folderKey, wrapped)
+  if (wrapped) {
+    return openFolderChild(ctx.format, ctx.folderKey, { rootId: ctx.folderId, itemId: item.id, isFolder: !!item.is_folder }, wrapped)
+  }
   throw new Error("This file's key isn't available, so it can't be changed here.")
 }
 
@@ -83,6 +87,7 @@ export async function memberUploadFiles(
 
   const sharedFolderContext: SharedFolderUploadContext = {
     folderKey: ctx.folderKey,
+    format: ctx.format,
     sharedFolderId: ctx.folderId,
     inviteId: ctx.inviteId,
   }

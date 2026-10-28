@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { listFolderItems } from '../../lib/folder-link-public'
 import type { Proof, PublicFolderItem } from '../../lib/folder-link-types'
-import { decryptChildFileKey } from '../../lib/folder-share-crypto'
+import { openChildKey } from '../../lib/folder-share-crypto'
 import { decryptFileMetadata } from '../../lib/crypto'
 
 export interface GuestNode {
@@ -94,21 +94,26 @@ export function sortGuestNodes(nodes: GuestNode[], key: GuestSortKey): GuestNode
   return [...nodes].sort(compare)
 }
 
-/** Decrypt one listing row; a failed unwrap leaves it visible but inert. */
+/**
+ * Decrypt one listing row; a missing or failed unwrap leaves it visible but
+ * inert. L7: the wrap opens only for THIS row (shared root `rootId`, the row's
+ * id, file or folder), so a wrap moved from another row is refused.
+ */
 export async function describeGuestItem(
   item: PublicFolderItem,
   folderKey: Uint8Array,
+  rootId: string,
 ): Promise<GuestNode> {
+  // Every item's name is sealed under its OWN key — a child folder included,
+  // so a guest needs the wrap the owner published for it just like a file.
+  if (!item.wrapped_file_key) return { item, name: null, fileKey: null, mimeType: null }
+  let fileKey: Uint8Array | null = null
   try {
-    const fileKey = item.wrapped_file_key
-      // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
-      ? await decryptChildFileKey(folderKey, item.wrapped_file_key)
-      : null
-    // Every item's name is sealed under its OWN key — a child folder included,
-    // so a guest needs the wrap the owner published for it just like a file.
-    const meta = await decryptFileMetadata(fileKey ?? folderKey, item.name_encrypted)
+    fileKey = await openChildKey(folderKey, { rootId, itemId: item.id, isFolder: item.is_folder }, item.wrapped_file_key)
+    const meta = await decryptFileMetadata(fileKey, item.name_encrypted)
     return { item, name: meta.name, fileKey, mimeType: meta.mimeType }
   } catch {
+    fileKey?.fill(0)
     return { item, name: null, fileKey: null, mimeType: null }
   }
 }
@@ -125,6 +130,8 @@ export interface Crumb {
 export async function fetchGuestPage(args: {
   token: string
   folderKey: Uint8Array
+  /** The shared folder's id (the L7 binding of every row's wrap). */
+  rootId: string
   parentId: string | null
   cursor?: string | null
   limit: number
@@ -136,7 +143,7 @@ export async function fetchGuestPage(args: {
     args.proof,
   )
   const nodes = await Promise.all(
-    page.items.map((item) => describeGuestItem(item, args.folderKey)),
+    page.items.map((item) => describeGuestItem(item, args.folderKey, args.rootId)),
   )
   return { nodes, nextCursor: page.next_cursor }
 }
@@ -158,6 +165,7 @@ export function popCrumb(stack: Crumb[], index: number): Crumb[] {
 export function useGuestListing(args: {
   token: string
   folderKey: Uint8Array
+  rootId: string
   parentId: string | null
   proof: Proof | null
   pageSize?: number
@@ -184,6 +192,7 @@ export function useGuestListing(args: {
     void fetchGuestPage({
       token: args.token,
       folderKey: args.folderKey,
+      rootId: args.rootId,
       parentId: args.parentId,
       limit: pageSize,
       proof: args.proof,
@@ -202,7 +211,7 @@ export function useGuestListing(args: {
     return () => {
       live = false
     }
-  }, [args.token, args.folderKey, args.parentId, args.proof?.proof, pageSize, args.refreshKey])
+  }, [args.token, args.folderKey, args.rootId, args.parentId, args.proof?.proof, pageSize, args.refreshKey])
 
   useEffect(() => {
     if (!args.onNames || nodes.length === 0) return
@@ -217,6 +226,7 @@ export function useGuestListing(args: {
     void fetchGuestPage({
       token: args.token,
       folderKey: args.folderKey,
+      rootId: args.rootId,
       parentId: args.parentId,
       cursor,
       limit: pageSize,
@@ -229,7 +239,7 @@ export function useGuestListing(args: {
       })
       .catch(() => setError('not_available'))
       .finally(() => setLoadingMore(false))
-  }, [args.token, args.folderKey, args.parentId, args.proof, cursor, loadingMore, pageSize])
+  }, [args.token, args.folderKey, args.rootId, args.parentId, args.proof, cursor, loadingMore, pageSize])
 
   return { nodes, loading, error, hasMore: cursor !== null, loadMore }
 }

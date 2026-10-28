@@ -606,6 +606,79 @@ export async function folderKeyId(folderKey: Uint8Array): Promise<Uint8Array> {
   return withProxy((p) => p.folderKeyId(folderKey))
 }
 
+// ─── Task 2237b, decisions L6 and L7: owned-folder wraps (core) ──────────────
+// The only way the web seals or opens a folder child, a custody record or a
+// link's owner copies. No client-side sealing, and no unbound fallback: the
+// legacy invite format has its own named functions in folder-share-crypto.ts.
+
+/** `kind` of an L7 child wrap: 1 for a file, 2 for a folder. */
+export const FOLDER_CHILD_FILE = 1
+export const FOLDER_CHILD_FOLDER = 2
+export type FolderChildKind = typeof FOLDER_CHILD_FILE | typeof FOLDER_CHILD_FOLDER
+
+/** L7: `nonce || ct` (60 bytes) of `childKey` under `folderKey`, bound to the shared ROOT id, the item id and its kind. */
+export async function wrapFolderChild(
+  folderKey: Uint8Array,
+  rootId: string,
+  itemId: string,
+  kind: FolderChildKind,
+  childKey: Uint8Array,
+): Promise<Uint8Array> {
+  return withProxy((p) => p.wrapFolderChild(folderKey, rootId, itemId, kind, childKey))
+}
+
+/** L7: open a child wrap. A wrap made for another root, item or kind is refused. */
+export async function unwrapFolderChild(
+  folderKey: Uint8Array,
+  rootId: string,
+  itemId: string,
+  kind: FolderChildKind,
+  wrapped: Uint8Array,
+): Promise<Uint8Array> {
+  return withProxy((p) => p.unwrapFolderChild(folderKey, rootId, itemId, kind, wrapped))
+}
+
+/** L6: the folder key's custody record (`shared_folders.owner_wrapped_folder_key`). */
+export async function wrapFolderCustody(
+  masterKey: Uint8Array,
+  folderId: string,
+  folderKey: Uint8Array,
+): Promise<Uint8Array> {
+  return withProxy((p) => p.wrapFolderCustody(masterKey, folderId, folderKey))
+}
+
+/** L6: open a custody record. A legacy (unbound) owner copy is refused. */
+export async function unwrapFolderCustody(
+  masterKey: Uint8Array,
+  folderId: string,
+  wrapped: Uint8Array,
+): Promise<Uint8Array> {
+  return withProxy((p) => p.unwrapFolderCustody(masterKey, folderId, wrapped))
+}
+
+/** L6: a link's `owner_wrapped_key` (K_c), bound to the share id. */
+export async function wrapLinkOwnerKey(masterKey: Uint8Array, shareId: string, linkKey: Uint8Array): Promise<Uint8Array> {
+  return withProxy((p) => p.wrapLinkOwnerKey(masterKey, shareId, linkKey))
+}
+
+export async function unwrapLinkOwnerKey(masterKey: Uint8Array, shareId: string, wrapped: Uint8Array): Promise<Uint8Array> {
+  return withProxy((p) => p.unwrapLinkOwnerKey(masterKey, shareId, wrapped))
+}
+
+/** L6: a link's `owner_wrapped_token`, bound to the share id. */
+export async function wrapLinkOwnerToken(masterKey: Uint8Array, shareId: string, token: Uint8Array): Promise<Uint8Array> {
+  return withProxy((p) => p.wrapLinkOwnerToken(masterKey, shareId, token))
+}
+
+export async function unwrapLinkOwnerToken(masterKey: Uint8Array, shareId: string, wrapped: Uint8Array): Promise<Uint8Array> {
+  return withProxy((p) => p.unwrapLinkOwnerToken(masterKey, shareId, wrapped))
+}
+
+/** The link passphrase stretch, in core (NFC, empty refused, token-bound salt). */
+export async function deriveFolderLinkPassphraseStretch(passphrase: string, token: string): Promise<Uint8Array> {
+  return withProxy((p) => p.deriveFolderLinkPassphraseStretch(passphrase, token))
+}
+
 /**
  * Encrypt a file key for user-to-user sharing.
  * Performs the full X25519 key exchange + AES-256-GCM encryption.

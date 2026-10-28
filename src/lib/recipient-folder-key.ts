@@ -24,27 +24,31 @@
 // deriveFileKey(folder id) instead of the folder key. Those resolve to
 // `missing`, and the UI tells the recipient the owner has to share again.
 //
-// No new crypto format: both candidates are read with the existing
-// decryptFolderKey / decryptChildFileKey. Every crypto call is injected so
-// the logic is testable under `bun test` (the WASM worker is not loadable
-// there — see test/1545-approve-folder-share-key.test.ts).
+// Both candidates are read with decryptFolderKey; the verifier wrap is opened
+// in the folder's format (decision L7b): an L7 wrap bound to (root, item,
+// kind) for a folder with a custody record, the legacy invite format for a
+// flag-off invite-only folder. The caller states the format; nothing here
+// tries one and falls back to the other. Every crypto call is injected so the
+// logic is testable under `bun test` (the WASM worker is not loadable there —
+// see test/1545-approve-folder-share-key.test.ts).
 import type { ShareInvite } from './api'
 import {
   decryptFolderKey as realDecryptFolderKey,
-  decryptChildFileKey as realDecryptChildFileKey,
+  openFolderChild as realOpenFolderChild,
+  type FolderWrapFormat,
 } from './folder-share-crypto'
 import { fromBase64 as realFromBase64, zeroize as realZeroize } from './crypto'
 
 export interface RecipientFolderKeyPorts {
   decryptFolderKey: typeof realDecryptFolderKey
-  decryptChildFileKey: typeof realDecryptChildFileKey
+  openFolderChild: typeof realOpenFolderChild
   fromBase64: typeof realFromBase64
   zeroize: typeof realZeroize
 }
 
 export const REAL_RECIPIENT_FOLDER_KEY_PORTS: RecipientFolderKeyPorts = {
   decryptFolderKey: realDecryptFolderKey,
-  decryptChildFileKey: realDecryptChildFileKey,
+  openFolderChild: realOpenFolderChild,
   fromBase64: realFromBase64,
   zeroize: realZeroize,
 }
@@ -66,11 +70,13 @@ export type RecipientFolderKeyInvite = Pick<
  *   /shares/invites/:id/folder-keys). Used to authenticate a candidate key.
  *   When it is empty there is nothing to check against, and the first
  *   candidate that decrypts is accepted.
+ * @param format the folder's wrap format (L7b), from its custody record.
  */
 export async function resolveRecipientFolderKey(
   invite: RecipientFolderKeyInvite,
   masterKey: Uint8Array,
   folderKeys: ReadonlyArray<{ file_id: string; encrypted_file_key: string }>,
+  format: FolderWrapFormat,
   ports: RecipientFolderKeyPorts = REAL_RECIPIENT_FOLDER_KEY_PORTS,
 ): Promise<RecipientFolderKeyResult> {
   if (!invite.sender_public_key) return { status: 'missing' }
@@ -109,18 +115,44 @@ export async function resolveRecipientFolderKey(
       continue
     }
 
-    if (verifier) {
-      try {
-        // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
-        const childKey = await ports.decryptChildFileKey(folderKey, verifier.encrypted_file_key)
-        ports.zeroize(childKey)
-      } catch {
-        ports.zeroize(folderKey)
-        continue
-      }
+    if (verifier && !(await opensVerifier(format, folderKey, invite.file_id, verifier, ports))) {
+      ports.zeroize(folderKey)
+      continue
     }
     return { status: 'ok', folderKey, source: candidate.source }
   }
 
   return { status: 'missing' }
+}
+
+/**
+ * Does `folderKey` open the verifier wrap? Under L7 the root's own entry is a
+ * folder wrap; any other row's kind is not in the key list, so both kinds are
+ * tried (each is still bound to its own row, so this is never a format
+ * fallback).
+ */
+async function opensVerifier(
+  format: FolderWrapFormat,
+  folderKey: Uint8Array,
+  rootId: string,
+  verifier: { file_id: string; encrypted_file_key: string },
+  ports: RecipientFolderKeyPorts,
+): Promise<boolean> {
+  const kinds = verifier.file_id === rootId ? [true] : [false, true]
+  for (const isFolder of kinds) {
+    try {
+      const childKey = await ports.openFolderChild(
+        format,
+        folderKey,
+        { rootId, itemId: verifier.file_id, isFolder },
+        verifier.encrypted_file_key,
+      )
+      ports.zeroize(childKey)
+      return true
+    } catch {
+      // try the other kind
+    }
+    if (format !== 'l7') break
+  }
+  return false
 }

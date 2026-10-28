@@ -18,7 +18,8 @@ import {
 } from '../lib/api'
 import { useDriveData } from '../lib/drive-data-context'
 import { SidebarStorageFooter } from './sidebar-storage-footer'
-import { decryptChildFileKey } from '../lib/folder-share-crypto'
+import { openFolderChild } from '../lib/folder-share-crypto'
+import { folderWrapFormat } from '../lib/owner-adoption'
 import { resolveRecipientFolderKey } from '../lib/recipient-folder-key'
 import { decryptFileMetadata } from '../lib/crypto'
 import { useSync } from '../lib/sync-context'
@@ -397,15 +398,21 @@ export function DriveLayout({ children }: { children: ReactNode }) {
             return { ...invite, decryptedName: 'Shared folder' }
           }
           const keys = await getFolderKeys(invite.id)
-          const resolved = await resolveRecipientFolderKey(invite, getMasterKey(), keys)
+          // L7b: the folder's format comes from its custody record, never a guess.
+          const format = await folderWrapFormat(invite.file_id)
+          const resolved = await resolveRecipientFolderKey(invite, getMasterKey(), keys, format)
           if (resolved.status !== 'ok') {
             return { ...invite, decryptedName: 'Shared folder' }
           }
           const folderKey = resolved.folderKey
           const folderEntry = keys.find(k => k.file_id === invite.file_id)
           if (folderEntry) {
-            // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
-            const fileKey = await decryptChildFileKey(folderKey, folderEntry.encrypted_file_key)
+            const fileKey = await openFolderChild(
+              format,
+              folderKey,
+              { rootId: invite.file_id, itemId: invite.file_id, isFolder: true },
+              folderEntry.encrypted_file_key,
+            )
             const { name } = await decryptFileMetadata(fileKey, invite.file_name_encrypted)
             return { ...invite, decryptedName: name }
           }

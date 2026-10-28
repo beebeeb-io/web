@@ -14,6 +14,12 @@
  * `owner_wrapped_key` is `wrap(master_key, K_c)` (decision L2, spec §6), so the
  * owner can copy the link again later (`rebuildFolderLinkUrl`).
  *
+ * Decisions L6, L6a and L7: the custody record is sealed by core's
+ * `wrapFolderCustody`; the link's share id is proposed here, so both owner
+ * copies are sealed under it by core; and every child key (the root's own name
+ * key included) is an L7 wrap bound to (root, item, kind). Nothing here seals
+ * a key by hand.
+ *
  * Every link keeps `#key=K_c`. A passphrase link does not replace K_c: its
  * unwrap key is `combine_folder_link_key(K_c, argon2id(passphrase, salt))`,
  * computed by core, and the fragment still carries K_c. Anyone with the URL
@@ -28,12 +34,12 @@ import {
 } from './api'
 import { deriveFileKey, fromBase64, toBase64, zeroize } from './crypto'
 import {
-  decryptOwnerFolderKey,
   encryptAllChildrenKeys,
-  encryptChildFileKey,
-  encryptOwnerFolderKey,
   findExistingFolderKey,
   generateFolderKey,
+  openFolderCustody,
+  sealChildKey,
+  sealFolderCustody,
 } from './folder-share-crypto'
 import { encryptActorName } from './guest-actor-name'
 import { forgetSharedFolderCustody } from './owner-adoption'
@@ -82,20 +88,26 @@ export interface CreatedFolderLink {
 /** Every effect `createFolderLinkWithKeys` needs, injectable for tests. */
 export interface CreateFolderLinkPorts {
   getSharedFolder: (folderId: string) => Promise<SharedFolderInfo>
-  decryptOwnerFolderKey: typeof decryptOwnerFolderKey
-  encryptOwnerFolderKey: typeof encryptOwnerFolderKey
+  /** L6: open the folder's custody record. */
+  openFolderCustody: typeof openFolderCustody
+  /** L6: seal a new custody record. */
+  sealFolderCustody: typeof sealFolderCustody
+  /** The legacy invite owner copy, read only to seed custody (L6). */
   findExistingFolderKey: typeof findExistingFolderKey
   /** A fresh RANDOM folder key; only when no custody record and no invite exists. */
   generateFolderKey: () => Promise<Uint8Array>
   /** The root folder's own name key (published under the folder key, below). */
   deriveFileKey: typeof deriveFileKey
-  encryptChildFileKey: typeof encryptChildFileKey
+  /** L7: a child key bound to (root, item, kind). */
+  sealChildKey: typeof sealChildKey
   /** Wrap every child key in the subtree under the folder key. */
   encryptAllChildrenKeys: typeof encryptAllChildrenKeys
   registerSharedFolderKey: typeof registerSharedFolderKey
   createFolderLink: typeof createFolderLink
   /** A fresh 32-byte link token, URL-safe base64 with no padding. */
   generateShareToken: () => Promise<string>
+  /** The link's share id, a fresh UUIDv4 (L6a). */
+  generateLinkId: () => string
   generateLinkKey: typeof generateLinkKey
   deriveLinkPassphraseKey: typeof deriveLinkPassphraseKey
   linkUnwrapKey: typeof linkUnwrapKey
@@ -115,16 +127,17 @@ function browserOrigin(): string {
 
 export const REAL_FOLDER_LINK_PORTS: CreateFolderLinkPorts = {
   getSharedFolder,
-  decryptOwnerFolderKey,
-  encryptOwnerFolderKey,
+  openFolderCustody,
+  sealFolderCustody,
   findExistingFolderKey,
   generateFolderKey,
   deriveFileKey,
-  encryptChildFileKey,
+  sealChildKey,
   encryptAllChildrenKeys,
   registerSharedFolderKey,
   createFolderLink,
   generateShareToken: async () => generateFolderLinkToken(),
+  generateLinkId: () => crypto.randomUUID(),
   generateLinkKey,
   deriveLinkPassphraseKey,
   linkUnwrapKey,
@@ -167,14 +180,14 @@ async function tryReadCustody(
  * member and every existing link). Only a folder with no custody at all walks
  * the invite fallback and then mints one.
  */
-async function ensureOwnerFolderKey(
+export async function ensureOwnerFolderKey(
   folderId: string,
   masterKey: Uint8Array,
-  ports: CreateFolderLinkPorts,
+  ports: CreateFolderLinkPorts = REAL_FOLDER_LINK_PORTS,
 ): Promise<Uint8Array> {
   const info = await tryReadCustody(folderId, ports)
   if (info?.owner_wrapped_folder_key) {
-    return ports.decryptOwnerFolderKey(
+    return ports.openFolderCustody(
       masterKey,
       folderId,
       ports.fromBase64(info.owner_wrapped_folder_key),
@@ -190,7 +203,7 @@ async function ensureOwnerFolderKey(
   const existing = await ports.findExistingFolderKey(masterKey, folderId)
   const folderKey = existing?.folderKey ?? (await ports.generateFolderKey())
   try {
-    const wrapped = ports.toBase64(await ports.encryptOwnerFolderKey(masterKey, folderId, folderKey))
+    const wrapped = ports.toBase64(await ports.sealFolderCustody(masterKey, folderId, folderKey))
     await ports.registerSharedFolderKey(folderId, {
       owner_wrapped_folder_key: wrapped,
       key_version: 1,
@@ -207,12 +220,19 @@ async function ensureOwnerFolderKey(
     const reread = await tryReadCustody(folderId, ports)
     if (!reread?.owner_wrapped_folder_key) throw err
     forgetSharedFolderCustody(folderId)
-    return ports.decryptOwnerFolderKey(
+    return ports.openFolderCustody(
       masterKey,
       folderId,
       ports.fromBase64(reread.owner_wrapped_folder_key),
     )
   }
+}
+
+/** How often a create is re-sealed under a fresh share id after `409 id_taken`. */
+export const LINK_ID_ATTEMPTS = 3
+
+function isIdTaken(err: unknown): boolean {
+  return errorCode(err) === 'id_taken'
 }
 
 export async function createFolderLinkWithKeys(
@@ -234,48 +254,70 @@ export async function createFolderLinkWithKeys(
     const unwrapKey = await ports.linkUnwrapKey(kc, stretch)
     const wrappedFolderKey = await ports.wrapFolderKeyForLink(folderKey, unwrapKey)
 
-    const body: CreateFolderLinkRequest = {
-      folder_id: input.folderId,
-      token,
-      access_level: input.accessLevel,
-      wrapped_folder_key: wrappedFolderKey,
-      // L2: the owner's copy of K_c (not of the folder key), so the link can be
-      // copied again later from the owner's devices.
-      owner_wrapped_key: await ports.ownerWrappedLinkKey(input.masterKey, kc),
-      owner_wrapped_token: await ports.ownerWrappedLinkToken(input.masterKey, token),
-    }
     // A guest can only read names and bytes for files whose key the owner has
     // published under this folder key. Publishing happens once per subtree;
     // the server keeps the first wrap and ignores later ones.
-    const folderKeys = await ports.encryptAllChildrenKeys(input.masterKey, folderKey, input.folderId)
+    const folderKeys = await ports.encryptAllChildrenKeys(input.masterKey, folderKey, input.folderId, 'l7')
     // The root's own name key, under the folder key too: with a random folder
     // key it is the only way a link or member can read the folder's own name.
+    // L7: bound to (root, root, folder).
     const rootNameKey = await ports.deriveFileKey(input.masterKey, input.folderId)
     try {
       folderKeys.unshift({
         file_id: input.folderId,
-        // TODO(core#44-L7): folder child wrap -> core wrap_folder_child/unwrap_folder_child (AAD root id, item id, kind); no unbound fallback.
-        encrypted_file_key: await ports.encryptChildFileKey(folderKey, rootNameKey),
+        encrypted_file_key: await ports.sealChildKey(
+          folderKey,
+          { rootId: input.folderId, itemId: input.folderId, isFolder: true },
+          rootNameKey,
+        ),
       })
     } finally {
       zeroize(rootNameKey)
     }
-    body.folder_keys = folderKeys
-    if (input.label) body.label_encrypted = await ports.encryptLabel(folderKey, input.label)
-    if (input.expiresInHours !== null) body.expires_in_hours = input.expiresInHours
-    if (input.maxOpens !== null) body.max_opens = input.maxOpens
-    if (input.capBytes !== null) body.cap_bytes = input.capBytes
-    if (passphrase) body.passphrase = passphrase
+    const labelEncrypted = input.label ? await ports.encryptLabel(folderKey, input.label) : null
 
-    const created = await ports.createFolderLink(body)
+    // L6a: the share id is proposed here and both owner copies are sealed under
+    // it. A taken id (a UUIDv4 collision) is answered 409 and nothing is
+    // stored, so the copies are re-sealed under a fresh id and sent again.
+    for (let attempt = 1; ; attempt += 1) {
+      const id = ports.generateLinkId()
+      const body: CreateFolderLinkRequest = {
+        id,
+        folder_id: input.folderId,
+        token,
+        access_level: input.accessLevel,
+        wrapped_folder_key: wrappedFolderKey,
+        // L2: the owner's copy of K_c (not of the folder key), so the link can be
+        // copied again later from the owner's devices.
+        owner_wrapped_key: await ports.ownerWrappedLinkKey(input.masterKey, id, kc),
+        owner_wrapped_token: await ports.ownerWrappedLinkToken(input.masterKey, id, token),
+        folder_keys: folderKeys,
+      }
+      if (labelEncrypted) body.label_encrypted = labelEncrypted
+      if (input.expiresInHours !== null) body.expires_in_hours = input.expiresInHours
+      if (input.maxOpens !== null) body.max_opens = input.maxOpens
+      if (input.capBytes !== null) body.cap_bytes = input.capBytes
+      if (passphrase) body.passphrase = passphrase
 
-    return {
-      id: created.id,
-      token,
-      url: buildFullShareLink(ports.origin(), token, linkKeyFragment(kc), 'f'),
-      level: created.access_level ?? input.accessLevel,
-      passphraseProtected: passphrase !== null,
-      keyVersion: created.key_version,
+      let created: Awaited<ReturnType<CreateFolderLinkPorts['createFolderLink']>>
+      try {
+        created = await ports.createFolderLink(body)
+      } catch (err) {
+        if (isIdTaken(err) && attempt < LINK_ID_ATTEMPTS) continue
+        throw err
+      }
+      // The owner copies are bound to `id`: a server that stored another id
+      // would leave a link its owner can never copy again.
+      if (created.id !== id) throw new Error('The server stored this link under a different id.')
+
+      return {
+        id: created.id,
+        token,
+        url: buildFullShareLink(ports.origin(), token, linkKeyFragment(kc), 'f'),
+        level: created.access_level ?? input.accessLevel,
+        passphraseProtected: passphrase !== null,
+        keyVersion: created.key_version,
+      }
     }
   } finally {
     folderKey.fill(0)

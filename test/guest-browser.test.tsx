@@ -30,8 +30,16 @@ const publicReal = (await mockModuleScoped('../src/lib/folder-link-public', impo
   fetchFolderThumbnail: async () => null,
 })) as unknown as { FolderNotAvailableError: new (message?: string) => Error }
 
+const ROOT = '11111111-1111-4111-8111-111111111111'
+/** Every L7 open the listing asked for: which (root, item, kind) it bound. */
+const opened: Array<{ rootId: string; itemId: string; isFolder: boolean }> = []
 await mockModuleScoped('../src/lib/folder-share-crypto', import.meta.dir, {
-  decryptChildFileKey: async (_folderKey: Uint8Array, wrapped: string) => {
+  openChildKey: async (
+    _folderKey: Uint8Array,
+    ref: { rootId: string; itemId: string; isFolder: boolean },
+    wrapped: string,
+  ) => {
+    opened.push(ref)
     if (wrapped === 'bad') throw new Error('unwrap failed')
     return new Uint8Array(32).fill(7)
   },
@@ -158,6 +166,7 @@ describe('breadcrumbs and paging', () => {
     const page = await fetchGuestPage({
       token: 't',
       folderKey: new Uint8Array(32),
+      rootId: ROOT,
       parentId: 'folder-1',
       limit: 200,
       proof: null,
@@ -177,6 +186,7 @@ describe('breadcrumbs and paging', () => {
       await fetchGuestPage({
         token: 't',
         folderKey: new Uint8Array(32),
+        rootId: ROOT,
         parentId: null,
         cursor: 'c2',
         limit: 200,
@@ -197,6 +207,7 @@ describe('unreadable rows', () => {
     const node = await describeGuestItem(
       item({ id: 'broken', name_encrypted: 'enc:Secret', wrapped_file_key: 'bad' }),
       new Uint8Array(32),
+      ROOT,
     )
     expect(node.name).toBeNull()
     expect(node.fileKey).toBeNull()
@@ -212,24 +223,36 @@ describe('unreadable rows', () => {
     expect(html).toContain('disabled')
   })
 
-  test('a folder decrypts with its own wrapped key, like a file', async () => {
+  test('a folder decrypts with its own wrapped key, like a file, bound to (root, its id, folder)', async () => {
+    opened.length = 0
     const node = await describeGuestItem(
       item({ id: 'd', is_folder: true, name_encrypted: 'child:Receipts', wrapped_file_key: 'wrap' }),
       new Uint8Array(32),
+      ROOT,
     )
     expect(node.name).toBe('Receipts')
     expect(node.fileKey).not.toBeNull()
     expect(isNodeClickable(node)).toBe(true)
+    expect(opened).toEqual([{ rootId: ROOT, itemId: 'd', isFolder: true }])
   })
 
-  test('a folder with no published wrap falls back to the folder key', async () => {
+  test('a file row is opened as a file under its own id', async () => {
+    opened.length = 0
+    await describeGuestItem(item({ id: 'f1', wrapped_file_key: 'wrap' }), new Uint8Array(32), ROOT)
+    expect(opened).toEqual([{ rootId: ROOT, itemId: 'f1', isFolder: false }])
+  })
+
+  test('a row with no published wrap stays inert: the folder key is never tried on its name (L7)', async () => {
+    opened.length = 0
     const node = await describeGuestItem(
       item({ id: 'd', is_folder: true, name_encrypted: 'enc:Legacy', wrapped_file_key: null }),
       new Uint8Array(32),
+      ROOT,
     )
-    expect(node.name).toBe('Legacy')
+    expect(node.name).toBeNull()
     expect(node.fileKey).toBeNull()
-    expect(isNodeClickable(node)).toBe(true)
+    expect(isNodeClickable(node)).toBe(false)
+    expect(opened).toEqual([])
   })
 })
 
@@ -240,6 +263,7 @@ describe('rendered views', () => {
         <GuestBrowser
           token="t"
           folderKey={new Uint8Array(32)}
+          rootId={ROOT}
           level="view"
           proof={null}
         />,
