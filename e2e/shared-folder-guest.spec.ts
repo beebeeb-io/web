@@ -357,9 +357,21 @@ test('2237b >5MiB guest upload opens byte-for-byte for owner and second guest; l
   const bytes = Buffer.alloc(5 * 1024 * 1024 + 337)
   for (let i = 0; i < bytes.length; i++) bytes[i] = i % 251
   const name = 'guest-multiframe.bin'
+  const isUpload = (url: string, method: string) => method === 'POST' && /\/api\/v1\/f\/[^/]+\/upload$/.test(url)
+  const uploadRequest = guest.waitForRequest((request) => isUpload(request.url(), request.method()), { timeout: 120_000 })
+  const uploadResponse = guest.waitForResponse((response) => isUpload(response.url(), response.request().method()), { timeout: 120_000 })
   await guest.locator('input[type=file]').first().setInputFiles({ name, mimeType: 'application/octet-stream', buffer: bytes })
   await guest.getByRole('button', { name: 'Skip', exact: true }).click()
   await expect(guest.locator('li[data-state=added]').first()).toBeVisible({ timeout: 120_000 })
+  // L7a: the metadata part comes first and carries the client-proposed id the
+  // wrap is sealed under; the server stores exactly that id.
+  const multipart = ((await uploadRequest).postDataBuffer() ?? Buffer.alloc(0)).toString('latin1')
+  expect(/name="([^"]+)"/.exec(multipart)?.[1], 'the metadata part is first').toBe('metadata')
+  const metadataJson = /name="metadata"\r\n(?:[^\r\n]*\r\n)*\r\n([^\r]*)\r\n--/.exec(multipart)?.[1] ?? '{}'
+  const proposedId = (JSON.parse(metadataJson) as { id?: string }).id ?? ''
+  expect(proposedId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+  const storedId = ((await (await uploadResponse).json()) as { file_id?: string }).file_id
+  expect(storedId, 'the server keeps the proposed id').toBe(proposedId)
   // SSE updates the owner's already-open folder: no reload to repair keys.
   await assertPreviewDownload(page, name, bytes, true)
   const secondCtx = await guestContext(browser)

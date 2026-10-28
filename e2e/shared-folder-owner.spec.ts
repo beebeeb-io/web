@@ -8,8 +8,11 @@ import {
   createFolderLinkViaUi,
   dismissFirstRunOverlays,
   escapeRe,
+  openFolderSharePanel,
   ownerFolderWithContent,
 } from './fixtures/folder-link'
+
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 
 /**
  * Task 2237b — the owner side of a shared folder link.
@@ -73,6 +76,47 @@ test.describe('2237b — owner creates, pauses and revokes folder links', () => 
 
     await guest.screenshot({ path: 'test-results/2237b-owner-guest-listing.png', fullPage: true })
     await guestCtx.close()
+  })
+
+  test('L6a: the link is stored under its proposed id, and after a reload the owner copies the same link again', async ({ page }) => {
+    test.setTimeout(240_000)
+
+    await page.goto('/?nodev=1')
+    await signupAndUnlock(page, {
+      email: uniqueEmail('2237b-owner-recopy'),
+      password: '2237bOwnerRecopy-correct-horse-1',
+    })
+    await dismissFirstRunOverlays(page)
+    const folder = await ownerFolderWithContent(page, 'Recopy folder')
+
+    const isCreate = (url: string, method: string) => method === 'POST' && /\/api\/v1\/shares\/folder-links$/.test(url)
+    const createRequest = page.waitForRequest((request) => isCreate(request.url(), request.method()))
+    const createResponse = page.waitForResponse((response) => isCreate(response.url(), response.request().method()))
+    const link = await createFolderLinkViaUi(page, folder.folderName, { level: 'view' })
+
+    // The client proposed the share id and sealed both owner copies under it;
+    // the server stored exactly that id.
+    const sent = JSON.parse((await createRequest).postData() ?? '{}') as { id?: string; owner_wrapped_key?: string; owner_wrapped_token?: string }
+    expect(sent.id ?? '', 'the create carries a client-proposed UUIDv4').toMatch(UUID_V4)
+    expect(sent.owner_wrapped_key, 'the owner copy of K_c is sent').toBeTruthy()
+    expect(sent.owner_wrapped_token, 'the owner copy of the token is sent').toBeTruthy()
+    const stored = (await (await createResponse).json()) as { id?: string }
+    expect(stored.id, 'the server keeps the proposed id').toBe(sent.id)
+    await closeSharePanel(page)
+
+    // A reload drops the URL this tab minted: the panel can only rebuild it
+    // from the owner copies, which open only under this link's share id.
+    await page.reload()
+    await dismissFirstRunOverlays(page)
+    const dialog = await openFolderSharePanel(page, folder.folderName)
+    const row = dialog.getByTestId('folder-link-row').first()
+    const copy = row.getByRole('button', { name: 'Copy link' })
+    await expect(copy, 'a rebuilt link can be copied').toBeEnabled({ timeout: 30_000 })
+    await copy.click()
+    await expect(row.getByText('Link copied.')).toBeVisible({ timeout: 5_000 })
+    const copied = await page.evaluate(() => navigator.clipboard.readText())
+    expect(copied, 'the same token and the same #key= as when it was made').toBe(link.url)
+    await closeSharePanel(page)
   })
 
   test('pause and revoke both dead-end the guest at the same message', async ({ page, browser }) => {
