@@ -7,6 +7,7 @@
  */
 import { describe, expect, test } from 'bun:test'
 import { mockModuleScoped } from './helpers/scoped-module-mock'
+import { createContentOps } from '../src/lib/content-crypto'
 import { loadWasm } from './helpers/wasm-crypto-mirror'
 
 const wasm = loadWasm()
@@ -30,6 +31,7 @@ let custody: { owner_wrapped_folder_key: string } | null = null
 
 const real = await mockModuleScoped('../src/lib/crypto', import.meta.dir, (r) => ({
   ...r,
+  readFileMetadata: async (key: Uint8Array, name: string) => createContentOps(wasm).readFileMetadata(key, name),
   deriveFileKey: async (masterKey: Uint8Array, fileId: string) =>
     wasm.derive_file_key(masterKey, encoder.encode(fileId)),
   encryptChunk: async (key: Uint8Array, plaintext: Uint8Array) => {
@@ -82,6 +84,7 @@ function seedFile() {
   return {
     id: '22222222-2222-4222-8222-222222222222',
     parent_id: FOLDER_ID,
+    name_encrypted: wasm.encrypt_name_for(FILE_KEY, 'guest.txt', 'text/plain', 2),
     acted_via_share_id: 'share-1',
     uploaded_by: null,
   }
@@ -93,11 +96,13 @@ const { needsOwnership, adoptGuestFile, resolveSharedFileKey, openOwnerFile, unw
 )
 
 describe('folderKeyForRoot', () => {
-  test('an invite-only folder with no custody record still opens with its own derived key', async () => {
+  // Decision L1 (plan C review): the folder key is random and never derived
+  // from the master key. This test used to pin the derived fallback; with no
+  // custody record and no invite there is now no key at all, never a guess.
+  test('no custody record and no invite: null, never the master-derived key (L1)', async () => {
     custody = null
     const key = await folderKeyForRoot(MASTER, FOLDER_ID)
-    expect(key).not.toBeNull()
-    expect(Array.from(key!)).toEqual(Array.from(wasm.derive_file_key(MASTER, encoder.encode(FOLDER_ID))))
+    expect(key).toBeNull()
   })
 
   test('an invite-only folder opens with the key the sent invite carries', async () => {
@@ -225,4 +230,20 @@ describe('openOwnerFile', () => {
     expect(res.kind).toBe('ok')
     if (res.kind === 'ok') expect(Array.from(res.fileKey)).toEqual(Array.from(FILE_KEY))
   })
+})
+
+
+test('B adoption verifies metadata with the candidate key before a write-once store', async () => {
+  seedCustody()
+  adoptCalls.length = 0
+  await expect(adoptGuestFile({ masterKey: MASTER, folderId: FOLDER_ID,
+    file: { ...seedFile(), id: '33333333-3333-4333-8333-333333333333' },
+    encryptedFileKeyB64: seal(FOLDER_KEY, new Uint8Array(32).fill(77)) })).rejects.toThrow()
+  expect(adoptCalls).toHaveLength(0)
+})
+
+test('B owner wrap read accepts the server byte-array representation', async () => {
+  const wire = seal(derive(MASTER, seedFile().id), FILE_KEY)
+  const bytes = Array.from(real.fromBase64(wire) as Uint8Array)
+  expect(await unwrapOwnerFileKey(MASTER, seedFile().id, bytes as any)).toEqual(FILE_KEY)
 })

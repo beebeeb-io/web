@@ -615,6 +615,11 @@ async function uploadFile(
     }], await folderKeyId(sharedFolderContext.folderKey))
   }
 
+  if (!sharedFolderContext && parentId) {
+    const { publishOwnerUploadKey } = await import('./owner-upload-key')
+    await publishOwnerUploadKey(masterKey, parentId, serverFileId, activeFileKey)
+  }
+
   // Generate and upload encrypted thumbnails for image files (medium + large)
   try {
     const { generateThumbnail, encryptAndUploadThumbnail, generateLargeThumbnail, encryptAndUploadLargeThumbnail } = await import('./thumbnail')

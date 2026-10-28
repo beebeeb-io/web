@@ -20,7 +20,7 @@ export const EMPTY_CONFIRM_MS = 250
 
 /**
  * Cheap row identity: id + the fields the list renders on
- * (id+name+size+updated_at+parent+flags+storage country). Two derivations with
+ * (id+name+key-path fields+size+updated_at+parent+flags+storage country). Two derivations with
  * the same signature are the same rows — the caller must not touch list state.
  * The country is rendered on the row (task 1919), so a derive that lost or changed
  * it is a different row.
@@ -34,6 +34,11 @@ export function rowsSignature(rows: DriveFile[]): string {
       f.file_request_id ?? '',
       f.sender_ephemeral_pubkey ?? '',
       f.wrapped_content_key ?? '',
+      // Task 2237b: who added a shared-folder row picks its key path, so a
+      // derive that learned (or lost) the attribution is a different row.
+      f.acted_via_share_id ?? '',
+      f.uploaded_by ?? '',
+      f.owner_wrapped_file_key ? '1' : '0',
       String(f.size_bytes),
       f.updated_at,
       f.parent_id ?? '',

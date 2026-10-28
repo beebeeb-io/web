@@ -66,7 +66,6 @@ export function writeErrorAction(err: unknown): 'refetch' | 'report' {
 /** The item's own key: the wrapped child key when we have it, else our derive. */async function itemFileKey(ctx: MemberContext, item: DriveFile): Promise<Uint8Array> {
   const wrapped = ctx.fileKeys?.[item.id]
   if (wrapped) return decryptChildFileKey(ctx.folderKey, wrapped)
-  if (ctx.masterKey) return deriveFileKey(ctx.masterKey, item.id)
   throw new Error("This file's key isn't available, so it can't be changed here.")
 }
 

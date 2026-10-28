@@ -6,10 +6,11 @@ import { BBButton } from '@beebeeb/shared'
 import { Icon } from './icons'
 import { FileIcon, getFileType } from './file-icon'
 import { getBadgeStyle } from '../lib/file-colors'
+import { FileBrowserRow, FILE_HEADER_BAR, FILE_HEADER_LABEL } from './file-browser-row'
+import { needsOwnership } from '../lib/owner-adoption'
 import { ContextMenu } from './context-menu'
 import { FileRowSkeleton } from '@beebeeb/shared'
 import { useKeys } from '../lib/key-context'
-import { useAuth } from '../lib/auth-context'
 import { decryptManyNames, encryptFilename, serializeEncryptedBlob } from '../lib/crypto'
 import { onDecrypted } from '../lib/decrypt-events'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
@@ -21,7 +22,7 @@ import {
   handleRowDoubleClick as resolveRowDoubleClick,
 } from '../lib/pending-select-timer'
 import { modKey } from '../hooks/use-keyboard-shortcuts'
-import { formatBytes } from '../lib/format'
+import { formatBytes, timeAgo } from '../lib/format'
 import { setPreference, updateFile } from '../lib/api'
 import { useDriveData } from '../lib/drive-data-context'
 import { SharePopover } from './share-popover'
@@ -68,19 +69,8 @@ const SORT_KEY_PREFIX = 'beebeeb.sort.'
 
 // ─── Helpers ─────────────────────────────────────────
 
-export function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime()
-  const seconds = Math.floor(diff / 1000)
-  if (seconds < 60) return 'just now'
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  if (days < 7) return `${days}d ago`
-  const weeks = Math.floor(days / 7)
-  return `${weeks}w ago`
-}
+/** Relative age ("3h ago"); lives in lib/format so the guest page shares it. */
+export { timeAgo }
 
 function dateGroup(dateStr: string): string {
   const date = new Date(dateStr)
@@ -106,10 +96,10 @@ function dateGroup(dateStr: string): string {
  * folder-key wrap instead.
  */
 export function addedBySomeoneElse(
-  file: { uploaded_by?: string | null },
+  file: { uploaded_by?: string | null; acted_via_share_id?: string | null },
   viewerId: string | null,
 ): boolean {
-  return !!file.uploaded_by && !!viewerId && file.uploaded_by !== viewerId
+  return viewerId !== null && needsOwnership(file, viewerId)
 }
 
 export interface FileListProps {
@@ -219,8 +209,7 @@ export function FileList({
   parentId,
   onRefresh,
 }: FileListProps) {
-  const { getFileKey, getFileKeyForFile, getFileKeyForSharedFile, isUnlocked } = useKeys()
-  const { user } = useAuth()
+  const { getFileKey, getFileKeyForFile, isUnlocked } = useKeys()
   const { showToast } = useToast()
 
   // ─── Active-share lookup ───────────────────────────
@@ -342,14 +331,11 @@ export function FileList({
         return { id: file.id, status: 'plaintext', name: file.name_encrypted }
       }
       try {
-        // A file another person added to a shared folder is sealed under ITS
-        // author's file key (derived from that person's master key), which this
-        // account cannot derive. The owner opens it through the folder-key
-        // wrap in `shared_folder_keys` instead (task 2237b).
-        const sharedAdded = !!parentId && addedBySomeoneElse(file, user?.user_id ?? null)
-        const fileKey = sharedAdded
-          ? (await getFileKeyForSharedFile(file, parentId)) ?? (await getFileKeyForFile(file))
-          : await getFileKeyForFile(file)
+        // A file another person added to a shared folder is sealed under a key
+        // this account cannot derive; getFileKeyForFile takes the folder-key
+        // path for it (owner wrap, then `shared_folder_keys` under the shared
+        // ROOT), the same path download, rename and zip use (task 2237b).
+        const fileKey = await getFileKeyForFile(file)
         return { id: file.id, status: 'ok', fileKey, nameEncrypted: file.name_encrypted }
       } catch (err) {
         return { id: file.id, status: 'error', error: err }
@@ -1009,7 +995,7 @@ export function FileList({
     const thumbUrl = thumbnails[file.id]
 
     return (
-      <div
+      <FileBrowserRow
         key={file.id}
         data-row-index={rowIndex}
         draggable={!isTrashing}
@@ -1027,7 +1013,6 @@ export function FileList({
         onDragLeave={(e) => handleDragLeave(e, file.id)}
         onDrop={(e) => handleDrop(e, file)}
         className={[
-          'file-row group transition-colors duration-150 cursor-pointer grid gap-2.5 md:gap-[14px]',
           'grid-cols-[20px_32px_1fr_40px] md:grid-cols-[20px_32px_1fr_110px_110px_100px_60px]',
           'px-3 md:px-5 py-[11px]',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber',
@@ -1421,7 +1406,7 @@ export function FileList({
             </BBButton>
           )}
         </div>
-      </div>
+      </FileBrowserRow>
     )
   }
 
@@ -1473,7 +1458,7 @@ export function FileList({
             )}
           </div>
 
-          <div className="px-3 md:px-5 py-2 border-b border-line bg-paper-2 grid gap-2.5 md:gap-[14px] grid-cols-[20px_32px_1fr_40px] md:grid-cols-[20px_32px_1fr_110px_110px_100px_60px]">
+          <div className={`${FILE_HEADER_BAR} grid-cols-[20px_32px_1fr_40px] md:grid-cols-[20px_32px_1fr_110px_110px_100px_60px]`}>
             <span className="flex items-center justify-center">
               {selectable && sortedFiles.length > 0 && (
                 <BBCheckbox
@@ -1491,7 +1476,7 @@ export function FileList({
             <button
               type="button"
               onClick={() => setSortKey((k) => k === 'name-asc' ? 'name-desc' : 'name-asc')}
-              className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-ink-3 hover:text-ink transition-colors cursor-pointer select-none"
+              className={`flex items-center gap-1 ${FILE_HEADER_LABEL} hover:text-ink transition-colors cursor-pointer select-none`}
               aria-label="Sort by name"
             >
               Name
@@ -1503,7 +1488,7 @@ export function FileList({
             <button
               type="button"
               onClick={() => setSortKey((k) => k === 'size-desc' ? 'size-asc' : 'size-desc')}
-              className="hidden md:flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-ink-3 hover:text-ink transition-colors cursor-pointer select-none"
+              className={`hidden md:flex items-center gap-1 ${FILE_HEADER_LABEL} hover:text-ink transition-colors cursor-pointer select-none`}
               aria-label="Sort by size"
             >
               Size
@@ -1515,7 +1500,7 @@ export function FileList({
             <button
               type="button"
               onClick={() => setSortKey((k) => k === 'modified-desc' ? 'modified-asc' : 'modified-desc')}
-              className="hidden md:flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-ink-3 hover:text-ink transition-colors cursor-pointer select-none"
+              className={`hidden md:flex items-center gap-1 ${FILE_HEADER_LABEL} hover:text-ink transition-colors cursor-pointer select-none`}
               aria-label="Sort by modified date"
             >
               Modified
@@ -1523,7 +1508,7 @@ export function FileList({
                 {sortKey === 'modified-desc' ? '↓' : sortKey === 'modified-asc' ? '↑' : <span className="opacity-30">↕</span>}
               </span>
             </button>
-            <span className="hidden md:inline text-[10px] font-medium uppercase tracking-wider text-ink-3">Shared</span>
+            <span className={`hidden md:inline ${FILE_HEADER_LABEL}`}>Shared</span>
             <span />
           </div>
         </>

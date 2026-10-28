@@ -110,3 +110,35 @@ describe('the shared-folder upload registers its child key with the id of ITS fo
     expect(cap.addFolderKeysCalls[0].folderKeyId).toBe(btoa('K-ctx'))
   })
 })
+
+describe('L1: an invite after a link uses the custody record, the key\'s one source', () => {
+  test('the custody key wins over an invite key and nothing is minted', async () => {
+    const { buildFolderInvite } = await import('../src/lib/folder-share-crypto')
+    const { ports, calls } = makeInvitePorts({ existing: { key: 'K-invite', blob: 'blob-invite' }, minted: 'K-new' })
+    let invitesAsked = 0
+    const { payload } = await buildFolderInvite(new Uint8Array(32), 'F', undefined, {
+      ...ports,
+      custodyFolderKey: async () => ({ folderKey: enc('K-custody'), encryptedOwnerFolderKeyB64: 'blob-custody' }),
+      findExistingFolderKey: async () => {
+        invitesAsked++
+        return { folderKey: enc('K-invite'), encryptedOwnerFolderKeyB64: 'blob-invite' }
+      },
+    })
+    expect(calls.minted).toBe(0)
+    expect(invitesAsked).toBe(0)
+    expect(payload.folder_key_id).toBe(idB64('K-custody'))
+    expect(payload.folder_keys[0].encrypted_file_key).toBe('wrapped-under-K-custody')
+    expect(payload.encrypted_owner_folder_key).toBe('blob-custody')
+  })
+
+  test('no custody record: the invite key is reused, as before', async () => {
+    const { buildFolderInvite } = await import('../src/lib/folder-share-crypto')
+    const { ports, calls } = makeInvitePorts({ existing: { key: 'K-invite', blob: 'blob-invite' } })
+    const { payload } = await buildFolderInvite(new Uint8Array(32), 'F', undefined, {
+      ...ports,
+      custodyFolderKey: async () => null,
+    })
+    expect(calls.minted).toBe(0)
+    expect(payload.folder_key_id).toBe(idB64('K-invite'))
+  })
+})

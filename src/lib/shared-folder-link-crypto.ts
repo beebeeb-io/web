@@ -22,30 +22,12 @@ import {
 import { FolderNotAvailableError, resolveFolderLink } from './folder-link-public'
 import { extractShareKeyToken } from './share-key'
 import type { FolderAccessLevel, Proof } from './folder-link-types'
+import { buildFullShareLink } from './share-full-link'
+import { normalizeLinkPassphrase } from './link-passphrase'
+
+export { EmptyLinkPassphraseError, normalizeLinkPassphrase } from './link-passphrase'
 
 export const LINK_PASSPHRASE_SALT_LABEL = 'beebeeb-folder-link-passphrase-v1'
-
-/** Where a protected link's opened folder key waits out a reload. */
-export const FOLDER_KEY_CACHE_PREFIX = 'beebeeb.folderLink.key.'
-
-function cacheFolderKey(token: string, folderKey: Uint8Array): void {
-  try {
-    sessionStorage.setItem(FOLDER_KEY_CACHE_PREFIX + token, toBase64(folderKey))
-  } catch {
-    // Private mode: the next reload asks for the passphrase again.
-  }
-}
-
-function readCachedFolderKey(token: string): Uint8Array | null {
-  try {
-    const stored = sessionStorage.getItem(FOLDER_KEY_CACHE_PREFIX + token)
-    if (!stored) return null
-    const bytes = fromBase64(stored)
-    return bytes.length === SECRET_BYTES ? bytes : null
-  } catch {
-    return null
-  }
-}
 
 const SECRET_BYTES = 32
 
@@ -93,10 +75,14 @@ async function sha256(bytes: Uint8Array): Promise<Uint8Array> {
  * Argon2id stretch of the passphrase. NEVER used alone as a key: it is always
  * combined with `K_c` through `linkUnwrapKey`.
  */
+// TODO(core#44, decision L6): use core's derive_folder_link_passphrase_stretch
+// through its wasm export once core #44 merges (it pins NFC itself); this is
+// the same salt and Argon2id cost composed here from core primitives.
 export async function deriveLinkPassphraseKey(
-  passphrase: string,
+  rawPassphrase: string,
   token: string,
 ): Promise<Uint8Array> {
+  const passphrase = normalizeLinkPassphrase(rawPassphrase)
   const saltInput = new TextEncoder().encode(token + LINK_PASSPHRASE_SALT_LABEL)
   const salt = (await sha256(saltInput)).slice(0, 16)
   const { masterKey } = await deriveKeys(passphrase, salt)
@@ -125,11 +111,24 @@ export async function unwrapFolderKeyFromLink(
   return unwrapKeyFromShare(linkKey, fromBase64(wrappedB64))
 }
 
-export async function ownerWrappedFolderKey(
+// TODO(core#44, decision L6): a link's owner_wrapped_key and
+// owner_wrapped_token must be sealed with core's link-owner wraps (a
+// purpose-bound key plus AAD: "beebeeb-link-owner-key-v1" || share_id and
+// "beebeeb-link-owner-token-v1" || share_id), not a bare AES-GCM wrap under the
+// master key. Core #44 is not merged (no wasm export yet), so these two and
+// rebuildFolderLinkUrl still use wrapKeyForShare. Nothing has shipped; the
+// shared_folders_v1 flag is off.
+/**
+ * A link's `owner_wrapped_key` (decision L2, spec §6): the link secret K_c
+ * sealed to the owner's master key, so the owner can copy the link again later
+ * (`rebuildFolderLinkUrl`). It is NOT the folder key; the folder key's only
+ * owner copy is the custody record.
+ */
+export async function ownerWrappedLinkKey(
   masterKey: Uint8Array,
-  folderKey: Uint8Array,
+  linkKey: Uint8Array,
 ): Promise<string> {
-  return toBase64(await wrapKeyForShare(masterKey, folderKey))
+  return toBase64(await wrapKeyForShare(masterKey, linkKey))
 }
 
 export async function ownerWrappedLinkToken(
@@ -137,6 +136,46 @@ export async function ownerWrappedLinkToken(
   token: string,
 ): Promise<string> {
   return toBase64(await wrapKeyForShare(masterKey, new TextEncoder().encode(token)))
+}
+
+/**
+ * Rebuild a link's full URL from the owner's wrapped copies of its token and
+ * K_c, after the panel that created it is long closed. Null when the link has
+ * no owner copies, or they do not open with this master key (never a link
+ * without its key, never a wrong one).
+ */
+export async function rebuildFolderLinkUrl(
+  link: {
+    owner_wrapped_key: string | null
+    owner_wrapped_token: string | null
+    wrapped_folder_key?: string | null
+    passphrase_protected?: boolean
+  },
+  masterKey: Uint8Array,
+  origin: string,
+): Promise<string | null> {
+  if (!link.owner_wrapped_key || !link.owner_wrapped_token) return null
+  let linkKey: Uint8Array | null = null
+  try {
+    linkKey = await unwrapKeyFromShare(masterKey, fromBase64(link.owner_wrapped_key))
+    if (linkKey.length !== SECRET_BYTES) return null
+    // A plain link can be proven before it is handed out: its K_c must open
+    // the link's own folder-key wrap. (A passphrase link needs the passphrase
+    // too, which the owner's device does not keep.)
+    if (!link.passphrase_protected && link.wrapped_folder_key) {
+      const opened = await unwrapFolderKeyFromLink(link.wrapped_folder_key, await linkUnwrapKey(linkKey, null))
+      opened.fill(0)
+    }
+    const token = new TextDecoder().decode(
+      await unwrapKeyFromShare(masterKey, fromBase64(link.owner_wrapped_token)),
+    )
+    if (!token) return null
+    return buildFullShareLink(origin, token, linkKeyFragment(linkKey), 'f')
+  } catch {
+    return null
+  } finally {
+    linkKey?.fill(0)
+  }
 }
 
 export interface FolderKeyResolution {
@@ -186,29 +225,19 @@ export async function resolveGuestFolderKey(
   if (resolved.kind === 'passphrase_required') return { kind: 'passphrase_required' }
 
   const root = resolved.root
+  // A reload intentionally re-prompts: the opened key lives only in page memory.
+  try { sessionStorage.removeItem('beebeeb.folderLink.key.' + token) } catch { /* unavailable */ }
+  if (root.passphrase_protected && !passphraseStretch) return { kind: 'passphrase_required' }
   try {
     const folderKey = await unwrapFolderKeyFromLink(
       root.wrapped_folder_key,
       await linkUnwrapKey(kc, passphraseStretch),
     )
-    // A protected link's wrap needs the passphrase stretch. Keeping the opened
-    // key in sessionStorage for the proof's lifetime is what lets a reload
-    // carry on without asking again (the proof alone cannot unwrap it).
-    if (root.passphrase_protected) cacheFolderKey(token, folderKey)
     return {
       kind: 'unlocked',
       value: { folderKey, keyVersion: root.key_version, level: root.access_level },
     }
   } catch {
-    if (root.passphrase_protected) {
-      const cached = readCachedFolderKey(token)
-      if (cached) {
-        return {
-          kind: 'unlocked',
-          value: { folderKey: cached, keyVersion: root.key_version, level: root.access_level },
-        }
-      }
-    }
     return { kind: 'not_available' }
   }
 }

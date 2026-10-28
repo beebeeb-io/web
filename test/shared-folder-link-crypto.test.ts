@@ -175,7 +175,7 @@ describe('resolveGuestFolderKey (2237b)', () => {
     expect(await resolveGuestFolderKey('tok', null)).toEqual({ kind: 'not_available' })
   })
 
-  test('a protected link keeps its opened key so a reload does not ask again', async () => {
+  test('a protected link keeps no raw key in storage and prompts after reload', async () => {
     ;(globalThis as unknown as { location: { hash: string } }).location.hash =
       `#key=${linkKeyFragment(KC)}`
     const folderKey = new Uint8Array(32).fill(0x11)
@@ -196,14 +196,10 @@ describe('resolveGuestFolderKey (2237b)', () => {
 
     const first = await resolveGuestFolderKey('tok', null, STRETCH)
     expect(first.kind).toBe('unlocked')
+    expect(store.has('beebeeb.folderLink.key.tok')).toBe(false)
 
-    // A reload has the proof but not the passphrase stretch: the key cached
-    // under sessionStorage is the only thing that opens the wrap.
     const second = await resolveGuestFolderKey('tok', null, null)
-    expect(second.kind).toBe('unlocked')
-    if (second.kind === 'unlocked') {
-      expect(Array.from(second.value.folderKey)).toEqual(Array.from(folderKey))
-    }
+    expect(second.kind).toBe('passphrase_required')
     // Proof that the wrap alone cannot be opened with K_c: a plain K_c unwrap
     // of the same blob is a different key, so the cache is doing the work.
     const plain = await unwrapFolderKeyFromLink(wrap, await linkUnwrapKey(KC, null)).catch(() => null)
@@ -213,5 +209,31 @@ describe('resolveGuestFolderKey (2237b)', () => {
   test('a missing fragment key is not_available before any request', async () => {
     expect(await resolveGuestFolderKey('tok', null)).toEqual({ kind: 'not_available' })
     expect(calls.length).toBe(0)
+  })
+})
+
+describe('link passphrase form (crypto review: NFC, never empty)', () => {
+  test('NFC: one code point and e + combining accent are the same passphrase', async () => {
+    const { normalizeLinkPassphrase } = await import('../src/lib/link-passphrase')
+    const composed = 'café'
+    const decomposed = 'café'
+    expect(composed).not.toBe(decomposed)
+    expect(normalizeLinkPassphrase(decomposed)).toBe(composed)
+    // Otherwise exactly as typed: spaces inside or around are part of it.
+    expect(normalizeLinkPassphrase(' a b ')).toBe(' a b ')
+  })
+
+  test('the stretch of both spellings is the same key', async () => {
+    const a = await deriveLinkPassphraseKey('café', 'tok')
+    const b = await deriveLinkPassphraseKey('café', 'tok')
+    expect(Array.from(a)).toEqual(Array.from(b))
+  })
+
+  test('empty or whitespace-only is refused, before any stretch', async () => {
+    const { normalizeLinkPassphrase, EmptyLinkPassphraseError } = await import('../src/lib/link-passphrase')
+    for (const empty of ['', ' ', '\t\n', ' ']) {
+      expect(() => normalizeLinkPassphrase(empty)).toThrow(EmptyLinkPassphraseError)
+      await expect(deriveLinkPassphraseKey(empty, 'tok')).rejects.toThrow(EmptyLinkPassphraseError)
+    }
   })
 })

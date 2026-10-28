@@ -228,3 +228,12 @@ describe('memberTrash', () => {
     expect(result).toEqual({ trashed: 1 })
   })
 })
+
+
+test('B member rename refuses a missing shared wrap instead of guessing a member key', async () => {
+  const before = patches.length
+  await expect(memberRename({ folderId: FOLDER_ID, inviteId: INVITE_ID, folderKey: FOLDER_KEY,
+    level: 'edit', displayName: 'Member', masterKey: MEMBER_MASTER, fileKeys: {} },
+    { id: FILE_ID, is_folder: false } as any, 'corrupt.txt')).rejects.toThrow(/key/)
+  expect(patches).toHaveLength(before)
+})

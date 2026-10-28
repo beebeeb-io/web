@@ -23,6 +23,7 @@ import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useKeys } from '../../lib/key-context'
 import { needsOwnership, sharedRootFor } from '../../lib/owner-adoption'
+import { useAuth } from '../../lib/auth-context'
 import { decryptFileMetadata } from '../../lib/crypto'
 import { checkEditability, editabilityNotice, type EditabilityResult } from '../../lib/text-editability'
 import { FileEditor, type FileEditorHandle } from '../editor/file-editor'
@@ -544,7 +545,8 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   // the owner wrap nor the folder key opens it. `undefined` = not applicable,
   // `null` = cannot open with no known label.
   const [shareOrigin, setShareOrigin] = useState<string | null | undefined>(undefined)
-  const sharedFile = needsOwnership(file)
+  const { user } = useAuth()
+  const sharedFile = needsOwnership(file, user?.user_id)
 
   /** Every load path asks here: an ordinary file derives from the master key,
    *  a guest- or member-added row goes through the shared-folder resolver. */

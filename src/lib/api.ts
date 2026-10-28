@@ -4509,6 +4509,16 @@ export async function listSharedFolderKeys(
   )
 }
 
+/** Owner-only insert of per-file wraps; existing rows remain unchanged. */
+export async function publishSharedFolderKeys(
+  folderId: string,
+  keys: { file_id: string; encrypted_file_key: string }[],
+): Promise<{ written: number; skipped: number }> {
+  return request(`/api/v1/shared-folders/${encodeURIComponent(folderId)}/keys`, {
+    method: 'POST', body: JSON.stringify({ keys }),
+  })
+}
+
 /** Owner: adopt a file a guest added, by wrapping its key to the master key. */
 export async function adoptOwnerFileKey(
   fileId: string,

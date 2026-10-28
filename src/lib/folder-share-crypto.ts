@@ -10,7 +10,7 @@ import {
   zeroize,
   folderKeyId as coreFolderKeyId,
 } from './crypto'
-import { listFilesPage, getSentInvites, FILE_LIST_HARD_CAP } from './api'
+import { listFilesPage, getSentInvites, getSharedFolder, FILE_LIST_HARD_CAP } from './api'
 import type { ShareInvite } from './api'
 
 /**
@@ -77,6 +77,14 @@ export async function decryptFolderKey(
   return folderKey
 }
 
+// TODO(core#44, decision L6): a NEW custody record must be sealed with core's
+// wrap_folder_custody (HKDF(master, "beebeeb-folder-custody-v1" || folder_id)
+// plus that label as AAD) and read with unwrap_folder_custody. Today the owner
+// copy is sealed under derive_file_key(master, folder_id) with no AAD, the same
+// key that seals the folder's own name, so a malicious server could serve the
+// name blob as the custody record. Core #44 is not merged (no wasm export yet);
+// nothing has shipped and the shared_folders_v1 flag is off. Legacy invite
+// blobs (encrypted_owner_folder_key) may keep this read path to SEED custody.
 export async function encryptOwnerFolderKey(
   masterKey: Uint8Array,
   folderId: string,
@@ -219,7 +227,32 @@ export interface FolderInvitePayload {
   folder_key_id: string
 }
 
+/**
+ * The folder key from its custody record (`shared_folders`), when one exists:
+ * decision L1 makes that record the key's one source, so an invite made after
+ * a link reuses the link's key instead of minting a second one (members and
+ * guests must open the same files). A 404 means "no record"; any other failure
+ * aborts, because minting on a transient error would split the folder's key.
+ */
+export async function custodyFolderKey(
+  masterKey: Uint8Array,
+  folderId: string,
+): Promise<{ folderKey: Uint8Array; encryptedOwnerFolderKeyB64: string } | null> {
+  let wrapped: string | null
+  try {
+    wrapped = (await getSharedFolder(folderId)).owner_wrapped_folder_key
+  } catch (e) {
+    if ((e as { status?: unknown } | null)?.status === 404) return null
+    throw e
+  }
+  if (!wrapped) return null
+  const folderKey = await decryptOwnerFolderKey(masterKey, folderId, fromBase64(wrapped))
+  return { folderKey, encryptedOwnerFolderKeyB64: wrapped }
+}
+
 export interface FolderInvitePorts {
+  /** Optional so a test can leave the custody record out; the real ports read it first. */
+  custodyFolderKey?: (masterKey: Uint8Array, folderId: string) => ReturnType<typeof custodyFolderKey>
   findExistingFolderKey: (masterKey: Uint8Array, folderId: string) => ReturnType<typeof findExistingFolderKey>
   generateFolderKey: () => Promise<Uint8Array>
   encryptAllChildrenKeys: typeof encryptAllChildrenKeys
@@ -228,6 +261,7 @@ export interface FolderInvitePorts {
 }
 
 export const REAL_FOLDER_INVITE_PORTS: FolderInvitePorts = {
+  custodyFolderKey: (m, f) => custodyFolderKey(m, f),
   findExistingFolderKey: (m, f) => findExistingFolderKey(m, f),
   generateFolderKey,
   encryptAllChildrenKeys: (...a) => encryptAllChildrenKeys(...a),
@@ -249,7 +283,11 @@ export async function buildFolderInvite(
   onProgress?: (stage: 'children', done: number, total: number) => void,
   ports: FolderInvitePorts = REAL_FOLDER_INVITE_PORTS,
 ): Promise<{ folderKey: Uint8Array; payload: FolderInvitePayload }> {
-  const existing = await ports.findExistingFolderKey(masterKey, folderId)
+  // L1: the custody record first, then an active invite's key; mint (at
+  // random) only when the folder has neither.
+  const existing =
+    (ports.custodyFolderKey ? await ports.custodyFolderKey(masterKey, folderId) : null) ??
+    (await ports.findExistingFolderKey(masterKey, folderId))
   const folderKey = existing?.folderKey ?? (await ports.generateFolderKey())
   try {
     const folderKeys = await ports.encryptAllChildrenKeys(masterKey, folderKey, folderId, (d, t) =>
@@ -372,6 +410,6 @@ export async function collectAllChildren(folderId: string): Promise<string[]> {
 export {
   generateLinkKey,
   linkKeyFragment,
-  ownerWrappedFolderKey,
+  ownerWrappedLinkKey,
   wrapFolderKeyForLink,
 } from './shared-folder-link-crypto'

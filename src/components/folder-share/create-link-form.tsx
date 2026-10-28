@@ -13,6 +13,7 @@ import {
   MAX_FOLDER_LINKS,
   type CreatedFolderLink,
 } from '../../lib/folder-link-create'
+import { EmptyLinkPassphraseError } from '../../lib/link-passphrase'
 import type { FolderAccessLevel } from '../../lib/folder-link-types'
 
 export function createDisabledReason(linkCount: number): string | null {
@@ -76,12 +77,18 @@ export function CreateLinkForm({ folderId, masterKey, linkCount, onCreated }: Cr
         label: form.label.trim() ? form.label.trim() : null,
         expiresInHours: form.expiryHours,
         capBytes: form.capBytes,
-        passphrase: form.passphrase.trim() ? form.passphrase.trim() : null,
+        // Exactly as typed (normalised to NFC in createFolderLinkWithKeys);
+        // only an untouched field means "no passphrase".
+        passphrase: form.passphrase === '' ? null : form.passphrase,
         maxOpens: null,
       })
       setForm(EMPTY_CREATE_FORM)
       onCreated(created)
     } catch (e) {
+      if (e instanceof EmptyLinkPassphraseError) {
+        setError(e.message)
+        return
+      }
       const refusal = folderLinkActionError(e)
       setError(refusal?.message || 'Could not create the link. Try again.')
     } finally {

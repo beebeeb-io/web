@@ -47,9 +47,10 @@ import {
 import { clearOfflineCaches, setOfflineCacheAccessCheck } from './offline-cache'
 import { clearThumbnailCache } from './thumbnail'
 import { cacheKeyPersistent, cacheKeySessionOnly } from './key-cache'
-import { getFolderKeys, getSentInvites, listFolderLinks, listSharedFolderKeys, setRecoveryCheckIfAbsent, verifyRecoveryCheck } from './api'
+import { ApiError, getFolderKeys, getSentInvites, listFolderLinks, listSharedFolderKeys, setRecoveryCheckIfAbsent, verifyRecoveryCheck } from './api'
 import type { DriveFile } from './api'
-import { folderKeyForRoot, openOwnerFile } from './owner-adoption'
+import { clearSharedFolderLookups, needsOwnership, sharedRootFor, unwrapOwnerFileKey, folderKeyForRoot, openOwnerFile } from './owner-adoption'
+import { createSharedFolderKeyCache } from './shared-folder-key-cache'
 import { activeFolderInvites } from './folder-share-crypto'
 import { decryptActorName } from './guest-actor-name'
 import { useAuth } from './auth-context'
@@ -591,6 +592,44 @@ export function KeyProvider({ children }: { children: ReactNode }) {
   // request list + unwrapped R_priv per request for the drive session.
   const requestResolverRef = useRef<RequestKeyResolver | null>(null)
 
+  // Successful key indexes are reused; misses refresh once, rejected fetches are evicted.
+  const sharedFolderCacheRef = useRef(createSharedFolderKeyCache(async (folderId) => {
+    const map = new Map<string, string>()
+    try {
+      let cursor: string | null = null
+      do {
+        const page = await listSharedFolderKeys(folderId, { limit: 500, cursor })
+        for (const row of page.keys) map.set(row.file_id, row.encrypted_file_key)
+        cursor = page.next_cursor
+      } while (cursor)
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 404) throw error
+      const invites = activeFolderInvites(await getSentInvites(), folderId)
+      for (const invite of invites) {
+        for (const row of await getFolderKeys(invite.id)) {
+          if (!map.has(row.file_id)) map.set(row.file_id, row.encrypted_file_key)
+        }
+      }
+    }
+    return map
+  }))
+
+  // Link labels per shared folder ("added via Family WhatsApp"), decrypted once
+  // per folder and refreshed when a row names a link this index has not seen.
+  const sharedFolderLabelsRef = useRef(createSharedFolderKeyCache<string | null>(async (folderId) => {
+    const labels = new Map<string, string | null>()
+    const links = await listFolderLinks(folderId)
+    const key = await folderKeyForRoot(masterKeyRef.current as Uint8Array, folderId)
+    try {
+      for (const link of links) {
+        labels.set(link.id, key && link.label_encrypted ? await decryptActorName(key, link.label_encrypted) : null)
+      }
+    } finally {
+      if (key) zeroize(key)
+    }
+    return labels
+  }))
+
   const getFileKeyForFile = useCallback(async (file: DriveFile, expectedUserId?: string): Promise<Uint8Array> => {
     if (!isBoundTo(expectedUserId)) {
       throw new Error('Vault is locked — unlock first')
@@ -600,91 +639,53 @@ export function KeyProvider({ children }: { children: ReactNode }) {
       if (!requestResolverRef.current) requestResolverRef.current = createRequestKeyResolver()
       return requestResolverRef.current.resolveFileKey(file, key)
     }
+    if (file.owner_wrapped_file_key) {
+      const owned = await unwrapOwnerFileKey(key, file.id, file.owner_wrapped_file_key)
+      if (owned) return owned
+    }
+    // Task 2237b: a row a link guest or another member added to a shared
+    // folder is not sealed under a key we derive. Every caller (download, zip,
+    // rename, versions, thumbnails), not only the listing, must take the
+    // shared-folder path for it; a row that does not open there falls through
+    // to the derived key and fails its own integrity check honestly.
+    if (needsOwnership(file, residentKeyUserIdRef.current)) {
+      const root = await sharedRootFor(file.parent_id ?? null, file.id)
+      if (root) {
+        const opened = await openOwnerFile({
+          masterKey: key,
+          folderId: root,
+          file,
+          keyIndexPromise: sharedFolderCacheRef.current.forFile(root, file.id),
+          labelFor: async () => null,
+        })
+        if (opened.kind === 'ok') return opened.fileKey
+      }
+    }
     return deriveFileKey(key, file.id)
   }, [isBoundTo])
 
-  // Task 2237b: per-folder key index and link labels for the shared-file path,
-  // fetched at most once per drive session and dropped on lock/logout.
-  const sharedFolderCacheRef = useRef<
-    Map<string, { keys: Promise<Map<string, string>>; labels: Promise<Map<string, string | null>> }>
-  >(new Map())
-
-  const sharedFolderCache = useCallback((folderId: string): {
-    keys: Promise<Map<string, string>>
-    labels: Promise<Map<string, string | null>>
-  } => {
-    const cache = sharedFolderCacheRef.current
-    const existing = cache.get(folderId)
-    if (existing) return existing
-    const keys = (async () => {
-      const map = new Map<string, string>()
-      try {
-        let cursor: string | null = null
-        do {
-          const page = await listSharedFolderKeys(folderId, { limit: 500, cursor })
-          for (const row of page.keys) map.set(row.file_id, row.encrypted_file_key)
-          cursor = page.next_cursor
-        } while (cursor)
-        return map
-      } catch {
-        // A folder shared only through an invite has no custody row, so the
-        // owner's index lives on the sent invites instead. Their child keys
-        // are wrapped under the invite's folder key, the same one the member used.
-        const invites = activeFolderInvites(await getSentInvites(), folderId)
-        for (const invite of invites) {
-          for (const row of await getFolderKeys(invite.id)) {
-            if (!map.has(row.file_id)) map.set(row.file_id, row.encrypted_file_key)
-          }
-        }
-        return map
-      }
-    })()
-    const labels = (async () => {
-      const map = new Map<string, string | null>()
-      try {
-        const links = await listFolderLinks(folderId)
-        const folderKey = folderKeyForRoot(masterKeyRef.current as Uint8Array, folderId)
-        const key = await folderKey
-        for (const link of links) {
-          if (!link.label_encrypted) continue
-          map.set(link.id, key ? await decryptActorName(key, link.label_encrypted) : null)
-        }
-      } catch {
-        /* labels are decoration; the row still opens or reports without one */
-      }
-      return map
-    })()
-    const entry = { keys, labels }
-    cache.set(folderId, entry)
-    return entry
-  }, [])
-
-  const getFileKeyForSharedFile = useCallback(async (file: DriveFile, folderId: string): Promise<Uint8Array | null> => {
-    if (!isBoundTo()) {
-      throw new Error('Vault is locked — unlock first')
-    }
-    const masterKey = masterKeyRef.current as Uint8Array
-    const cache = sharedFolderCache(folderId)
-    const result = await openOwnerFile({
-      masterKey,
-      folderId,
-      file,
-      keyIndexPromise: cache.keys,
-      labelFor: async (shareId) => (shareId ? ((await cache.labels).get(shareId) ?? null) : null),
-    })
-    return result.kind === 'ok' ? result.fileKey : null
-  }, [isBoundTo, sharedFolderCache])
-
   const getSharedFileOrigin = useCallback(async (file: DriveFile, folderId: string): Promise<string | null> => {
-    const shareId = file.acted_via_share_id ?? null
+    if (!isBoundTo()) throw new Error('Vault is locked — unlock first')
+    const shareId = file.acted_via_share_id
     if (!shareId) return null
     try {
-      const cache = sharedFolderCache(folderId)
-      return (await cache.labels).get(shareId) ?? null
+      return (await sharedFolderLabelsRef.current.forFile(folderId, shareId)).get(shareId) ?? null
     } catch {
+      // Labels are decoration; the row still opens or reports without one.
       return null
     }
-  }, [sharedFolderCache])
+  }, [isBoundTo])
+
+  const getFileKeyForSharedFile = useCallback(async (file: DriveFile, folderId: string): Promise<Uint8Array | null> => {
+    if (!isBoundTo()) throw new Error('Vault is locked — unlock first')
+    const masterKey = masterKeyRef.current as Uint8Array
+    const result = await openOwnerFile({
+      masterKey, folderId, file,
+      keyIndexPromise: sharedFolderCacheRef.current.forFile(folderId, file.id),
+      labelFor: async () => getSharedFileOrigin(file, folderId),
+    })
+    return result.kind === 'ok' ? result.fileKey : null
+  }, [isBoundTo, getSharedFileOrigin])
 
   const getMasterKey = useCallback((expectedUserId?: string): Uint8Array => {
     if (!isBoundTo(expectedUserId)) {
@@ -735,6 +736,8 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     requestResolverRef.current?.clear()
     requestResolverRef.current = null
     sharedFolderCacheRef.current.clear()
+    sharedFolderLabelsRef.current.clear()
+    clearSharedFolderLookups()
     clearCachedKey()
     void clearOfflineCaches()
     void clearThumbnailCache()
@@ -844,6 +847,8 @@ export function KeyProvider({ children }: { children: ReactNode }) {
     requestResolverRef.current?.clear()
     requestResolverRef.current = null
     sharedFolderCacheRef.current.clear()
+    sharedFolderLabelsRef.current.clear()
+    clearSharedFolderLookups()
     clearCachedKey()
     await Promise.all([clearOfflineCaches(), clearThumbnailCache(), clearVault()])
     setVaultExists(false)

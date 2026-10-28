@@ -23,6 +23,7 @@ import {
 import { fromBase64 } from '../../lib/crypto'
 import { decryptOwnerFolderKey } from '../../lib/folder-share-crypto'
 import { decryptActorName } from '../../lib/guest-actor-name'
+import { rebuildFolderLinkUrl } from '../../lib/shared-folder-link-crypto'
 import { SHARED_FOLDERS_FLAG } from '../../lib/flags'
 import type { FolderLink } from '../../lib/folder-link-types'
 import { useKeys } from '../../lib/key-context'
@@ -227,6 +228,20 @@ function FolderSharePanelLive({ open, folderId, folderName, onClose }: FolderSha
 
         const key = getMasterKey()
         setMasterKey(key)
+
+        // L2: every link the owner made, on any device, can be copied again:
+        // its URL is rebuilt from the owner's wrapped token and K_c.
+        const origin = typeof window !== 'undefined' ? window.location.origin : ''
+        const rebuilt = await Promise.all(
+          linkRows.map(async (link) => [link.id, await rebuildFolderLinkUrl(link, key, origin)] as const),
+        )
+        if (live) {
+          setUrls((current) => {
+            const next = { ...current }
+            for (const [id, url] of rebuilt) if (url && !next[id]) next[id] = url
+            return next
+          })
+        }
 
         const folderKey = custody?.owner_wrapped_folder_key
           ? await decryptOwnerFolderKey(key, folderId, fromBase64(custody.owner_wrapped_folder_key))

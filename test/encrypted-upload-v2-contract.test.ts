@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
+import { mockModuleScoped } from './helpers/scoped-module-mock'
 import { installMocks, cap, resetCaptures } from './helpers/upload-share-mocks'
 
 // Shared mock setup (tasks 0753, 1590): see helpers/upload-share-mocks.ts. The
@@ -6,6 +7,10 @@ import { installMocks, cap, resetCaptures } from './helpers/upload-share-mocks'
 // real module plus those overrides and is restored when this file finishes.
 // This suite asserts on `cap`.
 await installMocks()
+await mockModuleScoped('../src/lib/owner-adoption', import.meta.dir, {
+  sharedRootFor: async (parentId: string) => parentId === 'nested-folder' ? 'shared-root' : null,
+  folderKeyForRoot: async () => new Uint8Array(32).fill(7),
+})
 
 describe('encryptedUpload v2 server file id contract', () => {
   beforeEach(() => { resetCaptures() })
@@ -53,4 +58,16 @@ describe('encryptedUpload v2 server file id contract', () => {
     expect(cap.savedStates[1]).toMatchObject({ chunk_format: 1 })
     expect(cap.removedStates).toEqual(['server-file-id'])
   })
+})
+
+test('B owner upload publishes the actual v2 file key to the shared root without an invite', async () => {
+  resetCaptures()
+  const { encryptedUpload } = await import('../src/lib/encrypted-upload')
+  await encryptedUpload(new File(['data'], 'late.txt'), 'proposed', new Uint8Array([1]),
+    new Uint8Array([9]), 'nested-folder', undefined, undefined, undefined, undefined,
+    async () => new Uint8Array([9]))
+  expect(cap.ownerKeys).toHaveLength(1)
+  expect(cap.ownerKeys[0].folderId).toBe('shared-root')
+  expect(cap.ownerKeys[0].keys).toEqual([{ file_id: 'server-file-id', encrypted_file_key: 'AAAAAAAAAAAAAAAACQ==' }])
+  expect(cap.addFolderKeysCalls).toHaveLength(0)
 })

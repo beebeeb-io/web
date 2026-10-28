@@ -32,6 +32,15 @@ import { useFilePreview } from '../hooks/use-file-preview'
 import { useOnboarding } from '../lib/onboarding-context'
 import { getPreference, setPreference } from '../lib/api'
 import { applyKnownLargeThumbFlags, recordLargeThumbFlags } from '../lib/sync-thumb-flags'
+import {
+  createAttributionRefresher,
+  learnAttribution,
+  rowsMissingAttribution,
+  withAttribution,
+  type RowAttribution,
+} from '../lib/row-attribution'
+import { EncryptionStatus } from '../components/encryption-status'
+import { FILE_STATUS_BAR } from '../components/file-browser-row'
 import { useDriveData } from '../lib/drive-data-context'
 import { useToast } from '../components/toast'
 import { useWsEvent } from '../lib/ws-context'
@@ -430,11 +439,27 @@ export function Drive() {
   // lib/sync-storage-locations.ts). A pool never seen stays unknown.
   const poolLocationsRef = useRef(new Map<string, unknown>())
 
+  // Task 2237b: sync nodes carry no attribution (who added a row to a shared
+  // folder), GET /files does. Learn it from API rows and overlay it, so a
+  // guest's file pushed over the stream opens through the shared-folder path
+  // without a reload; a row the API never described is looked up, bounded
+  // (see lib/row-attribution.ts).
+  const rowAttributionRef = useRef(new Map<string, RowAttribution>())
+  const listingInFlightRef = useRef(false)
+  const [attributionRefresher] = useState(() => createAttributionRefresher({
+    known: rowAttributionRef.current,
+    getFile,
+    listFolder: () => listAllFiles(currentParentIdRef.current ?? undefined),
+    onLearned: () => refreshFromSyncRef.current(),
+    listingInFlight: () => listingInFlightRef.current,
+  }))
+  useEffect(() => () => attributionRefresher.reset(), [currentParentId, attributionRefresher])
+
   // Stable mapper — deps never change after mount.
   const syncNodeToDriveFile = useCallback((n: SyncNode): DriveFile => {
     // Folders hold no chunks, so the API sends them no location either.
     const location = n.is_folder ? undefined : knownPoolLocation(poolLocationsRef.current, n)
-    return {
+    return withAttribution({
       id: n.id,
       name_encrypted: n.name_encrypted,
       file_request_id: n.file_request_id,
@@ -453,7 +478,7 @@ export function Drive() {
       created_at: n.created_at,
       updated_at: n.updated_at,
       ...(location === undefined ? {} : { storage_location: location }),
-    }
+    }, rowAttributionRef.current)
   }, [])
 
   // refreshFromSync — reads sync.children() without an API call.
@@ -476,6 +501,7 @@ export function Drive() {
     const syncNodes = rawNodes.map(syncNodeToDriveFile)
     const nodes = withKnownLargeThumbs(syncNodes)
     const coverageComplete = syncTreeCompleteRef.current
+    if (!trashed) attributionRefresher.request(rowsMissingAttribution(nodes, rowAttributionRef.current))
 
     const decision = decideSyncRows({
       next: nodes,
@@ -540,8 +566,10 @@ export function Drive() {
       setLoading(true)
     }
 
+    listingInFlightRef.current = true
     try {
       const data = withKnownLargeThumbs(await listAllFiles(currentParentId ?? undefined, { trashed }))
+      learnAttribution(rowAttributionRef.current, data)
       if (!isCurrentOfflineCacheScope(cacheScope)) return
       if (syncReadyRef.current) {
         learnPoolLocations(poolLocationsRef.current, sync.children(currentParentId ?? null), data)
@@ -604,6 +632,7 @@ export function Drive() {
         setDriveOffline(false)
       }
     } finally {
+      listingInFlightRef.current = false
       if (isCurrentOfflineCacheScope(cacheScope)) setLoading(false)
     }
   // sync.ready intentionally read via syncReadyRef to avoid infinite re-fetch
@@ -3080,17 +3109,10 @@ export function Drive() {
         </div>
 
         {/* Status bar */}
-        <div className="px-3 md:px-5 py-2 border-t border-line bg-paper-2 flex items-center gap-2 md:gap-3.5 text-[11px] text-ink-3">
+        <div className={FILE_STATUS_BAR}>
           <span className="font-mono">{files.length} item{files.length !== 1 ? 's' : ''}</span>
           <span>·</span>
-          <span className="flex items-center gap-1.5">
-            <Icon name="shield" size={12} className={isUnlocked ? 'text-amber-deep' : 'text-ink-4'} />
-            {cryptoError
-              ? 'Encryption unavailable'
-              : isUnlocked
-                ? 'All encrypted · AES-256-GCM'
-                : 'Vault locked'}
-          </span>
+          <EncryptionStatus unlocked={isUnlocked} error={!!cryptoError} />
           <span className="ml-auto flex items-center gap-1.5">
             <Icon name="cloud" size={12} />
             Synced {syncedAgo}s ago

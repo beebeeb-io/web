@@ -15,3 +15,8 @@ describe('shared folder rows added by another account', () => {
     expect(addedBySomeoneElse({ uploaded_by: 'member-1' }, null)).toBe(false)
   })
 })
+
+
+test('A4 anonymous guest attribution uses the shared-folder key path', () => {
+  expect(addedBySomeoneElse({ uploaded_by: null, acted_via_share_id: 'link' }, 'owner')).toBe(true)
+})

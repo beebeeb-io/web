@@ -164,6 +164,8 @@ export function FolderLinkRow({
         <button
           type="button"
           onClick={() => onCopy(link, url)}
+          disabled={!url}
+          title={url ? undefined : "This link's key isn't stored for this account, so it can't be copied again."}
           className="rounded-md border border-line px-2.5 py-1 text-xs font-medium text-ink-2 disabled:opacity-60"
         >
           {copiedId === link.id ? 'Link copied.' : 'Copy link'}

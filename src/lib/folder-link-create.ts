@@ -7,6 +7,13 @@
  * fixed: make sure the folder's key exists and is published to the owner,
  * THEN mint the link.
  *
+ * The folder key is minted at RANDOM (decision L1, plan C review): its one
+ * source is the server's custody record (`shared_folders.owner_wrapped_folder_key`),
+ * read before anything is minted, so every client and every reload opens the
+ * same key. It is never derived from the master key. A link's
+ * `owner_wrapped_key` is `wrap(master_key, K_c)` (decision L2, spec §6), so the
+ * owner can copy the link again later (`rebuildFolderLinkUrl`).
+ *
  * Every link keeps `#key=K_c`. A passphrase link does not replace K_c: its
  * unwrap key is `combine_folder_link_key(K_c, argon2id(passphrase, salt))`,
  * computed by core, and the fragment still carries K_c. Anyone with the URL
@@ -19,14 +26,17 @@ import {
   registerSharedFolderKey,
   type SharedFolderInfo,
 } from './api'
-import { deriveFileKey, fromBase64, toBase64 } from './crypto'
+import { deriveFileKey, fromBase64, toBase64, zeroize } from './crypto'
 import {
   decryptOwnerFolderKey,
   encryptAllChildrenKeys,
+  encryptChildFileKey,
   encryptOwnerFolderKey,
   findExistingFolderKey,
+  generateFolderKey,
 } from './folder-share-crypto'
 import { encryptActorName } from './guest-actor-name'
+import { forgetSharedFolderCustody } from './owner-adoption'
 import {
   linkErrorCode,
   type CreateFolderLinkRequest,
@@ -40,7 +50,8 @@ import {
   generateLinkKey,
   linkKeyFragment,
   linkUnwrapKey,
-  ownerWrappedFolderKey,
+  normalizeLinkPassphrase,
+  ownerWrappedLinkKey,
   ownerWrappedLinkToken,
   wrapFolderKeyForLink,
 } from './shared-folder-link-crypto'
@@ -74,8 +85,11 @@ export interface CreateFolderLinkPorts {
   decryptOwnerFolderKey: typeof decryptOwnerFolderKey
   encryptOwnerFolderKey: typeof encryptOwnerFolderKey
   findExistingFolderKey: typeof findExistingFolderKey
-  /** The folder's own deterministic key — the one its name and children use. */
+  /** A fresh RANDOM folder key; only when no custody record and no invite exists. */
+  generateFolderKey: () => Promise<Uint8Array>
+  /** The root folder's own name key (published under the folder key, below). */
   deriveFileKey: typeof deriveFileKey
+  encryptChildFileKey: typeof encryptChildFileKey
   /** Wrap every child key in the subtree under the folder key. */
   encryptAllChildrenKeys: typeof encryptAllChildrenKeys
   registerSharedFolderKey: typeof registerSharedFolderKey
@@ -86,7 +100,7 @@ export interface CreateFolderLinkPorts {
   deriveLinkPassphraseKey: typeof deriveLinkPassphraseKey
   linkUnwrapKey: typeof linkUnwrapKey
   wrapFolderKeyForLink: typeof wrapFolderKeyForLink
-  ownerWrappedFolderKey: typeof ownerWrappedFolderKey
+  ownerWrappedLinkKey: typeof ownerWrappedLinkKey
   ownerWrappedLinkToken: typeof ownerWrappedLinkToken
   encryptLabel: (folderKey: Uint8Array, label: string) => Promise<string>
   fromBase64: typeof fromBase64
@@ -104,7 +118,9 @@ export const REAL_FOLDER_LINK_PORTS: CreateFolderLinkPorts = {
   decryptOwnerFolderKey,
   encryptOwnerFolderKey,
   findExistingFolderKey,
+  generateFolderKey,
   deriveFileKey,
+  encryptChildFileKey,
   encryptAllChildrenKeys,
   registerSharedFolderKey,
   createFolderLink,
@@ -113,7 +129,7 @@ export const REAL_FOLDER_LINK_PORTS: CreateFolderLinkPorts = {
   deriveLinkPassphraseKey,
   linkUnwrapKey,
   wrapFolderKeyForLink,
-  ownerWrappedFolderKey,
+  ownerWrappedLinkKey,
   ownerWrappedLinkToken,
   encryptLabel: encryptActorName,
   fromBase64,
@@ -165,29 +181,32 @@ async function ensureOwnerFolderKey(
     )
   }
 
-  // No custody row yet: an active folder invite still carries the key that
-  // members hold, so reuse it rather than minting a fresh one.
+  // No custody row yet. An active folder invite still carries the key that
+  // members hold: reuse it, so they keep opening everything. Only with no
+  // invite either is a folder key minted, at RANDOM (decision L1); it is never
+  // derived from the master key. Either way the key is registered as the
+  // custody record, which from then on is its one source for every client,
+  // and every existing child's key is wrapped under it when the link is made.
   const existing = await ports.findExistingFolderKey(masterKey, folderId)
-  if (existing) return existing.folderKey
-
-  // No custody and no invite: this is an ordinary folder of the owner's own
-  // drive, whose key IS deriveFileKey(masterKey, folderId) — the key its name
-  // and every child file key already derive from. Minting a random key here
-  // would publish a key that opens nothing the owner already stored.
-  const folderKey = await ports.deriveFileKey(masterKey, folderId)
-  const wrapped = ports.toBase64(await ports.encryptOwnerFolderKey(masterKey, folderId, folderKey))
+  const folderKey = existing?.folderKey ?? (await ports.generateFolderKey())
   try {
+    const wrapped = ports.toBase64(await ports.encryptOwnerFolderKey(masterKey, folderId, folderKey))
     await ports.registerSharedFolderKey(folderId, {
       owner_wrapped_folder_key: wrapped,
       key_version: 1,
     })
+    // This tab may have cached "not shared" for the folder a moment ago; the
+    // next upload into it must publish its wrap (owner-upload-key.ts).
+    forgetSharedFolderCustody(folderId)
     return folderKey
   } catch (err) {
     // Someone registered a key between our read and our write: their key is
     // the truth. Re-read and open it; never overwrite.
+    folderKey.fill(0)
     if (errorCode(err) !== 'key_version_conflict') throw err
     const reread = await tryReadCustody(folderId, ports)
     if (!reread?.owner_wrapped_folder_key) throw err
+    forgetSharedFolderCustody(folderId)
     return ports.decryptOwnerFolderKey(
       masterKey,
       folderId,
@@ -206,7 +225,9 @@ export async function createFolderLinkWithKeys(
 
     // K_c is the link secret in the fragment, for protected links too.
     const kc = ports.generateLinkKey()
-    const passphrase = input.passphrase?.trim() ? input.passphrase.trim() : null
+    // Empty means "no passphrase"; anything typed is used exactly (NFC), and
+    // whitespace-only is refused rather than quietly making a plain link.
+    const passphrase = input.passphrase ? normalizeLinkPassphrase(input.passphrase) : null
     const stretch = passphrase ? await ports.deriveLinkPassphraseKey(passphrase, token) : null
     // The guest opens every link through the same core combiner, with no
     // stretch for a plain link — so the owner must wrap under that same key.
@@ -218,14 +239,27 @@ export async function createFolderLinkWithKeys(
       token,
       access_level: input.accessLevel,
       wrapped_folder_key: wrappedFolderKey,
-      owner_wrapped_key: await ports.ownerWrappedFolderKey(input.masterKey, folderKey),
+      // L2: the owner's copy of K_c (not of the folder key), so the link can be
+      // copied again later from the owner's devices.
+      owner_wrapped_key: await ports.ownerWrappedLinkKey(input.masterKey, kc),
       owner_wrapped_token: await ports.ownerWrappedLinkToken(input.masterKey, token),
     }
     // A guest can only read names and bytes for files whose key the owner has
     // published under this folder key. Publishing happens once per subtree;
     // the server keeps the first wrap and ignores later ones.
     const folderKeys = await ports.encryptAllChildrenKeys(input.masterKey, folderKey, input.folderId)
-    if (folderKeys.length > 0) body.folder_keys = folderKeys
+    // The root's own name key, under the folder key too: with a random folder
+    // key it is the only way a link or member can read the folder's own name.
+    const rootNameKey = await ports.deriveFileKey(input.masterKey, input.folderId)
+    try {
+      folderKeys.unshift({
+        file_id: input.folderId,
+        encrypted_file_key: await ports.encryptChildFileKey(folderKey, rootNameKey),
+      })
+    } finally {
+      zeroize(rootNameKey)
+    }
+    body.folder_keys = folderKeys
     if (input.label) body.label_encrypted = await ports.encryptLabel(folderKey, input.label)
     if (input.expiresInHours !== null) body.expires_in_hours = input.expiresInHours
     if (input.maxOpens !== null) body.max_opens = input.maxOpens

@@ -17,6 +17,7 @@ import { mockModuleScoped } from './scoped-module-mock'
 // ── Shared state ─────────────────────────────────────────────────────────────
 // Upload-contract captures (the contract suite asserts on these).
 export const cap = {
+  ownerKeys: [] as { folderId: string; keys: unknown[] }[],
   initCalls: [] as unknown[],
   uploadedChunks: [] as Array<{ fileId: string; index: number; firstByte: number; uploadSessionId: string | null | undefined }>,
   updatedFiles: [] as Array<{ fileId: string; nameEncrypted: string }>,
@@ -26,6 +27,7 @@ export const cap = {
   addFolderKeysCalls: [] as Array<{ inviteId: string; keys: unknown[]; folderKeyId: string }>,
 }
 export function resetCaptures(): void {
+  cap.ownerKeys.length = 0
   cap.initCalls.length = 0
   cap.uploadedChunks.length = 0
   cap.updatedFiles.length = 0
@@ -105,6 +107,10 @@ export async function installMocks(): Promise<void> {
     }),
     addFolderKeys: async (inviteId: string, keys: unknown[], folderKeyId: string) => {
       cap.addFolderKeysCalls.push({ inviteId, keys, folderKeyId })
+    },
+    publishSharedFolderKeys: async (folderId: string, keys: unknown[]) => {
+      cap.ownerKeys.push({ folderId, keys })
+      return { written: keys.length, skipped: 0 }
     },
     getUploadStatus: async () => ({ uploaded_chunks: [] }),
     updateFile: async (fileId: string, updates: { name_encrypted?: string }) => {
