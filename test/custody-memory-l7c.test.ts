@@ -273,11 +273,45 @@ describe('L7d: the memory belongs to the device and only grows', () => {
     await expect(adoption.folderWrapFormat(ROOT)).rejects.toThrow("This folder's keys are unavailable")
   })
 
-  test('only canonical folder UUIDs: any other id is refused, never stored', () => {
+  // A server that sends a seen folder's id in another form (its UUID parser
+  // accepts them all) must not miss the set: every id is parsed to the
+  // canonical lower-case hyphenated form. An id that is no UUID refuses.
+  test('every form of a seen id reads as seen: hyphen-less, braced, upper-case and urn', async () => {
     memory.resetCustodyMemoryForTests()
-    for (const id of ['folder-1', '{' + ROOT + '}', ROOT.replace(/-/g, ''), '']) {
-      expect(() => memory.markCustodySeen(id)).toThrow()
+    memory.markCustodySeen(ROOT)
+    const hex = ROOT.replace(/-/g, '')
+    for (const form of [hex, `{${ROOT}}`, ROOT.toUpperCase(), `urn:uuid:${ROOT}`, hex.toUpperCase()]) {
+      expect(memory.hasSeenCustody(form)).toBe(true)
+      expect(() => memory.assertNeverSawCustody(form)).toThrow("This folder's keys are unavailable")
+      await expect(memory.assertNoSeenAncestor(form, async () => null)).rejects.toThrow("This folder's keys are unavailable")
+    }
+    // ...and every form of a folder never seen parses, so it reads as NOT seen
+    // (an unparsed form would count as seen, which would hide a broken parser).
+    const other = PRESEEN.replace(/-/g, '')
+    for (const form of [other, `{${PRESEEN}}`, PRESEEN.toUpperCase(), `urn:uuid:${PRESEEN}`, `URN:UUID:${PRESEEN}`]) {
+      expect(memory.hasSeenCustody(form)).toBe(false)
+    }
+  })
+
+  test('a seen id marked in another form is stored canonical', () => {
+    memory.resetCustodyMemoryForTests()
+    memory.markCustodySeen(`{${ROOT.toUpperCase()}}`)
+    expect(JSON.parse(storage.get(KEY)!)).toEqual([ROOT])
+    expect(memory.hasSeenCustody(ROOT)).toBe(true)
+  })
+
+  test('an id that is no UUID counts as seen (refuses) and is never stored', async () => {
+    memory.resetCustodyMemoryForTests()
+    for (const garbage of ['folder-1', '', 'not-a-uuid', `${ROOT}0`, ROOT.slice(1)]) {
+      expect(memory.hasSeenCustody(garbage)).toBe(true)
+      expect(() => memory.markCustodySeen(garbage)).toThrow()
+      // Even with nothing in the set, a walk from it refuses.
+      await expect(memory.assertNoSeenAncestor(garbage, async () => null)).rejects.toThrow("This folder's keys are unavailable")
     }
     expect(storage.has(KEY)).toBe(false)
+    // ...and once anything is in the set (the walk runs only then), a parent
+    // that is no UUID refuses mid-walk.
+    memory.markCustodySeen(ROOT)
+    await expect(memory.assertNoSeenAncestor(PRESEEN, async () => 'garbage')).rejects.toThrow("This folder's keys are unavailable")
   })
 })

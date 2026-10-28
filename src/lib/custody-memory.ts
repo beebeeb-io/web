@@ -26,8 +26,9 @@
  * record is used, and a failed write refuses (the caller does not use the
  * key). An unreadable set (a stored value that is not an array of canonical
  * UUIDs, or storage that can't be read at all) counts as "every folder seen":
- * legacy is refused, and the value is never overwritten. Only canonical
- * lower-case hyphenated UUIDs are accepted. Every id is also kept in memory
+ * legacy is refused, and the value is never overwritten. Ids are stored and
+ * looked up in their canonical lower-case hyphenated form, whatever form the
+ * server sent; an id that is no UUID refuses. Every id is also kept in memory
  * for the page load, so after a failed write the folder still refuses legacy
  * until a reload. Nothing secret is stored: folder ids only.
  */
@@ -55,8 +56,23 @@ export class CustodyMemoryWriteError extends FolderKeysUnavailableError {
 /** This page load's copy (canonical ids), persisted or not. */
 const inMemory = new Set<string>()
 
-function canonical(folderId: string): string {
-  return folderId.toLowerCase()
+/**
+ * A folder id in its canonical form (lower-case, hyphenated), whatever form the
+ * server sent: its UUID parser also takes the simple (32 hex), braced and
+ * `urn:uuid:` forms, so a seen folder must not slip past the set in one of
+ * them. Null when the id is no UUID at all: such an id counts as seen (it
+ * refuses) and is never stored.
+ */
+function parseFolderId(folderId: string): string | null {
+  let id = folderId
+  if (id.length === 45 && id.slice(0, 9).toLowerCase() === 'urn:uuid:') id = id.slice(9)
+  else if (id.length === 38 && id.startsWith('{') && id.endsWith('}')) id = id.slice(1, -1)
+  if (id.length === 32 && /^[0-9a-f]{32}$/i.test(id)) {
+    const hex = id.toLowerCase()
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+  }
+  const lower = id.toLowerCase()
+  return CANONICAL_UUID.test(lower) ? lower : null
 }
 
 /**
@@ -90,8 +106,8 @@ function readStored(): { ids: Set<string>; unreadable: boolean } {
  * FolderKeysUnavailableError for an id that is not a canonical folder UUID.
  */
 export function markCustodySeen(folderId: string): void {
-  const id = canonical(folderId)
-  if (!CANONICAL_UUID.test(id)) throw new FolderKeysUnavailableError()
+  const id = parseFolderId(folderId)
+  if (!id) throw new FolderKeysUnavailableError()
   // First in memory: even if the durable write fails, legacy stays refused.
   inMemory.add(id)
   // No storage API at all (tests, server-side render): memory is all there is.
@@ -110,10 +126,12 @@ export function markCustodySeen(folderId: string): void {
   }
 }
 
+/** Seen with custody, in any form of its id. An id that is no UUID counts as seen. */
 export function hasSeenCustody(folderId: string): boolean {
-  if (inMemory.has(canonical(folderId))) return true
+  const id = parseFolderId(folderId)
+  if (!id || inMemory.has(id)) return true
   const stored = readStored()
-  return stored.unreadable || stored.ids.has(canonical(folderId))
+  return stored.unreadable || stored.ids.has(id)
 }
 
 /** Whether this device has seen custody for any folder at all. */
@@ -146,6 +164,8 @@ export async function assertNoSeenAncestor(
   startId: string,
   parentOf: (id: string) => Promise<string | null>,
 ): Promise<void> {
+  // An id that is no UUID refuses even with nothing in the set.
+  if (!parseFolderId(startId)) throw new FolderKeysUnavailableError()
   if (!hasSeenAnyCustody()) return
   let cursor: string | null = startId
   for (let depth = 0; cursor; depth += 1) {
