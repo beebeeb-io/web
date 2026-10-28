@@ -4487,12 +4487,32 @@ export async function getSharedFolder(folderId: string): Promise<SharedFolderInf
 /** Owner: publish the folder key wrapped to the master key. */
 export async function registerSharedFolderKey(
   folderId: string,
-  body: { owner_wrapped_folder_key: string; key_version: number },
+  body: {
+    owner_wrapped_folder_key: string
+    key_version: number
+    /**
+     * Task 2237b L7b (a): on the FIRST registration of a flag-off invite-only
+     * folder, every existing child row re-sealed under L7. The server replaces
+     * them in the same transaction, only if they are exactly its rows.
+     */
+    rewrap?: { keys: { file_id: string; encrypted_file_key: string }[] }
+  },
 ): Promise<{ created: boolean; key_version: number }> {
   return request(`/api/v1/shared-folders/${encodeURIComponent(folderId)}/key`, {
     method: 'PUT',
     body: JSON.stringify(body),
   })
+}
+
+/**
+ * Owner, only while the folder has no custody record (task 2237b L7b (a)):
+ * every legacy child row of the folder, trashed and moved-out included, with
+ * whether each is a folder, so the first custody registration can re-seal them.
+ */
+export async function listLegacyFolderKeys(
+  folderId: string,
+): Promise<{ keys: { file_id: string; encrypted_file_key: string; is_folder: boolean }[] }> {
+  return request(`/api/v1/shared-folders/${encodeURIComponent(folderId)}/legacy-keys`)
 }
 
 /** Owner or member: the wrapped key of every file in the shared subtree. */
