@@ -7,6 +7,7 @@ import type { FolderAccessLevel, Proof } from '../../lib/folder-link-types'
 import { GuestGrid } from './guest-grid'
 import { GuestPreview } from './guest-preview'
 import { GuestList } from './guest-list'
+import { collectGuestZipEntries, downloadGuestZip } from '../../lib/guest-zip'
 import {
   GUEST_SORT_OPTIONS,
   popCrumb,
@@ -52,6 +53,7 @@ export function GuestBrowser(props: {
   const [sort, setSort] = useState<GuestSortKey>(readGuestSort)
   const [thumbnails, setThumbnails] = useState<Map<string, string>>(new Map())
   const [previewIndex, setPreviewIndex] = useState<number | null>(null)
+  const [zipBusy, setZipBusy] = useState(false)
 
   useEffect(() => {
     let live = true
@@ -128,6 +130,24 @@ export function GuestBrowser(props: {
   const previewNode = previewIndex === null ? null : sorted[previewIndex] ?? null
 
   const empty = !listing.loading && listing.nodes.length === 0 && !listing.error
+  const hasFiles = listing.nodes.some((node) => !node.item.is_folder)
+
+  const downloadAll = async () => {
+    if (zipBusy) return
+    const rootName = stack[0]?.name ?? 'Shared folder'
+    setZipBusy(true)
+    try {
+      const { files } = await collectGuestZipEntries({
+        token: props.token,
+        folderKey: props.folderKey,
+        proof: props.proof,
+        rootPath: rootName,
+      })
+      if (files.length > 0) await downloadGuestZip(files, `${rootName}.zip`)
+    } finally {
+      setZipBusy(false)
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -173,6 +193,16 @@ export function GuestBrowser(props: {
             List
           </button>
         </div>
+        {hasFiles ? (
+          <button
+            type="button"
+            onClick={() => void downloadAll()}
+            disabled={zipBusy}
+            className="rounded-lg border border-line px-3 py-1.5 text-sm font-medium disabled:opacity-60"
+          >
+            {zipBusy ? 'Preparing zip…' : 'Download all'}
+          </button>
+        ) : null}
       </div>
 
       {listing.error ? (

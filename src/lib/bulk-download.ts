@@ -41,6 +41,22 @@ export interface BulkDownloadOptions {
   onProgress?: (done: number, total: number, currentName: string) => void
   /** Name for the output zip file (default: beebeeb-files.zip). */
   zipFilename?: string
+  /** Override the archive destination (tests, and callers that own a sink). */
+  sink?: ZipSink
+}
+
+/**
+ * The three capabilities the packager needs. The owner drive and a folder-link
+ * guest differ only in how they list children, resolve a key and fetch
+ * plaintext, so both share one zip implementation.
+ */
+export interface BulkDownloadPorts {
+  listChildren(folderId: string): Promise<DriveFile[]>
+  getFileKey(file: DriveFile): Promise<Uint8Array>
+  decryptToBlob(
+    file: DriveFile,
+    fileKey: Uint8Array,
+  ): Promise<{ plaintext: Blob; filename: string }>
 }
 
 export interface BulkDownloadResult {
@@ -52,7 +68,7 @@ export interface BulkDownloadResult {
 
 // ─── Folder expansion ─────────────────────────────────────────────────────────
 
-interface QueueEntry {
+export interface QueueEntry {
   file: DriveFile
   /** ZIP path prefix, e.g. "Documents/Reports/" */
   prefix: string
@@ -68,8 +84,9 @@ interface QueueEntry {
  */
 async function expandToFiles(
   items: DriveFile[],
-  getFileKeyForFile: (file: DriveFile) => Promise<Uint8Array>,
+  ports: BulkDownloadPorts,
   prefix = '',
+  onListError?: (prefix: string, err: unknown) => void,
 ): Promise<QueueEntry[]> {
   const queue: QueueEntry[] = []
 
@@ -80,10 +97,10 @@ async function expandToFiles(
     }
 
     // Decrypt folder name for the path (folders never use the request-key path,
-    // but getFileKeyForFile handles that branch transparently).
+    // but ports.getFileKey handles that branch transparently).
     let folderName = `folder-${item.id.slice(0, 8)}`
     try {
-      const key = await getFileKeyForFile(item)
+      const key = await ports.getFileKey(item)
       const { name } = await decryptFileMetadata(key, item.name_encrypted)
       folderName = name
     } catch {
@@ -94,12 +111,51 @@ async function expandToFiles(
     const safeName = folderName.replace(/[/\\]/g, '_')
     const childPrefix = `${prefix}${safeName}/`
 
-    const children = await listFiles(item.id).catch(() => [])
-    const nested = await expandToFiles(children, getFileKeyForFile, childPrefix)
+    let children: DriveFile[] = []
+    try {
+      children = await ports.listChildren(item.id)
+    } catch (err) {
+      // A folder we cannot list contributes no entries. The caller decides
+      // whether that is silently tolerated (owner drive) or an error (guest).
+      onListError?.(childPrefix, err)
+    }
+    const nested = await expandToFiles(children, ports, childPrefix, onListError)
     queue.push(...nested)
   }
 
   return queue
+}
+
+/** Expand a selection into the exact files the archive will carry. */
+export async function expandDownloadEntries(
+  items: DriveFile[],
+  ports: BulkDownloadPorts,
+  prefix = '',
+  onListError?: (prefix: string, err: unknown) => void,
+): Promise<QueueEntry[]> {
+  return expandToFiles(items, ports, prefix, onListError)
+}
+
+/** One archive path per file; a repeat gets " (2)", " (3)" instead of clobbering. */
+export function uniqueZipPath(path: string, used: Set<string>): string {
+  if (!used.has(path)) {
+    used.add(path)
+    return path
+  }
+  const slash = path.lastIndexOf('/')
+  const dir = slash >= 0 ? path.slice(0, slash + 1) : ''
+  const base = slash >= 0 ? path.slice(slash + 1) : path
+  const dot = base.lastIndexOf('.')
+  const stem = dot > 0 ? base.slice(0, dot) : base
+  const ext = dot > 0 ? base.slice(dot) : ''
+  let n = 2
+  let candidate = `${dir}${stem} (${n})${ext}`
+  while (used.has(candidate)) {
+    n += 1
+    candidate = `${dir}${stem} (${n})${ext}`
+  }
+  used.add(candidate)
+  return candidate
 }
 
 // ─── Service-worker streaming download (0462) ────────────────────────────────
@@ -109,7 +165,7 @@ async function expandToFiles(
  * service-worker stream (preferred — bytes go straight to disk) and a
  * buffered Blob fallback (chunks accumulate in memory, anchor click at end).
  */
-interface ZipSink {
+export interface ZipSink {
   /** Write a chunk of ZIP bytes. */
   write(chunk: Uint8Array): Promise<void>
   /** Mark the archive complete. */
@@ -262,42 +318,47 @@ function createBlobSink(filename: string, mimeType: string): ZipSink {
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
+/** A single file the packager will place in the archive. */
+export interface ZipSource {
+  /** Archive path for the resolved filename (folder prefixes already applied). */
+  pathFor: (filename: string) => string
+  /** Name shown while the file is still being decrypted. */
+  fallbackName: string
+  /** Resolve the plaintext at write time so only one file is held at a time. */
+  load: () => Promise<{ plaintext: Blob; filename: string }>
+}
+
+export interface PackageZipOptions extends BulkDownloadOptions {
+  /** Caller's size estimate, used only for the 1 GiB warning. */
+  totalEstimatedBytes?: number
+}
+
 /**
- * Download and decrypt `items`, then package them into a ZIP file and
- * trigger a browser download.
+ * Assemble a streamed ZIP from `sources`, decrypting each file as it is added.
  *
- * - Single non-folder file: just calls regular download (no zip overhead).
- *   Callers should handle this case before calling `downloadAsZip` if
- *   they want the single-file fast path.
- * - Folders: expanded recursively, structure preserved in zip paths.
- * - Failed files: skipped, listed in `_errors.txt` inside the zip.
- * - Size > 1 GiB: `sizeWarning: true` in the result (caller shows warning).
- *
- * @param items      - DriveFile objects (may include folders)
- * @param getFileKeyForFile - async function that returns the decryption key for a
- *                            DriveFile (handles the request-key path for received files)
- * @param options    - progress callback and output filename
+ * This is the single archive implementation: the owner drive and a folder-link
+ * guest differ only in where the sources come from.
  */
-export async function downloadAsZip(
-  items: DriveFile[],
-  getFileKeyForFile: (file: DriveFile) => Promise<Uint8Array>,
-  options: BulkDownloadOptions = {},
+export async function packageZip(
+  sources: ZipSource[],
+  options: PackageZipOptions = {},
 ): Promise<BulkDownloadResult> {
-  const { onProgress, zipFilename = 'beebeeb-files.zip' } = options
+  const {
+    onProgress,
+    zipFilename = 'beebeeb-files.zip',
+    sink: overrideSink,
+    totalEstimatedBytes = 0,
+  } = options
 
-  // ── Expand folders to a flat file list ───────────────────────────────────
-  const entries = await expandToFiles(items, getFileKeyForFile)
-
-  if (entries.length === 0) {
+  if (sources.length === 0) {
     return { errorCount: 0, sizeWarning: false }
   }
 
-  // ── Size check ────────────────────────────────────────────────────────────
-  const totalEstimatedBytes = entries.reduce((s, e) => s + (e.file.size_bytes ?? 0), 0)
   const sizeWarning = totalEstimatedBytes > ZIP_SIZE_WARNING_BYTES
 
   // ── Choose sink: SW streaming preferred, Blob fallback otherwise ─────────
   const sink: ZipSink =
+    overrideSink ??
     (await createSwSink(zipFilename, 'application/zip').catch(() => null)) ??
     createBlobSink(zipFilename, 'application/zip')
 
@@ -373,38 +434,23 @@ export async function downloadAsZip(
   }
 
   // ── Decrypt + write each file sequentially ───────────────────────────────
-  for (let i = 0; i < entries.length; i++) {
+  for (let i = 0; i < sources.length; i++) {
     if (zipError) break
-    const { file, prefix } = entries[i]
+    const source = sources[i]
 
     // Placeholder name while we decrypt
-    const fallbackName = `file-${file.id.slice(0, 8)}`
-    onProgress?.(i, entries.length, fallbackName)
+    const fallbackPath = source.pathFor(source.fallbackName)
+    onProgress?.(i, sources.length, source.fallbackName)
 
     try {
-      const key = await getFileKeyForFile(file)
-      const { plaintext, filename } = await decryptToBlob(
-        file.id,
-        key,
-        file.name_encrypted,
-        file.mime_type ?? undefined,
-        file.chunk_count,
-        file.size_bytes,
-      )
+      const { plaintext, filename } = await source.load()
 
       // Materialise into a Uint8Array for fflate, then drop the Blob.
       let bytes: Uint8Array | null = new Uint8Array(await plaintext.arrayBuffer())
 
       // Deduplicate zip paths — if a name already exists (e.g. two files
-      // called "report.pdf" in the same folder), append the file ID suffix.
-      let zipPath = `${prefix}${filename}`
-      if (usedZipPaths.has(zipPath)) {
-        const dot = filename.lastIndexOf('.')
-        const base = dot > 0 ? filename.slice(0, dot) : filename
-        const ext = dot > 0 ? filename.slice(dot) : ''
-        zipPath = `${prefix}${base}-${file.id.slice(0, 6)}${ext}`
-      }
-      usedZipPaths.add(zipPath)
+      // called "report.pdf" in the same folder), number the later ones.
+      const zipPath = uniqueZipPath(source.pathFor(filename), usedZipPaths)
 
       const compress = !INCOMPRESSIBLE_EXT.test(filename)
       await addEntry(zipPath, bytes, compress)
@@ -413,11 +459,11 @@ export async function downloadAsZip(
       // emitted the corresponding zip chunks via the archive `ondata`.
       bytes = null
 
-      onProgress?.(i + 1, entries.length, filename)
+      onProgress?.(i + 1, sources.length, filename)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error'
-      errors.push(`${prefix}${fallbackName}: ${msg}`)
-      onProgress?.(i + 1, entries.length, fallbackName)
+      errors.push(`${fallbackPath}: ${msg}`)
+      onProgress?.(i + 1, sources.length, source.fallbackName)
     }
   }
 
@@ -451,4 +497,85 @@ export async function downloadAsZip(
   await sink.close()
 
   return { errorCount: errors.length, sizeWarning }
+}
+
+/** The owner drive's sources: the vault's own list and decrypt routes. */
+export function ownerDownloadPorts(
+  getFileKeyForFile: (file: DriveFile) => Promise<Uint8Array>,
+): BulkDownloadPorts {
+  return {
+    ...OWNER_DOWNLOAD_PORTS,
+    getFileKey: getFileKeyForFile,
+  }
+}
+
+/**
+ * The two ports that do not need the vault's key context. `getFileKey` throws
+ * here on purpose: an owner key comes from the unlocked vault, never from a
+ * module-level default, so callers go through `ownerDownloadPorts`.
+ */
+export const OWNER_DOWNLOAD_PORTS: BulkDownloadPorts = {
+  listChildren: (folderId) => listFiles(folderId),
+  getFileKey: async () => {
+    throw new Error('The owner file key must be supplied by the caller (use ownerDownloadPorts).')
+  },
+  decryptToBlob: (file, fileKey) =>
+    decryptToBlob(
+      file.id,
+      fileKey,
+      file.name_encrypted,
+      file.mime_type ?? undefined,
+      file.chunk_count,
+      file.size_bytes,
+    ),
+}
+
+/**
+ * Download and decrypt `items` through the given ports, then package them into
+ * a ZIP file and trigger a browser download.
+ *
+ * - Folders: expanded recursively, structure preserved in zip paths.
+ * - Failed files: skipped, listed in `_errors.txt` inside the zip.
+ * - Size > 1 GiB: `sizeWarning: true` in the result (caller shows warning).
+ */
+export async function downloadAsZipWith(
+  ports: BulkDownloadPorts,
+  items: DriveFile[],
+  options: BulkDownloadOptions = {},
+): Promise<BulkDownloadResult> {
+  const entries = await expandToFiles(items, ports)
+  const totalEstimatedBytes = entries.reduce((s, e) => s + (e.file.size_bytes ?? 0), 0)
+
+  return packageZip(
+    entries.map(({ file, prefix }) => ({
+      pathFor: (filename: string) => `${prefix}${filename}`,
+      fallbackName: `file-${file.id.slice(0, 8)}`,
+      load: async () => {
+        const key = await ports.getFileKey(file)
+        return ports.decryptToBlob(file, key)
+      },
+    })),
+    { ...options, totalEstimatedBytes },
+  )
+}
+
+/**
+ * Download and decrypt `items`, then package them into a ZIP file and
+ * trigger a browser download. Owner-vault shorthand for `downloadAsZipWith`.
+ *
+ * - Single non-folder file: just calls regular download (no zip overhead).
+ *   Callers should handle this case before calling `downloadAsZip` if
+ *   they want the single-file fast path.
+ *
+ * @param items      - DriveFile objects (may include folders)
+ * @param getFileKeyForFile - async function that returns the decryption key for a
+ *                            DriveFile (handles the request-key path for received files)
+ * @param options    - progress callback and output filename
+ */
+export async function downloadAsZip(
+  items: DriveFile[],
+  getFileKeyForFile: (file: DriveFile) => Promise<Uint8Array>,
+  options: BulkDownloadOptions = {},
+): Promise<BulkDownloadResult> {
+  return downloadAsZipWith(ownerDownloadPorts(getFileKeyForFile), items, options)
 }
