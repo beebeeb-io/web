@@ -5,6 +5,7 @@ import { decryptThumbnailBlob } from '../../lib/thumbnail'
 import { decryptFileMetadata } from '../../lib/crypto'
 import type { FolderAccessLevel, Proof } from '../../lib/folder-link-types'
 import { GuestGrid } from './guest-grid'
+import { GuestPreview } from './guest-preview'
 import { GuestList } from './guest-list'
 import {
   GUEST_SORT_OPTIONS,
@@ -50,6 +51,7 @@ export function GuestBrowser(props: {
   const [view, setView] = useState<GuestViewMode>(readGuestView)
   const [sort, setSort] = useState<GuestSortKey>(readGuestSort)
   const [thumbnails, setThumbnails] = useState<Map<string, string>>(new Map())
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null)
 
   useEffect(() => {
     let live = true
@@ -117,6 +119,14 @@ export function GuestBrowser(props: {
     setStack((current) => popCrumb(current, index))
   }
 
+  const openPreview = (node: GuestNode) => {
+    const index = sorted.findIndex((row) => row.item.id === node.item.id)
+    setPreviewIndex(index >= 0 ? index : null)
+    props.onPreview(node)
+  }
+
+  const previewNode = previewIndex === null ? null : sorted[previewIndex] ?? null
+
   const empty = !listing.loading && listing.nodes.length === 0 && !listing.error
 
   return (
@@ -177,11 +187,11 @@ export function GuestBrowser(props: {
         <GuestGrid
           nodes={sorted}
           onOpenFolder={openFolder}
-          onPreview={props.onPreview}
+          onPreview={openPreview}
           thumbnails={thumbnails}
         />
       ) : (
-        <GuestList nodes={sorted} onOpenFolder={openFolder} onPreview={props.onPreview} />
+        <GuestList nodes={sorted} onOpenFolder={openFolder} onPreview={openPreview} />
       )}
 
       {listing.hasMore ? (
@@ -194,6 +204,25 @@ export function GuestBrowser(props: {
             Load more
           </button>
         </div>
+      ) : null}
+
+      {previewNode ? (
+        <GuestPreview
+          token={props.token}
+          node={previewNode}
+          proof={props.proof}
+          onClose={() => setPreviewIndex(null)}
+          onPrev={() =>
+            setPreviewIndex((index) => (index === null ? null : Math.max(0, index - 1)))
+          }
+          onNext={() =>
+            setPreviewIndex((index) =>
+              index === null ? null : Math.min(sorted.length - 1, index + 1),
+            )
+          }
+          hasPrev={previewIndex !== null && previewIndex > 0}
+          hasNext={previewIndex !== null && previewIndex < sorted.length - 1}
+        />
       ) : null}
     </div>
   )
