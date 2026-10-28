@@ -11,7 +11,18 @@
  * rebuilt from anything other than the minted K_c. Consumers
  * (share-dialog.tsx on web, ShareSheetScreen.tsx on mobile) build every
  * user-visible / copyable share string through this function.
+ *
+ * Task 2237b adds the `path` parameter: a live folder link lives at `/f/<token>`
+ * (public read/upload) while a file or bundle share stays at `/s/<token>`.
+ * The default keeps every pre-2237b caller byte-identical, and the fragment
+ * rule is unchanged: a folder link ALWAYS carries `#key=`, passphrase-protected
+ * or not (the passphrase only stretches the unwrap key, it never replaces K_c).
  */
-export function buildFullShareLink(baseUrl: string, token: string, decryptionKey: string): string {
-  return `${baseUrl.replace(/\/+$/, '')}/s/${token}#key=${encodeURIComponent(decryptionKey)}`
+export function buildFullShareLink(
+  baseUrl: string,
+  token: string,
+  decryptionKey: string,
+  path: 's' | 'f' = 's',
+): string {
+  return `${baseUrl.replace(/\/+$/, '')}/${path}/${token}#key=${encodeURIComponent(decryptionKey)}`
 }

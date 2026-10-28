@@ -47,6 +47,9 @@ import { useKeys } from '../lib/key-context'
 import { userFriendlyError } from '../lib/user-friendly-error'
 import { isTypedRefusal } from '../lib/no-card-trial'
 import { buildFullShareLink } from '../lib/share-full-link'
+import { SHARED_FOLDERS_FLAG } from '../lib/flags'
+import { useFeatureFlag } from '../lib/use-feature-flag'
+import { FolderSharePanel } from './folder-share/folder-share-panel'
 
 interface ShareDialogProps {
   open: boolean
@@ -484,7 +487,7 @@ function InviteSuccess({
 
 // ─── Main dialog ─────────────────────────────────────
 
-export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolder, bundleFiles, onShareCreated }: ShareDialogProps) {
+function ShareDialogBundleBody({ open, onClose, fileId, fileName, fileSize, isFolder, bundleFiles, onShareCreated }: ShareDialogProps) {
   // getFileKeyForFile (task 2238 review): resolves a row's FileKey whether it is
   // derived from the master key or sealed under a file-request content key.
   const { getFileKey, getFileKeyForFile, getMasterKey, isUnlocked } = useKeys()
@@ -1149,4 +1152,28 @@ export function ShareDialog({ open, onClose, fileId, fileName, fileSize, isFolde
       />
     </>
   )
+}
+
+/**
+ * Task 2237b — a shared FOLDER gets its own panel (members + live links).
+ *
+ * The wrapper is deliberately thin: it only decides WHICH body to render. The
+ * 2238 snapshot-bundle body below is untouched byte for byte and is what a
+ * disabled (or still-loading) `shared_folders_v1` flag falls back to.
+ */
+export function ShareDialog(props: ShareDialogProps) {
+  const flag = useFeatureFlag(SHARED_FOLDERS_FLAG)
+  const folderMode = !!props.isFolder && (props.bundleFiles?.length ?? 0) <= 1
+  if (props.open && folderMode && flag.enabled) {
+    return (
+      <FolderSharePanel
+        open
+        folderId={props.fileId}
+        folderName={props.fileName}
+        onClose={props.onClose}
+        bundleFallback={() => <ShareDialogBundleBody {...props} />}
+      />
+    )
+  }
+  return <ShareDialogBundleBody {...props} />
 }
