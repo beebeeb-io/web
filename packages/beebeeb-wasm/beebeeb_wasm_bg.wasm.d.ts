@@ -26,6 +26,7 @@ export const decrypt_name_metadata_with_key: (a: number, b: number, c: number, d
 export const decrypt_names: (a: number, b: number, c: number, d: number) => void;
 export const decrypt_note: (a: number, b: number, c: number, d: number, e: number) => void;
 export const decrypt_thumbnail: (a: number, b: number, c: number, d: number, e: number) => void;
+export const deriveFolderLinkPassphraseStretch: (a: number, b: number, c: number, d: number, e: number) => void;
 export const deriveSharedFolderIndexKey: (a: number, b: number, c: number, d: number) => void;
 export const derive_file_key: (a: number, b: number, c: number, d: number, e: number) => void;
 export const derive_master_key: (a: number, b: number, c: number, d: number, e: number) => void;
@@ -80,6 +81,10 @@ export const transfer_derive_sas_bytes: (a: number, b: number, c: number, d: num
 export const transfer_encrypt: (a: number, b: number, c: number, d: number, e: number) => void;
 export const transfer_generate_keypair: (a: number) => void;
 export const transfer_sas_to_words: (a: number, b: number, c: number) => void;
+export const unwrapFolderChild: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
+export const unwrapFolderCustody: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+export const unwrapLinkOwnerKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+export const unwrapLinkOwnerToken: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const unwrap_request_private: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
 export const wasmbreachcheck_evaluate: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const wasmbreachcheck_new: (a: number, b: number) => number;
@@ -135,7 +140,7 @@ export const wasmsearchindex_encryptShardsWithFolderKey: (a: number, b: number, 
 export const wasmsearchindex_fileCount: (a: number) => number;
 export const wasmsearchindex_fromEncryptedShards: (a: number, b: number, c: number, d: number, e: number) => void;
 export const wasmsearchindex_fromEncryptedShardsWithFolderKey: (a: number, b: number, c: number, d: number, e: number) => void;
-export const wasmsearchindex_new: (a: number) => number;
+export const wasmsearchindex_new: (a: number, b: number) => void;
 export const wasmsearchindex_numShards: (a: number) => number;
 export const wasmsearchindex_query: (a: number, b: number, c: number, d: number) => void;
 export const wasmsearchindex_remove: (a: number, b: number, c: number, d: number) => void;
@@ -160,6 +165,10 @@ export const wasmsignupceremony_setPassword: (a: number, b: number, c: number, d
 export const wasmsignupceremony_setPasswordUnchecked: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
 export const wasmsignupceremony_startRegistration: (a: number, b: number) => void;
 export const wasmsignupceremony_step: (a: number, b: number) => void;
+export const wrapFolderChild: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
+export const wrapFolderCustody: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+export const wrapLinkOwnerKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+export const wrapLinkOwnerToken: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const wrap_request_private: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const x25519_shared_secret: (a: number, b: number, c: number, d: number, e: number) => void;
 export const wasmsignedurl_toJSON: (a: number, b: number) => void;
