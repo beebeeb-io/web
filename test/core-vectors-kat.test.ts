@@ -28,6 +28,8 @@ import {
   deriveSharedFolderIndexKey as derive_shared_folder_index_key,
   wrapFolderChild,
   unwrapFolderChild,
+  wrapOwnerFileKey,
+  unwrapOwnerFileKey,
   wrapFolderCustody,
   unwrapFolderCustody,
   wrapLinkOwnerKey,
@@ -97,6 +99,8 @@ const VENDORED_PATH = fileURLToPath(new URL('./vectors/core-vectors.v11.json', i
 const CORE_SIBLING_PATH = fileURLToPath(new URL('../../core/test-vectors/vectors.json', import.meta.url))
 
 // Pin from: shasum -a 256 test/vectors/core-vectors.v11.json
+// v11 at core c08defc (core#48, decision L8): owner_wrapped_file_key re-pinned
+// to the purpose-bound owner wrap (same version number, new bytes);
 // v11 = core a245a54 (core#45, task 2237d): adds owner_wrapped_file_key,
 // owner_wrapped_folder_key and folder_wrapped_file_key (owned-key resolution KATs);
 // v10 = core 640edab2 (core#44 + core#46, task 2237b decisions L6 and L7): adds
@@ -105,7 +109,7 @@ const CORE_SIBLING_PATH = fileURLToPath(new URL('../../core/test-vectors/vectors
 // key_wrap_v1 (the legacy unbound shape, pinned so a reader can prove it refuses it);
 // v9 = core 9cbf856 (core#42, task 2237b): adds combine_folder_link_key;
 // v8 = core edf7cd4 (core#41, task 2237): adds shared_folder_index_key.
-const PINNED_SHA256 = '60fbdfdc6090ef9bcff52de6061bdf213a6196d58aaf3062132842b9c20d8fed'
+const PINNED_SHA256 = '11f7522056d0c12eff92d2f37a5fa6975ce460cf36899e3a6a92f3455a4d754a'
 const EXPECTED_VERSION = 11
 
 function hexToBytes(hex: string): Uint8Array {
@@ -671,11 +675,17 @@ describe('core vectors KAT — the link passphrase stretch (2237b)', () => {
 })
 
 describe('core vectors KAT — owned-key resolution (2237d, v11)', () => {
-  test('owner_wrapped_file_key — unwrapOwnerFileKey (src/lib/owner-adoption.ts) = decrypt_chunk under derive_file_key(master, file id string)', () => {
+  test('owner_wrapped_file_key — L8: unwrapOwnerFileKey (src/lib/owner-adoption.ts) opens the pinned record for its item only', () => {
     const v = vectors.owner_wrapped_file_key
-    const derived = derive_file_key(hexToBytes(v.master_key_hex), new TextEncoder().encode(v.file_id)) as Uint8Array
+    const master = hexToBytes(v.master_key_hex)
     const frame = hexToBytes(v.expected_frame_hex)
-    expect(toHex(decrypt_chunk(derived, frame.slice(0, 12), frame.slice(12)) as Uint8Array)).toBe(v.child_key_hex)
+    expect(toHex(unwrapOwnerFileKey(master, v.file_id, frame))).toBe(v.child_key_hex)
+    expect(() => unwrapOwnerFileKey(master, v.folder_id, frame)).toThrow(/decryption failed/)
+    // The pre-L8 shape (no purpose key: decrypt under derive_file_key) does not open it.
+    const derived = derive_file_key(master, new TextEncoder().encode(v.file_id)) as Uint8Array
+    expect(() => decrypt_chunk(derived, frame.slice(0, 12), frame.slice(12))).toThrow()
+    const again = wrapOwnerFileKey(master, v.file_id, hexToBytes(v.child_key_hex))
+    expect(toHex(unwrapOwnerFileKey(master, v.file_id, again))).toBe(v.child_key_hex)
   })
 
   test('owner_wrapped_folder_key — the L6 custody record opens with unwrapFolderCustody for its folder only', () => {

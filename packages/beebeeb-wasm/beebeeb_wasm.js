@@ -3997,6 +3997,38 @@ export function unwrapLinkOwnerToken(master_key, share_id, wrapped) {
 }
 
 /**
+ * Open only an L8 owner file-key record, requiring exactly 32 plaintext bytes.
+ * @param {Uint8Array} master_key
+ * @param {string} item_id
+ * @param {Uint8Array} wrapped
+ * @returns {Uint8Array}
+ */
+export function unwrapOwnerFileKey(master_key, item_id, wrapped) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(item_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(wrapped, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.unwrapOwnerFileKey(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v4 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v4;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * Unwrap a request's X25519 private key. Returns 32-byte `Uint8Array`.
  * @param {Uint8Array} master_key
  * @param {Uint8Array} request_id
@@ -4150,6 +4182,39 @@ export function wrapLinkOwnerToken(master_key, share_id, token) {
         const ptr2 = passArray8ToWasm0(token, wasm.__wbindgen_export);
         const len2 = WASM_VECTOR_LEN;
         wasm.wrapLinkOwnerToken(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v4 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v4;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Seal an owner file-key adoption record with its own purpose key and AAD (L8).
+ * Item IDs use the exact UTF-8 string bytes used by the L6 exports.
+ * @param {Uint8Array} master_key
+ * @param {string} item_id
+ * @param {Uint8Array} file_key
+ * @returns {Uint8Array}
+ */
+export function wrapOwnerFileKey(master_key, item_id, file_key) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(item_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(file_key, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.wrapOwnerFileKey(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);

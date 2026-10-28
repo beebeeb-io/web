@@ -674,6 +674,16 @@ export async function unwrapLinkOwnerToken(masterKey: Uint8Array, shareId: strin
   return withProxy((p) => p.unwrapLinkOwnerToken(masterKey, shareId, wrapped))
 }
 
+/** L8: the owner's own copy of a guest or member file key (`owner_wrapped_file_key`), bound to the item id. */
+export async function wrapOwnerFileKey(masterKey: Uint8Array, itemId: string, fileKey: Uint8Array): Promise<Uint8Array> {
+  return withProxy((p) => p.wrapOwnerFileKey(masterKey, itemId, fileKey))
+}
+
+/** L8: open an owner file-key record. A folder name blob or a content frame is refused. */
+export async function unwrapOwnerFileKey(masterKey: Uint8Array, itemId: string, wrapped: Uint8Array): Promise<Uint8Array> {
+  return withProxy((p) => p.unwrapOwnerFileKey(masterKey, itemId, wrapped))
+}
+
 /** The link passphrase stretch, in core (NFC, empty refused, token-bound salt). */
 export async function deriveFolderLinkPassphraseStretch(passphrase: string, token: string): Promise<Uint8Array> {
   return withProxy((p) => p.deriveFolderLinkPassphraseStretch(passphrase, token))

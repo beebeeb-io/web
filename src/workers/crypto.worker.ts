@@ -537,6 +537,18 @@ const cryptoWorker = {
     return wasm.unwrapLinkOwnerToken(masterKey, shareId, wrapped) as Uint8Array
   },
 
+  /** L8: the owner's own copy of a guest or member file key, bound to the item id. 60 bytes. */
+  async wrapOwnerFileKey(masterKey: Uint8Array, itemId: string, fileKey: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.wrapOwnerFileKey(masterKey, itemId, fileKey) as Uint8Array
+  },
+
+  /** L8: open only an owner file-key record for this item (a name blob or a content frame is refused). */
+  async unwrapOwnerFileKey(masterKey: Uint8Array, itemId: string, wrapped: Uint8Array): Promise<Uint8Array> {
+    const wasm = await ensureWasm()
+    return wasm.unwrapOwnerFileKey(masterKey, itemId, wrapped) as Uint8Array
+  },
+
   /** The link passphrase stretch (Argon2id over the NFC passphrase, token-bound salt). */
   async deriveFolderLinkPassphraseStretch(passphrase: string, token: string): Promise<Uint8Array> {
     const wasm = await ensureWasm()

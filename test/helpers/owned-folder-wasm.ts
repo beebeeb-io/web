@@ -36,6 +36,10 @@ export function ownedFolderCrypto() {
       w.wrapLinkOwnerToken(masterKey, shareId, token) as Uint8Array,
     unwrapLinkOwnerToken: async (masterKey: Uint8Array, shareId: string, wrapped: Uint8Array) =>
       w.unwrapLinkOwnerToken(masterKey, shareId, wrapped) as Uint8Array,
+    wrapOwnerFileKey: async (masterKey: Uint8Array, itemId: string, fileKey: Uint8Array) =>
+      w.wrapOwnerFileKey(masterKey, itemId, fileKey) as Uint8Array,
+    unwrapOwnerFileKey: async (masterKey: Uint8Array, itemId: string, wrapped: Uint8Array) =>
+      w.unwrapOwnerFileKey(masterKey, itemId, wrapped) as Uint8Array,
     deriveFolderLinkPassphraseStretch: async (passphrase: string, token: string) =>
       w.deriveFolderLinkPassphraseStretch(passphrase, token) as Uint8Array,
     // The generic seal the legacy invite format (L7b) still uses.

@@ -1159,6 +1159,11 @@ export function unwrapLinkOwnerKey(master_key: Uint8Array, share_id: string, wra
 export function unwrapLinkOwnerToken(master_key: Uint8Array, share_id: string, wrapped: Uint8Array): Uint8Array;
 
 /**
+ * Open only an L8 owner file-key record, requiring exactly 32 plaintext bytes.
+ */
+export function unwrapOwnerFileKey(master_key: Uint8Array, item_id: string, wrapped: Uint8Array): Uint8Array;
+
+/**
  * Unwrap a request's X25519 private key. Returns 32-byte `Uint8Array`.
  */
 export function unwrap_request_private(master_key: Uint8Array, request_id: Uint8Array, wrapped: Uint8Array, nonce: Uint8Array): Uint8Array;
@@ -1184,6 +1189,12 @@ export function wrapLinkOwnerKey(master_key: Uint8Array, share_id: string, link_
  * link's share id.
  */
 export function wrapLinkOwnerToken(master_key: Uint8Array, share_id: string, token: Uint8Array): Uint8Array;
+
+/**
+ * Seal an owner file-key adoption record with its own purpose key and AAD (L8).
+ * Item IDs use the exact UTF-8 string bytes used by the L6 exports.
+ */
+export function wrapOwnerFileKey(master_key: Uint8Array, item_id: string, file_key: Uint8Array): Uint8Array;
 
 /**
  * Wrap a request's X25519 private key under the owner's master key.
@@ -1284,6 +1295,7 @@ export interface InitOutput {
     readonly unwrapFolderCustody: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly unwrapLinkOwnerKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly unwrapLinkOwnerToken: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly unwrapOwnerFileKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly unwrap_request_private: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly wasmbreachcheck_evaluate: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly wasmbreachcheck_new: (a: number, b: number) => number;
@@ -1368,6 +1380,7 @@ export interface InitOutput {
     readonly wrapFolderCustody: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly wrapLinkOwnerKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly wrapLinkOwnerToken: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly wrapOwnerFileKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly wrap_request_private: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly x25519_shared_secret: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly wasmsignedurl_toJSON: (a: number, b: number) => void;
