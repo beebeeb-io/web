@@ -8,7 +8,9 @@ import { GuestShell } from './guest-shell'
 export function Unavailable(props: { reason: 'not_available' | 'update_required' }) {
   const update = props.reason === 'update_required'
   return (
-    <GuestShell title={update ? 'Update Beebeeb' : "This link isn't available."}>
+    // The card says what happened; the page title stays neutral, so the same
+    // sentence is not shown twice.
+    <GuestShell title="Shared folder">
       <div className="mx-auto mt-4 w-full max-w-md rounded-lg border border-line bg-paper p-6 text-center shadow-1">
         <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-line bg-paper-2">
           <Icon name={update ? 'info' : 'link'} size={20} className="text-ink-3" />
