@@ -652,6 +652,22 @@ const cryptoWorker = {
     return handle
   },
 
+  /**
+   * Reconstruct an index from shards encrypted under a shared folder's key
+   * (task 2237b). Same handle contract as `searchIndexFromShards`.
+   */
+  async searchIndexFromShardsWithFolderKey(
+    folderKey: Uint8Array,
+    shards: EncryptedShardJs[],
+    numShards: number,
+  ): Promise<number> {
+    const wasm = await ensureWasm()
+    const idx = wasm.WasmSearchIndex.fromEncryptedShardsWithFolderKey(folderKey, shards, numShards)
+    const handle = nextSearchIndexHandle++
+    liveSearchIndexes.set(handle, idx)
+    return handle
+  },
+
   /** Insert/update a file. Returns the dirty bucket set as a plain number[]. */
   searchIndexUpsert(handle: number, fileId: string, name: string): number[] {
     const idx = liveSearchIndexes.get(handle)
@@ -689,6 +705,27 @@ const cryptoWorker = {
     const idx = liveSearchIndexes.get(handle)
     if (!idx) throw new Error(`No live search index for handle ${handle}`)
     return idx.encryptBuckets(masterKey, Uint32Array.from(buckets)) as EncryptedShardJs[]
+  },
+
+  /** Encrypt every non-empty page under the shared folder key. */
+  searchIndexEncryptShardsWithFolderKey(
+    handle: number,
+    folderKey: Uint8Array,
+  ): EncryptedShardJs[] {
+    const idx = liveSearchIndexes.get(handle)
+    if (!idx) throw new Error(`No live search index for handle ${handle}`)
+    return idx.encryptShardsWithFolderKey(folderKey) as EncryptedShardJs[]
+  },
+
+  /** Encrypt only the dirty buckets under the shared folder key. */
+  searchIndexEncryptBucketsWithFolderKey(
+    handle: number,
+    folderKey: Uint8Array,
+    buckets: number[],
+  ): EncryptedShardJs[] {
+    const idx = liveSearchIndexes.get(handle)
+    if (!idx) throw new Error(`No live search index for handle ${handle}`)
+    return idx.encryptBucketsWithFolderKey(folderKey, Uint32Array.from(buckets)) as EncryptedShardJs[]
   },
 
   /** Number of buckets this index uses. */

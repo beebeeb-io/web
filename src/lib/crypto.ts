@@ -878,6 +878,19 @@ export class SearchIndexProxy {
     return withProxy((p) => p.searchIndexEncryptBuckets(this.#handle, masterKey, buckets))
   }
 
+  /** Encrypt every non-empty shard page under a shared folder key (2237b). */
+  async encryptShardsWithFolderKey(folderKey: Uint8Array): Promise<CoreEncryptedShard[]> {
+    return withProxy((p) => p.searchIndexEncryptShardsWithFolderKey(this.#handle, folderKey))
+  }
+
+  /** Encrypt only the dirty buckets under a shared folder key (2237b). */
+  async encryptBucketsWithFolderKey(
+    folderKey: Uint8Array,
+    buckets: number[],
+  ): Promise<CoreEncryptedShard[]> {
+    return withProxy((p) => p.searchIndexEncryptBucketsWithFolderKey(this.#handle, folderKey, buckets))
+  }
+
   /** Bucket count of this index. */
   async numShards(): Promise<number> {
     return withProxy((p) => p.searchIndexNumShards(this.#handle))
@@ -925,6 +938,33 @@ export async function searchIndexFromShards(
   numShards: number,
 ): Promise<SearchIndexProxy> {
   const handle = await withProxy((p) => p.searchIndexFromShards(masterKey, shards, numShards))
+  return new SearchIndexProxy(handle)
+}
+
+/**
+ * A fresh shared-folder index built from `[{fileId, name}]` pairs (2237b).
+ * The names come from decrypted listings, so no key is needed to build; the
+ * shards are encrypted under the folder key on push.
+ */
+export async function createSharedSearchIndex(
+  files: Array<{ fileId: string; name: string }>,
+  numShards: number,
+): Promise<SearchIndexProxy> {
+  return buildSearchIndex(files, numShards)
+}
+
+/**
+ * Reconstruct a shared-folder index from shards encrypted under its folder key
+ * (2237b). Mirrors `searchIndexFromShards`, which is master-key only.
+ */
+export async function sharedSearchIndexFromShards(
+  folderKey: Uint8Array,
+  shards: CoreEncryptedShard[],
+  numShards: number,
+): Promise<SearchIndexProxy> {
+  const handle = await withProxy((p) =>
+    p.searchIndexFromShardsWithFolderKey(folderKey, shards, numShards),
+  )
   return new SearchIndexProxy(handle)
 }
 
