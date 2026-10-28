@@ -228,3 +228,31 @@ describe('refusals and races', () => {
     expect(verifiedKeys[0].every((b) => b === 0)).toBe(true)
   })
 })
+
+describe('L7d: the upgrade is a legacy read, so it refuses under any folder seen with custody', () => {
+  const PARENT = '44444444-4444-4444-8444-444444444444'
+
+  test('an ancestor (or the folder) seen with custody: refused before anything is listed, proven or sent', async () => {
+    const { markCustodySeen, resetCustodyMemoryForTests } = await import('../src/lib/custody-memory')
+    try {
+      for (const seen of [PARENT, ROOT]) {
+        resetCustodyMemoryForTests()
+        markCustodySeen(seen)
+        listed = 0
+        const run = createCustodyUpgrade(ports({ parentOf: async (id) => (id === ROOT ? PARENT : null) }))
+        await expect(run(ROOT, MASTER)).rejects.toThrow("This folder's keys are unavailable")
+        expect(listed).toBe(0)
+        expect(verifierCalls).toHaveLength(0)
+        expect(sent).toHaveLength(0)
+      }
+    } finally {
+      resetCustodyMemoryForTests()
+    }
+  })
+
+  test('control: nothing seen above it, the upgrade runs', async () => {
+    const run = createCustodyUpgrade(ports({ parentOf: async (id) => (id === ROOT ? PARENT : null) }))
+    await run(ROOT, MASTER)
+    expect(sent).toHaveLength(1)
+  })
+})

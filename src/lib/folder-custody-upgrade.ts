@@ -17,9 +17,12 @@
  *
  * Nothing is ever written unless every row opens under the proven key: a row
  * under another key may be another invite's, which a member can still read.
- * Only counts are logged, never an id or a name.
+ * Only counts are logged, never an id or a name. And no upgrade runs under a
+ * folder this device has seen with custody (L7d): reading its legacy rows is
+ * exactly the downgrade the custody memory exists to refuse.
  */
 import {
+  getFile,
   getSharedFolder,
   listLegacyFolderKeys,
   upgradeSharedFolderCustody,
@@ -35,6 +38,7 @@ import {
   sealFolderCustody,
 } from './folder-share-crypto'
 import { FolderUpgradeRefusedError, type FolderUpgradeRunner } from './folder-upgrade'
+import { assertNoSeenAncestor } from './custody-memory'
 
 export type { LegacyFolderKeyRow }
 
@@ -70,6 +74,8 @@ export interface CustodyUpgradePorts {
   listLegacyFolderKeys: (folderId: string) => Promise<LegacyFolderKeyRow[]>
   upgradeSharedFolderCustody: typeof upgradeSharedFolderCustody
   getSharedFolder: (folderId: string) => Promise<SharedFolderInfo>
+  /** A folder's parent, for the L7d ancestor check. */
+  parentOf: (id: string) => Promise<string | null>
 }
 
 // Resolved at call time, so a module mock registered later always applies.
@@ -78,6 +84,7 @@ export const REAL_CUSTODY_UPGRADE_PORTS: CustodyUpgradePorts = {
   listLegacyFolderKeys: (...a) => listLegacyFolderKeys(...a),
   upgradeSharedFolderCustody: (...a) => upgradeSharedFolderCustody(...a),
   getSharedFolder: (...a) => getSharedFolder(...a),
+  parentOf: async (id) => (await getFile(id)).parent_id ?? null,
 }
 
 function errorCode(err: unknown): string | undefined {
@@ -137,6 +144,9 @@ async function openExistingCustody(folderId: string, masterKey: Uint8Array, port
 /** The runner REAL_FOLDER_LINK_PORTS.upgradeLegacyFolder uses (contract §2). */
 export function createCustodyUpgrade(ports: CustodyUpgradePorts = REAL_CUSTODY_UPGRADE_PORTS): FolderUpgradeRunner {
   return async (folderId, masterKey) => {
+    // L7d: opening legacy rows is a legacy read, refused under any folder (this
+    // one or an ancestor) this device has seen with custody.
+    await assertNoSeenAncestor(folderId, ports.parentOf)
     for (let attempt = 1; ; attempt += 1) {
       let rows: LegacyFolderKeyRow[]
       try {
