@@ -103,7 +103,8 @@ describe('the shared-folder upload registers its child key with the id of ITS fo
     const file = new File([new Uint8Array([1, 2, 3, 4])], 'in-shared.txt', { type: 'text/plain' })
     await encryptedUpload(
       file, 'client-id', new Uint8Array([1]), new Uint8Array([9]), undefined, undefined, undefined,
-      { folderKey: enc('K-ctx'), sharedFolderId: 'F', inviteId: 'inv-7' },
+      // An invite-only folder (L7b legacy format); the format must be named.
+      { folderKey: enc('K-ctx'), sharedFolderId: 'F', inviteId: 'inv-7', format: 'legacy_invite' },
       undefined,
       async () => new Uint8Array([9]),
     )

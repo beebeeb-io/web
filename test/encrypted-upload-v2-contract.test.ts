@@ -74,3 +74,32 @@ test('B owner upload publishes the actual v2 file key to the shared root without
   expect(cap.ownerKeys[0].keys).toEqual([{ file_id: 'server-file-id', encrypted_file_key: btoa('l7|shared-root|server-file-id|1|9') }])
   expect(cap.addFolderKeysCalls).toHaveLength(0)
 })
+
+describe('L7b: a member upload seals its file key in the shared folder\'s format', () => {
+  const upload = async (format: unknown) => {
+    resetCaptures()
+    const { encryptedUpload } = await import('../src/lib/encrypted-upload')
+    return encryptedUpload(new File(['data'], 'member.txt'), 'proposed', new Uint8Array([1]),
+      new Uint8Array([9]), 'shared-root', undefined, undefined,
+      { folderKey: new Uint8Array(32).fill(7), sharedFolderId: 'shared-root', inviteId: 'invite-1', format } as never,
+      undefined, async () => new Uint8Array([9]))
+  }
+
+  test('a custody folder (also after a flag rollback, since the custody read still answers): L7 for (root, file, file)', async () => {
+    await upload('l7')
+    expect(cap.addFolderKeysCalls).toHaveLength(1)
+    expect(cap.addFolderKeysCalls[0].keys).toEqual([{ file_id: 'server-file-id', encrypted_file_key: btoa('l7|shared-root|server-file-id|1|9') }])
+    expect(cap.ownerKeys).toHaveLength(0)
+  })
+
+  test('a flag-off invite-only folder: the legacy invite seal', async () => {
+    await upload('legacy_invite')
+    // The stub seal is a zero nonce followed by the plaintext key.
+    expect(cap.addFolderKeysCalls[0].keys).toEqual([{ file_id: 'server-file-id', encrypted_file_key: 'AAAAAAAAAAAAAAAACQ==' }])
+  })
+
+  test('no format is a failed upload, never a legacy write', async () => {
+    await expect(upload(undefined)).rejects.toThrow(/unknown folder wrap format/)
+    expect(cap.addFolderKeysCalls).toHaveLength(0)
+  })
+})
