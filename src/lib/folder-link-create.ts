@@ -53,6 +53,7 @@ import {
 import { buildFullShareLink } from './share-full-link'
 import { assertNeverSawCustody, markCustodySeen } from './custody-memory'
 import { FolderNeedsUpgradeError, isUpgradeRequired, type FolderUpgradeRunner } from './folder-upgrade'
+import { createCustodyUpgrade } from './folder-custody-upgrade'
 import {
   deriveLinkPassphraseKey,
   generateFolderLinkToken,
@@ -103,8 +104,9 @@ export interface CreateFolderLinkPorts {
    */
   hasActiveLegacyInvites: (folderId: string) => Promise<boolean>
   /**
-   * Contract §2: runs the custody upgrade of a folder with legacy rows. Absent
-   * until web #199 provides it; then the owner is told the folder needs it.
+   * Contract §2: runs the custody upgrade of a folder with legacy rows (web
+   * #199, folder-custody-upgrade.ts). Without one, the owner is told the
+   * folder needs it (FolderNeedsUpgradeError); never a legacy write.
    */
   upgradeLegacyFolder?: FolderUpgradeRunner
   /** A fresh RANDOM folder key; only when no custody record and no invite exists. */
@@ -145,6 +147,9 @@ export const REAL_FOLDER_LINK_PORTS: CreateFolderLinkPorts = {
   openFolderCustody: (...a) => openFolderCustody(...a),
   sealFolderCustody: (...a) => sealFolderCustody(...a),
   hasActiveLegacyInvites: async (folderId) => activeFolderInvites(await getSentInvites(), folderId).length > 0,
+  // Web #199: "needs the upgrade" runs the upgrade. Its one key source is a
+  // proven key, so until task 2255 lands it refuses with FOLDER_KEY_UNVERIFIED.
+  upgradeLegacyFolder: (folderId, masterKey) => createCustodyUpgrade()(folderId, masterKey),
   generateFolderKey: () => generateFolderKey(),
   deriveFileKey: (...a) => deriveFileKey(...a),
   sealChildKey: (...a) => sealChildKey(...a),

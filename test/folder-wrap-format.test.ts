@@ -245,7 +245,9 @@ describe('L7b: the legacy names are referenced only where it allows', () => {
   // has no custody record).
   const ALLOWED: Record<string, string[]> = {
     legacyInviteChildWrap: ['src/lib/folder-share-crypto.ts'],
-    legacyInviteChildKey: ['src/lib/folder-share-crypto.ts'],
+    // ...and the L7b (a) custody upgrade, which opens a folder's legacy rows
+    // under a PROVEN folder key to re-seal them as L7 (web #199).
+    legacyInviteChildKey: ['src/lib/folder-share-crypto.ts', 'src/lib/folder-custody-upgrade.ts'],
     // Task 2255: the legacy owner copy is no longer written, and is read only
     // with core's proof (openLegacyInviteOwnerCopy); no unverified reader or
     // legacy writer exists anywhere in src/.

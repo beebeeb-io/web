@@ -43,10 +43,30 @@ export function needsFolderUpgrade(err: unknown): boolean {
 }
 
 /**
- * The hook web #199 fills in: run the custody upgrade for `folderId` (list the
- * legacy rows, open every one, re-seal each as L7, register custody with the
- * re-wrap), then resolve to the folder key, which the caller zeroizes. It
- * throws FolderNeedsUpgradeError when the folder can't be upgraded. Nothing in
- * this PR provides one, so the refusal stands.
+ * The custody upgrade for `folderId` (folder-custody-upgrade.ts): list the
+ * legacy rows, prove the folder key, open every row, re-seal each as L7 and
+ * register custody with the re-wrap in one call. Resolves to the folder key,
+ * which the caller zeroizes; throws FolderUpgradeRefusedError when the folder
+ * can't be upgraded. Wired into REAL_FOLDER_LINK_PORTS (web #199).
  */
 export type FolderUpgradeRunner = (folderId: string, masterKey: Uint8Array) => Promise<Uint8Array>
+
+/**
+ * Why an upgrade did not run. Nothing was written in any of these cases.
+ * - `key_unverified`: no folder key this client can prove (task 2255);
+ * - `rows_unopened`: a row is sealed under another key (another invite's,
+ *   which a member may still read), so replacing it could lock that member out;
+ * - `too_large`: more rows than one atomic call takes.
+ */
+export type FolderUpgradeRefusal = 'key_unverified' | 'rows_unopened' | 'too_large'
+
+/** A refused upgrade. Its message is the sentence the owner sees (<= 80 characters). */
+export class FolderUpgradeRefusedError extends Error {
+  readonly reason: FolderUpgradeRefusal
+
+  constructor(reason: FolderUpgradeRefusal, message: string) {
+    super(message)
+    this.name = 'FolderUpgradeRefusedError'
+    this.reason = reason
+  }
+}

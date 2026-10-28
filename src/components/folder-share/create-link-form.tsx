@@ -15,16 +15,17 @@ import {
 } from '../../lib/folder-link-create'
 import { EmptyLinkPassphraseError } from '../../lib/link-passphrase'
 import type { FolderAccessLevel } from '../../lib/folder-link-types'
-import { FOLDER_NEEDS_UPGRADE, needsFolderUpgrade } from '../../lib/folder-upgrade'
+import { FOLDER_NEEDS_UPGRADE, FolderUpgradeRefusedError, needsFolderUpgrade } from '../../lib/folder-upgrade'
 
 /**
  * The line a failed create shows. A folder that needs the custody upgrade
- * (contract 2237 §2) gets its own sentence, never the generic retry line:
- * retrying can't help it.
+ * (contract 2237 §2), or whose upgrade was refused, gets its own sentence,
+ * never the generic retry line: retrying can't help it.
  */
 export function createLinkErrorMessage(err: unknown): string {
   if (err instanceof EmptyLinkPassphraseError) return err.message
   if (needsFolderUpgrade(err)) return FOLDER_NEEDS_UPGRADE
+  if (err instanceof FolderUpgradeRefusedError) return err.message
   return folderLinkActionError(err)?.message || 'Could not create the link. Try again.'
 }
 
