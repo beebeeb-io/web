@@ -161,3 +161,21 @@ describe('folder link page states (2237b)', () => {
     expect(html).not.toContain('What should we call you?')
   })
 })
+
+// Review thread PRRT_kwDOSLX6Nc6xA1pW (fixed in 8f566cd, pinned here): a
+// guest upload or drop lands in the folder being browsed, not at the root.
+// GuestBrowser reports its location (onLocationChange); the page hands it to
+// the upload panel.
+describe('guest uploads land in the folder being browsed', () => {
+  test("the page passes the browser's location to the upload panel, never the root", async () => {
+    const { readFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const text = readFileSync(join(import.meta.dir, '..', 'src/pages/folder-link.tsx'), 'utf8')
+    expect(text).toContain('onLocationChange={setLocation}')
+    const start = text.indexOf('<GuestUploadPanel')
+    const panel = text.slice(start, text.indexOf('/>', start))
+    expect(start).toBeGreaterThan(0)
+    expect(panel).toContain('parentId={location}')
+    expect(panel).not.toContain('parentId={null}')
+  })
+})
