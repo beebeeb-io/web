@@ -36,6 +36,8 @@ import {
   unwrapLinkOwnerKey,
   wrapLinkOwnerToken,
   unwrapLinkOwnerToken,
+  wrapInviteOwnerCopy,
+  unwrapInviteOwnerCopy,
   deriveFolderLinkPassphraseStretch,
 } from 'beebeeb-wasm'
 import { unwrapKeyFromShare } from '../src/lib/crypto'
@@ -50,7 +52,7 @@ import { decryptThumbnailBlob } from '../src/lib/thumbnail'
 // relate to this one).
 //
 // ── Vendoring + refresh procedure ───────────────────────────────────────────
-// The vendored copy lives at test/vectors/core-vectors.v11.json and MUST be a
+// The vendored copy lives at test/vectors/core-vectors.v12.json and MUST be a
 // byte-for-byte copy of repos/core/test-vectors/vectors.json (so the drift
 // check below is a real sha256 comparison, not a comparison against a
 // modified copy). To refresh after core bumps the vector file:
@@ -93,12 +95,15 @@ import { decryptThumbnailBlob } from '../src/lib/thumbnail'
 // never touch the worker — so those ARE called directly, exactly as the app
 // calls them.
 
-const VENDORED_PATH = fileURLToPath(new URL('./vectors/core-vectors.v11.json', import.meta.url))
+const VENDORED_PATH = fileURLToPath(new URL('./vectors/core-vectors.v12.json', import.meta.url))
 // Sibling core checkout (present on developer machines / worktrees that keep
 // `core` next to `web`; absent in a bare CI checkout of web alone).
 const CORE_SIBLING_PATH = fileURLToPath(new URL('../../core/test-vectors/vectors.json', import.meta.url))
 
-// Pin from: shasum -a 256 test/vectors/core-vectors.v11.json
+// Pin from: shasum -a 256 test/vectors/core-vectors.v12.json
+// v12 = core 26094b3 (core#49, task 2255 L9; the same file at core main
+// 3831a05, whose WASM web vendors): adds invite_owner_copy_v1, the
+// purpose-bound folder-invite owner copy;
 // v11 at core c08defc (core#48, decision L8): owner_wrapped_file_key re-pinned
 // to the purpose-bound owner wrap (same version number, new bytes);
 // v11 = core a245a54 (core#45, task 2237d): adds owner_wrapped_file_key,
@@ -109,8 +114,8 @@ const CORE_SIBLING_PATH = fileURLToPath(new URL('../../core/test-vectors/vectors
 // key_wrap_v1 (the legacy unbound shape, pinned so a reader can prove it refuses it);
 // v9 = core 9cbf856 (core#42, task 2237b): adds combine_folder_link_key;
 // v8 = core edf7cd4 (core#41, task 2237): adds shared_folder_index_key.
-const PINNED_SHA256 = '11f7522056d0c12eff92d2f37a5fa6975ce460cf36899e3a6a92f3455a4d754a'
-const EXPECTED_VERSION = 11
+const PINNED_SHA256 = '9f426bb10fe48466c5c10bd6bd8bd20b42ceaae3f1dc8c9c04ee8babd1f7d67e'
+const EXPECTED_VERSION = 12
 
 function hexToBytes(hex: string): Uint8Array {
   const out = new Uint8Array(hex.length / 2)
@@ -143,7 +148,7 @@ beforeAll(() => {
 // ─── 1. Vendored-file checksum guard ────────────────────────────────────────
 
 describe('vendored vector checksum guard', () => {
-  test('test/vectors/core-vectors.v11.json matches the pinned sha256', () => {
+  test('test/vectors/core-vectors.v12.json matches the pinned sha256', () => {
     const buf = readFileSync(VENDORED_PATH)
     expect(sha256Hex(buf)).toBe(PINNED_SHA256)
   })
@@ -198,6 +203,7 @@ const IMPLEMENTED_FAMILIES = new Set([
   'owner_wrapped_file_key',
   'owner_wrapped_folder_key',
   'folder_wrapped_file_key',
+  'invite_owner_copy_v1',
 ])
 
 const SKIPPED_FAMILIES: Record<string, string> = {
@@ -627,6 +633,8 @@ describe('core vectors KAT — L6 custody and link-owner wraps (2237b)', () => {
     { family: 'folder_custody_v1', wrap: wrapFolderCustody, unwrap: unwrapFolderCustody },
     { family: 'link_owner_key_v1', wrap: wrapLinkOwnerKey, unwrap: unwrapLinkOwnerKey },
     { family: 'link_owner_token_v1', wrap: wrapLinkOwnerToken, unwrap: unwrapLinkOwnerToken },
+    // v12, task 2255 (L9): the folder-invite owner copy, the same pattern.
+    { family: 'invite_owner_copy_v1', wrap: wrapInviteOwnerCopy, unwrap: unwrapInviteOwnerCopy },
   ] as const
   for (const { family, wrap, unwrap } of cases) {
     test(`${family} — opens the pinned wrap, re-wraps, and refuses another record id`, () => {
@@ -650,6 +658,14 @@ describe('core vectors KAT — L6 custody and link-owner wraps (2237b)', () => {
     expect(() =>
       unwrapFolderCustody(hexToBytes(legacy.wrapper_key_hex), custody.record_id, hexToBytes(legacy.wrapped_hex)),
     ).toThrow(/decryption failed/)
+  })
+
+  test('invite_owner_copy_v1 — an invite owner copy is not a custody record, and a custody record is not an owner copy', () => {
+    const v = vectors.invite_owner_copy_v1
+    const master = hexToBytes(v.master_key_hex)
+    const key = hexToBytes(v.plaintext_hex)
+    expect(() => unwrapFolderCustody(master, v.record_id, hexToBytes(v.wrapped_hex))).toThrow(/decryption failed/)
+    expect(() => unwrapInviteOwnerCopy(master, v.record_id, wrapFolderCustody(master, v.record_id, key))).toThrow(/decryption failed/)
   })
 })
 

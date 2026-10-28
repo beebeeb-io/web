@@ -144,7 +144,7 @@ describe('passphrase stretch (2237b)', () => {
 
   test("is core's stretch (L6): the pinned vector, NFC and NFD alike", async () => {
     const vectors = JSON.parse(
-      await Bun.file(new URL('./vectors/core-vectors.v11.json', import.meta.url)).text(),
+      await Bun.file(new URL('./vectors/core-vectors.v12.json', import.meta.url)).text(),
     ) as { vectors: Array<Record<string, string>> }
     for (const name of ['folder_link_passphrase', 'folder_link_passphrase_nfd']) {
       const v = vectors.vectors.find((entry) => entry.name === name)!
