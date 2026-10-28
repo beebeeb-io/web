@@ -558,6 +558,532 @@ export class WasmChunkEncryptor {
 if (Symbol.dispose) WasmChunkEncryptor.prototype[Symbol.dispose] = WasmChunkEncryptor.prototype.free;
 
 /**
+ * How long a discovery answer is trusted, and whether to ask again: one per API base.
+ * `lookup(nowMs)` is `{ kind: "fetch" | "cached" | "use_api", discovery? }`;
+ * `record(outcome, body, nowMs)` takes the `classifyDirectAnswer` result and the
+ * discovery body (or `null`).
+ */
+export class WasmDirectDiscoveryCache {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmDirectDiscoveryCacheFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmdirectdiscoverycache_free(ptr, 0);
+    }
+    /**
+     * @param {number} now_ms
+     * @returns {any}
+     */
+    lookup(now_ms) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmdirectdiscoverycache_lookup(retptr, this.__wbg_ptr, now_ms);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    constructor() {
+        const ret = wasm.wasmdirectdiscoverycache_new();
+        this.__wbg_ptr = ret >>> 0;
+        WasmDirectDiscoveryCacheFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {any} outcome
+     * @param {Uint8Array | null | undefined} body
+     * @param {number} now_ms
+     */
+    record(outcome, body, now_ms) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            var ptr0 = isLikeNone(body) ? 0 : passArray8ToWasm0(body, wasm.__wbindgen_export);
+            var len0 = WASM_VECTOR_LEN;
+            wasm.wasmdirectdiscoverycache_record(retptr, this.__wbg_ptr, addHeapObject(outcome), ptr0, len0, now_ms);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            if (r1) {
+                throw takeObject(r0);
+            }
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+}
+if (Symbol.dispose) WasmDirectDiscoveryCache.prototype[Symbol.dispose] = WasmDirectDiscoveryCache.prototype.free;
+
+/**
+ * Whether this client may start a direct transfer now, per direction: after a transfer gave up direct,
+ * no new one of that direction starts for ten minutes. One per API base and account; feed it
+ * `Date.now()` (or a monotonic clock, consistently). `lastGaveUpMs` / `restore` let a client persist the
+ * two timestamps. A recorded time later than "now" counts as expired.
+ */
+export class WasmDirectHealth {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmDirectHealthFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmdirecthealth_free(ptr, 0);
+    }
+    /**
+     * A transfer of `direction` gave up direct. Throws `direction_invalid` for anything but
+     * `"download"` or `"upload"` (as every method here does).
+     * @param {string} direction
+     * @param {number} now_ms
+     */
+    gaveUp(direction, now_ms) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(direction, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.wasmdirecthealth_gaveUp(retptr, this.__wbg_ptr, ptr0, len0, now_ms);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            if (r1) {
+                throw takeObject(r0);
+            }
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * When the last give-up of `direction` was recorded, or `null`.
+     * @param {string} direction
+     * @returns {number | undefined}
+     */
+    lastGaveUpMs(direction) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-32);
+            const ptr0 = passStringToWasm0(direction, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.wasmdirecthealth_lastGaveUpMs(retptr, this.__wbg_ptr, ptr0, len0);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r2 = getDataViewMemory0().getFloat64(retptr + 8 * 1, true);
+            var r4 = getDataViewMemory0().getInt32(retptr + 4 * 4, true);
+            var r5 = getDataViewMemory0().getInt32(retptr + 4 * 5, true);
+            if (r5) {
+                throw takeObject(r4);
+            }
+            return r0 === 0 ? undefined : r2;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(32);
+        }
+    }
+    /**
+     * May a new direct transfer of `direction` start now?
+     * @param {string} direction
+     * @param {number} now_ms
+     * @returns {boolean}
+     */
+    mayStart(direction, now_ms) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(direction, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.wasmdirecthealth_mayStart(retptr, this.__wbg_ptr, ptr0, len0, now_ms);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return r0 !== 0;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * As `mayStart`, for a file that may already have given up direct: it never may again (`fileGaveUp`).
+     * @param {string} direction
+     * @param {number} now_ms
+     * @param {boolean} file_gave_up
+     * @returns {boolean}
+     */
+    mayStartFile(direction, now_ms, file_gave_up) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(direction, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.wasmdirecthealth_mayStartFile(retptr, this.__wbg_ptr, ptr0, len0, now_ms, file_gave_up);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return r0 !== 0;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    constructor() {
+        const ret = wasm.wasmdirecthealth_new();
+        this.__wbg_ptr = ret >>> 0;
+        WasmDirectHealthFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * Put back a timestamp `lastGaveUpMs` returned earlier.
+     * @param {string} direction
+     * @param {number} last_gave_up_ms
+     */
+    restore(direction, last_gave_up_ms) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(direction, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.wasmdirecthealth_restore(retptr, this.__wbg_ptr, ptr0, len0, last_gave_up_ms);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            if (r1) {
+                throw takeObject(r0);
+            }
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+}
+if (Symbol.dispose) WasmDirectHealth.prototype[Symbol.dispose] = WasmDirectHealth.prototype.free;
+
+/**
+ * The download planner for ONE file: when to ask the API for a window of
+ * links, which chunk to fetch next (at most 4 in flight, in order), when to
+ * renew a link, and when a chunk goes to the pinned API route. It performs no
+ * I/O and holds no clock: pass `Date.now()` as `nowMs` on every call.
+ *
+ * Drive it from one place:
+ *
+ * ```js
+ * const p = new WasmDownloadPlanner(discovery, apiBase, fileId, seed)
+ * for (;;) {
+ *   const w = p.poll(Date.now())
+ *   switch (w.kind) {
+ *     case "request_window": // POST, then windowAnswered(body) or windowFailed(outcome)
+ *       break
+ *     case "fetch": // GET w.url.raw() (w.url is a WasmSignedUrl, not a string), then fetchOk(w.index) or fetchFailed(w.index)
+ *       break
+ *     case "fetch_via_api": // pinned route, then fetchOk or apiFetchFailed
+ *       break
+ *     case "wait": // sleep until w.until_ms or until a request returns
+ *       break
+ *     case "done": return
+ *     case "stop": return // discard partial output and act on w.verdict.kind
+ *   }
+ *   // chunks are decrypted IN ORDER: after each, consumed(index); if one does
+ *   // not authenticate, chunkUnauthentic(index)
+ * }
+ * ```
+ */
+export class WasmDownloadPlanner {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmDownloadPlannerFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmdownloadplanner_free(ptr, 0);
+    }
+    /**
+     * The pinned API route failed for chunk `index` after the caller's own retries.
+     * @param {number} index
+     */
+    apiFetchFailed(index) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmdownloadplanner_apiFetchFailed(retptr, this.__wbg_ptr, index);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            if (r1) {
+                throw takeObject(r0);
+            }
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Chunk `index` arrived but did not authenticate when decrypted.
+     * @param {number} index
+     */
+    chunkUnauthentic(index) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmdownloadplanner_chunkUnauthentic(retptr, this.__wbg_ptr, index);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            if (r1) {
+                throw takeObject(r0);
+            }
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Chunk `index` has been decrypted and written. Strictly in order.
+     * @param {number} index
+     */
+    consumed(index) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmdownloadplanner_consumed(retptr, this.__wbg_ptr, index);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            if (r1) {
+                throw takeObject(r0);
+            }
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Chunks decrypted and written so far.
+     * @returns {number}
+     */
+    consumedCount() {
+        const ret = wasm.wasmdownloadplanner_consumedCount(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * The transfer of chunk `index` from storage failed (any non-200, a short
+     * body, a wrong length, a network error, an expired link).
+     * @param {number} index
+     * @param {number} now_ms
+     */
+    fetchFailed(index, now_ms) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmdownloadplanner_fetchFailed(retptr, this.__wbg_ptr, index, now_ms);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            if (r1) {
+                throw takeObject(r0);
+            }
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Chunk `index` arrived whole (status 200 and the right length).
+     * @param {number} index
+     */
+    fetchOk(index) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmdownloadplanner_fetchOk(retptr, this.__wbg_ptr, index);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            if (r1) {
+                throw takeObject(r0);
+            }
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * `{ chunk_count, chunk_size, encrypted_size, original_size }` once the
+     * first window was accepted, else `null`.
+     * @returns {any}
+     */
+    geometry() {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmdownloadplanner_geometry(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Chunk requests (storage or API) currently outstanding.
+     * @returns {number}
+     */
+    inFlight() {
+        const ret = wasm.wasmdownloadplanner_inFlight(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * `discovery` is the object `parseDirectDiscovery` returned; `jitter_seed` is any number.
+     * The seed is the number's IEEE-754 bits (`f64::to_bits`): `Math.random()` is fine, every
+     * distinct number is a distinct seed (so two tabs do not share a retry schedule), the same
+     * number repeats its schedule, and `0` and `-0` are two seeds. It is not a secret.
+     * @param {any} discovery
+     * @param {string} api_base
+     * @param {string} file_id
+     * @param {number} jitter_seed
+     */
+    constructor(discovery, api_base, file_id, jitter_seed) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(api_base, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(file_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len1 = WASM_VECTOR_LEN;
+            wasm.wasmdownloadplanner_new(retptr, addHeapObject(discovery), ptr0, len0, ptr1, len1, jitter_seed);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            this.__wbg_ptr = r0 >>> 0;
+            WasmDownloadPlannerFinalization.register(this, this.__wbg_ptr, this);
+            return this;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * The pinned `object_version_id`, or `null` before the first window.
+     * @returns {string | undefined}
+     */
+    pinnedVersion() {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmdownloadplanner_pinnedVersion(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            let v1;
+            if (r0 !== 0) {
+                v1 = getStringFromWasm0(r0, r1).slice();
+                wasm.__wbindgen_export4(r0, r1 * 1, 1);
+            }
+            return v1;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * What to do now: a `DirectPoll` (`{ kind, ... }`, see the class docs). For `kind: "fetch"` the
+     * `url` is a `WasmSignedUrl`, not a string: pass `url.raw()` to `fetch` and nothing else.
+     * @param {number} now_ms
+     * @returns {DirectPoll}
+     */
+    poll(now_ms) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmdownloadplanner_poll(retptr, this.__wbg_ptr, now_ms);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Cap the ciphertext bytes held at once (fetching, or fetched and waiting to be decrypted in order):
+     * the planner then holds `clamp(floor(bytes / (chunk_size + 28)), 1, 4)` chunks, so 64 MiB holds four
+     * chunks of 4 MiB but one of 256 MiB. Call it before the first `poll`. Throws `bytes_invalid` for a
+     * number that is not a whole, non-negative byte count.
+     * @param {number} bytes
+     */
+    setMaxInFlightBytes(bytes) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmdownloadplanner_setMaxInFlightBytes(retptr, this.__wbg_ptr, bytes);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            if (r1) {
+                throw takeObject(r0);
+            }
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Did the storage breaker trip? It does when a chunk used up its renewals and no chunk of this
+     * transfer has come whole from storage: from then on every remaining chunk is a `fetch_via_api` poll.
+     * When the file ends with this `true`, tell `WasmDirectHealth.gaveUp("download", nowMs)`.
+     * @returns {boolean}
+     */
+    storageGivenUp() {
+        const ret = wasm.wasmdownloadplanner_storageGivenUp(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * The window answer for the outstanding request, as the raw response body
+     * (`Uint8Array`). Returns `"accepted"`, `"malformed"` (the body is not the
+     * contract's JSON; handled like any window the server could not serve), or
+     * the code of the contract violation (`transport`, `file_mismatch`,
+     * `version_changed`, `geometry`, `grants`, `length`, `method`,
+     * `authority_<refusal>`, `expiry`, `unexpected`). It never throws: poll
+     * again.
+     * @param {Uint8Array} body
+     * @param {number} now_ms
+     * @returns {string}
+     */
+    windowAnswered(body, now_ms) {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passArray8ToWasm0(body, wasm.__wbindgen_export);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.wasmdownloadplanner_windowAnswered(retptr, this.__wbg_ptr, ptr0, len0, now_ms);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            deferred2_0 = r0;
+            deferred2_1 = r1;
+            return getStringFromWasm0(r0, r1);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+            wasm.__wbindgen_export4(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * The window request failed. `outcome` is what `classifyDirectAnswer`
+     * returned for the answer (or `{ kind: "use_api_now" }` for a network
+     * error).
+     * @param {any} outcome
+     * @param {number} now_ms
+     */
+    windowFailed(outcome, now_ms) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmdownloadplanner_windowFailed(retptr, this.__wbg_ptr, addHeapObject(outcome), now_ms);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            if (r1) {
+                throw takeObject(r0);
+            }
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * A 2xx window response whose body could not be decoded at all.
+     */
+    windowMalformed() {
+        wasm.wasmdownloadplanner_windowMalformed(this.__wbg_ptr);
+    }
+}
+if (Symbol.dispose) WasmDownloadPlanner.prototype[Symbol.dispose] = WasmDownloadPlanner.prototype.free;
+
+/**
  * A stateful, client-side search index over a vault's file names.
  *
  * Build it from a file list, mutate it incrementally (`upsert`/`remove` return
@@ -630,6 +1156,31 @@ export class WasmSearchIndex {
         }
     }
     /**
+     * Encrypt only the given buckets under the folder key (incremental sync).
+     * @param {Uint8Array} folder_key
+     * @param {Uint32Array} buckets
+     * @returns {any}
+     */
+    encryptBucketsWithFolderKey(folder_key, buckets) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passArray8ToWasm0(folder_key, wasm.__wbindgen_export);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passArray32ToWasm0(buckets, wasm.__wbindgen_export);
+            const len1 = WASM_VECTOR_LEN;
+            wasm.wasmsearchindex_encryptBucketsWithFolderKey(retptr, this.__wbg_ptr, ptr0, len0, ptr1, len1);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
      * Encrypt every non-empty shard page → `[{bucket, page, blob: Uint8Array}]`.
      * @param {Uint8Array} master_key
      * @returns {any}
@@ -640,6 +1191,28 @@ export class WasmSearchIndex {
             const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
             const len0 = WASM_VECTOR_LEN;
             wasm.wasmsearchindex_encryptShards(retptr, this.__wbg_ptr, ptr0, len0);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Encrypt every non-empty shard page under the folder key.
+     * @param {Uint8Array} folder_key
+     * @returns {any}
+     */
+    encryptShardsWithFolderKey(folder_key) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passArray8ToWasm0(folder_key, wasm.__wbindgen_export);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.wasmsearchindex_encryptShardsWithFolderKey(retptr, this.__wbg_ptr, ptr0, len0);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
             var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
@@ -673,6 +1246,31 @@ export class WasmSearchIndex {
             const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
             const len0 = WASM_VECTOR_LEN;
             wasm.wasmsearchindex_fromEncryptedShards(retptr, ptr0, len0, addHeapObject(shards), num_shards);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return WasmSearchIndex.__wrap(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Reconstruct a shared folder's index from shards sealed under the folder
+     * key (`encryptShardsWithFolderKey` output).
+     * @param {Uint8Array} folder_key
+     * @param {any} shards
+     * @param {number} num_shards
+     * @returns {WasmSearchIndex}
+     */
+    static fromEncryptedShardsWithFolderKey(folder_key, shards, num_shards) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passArray8ToWasm0(folder_key, wasm.__wbindgen_export);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.wasmsearchindex_fromEncryptedShardsWithFolderKey(retptr, ptr0, len0, addHeapObject(shards), num_shards);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
             var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
@@ -767,6 +1365,113 @@ export class WasmSearchIndex {
     }
 }
 if (Symbol.dispose) WasmSearchIndex.prototype[Symbol.dispose] = WasmSearchIndex.prototype.free;
+
+/**
+ * A presigned storage link as the `fetch` step carries it: a bearer capability until it expires. It
+ * is an object, not a string, so that `console.log`, `String(url)`, a template literal and
+ * `JSON.stringify(step)` can never show it: all of them give the redacted form (scheme and host).
+ * The only way to the link is `raw()`, by name.
+ */
+export class WasmSignedUrl {
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(WasmSignedUrl.prototype);
+        obj.__wbg_ptr = ptr;
+        WasmSignedUrlFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmSignedUrlFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmsignedurl_free(ptr, 0);
+    }
+    /**
+     * The full presigned link, to hand to `fetch`. Never log it.
+     * @returns {string}
+     */
+    raw() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmsignedurl_raw(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            deferred1_0 = r0;
+            deferred1_1 = r1;
+            return getStringFromWasm0(r0, r1);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+            wasm.__wbindgen_export4(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * Scheme and host only: safe for a log line.
+     * @returns {string}
+     */
+    redacted() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmsignedurl_redacted(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            deferred1_0 = r0;
+            deferred1_1 = r1;
+            return getStringFromWasm0(r0, r1);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+            wasm.__wbindgen_export4(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * `JSON.stringify(step)`.
+     * @returns {string}
+     */
+    toJSON() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmsignedurl_toJSON(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            deferred1_0 = r0;
+            deferred1_1 = r1;
+            return getStringFromWasm0(r0, r1);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+            wasm.__wbindgen_export4(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * `String(url)` and template literals.
+     * @returns {string}
+     */
+    toString() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmsignedurl_toString(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            deferred1_0 = r0;
+            deferred1_1 = r1;
+            return getStringFromWasm0(r0, r1);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+            wasm.__wbindgen_export4(deferred1_0, deferred1_1, 1);
+        }
+    }
+}
+if (Symbol.dispose) WasmSignedUrl.prototype[Symbol.dispose] = WasmSignedUrl.prototype.free;
 
 /**
  * The signup ceremony state machine, one per signup attempt.
@@ -1115,6 +1820,117 @@ export class WasmSignupCeremony {
     }
 }
 if (Symbol.dispose) WasmSignupCeremony.prototype[Symbol.dispose] = WasmSignupCeremony.prototype.free;
+
+/**
+ * May the client follow this storage link? Throws an `Error` whose `code` is
+ * the refusal (`malformed`, `not_https`, `userinfo`, `ip_literal`, `loopback`,
+ * `bad_host`, `port`, `host_not_listed`, `bucket_not_listed`, `bad_path`); the
+ * message never contains the URL. `discovery` is the object
+ * `parseDirectDiscovery` returned; `api_base` is the API origin in use.
+ * @param {string} url
+ * @param {any} discovery
+ * @param {string} api_base
+ */
+export function checkStorageUrl(url, discovery, api_base) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(url, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(api_base, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.checkStorageUrl(retptr, ptr0, len0, addHeapObject(discovery), ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        if (r1) {
+            throw takeObject(r0);
+        }
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * What an API answer means, as `{ kind, millis?, status?, error? }` with `kind`
+ * one of `proceed`, `not_supported`, `use_api_now`, `api_for_this_file`
+ * (for an UPLOAD call: this session cannot go direct, so abandon it and init again WITHOUT the
+ * capability token),
+ * `restart`, `backoff` (with `millis`), `terminal` (with `status`, `error`),
+ * `retry` (the pinned chunk route and the upload calls: a failure that may pass; the retry rules of
+ * the pinned route are `pinnedRetryDecision`, those of an upload are core's `UploadChunkState`, which is
+ * not exported yet, so do not pass an upload outcome to `pinnedRetryDecision`), `regrant`
+ * (`upload_commit` only: the staged chunk is not there, ask for a new link and send it again), `held`
+ * (`upload_commit` only: the server holds the chunk's commit lock, possibly for minutes: wait and
+ * commit again, `millis` is the server's stated wait or null). core's `UploadChunkState` gives a hold an
+ * allowance of its own (the lock TTL, 420 s, plus 30 s; never polling faster than once a second), but it
+ * is not exported yet: a host that handles `held` itself must bound the wait the same way (at least the
+ * server's lock TTL, or it abandons a chunk whose commit would have gone through), poll no faster than
+ * once a second, and not count a hold as one of its failures.
+ * `call` is `"discovery"`, `"download_grant"`, `"pinned_chunk"`, `"upload_grant"` or
+ * `"upload_commit"`; pass `status` 0 when there was
+ * no HTTP answer. `body` is whatever was read of the body (at most 64 KiB is
+ * looked at); `retry_after` is the raw header value.
+ * @param {string} call
+ * @param {number} status
+ * @param {string | null | undefined} content_type
+ * @param {Uint8Array} body
+ * @param {string | null} [retry_after]
+ * @returns {any}
+ */
+export function classifyDirectAnswer(call, status, content_type, body, retry_after) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(call, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(content_type) ? 0 : passStringToWasm0(content_type, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        var len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(body, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(retry_after) ? 0 : passStringToWasm0(retry_after, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        var len3 = WASM_VECTOR_LEN;
+        wasm.classifyDirectAnswer(retptr, ptr0, len0, status, ptr1, len1, ptr2, len2, ptr3, len3);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Combine a folder link's fragment key `K_c` with an optional 32-byte
+ * passphrase stretch (task 2237b). Pass `undefined`/`null` for a link without
+ * a passphrase. Returns a 32-byte `Uint8Array`: the key that unwraps the
+ * link's sealed folder key. Never send the result or `K_c` to the server.
+ * @param {Uint8Array} k_c
+ * @param {Uint8Array | null} [passphrase_stretch]
+ * @returns {Uint8Array}
+ */
+export function combineFolderLinkKey(k_c, passphrase_stretch) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(k_c, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(passphrase_stretch) ? 0 : passArray8ToWasm0(passphrase_stretch, wasm.__wbindgen_export);
+        var len1 = WASM_VECTOR_LEN;
+        wasm.combineFolderLinkKey(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v3 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v3;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
 
 /**
  * Compute recovery check from master key. Returns 32-byte `Uint8Array`.
@@ -1534,6 +2350,37 @@ export function decrypt_thumbnail(file_key, frame) {
 }
 
 /**
+ * Derive one bucket key of a shared folder's encrypted search index (task
+ * 2237b): `HKDF-SHA256(ikm = folder key, salt = none, info =
+ * "beebeeb-shared-folder-index-v1" || bucket as u32 LE)`. Returns a 32-byte
+ * `Uint8Array`. `bucket` must be below the index's shard count (64 in the
+ * standard layout); values of 64 or more are rejected here.
+ * @param {Uint8Array} folder_key
+ * @param {number} bucket
+ * @returns {Uint8Array}
+ */
+export function deriveSharedFolderIndexKey(folder_key, bucket) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(folder_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.deriveSharedFolderIndexKey(retptr, ptr0, len0, bucket);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * Derive a per-file encryption key from a master key and file ID via
  * HKDF-SHA256. Both `master_key` and `file_id` are raw byte slices.
  * Returns the 32-byte file key as `Uint8Array`.
@@ -1697,6 +2544,54 @@ export function derive_x25519_public(private_key) {
         var v2 = getArrayU8FromWasm0(r0, r1).slice();
         wasm.__wbindgen_export4(r0, r1 * 1, 1);
         return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * `/api/v1/files/{id}/download-grants` for `file_id`.
+ * @param {string} file_id
+ * @returns {string}
+ */
+export function directDownloadGrantsPath(file_id) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(file_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.directDownloadGrantsPath(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred2_0 = r0;
+        deferred2_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * `{ cap_object_download_v1, cap_object_upload_v1, capabilities_header,
+ * discovery_path, max_window, default_window, chunk_overhead,
+ * storage_connect_timeout_ms, storage_get_idle_ms, discovery_timeout_ms,
+ * api_call_timeout_ms, background_put_resource_timeout_ms }`: the contract's
+ * names and numbers, and the time bounds every client applies, so no client re-types them.
+ * @returns {any}
+ */
+export function directTransferConstants() {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.directTransferConstants(retptr);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
@@ -2361,6 +3256,59 @@ export function open_request_upload(r_priv, e_pub, file_id, wrapped_key) {
 }
 
 /**
+ * Decode a discovery body (`GET /api/v1/transfer/capabilities`). Returns
+ * `{ download, upload, storage_hosts, storage_buckets: [{host, bucket}],
+ * max_window, url_ttl_seconds }`; unknown fields are ignored and missing lists
+ * are empty. Throws an `Error` with `code` `discovery_too_large` or
+ * `discovery_malformed`.
+ * @param {Uint8Array} body
+ * @returns {any}
+ */
+export function parseDirectDiscovery(body) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(body, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.parseDirectDiscovery(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * The shared retry policy of the pinned per-chunk route (4 attempts, 150 s of waiting in all, a
+ * stated `Retry-After` kept, otherwise 1 s doubling). `outcome` is what `classifyDirectAnswer`
+ * returned for `call: "pinned_chunk"`; `attempt` is the 1-based number of the attempt that just
+ * failed; `waitedMs` is the total waited so far.
+ * @param {any} outcome
+ * @param {number} attempt
+ * @param {number} waited_ms
+ * @returns {any}
+ */
+export function pinnedRetryDecision(outcome, attempt, waited_ms) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.pinnedRetryDecision(retptr, addHeapObject(outcome), attempt, waited_ms);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * Return the base storage quota (in bytes) for a plan slug.
  * @param {string} plan_slug
  * @returns {bigint}
@@ -2479,6 +3427,94 @@ export function recover_from_phrase(phrase) {
 }
 
 /**
+ * A URL for a log line: scheme and host only.
+ * @param {string} url
+ * @returns {string}
+ */
+export function redactUrl(url) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(url, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.redactUrl(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred2_0 = r0;
+        deferred2_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * What to do with an unfinished upload found on disk. `recorded` is `"api"` or `"direct"` (what the resume
+ * record names); `discovery` is `{ kind, upload? }` with `kind` `"offers"` (and `upload: true | false`),
+ * `"not_supported"` (a JSON 404), `"unknown"` (a 5xx, a timeout, a bare 404: no usable answer) or
+ * `"unauthorized"` (401 or 403); `forcedApi` is the user's own switch. Returns `"continue_api"`,
+ * `"continue_direct"`, `"abandon_to_api"`, `"keep_record_and_fail"` or `"keep_record_and_reauthenticate"`.
+ * A recorded direct session is given up only on a definite no. Throws `recorded_invalid` or
+ * `discovery_state_invalid`.
+ * @param {string} recorded
+ * @param {any} discovery
+ * @param {boolean} forced_api
+ * @returns {string}
+ */
+export function resumeTransport(recorded, discovery, forced_api) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(recorded, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.resumeTransport(retptr, ptr0, len0, addHeapObject(discovery), forced_api);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr2 = r0;
+        var len2 = r1;
+        if (r3) {
+            ptr2 = 0; len2 = 0;
+            throw takeObject(r2);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Text that may contain URLs, made safe to print.
+ * @param {string} text
+ * @returns {string}
+ */
+export function scrubText(text) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.scrubText(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred2_0 = r0;
+        deferred2_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * Seal a content key to a request's public key (anonymous uploader path).
  * `r_pub` and `content_key` are 32 bytes; `file_id` is arbitrary bytes.
  * Returns `{ e_pub: Uint8Array, wrapped_key: Uint8Array }`.
@@ -2531,6 +3567,51 @@ export function searchIndexSyncPlan(local, remote, local_is_authoritative) {
             throw takeObject(r1);
         }
         return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * The most a storage GET of `len` ciphertext bytes may take, in milliseconds (the same formula as a PUT).
+ * Throws like `storagePutTotalMs`.
+ * @param {number} len
+ * @returns {number}
+ */
+export function storageGetTotalMs(len) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.storageGetTotalMs(retptr, len);
+        var r0 = getDataViewMemory0().getFloat64(retptr + 8 * 0, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        return r0;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * The most a storage PUT of `len` ciphertext bytes may take, in milliseconds: a minute plus the
+ * chunk at 1 Mbit/s (`60 s + ceil(len / 131072) s`). Throws an `Error` with `code` `length_invalid`
+ * for a `len` that is not a whole, non-negative number.
+ * @param {number} len
+ * @returns {number}
+ */
+export function storagePutTotalMs(len) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.storagePutTotalMs(retptr, len);
+        var r0 = getDataViewMemory0().getFloat64(retptr + 8 * 0, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        return r0;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
@@ -2936,6 +4017,10 @@ function __wbg_get_imports() {
             const ret = getObject(arg0).done;
             return ret;
         },
+        __wbg_entries_e0b73aa8571ddb56: function(arg0) {
+            const ret = Object.entries(getObject(arg0));
+            return addHeapObject(ret);
+        },
         __wbg_from_0dbf29f09e7fb200: function(arg0) {
             const ret = Array.from(getObject(arg0));
             return addHeapObject(ret);
@@ -2967,6 +4052,16 @@ function __wbg_get_imports() {
             let result;
             try {
                 result = getObject(arg0) instanceof ArrayBuffer;
+            } catch (_) {
+                result = false;
+            }
+            const ret = result;
+            return ret;
+        },
+        __wbg_instanceof_Map_1b76fd4635be43eb: function(arg0) {
+            let result;
+            try {
+                result = getObject(arg0) instanceof Map;
             } catch (_) {
                 result = false;
             }
@@ -3103,6 +4198,10 @@ function __wbg_get_imports() {
             const ret = getObject(arg0).versions;
             return addHeapObject(ret);
         },
+        __wbg_wasmsignedurl_new: function(arg0) {
+            const ret = WasmSignedUrl.__wrap(arg0);
+            return addHeapObject(ret);
+        },
         __wbindgen_cast_0000000000000001: function(arg0) {
             // Cast intrinsic for `F64 -> Externref`.
             const ret = arg0;
@@ -3151,9 +4250,21 @@ const WasmChunkDecryptorFinalization = (typeof FinalizationRegistry === 'undefin
 const WasmChunkEncryptorFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmchunkencryptor_free(ptr >>> 0, 1));
+const WasmDirectDiscoveryCacheFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmdirectdiscoverycache_free(ptr >>> 0, 1));
+const WasmDirectHealthFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmdirecthealth_free(ptr >>> 0, 1));
+const WasmDownloadPlannerFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmdownloadplanner_free(ptr >>> 0, 1));
 const WasmSearchIndexFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmsearchindex_free(ptr >>> 0, 1));
+const WasmSignedUrlFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmsignedurl_free(ptr >>> 0, 1));
 const WasmSignupCeremonyFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmsignupceremony_free(ptr >>> 0, 1));
