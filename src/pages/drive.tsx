@@ -52,7 +52,6 @@ import { useFrozen } from '../hooks/use-frozen'
 import { useAuth } from '../lib/auth-context'
 import {
   listAllFiles,
-  createFolder,
   toggleStar,
   updateFile,
   deleteFile,
@@ -68,6 +67,7 @@ import {
   type StorageUsage,
   type SyncNode,
 } from '../lib/api'
+import { createOwnerFolder } from '../lib/owner-upload-key'
 import { userFriendlyError } from '../lib/user-friendly-error'
 import { usePlanBlock } from '../hooks/use-plan-block'
 import { noCardTrialStatus, trialCapShortfallNotice } from '../lib/no-card-trial'
@@ -1744,7 +1744,9 @@ export function Drive() {
         const enc = await encryptFileMetadata(folderKey, folderName)
         const nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
 
-        const result = await createFolder(nameEncrypted, parentId, folderId)
+        // Inside a shared folder its name-key wrap is published too, so guests
+        // and members can read the new folder's name.
+        const result = await createOwnerFolder({ nameEncrypted, parentId, folderId, nameKey: folderKey, masterKey: getMasterKey() })
         folderIdMap[folderPath] = result.id
 
         // Index the folder in the search index
@@ -1893,12 +1895,21 @@ export function Drive() {
       // Then encrypt the name with that ID as the key derivation input
       const folderId = crypto.randomUUID()
       let nameEncrypted = name
+      let nameKey: Uint8Array | undefined
       if (isUnlocked && cryptoReady) {
-        const folderKey = await getFileKey(folderId)
-        const enc = await encryptFileMetadata(folderKey, name)
+        nameKey = await getFileKey(folderId)
+        const enc = await encryptFileMetadata(nameKey, name)
         nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
       }
-      const result = await createFolder(nameEncrypted, currentParentId, folderId)
+      // Inside a shared folder its name-key wrap is published too (guests and
+      // members read the name through it).
+      const result = await createOwnerFolder({
+        nameEncrypted,
+        parentId: currentParentId,
+        folderId,
+        nameKey,
+        masterKey: nameKey ? getMasterKey() : undefined,
+      })
 
       // Update the encrypted search index with the new folder
       const pathPrefix = breadcrumbs.slice(1).map((b) => b.name).join('/')
@@ -2057,7 +2068,7 @@ export function Drive() {
       const folderKey = await getFileKey(folderId)
       const enc = await encryptFileMetadata(folderKey, folderName)
       const nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
-      const result = await createFolder(nameEncrypted, undefined, folderId)
+      const result = await createOwnerFolder({ nameEncrypted, folderId })
 
       // Move all matching files into it
       await Promise.all(filesToMove.map((f) => updateFile(f.id, { parent_id: result.id })))
