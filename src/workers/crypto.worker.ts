@@ -450,7 +450,7 @@ const cryptoWorker = {
     return wasm.derive_share_key(sharedSecret, fileId) as Uint8Array
   },
 
-  /** A shared folder's key id (core `folder_key_id`, task 2133): 32 bytes, not secret. */
+  /** Task 2255 (L9): purpose-bound folder-invite owner copies, sealed and opened in core. */
   async wrapInviteOwnerCopy(masterKey: Uint8Array, folderId: string, folderKey: Uint8Array): Promise<Uint8Array> {
     return (await ensureWasm()).wrapInviteOwnerCopy(masterKey, folderId, folderKey)
   },
@@ -459,12 +459,13 @@ const cryptoWorker = {
     return (await ensureWasm()).unwrapInviteOwnerCopy(masterKey, folderId, wrapped)
   },
 
-  async verifyLegacyFolderKey(
-    masterKey: Uint8Array, folderId: string, candidate: Uint8Array, ownerChildId: string, childWrap: Uint8Array,
-  ): Promise<boolean> {
-    return (await ensureWasm()).verifyLegacyFolderKey(masterKey, folderId, candidate, ownerChildId, childWrap)
+  async openLegacyInviteOwnerCopy(
+    masterKey: Uint8Array, folderId: string, legacyCopy: Uint8Array, rows: { file_id: string; encrypted_file_key: string }[],
+  ): Promise<Uint8Array | null> {
+    return (await ensureWasm()).openLegacyInviteOwnerCopy(masterKey, folderId, legacyCopy, rows) ?? null
   },
 
+  /** A shared folder's key id (core `folder_key_id`, task 2133): 32 bytes, not secret. */
   async folderKeyId(folderKey: Uint8Array): Promise<Uint8Array> {
     const wasm = await ensureWasm()
     return wasm.folder_key_id(folderKey) as Uint8Array

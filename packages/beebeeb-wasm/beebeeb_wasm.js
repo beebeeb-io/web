@@ -3262,6 +3262,48 @@ export function opaque_registration_start(password) {
 }
 
 /**
+ * L9 (task 2255): open a LEGACY invite owner copy and return its key only when
+ * core proves it over the folder's rows, in ONE call. `rows` are the server's
+ * `GET /shares/invites/{id}/folder-keys` rows verbatim:
+ * `[{ file_id: string, encrypted_file_key: string }]`, the key in standard base64.
+ * They are read lazily, and core examines at most 64 distinct ids. Returns
+ * `undefined` when the copy does not open, holds text, or is not proven; the
+ * unproven candidate never reaches JS. Attack B (task 2255) is a named residual.
+ * @param {Uint8Array} master_key
+ * @param {string} folder_id
+ * @param {Uint8Array} legacy_copy
+ * @param {any} rows
+ * @returns {Uint8Array | undefined}
+ */
+export function openLegacyInviteOwnerCopy(master_key, folder_id, legacy_copy, rows) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(folder_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(legacy_copy, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.openLegacyInviteOwnerCopy(retptr, ptr0, len0, ptr1, len1, ptr2, len2, addHeapObject(rows));
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        let v4;
+        if (r0 !== 0) {
+            v4 = getArrayU8FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        }
+        return v4;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * Open a sealed request upload (owner decrypt path). Recovers the content key.
  * `r_priv` and `e_pub` are 32 bytes; `file_id` is arbitrary bytes. Returns 32-byte `Uint8Array`.
  * @param {Uint8Array} r_priv
@@ -4090,41 +4132,6 @@ export function unwrap_request_private(master_key, request_id, wrapped, nonce) {
         var v5 = getArrayU8FromWasm0(r0, r1).slice();
         wasm.__wbindgen_export4(r0, r1 * 1, 1);
         return v5;
-    } finally {
-        wasm.__wbindgen_add_to_stack_pointer(16);
-    }
-}
-
-/**
- * Verify a legacy child wrap against the owner's master-derived child key.
- * @param {Uint8Array} master_key
- * @param {string} folder_id
- * @param {Uint8Array} candidate_key
- * @param {string} owner_child_id
- * @param {Uint8Array} child_wrap
- * @returns {boolean}
- */
-export function verifyLegacyFolderKey(master_key, folder_id, candidate_key, owner_child_id, child_wrap) {
-    try {
-        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(folder_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len1 = WASM_VECTOR_LEN;
-        const ptr2 = passArray8ToWasm0(candidate_key, wasm.__wbindgen_export);
-        const len2 = WASM_VECTOR_LEN;
-        const ptr3 = passStringToWasm0(owner_child_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len3 = WASM_VECTOR_LEN;
-        const ptr4 = passArray8ToWasm0(child_wrap, wasm.__wbindgen_export);
-        const len4 = WASM_VECTOR_LEN;
-        wasm.verifyLegacyFolderKey(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4);
-        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
-        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
-        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
-        if (r2) {
-            throw takeObject(r1);
-        }
-        return r0 !== 0;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }

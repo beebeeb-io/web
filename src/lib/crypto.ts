@@ -594,10 +594,15 @@ export async function unwrapInviteOwnerCopy(masterKey: Uint8Array, folderId: str
   return withProxy((p) => p.unwrapInviteOwnerCopy(masterKey, folderId, wrapped))
 }
 
-export async function verifyLegacyFolderKey(
-  masterKey: Uint8Array, folderId: string, candidate: Uint8Array, ownerChildId: string, childWrap: Uint8Array,
-): Promise<boolean> {
-  return withProxy((p) => p.verifyLegacyFolderKey(masterKey, folderId, candidate, ownerChildId, childWrap))
+/**
+ * Task 2255 (L9, corrected): open a LEGACY owner copy only when core proves it
+ * over the folder's rows (the server's folder-keys rows, verbatim), in one
+ * worker call. Null when it does not open, holds text, or is not proven.
+ */
+export async function openLegacyInviteOwnerCopy(
+  masterKey: Uint8Array, folderId: string, legacyCopy: Uint8Array, rows: { file_id: string; encrypted_file_key: string }[],
+): Promise<Uint8Array | null> {
+  return (await withProxy((p) => p.openLegacyInviteOwnerCopy(masterKey, folderId, legacyCopy, rows))) ?? null
 }
 
 /**

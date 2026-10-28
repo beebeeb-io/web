@@ -970,6 +970,17 @@ export function opaque_registration_finish(client_state: Uint8Array, password: U
 export function opaque_registration_start(password: Uint8Array): any;
 
 /**
+ * L9 (task 2255): open a LEGACY invite owner copy and return its key only when
+ * core proves it over the folder's rows, in ONE call. `rows` are the server's
+ * `GET /shares/invites/{id}/folder-keys` rows verbatim:
+ * `[{ file_id: string, encrypted_file_key: string }]`, the key in standard base64.
+ * They are read lazily, and core examines at most 64 distinct ids. Returns
+ * `undefined` when the copy does not open, holds text, or is not proven; the
+ * unproven candidate never reaches JS. Attack B (task 2255) is a named residual.
+ */
+export function openLegacyInviteOwnerCopy(master_key: Uint8Array, folder_id: string, legacy_copy: Uint8Array, rows: any): Uint8Array | undefined;
+
+/**
  * Open a sealed request upload (owner decrypt path). Recovers the content key.
  * `r_priv` and `e_pub` are 32 bytes; `file_id` is arbitrary bytes. Returns 32-byte `Uint8Array`.
  */
@@ -1174,11 +1185,6 @@ export function unwrapOwnerFileKey(master_key: Uint8Array, item_id: string, wrap
 export function unwrap_request_private(master_key: Uint8Array, request_id: Uint8Array, wrapped: Uint8Array, nonce: Uint8Array): Uint8Array;
 
 /**
- * Verify a legacy child wrap against the owner's master-derived child key.
- */
-export function verifyLegacyFolderKey(master_key: Uint8Array, folder_id: string, candidate_key: Uint8Array, owner_child_id: string, child_wrap: Uint8Array): boolean;
-
-/**
  * L7 wire = nonce(12) || ciphertext+tag(48); UUID strings bind raw UUID bytes.
  */
 export function wrapFolderChild(folder_key: Uint8Array, shared_folder_id: string, item_id: string, kind: number, child_key: Uint8Array): Uint8Array;
@@ -1282,6 +1288,7 @@ export interface InitOutput {
     readonly opaque_login_start: (a: number, b: number, c: number) => void;
     readonly opaque_registration_finish: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly opaque_registration_start: (a: number, b: number, c: number) => void;
+    readonly openLegacyInviteOwnerCopy: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly open_request_upload: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly parseDirectDiscovery: (a: number, b: number, c: number) => void;
     readonly pinnedRetryDecision: (a: number, b: number, c: number, d: number) => void;
@@ -1313,7 +1320,6 @@ export interface InitOutput {
     readonly unwrapLinkOwnerToken: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly unwrapOwnerFileKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly unwrap_request_private: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
-    readonly verifyLegacyFolderKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
     readonly wasmbreachcheck_evaluate: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly wasmbreachcheck_new: (a: number, b: number) => number;
     readonly wasmbreachcheck_prefix: (a: number, b: number) => void;

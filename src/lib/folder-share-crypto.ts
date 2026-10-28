@@ -11,7 +11,7 @@ import {
   folderKeyId as coreFolderKeyId,
   wrapInviteOwnerCopy,
   unwrapInviteOwnerCopy,
-  verifyLegacyFolderKey,
+  openLegacyInviteOwnerCopy,
 } from './crypto'
 import { listFilesPage, getSentInvites, getFolderKeys, FILE_LIST_HARD_CAP } from './api'
 import type { ShareInvite } from './api'
@@ -19,8 +19,10 @@ import type { ShareInvite } from './api'
 /**
  * The wire form of a folder key's id (task 2133, design K): standard base64
  * (with padding) of core's 32-byte `folder_key_id`. No JS HKDF: the id is
- * derived by the core WASM export. The server compares it to refuse a second,
- * different key for a folder that is already keyed.
+ * derived by the core WASM export. Design K has the server compare it and
+ * refuse a second, different key for a folder that is already keyed; server
+ * main does not check it yet (found in the task 2255 review), so today only
+ * the client rules in `findExistingFolderKey` keep one key per folder.
  */
 export async function folderKeyId(
   folderKey: Uint8Array,
@@ -88,25 +90,24 @@ export async function encryptOwnerFolderKey(
   return wrapInviteOwnerCopy(masterKey, folderId, folderKey)
 }
 
+/**
+ * The folder key behind one invite's owner copy, for approving that invite.
+ * The same L9 rule as `findExistingFolderKey`: the purpose-bound format, or a
+ * legacy copy only with core's proof. It never substitutes another invite's
+ * key, and it throws FOLDER_KEY_UNVERIFIED when the copy can't be proven.
+ */
 export async function decryptOwnerFolderKey(
   masterKey: Uint8Array,
   folderId: string,
   encryptedOwnerFolderKey: Uint8Array,
   ports: ExistingFolderKeyPorts = REAL_EXISTING_FOLDER_KEY_PORTS,
 ): Promise<Uint8Array> {
-  try {
-    return await ports.unwrapInviteOwnerCopy(masterKey, folderId, encryptedOwnerFolderKey)
-  } catch (e) {
-    if (!isAuthenticationFailure(e)) throw e
-  }
-  // Approval must prove THIS invite's legacy copy, never substitute another key.
-  const b64 = toBase64(encryptedOwnerFolderKey)
-  const existing = await findExistingFolderKey(masterKey, folderId, {
-    ...ports,
-    getSentInvites: async () => (await ports.getSentInvites()).filter((i) => i.encrypted_owner_folder_key === b64),
+  const folderKey = await openOwnerCopy(masterKey, folderId, encryptedOwnerFolderKey, ports, async () => {
+    const active = activeFolderInvites(await ports.getSentInvites(), folderId)
+    return active.length > 0 ? ports.getFolderKeys(active[0].id) : []
   })
-  if (!existing) throw new Error(FOLDER_KEY_UNVERIFIED)
-  return existing.folderKey
+  if (!folderKey) throw new Error(FOLDER_KEY_UNVERIFIED)
+  return folderKey
 }
 
 const ACTIVE_STATUSES = new Set(['invited', 'claimed', 'approved'])
@@ -135,25 +136,17 @@ export function ownerFolderKeyBlobs(invites: ShareInvite[], folderId: string): s
 export interface ExistingFolderKeyPorts {
   getSentInvites: () => Promise<ShareInvite[]>
   getFolderKeys: typeof getFolderKeys
-  listFilesPage: typeof listFilesPage
   unwrapInviteOwnerCopy: typeof unwrapInviteOwnerCopy
-  verifyLegacyFolderKey: typeof verifyLegacyFolderKey
-  deriveFileKey: typeof deriveFileKey
-  decryptChunk: typeof decryptChunk
+  openLegacyInviteOwnerCopy: typeof openLegacyInviteOwnerCopy
   fromBase64: typeof fromBase64
-  zeroize: typeof zeroize
 }
 
 export const REAL_EXISTING_FOLDER_KEY_PORTS: ExistingFolderKeyPorts = {
   getSentInvites,
   getFolderKeys,
-  listFilesPage,
   unwrapInviteOwnerCopy,
-  verifyLegacyFolderKey,
-  deriveFileKey,
-  decryptChunk,
+  openLegacyInviteOwnerCopy,
   fromBase64,
-  zeroize,
 }
 
 // Must stay <= 80 characters so userFriendlyError shows it (SHORT_MESSAGE_MAX).
@@ -168,11 +161,48 @@ function isAuthenticationFailure(e: unknown): boolean {
 }
 
 /**
- * L9 (task 2255) supersedes 2133's unverified owner-copy reuse. New copies
- * authenticate their purpose and folder in core. Legacy copies additionally
- * require a stored wrap that opens to an owner's master-derived child key.
- * Missing proof returns null (the caller mints). Operational errors abort.
- * The caller owns and must zeroize the returned key.
+ * Open one owner copy (task 2255, L9 as corrected 2026-10-28): the
+ * purpose-bound format opens on its own; a LEGACY copy opens only when core
+ * proves it over the folder's rows, in one bounded call (a text candidate is
+ * refused, any row counts, each id once, at most 64). Null when neither
+ * opens with proof. Only an authentication failure of the purpose-bound open
+ * falls through to the legacy path; any other error aborts.
+ * Residual (attack B): a server that knows the folder's own name key (a
+ * pre-2238 folder link, a colluding member of an enclosing shared folder) can
+ * forge a legacy copy that passes. P3-3: no key version is bound either.
+ */
+async function openOwnerCopy(
+  masterKey: Uint8Array,
+  folderId: string,
+  blob: Uint8Array,
+  ports: ExistingFolderKeyPorts,
+  folderRows: () => Promise<{ file_id: string; encrypted_file_key: string }[]>,
+): Promise<Uint8Array | null> {
+  try {
+    return await ports.unwrapInviteOwnerCopy(masterKey, folderId, blob)
+  } catch (e) {
+    if (!isAuthenticationFailure(e)) throw e
+  }
+  return ports.openLegacyInviteOwnerCopy(masterKey, folderId, blob, await folderRows())
+}
+
+/**
+ * Task 2133: the folder's key is minted at its first invite, and every later
+ * invite while the folder has an active invite reuses it. The server keeps
+ * the FIRST wrapped child key per (folder, file), so a second key would
+ * silently and permanently split the folder between earlier and later members.
+ *
+ * The rule: reuse the NEWEST owner blob that opens (see `openOwnerCopy`),
+ * among this folder's invites that are active by status only
+ * (invited/claimed/approved; denied excluded, expires_at ignored). Mint a new
+ * key only when the folder has no active invite (null). Throws, never mints,
+ * when the folder has active invites but no blob opens with proof: none of
+ * them carries an owner blob, or every blob fails. The folder's rows are
+ * fetched once, and only when a legacy blob needs proof (the server keeps one
+ * row set per folder). (Rotation on revoke is a separate decision.)
+ *
+ * Returns the blob that opened plus its key. The caller owns (and must
+ * zeroize) the key.
  */
 export async function findExistingFolderKey(
   masterKey: Uint8Array,
@@ -180,67 +210,17 @@ export async function findExistingFolderKey(
   ports: ExistingFolderKeyPorts = REAL_EXISTING_FOLDER_KEY_PORTS,
 ): Promise<{ folderKey: Uint8Array; encryptedOwnerFolderKeyB64: string } | null> {
   const active = activeFolderInvites(await ports.getSentInvites(), folderId)
-  let wrappingKey: Uint8Array | undefined
-  let children: Set<string> | undefined
-  try {
-    for (const b64 of uniqueOwnerBlobs(active)) {
-      const blob = ports.fromBase64(b64)
-      try {
-        const folderKey = await ports.unwrapInviteOwnerCopy(masterKey, folderId, blob)
-        return { folderKey, encryptedOwnerFolderKeyB64: b64 }
-      } catch (e) {
-        if (!isAuthenticationFailure(e)) throw e
-      }
+  if (active.length === 0) return null
+  const blobs = uniqueOwnerBlobs(active)
+  if (blobs.length === 0) throw new Error(FOLDER_KEY_UNVERIFIED)
 
-      wrappingKey ??= await ports.deriveFileKey(masterKey, folderId)
-      let candidate: Uint8Array
-      try {
-        candidate = await ports.decryptChunk(wrappingKey, blob.slice(0, 12), blob.slice(12))
-      } catch (e) {
-        if (!isAuthenticationFailure(e)) throw e
-        continue
-      }
-      let verified = false
-      try {
-        if (candidate.length !== 32) continue
-        // Use current direct children, excluding request-upload keys. Ignore
-        // stale wraps for children that moved out or were trashed (2133).
-        if (!children) {
-          children = new Set<string>()
-          let cursor: string | undefined
-          const seenCursors = new Set<string>()
-          do {
-            const page = await ports.listFilesPage({ parentId: folderId, limit: SHARE_PAGE_LIMIT, cursor })
-            if (!page.next_cursor && page.files.length >= SHARE_PAGE_LIMIT) throw new Error(TOO_LARGE_TO_SHARE)
-            for (const child of page.files) {
-              if (child.parent_id === folderId && !child.is_trashed && !child.file_request_id && !child.wrapped_content_key) children.add(child.id)
-              if (children.size > FILE_LIST_HARD_CAP) throw new Error(TOO_LARGE_TO_SHARE)
-            }
-            cursor = page.next_cursor ?? undefined
-            if (cursor && seenCursors.has(cursor)) throw new Error(TOO_LARGE_TO_SHARE)
-            if (cursor) seenCursors.add(cursor)
-          } while (cursor)
-        }
-        if (children.size === 0) continue
-        // Duplicate owner blobs may occur on several invites; a missing or
-        // stale proof on one invite must not hide a valid proof on another.
-        for (const invite of active.filter((i) => i.encrypted_owner_folder_key === b64)) {
-          for (const row of await ports.getFolderKeys(invite.id)) {
-            if (!children.has(row.file_id)) continue
-            if (await ports.verifyLegacyFolderKey(masterKey, folderId, candidate, row.file_id, ports.fromBase64(row.encrypted_file_key))) {
-              verified = true
-              return { folderKey: candidate, encryptedOwnerFolderKeyB64: b64 }
-            }
-          }
-        }
-      } finally {
-        if (!verified) ports.zeroize(candidate)
-      }
-    }
-    return null
-  } finally {
-    if (wrappingKey) ports.zeroize(wrappingKey)
+  let rows: ReturnType<typeof ports.getFolderKeys> | undefined
+  const folderRows = () => (rows ??= ports.getFolderKeys(active[0].id))
+  for (const b64 of blobs) {
+    const folderKey = await openOwnerCopy(masterKey, folderId, ports.fromBase64(b64), ports, folderRows)
+    if (folderKey) return { folderKey, encryptedOwnerFolderKeyB64: b64 }
   }
+  throw new Error(FOLDER_KEY_UNVERIFIED)
 }
 
 export interface FolderInvitePayload {
@@ -270,9 +250,10 @@ export const REAL_FOLDER_INVITE_PORTS: FolderInvitePorts = {
 
 /**
  * Everything a folder invite carries (task 2133): the folder's key (reused
- * from an authenticated earlier invite, otherwise minted fresh), every child's key
- * wrapped under it, the owner's own sealed copy, and the key's id for the
- * server's mismatch check. The caller owns the returned `folderKey` and must
+ * from an earlier invite, minted only when none is active), every child's key
+ * wrapped under it, the owner's own copy (always written in the purpose-bound
+ * format, so a proven legacy key is upgraded), and the key's id (see
+ * `folderKeyId`). The caller owns the returned `folderKey` and must
  * zeroize it (also needed for the recipient wrap on auto-approve); on a throw
  * the key made here is already zeroized.
  */

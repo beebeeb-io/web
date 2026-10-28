@@ -57,6 +57,7 @@ export const opaque_login_finish: (a: number, b: number, c: number, d: number, e
 export const opaque_login_start: (a: number, b: number, c: number) => void;
 export const opaque_registration_finish: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const opaque_registration_start: (a: number, b: number, c: number) => void;
+export const openLegacyInviteOwnerCopy: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
 export const open_request_upload: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
 export const parseDirectDiscovery: (a: number, b: number, c: number) => void;
 export const pinnedRetryDecision: (a: number, b: number, c: number, d: number) => void;
@@ -88,7 +89,6 @@ export const unwrapLinkOwnerKey: (a: number, b: number, c: number, d: number, e:
 export const unwrapLinkOwnerToken: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const unwrapOwnerFileKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const unwrap_request_private: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
-export const verifyLegacyFolderKey: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
 export const wasmbreachcheck_evaluate: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const wasmbreachcheck_new: (a: number, b: number) => number;
 export const wasmbreachcheck_prefix: (a: number, b: number) => void;
