@@ -64,8 +64,8 @@ const faqItems: FaqItem[] = [
     a: 'All data is stored in the EU, under EU jurisdiction and GDPR. More EU locations are coming. Either way, your files are end-to-end encrypted before they leave your device, so we only ever hold encrypted blobs.',
   },
   {
-    q: 'Do you support SEPA, cards, and invoicing?',
-    a: 'We support SEPA Direct Debit, Visa, Mastercard, and invoice billing for Business plans. All prices are in EUR, billed in EUR — no currency conversion surprises. VAT is handled automatically with reverse charge for EU businesses.',
+    q: 'Which payment methods do you support?',
+    a: 'Card or iDEAL. If you pay with iDEAL, renewals are collected by SEPA Direct Debit from the same bank account. All prices are in EUR, billed in EUR — no currency conversion surprises. VAT is handled automatically with reverse charge for EU businesses.',
   },
   {
     q: 'Is there a free trial?',

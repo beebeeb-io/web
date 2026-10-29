@@ -325,7 +325,7 @@ function AdminRedirect() {
  * with a static string `to` drops the current `?search` (react-router v7), so a
  * checkout return like `/billing?upgraded=true` would land on `/settings/billing`
  * with the param stripped — and the billing page's `?upgraded` finalize/poll flow
- * (and the legacy Stripe `?success`/`?session_id` returns) would never fire.
+ * (and legacy checkout `?success`/`?session_id` returns) would never fire.
  * Carrying `location.search` through the hop keeps the return params intact (0865).
  *
  * `state={location.state}` (task 1518 part C): `<Navigate>` does NOT forward

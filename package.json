@@ -69,8 +69,6 @@
     "@shikijs/langs": "^4.0.2",
     "@shikijs/themes": "^4.0.2",
     "@shikijs/types": "^4.0.2",
-    "@stripe/react-stripe-js": "^6.3.0",
-    "@stripe/stripe-js": "^9.4.0",
     "@tanstack/react-virtual": "^3.13.25",
     "beebeeb-wasm": "workspace:*",
     "codemirror": "^6.0.2",
