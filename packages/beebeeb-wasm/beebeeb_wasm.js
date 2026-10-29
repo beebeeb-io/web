@@ -817,6 +817,16 @@ export class WasmDownloadPlanner {
         }
     }
     /**
+     * The ciphertext length of chunk `index` once the first window was accepted, else `null`.
+     * The link's `length` is this number; the caller checks a storage answer against it.
+     * @param {number} index
+     * @returns {number | null}
+     */
+    chunkLength(index) {
+        const ret = wasm.wasmdownloadplanner_chunkLength(this.__wbg_ptr, index);
+        return takeObject(ret);
+    }
+    /**
      * Chunk `index` arrived but did not authenticate when decrypted.
      * @param {number} index
      */
@@ -1833,6 +1843,55 @@ export class WasmSignupCeremony {
 if (Symbol.dispose) WasmSignupCeremony.prototype[Symbol.dispose] = WasmSignupCeremony.prototype.free;
 
 /**
+ * Was the body a storage GET actually delivered the chunk? Same answer shape as
+ * `checkStorageGet`, but decided by the counted bytes: `stored` only when `received` is
+ * exactly `expected`. `Content-Length` is only the head; a truncated stream ends short.
+ * @param {number} received
+ * @param {number} expected
+ * @returns {DirectStorageGet}
+ */
+export function checkStorageBody(received, expected) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.checkStorageBody(retptr, received, expected);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Was a storage GET answer the chunk we asked for? `{ kind: "stored" }` or
+ * `{ kind: "failed", status }`; status `0` means there was no HTTP answer at all.
+ * Only a `200` whose `Content-Length` is exactly `expected` is `stored`.
+ * @param {number} status
+ * @param {number | null | undefined} content_length
+ * @param {number} expected
+ * @returns {DirectStorageGet}
+ */
+export function checkStorageGet(status, content_length, expected) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.checkStorageGet(retptr, status, !isLikeNone(content_length), isLikeNone(content_length) ? 0 : content_length, expected);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * May the client follow this storage link? Throws an `Error` whose `code` is
  * the refusal (`malformed`, `not_https`, `userinfo`, `ip_literal`, `loopback`,
  * `bad_host`, `port`, `host_not_listed`, `bucket_not_listed`, `bad_path`); the
@@ -2618,9 +2677,11 @@ export function directDownloadGrantsPath(file_id) {
 /**
  * `{ cap_object_download_v1, cap_object_upload_v1, capabilities_header,
  * discovery_path, max_window, default_window, chunk_overhead,
+ * max_discovery_body_bytes, max_grant_body_bytes, max_chunk_body_bytes,
  * storage_connect_timeout_ms, storage_get_idle_ms, discovery_timeout_ms,
  * api_call_timeout_ms, background_put_resource_timeout_ms }`: the contract's
- * names and numbers, and the time bounds every client applies, so no client re-types them.
+ * names and numbers, the response caps and the time bounds every client applies,
+ * so no client re-types them.
  * @returns {any}
  */
 export function directTransferConstants() {
@@ -3149,6 +3210,30 @@ export function list_tar_entries(data) {
 }
 
 /**
+ * The ciphertext bytes a process of `class` (`"native"`, `"browser"`, `"mobile_app"`,
+ * `"mobile_extension"`) may hold at once. Throws `class_invalid` for any other string.
+ * @param {string} _class
+ * @returns {number}
+ */
+export function maxInFlightBytes(_class) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(_class, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.maxInFlightBytes(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getFloat64(retptr + 8 * 0, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        return r0;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * Finish OPAQUE client login. Returns `{ message: Uint8Array, session_key: Uint8Array, export_key: Uint8Array }`.
  *
  * `ksf_version` selects the KSF the account's password file was registered
@@ -3334,6 +3419,61 @@ export function open_request_upload(r_priv, e_pub, file_id, wrapped_key) {
         var v5 = getArrayU8FromWasm0(r0, r1).slice();
         wasm.__wbindgen_export4(r0, r1 * 1, 1);
         return v5;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * When `wire_bytes` received since `start_ms` at `kbps` KiB/s lets the next storage
+ * request start. The three counts cross as JS numbers (`f64`), like every other count.
+ * `-Infinity` (`i64::MIN` in core) means there is no ceiling: a real deadline is a
+ * finite number, so a caller only has to test `Number.isFinite`. Desktop's formula,
+ * unchanged in value.
+ * @param {number} start_ms
+ * @param {number} wire_bytes
+ * @param {number} kbps
+ * @returns {number}
+ */
+export function pacedUntilMs(start_ms, wire_bytes, kbps) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.pacedUntilMs(retptr, start_ms, wire_bytes, kbps);
+        var r0 = getDataViewMemory0().getFloat64(retptr + 8 * 0, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        return r0;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * May this client use the direct transport for `direction`? True only when discovery
+ * offers it AND has at least one storage pair AND every pair in `discovery.storage_buckets`
+ * is in `pairs` (an array of `{host, bucket}`). Hosts compare ASCII case-insensitively,
+ * buckets exactly.
+ * @param {any} discovery
+ * @param {string} direction
+ * @param {any} pairs
+ * @returns {boolean}
+ */
+export function pairsAllowed(discovery, direction, pairs) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(direction, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.pairsAllowed(retptr, addHeapObject(discovery), ptr0, len0, addHeapObject(pairs));
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return r0 !== 0;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
@@ -4585,6 +4725,10 @@ function __wbg_get_imports() {
             const ret = new Uint8Array(getObject(arg0));
             return addHeapObject(ret);
         },
+        __wbg_new_34d45cc8e36aaead: function() {
+            const ret = new Map();
+            return addHeapObject(ret);
+        },
         __wbg_new_5e360d2ff7b9e1c3: function(arg0, arg1) {
             const ret = new Error(getStringFromWasm0(arg0, arg1));
             return addHeapObject(ret);
@@ -4648,6 +4792,10 @@ function __wbg_get_imports() {
         },
         __wbg_set_6be42768c690e380: function(arg0, arg1, arg2) {
             getObject(arg0)[takeObject(arg1)] = takeObject(arg2);
+        },
+        __wbg_set_fde2cec06c23692b: function(arg0, arg1, arg2) {
+            const ret = getObject(arg0).set(getObject(arg1), getObject(arg2));
+            return addHeapObject(ret);
         },
         __wbg_static_accessor_GLOBAL_8cfadc87a297ca02: function() {
             const ret = typeof global === 'undefined' ? null : global;
