@@ -43,7 +43,10 @@ export async function directApi(s: DirectSession, path: string, call: string, si
       method: body === undefined ? 'GET' : 'POST', headers, credentials: 'include', signal: combined,
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
-    const bytes = await readBounded(response, call === 'discovery' ? 256 * 1024 : call === 'download_grant' ? 1024 * 1024 : 256 * 1024 * 1024 + 28)
+    // Every response bound is core's; no caller picks its own ceiling.
+    const bound = call === 'discovery' ? constants.max_discovery_body_bytes
+      : call === 'download_grant' ? constants.max_grant_body_bytes : constants.max_chunk_body_bytes
+    const bytes = await readBounded(response, bound)
     assertSession(s, signal)
     const outcome = s.wasm.classifyDirectAnswer(call, response.status, response.headers.get('Content-Type'), bytes, response.headers.get('Retry-After'))
     if (outcome.kind === 'terminal') {

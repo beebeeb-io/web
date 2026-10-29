@@ -1,3 +1,4 @@
+import type * as Wasm from 'beebeeb-wasm'
 import allowlist from '../../../config/storage-allowlist.json'
 
 export interface Pair { host: string; bucket: string }
@@ -17,10 +18,11 @@ export function storageSource(pair: Pair, dev = false): string {
   return `${dev && loopback ? 'http' : 'https'}://${pair.host}/${pair.bucket}/`
 }
 
-export function directAllowed(discovery: Discovery, direction: 'download' | 'upload', pairs: Pair[]): boolean {
-  const token = direction === 'download' ? 'object-download-v1' : 'object-upload-v1'
-  return discovery[direction]?.includes(token) === true && !!discovery.storage_buckets?.length &&
-    discovery.storage_buckets.every(p => pairs.some(a => a.host === p.host && a.bucket === p.bucket))
+/** The rule is core's: the direction must be offered, at least one pair must be listed, and every
+ * discovery pair must be in the allowlist (hosts ASCII case-insensitive, buckets exact). The core
+ * surface is passed in so the decision runs on the session's engine and tests can see the call. */
+export function pairsAllowed(core: Pick<typeof Wasm, 'pairsAllowed'>, discovery: Discovery, direction: 'download' | 'upload', pairs: Pair[]): boolean {
+  return core.pairsAllowed(discovery, direction, pairs)
 }
 
 export function configuredPairs(): Pair[] {

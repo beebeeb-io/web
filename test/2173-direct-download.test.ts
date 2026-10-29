@@ -92,7 +92,10 @@ test('storage rejects mismatched, truncated and oversized ciphertext lengths and
   for (const res of [new Response(new Uint8Array(27), { headers: { 'Content-Length': '28' } }), data(29), new Response('', { status: 302 }), new Response(new Uint8Array(29), { headers: { 'Content-Length': '28' } })]) {
     install(() => res)
     const link = { raw: () => signature } as wasm.WasmSignedUrl
-    expect(await storageGet(link, 28, new AbortController().signal, wasm)).toEqual({ status: 0 })
+    const answer = await storageGet(link, 28, new AbortController().signal, wasm)
+    const head = wasm.checkStorageGet(answer.status, answer.contentLength, 28)
+    const verdict = head.kind === 'stored' ? wasm.checkStorageBody(answer.received, 28) : head
+    expect(verdict.kind).toBe('failed')
   }
 })
 
@@ -103,7 +106,7 @@ test('idle storage read aborts using the core thirty-second bound', async () => 
     init.signal!.addEventListener('abort', () => { aborted = true; c.error(new TypeError(signature)) })
   } }), { headers: { 'Content-Length': '28' } }))
   const fast = { ...wasm, directTransferConstants: () => ({ ...wasm.directTransferConstants(), storage_get_idle_ms: 5 }) }
-  expect(await storageGet({ raw: () => signature } as wasm.WasmSignedUrl, 28, new AbortController().signal, fast)).toEqual({ status: 0 })
+  expect(await storageGet({ raw: () => signature } as wasm.WasmSignedUrl, 28, new AbortController().signal, fast)).toEqual({ status: 0, contentLength: null, received: 0 })
   expect(aborted).toBe(true)
 })
 
@@ -141,7 +144,7 @@ test('our storage rejection never logs a signed URL; reports use the shared scru
   console.error = console.warn = console.log = (...args) => { lines.push(args.join(' ')) }
   try {
     install(() => { throw new TypeError(signature) })
-    expect(await storageGet({ raw: () => signature } as wasm.WasmSignedUrl, 28, new AbortController().signal, wasm)).toEqual({ status: 0 })
+    expect(await storageGet({ raw: () => signature } as wasm.WasmSignedUrl, 28, new AbortController().signal, wasm)).toEqual({ status: 0, contentLength: null, received: 0 })
     expect(lines.filter(l => l.includes('X-Amz-Signature')).length).toBe(0)
     expect(scrubText('download failed ' + signature)).not.toContain('X-Amz-Signature')
   } finally { console.error = log; console.warn = warn; console.log = info }
@@ -236,3 +239,120 @@ for (const mismatch of ['corrupt', 'format', 'both corrupt'] as const) {
     } finally { ops.decryptorDispose(handle) }
   })
 }
+
+test('the_allowlist_decision_is_cores', async () => {
+  // Core compares hosts ASCII case-insensitively; the caller's pair spelling does not decide.
+  let grants = 0, gets = 0
+  const upper = { host: pair.host.toUpperCase(), bucket: pair.bucket }
+  install(url => {
+    if (url.endsWith('capabilities')) return json({ ...disc, storage_hosts: [upper.host], storage_buckets: [upper] })
+    if (url.endsWith('download-grants')) { grants++; return json(windowBody()) }
+    gets++; return data()
+  })
+  const source = await directChunks(file, { versionId: version, chunkFormat: 0 }, new AbortController().signal, { session: session(), pairs: [pair] })
+  expect((await collect(source!)).map(f => f.length)).toEqual([28])
+  expect([grants, gets]).toEqual([1, 1])
+
+  // One pair core refuses keeps the whole file on the API path: no grant, no storage request.
+  let calls = 0
+  const other = { ...pair, bucket: 'bb-02' }
+  install(url => {
+    calls++
+    if (url.endsWith('capabilities')) return json({ ...disc, storage_buckets: [pair, other] })
+    if (url.endsWith('download-grants')) return json(windowBody())
+    return data()
+  })
+  expect(await directChunks(file, { versionId: null, chunkFormat: 0 }, new AbortController().signal, { session: session(), pairs: [pair] })).toBeNull()
+  expect(calls).toBe(1)
+})
+
+test('a_window_violation_ends_direct_for_the_file', async () => {
+  // Core compares version ids ASCII case-insensitively; the caller's spelling does not decide.
+  const cased = 'aaaaaaaa-2222-4222-8222-222222222222'
+  let grants = 0, gets = 0
+  install(url => {
+    if (url.endsWith('capabilities')) return json(disc)
+    if (url.endsWith('download-grants')) { grants++; return json({ ...windowBody(), object_version_id: cased }) }
+    gets++; return data()
+  })
+  const source = await directChunks(file, { versionId: cased.toUpperCase(), chunkFormat: 0 }, new AbortController().signal, { session: session(), pairs: [pair] })
+  expect((await collect(source!)).map(f => f.length)).toEqual([28])
+  expect([grants, gets]).toEqual([1, 1])
+
+  // A renewal window for another version ends the file on the planner's restart verdict.
+  grants = 0; gets = 0
+  install(url => {
+    if (url.endsWith('capabilities')) return json(disc)
+    if (url.endsWith('download-grants')) {
+      grants++
+      const w = windowBody(0, 10, 1000)
+      w.grants = w.grants.slice(0, 8); w.next_index = 8
+      if (grants > 1) w.object_version_id = '33333333-3333-4333-8333-333333333333'
+      return json(w)
+    }
+    gets++; return data(1028)
+  })
+  const replaced = await directChunks(file, { versionId: version, chunkFormat: 0 }, new AbortController().signal, { session: session(), pairs: [pair] })
+  await expect(collect(replaced!)).rejects.toThrow('File changed during download')
+  expect([grants, gets]).toEqual([2, 6])
+})
+
+test('the_pinned_chunk_length_comes_from_the_planner', async () => {
+  const lengths: number[] = []
+  class Planner extends wasm.WasmDownloadPlanner {
+    chunkLength(index: number) { lengths.push(index); return super.chunkLength(index) }
+  }
+  const grant = (index: number, length: number) => ({ index, method: 'GET', url: signature.replace('/0.bin', `/${index}.bin`), length, expires_at: new Date(Date.now() + 300000).toISOString() })
+  let pinned = 0
+  install(url => {
+    if (url.endsWith('capabilities')) return json(disc)
+    if (url.endsWith('download-grants')) return json({ transport: 'object-download-v1', file_id: file, object_version_id: version,
+      chunk_count: 3, chunk_size: 1000, original_size: 2500, encrypted_size: 2 * 1028 + 528,
+      grants: [grant(0, 1028), grant(1, 1028), grant(2, 528)], next_index: null })
+    if (url.includes('/chunks/')) { pinned++; return new Response(new Uint8Array(url.includes('/chunks/2') ? 528 : 1028)) }
+    throw new TypeError('storage down')
+  })
+  let clock = t0(); Date.now = () => clock += 10000
+  const source = await directChunks(file, { versionId: version, chunkFormat: 0 }, new AbortController().signal, { session: session({ ...wasm, WasmDownloadPlanner: Planner }), pairs: [pair] })
+  expect((await collect(source!)).map(f => f.length)).toEqual([1028, 1028, 528])
+  expect(lengths).toContain(2)
+  expect(pinned).toBe(3)
+})
+
+test('storage_answers_are_classified_by_core', async () => {
+  let failures = 0, pinned = 0
+  class Planner extends wasm.WasmDownloadPlanner {
+    fetchFailed(index: number, now: number) { failures++; super.fetchFailed(index, now) }
+  }
+  install(url => {
+    if (url.endsWith('capabilities')) return json(disc)
+    if (url.endsWith('download-grants')) return json(windowBody())
+    if (url.includes('/chunks/')) { pinned++; return data(28) }
+    return new Response(new Uint8Array(29), { headers: { 'Content-Length': '29' } })
+  })
+  let clock = t0(); Date.now = () => clock += 10000
+  const source = await directChunks(file, { versionId: version, chunkFormat: 0 }, new AbortController().signal, { session: session({ ...wasm, WasmDownloadPlanner: Planner }), pairs: [pair] })
+  expect((await collect(source!)).map(f => f.length)).toEqual([28])
+  expect(failures).toBeGreaterThan(0)
+  expect(pinned).toBe(1)
+})
+
+test('the_in_flight_cap_is_the_browser_class', async () => {
+  const abort = new AbortController()
+  const asked: string[] = []
+  let cap = 0, gets = 0
+  class Planner extends wasm.WasmDownloadPlanner {
+    setMaxInFlightBytes(n: number) { cap = n; super.setMaxInFlightBytes(n) }
+  }
+  const core = { ...wasm, maxInFlightBytes: (cls: string) => { asked.push(cls); return 8 * 1024 * 1024 } }
+  install(url => {
+    if (url.endsWith('capabilities')) return json(disc)
+    if (url.endsWith('download-grants')) return json(windowBody(0, 3, 32 * 1024 * 1024))
+    gets++; queueMicrotask(() => abort.abort()); throw new TypeError('network down')
+  })
+  const source = await directChunks(file, { versionId: version, chunkFormat: 0 }, abort.signal, { session: session({ ...core, WasmDownloadPlanner: Planner }), pairs: [pair] })
+  await expect(collect(source!)).rejects.toThrow()
+  expect(asked).toEqual(['browser'])
+  expect(cap).toBe(8 * 1024 * 1024)
+  expect(gets).toBe(1)
+})

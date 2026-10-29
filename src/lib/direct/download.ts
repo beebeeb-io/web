@@ -1,10 +1,21 @@
 import type { DirectPoll } from 'beebeeb-wasm'
-import { configuredPairs, directAllowed, type Discovery, type Pair } from './allowlist'
+import { configuredPairs, pairsAllowed, type Discovery, type Pair } from './allowlist'
 import { getDirectSession, type DirectSession } from './session'
 import { assertSession, directApi, wait } from './api'
 import { storageGet } from './storage-fetch'
 import { fetchPinnedChunk } from './pinned-chunk'
 import { forceApi } from './transport-switch'
+
+/** Every message that crosses this module's boundary is scrubbed by core: no link or key prints. */
+function scrubError(s: DirectSession, error: unknown): unknown {
+  if (!(error instanceof Error)) return error
+  const message = s.wasm.scrubText(error.message)
+  if (message === error.message) return error
+  const copy = error instanceof DOMException ? new DOMException(message, error.name) : new Error(message)
+  const status = (error as { status?: unknown }).status
+  if (status !== undefined) Object.assign(copy, { status })
+  return copy
+}
 
 export interface Geometry { chunk_count: number; chunk_size: number; encrypted_size: number; original_size: number }
 export interface DirectChunks extends AsyncIterable<Uint8Array> { geometry: Geometry; cancel(): void }
@@ -38,11 +49,11 @@ export async function directChunks(
   if (!s.health.mayStart('download', performance.now())) return null
   const discovery = await discover(s)
   assertSession(s, signal)
-  if (!discovery || !directAllowed(discovery, 'download', options?.pairs ?? configuredPairs())) return null
+  if (!discovery || !pairsAllowed(s.wasm, discovery, 'download', options?.pairs ?? configuredPairs())) return null
   const control = new AbortController()
   const combined = AbortSignal.any([signal, s.controller.signal, control.signal])
   const planner = new s.wasm.WasmDownloadPlanner(discovery, s.apiBase, fileId, Math.random())
-  planner.setMaxInFlightBytes(64 * 1024 * 1024)
+  planner.setMaxInFlightBytes(s.wasm.maxInFlightBytes('browser'))
   const release = () => {
     control.abort()
     if (planner.storageGivenUp() && s.current()) s.health.gaveUp('download', performance.now())
@@ -52,10 +63,10 @@ export async function directChunks(
     // Core owns the immutable version pin. A caller that already knows the version supplies it on the first window.
     const request = { ...step.request, object_version_id: step.request.object_version_id ?? pin.versionId }
     const answer = await directApi(s, s.wasm.directDownloadGrantsPath(fileId), 'download_grant', combined, request)
-    if (answer.outcome.kind === 'proceed') {
-      planner.windowAnswered(answer.bytes, Date.now())
-      if (pin.versionId && planner.pinnedVersion() && planner.pinnedVersion() !== pin.versionId) throw new Error('File changed during download')
-    } else planner.windowFailed(answer.outcome, Date.now())
+    // A refused window is core's verdict (the file goes to the API, or its rest to the pinned
+    // route); the caller's own version spelling never overrides it.
+    if (answer.outcome.kind === 'proceed') planner.windowAnswered(answer.bytes, Date.now())
+    else planner.windowFailed(answer.outcome, Date.now())
   }
   try {
     // Resolve negotiation before returning anything: API fallback is safe only before any bytes have been delivered.
@@ -86,15 +97,16 @@ export async function directChunks(
                 s.wasm.checkStorageUrl(step.url.raw(), discovery, s.apiBase)
                 const answer = await storageGet(step.url, step.length, combined, s.wasm)
                 assertSession(s, combined)
-                if (answer.status === 200 && answer.body) { ready.set(step.index, answer.body); planner.fetchOk(step.index) }
+                const head = s.wasm.checkStorageGet(answer.status, answer.contentLength, step.length)
+                const verdict = head.kind === 'stored' ? s.wasm.checkStorageBody(answer.received, step.length) : head
+                if (verdict.kind === 'stored' && answer.body) { ready.set(step.index, answer.body); planner.fetchOk(step.index) }
                 else planner.fetchFailed(step.index, Date.now())
               } finally { step.url.free() }
             } else {
               const bytes = await fetchPinnedChunk(fileId, step.index, step.object_version_id, combined, s)
               assertSession(s, combined)
-              const expected = step.index === geometry.chunk_count - 1
-                ? geometry.encrypted_size - step.index * (geometry.chunk_size + 28) : geometry.chunk_size + 28
-              if (bytes.length !== expected) { planner.apiFetchFailed(step.index); throw new Error('Pinned chunk length mismatch') }
+              const expected = planner.chunkLength(step.index)
+              if (expected === null || bytes.length !== expected) { planner.apiFetchFailed(step.index); throw new Error('Pinned chunk length mismatch') }
               ready.set(step.index, bytes); planner.fetchOk(step.index)
             }
           })().catch(error => { fatal = error }).finally(() => { pending.delete(job) })
@@ -135,7 +147,7 @@ export async function directChunks(
             } else if (step.until_ms !== null) await wait(step.until_ms - Date.now(), combined)
             else throw new Error('Direct download stalled')
           }
-        } finally {
+        } catch (error) { throw scrubError(s, error) } finally {
           control.abort()
           await Promise.all(pending)
           ready.clear()
@@ -143,7 +155,7 @@ export async function directChunks(
         }
       },
     }
-  } catch (error) { release(); throw error }
+  } catch (error) { release(); throw scrubError(s, error) }
 }
 
 /** Worker-owned content reader; failed pushes leave its chunk index unchanged. */
