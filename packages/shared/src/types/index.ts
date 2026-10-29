@@ -432,30 +432,6 @@ export interface Plan {
   last_pushed_at?: string | null
 }
 
-export interface BillingSyncResult {
-  /** Total plans upserted (server field: synced) */
-  synced: number
-  /** Alias for synced — server may return either */
-  count?: number
-  plans_synced?: number
-  created: number
-  updated: number
-  synced_at: string
-  message?: string
-}
-
-export interface PlanUpdateInput {
-  name?: string
-  price_eur?: number
-  price_yearly_eur?: number
-  storage_bytes?: number
-  features?: string[]
-  is_active?: boolean
-  sort_order?: number
-  badge?: string | null
-  force_push?: boolean
-}
-
 export interface LastTrial {
   kind: 'no_card' | 'mandated' | 'promo' | 'grant'
   /** RFC 3339: when the trial ended unpaid. */

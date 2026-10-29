@@ -11,8 +11,8 @@
  * ENTIRE ancestor chain, including the top-level document, also carries
  * Cross-Origin-Opener-Policy + Cross-Origin-Embedder-Policy. The Drive app's
  * normal routes intentionally do NOT carry those headers (PLAN.md: applying
- * them site-wide would break any future cross-origin embed, e.g. a hosted
- * checkout page).
+ * them site-wide would break any future cross-origin embed, e.g. a third-party
+ * iframe embed).
  * A real, separate top-level document is the only way to scope isolation to
  * "the office route only" as PLAN.md intends for a client-routed SPA, since
  * nginx/Vite can only condition response headers on the REQUEST PATH of a
