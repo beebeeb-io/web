@@ -51,6 +51,21 @@ API_LOG="$LOG_DIR/bb-web-e2e-api-$API_PORT.log"
 VITE_LOG="$LOG_DIR/bb-web-e2e-vite-$VITE_PORT.log"
 WORKERS="${E2E_WORKERS:-1}"
 REPEAT="${E2E_REPEAT:-1}"
+# Task 1525: the signup email-code step's mail-sink helper
+# (e2e/helpers/mail-sink.ts) reads sent emails back out of THIS backend's
+# stdout/stderr (redirected below to /tmp/bb-web-e2e-api.log) — the
+# `EmailBackend::Console` this isolated backend always uses (no SMTP
+# configured) logs the full rendered email via `tracing::info!`. Checked
+# empirically: with RUST_LOG unset, tracing_subscriber's default EnvFilter
+# only surfaces ERROR — the email body never reaches the log at all. Scoped
+# to just the email module (not a bare `info`) so this doesn't also turn on
+# noisy per-request tracing across the rest of the API. Every
+# fillSignupForm()/reachPasswordStep()-driven spec now goes through the code
+# step (routes/auth.rs: "/signup/email-start" is unconditionally mounted,
+# independent of BB_SIGNUP_EMAIL_CODE), so this default is load-bearing for
+# the WHOLE suite, not just 1525's own spec — a caller's own RUST_LOG (e.g.
+# to add more targets) is respected untouched.
+RUST_LOG="${RUST_LOG:-beebeeb_api::email=info}"
 
 WEB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # Resolve the beebeeb.io WORKSPACE root via git's COMMON dir, not a fixed
