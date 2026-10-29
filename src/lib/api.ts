@@ -1,4 +1,6 @@
+import { isPasswordSetSignInRequired } from './reset-2fa'
 import { collectPaged } from './paginate'
+import { buildUploadInitV2Body, type UploadInitMetadata } from './upload-init-body'
 import {
   opaqueLoginStart as wasmOpaqueLoginStart,
   opaqueLoginFinish as wasmOpaqueLoginFinish,
@@ -10,6 +12,7 @@ import {
   IncorrectPasswordError,
   SessionTooOldForConfirmationError,
   clearToken,
+  clearLegacyBearer,
   clearSessionConfirmed,
   getApiUrl,
   getToken,
@@ -18,8 +21,10 @@ import {
   registerConnectionStatusHandler,
   registerErrorNotifier,
   provenanceHeaders,
+  expectedUserHeaders,
   registerOnTokenCleared,
   registerSessionExpiredHandler,
+  readErrorResponse,
   request,
   resolveSessionToken,
   setApiUrl,
@@ -27,15 +32,19 @@ import {
   setToken,
 } from '@beebeeb/shared'
 import type {
-  AbuseReport,
-  AbuseReportStatus,
+  CreateFolderLinkRequest,
+  FolderAccessLevel,
+  FolderLink,
+  FolderLinkCreated,
+  SharedFolderActivityResponse,
+  UpdateFolderLinkRequest,
+} from './folder-link-types'
+import type {
   AcceptInviteResponse,
   AccountActivity,
   AccountSession,
   ActivityResponse,
-  AdminStats,
   AuditEvent,
-  AuthSessionResponse,
   AuthUser,
   BillingUsage,
   CreateBundleShareRequest,
@@ -47,7 +56,6 @@ import type {
   DriveFile,
   FileVersion,
   HealthResponse,
-  ImpersonateResponse,
   InviteActivity,
   InviteInfo,
   InvitePreview,
@@ -76,7 +84,6 @@ import type {
   ShareStats,
   ShareView,
   SharedFileDownload,
-  SignupResult,
   StorageUsage,
   StreamTokenResponse,
   SubmittedSyncOp,
@@ -88,6 +95,7 @@ import type {
   TrackingPreference,
   TransferProof,
   TransferStatus,
+  UploadAbandonResponse,
   UploadStatusResponse,
   UserRegionResponse,
   VersionSetting,
@@ -95,6 +103,10 @@ import type {
   Workspace,
   WorkspaceMembersResponse,
 } from '@beebeeb/shared'
+import { parsePitch } from './coupon'
+import type { CouponPitch, CouponRedeemed } from './coupon'
+import { withServerBusyRetry } from './server-busy-retry'
+import { postEraseRequestOnce } from './erase-request-transport'
 
 export const API_URL = import.meta.env.VITE_API_URL || 'https://api.beebeeb.io'
 const STATUS_URL = import.meta.env.VITE_STATUS_URL || 'https://status.beebeeb.io'
@@ -150,6 +162,7 @@ export {
   IncorrectPasswordError,
   SessionTooOldForConfirmationError,
   clearToken,
+  clearLegacyBearer,
   getApiUrl,
   getToken,
   registerAccountDeletedHandler,
@@ -230,7 +243,6 @@ export type {
   ShareStats,
   ShareView,
   SharedFileDownload,
-  SignupResult,
   StorageUsage,
   StreamTokenResponse,
   SubmittedSyncOp,
@@ -243,6 +255,7 @@ export type {
   TrackingPreference,
   TransferProof,
   TransferStatus,
+  UploadAbandonResponse,
   UploadStatusResponse,
   UserRegionResponse,
   VersionSetting,
@@ -254,6 +267,8 @@ export type {
 } from '@beebeeb/shared'
 
 export type { ActivityEncryptedNameSnapshot } from '@beebeeb/shared'
+// Task 1037 — `GET /billing/subscription` → `account_state`.
+export type { AccountState } from '@beebeeb/shared'
 
 // ─── Task 1525: verify the email with a code BEFORE the account exists ────
 
@@ -297,21 +312,6 @@ export async function signupEmailVerify(
   })
 }
 
-// DEPRECATED: legacy JSON-password signup bypasses OPAQUE. It still has an
-// active caller in auth-context and must be removed when signup migrates fully
-// to the OPAQUE register flow.
-export async function signup(
-  email: string,
-  password: string,
-): Promise<SignupResult> {
-  const data = await request<AuthSessionResponse>('/api/v1/auth/signup', {
-    method: 'POST',
-    body: JSON.stringify({ email, password }),
-  })
-  setToken(data.session_token)
-  setEmail(email)
-  return data
-}
 
 // ─── OPAQUE auth endpoints ─────────────────────────
 
@@ -473,6 +473,71 @@ export async function opaqueRegisterFinishExisting(
   })
 }
 
+// ─── Reset ends at 2FA (server task 1730, client task 1803) ───────────────
+// Both credential-reset finalizers (set-password-finish, recover-with-phrase-
+// finalize) declare this capability. It is a promise that the caller handles
+// `{ requires_2fa, partial_token }` by sending the person through
+// /auth/2fa/verify. It is never a security input: a request without it gets the
+// SAFE legacy behaviour (409 password_set_sign_in_required), not a weaker one.
+
+/** Request header carrying the declared client capabilities. */
+export const CAPABILITIES_HEADER = 'X-Beebeeb-Capabilities'
+/** The capability token: "I finish a password reset through the 2FA challenge". */
+export const RESET_2FA_CAPABILITY = 'reset-2fa'
+const RESET_2FA_HEADERS: Record<string, string> = { [CAPABILITIES_HEADER]: RESET_2FA_CAPABILITY }
+
+/** What a credential-reset finalizer answers (task 1730). */
+export type ResetFinalizeResult =
+  | {
+      /** The account has 2FA: no session yet, finish via `verify2fa(partial_token, code)`. */
+      requires_2fa: true
+      partial_token: string
+      user_id: string
+      /** Present on set-password-finish; recover-with-phrase-finalize omits it. */
+      email?: string
+      session_token?: undefined
+    }
+  | {
+      requires_2fa?: false
+      session_token: string
+      user_id: string
+      email?: string
+    }
+
+/**
+ * A credential reset deletes EVERY earlier session server-side (task 1730), so
+ * whatever session evidence this page-load holds is obsolete the moment the
+ * finalizer answers with a 2FA challenge (or the typed 409): the legacy bearer
+ * and the "confirmed session" flag. Left in place, the first wrong code at
+ * /auth/2fa/verify is an EXPECTED 401 that the shared `request()` client would
+ * read as session expiry (flag still set, a signed-in locked-vault user got
+ * here via getMe) and bounce to /login before the code step could show its
+ * retry message (task 1803 round 2, Codex P2 on web#139). Clearing the evidence
+ * makes that 401 an ordinary anonymous one; every other request keeps the
+ * unchanged expiry handling. `clearLegacyBearer` (not `clearToken`) so the
+ * stored-email callback is not fired — the reset's own email is stored after.
+ */
+function endObsoleteSession(): void {
+  clearLegacyBearer()
+  clearSessionConfirmed()
+}
+
+/** Run a reset finalizer's request; on the typed 409 the old sessions are gone too. */
+async function resetFinalizeRequest(path: string, body: Record<string, unknown>): Promise<ResetFinalizeResult> {
+  try {
+    const data = await request<ResetFinalizeResult>(path, {
+      method: 'POST',
+      headers: RESET_2FA_HEADERS,
+      body: JSON.stringify(body),
+    })
+    if (data.requires_2fa) endObsoleteSession()
+    return data
+  } catch (err) {
+    if (isPasswordSetSignInRequired(err)) endObsoleteSession()
+    throw err
+  }
+}
+
 // ─── Recovery-phrase auth endpoints (server task 0034) ────────────────────
 // These endpoints don't exist yet. Returns null on 404 so the UI can show a
 // "service unavailable" message rather than crashing.
@@ -567,26 +632,28 @@ export async function recoverOpaqueRegister(
  * Client sends the OPAQUE upload message (output of opaqueRegistrationFinish)
  * plus the recovery_token obtained from the start endpoint. Server finalises
  * the OPAQUE password file update and returns a fresh session token.
+ *
+ * Task 1730 / 1803: for an account with 2FA enabled the server ends the
+ * recovery at the 2FA challenge instead of minting a session — it answers
+ * `{ requires_2fa: true, partial_token }` (no session, no cookie) and the
+ * caller finishes through `verify2fa`. The server only does this for clients
+ * that declare `X-Beebeeb-Capabilities: reset-2fa`, which this call always
+ * does; without the header it answers 409 `password_set_sign_in_required`
+ * (the credential WAS rotated) — see `isPasswordSetSignInRequired`.
  */
 export async function recoverWithPhraseFinalize(
   recoveryToken: string,
   opaqueRegistration: string,
   recoveryCheck: string,
   x25519PublicKey: string,
-): Promise<{ session_token: string; user_id: string }> {
-  const data = await request<{ session_token: string; user_id: string }>(
-    '/api/v1/auth/recover-with-phrase-finalize',
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        recovery_token: recoveryToken,
-        opaque_registration: opaqueRegistration,
-        recovery_check: recoveryCheck,
-        x25519_public_key: x25519PublicKey,
-      }),
-    },
-  )
-  setToken(data.session_token)
+): Promise<ResetFinalizeResult> {
+  const data = await resetFinalizeRequest('/api/v1/auth/recover-with-phrase-finalize', {
+    recovery_token: recoveryToken,
+    opaque_registration: opaqueRegistration,
+    recovery_check: recoveryCheck,
+    x25519_public_key: x25519PublicKey,
+  })
+  if (!data.requires_2fa) setToken(data.session_token)
   return data
 }
 
@@ -619,6 +686,27 @@ export async function logout(): Promise<void> {
 // ─── Step-up re-auth ────────────────────────────────
 
 /**
+ * What a step-up is FOR (task 1734, round 2). Without a grant the token is the
+ * ordinary `password_step_up` every destructive action takes. With
+ * `cli_device_approval` the server mints a token that can ONLY approve the
+ * device-code login `cliCode`, in THIS session: the generic token is refused by
+ * `/auth/cli-session`, and this one is refused by everything else. A server from
+ * before this change ignores the extra fields and mints the generic token,
+ * which that same older server's `/auth/cli-session` accepts - so the web can
+ * ship first.
+ */
+export interface StepUpGrant {
+  purpose: 'cli_device_approval'
+  /** The device code the person typed, as shown on their own device (`XXXX-XXXX`). */
+  cliCode: string
+}
+
+/** The request-body fields for a grant; nothing at all for the ordinary step-up. */
+export function stepUpGrantFields(grant?: StepUpGrant): { purpose?: string; cli_code?: string } {
+  return grant ? { purpose: grant.purpose, cli_code: grant.cliCode } : {}
+}
+
+/**
  * Exchange the user's password for a short-lived confirmation token.
  * Pass that token via the X-Confirm-Token header on destructive endpoints
  * (permanent delete, change password, delete account).
@@ -642,6 +730,7 @@ export async function logout(): Promise<void> {
  */
 export async function confirmAction(
   password: string,
+  grant?: StepUpGrant,
 ): Promise<{ confirmation_token: string; expires_at: string }> {
   const token = getToken()
   const authHeaders: Record<string, string> = {
@@ -671,7 +760,7 @@ export async function confirmAction(
   if (startRes.status === 409) {
     const body = (await startRes.json().catch(() => ({}))) as Record<string, unknown>
     if (body.opaque_unavailable === true) {
-      return confirmActionPlaintext(password, authHeaders)
+      return confirmActionPlaintext(password, authHeaders, grant)
     }
     // Some other 409 — surface it rather than silently swallowing.
     throw new ApiError(
@@ -681,11 +770,9 @@ export async function confirmAction(
   }
 
   if (!startRes.ok) {
-    const body = (await startRes
-      .json()
-      .catch(() => ({ error: 'Server returned an invalid response' }))) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(startRes)
     throw new ApiError(
-      (body.message ?? body.error ?? startRes.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       startRes.status,
     )
   }
@@ -720,6 +807,7 @@ export async function confirmAction(
     body: JSON.stringify({
       client_message: toBase64(loginFinish.message),
       server_state: startBody.server_state,
+      ...stepUpGrantFields(grant),
     }),
     credentials: 'include',
   })
@@ -732,11 +820,9 @@ export async function confirmAction(
     throw new IncorrectPasswordError()
   }
   if (!finishRes.ok) {
-    const body = (await finishRes
-      .json()
-      .catch(() => ({ error: 'Server returned an invalid response' }))) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(finishRes)
     throw new ApiError(
-      (body.message ?? body.error ?? finishRes.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       finishRes.status,
     )
   }
@@ -753,6 +839,7 @@ export async function confirmAction(
 async function confirmActionPlaintext(
   password: string,
   authHeaders: Record<string, string>,
+  grant?: StepUpGrant,
 ): Promise<{ confirmation_token: string; expires_at: string }> {
   // Direct fetch instead of request() — a 401 from /auth/confirm means the
   // user mistyped their password during step-up, NOT that their session
@@ -761,7 +848,7 @@ async function confirmActionPlaintext(
   const res = await fetch(`${API_URL}/api/v1/auth/confirm`, {
     method: 'POST',
     headers: authHeaders,
-    body: JSON.stringify({ password }),
+    body: JSON.stringify({ password, ...stepUpGrantFields(grant) }),
     // task 0447 — send cookie + accept Set-Cookie back. The confirm endpoint
     // is authenticated and may set a refreshed bb_session cookie.
     credentials: 'include',
@@ -784,9 +871,9 @@ async function confirmActionPlaintext(
     throw new IncorrectPasswordError()
   }
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({ error: 'Server returned an invalid response' }))) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(res)
     throw new ApiError(
-      (body.message ?? body.error ?? res.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       res.status,
     )
   }
@@ -810,7 +897,9 @@ async function confirmActionPlaintext(
  * cancelled/failed WebAuthn ceremony here must never clear the session or
  * bounce the user to /login — they are still logged in.
  */
-export async function confirmPasskey(): Promise<{ confirmation_token: string; expires_at: string }> {
+export async function confirmPasskey(
+  grant?: StepUpGrant,
+): Promise<{ confirmation_token: string; expires_at: string }> {
   const token = getToken()
   const authHeaders: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -824,11 +913,9 @@ export async function confirmPasskey(): Promise<{ confirmation_token: string; ex
   })
 
   if (!startRes.ok) {
-    const body = (await startRes
-      .json()
-      .catch(() => ({ error: 'Server returned an invalid response' }))) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(startRes)
     throw new ApiError(
-      (body.message ?? body.error ?? startRes.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       startRes.status,
     )
   }
@@ -849,7 +936,11 @@ export async function confirmPasskey(): Promise<{ confirmation_token: string; ex
   const finishRes = await fetch(`${API_URL}/api/v1/auth/confirm-passkey-finish`, {
     method: 'POST',
     headers: authHeaders,
-    body: JSON.stringify({ credential: credentialData, auth_state: startBody.auth_state }),
+    body: JSON.stringify({
+      credential: credentialData,
+      auth_state: startBody.auth_state,
+      ...stepUpGrantFields(grant),
+    }),
     credentials: 'include',
   })
 
@@ -860,11 +951,9 @@ export async function confirmPasskey(): Promise<{ confirmation_token: string; ex
     throw new ApiError('Passkey confirmation failed', 401)
   }
   if (!finishRes.ok) {
-    const body = (await finishRes
-      .json()
-      .catch(() => ({ error: 'Server returned an invalid response' }))) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(finishRes)
     throw new ApiError(
-      (body.message ?? body.error ?? finishRes.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       finishRes.status,
     )
   }
@@ -906,9 +995,29 @@ export async function getMe(): Promise<AuthUser> {
   return user
 }
 
-export async function setup2fa(): Promise<TotpSetupResponse> {
+/**
+ * POST /api/v1/auth/2fa/setup — start (or restart) TOTP enrollment.
+ *
+ * When the account has NO 2FA enabled yet, call with no arguments — the
+ * server issues a fresh secret unconditionally (this is the original,
+ * unchanged behavior).
+ *
+ * When 2FA is ALREADY enabled, the server requires step-up before it will
+ * replace the live secret (`routes/totp.rs` `setup_step_up_validated_if_required`
+ * — task 1610): either the account's CURRENT 6-digit TOTP/backup code as
+ * `opts.code`, or a step-up `X-Confirm-Token` (password/passkey re-auth via
+ * `confirmAction`/`<StepUpAuth>`) as `opts.confirmToken`. Passing neither
+ * against an enabled account throws `ApiError(403, ..., 'confirmation_required')` —
+ * callers MUST offer one of the two paths before calling this for
+ * "set up again", never call it bare.
+ */
+export async function setup2fa(opts?: { code?: string; confirmToken?: string }): Promise<TotpSetupResponse> {
+  const headers: Record<string, string> = {}
+  if (opts?.confirmToken) headers['X-Confirm-Token'] = opts.confirmToken
   return request<TotpSetupResponse>('/api/v1/auth/2fa/setup', {
     method: 'POST',
+    ...(opts?.code ? { body: JSON.stringify({ code: opts.code }) } : {}),
+    ...(opts?.confirmToken ? { headers } : {}),
   })
 }
 
@@ -1030,6 +1139,8 @@ export async function createFolder(
 interface UploadInitV1Response {
   file_id: string
   chunk_count: number
+  /** Task 2062 — the pool chosen at init. */
+  storage_location?: { country?: string | null } | null
 }
 
 interface UploadInitV2Response {
@@ -1042,35 +1153,23 @@ interface UploadInitV2Response {
   storage_format_version: number
   storage_pool_id: string
   region: string
+  /** Task 2062 — `{ region, country, country_code }` for the pool chosen at init; no city. */
+  storage_location?: { country?: string | null } | null
 }
 
 export type UploadInitResponse =
   | (UploadInitV1Response & { protocol: 'v1' })
   | (UploadInitV2Response & { protocol: 'v2' })
 
-export async function initUpload(metadata: {
-  file_id?: string
-  name_encrypted: string
-  size_bytes: number
-  chunk_count: number
-  parent_id?: string | null
-  /** True when the file is an image or video. Set by the client at upload time
-   *  because MIME types are encrypted — the server cannot infer media type. */
-  is_media?: boolean
-  /** True when this upload is the Keep Both result of a same-name conflict. */
-  conflict_created?: boolean
-}): Promise<UploadInitResponse> {
+export async function initUpload(
+  metadata: UploadInitMetadata,
+  signal?: AbortSignal,
+): Promise<UploadInitResponse> {
   try {
     const v2 = await request<UploadInitV2Response>('/api/v1/uploads/init', {
       method: 'POST',
-      body: JSON.stringify({
-        file_name: metadata.name_encrypted,
-        file_size_bytes: metadata.size_bytes,
-        parent_id: metadata.parent_id,
-        profile: 'web',
-        is_media: metadata.is_media ?? false,
-        conflict_created: metadata.conflict_created ?? false,
-      }),
+      body: JSON.stringify(buildUploadInitV2Body(metadata)),
+      signal,
     })
     return { ...v2, protocol: 'v2' }
   } catch (err) {
@@ -1082,6 +1181,7 @@ export async function initUpload(metadata: {
   const v1 = await request<UploadInitV1Response>('/api/v1/files/upload/init', {
     method: 'POST',
     body: JSON.stringify(metadata),
+    signal,
   })
   return { ...v1, protocol: 'v1' }
 }
@@ -1091,32 +1191,37 @@ export async function uploadChunk(
   index: number,
   data: Uint8Array,
   uploadSessionId?: string | null,
+  signal?: AbortSignal,
 ): Promise<{ index: number; size: number; skipped?: boolean }> {
-  const v2Path = uploadSessionId ? `/api/v1/uploads/${uploadSessionId}/chunks/${index}` : null
-  if (v2Path) {
-    try {
-      return await uploadChunkRequest(v2Path, data)
-    } catch (err) {
-      if (!(err instanceof ApiError) || err.status !== 404) {
-        throw err
-      }
-    }
+  // A v2 session's chunks go to the session route ONLY. There is deliberately
+  // no fallback to the legacy `/files/{id}/chunks` route on a v2 404 (task
+  // 1589): a 404 there means the server swept the session (its lease
+  // expired), and the legacy route would write against whatever upload state
+  // the file has NOW — possibly another device's upload after a takeover.
+  // The caller (encryptedUpload → runWithSessionReinit) re-inits instead.
+  if (uploadSessionId) {
+    return uploadChunkRequest(`/api/v1/uploads/${uploadSessionId}/chunks/${index}`, data, signal)
   }
 
-  return uploadChunkRequest(`/api/v1/files/${fileId}/chunks/${index}`, data)
+  // v1 protocol (the init itself answered from the legacy route).
+  return uploadChunkRequest(`/api/v1/files/${fileId}/chunks/${index}`, data, signal)
 }
 
 async function uploadChunkRequest(
   path: string,
   data: Uint8Array,
+  signal?: AbortSignal,
 ): Promise<{ index: number; size: number; skipped?: boolean }> {
   const token = getToken()
   const headers: Record<string, string> = {
     'Content-Type': 'application/octet-stream',
     // Chunk uploads stream binary via raw fetch() (task 0447), bypassing the
     // shared request() client — so the writer-provenance headers (task 1436)
-    // have to be added by hand here too.
+    // and the expected-user defence header (task 1531, web #85 round 2)
+    // have to be added by hand here too. A chunk PUT is unambiguously a
+    // mutating request.
     ...provenanceHeaders(),
+    ...expectedUserHeaders(),
   }
   if (token) {
     headers['Authorization'] = `Bearer ${token}`
@@ -1130,8 +1235,14 @@ async function uploadChunkRequest(
       body: new Uint8Array(data) as BodyInit,
       // task 0447 — chunk uploads are authenticated; ship the cookie.
       credentials: 'include',
+      signal,
     })
-  } catch (_err) {
+  } catch (err) {
+    // A caller-provided AbortSignal firing mid-PUT is a deliberate cancel
+    // (task 1571 web PR #106) — let the real AbortError propagate as-is so
+    // callers' `err.name === 'AbortError'` checks still work, instead of
+    // masking it as a generic network failure below.
+    if (signal?.aborted) throw err
     // The error notifier now lives in @beebeeb/shared and is fired by the
     // shared `request()` helper for normal endpoints. Chunk uploads use raw
     // `fetch()` because they stream binary, so just throw — the caller
@@ -1141,16 +1252,21 @@ async function uploadChunkRequest(
   }
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(res)
     // Carry the machine-readable `error` code (e.g. `object_budget_exceeded`,
     // `quota_exceeded`) through as ApiError.code so the upload error boundary
     // can branch on it. Chunk uploads use raw fetch(), so unlike the shared
     // request() helper this had previously dropped the code.
     const code = typeof body.error === 'string' ? body.error : undefined
+    // Task 1605: also thread the raw body through as `.details` (mirrors the
+    // shared request() helper) so a 413 `quota_exceeded` chunk-PUT failure
+    // carries `is_trial_cap`/`limit_bytes`/`used_bytes` the same way a
+    // request()-routed one does.
     throw new ApiError(
-      (body.message ?? body.error ?? res.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       res.status,
       code,
+      body,
     )
   }
 
@@ -1161,17 +1277,12 @@ export async function completeUpload(
   fileId: string,
   uploadSessionId?: string | null,
 ): Promise<DriveFile> {
+  // No legacy fallback on a v2 404 (task 1589) — see uploadChunk() above.
   if (uploadSessionId) {
-    try {
-      return await request<DriveFile>(`/api/v1/uploads/${uploadSessionId}/complete`, {
-        method: 'POST',
-        body: JSON.stringify({}),
-      })
-    } catch (err) {
-      if (!(err instanceof ApiError) || err.status !== 404) {
-        throw err
-      }
-    }
+    return request<DriveFile>(`/api/v1/uploads/${uploadSessionId}/complete`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    })
   }
 
   return request<DriveFile>(`/api/v1/files/${fileId}/upload/complete`, {
@@ -1186,6 +1297,22 @@ export async function getUploadStatus(
   return request<UploadStatusResponse>(
     `/api/v1/files/${fileId}/upload/status`,
   )
+}
+
+/**
+ * Abandon an in-flight version upload for `fileId` (task 1571) — the
+ * server-side counterpart to a client-aborted save. Restores the file's
+ * previous, already-completed version as current (untouched); if the file
+ * had no previous version (its first-ever, still-incomplete upload), the
+ * row is removed instead. A no-op (never an error) when the file isn't
+ * currently mid-upload, so callers can fire this unconditionally after
+ * aborting a save without first checking server state.
+ */
+export async function abandonUpload(fileId: string): Promise<UploadAbandonResponse> {
+  return request<UploadAbandonResponse>(`/api/v1/files/${fileId}/upload/abandon`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  })
 }
 
 export async function getFile(id: string): Promise<DriveFile> {
@@ -1208,10 +1335,12 @@ export async function downloadFile(id: string): Promise<Blob> {
 export async function updateFile(
   fileId: string,
   updates: { parent_id?: string | null; name_encrypted?: string; note_encrypted?: string | null },
+  signal?: AbortSignal,
 ): Promise<DriveFile> {
   return request<DriveFile>(`/api/v1/files/${fileId}`, {
     method: 'PATCH',
     body: JSON.stringify(updates),
+    signal,
   })
 }
 
@@ -1234,8 +1363,20 @@ export async function bulkTrashFiles(
   )
 }
 
-export async function restoreFile(id: string): Promise<void> {
-  await request<void>(`/api/v1/files/${id}/restore`, { method: 'POST' })
+/** What a restore did. `complete: false` (202, task 1918 round 4): the folder's trash group is
+ *  larger than one request may touch; the server restores the rest in the background. */
+export interface RestoreFileResult {
+  complete: boolean
+  remaining: number | null
+}
+
+export async function restoreFile(id: string): Promise<RestoreFileResult> {
+  const body = await request<unknown>(`/api/v1/files/${id}/restore`, { method: 'POST' })
+  const b = body && typeof body === 'object' ? (body as Record<string, unknown>) : {}
+  return {
+    complete: b.complete !== false,
+    remaining: typeof b.remaining === 'number' ? b.remaining : null,
+  }
 }
 
 export async function permanentDeleteFile(
@@ -1329,6 +1470,36 @@ export async function getSyncOps(since: number): Promise<SyncOp[]> {
   return data.ops ?? []
 }
 
+/**
+ * Task 1973 (server#233): a sync op as a server that numbers each user's ops
+ * sends it. `user_seq` is the op's place in its user's own gap-free sequence;
+ * `null` for an op recorded before that deploy, absent on an older server.
+ */
+export type UserSeqSyncOp = SyncOp & { user_seq?: number | null }
+
+/** Task 1973: a snapshot from a server that numbers ops carries a numeric `user_seq`. */
+export type UserSeqSyncSnapshot = SyncSnapshot & { user_seq?: number | null }
+
+/** Task 1973: one `GET /sync/ops?since_user_seq=` page plus the server's heads. */
+export interface UserSeqSyncOpsPage {
+  ops: UserSeqSyncOp[]
+  head_seq?: number
+  /** The user's newest `user_seq`, read in the same statement as the page. */
+  head_user_seq?: number
+}
+
+/**
+ * Task 1973: this user's ops with `user_seq > sinceUserSeq`, ascending by
+ * `user_seq`. An older server ignores the parameter (and has no
+ * `head_user_seq`); the caller treats that as a failed catch-up.
+ */
+export async function getSyncOpsSinceUserSeq(sinceUserSeq: number): Promise<UserSeqSyncOpsPage> {
+  const data = await request<UserSeqSyncOpsPage>(
+    `/api/v1/sync/ops?since_user_seq=${encodeURIComponent(String(sinceUserSeq))}`,
+  )
+  return { ops: data.ops ?? [], head_seq: data.head_seq, head_user_seq: data.head_user_seq }
+}
+
 export async function submitSyncOps(ops: SubmittedSyncOp[]): Promise<SyncOpsResult> {
   return request<SyncOpsResult>('/api/v1/sync/ops', {
     method: 'POST',
@@ -1420,6 +1591,54 @@ export async function forgotPassword(
   })
 }
 
+/**
+ * Task 1704 — email-based self-service password reset (the /set-password page).
+ *
+ * The emailed one-time link is the entry proof; the password is chosen
+ * client-side via OPAQUE re-registration and is never transmitted. ZERO key
+ * material on the wire: unlike recoverWithPhraseFinalize, the client does NOT
+ * send recovery_check / x25519_public_key — those bindings are set-once
+ * (1554/1556) and an email-only reset keeps them untouched server-side. The
+ * vault stays locked until the user re-enters their recovery phrase / vault
+ * key (the /recover-with-phrase re-wrap ceremony).
+ */
+
+/** OPAQUE registration start authorized by the one-time set-password token. */
+export async function setPasswordOpaqueRegister(
+  token: string,
+  clientMessage: string,
+): Promise<{ server_message: string }> {
+  return request<{ server_message: string }>('/api/v1/auth/set-password-opaque-register', {
+    method: 'POST',
+    body: JSON.stringify({ token, client_message: clientMessage }),
+  })
+}
+
+/**
+ * Consume the one-time token and replace the account credential. For an
+ * account without 2FA the server deletes ALL sessions and mints a fresh one
+ * for this device (returned as `session_token` and set as the bb_session
+ * httpOnly cookie).
+ *
+ * Task 1730 / 1803: for an account WITH 2FA the reset ends at the challenge —
+ * `{ requires_2fa: true, partial_token }`, no session, no cookie — and the page
+ * finishes through `verify2fa`. Always declares `reset-2fa` so the server uses
+ * that path; an old cached bundle that does not gets 409
+ * `password_set_sign_in_required` (see `isPasswordSetSignInRequired`).
+ */
+export async function setPasswordFinalize(
+  token: string,
+  opaqueRegistration: string,
+): Promise<ResetFinalizeResult> {
+  const data = await resetFinalizeRequest('/api/v1/auth/set-password-finish', {
+    token,
+    opaque_registration: opaqueRegistration,
+  })
+  if (!data.requires_2fa) setToken(data.session_token)
+  if (data.email) setEmail(data.email)
+  return data
+}
+
 export async function resetPassword(
   token: string,
   newPassword: string,
@@ -1449,6 +1668,36 @@ export async function deleteAccountPermanently(
   )
   clearToken()
   return data
+}
+
+// Task 1918: "Erase all files" from the locked screen is a server-side request with a
+// cooldown that only ever moves files to the trash (pure logic: `./erase-request.ts`).
+
+/** `GET /api/v1/account/erase-request`: the pending request (or null) and the live item count. */
+export async function getEraseRequest(): Promise<unknown> {
+  return request<unknown>('/api/v1/account/erase-request')
+}
+
+/**
+ * `POST /api/v1/account/erase-request`: `confirmCount` must equal the server's live item count.
+ * Sent exactly once (task 1918 round 4): the step-up token is single-use, so a retry could only
+ * ever be refused, and would hide the real outcome. See `erase-request-transport.ts`.
+ */
+export async function createEraseRequest(confirmCount: number, confirmToken: string): Promise<unknown> {
+  return postEraseRequestOnce(confirmCount, confirmToken)
+}
+
+/** `POST /api/v1/account/erase-request/cancel`: any signed-in session of the account. */
+export async function cancelEraseRequest(): Promise<unknown> {
+  return request<unknown>('/api/v1/account/erase-request/cancel', { method: 'POST' })
+}
+
+/**
+ * `POST /api/v1/account/erase-request/{id}/restore` (task 1918 round 4): restore everything that
+ * erase moved to the trash. 200 = all back; 202 = the server continues in the background.
+ */
+export async function restoreEraseRequest(requestId: string): Promise<unknown> {
+  return request<unknown>(`/api/v1/account/erase-request/${encodeURIComponent(requestId)}/restore`, { method: 'POST' })
 }
 
 export async function changeEmail(
@@ -1535,9 +1784,9 @@ export async function getShare(
   const res = await fetch(`${API_URL}/api/v1/shares/${token}${qs ? `?${qs}` : ''}`)
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(res)
     throw new ApiError(
-      (body.message ?? body.error ?? res.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       res.status,
     )
   }
@@ -1597,9 +1846,9 @@ export async function verifySharePassphrase(
   })
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(res)
     throw new ApiError(
-      (body.message ?? body.error ?? res.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       res.status,
     )
   }
@@ -1713,6 +1962,10 @@ export async function createInvite(
     encrypted_folder_key: string
     encrypted_owner_folder_key: string
     folder_keys: { file_id: string; encrypted_file_key: string }[]
+    /** base64 of core's folder_key_id for the key used (task 2133). */
+    folder_key_id: string
+    /** Contract 2237 §1: `l7` exactly when `folder_keys` are L7 wraps. */
+    format?: 'l7'
   },
 ): Promise<{ invite_id: string; status: string; recipient_public_key?: string | null }> {
   return request('/api/v1/shares/invites', {
@@ -1876,6 +2129,30 @@ export async function validatePromo(params: {
   return request<PromoValidation>('/api/v1/billing/promo/validate', {
     method: 'POST',
     body: JSON.stringify(params),
+  })
+}
+
+// ── Coupon links (task 1814, slice A: free grants) ──────────────────────────
+
+/**
+ * `GET /api/v1/coupons/{code}` — public, per-IP limited. A usable coupon returns the
+ * pitch; EVERY other case (unknown, revoked, expired, used up, garbage) is
+ * `200 {valid: false}`, so the caller cannot and must not tell them apart.
+ */
+export async function getCoupon(code: string): Promise<CouponPitch | null> {
+  return parsePitch(await request<unknown>(`/api/v1/coupons/${encodeURIComponent(code)}`))
+}
+
+/**
+ * `POST /api/v1/billing/coupon/redeem` — signed in. Typed refusals arrive as
+ * `ApiError.code`: `coupon_not_applicable` (409), `coupon_already_used` (409),
+ * `coupon_unavailable` (410), `email_unverified` (403). A replay by the same account
+ * is a 200 with `already_redeemed: true`.
+ */
+export async function redeemCoupon(code: string): Promise<CouponRedeemed> {
+  return request<CouponRedeemed>('/api/v1/billing/coupon/redeem', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
   })
 }
 
@@ -2211,6 +2488,63 @@ export async function getBillingInvoices(): Promise<BillingInvoice[]> {
   }))
 }
 
+/** A row from GET /api/v1/billing/credit-notes (task 1899). Amounts are NEGATIVE
+ *  cents: the server surfaces the credit-note sign, the table stores them positive. */
+export interface BillingCreditNote {
+  id: string
+  credit_note_number: string
+  credit_note_date: string
+  original_invoice_number: string
+  reason: string
+  currency: string
+  amount_gross_cents: number
+  amount_net_cents: number
+  vat_amount_cents: number
+  vat_rate_bps: number
+  vat_treatment: VatTreatment
+  status: string
+}
+
+/** Raw credit-note row as the server sends it (`number`, plus a `pdf_url` we do
+ *  not use: the download goes through `downloadCreditNotePdf(id)`). */
+export interface RawBillingCreditNote extends Omit<BillingCreditNote, 'credit_note_number'> {
+  number: string
+  pdf_url?: string
+}
+
+/** Normalise the server's credit-note rows (`number` -> `credit_note_number`). */
+export function mapBillingCreditNotes(
+  raw: { credit_notes?: RawBillingCreditNote[] } | null | undefined,
+): BillingCreditNote[] {
+  return (raw?.credit_notes ?? []).map(({ number, pdf_url: _pdfUrl, ...rest }) => ({
+    ...rest,
+    credit_note_number: number,
+  }))
+}
+
+/** GET /api/v1/billing/credit-notes: the caller's credit notes, newest first. */
+export async function getBillingCreditNotes(): Promise<BillingCreditNote[]> {
+  return mapBillingCreditNotes(
+    await request<{ credit_notes: RawBillingCreditNote[] }>('/api/v1/billing/credit-notes'),
+  )
+}
+
+/** Download a credit-note PDF. Same authenticated blob pattern as the invoice PDF:
+ *  bearer header + cookie, never a token in the URL. */
+export async function downloadCreditNotePdf(creditNoteId: string): Promise<Blob> {
+  const token = getToken()
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const res = await fetch(
+    `${API_URL}/api/v1/billing/credit-notes/${creditNoteId}/pdf`,
+    { headers, credentials: 'include' },
+  )
+  if (!res.ok) {
+    throw new ApiError(res.statusText, res.status)
+  }
+  return res.blob()
+}
+
 /**
  * Download an invoice PDF (GET /api/v1/billing/invoices/{id}/pdf). The endpoint
  * is authenticated, so we fetch with the bearer token + cookie and hand back a
@@ -2324,7 +2658,29 @@ export interface CheckoutTrialResult {
   message: string
 }
 
-export type CheckoutResult = { url: string; payment_id?: string } | CheckoutTrialResult
+export type CheckoutResult = CheckoutSuccess | CheckoutTrialResult
+
+/**
+ * The redirect-shaped checkout result. Paid plans get the provider hosted
+ * checkout (`payment_id` set). A plan priced €0 (task 1702) comes back
+ * `activated: true` instead: the server activated the plan directly, with NO
+ * payment provider involved (no Mollie checkout, no subscription create, no
+ * mandate). `url` still carries the post-success destination per the checkout
+ * contract, so a caller that only redirects keeps working; callers that want
+ * honest messaging branch on `activated`. There is no `payment_id` — nothing
+ * was charged.
+ */
+export interface ZeroPriceActivation {
+  activated: true
+  plan: string
+  billing_cycle: string
+  status: string
+  current_period_end: string
+  url: string
+  payment_id?: undefined
+}
+
+export type CheckoutSuccess = { url: string; payment_id?: string; activated?: false } | ZeroPriceActivation
 
 // Overloaded so existing no-promo call sites (upgrade-dialog, upgrade-nudge-modal)
 // keep destructuring `{ url }` unchanged — the trial branch is only reachable
@@ -2335,7 +2691,7 @@ export async function createCheckoutSession(params: {
   plan: string
   billing_cycle: string
   promo_code?: undefined
-}): Promise<{ url: string; payment_id?: string }>
+}): Promise<CheckoutSuccess>
 export async function createCheckoutSession(params: {
   plan: string
   billing_cycle: string
@@ -2356,27 +2712,81 @@ export async function createCheckoutSession(params: {
   })
 }
 
+/** Payment method that captures the trial mandate (task 1037). */
+export type TrialCheckoutMethod = 'creditcard' | 'ideal'
+
 /**
- * Start a 14-day free trial (task 0905, Pattern B — no card required).
- *
- * `POST /api/v1/billing/trial/start` sets the subscription to `status:'trialing'`
- * + `trial_ends_at = now()+14d` and grants the chosen plan's quota immediately —
- * NO Mollie call, NO payment method. Returns the new trialing subscription row.
- *
- * The server enforces one-trial-per-account. On a 409 the thrown ApiError carries
- * a machine-readable `.code` the caller branches on:
- *   - `trial_already_used`             → user already had a trial; fall back to
- *                                        the normal paid checkout (hide the CTA).
- *   - `trial_has_active_subscription`  → user already has an active paid sub.
- * A 400 means the plan or billing_cycle is invalid.
+ * `POST /billing/trial/checkout` result. Paid plans get the Mollie hosted
+ * checkout (`payment_id` set, redirect to `url`). A plan priced €0 (task
+ * 1702) comes back `activated: true` — the server activated the plan
+ * directly, no payment provider involved; `url` keeps the post-success
+ * destination and there is no `payment_id`.
  */
-export async function startTrial(params: {
+export type TrialCheckoutResult =
+  | { url: string; payment_id: string; activated?: false }
+  | ZeroPriceActivation
+
+/**
+ * Start a trial WITH a payment mandate (task 1037 — no free signups).
+ *
+ * `POST /api/v1/billing/trial/checkout` creates the Mollie mandate payment
+ * (card: €0 first payment; iDEAL: €0.01, refunded, creating a SEPA mandate)
+ * and returns the hosted-checkout `{url, payment_id}`. Nothing is granted
+ * until Mollie reports the payment `paid`; the webhook then flips the
+ * subscription to `trialing` with a Mollie subscription starting at
+ * `trial_ends_at`. Mollie sends the user back to `/choose-plan?returned=1`.
+ *
+ * On a 409 the thrown ApiError's `.code`:
+ *   - `trial_already_used`            → normal paid checkout (`/billing?view=change`).
+ *   - `trial_has_active_subscription` → the account already has a plan.
+ * A 400 means an invalid plan/cycle/method, or Mollie is not configured.
+ */
+export async function startTrialCheckout(params: {
   plan: string
-  billing_cycle: string
-}): Promise<Subscription> {
-  return request<Subscription>('/api/v1/billing/trial/start', {
+  billing_cycle: 'monthly' | 'yearly'
+  method: TrialCheckoutMethod
+}, endpoint: string = '/api/v1/billing/trial/checkout'): Promise<TrialCheckoutResult> {
+  return request<TrialCheckoutResult>(endpoint, {
     method: 'POST',
     body: JSON.stringify(params),
+  })
+}
+
+/** `201` body of `POST /billing/trial/start` for a no-card trial (server task 1755). */
+export interface NoCardTrialStarted {
+  id: string
+  plan: string
+  billing_cycle: string
+  region: string
+  status: 'trialing'
+  trial_ends_at: string
+  plan_version: number | null
+  trial_kind: 'no_card'
+  /** The limit uploads will actually stop at: min(plan quota, the trial cap). */
+  cap_bytes: number
+}
+
+/**
+ * Start the no-card trial (task 1757, server task 1755; spec 4b.3).
+ *
+ * `POST <start_endpoint>` where `start_endpoint` is the onboarding document's
+ * `offers.trial.start_endpoint` (a same-origin `/api/v1/...` path). The server
+ * wants a plan and a billing cycle (the plan whose features the trial shows) and
+ * NOTHING about payment: no card, no mandate, no billing profile. The document is
+ * the authority on whether a start will be accepted; a refusal is a typed 409/403
+ * (`trial_temporarily_unavailable`, `trial_already_used`, `trial_previously_subscribed`,
+ * `trial_has_active_subscription`, `email_unverified`) or a 429 when too many
+ * trials were started from the same network — see `startTrialErrorCopy`.
+ */
+export async function startNoCardTrial(params: {
+  plan: string
+  billing_cycle: 'monthly' | 'yearly'
+  endpoint?: string
+}): Promise<NoCardTrialStarted> {
+  const { endpoint, ...body } = params
+  return request<NoCardTrialStarted>(endpoint ?? '/api/v1/billing/trial/start', {
+    method: 'POST',
+    body: JSON.stringify(body),
   })
 }
 
@@ -2396,8 +2806,51 @@ export async function startTrial(params: {
  *   - `trial_already_subscribed`→ already converted; send to billing management.
  * A 400 means Mollie is not configured server-side.
  */
-export async function convertTrial(): Promise<{ url: string; payment_id?: string }> {
-  return request<{ url: string; payment_id?: string }>('/api/v1/billing/trial/convert', {
+export async function convertTrial(): Promise<
+  { url: string; payment_id?: string; activated?: false } | ZeroPriceActivation
+> {
+  return request<{ url: string; payment_id?: string; activated?: false } | ZeroPriceActivation>(
+    '/api/v1/billing/trial/convert',
+    {
+      method: 'POST',
+    },
+  )
+}
+
+/**
+ * Task 1605 (server PR #129, `POST /billing/trial/pay-now`). Ends a mandated
+ * trial's 25 GB cap early by charging the first period NOW on the existing
+ * mandate, instead of waiting for the automatic charge at `trial_ends_at`.
+ *
+ * Two settlement shapes, both 200:
+ *   - `{payment_id, status: 'paid', amount_cents}` — a card/instant-method
+ *     mandate settled synchronously; the caller can refetch the subscription
+ *     immediately (quota unlocks, trial badge drops).
+ *   - `{pending: true, payment_id}` — a SEPA/off-session mandate that will
+ *     settle over the next few days via webhook; the caller shows a waiting
+ *     state and polls `getSubscription()` (see `trial-pay-now.ts`'s bounded
+ *     poll helpers) rather than assuming it already worked.
+ *
+ * 409 `trial_not_active` (the server's own code) means the trial already
+ * ended/converted/was cancelled between the button rendering and the click —
+ * callers should refetch and show the current state, not retry blindly.
+ * Idempotent server-side (per-user advisory lock + local-status-only reuse
+ * check) — a double-click here is safe to just re-send; the client ALSO
+ * disables the button while a request is in flight as a first line of
+ * defense against firing two at once.
+ */
+export interface TrialPayNowResult {
+  payment_id: string
+  status?: string
+  amount_cents?: number
+  pending?: boolean
+  /** Task 2092: a hosted checkout, set exactly when `status` is `open`. */
+  checkout_url?: string | null
+  reused?: boolean
+}
+
+export async function payTrialNow(): Promise<TrialPayNowResult> {
+  return request<TrialPayNowResult>('/api/v1/billing/trial/pay-now', {
     method: 'POST',
   })
 }
@@ -2453,21 +2906,6 @@ export async function pauseSubscription(
 /** POST /api/v1/billing/resume — clear pause_collection and restart billing now. */
 export async function resumeSubscription(): Promise<{ message: string }> {
   return request('/api/v1/billing/resume', { method: 'POST' })
-}
-
-/** GET /api/v1/billing/winback-eligible — is the user eligible for the one-time win-back offer? */
-export async function getWinbackEligible(): Promise<{ eligible: boolean }> {
-  return request<{ eligible: boolean }>('/api/v1/billing/winback-eligible')
-}
-
-export interface WinbackClaimResponse {
-  discount_pct: number
-  months: number
-}
-
-/** POST /api/v1/billing/winback-claim — apply the 50%-off-3-months coupon. 409 if already claimed. */
-export async function claimWinback(): Promise<WinbackClaimResponse> {
-  return request<WinbackClaimResponse>('/api/v1/billing/winback-claim', { method: 'POST' })
 }
 
 export async function switchBillingCycle(
@@ -2526,37 +2964,49 @@ export interface StorageAddonState {
   pending?: boolean
 }
 
+/**
+ * Task 1706 — shared normalization for GET/POST /billing/addons payloads.
+ *
+ * `effective_storage_bytes` is the server's bonus-inclusive truth
+ * (`get_user_quota` — catalog base + add-on TB + admin bonus). When the field
+ * is present it is used as-is; when it is absent we return 0 and let callers
+ * fall back to their own server-truth sources. The old tb×1e12 synthesis
+ * (total/base+extra → bytes) is DELIBERATELY GONE: it multiplied the stale
+ * pre-pricing-v2 whole-TB literals (basic advertised as 1 TB) into a fake
+ * quota. Add-on quantities/prices stay authoritative from the same payload;
+ * only the byte total must come from the server.
+ */
+export function normalizeStorageAddonState(
+  raw: Record<string, unknown>,
+  fallbackExtraTB = 0,
+): StorageAddonState {
+  const baseTB = typeof raw.base_storage_tb === 'number' ? raw.base_storage_tb : 0
+  const extraTB = typeof raw.extra_storage_tb === 'number' ? raw.extra_storage_tb : fallbackExtraTB
+  const maxTB = typeof raw.max_storage_tb === 'number' ? raw.max_storage_tb : baseTB + extraTB
+
+  const rawEffective = raw.effective_storage_bytes
+  const effectiveBytes =
+    typeof rawEffective === 'number' && Number.isFinite(rawEffective) && rawEffective >= 0
+      ? rawEffective
+      : 0
+
+  return {
+    plan: typeof raw.plan === 'string' ? raw.plan : 'free',
+    extra_storage_tb: extraTB,
+    max_storage_tb: maxTB,
+    storage_addon_price_cents: typeof raw.storage_addon_price_cents === 'number' ? raw.storage_addon_price_cents : null,
+    base_storage_tb: baseTB,
+    effective_storage_bytes: effectiveBytes,
+    // SEPA deferred-apply marker (task 0941) — pass-through, task 1706 keeps it.
+    pending: raw.pending === true,
+  }
+}
+
 /** GET /api/v1/billing/addons — current add-on state */
 export async function getStorageAddons(): Promise<StorageAddonState | null> {
   try {
     const raw = await request<Record<string, unknown>>('/api/v1/billing/addons')
-
-    // Normalize: the API may return total_storage_tb instead of effective_storage_bytes,
-    // and some fields may be null. Compute missing values defensively.
-    const baseTB = typeof raw.base_storage_tb === 'number' ? raw.base_storage_tb : 0
-    const extraTB = typeof raw.extra_storage_tb === 'number' ? raw.extra_storage_tb : 0
-    const totalTB = typeof raw.total_storage_tb === 'number' ? raw.total_storage_tb : null
-    const maxTB = typeof raw.max_storage_tb === 'number' ? raw.max_storage_tb : baseTB + extraTB
-
-    // effective_storage_bytes: prefer the explicit field if present and valid,
-    // then fall back to total_storage_tb, then compute from base + extra.
-    let effectiveBytes: number
-    if (typeof raw.effective_storage_bytes === 'number' && raw.effective_storage_bytes > 0) {
-      effectiveBytes = raw.effective_storage_bytes
-    } else if (totalTB != null && totalTB > 0) {
-      effectiveBytes = totalTB * 1_000_000_000_000
-    } else {
-      effectiveBytes = (baseTB + extraTB) * 1_000_000_000_000
-    }
-
-    return {
-      plan: typeof raw.plan === 'string' ? raw.plan : 'free',
-      extra_storage_tb: extraTB,
-      max_storage_tb: maxTB,
-      storage_addon_price_cents: typeof raw.storage_addon_price_cents === 'number' ? raw.storage_addon_price_cents : null,
-      base_storage_tb: baseTB,
-      effective_storage_bytes: effectiveBytes,
-    }
+    return normalizeStorageAddonState(raw)
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) return null
     throw err
@@ -2595,30 +3045,10 @@ export async function updateStorageAddons(params: {
     body: JSON.stringify(params),
   })
 
-  // Normalize the same way as getStorageAddons
-  const baseTB = typeof raw.base_storage_tb === 'number' ? raw.base_storage_tb : 0
-  const extraTB = typeof raw.extra_storage_tb === 'number' ? raw.extra_storage_tb : params.extra_storage_tb
-  const totalTB = typeof raw.total_storage_tb === 'number' ? raw.total_storage_tb : null
-  const maxTB = typeof raw.max_storage_tb === 'number' ? raw.max_storage_tb : baseTB + extraTB
-
-  let effectiveBytes: number
-  if (typeof raw.effective_storage_bytes === 'number' && raw.effective_storage_bytes > 0) {
-    effectiveBytes = raw.effective_storage_bytes
-  } else if (totalTB != null && totalTB > 0) {
-    effectiveBytes = totalTB * 1_000_000_000_000
-  } else {
-    effectiveBytes = (baseTB + extraTB) * 1_000_000_000_000
-  }
-
-  return {
-    plan: typeof raw.plan === 'string' ? raw.plan : 'free',
-    extra_storage_tb: extraTB,
-    max_storage_tb: maxTB,
-    storage_addon_price_cents: typeof raw.storage_addon_price_cents === 'number' ? raw.storage_addon_price_cents : null,
-    base_storage_tb: baseTB,
-    effective_storage_bytes: effectiveBytes,
-    pending: raw.pending === true,
-  }
+  // Task 1706: same normalization as getStorageAddons — explicit
+  // effective_storage_bytes when the server sends it, never a tb×1e12
+  // synthesis. (The apply response carries the field server-side.)
+  return normalizeStorageAddonState(raw, params.extra_storage_tb)
 }
 
 /**
@@ -2695,10 +3125,25 @@ export async function listTokens(): Promise<PersonalAccessToken[]> {
   }
 }
 
-/** Create a new personal access token. */
-export async function createToken(params: CreateTokenParams): Promise<CreateTokenResponse> {
+/**
+ * Create a new personal access token.
+ *
+ * Task 1536 (server PR #98): `POST /api/v1/tokens` now requires a fresh
+ * `X-Confirm-Token` for SESSION-authenticated callers — this app always
+ * authenticates via session (never a bare PAT), so a caller must obtain one
+ * via the existing step-up flow (`confirmAction`/`confirmPasskey` above, or
+ * the `<StepUpAuth>` component) and pass it here. `confirmToken` stays
+ * optional: omitting it sends no header at all, which the CURRENT (pre-#98)
+ * server simply ignores — harmless, not a silent bypass of anything #98 has
+ * not shipped yet.
+ */
+export async function createToken(
+  params: CreateTokenParams,
+  confirmToken?: string,
+): Promise<CreateTokenResponse> {
   return request<CreateTokenResponse>('/api/v1/tokens', {
     method: 'POST',
+    headers: confirmToken ? { 'X-Confirm-Token': confirmToken } : undefined,
     body: JSON.stringify(params),
   })
 }
@@ -2781,10 +3226,13 @@ export async function getFolderKeys(
 export async function addFolderKeys(
   inviteId: string,
   keys: { file_id: string; encrypted_file_key: string }[],
+  folderKeyId: string,
+  /** Contract 2237 §1: `l7` exactly when `keys` are L7 wraps; absent for legacy. */
+  format?: 'l7',
 ): Promise<void> {
   await request(`/api/v1/shares/invites/${inviteId}/folder-keys`, {
     method: 'POST',
-    body: JSON.stringify({ keys }),
+    body: JSON.stringify(format ? { keys, folder_key_id: folderKeyId, format } : { keys, folder_key_id: folderKeyId }),
   })
 }
 
@@ -3171,20 +3619,35 @@ export async function getInvitePreview(
   // Public endpoint — no auth header needed
   const res = await fetch(`${API_URL}/api/v1/workspaces/invite-preview/${token}`)
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(res)
     throw new ApiError(
-      (body.message ?? body.error ?? res.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       res.status,
     )
   }
   return res.json() as Promise<InvitePreview>
 }
 
-export async function listVersions(fileId: string): Promise<{
+/**
+ * One row of the version list. `is_current` / `deletable` / `source` are the
+ * server's task-1809 flags (absent on an older server; the UI falls back to
+ * "not the current version", see `canDeleteVersion`).
+ */
+export interface VersionListItem extends FileVersion {
+  is_current?: boolean
+  deletable?: boolean
+  source?: 'object_version' | 'file_version'
+}
+
+export interface VersionList {
   file_id: string
   current_version: number
-  versions: FileVersion[]
-}> {
+  /** True while the account has no plan: only then do kept versions count against its storage. */
+  versions_count_toward_quota?: boolean
+  versions: VersionListItem[]
+}
+
+export async function listVersions(fileId: string): Promise<VersionList> {
   return request(`/api/v1/files/${fileId}/versions`)
 }
 
@@ -3206,8 +3669,15 @@ export async function restoreVersion(fileId: string, versionId: string): Promise
   return request(`/api/v1/files/${fileId}/versions/${versionId}/restore`, { method: 'POST' })
 }
 
-export async function deleteVersion(fileId: string, versionId: string): Promise<void> {
-  await request(`/api/v1/files/${fileId}/versions/${versionId}`, { method: 'DELETE' })
+/**
+ * Delete one kept version (task 1809). 404 = not yours / already gone, 409
+ * `cannot_delete_current_version` = the file's current content (trash the file).
+ */
+export async function deleteVersion(
+  fileId: string,
+  versionId: string,
+): Promise<{ version_number: number; size_bytes: number; source: 'object_version' | 'file_version' }> {
+  return request(`/api/v1/files/${fileId}/versions/${versionId}`, { method: 'DELETE' })
 }
 
 export async function getVersionSettings(): Promise<{ settings: VersionSetting[] }> {
@@ -3260,13 +3730,6 @@ export async function revokeSession(id: string): Promise<void> {
   await request(`/api/v1/auth/sessions/${id}`, { method: 'DELETE' })
 }
 
-export async function adminImpersonate(userId: string): Promise<ImpersonateResponse> {
-  const data = await request<ImpersonateResponse>(`/api/v1/admin/impersonate/${userId}`, {
-    method: 'POST',
-  })
-  return data
-}
-
 /**
  * Token-based impersonation redemption (task 0161). Public endpoint — the
  * single-use 15-minute token in the body is itself the credential. On success
@@ -3294,15 +3757,6 @@ export async function redeemImpersonationToken(
     setToken(data.session_token)
   }
   return data
-}
-
-/**
- * Used by drive-layout to gate the sidebar Admin link. The actual
- * admin portal lives at admin.beebeeb.io — this just answers the
- * question "is the current user allowed to see the link at all".
- */
-export async function getAdminStats(): Promise<AdminStats> {
-  return request<AdminStats>('/api/v1/admin/stats')
 }
 
 /**
@@ -3405,38 +3859,14 @@ export async function reportShareLink(
   })
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
+    const { body, fallbackMessage } = await readErrorResponse(res)
     throw new ApiError(
-      (body.message ?? body.error ?? res.statusText) as string,
+      (body.message ?? body.error ?? fallbackMessage) as string,
       res.status,
     )
   }
 
   return res.json() as Promise<{ id: string }>
-}
-
-export async function listAbuseReports(params?: {
-  status?: AbuseReportStatus
-  limit?: number
-}): Promise<AbuseReport[]> {
-  const qs = new URLSearchParams()
-  if (params?.status) qs.set('status', params.status)
-  if (params?.limit != null) qs.set('limit', String(params.limit))
-  const q = qs.toString()
-  const data = await request<{ reports: AbuseReport[]; count: number }>(
-    `/api/v1/admin/reports${q ? `?${q}` : ''}`,
-  )
-  return data.reports
-}
-
-export async function updateAbuseReport(
-  id: string,
-  updates: { status: AbuseReportStatus; admin_notes?: string },
-): Promise<{ id: string; status: AbuseReportStatus; resolved_at: string | null; message: string }> {
-  return request(`/api/v1/admin/reports/${id}`, {
-    method: 'PATCH',
-    body: JSON.stringify(updates),
-  })
 }
 
 /**
@@ -3695,18 +4125,35 @@ export async function unfreezeAccount(): Promise<{ frozen: boolean }> {
   return request<{ frozen: boolean }>('/api/v1/me/unfreeze', { method: 'POST' })
 }
 
-/** GET /api/v1/me/region — current user's preferred region + available list */
-export async function getUserRegion(): Promise<UserRegionResponse> {
-  return request<UserRegionResponse>('/api/v1/me/region')
+/**
+ * GET /api/v1/me/region — the stored preference plus the server's list of
+ * choices (task 1919). `choices` is the same array as the public
+ * `GET /api/v1/storage-regions`; it is absent on a server older than 1919, so
+ * it is typed `unknown` and validated by `parseChoices()`.
+ */
+export type UserRegionData = UserRegionResponse & { choices?: unknown }
+
+export async function getUserRegion(): Promise<UserRegionData> {
+  return request<UserRegionData>('/api/v1/me/region')
 }
 
-/** PUT /api/v1/me/region — set preferred region.
- * Server (regions.rs `SetRegionBody`) deserializes ONLY `preferred_region`;
- * sending `{continent}` silently dropped the value and cleared the preference. */
-export async function setUserRegion(continent: string): Promise<{ preferred_region: string | null }> {
-  return request<{ preferred_region: string | null }>('/api/v1/me/region', {
+/** PUT /api/v1/me/region — set where new uploads go.
+ * Send the `id` of a choice from the list verbatim (the default row's id, or a
+ * live country's id), or `null` to clear the preference. The server answers
+ * 400 `region_unavailable` for anything it does not offer as live (coming soon,
+ * unknown), and the stored value stays unchanged. PUT replaces the whole
+ * choice: an omitted `region_strict` means false, and strict needs a country
+ * (400 `region_strict_requires_datacenter` otherwise; the code predates 2050).
+ * Server (regions.rs `SetRegionBody`) deserializes ONLY `preferred_region` and
+ * `region_strict`; sending `{continent}` silently dropped the value and cleared
+ * the preference. */
+export async function setUserRegion(
+  id: string | null,
+  strict = false,
+): Promise<{ preferred_region: string | null; region_strict?: boolean }> {
+  return request<{ preferred_region: string | null; region_strict?: boolean }>('/api/v1/me/region', {
     method: 'PUT',
-    body: JSON.stringify({ preferred_region: continent }),
+    body: JSON.stringify({ preferred_region: id, region_strict: strict }),
   })
 }
 
@@ -3907,10 +4354,15 @@ export async function uploadToFileRequest(
   token: string,
   formData: FormData,
 ): Promise<{ file_id: string; files_received: number; total_bytes_received: number; message: string }> {
-  const res = await fetch(`${getApiUrl()}/api/v1/r/${encodeURIComponent(token)}/upload`, {
-    method: 'POST',
-    body: formData,
-  })
+  // Task 1870: a `429 server_busy` is retried after Retry-After; the per-link
+  // `upload_rate_limited` 429 is not (see server-busy-retry.ts). The FormData
+  // is a reusable body, so the same instance is re-sent.
+  const res = await withServerBusyRetry(() =>
+    fetch(`${getApiUrl()}/api/v1/r/${encodeURIComponent(token)}/upload`, {
+      method: 'POST',
+      body: formData,
+    }),
+  )
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: 'Upload failed' })) as Record<string, unknown>
     throw new ApiError(
@@ -4042,4 +4494,163 @@ export async function replyToSupportTicket(
     method: 'POST',
     body: JSON.stringify({ body }),
   })
+}
+
+// ─── Shared-folder links (task 2237b) ───────────────────────────────────────
+// Thin wrappers only: every decision (key custody, passphrase, copy) lives in
+// the link modules, not here.
+
+/** Owner: every live link on a folder they own. */
+export async function listFolderLinks(folderId: string): Promise<FolderLink[]> {
+  const body = await request<{ links: FolderLink[] }>(
+    `/api/v1/shares/folder-links?folder_id=${encodeURIComponent(folderId)}`,
+  )
+  return body.links
+}
+
+export async function createFolderLink(req: CreateFolderLinkRequest): Promise<FolderLinkCreated> {
+  return request<FolderLinkCreated>('/api/v1/shares/folder-links', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  })
+}
+
+export async function updateFolderLink(
+  id: string,
+  patch: UpdateFolderLinkRequest,
+): Promise<FolderLink> {
+  return request<FolderLink>(`/api/v1/shares/folder-links/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+}
+
+export async function revokeFolderLink(id: string): Promise<void> {
+  await request<unknown>(`/api/v1/shares/folder-links/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+}
+
+export interface SharedFolderInfo {
+  folder_id: string
+  role: 'owner' | 'member'
+  access_level: FolderAccessLevel
+  key_version: number
+  owner_wrapped_folder_key: string | null
+  wrapped_folder_key: string | null
+}
+
+/** Owner or member: custody of the shared folder's key. */
+export async function getSharedFolder(folderId: string): Promise<SharedFolderInfo> {
+  return request<SharedFolderInfo>(`/api/v1/shared-folders/${encodeURIComponent(folderId)}`)
+}
+
+/** Owner: publish the folder key wrapped to the master key. */
+export async function registerSharedFolderKey(
+  folderId: string,
+  body: { owner_wrapped_folder_key: string; key_version: number },
+): Promise<{ created: boolean; key_version: number }> {
+  return request(`/api/v1/shared-folders/${encodeURIComponent(folderId)}/key`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+}
+
+/** One legacy (unbound) child row of a folder that has no custody record yet. */
+export interface LegacyFolderKeyRow {
+  file_id: string
+  /** base64 of the legacy child wrap (empty AAD). */
+  encrypted_file_key: string
+  /** The row's L7 kind once it is re-sealed. */
+  is_folder: boolean
+}
+
+/**
+ * Owner, only while the folder has no custody record (task 2237b L7b (a)):
+ * every legacy child row of the folder, trashed and moved-out children
+ * included. 409 `custody_exists` once custody exists; 413 over the one-call cap.
+ */
+export async function listLegacyFolderKeys(folderId: string): Promise<LegacyFolderKeyRow[]> {
+  const body = await request<{ keys: LegacyFolderKeyRow[] }>(
+    `/api/v1/shared-folders/${encodeURIComponent(folderId)}/legacy-keys`,
+  )
+  return body.keys
+}
+
+/**
+ * Owner: the custody upgrade of a folder whose legacy rows predate custody
+ * (L7b (a), contract 2237 §2): the custody record AND every legacy row,
+ * re-sealed as L7, in one atomic call. It always says `format: "l7"` (§1) and
+ * always carries `rewrap`, even empty: an upgrade is never a plain registration.
+ *
+ * THE ONE PLACE to change if server #353 settles a different route or body.
+ * Coded against #353 (feat/2237b-a-custody-upgrade) and the contract as of
+ * 2026-10-28: `PUT .../key` with `rewrap: { keys }`; 409 `rewrap_incomplete`
+ * (the rows changed), 409 `custody_exists` (upgraded elsewhere), 413 (too many).
+ */
+export async function upgradeSharedFolderCustody(
+  folderId: string,
+  upgrade: { ownerWrappedFolderKey: string; keys: { file_id: string; encrypted_file_key: string }[] },
+): Promise<{ created: boolean; key_version: number; rewrapped?: number }> {
+  return request(`/api/v1/shared-folders/${encodeURIComponent(folderId)}/key`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      owner_wrapped_folder_key: upgrade.ownerWrappedFolderKey,
+      key_version: 1,
+      format: 'l7',
+      rewrap: { keys: upgrade.keys },
+    }),
+  })
+}
+
+/** Owner or member: the wrapped key of every file in the shared subtree. */
+export async function listSharedFolderKeys(
+  folderId: string,
+  opts: { limit?: number; cursor?: string | null } = {},
+): Promise<{ keys: { file_id: string; encrypted_file_key: string }[]; next_cursor: string | null }> {
+  const params = new URLSearchParams()
+  if (opts.limit !== undefined) params.set('limit', String(opts.limit))
+  if (opts.cursor) params.set('cursor', opts.cursor)
+  const query = params.toString()
+  return request(
+    `/api/v1/shared-folders/${encodeURIComponent(folderId)}/keys${query ? `?${query}` : ''}`,
+  )
+}
+
+/**
+ * Owner-only insert of per-file wraps; existing rows remain unchanged. The
+ * route serves custody folders only, so its wraps are always L7 and say so
+ * (contract 2237 §1).
+ */
+export async function publishSharedFolderKeys(
+  folderId: string,
+  keys: { file_id: string; encrypted_file_key: string }[],
+): Promise<{ written: number; skipped: number }> {
+  return request(`/api/v1/shared-folders/${encodeURIComponent(folderId)}/keys`, {
+    method: 'POST', body: JSON.stringify({ keys, format: 'l7' }),
+  })
+}
+
+/** Owner: adopt a file a guest added, by wrapping its key to the master key. */
+export async function adoptOwnerFileKey(
+  fileId: string,
+  ownerWrappedFileKey: string,
+): Promise<{ adopted: boolean }> {
+  return request(`/api/v1/files/${encodeURIComponent(fileId)}/owner-key`, {
+    method: 'POST',
+    body: JSON.stringify({ owner_wrapped_file_key: ownerWrappedFileKey }),
+  })
+}
+
+export async function getSharedFolderActivity(
+  folderId: string,
+  limit?: number,
+): Promise<SharedFolderActivityResponse> {
+  const query = limit === undefined ? '' : `?limit=${limit}`
+  return request(`/api/v1/shared-folders/${encodeURIComponent(folderId)}/activity${query}`)
+}
+
+/** Runtime feature flags for this session (cached by useFeatureFlag). */
+export async function getEvaluateFlags(): Promise<{ flags: Record<string, boolean> }> {
+  return request('/api/v1/feature-flags/evaluate')
 }

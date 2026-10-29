@@ -53,8 +53,9 @@ export interface CheckoutPreState {
 }
 
 export interface PendingCheckout {
-  // 'plan' = plan upgrade / cycle switch / trial convert; 'storage' = add-on.
-  kind: 'plan' | 'storage'
+  // 'plan' = plan upgrade / cycle switch / trial convert; 'storage' = add-on;
+  // 'trial' = a trial-with-mandate checkout from /choose-plan (task 1037).
+  kind: 'plan' | 'storage' | 'trial'
   // What was bought. For storage, `cycle` mirrors the current cycle (unused by
   // the storage reconcile path, which keys off the storage delta).
   plan: string
@@ -79,7 +80,7 @@ export function makePreState(sub: Subscription | null | undefined): CheckoutPreS
 }
 
 export function setPendingCheckout(
-  kind: 'plan' | 'storage',
+  kind: PendingCheckout['kind'],
   plan: string,
   cycle: string,
   pre: CheckoutPreState,
@@ -134,9 +135,18 @@ export function persistTrialConvertIntent(
  * there is wired through it.
  */
 export function resolveResumeAction(
-  pending: Pick<PendingCheckout, 'plan' | 'cycle'>,
+  pending: Pick<PendingCheckout, 'plan' | 'cycle'> & { kind?: PendingCheckout['kind'] },
   currentPlan: string,
-): { kind: 'checkout'; plan: string; cycle: string } | { kind: 'switch-cycle'; cycle: 'monthly' | 'yearly' } {
+):
+  | { kind: 'checkout'; plan: string; cycle: string }
+  | { kind: 'switch-cycle'; cycle: 'monthly' | 'yearly' }
+  | { kind: 'trial'; plan: string; cycle: 'monthly' | 'yearly' } {
+  // Task 1037 — an abandoned TRIAL checkout (mandate capture on /choose-plan)
+  // resumes on the chooser. Recreating a PAID checkout for it would charge the
+  // full price today for what the user started as a free trial.
+  if (pending.kind === 'trial') {
+    return { kind: 'trial', plan: pending.plan, cycle: pending.cycle === 'yearly' ? 'yearly' : 'monthly' }
+  }
   if (pending.plan !== currentPlan) {
     return { kind: 'checkout', plan: pending.plan, cycle: pending.cycle }
   }
@@ -160,7 +170,7 @@ export function getPendingCheckout(): PendingCheckout | null {
     // a plan checkout with an empty pre-state — the reconcile then falls back to
     // the target-match / any-change heuristics rather than a delta compare.
     return {
-      kind: data.kind === 'storage' ? 'storage' : 'plan',
+      kind: data.kind === 'storage' || data.kind === 'trial' ? data.kind : 'plan',
       plan: data.plan ?? 'free',
       cycle: data.cycle ?? 'monthly',
       pre: data.pre ?? makePreState(null),

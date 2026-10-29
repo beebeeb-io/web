@@ -11,7 +11,9 @@ import { RenameDialog } from '../components/rename-dialog'
 import { useFilePreview } from '../hooks/use-file-preview'
 import { useToast } from '../components/toast'
 import { useKeys } from '../lib/key-context'
-import { encryptFilename, serializeEncryptedBlob } from '../lib/crypto'
+import { encryptFilename, readFileMetadata, serializeEncryptedBlob } from '../lib/crypto'
+import { renameKeyFor } from '../lib/owner-rename'
+import { moveOwnerItems } from '../lib/owner-upload-key'
 import { encryptedDownload } from '../lib/encrypted-download'
 import {
   listFiles,
@@ -22,6 +24,7 @@ import {
   type DriveFile,
 } from '../lib/api'
 import { useWsEvent } from '../lib/ws-context'
+import { useSync } from '../lib/sync-context'
 import { useSelfHealRefetch } from '../hooks/use-self-heal-refetch'
 import { userFriendlyError } from '../lib/user-friendly-error'
 import { EmptyRecent } from '../components/empty-states/empty-recent'
@@ -30,8 +33,9 @@ import { mergeRecentlyChangedFiles } from '../lib/recent-files'
 const RECENT_LIMIT = 50
 
 export function Recent() {
-  const { getFileKey, getFileKeyForFile, isUnlocked, cryptoReady } = useKeys()
+  const { getFileKey, getFileKeyForFile, getMasterKey, isUnlocked, cryptoReady } = useKeys()
   const { showToast } = useToast()
+  const { setNodeStarred } = useSync()
   const navigate = useNavigate()
   const { previewFile, openPreview, closePreview } = useFilePreview()
 
@@ -93,7 +97,8 @@ export function Recent() {
   async function handleMoveConfirm(destinationId: string | null) {
     if (!moveFileId) return
     try {
-      await updateFile(moveFileId, { parent_id: destinationId })
+      // rv-web198c P2-5: a move into a shared folder publishes its wraps.
+      await moveOwnerItems({ ids: [moveFileId], destinationId, rows: files, masterKey: isUnlocked ? getMasterKey() : undefined, viewerId: null })
       showToast({ icon: 'folder', title: 'File moved', description: 'Moved successfully.' })
       fetchFiles()
     } catch (err) {
@@ -106,7 +111,8 @@ export function Recent() {
   async function handleRenameConfirm(newName: string) {
     if (!renameFileId || !isUnlocked || !cryptoReady) return
     try {
-      const fileKey = await getFileKey(renameFileId)
+      // rv-web198c P2-4: a guest's or member's row is renamed under ITS key.
+      const fileKey = await renameKeyFor({ fileId: renameFileId, file: files.find((f) => f.id === renameFileId), viewerId: null, getFileKey, getFileKeyForFile, readName: readFileMetadata })
       const enc = await encryptFilename(fileKey, newName)
       await updateFile(renameFileId, { name_encrypted: serializeEncryptedBlob(enc.nonce, enc.ciphertext) })
       showToast({ icon: 'check', title: 'Renamed', description: `Renamed to "${newName}".` })
@@ -153,6 +159,7 @@ export function Recent() {
       case 'star':
         try {
           const result = await toggleStar(file.id)
+          setNodeStarred(file.id, result.is_starred) // keep the sync tree in step (task 1577)
           setFiles((prev) => prev.map((f) => f.id === file.id ? { ...f, is_starred: result.is_starred } : f))
         } catch (err) {
           showToast({ icon: 'star', title: 'Failed to update star', description: userFriendlyError(err), danger: true })
@@ -211,6 +218,7 @@ export function Recent() {
       location: file.is_trashed ? 'Trash' : 'Recent',
       cipher: isUnlocked ? 'AES-256-GCM' : undefined,
       keyId: isUnlocked ? file.id : undefined,
+      nameEncrypted: file.name_encrypted,
       noteEncrypted: file.note_encrypted ?? null,
     }
   }

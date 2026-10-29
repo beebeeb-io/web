@@ -8,22 +8,38 @@
 // listFiles, …). Those stay in each app's local `api.ts` and are layered on
 // top of `request()`.
 
-export { setApiUrl, getApiUrl, setClientInfo, getClientInfo, provenanceHeaders } from './config'
+export {
+  setApiUrl,
+  getApiUrl,
+  setClientInfo,
+  getClientInfo,
+  provenanceHeaders,
+  setExpectedUserProvider,
+  expectedUserHeaders,
+} from './config'
 export {
   setTokenStorageKey,
   registerOnTokenCleared,
   getToken,
   setToken,
   clearToken,
+  clearLegacyBearer,
 } from './token'
 export {
   registerErrorNotifier,
   registerSessionExpiredHandler,
   registerAccountDeletedHandler,
+  registerAccountSuspendedHandler,
   registerConnectionStatusHandler,
+  registerAccountMismatchHandler,
   markSessionConfirmed,
   clearSessionConfirmed,
+  getAuthStamp,
+  bumpAuthGeneration,
+  setAuthIdentity,
+  isCurrentAuthStamp,
 } from './notifiers'
+export type { AuthStamp } from './notifiers'
 export { request, resolveSessionToken } from './request'
 export type { ResolveSessionTokenDeps } from './request'
 export {
@@ -31,5 +47,6 @@ export {
   IncorrectPasswordError,
   SessionTooOldForConfirmationError,
   parseErrorBody,
+  readErrorResponse,
 } from './errors'
 export * from '../types'

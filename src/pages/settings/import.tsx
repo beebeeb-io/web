@@ -31,7 +31,8 @@ import {
   type GDriveImportItem,
 } from '../../lib/google-import'
 import { encryptedUpload } from '../../lib/encrypted-upload'
-import { createFolder, googleTokenRefresh } from '../../lib/api'
+import { googleTokenRefresh } from '../../lib/api'
+import { createOwnerFolder } from '../../lib/owner-upload-key'
 import { deriveFileKey, encryptFilename, serializeEncryptedBlob } from '../../lib/crypto'
 import {
   GD_TOKEN_KEY,
@@ -958,7 +959,8 @@ export function SettingsImport() {
     const nameEncrypted = serializeEncryptedBlob(encName.nonce, encName.ciphertext)
 
     try {
-      const folder = await createFolder(nameEncrypted, parentId, folderId)
+      // Inside a shared folder its name-key wrap is published too.
+      const folder = await createOwnerFolder({ nameEncrypted, parentId, folderId, nameKey: folderKey, masterKey })
       folderCacheRef.current.set(folderPath, folder.id)
       return folder.id
     } catch {

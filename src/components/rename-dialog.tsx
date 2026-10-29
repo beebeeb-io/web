@@ -8,9 +8,15 @@ interface RenameDialogProps {
   onClose: () => void
   currentName: string
   onRename: (newName: string) => void
+  /** Lowercase decrypted names of sibling files already in this folder
+   *  (excluding the file being renamed). Task 1544 finding 3: renaming into
+   *  one of these would create a same-name duplicate that a later re-upload
+   *  could silently auto-version onto the wrong file — so it's blocked here
+   *  with an explicit message instead. */
+  existingNames?: Set<string>
 }
 
-export function RenameDialog({ open, onClose, currentName, onRename }: RenameDialogProps) {
+export function RenameDialog({ open, onClose, currentName, onRename, existingNames }: RenameDialogProps) {
   const [name, setName] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
   const focusTrapRef = useFocusTrap<HTMLFormElement>(open)
@@ -32,10 +38,13 @@ export function RenameDialog({ open, onClose, currentName, onRename }: RenameDia
 
   if (!open) return null
 
+  const trimmed = name.trim()
+  const isDuplicate =
+    trimmed !== '' && trimmed !== currentName && (existingNames?.has(trimmed.toLowerCase()) ?? false)
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    const trimmed = name.trim()
-    if (!trimmed || trimmed === currentName) return
+    if (!trimmed || trimmed === currentName || isDuplicate) return
     onRename(trimmed)
     onClose()
   }
@@ -67,15 +76,27 @@ export function RenameDialog({ open, onClose, currentName, onRename }: RenameDia
           <label className="block text-xs font-medium text-ink-2 mb-1.5">
             New name
           </label>
-          <div className="flex items-center gap-2 border rounded-md bg-paper px-3 py-2 border-line focus-within:ring-2 focus-within:ring-amber/30 focus-within:border-amber-deep">
+          <div
+            className={`flex items-center gap-2 border rounded-md bg-paper px-3 py-2 focus-within:ring-2 ${
+              isDuplicate
+                ? 'border-red focus-within:ring-red/30 focus-within:border-red'
+                : 'border-line focus-within:ring-amber/30 focus-within:border-amber-deep'
+            }`}
+          >
             <input
               ref={inputRef}
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Enter new name"
+              aria-invalid={isDuplicate}
               className="flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-4"
             />
           </div>
+          {isDuplicate && (
+            <p className="mt-1.5 text-xs text-red">
+              A file named &quot;{trimmed}&quot; already exists here.
+            </p>
+          )}
         </div>
 
         <div className="px-xl py-md border-t border-line flex justify-end gap-2">
@@ -86,7 +107,7 @@ export function RenameDialog({ open, onClose, currentName, onRename }: RenameDia
             type="submit"
             variant="amber"
             size="sm"
-            disabled={!name.trim() || name.trim() === currentName}
+            disabled={!trimmed || trimmed === currentName || isDuplicate}
           >
             Rename
           </BBButton>

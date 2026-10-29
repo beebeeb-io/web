@@ -4,6 +4,7 @@ import { DriveLayout } from '../components/drive-layout'
 import { Icon } from '@beebeeb/shared'
 import { useKeys } from '../lib/key-context'
 import { useToast } from '../components/toast'
+import { usePlanBlock } from '../hooks/use-plan-block'
 import { encryptedUpload } from '../lib/encrypted-upload'
 
 // ─── PDF generation (no external deps) ──────────────────────────────────────
@@ -193,6 +194,8 @@ export function ScanPage() {
   const navigate = useNavigate()
   const { getFileKey, getMasterKey, isUnlocked, cryptoReady } = useKeys()
   const { showToast } = useToast()
+  // Task 1037 — needs_plan / lapsed accounts cannot save scans (quota 0).
+  const { blockUpload, handlePlanError } = usePlanBlock()
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -294,6 +297,7 @@ export function ScanPage() {
 
   const handleSaveToVault = useCallback(async () => {
     if (pages.length === 0 || !isUnlocked || !cryptoReady) return
+    if (blockUpload()) return
 
     setStep('saving')
     setSaveProgress(5)
@@ -330,12 +334,17 @@ export function ScanPage() {
       // Navigate to drive after brief pause
       setTimeout(() => navigate('/'), 1200)
     } catch (err) {
+      if (handlePlanError(err)) {
+        setStep('review')
+        setSaveProgress(0)
+        return
+      }
       const msg = err instanceof Error ? err.message : 'Upload failed'
       showToast({ icon: 'x', title: `Could not save scan: ${msg}`, danger: true })
       setStep('review')
       setSaveProgress(0)
     }
-  }, [pages, isUnlocked, cryptoReady, getFileKey, getMasterKey, stopCamera, showToast, navigate])
+  }, [pages, isUnlocked, cryptoReady, getFileKey, getMasterKey, stopCamera, showToast, navigate, blockUpload, handlePlanError])
 
   // ── Render ────────────────────────────────────────────────────────────────
 

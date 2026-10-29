@@ -9,9 +9,12 @@ import { listAllFiles, restoreFile, bulkPermanentDelete, confirmAction, ApiError
 import { useToast } from '../components/toast'
 import { useKeys } from '../lib/key-context'
 import { TrashRowSkeleton } from '@beebeeb/shared'
-import { decryptFilename, parseEncryptedBlob } from '../lib/crypto'
+import { readNameMetadata } from '../lib/crypto'
 import { useWsEvent } from '../lib/ws-context'
 import { EmptyTrash } from '../components/empty-states/empty-trash'
+import { RestoreFromEraseOffer } from '../components/restore-from-erase'
+import { restoreToast, splitRestored } from '../lib/trash-restore-summary'
+import { sharedEraseStatus } from '../lib/erase-status-store'
 import { ConfirmPasswordModal } from '../components/confirm-password-modal'
 import { formatBytes } from '../lib/format'
 import { FileDetailsPanel, type FileDetailsMeta } from '../components/file-details-panel'
@@ -145,10 +148,13 @@ export function Trash() {
     fetchTrash()
   }, [fetchTrash])
 
-  // Real-time: refresh trash when files are trashed, restored, or permanently deleted
+  // Real-time: refresh trash when files are trashed, restored, or permanently deleted. Task 1918
+  // round 4d: the erase status (what of the erase is left in the trash) changed too; the restore
+  // offer re-reads it (coalesced) when the shared cache is invalidated.
   useWsEvent(
     ['file.trashed', 'file.restored', 'file.deleted'],
     useCallback(() => {
+      sharedEraseStatus.invalidate()
       fetchTrash()
     }, [fetchTrash]),
   )
@@ -170,17 +176,10 @@ export function Trash() {
         return file.name_encrypted
       }
       const fileKey = await getFileKey(file.id)
-      const { nonce, ciphertext } = parseEncryptedBlob(file.name_encrypted)
-      const plain = await decryptFilename(fileKey, nonce, ciphertext)
-      try {
-        const meta = JSON.parse(plain) as { name?: string }
-        if (meta && typeof meta === 'object' && typeof meta.name === 'string' && meta.name.trim()) {
-          return meta.name.trim()
-        }
-      } catch {
-        // Legacy format — `plain` is the bare filename.
-      }
-      return plain
+      // Core's display reader (task 1943): name subkey first, then the legacy
+      // raw key; a {name, mime_type} plaintext or a bare legacy filename.
+      const { name } = await readNameMetadata(fileKey, file.name_encrypted)
+      return name.trim() || name
     }
 
     async function decryptAll() {
@@ -234,20 +233,42 @@ export function Trash() {
     })
   }
 
+  /**
+   * Task 1918 round 4c: an own action changed the trash (restore, delete forever, empty trash),
+   * so the app's cached erase status (what is left in the trash) is out of date. Called in each
+   * handler's `finally`: whatever happened, the next read goes to the server.
+   */
+  const trashChanged = () => {
+    sharedEraseStatus.invalidate()
+  }
+
   const handleRestore = async (id: string) => {
     setLoading(true)
     try {
-      await restoreFile(id)
+      const result = await restoreFile(id)
       setFiles((prev) => prev.filter((f) => f.id !== id))
       setSelected((prev) => {
         const next = new Set(prev)
         next.delete(id)
         return next
       })
-      showToast({ icon: 'check', title: 'File restored', description: 'Moved back to your vault' })
+      if (result.complete) {
+        showToast({ icon: 'check', title: 'File restored', description: 'Moved back to your vault' })
+      } else {
+        // Task 1918 round 4: a folder too large for one request (202) comes back in batches.
+        showToast({
+          icon: 'check',
+          title: 'Restoring in the background',
+          description:
+            result.remaining != null
+              ? `${result.remaining} more items come back over the next minutes; the trash updates as they do.`
+              : 'The rest comes back over the next minutes; the trash updates as it does.',
+        })
+      }
     } catch (err) {
       showToast({ icon: 'x', title: 'Restore failed', description: err instanceof Error ? err.message : 'Could not restore file', danger: true })
     } finally {
+      trashChanged()
       setLoading(false)
     }
   }
@@ -344,6 +365,7 @@ export function Trash() {
       })
       fetchTrash()
     } finally {
+      trashChanged()
       setDeleteProgress(null)
       setLoading(false)
     }
@@ -352,15 +374,30 @@ export function Trash() {
   /**
    * Restore every id, bounding concurrency to waves of WAVE_SIZE so restoring
    * thousands of trashed rows doesn't fire thousands of parallel requests at
-   * once. Returns the ids that restored successfully; throws on the first wave
-   * that fails (the caller refetches to resync after partial progress).
+   * once. Throws on the first wave that fails (the caller refetches to resync
+   * after partial progress). Task 1918 round 4b: returns which ids came back now
+   * and which are large folders the server restores in the background (202).
    */
-  const restoreInWaves = async (ids: string[]): Promise<void> => {
+  const restoreInWaves = async (ids: string[]): Promise<{ done: string[]; background: string[] }> => {
     const WAVE_SIZE = 20
+    const done: string[] = []
+    const background: string[] = []
     for (let i = 0; i < ids.length; i += WAVE_SIZE) {
       const wave = ids.slice(i, i + WAVE_SIZE)
-      await Promise.all(wave.map((id) => restoreFile(id)))
+      const results = await Promise.all(wave.map((id) => restoreFile(id)))
+      const split = splitRestored(wave, results)
+      done.push(...split.done)
+      background.push(...split.background)
     }
+    return { done, background }
+  }
+
+  /** Rows that came back leave the list; large folders restoring in the background stay. */
+  const applyBulkRestore = (outcome: { done: string[]; background: string[] }) => {
+    const gone = new Set(outcome.done)
+    setFiles((prev) => prev.filter((f) => !gone.has(f.id)))
+    setSelected((prev) => new Set([...prev].filter((id) => !gone.has(id))))
+    showToast({ icon: 'check', ...restoreToast(outcome.done.length, outcome.background.length) })
   }
 
   const handleRestoreSelected = async () => {
@@ -368,14 +405,12 @@ export function Trash() {
     if (ids.length === 0) return
     setLoading(true)
     try {
-      await restoreInWaves(ids)
-      setFiles((prev) => prev.filter((f) => !selected.has(f.id)))
-      setSelected(new Set())
-      showToast({ icon: 'check', title: `${ids.length} file${ids.length !== 1 ? 's' : ''} restored`, description: 'Moved back to your vault' })
+      applyBulkRestore(await restoreInWaves(ids))
     } catch (err) {
       showToast({ icon: 'x', title: 'Restore failed', description: err instanceof Error ? err.message : 'Some files could not be restored', danger: true })
       fetchTrash()
     } finally {
+      trashChanged()
       setLoading(false)
     }
   }
@@ -385,14 +420,12 @@ export function Trash() {
     if (ids.length === 0) return
     setLoading(true)
     try {
-      await restoreInWaves(ids)
-      setFiles([])
-      setSelected(new Set())
-      showToast({ icon: 'check', title: `${ids.length} file${ids.length !== 1 ? 's' : ''} restored`, description: 'Moved back to your vault' })
+      applyBulkRestore(await restoreInWaves(ids))
     } catch (err) {
       showToast({ icon: 'x', title: 'Restore all failed', description: err instanceof Error ? err.message : 'Some files could not be restored', danger: true })
       fetchTrash()
     } finally {
+      trashChanged()
       setLoading(false)
     }
   }
@@ -413,6 +446,7 @@ export function Trash() {
       location: 'Trash',
       cipher: isUnlocked ? 'AES-256-GCM' : undefined,
       keyId: isUnlocked ? file.id : undefined,
+      nameEncrypted: file.name_encrypted,
       noteEncrypted: file.note_encrypted ?? null,
     }
   }
@@ -462,6 +496,10 @@ export function Trash() {
             </BBButton>
           </div>
         </div>
+
+        {/* Task 1918 round 4: "Restore everything from the erase on <date>", while something of
+            the last erase is still in the trash. */}
+        <RestoreFromEraseOffer className="px-5 pt-3" onDone={fetchTrash} />
 
         {/* Table header */}
         <div

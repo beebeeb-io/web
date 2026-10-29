@@ -18,9 +18,12 @@ import {
 import { useAuth, isAuthenticated } from '../lib/auth-context'
 import { useDriveData } from '../lib/drive-data-context'
 import { handleBillingResetTestMode } from '../lib/billing-reset'
+import { isSamePlanActiveError, samePlanConflictMessage, isCurrentPlanCycle } from '../lib/checkout-same-plan'
 import { setPendingCheckout, makePreState } from '../lib/pending-checkout'
 import { PRICING_PAGE_PLANS, MARKETED_PLAN_SLUGS, type PricingPlanDef } from '../lib/plan-constants'
-import { ensureWasm, isWasmReady, planMonthlyCostCents } from '../lib/plan-pricing'
+import { ensureWasm, deriveAddonAwarePriceDisplay } from '../lib/plan-pricing'
+import { choosePlanPath, isTrialPlanSlug } from '../lib/trial-checkout'
+import { resolveAccountState } from '../lib/account-state'
 
 type BillingCycle = 'monthly' | 'yearly'
 
@@ -33,7 +36,7 @@ const fallbackPlans = PRICING_PAGE_PLANS.filter((p) => marketed.has(p.id))
 
 const trustPoints: [string, string, string][] = [
   ['shield', 'All plans E2E encrypted', 'AES-256-GCM · keys never leave your device'],
-  ['cloud', 'EU-only infrastructure', 'Stored in Falkenstein, Germany'],
+  ['cloud', 'EU-only infrastructure', 'Stored in the EU, under EU jurisdiction'],
   ['users', '30-day refund', 'No questions, no retention calls'],
   ['key', 'Open-source client apps', 'Audit the code · GitHub'],
 ]
@@ -57,8 +60,8 @@ const faqItems: FaqItem[] = [
     a: 'Your files stay encrypted and accessible. If you exceed the storage limit of your new plan, you can still download everything — you just cannot upload new files until you are under the limit.',
   },
   {
-    q: 'Where exactly is my data stored?',
-    a: 'Today, all data is stored in Falkenstein, Germany — inside the EU, under GDPR. More EU regions (Helsinki and Ede) are coming soon. Either way, your files are end-to-end encrypted before they leave your device, so we only ever hold encrypted blobs.',
+    q: 'Where is my data stored?',
+    a: 'All data is stored in the EU, under EU jurisdiction and GDPR. More EU locations are coming. Either way, your files are end-to-end encrypted before they leave your device, so we only ever hold encrypted blobs.',
   },
   {
     q: 'Do you support SEPA, cards, and invoicing?',
@@ -129,7 +132,9 @@ export async function startPlanCheckout(
   const result = promoCode
     ? await checkout({ plan: planId, billing_cycle: cycle, promo_code: promoCode })
     : await checkout({ plan: planId, billing_cycle: cycle })
-  if (!('trial' in result)) {
+  if (!('trial' in result) && !result.activated) {
+    // A €0 plan (task 1702) came back already activated — there is no
+    // checkout to abandon, so no pending intent is persisted.
     setPendingCheckout('plan', planId, cycle, makePreState(subscription), result.payment_id)
   }
   return result
@@ -140,12 +145,19 @@ function PlanCard({
   cycle,
   onSelect,
   promoSchedule,
+  isCurrentPlan = false,
 }: {
   plan: PlanDef
   cycle: BillingCycle
   onSelect: (id: string) => void
   /** Ready-to-display promo schedule sentence for this specific plan, if an applied code applies here. */
   promoSchedule?: string
+  /** Task 1707 — the signed-in user's subscription snapshot already IS this
+   * plan on THIS cycle (status='active'): the checkout this CTA would start is
+   * exactly what the server's same-plan guard refuses, so label it honestly
+   * instead of letting the server bounce the click. Flips back to a normal CTA
+   * when the cycle toggle moves off the user's current cycle. */
+  isCurrentPlan?: boolean
 }) {
   const displayPrice =
     cycle === 'yearly' && plan.priceYearly > 0
@@ -240,10 +252,10 @@ function PlanCard({
           variant={plan.ctaVariant}
           size="lg"
           className="w-full justify-center"
-          onClick={() => !plan.comingSoon && onSelect(plan.id)}
-          disabled={plan.comingSoon}
+          onClick={() => !plan.comingSoon && !isCurrentPlan && onSelect(plan.id)}
+          disabled={plan.comingSoon || isCurrentPlan}
         >
-          {plan.cta}
+          {isCurrentPlan ? 'Current plan' : plan.cta}
         </BBButton>
       </div>
     </div>
@@ -346,48 +358,34 @@ export function Pricing() {
       // Keep the static coming-soon card if either the constant or the server
       // marks it coming-soon / not purchasable (Teams stays non-checkout).
       if (!ap || fp.comingSoon || ap.coming_soon || ap.purchasable === false) return fp
-      const monthlyEq = ap.price_yearly_eur > 0 ? ap.price_yearly_eur / 12 : 0
-      const tbCount = Math.round(ap.storage_bytes / 1_000_000_000_000)
-
       // Task 1550: the storage-addon rate is NOT (base plan price ÷ base TB
       // count) — that's the base plan's own unit economics, not what an
       // EXTRA TB costs. It must be the real marginal add-on rate, so it
       // never contradicts the (already-correct) feature bullet three lines
-      // below. Derive it the same way billing.tsx derives its checkout-page
-      // addonPerTbCents fallback: the diff between core's WASM quota engine
-      // (beebeeb-types::quota — the single source of truth for what Mollie
-      // actually bills) at extraTB=1 vs extraTB=0. `/api/v1/billing/plans`
-      // itself carries no per-TB add-on field today (server catalogue gap —
-      // see task 1550's Notes for the recommended companion server task), so
-      // this is the closest available non-page-local source: the same
-      // pricing engine checkout falls back to, not a second literal.
-      // Until WASM is ready (this route isn't behind <WasmGuard>), leave
-      // note/perTb untouched — the static plan-constants.ts default is
-      // already the correct €14.99/TB, a safer fallback than a wrong number.
-      let note = fp.note
-      let perTb = fp.perTb
-      if (tbCount > 0 && isWasmReady()) {
-        const addonCents = planMonthlyCostCents(fp.id, 1) - planMonthlyCostCents(fp.id, 0)
-        if (addonCents > 0) {
-          const perTbMonthly = addonCents / 100
-          const perTbStr = perTbMonthly % 1 === 0 ? perTbMonthly.toFixed(0) : perTbMonthly.toFixed(2)
-          note = `${ap.storage_label} · €${perTbStr}/TB`
-          perTb = `€${perTbStr}/TB`
-        }
-      }
+      // below. `deriveAddonAwarePriceDisplay` derives it the same way
+      // billing.tsx derives its checkout-page addonPerTbCents fallback: the
+      // diff between core's WASM quota engine (beebeeb-types::quota — the
+      // single source of truth for what Mollie actually bills) at extraTB=1
+      // vs extraTB=0. `/api/v1/billing/plans` itself carries no per-TB
+      // add-on field today (server catalogue gap — see task 1550's Notes for
+      // the recommended companion server task), so this is the closest
+      // available non-page-local source: the same pricing engine checkout
+      // falls back to, not a second literal. Until WASM is ready (this
+      // route isn't behind <WasmGuard>) or the plan has no base TB, it
+      // leaves note/perTb at the static plan-constants.ts fallback — already
+      // the correct €10.99/TB, a safer default than a wrong number. See
+      // test/pricing-addon-display-1550.test.ts for the unit-level guard
+      // against the price_eur/tbCount regression, with WASM mocked out.
+      const display = deriveAddonAwarePriceDisplay(fp.id, ap, { note: fp.note, perTb: fp.perTb })
 
       return {
         ...fp,
-        priceMonthly: ap.price_eur,
-        priceYearly: Math.round(monthlyEq * 100) / 100,
-        storage: ap.storage_label,
-        note,
-        perTb,
+        ...display,
       }
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- wasmVersion is a
-    // recompute trigger only (isWasmReady()/planMonthlyCostCents read live
-    // module state, not React state).
+    // recompute trigger only (deriveAddonAwarePriceDisplay's default addonRate
+    // reads live WASM module state, not React state).
   }, [apiPlans, wasmVersion])
 
   // ── Promo code (task 11, spec §4) ─────────────────────────────────────────
@@ -479,6 +477,20 @@ export function Pricing() {
     // the server would reject for a plan-mismatch reason — that mismatch could
     // otherwise surface as a differentiated error out of the catch below.
     const promoCodeForThisPlan = promoQuotes[planId] ? promoAppliedCode : null
+    // Task 1037 — "Start 14-day trial" for a signed-in account that can still
+    // trial (never used one, not on a plan) goes through the trial-with-mandate
+    // chooser, not straight to a paid checkout. A promo code keeps the checkout
+    // path (the server may turn it into an extended trial itself).
+    if (
+      !promoCodeForThisPlan &&
+      isTrialPlanSlug(planId) &&
+      (subscription?.status === 'cancelled' || (subscription?.plan ?? 'free') === 'free' || resolveAccountState(subscription) !== 'ok') &&
+      subscription?.status !== 'trialing' &&
+      subscription?.has_used_trial !== true
+    ) {
+      navigate(choosePlanPath({ plan: planId, cycle }, { fromBilling: true }))
+      return
+    }
     try {
       const result = await startPlanCheckout(planId, cycle, promoCodeForThisPlan, subscription)
       if ('trial' in result) {
@@ -489,6 +501,20 @@ export function Pricing() {
         })
         window.dispatchEvent(new Event('beebeeb:plan-changed'))
         navigate('/')
+        return
+      }
+      // Task 1702 — a €0 plan came back already activated (no payment
+      // provider round trip). Show the honest state instead of redirecting
+      // to a provider page that does not exist.
+      if (result.activated) {
+        showToast({
+          icon: 'check',
+          title: 'Your plan is activated',
+          description: 'This plan is free right now — nothing was charged.',
+        })
+        window.dispatchEvent(new Event('beebeeb:plan-changed'))
+        refreshPlanDetails()
+        navigate('/billing')
         return
       }
       window.location.href = result.url
@@ -503,6 +529,28 @@ export function Pricing() {
           title: 'Subscription reset',
           description: resetMessage,
         })
+        return
+      }
+      // Task 1707 — the server refused a checkout for the exact plan+cycle the
+      // user already has active (same-plan re-purchase guard). Say so plainly
+      // instead of a generic "Checkout failed"; the plan card itself is
+      // already labelled/disabled as "Current plan" for this plan+cycle (see
+      // PlanCard below), so this only fires when the loaded subscription
+      // snapshot was stale or the user raced the state.
+      if (isSamePlanActiveError(err)) {
+        showToast({
+          icon: 'info',
+          title: 'Already subscribed',
+          description: samePlanConflictMessage(err),
+        })
+        // Task 1707 review #133-B — the 409 proves the loaded snapshot was
+        // stale: re-fetch the subscription so the Current-plan predicate
+        // disables the card for the rest of the visit, and refresh the shared
+        // plan details the same way the billing-reset path does. Best-effort —
+        // a failed refetch leaves the previous snapshot (the toast above has
+        // already said what happened).
+        getSubscription().then(setSubscription).catch(() => {})
+        refreshPlanDetails()
         return
       }
       showToast({
@@ -622,6 +670,7 @@ export function Pricing() {
                   cycle={cycle}
                   onSelect={handleSelect}
                   promoSchedule={promoQuotes[p.id]?.description_schedule}
+                  isCurrentPlan={isCurrentPlanCycle(subscription, p.id, cycle)}
                 />
               ))}
             </div>

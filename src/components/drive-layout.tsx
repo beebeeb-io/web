@@ -6,28 +6,33 @@ import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBLogo } from '@beebeeb/shared'
 import { Icon, type IconName } from './icons'
 import { useAuth } from '../lib/auth-context'
+import { useRegionChoices } from '../lib/use-region-choices'
+import { sidebarRegionLabel } from '../lib/storage-regions'
 import { useKeys } from '../lib/key-context'
 import {
   getIncomingInvites,
   getFolderKeys,
-  getPreference,
   setPreference,
   requestAdminHandoff,
   type ShareInvite,
 } from '../lib/api'
 import { useDriveData } from '../lib/drive-data-context'
-import { StorageUsageBar } from './storage-usage-bar'
-import { decryptFolderKey, decryptChildFileKey } from '../lib/folder-share-crypto'
-import { decryptFilename, fromBase64, parseEncryptedBlob, decryptFileMetadata } from '../lib/crypto'
+import { SidebarStorageFooter } from './sidebar-storage-footer'
+import { openFolderChild } from '../lib/folder-share-crypto'
+import { folderWrapFormat } from '../lib/owner-adoption'
+import { markCustodySeen } from '../lib/custody-memory'
+import { resolveRecipientFolderKey } from '../lib/recipient-folder-key'
+import { decryptFileMetadata } from '../lib/crypto'
 import { useSync } from '../lib/sync-context'
 import { useSearchIndex, type NodeNameResolver } from '../hooks/use-search-index'
 import { QuotaWarning } from './quota-warning'
 import { QuickAccess } from './quick-access'
 import { EmailVerifyBanner } from './email-verify-banner'
+import { EraseRequestBanner } from './erase-request-banner'
 import { TrialBanner } from './trial-banner'
+import { TrialEndedAllowanceNotice } from './trial-ended-notice'
 import { AnnouncementBanner } from './announcement-banner'
 import { IosAppBanner } from './ios-app-banner'
-import { formatStorageSI } from '../lib/format'
 import { NotificationInbox, useNotifications } from './notification-inbox'
 
 // ─── PWA install prompt ──────────────────────────────────────────────────────
@@ -95,54 +100,9 @@ function PwaInstallBanner() {
   )
 }
 
-// ─── Sidebar storage quota warning ──────────────────────────────────────────
-
-interface SidebarQuotaBarProps {
-  usedBytes: number
-  quotaBytes: number
-}
-
-/**
- * Shows a compact warning bar below the regular storage meter when usage
- * is at or above 80%. Hidden entirely below that threshold.
- *
- * - ≥ 80% and < 95%: amber bar + "X GB of Y GB used"
- * - ≥ 95%: red bar + "Almost full — upgrade your plan" link to /billing
- */
-function SidebarQuotaBar({ usedBytes, quotaBytes }: SidebarQuotaBarProps) {
-  if (quotaBytes <= 0) return null
-
-  const pct = Math.min(100, (usedBytes / quotaBytes) * 100)
-
-  if (pct < 80) return null
-
-  const isCritical = pct >= 95
-
-  return (
-    <div className="mt-2 pt-2 border-t border-line">
-      {/* Bar track + fill */}
-      <div className="h-[3px] w-full rounded-full bg-line overflow-hidden mb-1.5">
-        <div
-          className={`h-full rounded-full transition-all duration-700 ease-out ${isCritical ? 'bg-red' : 'bg-amber'}`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-
-      {isCritical ? (
-        <div className="text-[11px] text-red leading-snug">
-          Almost full —{' '}
-          <Link to="/billing" className="font-semibold underline underline-offset-2 hover:text-red/80">
-            upgrade your plan
-          </Link>
-        </div>
-      ) : (
-        <div className="text-[11px] text-ink-2 font-mono tabular-nums">
-          {formatStorageSI(usedBytes)} of {formatStorageSI(quotaBytes)} used
-        </div>
-      )}
-    </div>
-  )
-}
+// ─── Sidebar storage footer lives in ./sidebar-storage-footer (task 1705:
+// exactly ONE storage bar + at most one compact warning line; the old
+// duplicate ≥80% SidebarQuotaBar was removed). ──────────────────────────────
 
 const navItems: { path: string; icon: IconName; label: string }[] = [
   { path: '/', icon: 'folder', label: 'All files' },
@@ -153,15 +113,6 @@ const navItems: { path: string; icon: IconName; label: string }[] = [
   { path: '/trash', icon: 'trash', label: 'Trash' },
   { path: '/devices', icon: 'cloud', label: 'Devices' },
 ]
-
-const REGION_META: Record<string, { label: string; flag: string }> = {
-  auto: { label: 'Europe', flag: '' },
-  falkenstein: { label: 'Falkenstein, Germany', flag: '' },
-  // Coming-soon roadmap regions (DR-1 canon): labelled so a file stored there
-  // shows a real city instead of the raw region string once those pools go live.
-  helsinki: { label: 'Helsinki, Finland', flag: '' },
-  ede: { label: 'Ede, Netherlands', flag: '' },
-}
 
 const PINNED_FOLDERS_PREF = 'pinned_folders'
 
@@ -353,9 +304,9 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   const { reconcileFromTree } = useSearchIndex()
   const { isFrozen } = useFrozen()
   const adminUrl = import.meta.env.VITE_ADMIN_URL ?? 'https://admin.beebeeb.io'
-  const { usage, planDetails: contextPlanDetails, pinnedFolderIds, isOffline } = useDriveData()
+  const { usage, planDetails: contextPlanDetails, pinnedFolderIds, isOffline, accountStateLabel } = useDriveData()
   const [sharedFolders, setSharedFolders] = useState<(ShareInvite & { decryptedName?: string })[]>([])
-  const [storageRegion, setStorageRegion] = useState<string>('auto')
+  const regions = useRegionChoices(user?.user_id)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const sidebarTrapRef = useFocusTrap<HTMLElement>(sidebarOpen)
   const [quickAccessDragOver, setQuickAccessDragOver] = useState(false)
@@ -380,6 +331,11 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   // every authenticated file surface (drive, /search, trash), not just the drive
   // page. reconcileFromTree adds missing nodes, prunes dead ones, and emits
   // `beebeeb:search-index-updated` so open search surfaces reload.
+  //
+  // Task 1700: reconcileFromTree now diffs names against a ciphertext-keyed
+  // cache and single-flights passes, so an unchanged pass performs zero
+  // upserts and zero shard PUTs — this 1.5 s debounce may keep firing under a
+  // foreign op storm without re-encrypting the whole index every window.
   const backfillTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     if (!isUnlocked || !cryptoReady || !sync.ready) return
@@ -395,24 +351,6 @@ export function DriveLayout({ children }: { children: ReactNode }) {
     return () => { if (backfillTimerRef.current) clearTimeout(backfillTimerRef.current) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isUnlocked, cryptoReady, sync.ready, sync.treeVersion, reconcileFromTree])
-
-  useEffect(() => {
-    getPreference<{ pool_name: string }>('storage_region')
-      .then(pref => { if (pref?.pool_name) setStorageRegion(pref.pool_name) })
-      .catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    function onRegionChanged() {
-      getPreference<{ pool_name: string }>('storage_region')
-        .then(pref => { if (pref?.pool_name) setStorageRegion(pref.pool_name) })
-        .catch(() => {})
-    }
-    window.addEventListener('beebeeb:region-changed', onRegionChanged)
-    return () => {
-      window.removeEventListener('beebeeb:region-changed', onRegionChanged)
-    }
-  }, [])
 
   function handleQuickAccessDragOver(e: DragEvent<HTMLDivElement>) {
     if (e.dataTransfer.types.includes('application/beebeeb-folder')) {
@@ -457,21 +395,27 @@ export function DriveLayout({ children }: { children: ReactNode }) {
       }
       const withNames = await Promise.all(folderInvites.map(async (invite) => {
         try {
-          if (!invite.sender_public_key || !invite.encrypted_folder_key || !invite.file_name_encrypted) {
+          if (!invite.sender_public_key || !invite.file_name_encrypted) {
             return { ...invite, decryptedName: 'Shared folder' }
           }
-          const folderKey = await decryptFolderKey(
-            getMasterKey(),
-            fromBase64(invite.sender_public_key),
-            invite.file_id,
-            fromBase64(invite.encrypted_folder_key),
-          )
           const keys = await getFolderKeys(invite.id)
+          // L7b: the folder's format comes from its custody record, never a guess.
+          const format = await folderWrapFormat(invite.file_id)
+          const resolved = await resolveRecipientFolderKey(invite, getMasterKey(), keys, format)
+          if (resolved.status !== 'ok') {
+            return { ...invite, decryptedName: 'Shared folder' }
+          }
+          const folderKey = resolved.folderKey
+          if (format === 'l7') markCustodySeen(invite.file_id)
           const folderEntry = keys.find(k => k.file_id === invite.file_id)
           if (folderEntry) {
-            const fileKey = await decryptChildFileKey(folderKey, folderEntry.encrypted_file_key)
-            const { nonce, ciphertext } = parseEncryptedBlob(invite.file_name_encrypted)
-            const name = await decryptFilename(fileKey, nonce, ciphertext)
+            const fileKey = await openFolderChild(
+              format,
+              folderKey,
+              { rootId: invite.file_id, itemId: invite.file_id, isFolder: true },
+              folderEntry.encrypted_file_key,
+            )
+            const { name } = await decryptFileMetadata(fileKey, invite.file_name_encrypted)
             return { ...invite, decryptedName: name }
           }
           return { ...invite, decryptedName: 'Shared folder' }
@@ -491,6 +435,18 @@ export function DriveLayout({ children }: { children: ReactNode }) {
   const resolvedUsedBytes  = usage?.used_bytes  ?? 0
   const resolvedQuotaBytes = storageLimit
   const planName = usage?.plan_name ?? contextPlanDetails.plan?.name ?? 'Free'
+  // Task 1037: the server's internal no-plan slug is "none" (needs_plan /
+  // lapsed) — never render it as "none plan".
+  // Task 1816: an allowance account has no plan but a working vault; say what
+  // the meter measures instead of "No plan".
+  const planLabel =
+    accountStateLabel === 'allowance'
+      ? 'Allowance'
+      : accountStateLabel === 'trialing_no_card'
+        ? 'Trial'
+        : planName === 'none'
+          ? 'No plan'
+          : `${planName} plan`
 
   return (
     <div className="h-screen flex overflow-hidden bg-paper">
@@ -611,31 +567,12 @@ export function DriveLayout({ children }: { children: ReactNode }) {
 
         <div className="mx-4 my-2.5 h-px bg-line" />
 
-        <div className="mt-auto px-4 py-4 border-t border-line">
-          <div className="flex items-baseline justify-between mb-2">
-            <div className="text-[10px] font-medium uppercase tracking-wider text-ink-3">
-              Storage
-            </div>
-            <span className="text-[10px] text-ink-3">{planName} plan</span>
-          </div>
-          <StorageUsageBar
-            usedBytes={resolvedUsedBytes}
-            quotaBytes={resolvedQuotaBytes}
-            compact
-          />
-          <SidebarQuotaBar
-            usedBytes={resolvedUsedBytes}
-            quotaBytes={resolvedQuotaBytes}
-          />
-          <div className="mt-3 flex items-center gap-1.5 text-[10px] text-ink-3">
-            {REGION_META[storageRegion]?.flag ? (
-              <span className="text-[12px]">{REGION_META[storageRegion].flag}</span>
-            ) : (
-              <Icon name="shield" size={11} className="text-amber-deep" />
-            )}
-            <span className="font-mono">{REGION_META[storageRegion]?.label ?? storageRegion}</span>
-          </div>
-        </div>
+        <SidebarStorageFooter
+          usedBytes={resolvedUsedBytes}
+          quotaBytes={resolvedQuotaBytes}
+          planLabel={planLabel}
+          regionLabel={sidebarRegionLabel(regions.preferred, regions.choices)}
+        />
 
         {isAdmin && (
           <div className="px-3 pt-2">
@@ -722,7 +659,10 @@ export function DriveLayout({ children }: { children: ReactNode }) {
         <IosAppBanner />
         <AnnouncementBanner />
         <EmailVerifyBanner />
+        {/* Task 1918 round 4: a pending "erase all files" request, with Cancel. */}
+        <EraseRequestBanner />
         <TrialBanner />
+        <TrialEndedAllowanceNotice />
         {isFrozen && (
           <div className="bg-amber/10 border-b border-amber/20 px-4 py-2.5 text-center text-[13px] text-ink-2">
             Your account is frozen. You can view and download files but cannot upload, delete, or share.{' '}
@@ -731,7 +671,7 @@ export function DriveLayout({ children }: { children: ReactNode }) {
             </Link>
           </div>
         )}
-        {usage && (
+        {usage && accountStateLabel !== 'trial_ended' && (
           <QuotaWarning
             usedBytes={usage.used_bytes}
             limitBytes={usage.plan_limit_bytes}

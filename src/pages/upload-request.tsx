@@ -360,7 +360,7 @@ export function UploadRequestPage() {
         </div>
         <p className="text-center text-[12px] text-ink-4 mt-4">
           Want encrypted storage for your own files?{' '}
-          <a href="/signup" className="text-amber-deep hover:underline">Create a free account</a>
+          <a href="/signup" className="text-amber-deep hover:underline">Start a 14-day free trial</a>
         </p>
       </Shell>
     )

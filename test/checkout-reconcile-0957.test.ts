@@ -128,9 +128,10 @@ describe('reflectsUpgrade — the reconcile state machine (task 0957, spec §3.3
   })
 
   // ── No-intent fallback (legacy direct-visit heuristic) ────────────────
-  test('reflectsUpgradeNoIntent accepts any active/trialing paid plan', () => {
+  // Task 1753-P2-01 amended this (was: 'accepts any active/trialing paid plan'): a trial is not an upgrade.
+  test('reflectsUpgradeNoIntent accepts an active paid plan, never a trialing one', () => {
     expect(reflectsUpgradeNoIntent(sub({ plan: 'pro', status: 'active' }))).toBe(true)
-    expect(reflectsUpgradeNoIntent(sub({ plan: 'pro', status: 'trialing' }))).toBe(true)
+    expect(reflectsUpgradeNoIntent(sub({ plan: 'pro', status: 'trialing' }))).toBe(false)
   })
 
   test('reflectsUpgradeNoIntent rejects Free or a non-active status', () => {

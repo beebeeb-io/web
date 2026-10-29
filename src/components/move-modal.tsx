@@ -3,7 +3,8 @@ import { useFocusTrap } from '../hooks/use-focus-trap'
 import { BBButton } from '@beebeeb/shared'
 import { BBChip } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
-import { listFiles, createFolder } from '../lib/api'
+import { listFiles } from '../lib/api'
+import { createOwnerFolder } from '../lib/owner-upload-key'
 import { useKeys } from '../lib/key-context'
 import { decryptFileMetadata, encryptFilename, serializeEncryptedBlob } from '../lib/crypto'
 
@@ -30,7 +31,7 @@ export function MoveModal({
   mode: initialMode = 'move',
   onConfirm,
 }: MoveModalProps) {
-  const { getFileKey, isUnlocked } = useKeys()
+  const { getFileKey, getMasterKey, isUnlocked } = useKeys()
   const [folders, setFolders] = useState<FolderNode[]>([])
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({})
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -128,12 +129,20 @@ export function MoveModal({
       const parentId = breadcrumbs[breadcrumbs.length - 1]?.id ?? undefined
       const folderId = crypto.randomUUID()
       let nameEncrypted = name
+      let nameKey: Uint8Array | undefined
       if (isUnlocked) {
-        const folderKey = await getFileKey(folderId)
-        const enc = await encryptFilename(folderKey, name)
+        nameKey = await getFileKey(folderId)
+        const enc = await encryptFilename(nameKey, name)
         nameEncrypted = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
       }
-      const created = await createFolder(nameEncrypted, parentId, folderId)
+      // Inside a shared folder its name-key wrap is published too.
+      const created = await createOwnerFolder({
+        nameEncrypted,
+        parentId,
+        folderId,
+        nameKey,
+        masterKey: nameKey ? getMasterKey() : undefined,
+      })
       setDecryptedNames((prev) => ({ ...prev, [created.id]: name }))
       setSearch('')
       fetchFolders(parentId)

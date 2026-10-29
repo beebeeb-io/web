@@ -1,30 +1,39 @@
-import { type FormEvent, useState, useCallback } from 'react'
+import { type FormEvent, useState, useCallback, useRef } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { AuthShell } from '../components/auth-shell'
 import { BBButton } from '@beebeeb/shared'
 import { BBInput } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { ApiError } from '@beebeeb/shared'
+import type { LoginResult } from '@beebeeb/shared'
 import { TwoFactorPrompt } from '../components/two-factor-prompt'
-import { DeviceProvision } from '../components/device-provision'
+import { LoginProvisionBranch } from '../components/login-provision-branch'
+import { resolveSignInUnlock } from '../lib/sign-in-unlock'
 import type { ProvisionAuthMethod } from '../lib/device-provision-logic'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
 import { devAutoAuth } from '../lib/dev-auth'
-import { startPasskeyLogin, finishPasskeyLogin, setToken, clearToken, opaqueLoginStart as apiOpaqueLoginStart, opaqueLoginFinish as apiOpaqueLoginFinish, serverOptsToGetOptions, credentialToAuthenticationJSON, getVaultKeyEscrow } from '../lib/api'
+import { startPasskeyLogin, finishPasskeyLogin, setToken, clearLegacyBearer, opaqueLoginStart as apiOpaqueLoginStart, opaqueLoginFinish as apiOpaqueLoginFinish, serverOptsToGetOptions, credentialToAuthenticationJSON, getVaultKeyEscrow } from '../lib/api'
 import { opaqueLoginStart, opaqueLoginFinish, toBase64, fromBase64 } from '../lib/crypto'
 import { autoUpgradeToV1 } from '../lib/auto-upgrade'
+import { passkeyLoginErrorMessage } from '../lib/passkey-errors'
 import { prfExtensionInputs, extractPrfOutput, getVaultWrapKey, decryptVaultBlob } from '../lib/passkey-vault'
 import { sanitizeRedirect } from '../lib/safe-redirect'
 import { consumePendingExport, DATA_EXPORT_ROUTE } from '../lib/export-intent'
 import { accountDeletedMessage } from '../lib/user-friendly-error'
 import { consumeAccountDeletedNotice } from '../lib/account-deleted-notice'
+import { classifyTwoFactorFailure } from '../lib/two-factor-login'
+
+// Task 1713 FIX B / task 1810: the needs-provision branch lives in
+// components/login-provision-branch.tsx (also used by /set-password); re-exported
+// so existing imports and the routing pin keep working.
+export { LoginProvisionBranch }
 
 export function Login() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { refreshUser, verify2fa } = useAuth()
-  const { unlockVault, unlockVaultWithPasskey, vaultExists, cryptoReady, cryptoError, isUnlocked, setMasterKeyFromPasskey, getMasterKey } = useKeys()
+  const { unlockVault, unlockVaultWithPasskey, vaultExists, cryptoReady, cryptoError, isUnlocked, isUnlockedFor, setMasterKeyFromPasskey, getMasterKey, discardStalePasswordVault, lock } = useKeys()
 
   // Task 1525: the "you already have an account" signup-exists email links
   // here with ?email=<address> so a user who mistakenly tries to sign up
@@ -41,6 +50,11 @@ export function Login() {
 
   // 2FA state
   const [partialToken, setPartialToken] = useState<string | null>(null)
+  // When the partial token was issued and how many codes were sent against it.
+  // The server answers every 2FA rejection with the same 401 (no enumeration),
+  // so these are the only way to tell "timed out" / "too many" from "wrong code".
+  const twoFactorIssuedAt = useRef(0)
+  const twoFactorAttempts = useRef(0)
   // Stash the account's KSF version across the 2FA round-trip. handleSubmit
   // returns early (before unlock) when 2FA is required, so the v0 auto-upgrade
   // can't fire there — handle2faVerify reads this after it unlocks the vault.
@@ -57,12 +71,12 @@ export function Login() {
   const navigateAfterLogin = useCallback(() => {
     // 1. Explicit ?next= redirect (e.g. CLI device-auth) — allowlisted.
     const fromQuery = sanitizeRedirect(searchParams.get('next'))
-    if (fromQuery) return navigate(fromQuery)
+    if (fromQuery) return navigate(fromQuery, { replace: true })
     // 2. Resume a data-export captured when the session expired mid-export
     //    (GDPR Art. 20 resume, task 0720) — routed through the same allowlist.
-    if (consumePendingExport()) return navigate(sanitizeRedirect(DATA_EXPORT_ROUTE) ?? '/')
+    if (consumePendingExport()) return navigate(sanitizeRedirect(DATA_EXPORT_ROUTE) ?? '/', { replace: true })
     // 3. Default home.
-    navigate('/')
+    navigate('/', { replace: true })
   }, [navigate, searchParams])
 
   const handleDevSkip = useCallback(async () => {
@@ -85,6 +99,8 @@ export function Login() {
   // OPAQUE attempt can leave `password` holding a stale, unproven value —
   // see shouldWrapWithPassword's doc comment in device-provision-logic.ts).
   const [provisionAuthMethod, setProvisionAuthMethod] = useState<ProvisionAuthMethod>('opaque')
+  // Task 1810: the sign-in just discarded a vault sealed under the previous password.
+  const [provisionStaleVault, setProvisionStaleVault] = useState(false)
 
   // OPAQUE KSF migration prompt (task 0548) — the server returned
   // `opaque_ksf_outdated`, meaning this account's password file was written
@@ -100,6 +116,32 @@ export function Login() {
   const [passkeyFallbackShowPw, setPasskeyFallbackShowPw] = useState(false)
   const [passkeyFallbackSubmitting, setPasskeyFallbackSubmitting] = useState(false)
   const [passkeyFallbackError, setPasskeyFallbackError] = useState('')
+
+  /**
+   * Task 1810 (P0): unlock this device's local vault with a password the SERVER
+   * has just proven (OPAQUE finished). Nothing resident from before is carried
+   * over: any key in memory or in the tab/persisted caches is cleared first, so
+   * the only key used after this sign-in is the one this password opens. If it
+   * cannot open the local vault, that vault was sealed under a password the
+   * account no longer has (a reset or change made elsewhere): it is deleted and
+   * the person re-enters the recovery phrase instead of hitting a dead end.
+   */
+  async function unlockProvenVault(
+    proven: string,
+    userId: string,
+  ): Promise<'unlocked' | 'provision' | 'provision_stale'> {
+    lock()
+    const step = resolveSignInUnlock(await unlockVault(proven, userId))
+    if (step === 'proceed') return 'unlocked'
+    if (step === 'discard_then_provision') {
+      // true only if an entry of THIS account was actually removed (task 1810
+      // round 2, P2-1): another account's entry is left alone, and the "we
+      // removed your old vault" notice is shown only when that is what happened.
+      const removed = await discardStalePasswordVault(userId)
+      return removed ? 'provision_stale' : 'provision'
+    }
+    return 'provision'
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -130,6 +172,8 @@ export function Login() {
         // Carry ksfVersion to handle2faVerify so a v0 account still auto-upgrades
         // after it clears 2FA (the unlock + dispatch happen there, not here).
         setPendingKsfVersion(ksfVersion)
+        twoFactorIssuedAt.current = Date.now()
+        twoFactorAttempts.current = 0
         setPartialToken(loginResult.partial_token)
         setSubmitting(false)
         return
@@ -140,16 +184,36 @@ export function Login() {
       // sent as a bearer header that shadows the fresh cookie (server
       // 401s on stale bearer → client treats as session-expired → user
       // gets logged out immediately after logging in).
-      clearToken()
+      //
+      // clearLegacyBearer(), NOT clearToken() (PR #109 review round 2,
+      // Codex P2): opaqueLoginFinish (above) just called its own internal
+      // setEmail(email) — the user is logging IN, not out. clearToken()
+      // also fires the registered onTokenCleared callback (src/lib/api.ts
+      // → clearEmail()), which would wipe that same bb_email it was just
+      // given, breaking a LATER VaultUnlock.handlePasskeyUnlock() call (it
+      // reads bb_email via getEmail()).
+      clearLegacyBearer()
 
       // OPAQUE auth succeeded — refresh user session
       await refreshUser()
 
       // Now unlock the local vault
       if (vaultExists) {
-        const ok = await unlockVault(password)
-        if (!ok) {
-          setError('Wrong password — could not unlock vault on this device.')
+        // loginResult.user_id (from the SAME OPAQUE finish response that
+        // just proved `password` correct) — task 1531/1534 (P0) binds the
+        // unlocked key to it explicitly rather than trusting whatever key
+        // may already be resident from a prior account in this same tab.
+        const outcome = await unlockProvenVault(password, loginResult.user_id)
+        if (outcome !== 'unlocked') {
+          // 'provision': password was RIGHT (OPAQUE proved it) but this device's
+          // saved vault entry could not be proven to be this account's (P0
+          // continuation, web #85). 'provision_stale' (task 1810): the entry was
+          // sealed under a previous password and has been deleted. Either way
+          // the phrase screen re-seals the key under this password — never the
+          // generic wrong-password dead end.
+          setProvisionStaleVault(outcome === 'provision_stale')
+          setProvisionAuthMethod('opaque')
+          setNeedsProvision(true)
           setSubmitting(false)
           return
         }
@@ -158,7 +222,11 @@ export function Login() {
         // converges onto the current standard. Fire-and-forget + best-effort
         // (never throws), so it can't block navigation. Runs only now that the
         // vault is unlocked: uses the in-memory master key, never the password.
-        if (ksfVersion === 0) void autoUpgradeToV1(password, getMasterKey())
+        // getMasterKey(loginResult.user_id) — the authoritative id this
+        // unlock just proved, not a `useAuth().user` snapshot that may not
+        // have re-rendered into this closure yet (task 1531/1534 P0
+        // continuation; see getMasterKey's own doc comment).
+        if (ksfVersion === 0) void autoUpgradeToV1(password, getMasterKey(loginResult.user_id))
         navigateAfterLogin()
       } else {
         // No vault on this device — needs mnemonic provisioning. OPAQUE
@@ -195,24 +263,71 @@ export function Login() {
 
   async function handle2faVerify(code: string) {
     if (!partialToken) return
+    twoFactorAttempts.current += 1
+    // Declared outside the first try so the account id it proves (task
+    // 1531/1534, P0) is still in scope for the unlock below — assigned on
+    // every path that doesn't return/throw in the catch beneath it.
+    let verifyResult: LoginResult
     try {
-      await verify2fa(partialToken, code)
+      verifyResult = await verify2fa(partialToken, code)
+    } catch (err) {
+      // TwoFactorPrompt renders what we THROW (and clears the field); the
+      // page-level `error` is not rendered on the 2FA step, so setting it
+      // here alone would swallow the failure — which is exactly the bug this
+      // replaced (a wrong code left the digits on screen with no message).
+      const deletedMsg = accountDeletedMessage(err)
+      if (deletedMsg) {
+        setPartialToken(null)
+        setError(deletedMsg)
+        return
+      }
+      const failure = classifyTwoFactorFailure(err, {
+        issuedAt: twoFactorIssuedAt.current,
+        attempts: twoFactorAttempts.current,
+      })
+      if (failure.kind === 'restart') {
+        // The challenge is spent — back to the password step, where `error`
+        // IS rendered. The password is cleared on purpose: the message asks
+        // for it again, and the old one only lived in memory for this step.
+        setPartialToken(null)
+        setPassword('')
+        setError(failure.message)
+        return
+      }
+      throw new Error(failure.message)
+    }
+    try {
       // Same reason as handleSubmit: server has set the fresh bb_session
       // cookie, drop any stale localStorage bearer that would shadow it.
-      clearToken()
+      //
+      // clearLegacyBearer(), NOT clearToken() (PR #109 review round 2,
+      // Codex P2, same reasoning as handleSubmit above): 2FA verification
+      // just succeeded — the user is logging in, not out — so clearing
+      // bb_email here (clearToken()'s onTokenCleared side effect) would
+      // break a LATER VaultUnlock.handlePasskeyUnlock() call.
+      clearLegacyBearer()
+
+      if (!verifyResult.user_id) {
+        setError('Could not confirm account identity. Try logging in again.')
+        setPartialToken(null)
+        return
+      }
 
       // 2FA verified — now unlock the vault with the password from the first step
       if (vaultExists) {
-        const ok = await unlockVault(password)
-        if (!ok) {
-          setError('Could not unlock vault. Try logging in again.')
+        const outcome = await unlockProvenVault(password, verifyResult.user_id)
+        if (outcome !== 'unlocked') {
+          // See handleSubmit's identical branch.
+          setProvisionStaleVault(outcome === 'provision_stale')
+          setProvisionAuthMethod('opaque')
+          setNeedsProvision(true)
           setPartialToken(null)
           return
         }
         // v0 account that just cleared 2FA — fire the same silent V1 upgrade as
         // the non-2FA path. Best-effort, fire-and-forget; in-memory master key
         // only, never derived from the password.
-        if (pendingKsfVersion === 0) void autoUpgradeToV1(password, getMasterKey())
+        if (pendingKsfVersion === 0) void autoUpgradeToV1(password, getMasterKey(verifyResult.user_id))
       } else {
         // handleSubmit's OPAQUE handshake already proved `password` correct
         // before 2FA was ever requested — this is still the opaque path.
@@ -223,7 +338,11 @@ export function Login() {
       }
       navigateAfterLogin()
     } catch {
-      setError('Incorrect code or session expired. Please try again.')
+      // The code WAS accepted; what failed is the local unlock afterwards.
+      // Back to the password step (where `error` is rendered) rather than
+      // blaming the code.
+      setPartialToken(null)
+      setError('Could not unlock vault. Try logging in again.')
     }
   }
 
@@ -245,23 +364,35 @@ export function Login() {
       const serverMsg = Uint8Array.from(atob(serverResp.server_message), c => c.charCodeAt(0))
       const ksfVersion = serverResp.ksf_version
       const loginFinish = await opaqueLoginFinish(loginStart.state, passkeyFallbackPassword, serverMsg, ksfVersion)
-      await apiOpaqueLoginFinish(email, toBase64(loginFinish.message), serverResp.server_state)
+      const fallbackLoginResult = await apiOpaqueLoginFinish(email, toBase64(loginFinish.message), serverResp.server_state)
       // Drop any stale localStorage bearer so the fresh bb_session cookie
       // is the only auth carried on subsequent requests.
-      clearToken()
+      //
+      // clearLegacyBearer(), NOT clearToken() (PR #109 review round 2,
+      // Codex P2, same reasoning as handleSubmit above): apiOpaqueLoginFinish
+      // just called its own internal setEmail(email) — this password
+      // fallback just authenticated the user, it did not log them out.
+      clearLegacyBearer()
       await refreshUser()
 
       // Try unlocking the local vault with this password
       if (vaultExists) {
-        const ok = await unlockVault(passkeyFallbackPassword)
-        if (!ok) {
-          setPasskeyFallbackError('Password accepted, but could not unlock the local vault. Try your recovery phrase instead.')
+        // task 1531/1534 (P0): bind to the account this OPAQUE finish
+        // response just proved, not whatever key may already be resident.
+        const outcome = await unlockProvenVault(passkeyFallbackPassword, fallbackLoginResult.user_id)
+        if (outcome !== 'unlocked') {
+          // See handleSubmit's identical branch.
+          setPassword(passkeyFallbackPassword)
+          setProvisionStaleVault(outcome === 'provision_stale')
+          setProvisionAuthMethod('opaque')
+          setPasskeyNeedsPassword(false)
+          setNeedsProvision(true)
           setPasskeyFallbackSubmitting(false)
           return
         }
         // Mirror of handleSubmit: silently upgrade a legacy (v0) account to V1
         // now that it's authenticated + unlocked. Best-effort, fire-and-forget.
-        if (ksfVersion === 0) void autoUpgradeToV1(passkeyFallbackPassword, getMasterKey())
+        if (ksfVersion === 0) void autoUpgradeToV1(passkeyFallbackPassword, getMasterKey(fallbackLoginResult.user_id))
         navigateAfterLogin()
       } else {
         // No local vault — hand off to device provisioning (recovery phrase).
@@ -340,12 +471,62 @@ export function Login() {
       )
 
       if (result.session_token) {
+        // Task 1531/1534 (P0 continuation, web PR #85, crypto-security-
+        // reviewer P2): bind to `result.user_id` — from `finishPasskeyLogin`,
+        // the response that actually verified the WebAuthn assertion — not
+        // `startRes.user_id`, which is merely the id `startPasskeyLogin`
+        // echoed back for the EMAIL the form was given, before any signature
+        // was checked. `result` is the authoritative "this credential proved
+        // THIS account" answer; `startRes.user_id` never proved anything on
+        // its own. Refuse rather than silently falling back if it is somehow
+        // missing on a token-bearing response (should not happen — defensive).
+        if (!result.user_id) {
+          setError('Could not confirm account identity. Try signing in again.')
+          setPasskeyLoading(false)
+          return
+        }
+        const authedUserId = result.user_id
         setToken(result.session_token)
+        // Task 1553 — same reason as handleSubmit/handle2faVerify above:
+        // server already set the fresh bb_session cookie in the
+        // passkey-login-finish response, so drop the localStorage bearer
+        // finishPasskeyLogin just wrote before it can shadow the cookie or
+        // silently re-authenticate this account later via
+        // POST /auth/upgrade-session after the cookie is gone.
+        //
+        // clearLegacyBearer(), NOT clearToken() (PR #109 review round 2,
+        // Codex P2): this passkey login just authenticated the user — it
+        // is not a logout. clearToken() also fires the registered
+        // onTokenCleared callback (src/lib/api.ts → clearEmail()), which
+        // would wipe bb_email (set on a prior login/signup on this device)
+        // even though the user remains fully signed in, breaking a LATER
+        // VaultUnlock.handlePasskeyUnlock() call (it reads bb_email via
+        // getEmail()).
+        clearLegacyBearer()
         await refreshUser()
 
-        if (isUnlocked) {
+        // Task 1531/1534 (P0, cross-account master-key confusion). This used
+        // to be `if (isUnlocked) { navigateAfterLogin(); return }` — but
+        // `isUnlocked` is a snapshot from THIS render, and by the point
+        // `refreshUser()` above resolves, it may not yet reflect that
+        // KeyProvider has caught up (React hasn't necessarily re-rendered
+        // yet). A key can ALREADY be resident here from a DIFFERENT
+        // account's session in this same tab (persisted-key cache restored
+        // at boot, or a prior account that was never explicitly logged out
+        // of) — trusting `isUnlocked` alone let that stale key silently
+        // carry over into this account's session. isUnlockedFor reads
+        // the LIVE ref and compares it against `authedUserId` — the
+        // account THIS passkey ceremony just proved, from the very same
+        // auth response, not a React state snapshot.
+        if (isUnlockedFor(authedUserId)) {
           navigateAfterLogin()
           return
+        }
+        if (isUnlocked) {
+          // A key WAS resident but for a DIFFERENT account — never let it
+          // leak into this account's session. Clear it; the escrow/PRF
+          // unlock below loads `authedUserId`'s REAL key.
+          lock()
         }
 
         // Step 5: Attempt passkey vault unlock via escrow.
@@ -362,7 +543,7 @@ export function Login() {
 
           if (wrapKey) {
             // Try local passkey vault first, then server escrow
-            const localOk = await unlockVaultWithPasskey(wrapKey)
+            const localOk = await unlockVaultWithPasskey(wrapKey, authedUserId)
             if (localOk) {
               navigateAfterLogin()
               return
@@ -372,7 +553,7 @@ export function Login() {
             if (escrowBlob) {
               const masterKey = await decryptVaultBlob(wrapKey, fromBase64(escrowBlob))
               if (masterKey) {
-                await setMasterKeyFromPasskey(masterKey, wrapKey)
+                await setMasterKeyFromPasskey(masterKey, wrapKey, authedUserId)
                 navigateAfterLogin()
                 return
               }
@@ -399,7 +580,7 @@ export function Login() {
     } catch (err) {
       // task 1404 — soft-deleted account on the passkey path.
       const deletedMsg = accountDeletedMessage(err)
-      setError(deletedMsg ?? (err instanceof Error ? err.message : 'Passkey authentication failed'))
+      setError(deletedMsg ?? passkeyLoginErrorMessage(err))
     } finally {
       setPasskeyLoading(false)
     }
@@ -536,14 +717,17 @@ export function Login() {
     )
   }
 
-  // Show device provisioning when OPAQUE auth succeeded but no vault on this device
+  // Show device provisioning when OPAQUE auth succeeded but no vault on this device.
+  // Task 1713 FIX B — with the /set-password completion marker stamped, the
+  // post-reset locked surface takes priority over the bare device-setup screen.
   if (needsProvision) {
     return (
-      <DeviceProvision
+      <LoginProvisionBranch
         password={password}
         authMethod={provisionAuthMethod}
         email={email}
         onProvisioned={navigateAfterLogin}
+        staleVault={provisionStaleVault}
       />
     )
   }

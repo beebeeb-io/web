@@ -25,16 +25,20 @@
  * Apps should `setApiUrl(...)` once at startup before calling `request()`.
  */
 
-import { ApiError, parseErrorBody } from './errors'
-import { getApiUrl, provenanceHeaders } from './config'
+import { ApiError, readErrorResponse } from './errors'
+import { getApiUrl, provenanceHeaders, expectedUserHeaders } from './config'
 import { clearToken, getToken } from './token'
 import {
   fireAccountDeleted,
+  fireAccountMismatch,
+  fireAccountSuspended,
   fireConnectionStatus,
   fireErrorNotifier,
   fireSessionExpired,
   wasSessionConfirmed,
   clearSessionConfirmed,
+  getAuthStamp,
+  isCurrentAuthStamp,
 } from './notifiers'
 
 const CONNECTION_FAILURE_THRESHOLD = 2
@@ -98,6 +102,9 @@ export async function request<T>(
   options: RequestInit = {},
 ): Promise<T> {
   const token = getToken()
+  // Task 1948 (web#169 review): which login this request is issued under. A
+  // 403 account_suspended only applies to THAT login (see the handler below).
+  const authStamp = getAuthStamp()
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string> | undefined),
@@ -110,6 +117,16 @@ export async function request<T>(
   // traffic carries neither header (see `setClientInfo`'s doc comment).
   Object.assign(headers, provenanceHeaders())
 
+  const method = (options.method ?? 'GET').toUpperCase()
+  // Task 1531 (web #85 round 2): the expected-user defence header only makes
+  // sense on a MUTATING request (server task 1554 only checks those) — a GET
+  // carries no risk of writing under the wrong account, and omitting it
+  // there keeps the header's blast radius exactly as small as the threat it
+  // defends against.
+  if (method !== 'GET' && method !== 'HEAD') {
+    Object.assign(headers, expectedUserHeaders())
+  }
+
   const apiUrl = getApiUrl()
   // `credentials: 'include'` is what makes the httpOnly bb_session cookie
   // travel on cross-origin requests (web app on app.beebeeb.io → API on
@@ -118,7 +135,6 @@ export async function request<T>(
   // Access-Control-Allow-Credentials: true to match (task 0447).
   const init: RequestInit = { ...options, headers, credentials: 'include' }
 
-  const method = (options.method ?? 'GET').toUpperCase()
   if (method !== 'GET' && method !== 'HEAD') {
     await paceIfNeeded()
   }
@@ -127,11 +143,25 @@ export async function request<T>(
     let res: Response
     try {
       res = await fetch(`${apiUrl}${path}`, init)
-    } catch (_first) {
+    } catch (firstErr) {
+      // A caller-provided AbortSignal firing mid-request is a deliberate
+      // cancellation, not a transient network blip — surface it immediately
+      // as the same AbortError `fetch` itself throws, with no artificial
+      // 800ms retry delay and no second fetch attempt (task 1571 web PR
+      // #106, Codex P1: initUpload previously never wired its signal into
+      // this call at all, so an aborted save's init request ran to
+      // completion server-side regardless of the abort). Callers rely on
+      // `err instanceof DOMException && err.name === 'AbortError'` to tell
+      // a deliberate cancel apart from a genuine save failure — wrapping it
+      // in `ApiError(_, 0)` like an ordinary network failure would defeat
+      // that check and also risk a retry re-issuing the same request after
+      // the caller has already moved on.
+      if (options.signal?.aborted) throw firstErr
       await delay(RETRY_DELAY_MS)
       try {
         res = await fetch(`${apiUrl}${path}`, init)
-      } catch (_second) {
+      } catch (secondErr) {
+        if (options.signal?.aborted) throw secondErr
         consecutiveFailures += 1
         if (consecutiveFailures >= CONNECTION_FAILURE_THRESHOLD) {
           reportConnection('flaky')
@@ -166,8 +196,7 @@ export async function request<T>(
     }
 
     if (!res.ok) {
-      const body = await res.json().catch(() => ({ error: 'Server returned an invalid response' })) as Record<string, unknown>
-      const { code, message } = parseErrorBody(body, res.statusText)
+      const { body, code, message } = await readErrorResponse(res)
 
       // Soft-deleted account (task 1403/1404) — the session/credentials were
       // fine, the ACCOUNT itself is gone. Always a 403, never a 401 (the
@@ -183,6 +212,38 @@ export async function request<T>(
       if (code === 'account_deleted') {
         if (token) clearToken()
         fireAccountDeleted(body)
+      }
+
+      // Task 1948 (1c): the session belongs to an account that is suspended or
+      // disabled. Every later request would carry the same dead login, so it is
+      // signed out on this device from WHICHEVER call surfaced it, like
+      // account_deleted above: drop the legacy bearer, forget that a session was
+      // confirmed this page load (so a later anonymous 401 is not "expired"),
+      // and let the app do the rest (local key/vault cleanup and the notice).
+      // The httpOnly `bb_session` cookie cannot be removed from here; the
+      // server has to expire it.
+      //
+      // Only for the login this request was issued under (web#169 review, Codex
+      // P1): when a newer login became current while it waited for its answer,
+      // the token and the confirmed session are that newer login's and stay. The
+      // handler gets the stamp and makes the same check before it signs out.
+      if (code === 'account_suspended') {
+        if (isCurrentAuthStamp(authStamp)) {
+          if (token) clearToken()
+          clearSessionConfirmed()
+        }
+        fireAccountSuspended(authStamp)
+      }
+
+      // Task 1531 (web #85 round 2) / server task 1554: the server refused a
+      // mutating request because the caller's `X-Beebeeb-Expected-User`
+      // header (the resident key's bound account) did not match the
+      // session's actual user — genuine cross-account key confusion, or a
+      // stale header left over from a just-switched account. Either way the
+      // resident key must not be trusted further; the registered handler
+      // (web: key-context.tsx) locks it and routes to login.
+      if (res.status === 409 && code === 'account_mismatch') {
+        fireAccountMismatch()
       }
 
       if (res.status === 401) {
@@ -207,7 +268,11 @@ export async function request<T>(
         throw new ApiError(message, 401, code)
       }
 
-      throw new ApiError(message, res.status, code)
+      // Task 1605: carry the parsed body through as `.details` so callers can
+      // read additive fields (`is_trial_cap`, `limit_bytes`, …) without a
+      // second parse — the 401 branches above stay message/code-only (no
+      // caller needs more there today).
+      throw new ApiError(message, res.status, code, body)
     }
 
     // 204 No Content (and other empty-body 2xx, e.g. DELETE) carry no JSON —

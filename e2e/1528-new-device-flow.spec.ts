@@ -247,6 +247,11 @@ test.describe('task 1528: new-device flow — auth then phrase, no passkey/QR ta
 
 test.describe('task 1529 (P0): passkey sign-in on a new device is session-only', () => {
   test('passkey login on a fresh device reaches the same 12-box screen; after restore, IndexedDB has NO master vault entry', async ({ page }) => {
+    // Signup + password step-up (256 MiB Argon2id) + passkey CREATE + passkey
+    // login + phrase restore in one test: under parallel-lane host load
+    // (~60) the 30 s default ran out at the "Passkey added" step
+    // (e2e classification 2026-09-26, flaky under PR #97's harness).
+    test.setTimeout(90_000)
     await addVirtualAuthenticator(page)
     await page.goto('/?nodev=1')
     const account = await signupAndUnlock(page, { password: PASSKEY_LOGIN_PW })

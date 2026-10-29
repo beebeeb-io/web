@@ -2,7 +2,7 @@ import { test, expect, type Page, type Locator } from '@playwright/test'
 
 // All Drive E2E tests run in the `authenticated` Playwright project (dev
 // auto-login via storageState), so they exercise the signed-in app surface
-// directly. The legacy "create account via /api/v1/auth/signup then log in via
+// directly. The legacy "create account via the legacy password signup route then log in via
 // the UI" tests were removed — the login page is now OPAQUE-mandatory with no
 // password fallback, so a legacy account can't complete a UI login (task 0763).
 
@@ -20,7 +20,7 @@ test.describe('Drive E2E', () => {
   })
 
   test('drive renders with the file list for the authenticated dev account', async ({ page }) => {
-    // The legacy "create account via /api/v1/auth/signup then log in via the UI"
+    // The legacy "create account via the legacy password signup route then log in via the UI"
     // path is obsolete: the login page is OPAQUE-mandatory with no password
     // fallback (src/pages/login.tsx), so a legacy password account can't complete
     // a UI login. Instead assert the authenticated drive (dev auto-login via the
@@ -95,11 +95,19 @@ test.describe('Drive E2E', () => {
 
   test('billing page loads plans', async ({ page }) => {
     test.setTimeout(90_000)
-    // /billing redirects to /settings/billing; go straight there. The SettingsHeader
-    // title "Plan & billing" renders immediately (even in the page's Loading… state),
-    // so it's a stable anchor while plan data fetches (the dev account's plan
-    // endpoints 404, but the header is unconditional) (task 0763).
-    await gotoSettings(page, '/settings/billing', page.getByRole('heading', { name: /plan & billing/i }))
+    // /billing redirects to /settings/billing; go straight there (no ?view=change),
+    // which settles on the "summary" view. STALE SPEC (found while running the full
+    // suite, task 1559): this used to wait on the SettingsHeader title
+    // "Plan & billing", which task 1449 already documented as wrong for this exact
+    // navigation in trial-0905.spec.ts (GATE 2) — "Plan & billing" is the title only
+    // for the loading/error states and the "change" view
+    // (src/pages/billing.tsx ~1386/1402/1522); the summary view's header is
+    // "Billing" (src/pages/billing.tsx ~1517: `title="Billing"`, task 0942's
+    // summary/change split). This test's own anchor was never updated to match, so
+    // it deterministically timed out (RED, 3/3 attempts, confirmed both under host
+    // load and in isolation on a quiet host — error-context.md showed
+    // `heading "Billing" [level=2]` in the DOM, never "Plan & billing").
+    await gotoSettings(page, '/settings/billing', page.getByRole('heading', { name: /^billing$/i }))
   })
 })
 

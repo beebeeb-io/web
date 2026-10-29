@@ -32,7 +32,7 @@ flowchart LR
     Guard["WasmGuard — blocks vault until crypto is ready"]
     Worker["Crypto worker — WebAssembly + Web Worker"]
     Core["beebeeb-core — Rust crypto, compiled to WASM"]
-    API["beebeeb API — localhost:3001 in dev"]
+    API["beebeeb API — not open source; localhost:3001 in dev"]
 
     Browser --> Guard --> Worker --> Core
     Browser --> API
@@ -40,42 +40,62 @@ flowchart LR
 
 ## Quick start
 
-Requires [Bun](https://bun.sh) and a running beebeeb API on `http://localhost:3001`. From the workspace root, bring up Postgres and the API:
+Requires [Bun](https://bun.sh). Everything below runs in a plain clone of this repository:
 
 ```sh
-docker compose up -d postgres
-cd repos/server && cargo run -p beebeeb-api
-```
-
-Then, in the web repo:
-
-```sh
+git clone https://github.com/beebeeb-io/web.git
+cd web
 bun install
-bun dev          # http://localhost:5173
+bun dev              # http://localhost:5173
 ```
 
-In development, `DevAuthGate` tries to auto-authenticate through `POST /dev/auto-login` (a debug-only server route). If it isn't available, the normal login flow is shown.
+The WebAssembly crypto module ships in this repo as the committed workspace package
+`packages/beebeeb-wasm` (built from [core](https://github.com/beebeeb-io/core)), so no Rust
+toolchain is needed to build or run the web client.
+
+### About the API server
+
+The beebeeb API server is **not open source**. The product clients (core, cli, web, mobile,
+desktop) are public; the server is not. What that means for a contributor today:
+
+- **You can** install, type-check, run the unit tests, build the production bundle, and run
+  the dev server to work on the screens that render without an account, such as the
+  sign-in and sign-up pages. Without an API they show "Could not reach the server"
+  notices; that is expected.
+- **You cannot yet** sign in from a local dev server. The dev bundle talks to
+  `http://localhost:3001` (`VITE_API_URL` in `.env.development`), and the hosted API at
+  `api.beebeeb.io` only accepts browser requests from beebeeb's own origins, so a dev
+  server on `localhost:5173` cannot use it.
+- **Full-stack end-to-end tests** (the Playwright specs under `e2e/`) need a real API
+  server, so a plain clone cannot run them. Maintainers run the relevant specs against an
+  internal API server before merging.
+
+If you want to work on a signed-in flow, open an issue first and we will help you test it.
 
 ## Build & checks
 
 ```sh
-bun run build        # tsc --noEmit && vite build && node gen-wasm-sri.mjs → dist/
 bunx tsc --noEmit    # type-check
-bunx playwright test # E2E (needs API on :3001 and dev server on :5173)
+bun test             # unit tests (no server needed)
+bun run build        # tsc --noEmit && vite build && node gen-wasm-sri.mjs → dist/
 ```
 
-Docker images build from the **workspace root** as context, because the Dockerfile copies `repos/web`, `repos/core/beebeeb-wasm/pkg`, and `packages/shared`:
+`bun run build` bakes `VITE_API_URL` into the bundle (see `.env.production`). Copy
+`.env.example` to a local `.env` for Playwright test-account values (`BB_TEST_USER_*`) — never
+commit real credentials.
 
-```sh
-docker build -f repos/web/Dockerfile .
-docker build -f repos/web/Dockerfile --build-arg VITE_API_URL=https://api.beebeeb.io .
-```
+### Internal (maintainers)
 
-Set `VITE_API_URL` to point the bundle at a non-default API. Test-account values (`BB_TEST_USER_*`) for Playwright live in a local `.env` — copy `.env.example` and never commit real credentials.
+The production Docker image is built by beebeeb maintainers, not from a clone of this repo
+alone: the `Dockerfile` expects beebeeb's internal workspace as its build context, and the
+end-to-end runner (`e2e/scripts/web-e2e.sh`) needs a local API server binary. Contributors do
+not need either. In development, `DevAuthGate` tries `POST /dev/auto-login`
+(a debug-only route on a local API server) and falls back to the normal sign-in flow when it
+is not there.
 
 ## Stack
 
-React 19 · Vite 6 · TypeScript · Tailwind 4 · React Router 7 · Bun · Playwright. Crypto comes from `beebeeb-wasm` (the Rust core compiled to WebAssembly); shared UI and the API client come from `@beebeeb/shared`. Production is served by an Nginx container.
+React 19 · Vite 6 · TypeScript · Tailwind 4 · React Router 7 · Bun · Playwright. Crypto comes from `beebeeb-wasm` (the Rust core compiled to WebAssembly, committed at `packages/beebeeb-wasm`); shared UI and the API client come from `@beebeeb/shared`. Production is served by an Nginx container.
 
 ## Notable behaviour
 

@@ -5,6 +5,7 @@ import { useAuth } from '../lib/auth-context'
 import { useDriveData } from '../lib/drive-data-context'
 import { useNavigate } from 'react-router-dom'
 import { updatePaymentMethod } from '../lib/api'
+import { suspendedAccountSafetyMessage } from '../lib/suspended-overlay-copy'
 
 export function BillingSuspendedOverlay() {
   const { user } = useAuth()
@@ -14,13 +15,6 @@ export function BillingSuspendedOverlay() {
   const state = sub?.billing_state
 
   if (!user || state !== 'suspended') return null
-
-  const pastDueSince = sub?.past_due_since ? new Date(sub.past_due_since) : null
-  const deletionDate = pastDueSince
-    ? new Date(pastDueSince.getTime() + 90 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB', {
-        day: 'numeric', month: 'short', year: 'numeric',
-      })
-    : null
 
   async function handleUpdatePayment() {
     try {
@@ -52,11 +46,9 @@ export function BillingSuspendedOverlay() {
           but you need to update your payment method to restore access.
         </p>
 
-        {deletionDate && (
-          <p className="text-sm text-red font-medium mb-lg">
-            If no action is taken, your files will be permanently deleted on {deletionDate}.
-          </p>
-        )}
+        <p className="text-sm text-ink-3 leading-relaxed mb-lg">
+          {suspendedAccountSafetyMessage()}
+        </p>
 
         <div className="flex flex-wrap gap-sm justify-center">
           <BBButton variant="amber" size="lg" onClick={() => void handleUpdatePayment()}>

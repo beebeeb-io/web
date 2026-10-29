@@ -23,6 +23,13 @@
  * A lapsed trial (status back to free) renders NOTHING here — the normal Free
  * plan + upgrade path takes over, so a lapsed user never sees a stale banner.
  *
+ * Task 1037 — a trial started WITH a payment mandate (`trial_auto_converts:
+ * true`) already has a Mollie subscription that charges at `trial_ends_at`, so
+ * there is nothing to convert: the banner states the end date and the amount
+ * that will be charged automatically, and links to billing (where the trial
+ * can be cancelled). Legacy no-card trials (`trial_auto_converts` false/absent)
+ * keep the "Add payment method" convert CTA below.
+ *
  * Brand: amber only on the primary "Add payment method" CTA; the day count is
  * mono (it reads like data); honest copy, no emojis.
  */
@@ -34,7 +41,18 @@ import { useDriveData } from '../lib/drive-data-context'
 import { useToast } from './toast'
 import { convertTrial, ApiError } from '../lib/api'
 import { persistTrialConvertIntent } from '../lib/pending-checkout'
+import { trialAutoConvertCopy, trialRenewalAmount } from '../lib/trial-checkout'
 import { userFriendlyError } from '../lib/user-friendly-error'
+import { noCardTrialStatus, trialBillingRefusalCopy } from '../lib/no-card-trial'
+import { PAID_CHECKOUT_PATH } from '../lib/account-state'
+import { NoCardTrialStatusCard } from './no-card-trial'
+import {
+  confirmPaymentBy,
+  chargesAutomatically,
+  confirmPaymentBannerCopy,
+  CONFIRM_PAYMENT_CTA,
+  CONFIRM_PAYMENT_TRIAL_PATH,
+} from '../lib/confirm-payment'
 
 /** Whole days remaining until an RFC3339 instant (ceil; never negative). */
 function daysLeft(iso: string): number {
@@ -43,12 +61,20 @@ function daysLeft(iso: string): number {
 }
 
 export function TrialBanner() {
-  const { planDetails } = useDriveData()
+  const { planDetails, accountDocument, usage } = useDriveData()
   const { showToast } = useToast()
   const navigate = useNavigate()
   const [converting, setConverting] = useState(false)
 
   const sub = planDetails.subscription
+
+  // Task 1757 — a trial without a card. The onboarding document says so; the legacy
+  // banner below would offer "Add payment method", which the server now refuses for
+  // this kind of trial (409 trial_convert_unavailable): it converts by subscribing.
+  const noCard = noCardTrialStatus(accountDocument, Date.now(), undefined, usage?.used_bytes)
+  if (noCard) {
+    return <NoCardTrialStatusCard status={noCard} canSubscribe={accountDocument?.purchase?.ctaAllowed === true} variant="banner" />
+  }
 
   // Only show for an ACTIVE trial with a future end date. A lapsed trial has
   // status back to a non-trialing value (free/cancelled), so this is also the
@@ -56,6 +82,60 @@ export function TrialBanner() {
   if (!sub || sub.status !== 'trialing' || !sub.trial_ends_at) return null
   const remaining = daysLeft(sub.trial_ends_at)
   if (remaining <= 0) return null
+
+  // Task 2106 — the bank asked the customer to confirm the first payment (3-D Secure):
+  // the trial is held and does NOT charge by itself, although `trial_auto_converts` is
+  // still true. Never say "charged automatically" here; send them to billing, which
+  // starts the hosted checkout.
+  const heldUntil = confirmPaymentBy(sub)
+  if (heldUntil) {
+    return (
+      <div
+        role="status"
+        data-testid="trial-banner-confirm"
+        className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 bg-paper-2 border-b border-line text-[12.5px] text-ink"
+      >
+        <Icon name="clock" size={12} className="text-amber-deep shrink-0" />
+        <span className="flex-1 min-w-[16rem] text-ink-2">{confirmPaymentBannerCopy(heldUntil)}</span>
+        <Link
+          to={CONFIRM_PAYMENT_TRIAL_PATH}
+          data-testid="trial-banner-confirm-cta"
+          className="shrink-0 px-2.5 py-1 rounded bg-amber text-ink text-[12px] font-medium hover:brightness-105 transition-all"
+        >
+          {CONFIRM_PAYMENT_CTA}
+        </Link>
+      </div>
+    )
+  }
+
+  // Task 1037 — mandate already captured: it converts on its own.
+  if (chargesAutomatically(sub)) {
+    const amount = trialRenewalAmount(sub, planDetails.plan)
+    const cycle = sub.billing_cycle === 'yearly' ? 'yearly' : 'monthly'
+    return (
+      <div
+        role="status"
+        data-testid="trial-banner-auto"
+        className="flex items-center gap-3 px-4 py-2.5 bg-paper-2 border-b border-line text-[12.5px] text-ink"
+      >
+        <Icon name="clock" size={12} className="text-amber-deep shrink-0" />
+        <span className="flex-1 text-ink-2">
+          {amount != null
+            ? trialAutoConvertCopy(sub.trial_ends_at, amount, cycle)
+            : `Trial — ends ${new Date(sub.trial_ends_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}. Then charged automatically.`}{' '}
+          <span className="text-ink-3">
+            <span className="font-mono">{remaining}</span> {remaining === 1 ? 'day' : 'days'} left.
+          </span>
+        </span>
+        <Link
+          to="/billing"
+          className="shrink-0 text-[12px] text-ink-3 hover:text-ink underline underline-offset-2 transition-colors"
+        >
+          Manage
+        </Link>
+      </div>
+    )
+  }
 
   // Honest, urgency-aware copy near expiry.
   const nearExpiry = remaining <= 2
@@ -65,7 +145,19 @@ export function TrialBanner() {
     if (converting) return
     setConverting(true)
     try {
-      const { url, payment_id } = await convertTrial()
+      const res = await convertTrial()
+      // Task 1702 — a €0 plan's conversion is a direct activation: no Mollie
+      // checkout, nothing to poll or reconcile.
+      if (res.activated) {
+        showToast({
+          icon: 'check',
+          title: 'Your plan is activated',
+          description: 'This plan is free right now — nothing was charged.',
+        })
+        navigate('/billing')
+        setConverting(false)
+        return
+      }
       // Mirror the 0865 redirect plumbing: stamp the SAME precise pending-
       // checkout shape billing.tsx itself writes before a checkout redirect
       // (task 1064 / D6) — `kind: 'plan'` + a real `pre` snapshot of the
@@ -75,11 +167,22 @@ export function TrialBanner() {
       // review: this used to omit payment_id, losing the direct
       // `GET /payment/{id}/status` reconciliation path for banner-started
       // conversions).
-      persistTrialConvertIntent(sub, payment_id)
-      window.location.href = url
+      persistTrialConvertIntent(sub, res.payment_id)
+      window.location.href = res.url
     } catch (err) {
       // Surface the typed 409s and route the user to the right place.
       if (err instanceof ApiError) {
+        if (err.code === 'trial_convert_unavailable') {
+          // A trial without a card has nothing to convert: subscribe at checkout.
+          showToast({
+            icon: 'clock',
+            title: 'Subscribe to keep your plan',
+            description: trialBillingRefusalCopy(err) ?? 'Choose a plan and pay at checkout.',
+          })
+          navigate(PAID_CHECKOUT_PATH)
+          setConverting(false)
+          return
+        }
         if (err.code === 'trial_not_active') {
           showToast({
             icon: 'clock',

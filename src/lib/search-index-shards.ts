@@ -12,6 +12,10 @@
 // runs in core; nothing here parses a blob.
 
 import { getToken, getApiUrl } from './api'
+import { provenanceHeaders, expectedUserHeaders } from '@beebeeb/shared'
+import { WorkQueue } from './work-queue'
+
+const writes = new WorkQueue(2)
 
 /** One entry in the server's shard manifest (`GET /shards`). */
 export interface ShardRef {
@@ -44,7 +48,7 @@ export const MAX_SHARD_BLOB_BYTES = 160 * 1024
 function authHeaders(extra?: Record<string, string>): Record<string, string> {
   // Auth via cookie (post-migration) or bearer (legacy localStorage); the
   // server's AuthUser extractor accepts either. Same pattern as search-index.ts.
-  const headers: Record<string, string> = { ...extra }
+  const headers: Record<string, string> = { ...provenanceHeaders(), ...expectedUserHeaders(), ...extra }
   const token = getToken()
   if (token) headers['Authorization'] = `Bearer ${token}`
   return headers
@@ -110,25 +114,32 @@ export async function getShards(coords: ShardCoord[]): Promise<EncryptedShard[]>
  * per-shard `version` (LWW) and returns the new `{bucket, page, version}`.
  * The body is raw `application/octet-stream` — never JSON.
  */
-export async function putShard(shard: EncryptedShard): Promise<ShardRef> {
+export async function putShard(shard: EncryptedShard, signal?: AbortSignal): Promise<ShardRef> {
   if (shard.blob.length === 0) throw new Error('shard blob must not be empty')
   if (shard.blob.length > MAX_SHARD_BLOB_BYTES) {
     throw new Error(`shard ${shard.bucket}/${shard.page} blob ${shard.blob.length}B exceeds cap`)
   }
-  const res = await fetch(
-    `${getApiUrl()}/api/v1/search-index/shards/${shard.bucket}/${shard.page}`,
-    {
-      method: 'PUT',
-      headers: authHeaders({ 'Content-Type': 'application/octet-stream' }),
-      // Copy into a fresh ArrayBuffer-backed view so a Uint8Array that is a
-      // subarray over a larger buffer (core often returns views) sends only its
-      // own bytes, not the whole backing buffer.
-      body: shard.blob.slice().buffer as ArrayBuffer,
-      credentials: 'include',
-    },
-  )
-  if (!res.ok) throw new Error(`shard ${shard.bucket}/${shard.page} PUT failed: ${res.status}`)
-  return (await res.json()) as ShardRef
+  // Capture identity before admission; a queued encrypted page must not adopt
+  // credentials/expected-user from a later account switch.
+  const url = `${getApiUrl()}/api/v1/search-index/shards/${shard.bucket}/${shard.page}`
+  const headers = authHeaders({ 'Content-Type': 'application/octet-stream' })
+  return writes.run(async () => {
+    const res = await fetch(
+      url,
+      {
+        method: 'PUT',
+        headers,
+        signal,
+        // Copy into a fresh ArrayBuffer-backed view so a Uint8Array that is a
+        // subarray over a larger buffer (core often returns views) sends only its
+        // own bytes, not the whole backing buffer.
+        body: shard.blob.slice().buffer as ArrayBuffer,
+        credentials: 'include',
+      },
+    )
+    if (!res.ok) throw new Error(`shard ${shard.bucket}/${shard.page} PUT failed: ${res.status}`)
+    return (await res.json()) as ShardRef
+  }, signal, url)
 }
 
 /**
@@ -137,26 +148,31 @@ export async function putShard(shard: EncryptedShard): Promise<ShardRef> {
  * but writes are issued with bounded concurrency so a 64-shard rebuild doesn't
  * burst the connection pool.
  */
-export async function putShards(shards: EncryptedShard[]): Promise<void> {
-  const CONCURRENCY = 6
-  for (let i = 0; i < shards.length; i += CONCURRENCY) {
-    const slice = shards.slice(i, i + CONCURRENCY)
-    await Promise.all(slice.map((s) => putShard(s)))
-  }
+export async function putShards(shards: EncryptedShard[], signal?: AbortSignal): Promise<void> {
+  // Wait for EVERY admitted write even on failure before allowing a publisher
+  // to retry. An older in-flight page must not outlive its publication batch.
+  const results = await Promise.allSettled(shards.map(s => putShard(s, signal)))
+  const failed = results.find(r => r.status === 'rejected')
+  if (failed?.status === 'rejected') throw failed.reason
 }
 
 /**
  * `DELETE /shards/{bucket}/{page}` — remove a shard whose bucket emptied.
  * Idempotent (the server 204s whether or not a row existed).
  */
-export async function deleteShard(bucket: number, page: number): Promise<void> {
-  const res = await fetch(`${getApiUrl()}/api/v1/search-index/shards/${bucket}/${page}`, {
-    method: 'DELETE',
-    headers: authHeaders(),
-    credentials: 'include',
-  })
-  // 204 expected; 404 is fine too (already gone).
-  if (!res.ok && res.status !== 404) {
-    throw new Error(`shard ${bucket}/${page} DELETE failed: ${res.status}`)
-  }
+export async function deleteShard(bucket: number, page: number, signal?: AbortSignal): Promise<void> {
+  const url = `${getApiUrl()}/api/v1/search-index/shards/${bucket}/${page}`
+  const headers = authHeaders()
+  return writes.run(async () => {
+    const res = await fetch(url, {
+      signal,
+      method: 'DELETE',
+      headers,
+      credentials: 'include',
+    })
+    // 204 expected; 404 is fine too (already gone).
+    if (!res.ok && res.status !== 404) {
+      throw new Error(`shard ${bucket}/${page} DELETE failed: ${res.status}`)
+    }
+  }, signal, url)
 }

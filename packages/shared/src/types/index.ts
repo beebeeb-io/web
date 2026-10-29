@@ -99,6 +99,16 @@ export interface DriveFile {
   file_request_id?: string | null
   sender_ephemeral_pubkey?: string | null
   wrapped_content_key?: string | null
+  /** Task 2237b: a guest- or member-added row in a shared folder. The owner's
+   *  own copy of the file key, wrapped to the master key; null until an owner
+   *  client adopts the file. */
+  owner_wrapped_file_key?: string | null
+  /** The folder link the guest used, for "added via {label}" attribution. */
+  acted_via_share_id?: string | null
+  /** The guest's chosen display name, sealed under the folder key. */
+  actor_name_encrypted?: string | null
+  /** The signed-in member who added the file, when it was not a guest. */
+  uploaded_by?: string | null
   created_at: string
   updated_at: string
 }
@@ -110,9 +120,20 @@ export interface UploadStatusResponse {
   is_uploading: boolean
 }
 
+/** Response from `POST /api/v1/files/:id/upload/abandon` (task 1571). */
+export interface UploadAbandonResponse {
+  id: string
+  status: 'reverted' | 'deleted' | 'not_uploading'
+  previous_version_number?: number
+  deleted: boolean
+}
+
 export interface SyncNode {
   id: string
   name_encrypted: string
+  file_request_id?: string | null
+  sender_ephemeral_pubkey?: string | null
+  wrapped_content_key?: string | null
   parent_id: string | null
   is_folder: boolean
   size_bytes: number
@@ -368,6 +389,8 @@ export interface ShareInvite {
   is_folder_share?: boolean
   encrypted_folder_key?: string
   encrypted_owner_folder_key?: string
+  /** The grant the server enforces (read | add | write | admin). */
+  permission?: string
 }
 
 export interface InviteActivity {
@@ -441,6 +464,14 @@ export interface PlanUpdateResponse {
   note?: string
 }
 
+export interface LastTrial {
+  kind: 'no_card' | 'mandated' | 'promo' | 'grant'
+  /** RFC 3339: when the trial ended unpaid. */
+  ended_at: string
+  /** A real payment settled since the trial started. */
+  charged: boolean
+}
+
 export interface Subscription {
   plan: string
   billing_cycle: string
@@ -477,6 +508,13 @@ export interface Subscription {
    * attempt `startTrial()`.
    */
   has_used_trial?: boolean
+  /**
+   * The account's most recent trial that ENDED unpaid (task 1757 round 2), or null.
+   * `has_used_trial` is a lifetime flag and says nothing about HOW a trial ended; this
+   * does: `kind` (no_card | mandated | promo), `ended_at`, and whether a real charge
+   * settled since it started. The "nothing was charged" notice is gated on it.
+   */
+  last_trial?: LastTrial | null
   /**
    * Whether the active billing provider supports subscription pause/resume
    * (task 0924). True only under Stripe; false under Mollie (no native pause).
@@ -556,7 +594,90 @@ export interface Subscription {
    * no storage add-on.
    */
   addon_per_tb_cents?: number | null
+  /**
+   * The plan the account is ENTITLED to right now (server task 1601). `"none"`
+   * for a `needs_plan` or `lapsed` account (task 1037). Absent on older servers.
+   */
+  effective_plan?: string
+  /**
+   * Account lifecycle state (task 1037 — no free signups). Additive; absent on
+   * older servers, which clients treat as `"ok"`.
+   *   - `ok`         — normal (entitled, or grandfathered Free).
+   *   - `needs_plan` — a new-model account that never started a trial or plan:
+   *                    the app sends it to `/choose-plan`. Upload quota is 0.
+   *   - `lapsed`     — a trial/plan ended unpaid: read-only (quota 0), data
+   *                    deleted at `data_deletion_at` unless the user subscribes.
+   */
+  account_state?: AccountState
+  /**
+   * RFC3339 deletion date. Originally `lapsed`-only (task 1037); since server
+   * PR #129 (task 1605) it is ALSO populated for a never-paid trial the
+   * moment it enters `cancelling` (= `access_until` + the 14-day never-paid
+   * retention window), not only once it has actually lapsed. Null for a paid
+   * cancelling account unless/until the server has computed a real deletion
+   * date for it.
+   */
+  data_deletion_at?: string | null
+  /**
+   * Task 1814 — what ended, while `account_state` is `lapsed`: `"gift"` for the end of a
+   * free coupon period (never a trial, never asked for a payment), `"trial"` otherwise,
+   * null when the account is not lapsed. Additive; absent on older servers (treat as
+   * `"trial"`, the only lapse they had).
+   */
+  lapse_kind?: 'gift' | 'trial' | null
+  /**
+   * True when a `trialing` row already has a Mollie mandate + subscription, so
+   * it is charged automatically at `trial_ends_at` (task 1037). False/absent
+   * for legacy no-card trials, which still use `POST /billing/trial/convert`.
+   */
+  trial_auto_converts?: boolean
+  /**
+   * Task 2106 (server 2092b). RFC 3339 end of the 3-day hold when the bank asked the
+   * customer to confirm a trial's first payment (3-D Secure); null/absent otherwise.
+   * `trial_auto_converts` stays true during the hold, so THIS field alone says the
+   * trial does not charge by itself: it ends at this instant unless the customer
+   * confirms (pay-now).
+   */
+  confirm_payment_by?: string | null
+  /**
+   * Why a paid trial mandate did NOT start a trial (task 1037, one trial per
+   * payment method): `"payment_method_already_used"` when the card / bank
+   * account already started a trial on any account. The account stays
+   * `needs_plan` (the iDEAL cent is refunded). Null otherwise; cleared on the
+   * next `POST /billing/trial/checkout` and on a successful trial.
+   */
+  trial_block_reason?: string | null
+  /**
+   * Task 1605 (server PR #129, `GET /billing/subscription`). Set the instant
+   * a never-paid mandated trial is cancelled (`subscriptions.canceled_at`) —
+   * uploads and new shares are refused (409 `trial_cancelled_read_only`) from
+   * this moment, even though `status` stays `cancelling` and view/download
+   * keep working until `access_until`. Null for every other state, including
+   * a PAID account's ordinary cancel (which keeps full access, uploads
+   * included, until `current_period_end` — no upload block at all).
+   */
+  uploads_blocked_at?: string | null
+  /**
+   * Task 1605. For a cancelled never-paid trial, the date view/download stop
+   * working (= `trial_ends_at` at the moment of cancel) — the read-only
+   * window's end, not a renewal. Mirrors `current_period_end` for this case
+   * but is the field to read: it stays correct even where `current_period_end`
+   * has server-internal meanings that shift. Null outside this state.
+   */
+  access_until?: string | null
+  /**
+   * Task 1605. Non-null only while a `trialing` row (i) already holds a
+   * Mollie mandate/subscription (`trial_auto_converts: true`) AND (ii) has
+   * never had a successful real charge — the storage quota is capped at this
+   * many bytes (25 GB) until the first payment settles, after which the
+   * server drops the cap and this reads null on the next fetch. Never set for
+   * the legacy no-card trial pattern (that one keeps the full plan quota).
+   */
+  trial_storage_cap_bytes?: number | null
 }
+
+/** `GET /billing/subscription` → `account_state` (task 1037). */
+export type AccountState = 'ok' | 'needs_plan' | 'lapsed'
 
 export interface Invoice {
   id: string
@@ -1567,9 +1688,10 @@ export interface DataExportStatus {
 export interface AvailableRegion {
   continent: string
   display_name: string
-  /** Representative city, e.g. "Falkenstein". Server (storage.rs `RegionInfo`)
-   *  emits this as `example_city` — NOT `city`. */
-  example_city: string
+  /** Representative COUNTRY, e.g. "Germany" (task 2050). Absent on a server
+   *  older than 2050. The server still emits a deprecated `example_city` for
+   *  one release; it is deliberately not typed here, so nothing can render it. */
+  example_country?: string
   /** No `provider` field — the brand rule (docs/canon/data-residency.md) is
    *  name the city, never the hosting provider, in user-facing copy. The
    *  server's `RegionInfo.provider` is `#[serde(skip_serializing)]` (task
@@ -1580,6 +1702,8 @@ export interface AvailableRegion {
 
 export interface UserRegionResponse {
   preferred_region: string | null
+  /** "Only store in <country>" (task 1952). Absent on a server older than 1952. */
+  region_strict?: boolean
   /** Server (regions.rs `get_preferred_region`) returns the array under
    *  `available_regions`, not `regions`. */
   available_regions: AvailableRegion[]

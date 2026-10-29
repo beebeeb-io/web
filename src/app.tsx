@@ -1,25 +1,38 @@
-import React, { useState, useCallback, useEffect, lazy, Suspense } from 'react'
+import React, { useState, useCallback, useRef, useEffect, lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { reportError } from '@beebeeb/shared'
 import { AuthProvider, useAuth } from './lib/auth-context'
 import { KeyProvider, useKeys } from './lib/key-context'
 import { sanitizeRedirect } from './lib/safe-redirect'
+import { readPlanIntent, guestRouteFallback } from './lib/plan-intent'
+import { planGateRedirect } from './lib/account-state'
+import { flushDeferredWelcomeFile } from './lib/welcome-file-upload'
 import { WsProvider } from './lib/ws-context'
 import { SyncProvider } from './lib/sync-context'
 import { OnboardingProvider } from './lib/onboarding-context'
-import { FEATURE_TEAMS } from './lib/flags'
+import { FEATURE_TEAMS, FEATURE_ONBOARDING_DOCUMENT } from './lib/flags'
+import { isOfficeLabsEnabled, OFFICE_ROUTE_MARKER } from './lib/office/office-labs'
 import { ToastProvider, useToast } from './components/toast'
 import { ErrorBoundary } from './components/error-boundary'
 import { WasmGuard } from './components/wasm-guard'
 import { VaultUnlock } from './components/vault-unlock'
+import { VaultLockedImpersonated } from './components/vault-locked-impersonated'
+import { VaultLockedNoKey } from './components/vault-locked-no-key'
+import {
+  clearPostResetLock,
+  isPostResetLockedDevice,
+  resolveLockedVaultSurface,
+} from './lib/post-reset-lock'
 import { OfflineBanner } from './components/offline-banner'
-import { ImpersonationProvider } from './lib/impersonation-context'
+import { ImpersonationProvider, isImpersonationSessionActive } from './lib/impersonation-context'
 import { ImpersonationBanner } from './components/impersonation-banner'
 import { DevAuthGate } from './components/dev-auth-gate'
 import { registerAccountDeletedHandler, registerErrorNotifier, registerSessionExpiredHandler } from './lib/api'
 import { formatAccountDeletedMessage } from './lib/user-friendly-error'
 import { stashAccountDeletedNotice } from './lib/account-deleted-notice'
+import { signedOutDestination, useSignedOutInactive } from './lib/account-inactive'
+import { AccountInactiveScreen } from './components/account-inactive'
 import { CommandPalette } from './components/command-palette'
 import { ShortcutsCheatsheet } from './components/shortcuts-cheatsheet'
 import { useKeyboardShortcuts } from './hooks/use-keyboard-shortcuts'
@@ -28,6 +41,9 @@ import { SessionTimeoutWarning } from './components/session-timeout-warning'
 import { Signup } from './pages/signup'
 import { Login } from './pages/login'
 import { Onboarding } from './pages/onboarding'
+import { Coupon } from './pages/coupon'
+import { heldCouponRedirect, readHeldCoupon } from './lib/coupon'
+import { isVaultFreePath } from './lib/vault-free-paths'
 
 // ── Lazy: split into separate chunks, loaded on demand ───────────────────────
 // Named-export helper: React.lazy requires a default export
@@ -45,11 +61,19 @@ const Search         = lazyNamed(() => import('./pages/search'),         'Search
 const Photos         = lazyNamed(() => import('./pages/photos'),         'Photos')
 const Pricing        = lazyNamed(() => import('./pages/pricing'),        'Pricing')
 const Billing        = lazyNamed(() => import('./pages/billing'),        'Billing')
+const ChoosePlan     = lazyNamed(() => import('./pages/choose-plan'),    'ChoosePlan')
+const ReturnToApp    = lazyNamed(() => import('./pages/return-to-app'),  'ReturnToApp')
+const SurveyPage     = lazyNamed(() => import('./pages/survey'),         'SurveyPage')
+const EraseRequestCancelPage = lazyNamed(() => import('./pages/erase-request-cancel'), 'EraseRequestCancelPage')
+const EraseRequestVerifyPage = lazyNamed(() => import('./pages/erase-request-verify'), 'EraseRequestVerifyPage')
 const ShareViewPage  = lazyNamed(() => import('./pages/share-view'),     'ShareViewPage')
+const FolderLinkPage = lazyNamed(() => import('./pages/folder-link'),    'FolderLinkPage')
 const ForgotPassword = lazyNamed(() => import('./pages/forgot-password'),'ForgotPassword')
 const ResetPassword  = lazyNamed(() => import('./pages/reset-password'), 'ResetPassword')
+const SetPassword    = lazyNamed(() => import('./pages/set-password'),   'SetPassword')
 const RecoverWithPhrase = lazyNamed(() => import('./pages/recover-with-phrase'), 'RecoverWithPhrase')
 const VerifyEmail    = lazyNamed(() => import('./pages/verify-email'),   'VerifyEmail')
+const OfficeEditorPage = lazyNamed(() => import('./pages/office-editor-page'), 'OfficeEditorPage')
 const Unlock         = lazyNamed(() => import('./pages/unlock'),         'Unlock')
 const Migration      = lazyNamed(() => import('./pages/migration'),      'Migration')
 const Team           = lazyNamed(() => import('./pages/team'),           'Team')
@@ -64,6 +88,28 @@ const ImpersonateRedeem = lazyNamed(
   'ImpersonateRedeem',
 )
 const JoinPage       = lazyNamed(() => import('./pages/join'),            'JoinPage')
+// Dev-only harness for the office loading skeleton (task 1567) — never
+// imported, let alone routed to, in a production build (see the
+// `import.meta.env.DEV`-gated Route below). Vite constant-folds that check
+// and Rollup tree-shakes both the import and the chunk out of `bun run build`.
+const DevOfficePreview = import.meta.env.DEV
+  ? lazyNamed(() => import('./pages/dev-office-preview'), 'DevOfficePreview')
+  : null
+// Task 1745: document-driven signup + account view. Behind
+// FEATURE_ONBOARDING_DOCUMENT (default off), so the flag-off build has no route
+// to them and `/signup` is the legacy page unchanged. Both fall back to the
+// legacy page on a 404 / network failure / malformed document (spec 5.8 rule 6).
+const SignupFromDocument = FEATURE_ONBOARDING_DOCUMENT
+  ? lazyNamed(() => import('./pages/onboarding-document'), 'SignupFromDocument')
+  : null
+const AccountStatusFromDocument = FEATURE_ONBOARDING_DOCUMENT
+  ? lazyNamed(() => import('./pages/onboarding-document'), 'AccountStatusFromDocument')
+  : null
+// Dev-only fixture harness for the onboarding renderer (task 1745). Same
+// `import.meta.env.DEV` gating as DevOfficePreview: absent from `bun run build`.
+const DevOnboardingFixtures = import.meta.env.DEV
+  ? lazyNamed(() => import('./pages/dev-onboarding-fixtures'), 'DevOnboardingFixtures')
+  : null
 const NotFound       = lazyNamed(() => import('./pages/errors/not-found'),   'NotFound')
 const Logout         = lazyNamed(() => import('./pages/logout'),             'Logout')
 const ServerError    = lazyNamed(() => import('./pages/errors/server-error'), 'ServerError')
@@ -96,35 +142,165 @@ const UploadRequestPage     = lazyNamed(() => import('./pages/upload-request'), 
 import { ThemeProvider } from './lib/theme-context'
 import { DisplayProvider } from './lib/display-context'
 import { BillingBanner } from './components/billing-banner'
+import { AccountNoticeBanner } from './components/account-notice-banner'
 import { IncidentBanner } from './components/incident-banner'
 import { BillingSuspendedOverlay } from './components/billing-suspended-overlay'
 import { CookieBanner } from './components/cookie-banner'
-import { DriveDataProvider } from './lib/drive-data-context'
+import { DriveDataProvider, useDriveData } from './lib/drive-data-context'
 import { SearchIndexProvider } from './lib/search-index-context'
 
-function ProtectedRoute({ children }: { children: ReactNode }) {
+/**
+ * Task 1693 Part B renders this as the explicit, metadata-only "Vault
+ * locked" state for an impersonated session (ruling D-2026-10-02, option A:
+ * "net zoals in iOS dat er staat 'vault locked', de rest hetzelfde").
+ * Exported for `bun test` (this repo has no jsdom/@testing-library; see
+ * test/1693-impersonated-vault-locked.test.tsx for the render harness).
+ * NOT exported from the app bundle elsewhere.
+ */
+export function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
+  const signedOutInactive = useSignedOutInactive()
   const { isUnlocked, vaultExists, vaultChecked } = useKeys()
   const location = useLocation()
+  // Task 1704 SLICE 2 — the escape hatch out of the no-key surface: once the
+  // user asks for the password form ("I remember my previous password"), this
+  // instance renders VaultUnlock for the rest of its life. The marker itself
+  // is cleared by the surface's handler, so sibling route instances agree.
+  const [unlockFormRequested, setUnlockFormRequested] = useState(false)
+
+  // Once the vault IS unlocked (e.g. the /recover-with-phrase ceremony
+  // re-wrapped the key under the fresh password), the post-reset marker has
+  // served its purpose — clear it so any LATER lock in this tab returns to
+  // the normal password form, not the no-key surface.
+  useEffect(() => {
+    if (isUnlocked && isPostResetLockedDevice()) clearPostResetLock()
+  }, [isUnlocked])
 
   if (loading || !vaultChecked) return null
 
   // Preserve the intended destination so the login flow can return here after
-  // auth — notably the CLI device-auth round-trip to /cli-auth?code=…, which
-  // is bounced here before login.tsx ever sees the URL. login.tsx validates
+  // auth — notably the CLI device-auth round-trip to /cli-auth (the code is
+  // typed on that page, never carried in the URL), which is bounced here before
+  // login.tsx ever sees the URL. login.tsx validates
   // `next` against a strict allowlist (safe-redirect.ts), so a non-allowlisted
   // path simply falls back to "/" — safe to set for every protected route.
   const loginTo = `/login?next=${encodeURIComponent(location.pathname + location.search)}`
 
-  if (!user) return <Navigate to={loginTo} replace />
-  if (!isUnlocked) return vaultExists ? <VaultUnlock /> : <Navigate to={loginTo} replace />
+  if (!user) {
+    // Task 1948 (1c): this page load signed out a login whose account is no longer
+    // active. Say so here, with Sign out and the support address, instead of a
+    // silent bounce to the sign-in page.
+    if (signedOutDestination(signedOutInactive) === 'account_inactive') return <AccountInactiveScreen />
+    return <Navigate to={loginTo} replace />
+  }
+  if (!isUnlocked) {
+    if (!vaultExists) return <Navigate to={loginTo} replace />
+    // Task 1693 (Part B, ruling D-2026-10-02 — option A, "net zoals in iOS
+    // dat er staat vault locked, de rest hetzelfde"): an impersonated
+    // session must NOT render the password form. VaultUnlock's submit calls
+    // unlockVault(password, <target user_id>) — the admin would be typing
+    // their own password against the TARGET account's vault entry (tagged
+    // to a different user_id; after task 1531 it correctly refuses, so the
+    // form is not just wrong, it can never succeed). Zero-knowledge means
+    // no key material for the target exists in this session, period. Show
+    // the explicit, metadata-only "Vault locked" state instead. Normal
+    // (non-impersonated) users keep the existing VaultUnlock flow untouched.
+    //
+    // Task 1704 SLICE 2 (decision doc D-2026-10-02, Amendment + §4c): a
+    // NON-impersonated user who just completed the email password reset
+    // holds a FRESH account credential but no vault key — the device's
+    // wrapped vault can never open under the new password, so VaultUnlock's
+    // form is a dead end for them. The /set-password completion stamps a
+    // marker (src/lib/post-reset-lock.ts — no key-context/crypto change);
+    // with it present, render the honest locked-state surface instead:
+    // re-entry via the 12-word phrase plus the self-service exits (cancel
+    // billing, delete all data, delete account). The decision itself is
+    // factored into resolveLockedVaultSurface() — impersonation keeps
+    // priority exactly as 1693 shipped it, and users without the marker
+    // (a normal lock, or a tab where the old password may still work) get
+    // VaultUnlock byte-for-byte unchanged.
+    const surface = resolveLockedVaultSurface({
+      impersonating: isImpersonationSessionActive(),
+      postResetMarker: isPostResetLockedDevice(),
+      unlockFormRequested,
+    })
+    if (surface === 'impersonated') return <VaultLockedImpersonated />
+    if (surface === 'no_key') {
+      return (
+        <VaultLockedNoKey onTryPreviousPassword={() => setUnlockFormRequested(true)} />
+      )
+    }
+    return <VaultUnlock />
+  }
 
   return (
-    <>
+    <PlanGate>
       <SessionTimeoutWarning />
       <WasmGuard>{children}</WasmGuard>
-    </>
+    </PlanGate>
   )
+}
+
+/**
+ * Task 1037 — no free signups. A `needs_plan` account (never started a trial
+ * or plan) is sent to /choose-plan from every protected route except the few
+ * it still needs (the chooser, account settings/deletion, billing, logout —
+ * see `planGateRedirect`). Waits for the first subscription fetch so a new
+ * account never flashes the drive; the shared cache in DriveDataProvider is
+ * refreshed on `billing_updated` / plan-changed, so the gate lifts itself the
+ * moment the trial is live. A missing `account_state` (older server) is "ok".
+ *
+ * Task 1816: `accountState` is the onboarding document's when it is available
+ * (an allowance account is `ok` and reaches the drive; only `needs_plan` WITHOUT
+ * an allowance goes to the chooser), else the legacy subscription's.
+ */
+function PlanGate({ children }: { children: ReactNode }) {
+  const { accountState, accountBlocking, subscriptionSettled, planDetails } = useDriveData()
+  const location = useLocation()
+  // A billing refresh re-opens `subscriptionSettled` while the document is
+  // re-fetched (1816 round 2). Once the gate has decided for this account, keep
+  // the app mounted through that window — never a spinner that remounts the
+  // drive, never a redirect decided on the half-refreshed state.
+  const decidedFor = useRef<string | null>(null)
+  const { user } = useAuth()
+  const { getMasterKey } = useKeys()
+  // A welcome file onboarding deferred while the account had no plan is
+  // uploaded once the account is entitled — here for every later page (another
+  // tab, a later visit); /choose-plan's success path does it inline. Deduped +
+  // "pending"-guarded in src/lib/welcome-file.ts, so this is one preference
+  // GET per session for everyone else.
+  const userId = user?.user_id
+  useEffect(() => {
+    if (!subscriptionSettled || accountState !== 'ok' || !userId) return
+    let masterKey: Uint8Array
+    try {
+      masterKey = getMasterKey(userId)
+    } catch {
+      return
+    }
+    void flushDeferredWelcomeFile(userId, masterKey)
+  }, [subscriptionSettled, accountState, userId, getMasterKey])
+  if (subscriptionSettled) decidedFor.current = userId ?? null
+  if (!subscriptionSettled && userId && decidedFor.current === userId) {
+    return <>{children}</>
+  }
+  if (!subscriptionSettled) {
+    return (
+      <div className="flex items-center justify-center min-h-screen" aria-busy="true">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-amber" />
+      </div>
+    )
+  }
+  // Task 1814: an account that arrived through a coupon link and holds no plan claims it
+  // before anything else (including the chooser, and including an allowance account, which
+  // 1816 counts as `ok`). The hold ends on any final answer (see pages/coupon.tsx).
+  // An unreadable subscription is "unknown", never "no plan": it redirects nobody.
+  const sub = planDetails.subscription
+  const couponTo = sub ? heldCouponRedirect(accountState, sub.plan, readHeldCoupon()) : null
+  if (couponTo && location.pathname !== couponTo.split('?')[0]) return <Navigate to={couponTo} replace />
+  const to = planGateRedirect(location.pathname, accountState, accountBlocking)
+  if (to) return <Navigate to={to} replace />
+  return <>{children}</>
 }
 
 /**
@@ -167,6 +343,7 @@ function GuestRoute({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
   const { isUnlocked } = useKeys()
   const [searchParams] = useSearchParams()
+  const location = useLocation()
 
   if (loading) return null
   // Only redirect to app if user is fully authenticated AND vault is unlocked.
@@ -176,7 +353,7 @@ function GuestRoute({ children }: { children: ReactNode }) {
     // Task 1437 — this branch can fire a STALE render after login.tsx's
     // navigateAfterLogin() has ALREADY navigated the user to their real
     // `?next=` destination (notably the CLI device-auth round-trip,
-    // /cli-auth?code=…): `isUnlocked` flipping true (inside setMasterKey /
+    // /cli-auth): `isUnlocked` flipping true (inside setMasterKey /
     // unlockVault, on the OPAQUE-login or device-provision success path)
     // and the router committing the new location land in separate React
     // render passes, so GuestRoute — still matched against its own
@@ -184,7 +361,7 @@ function GuestRoute({ children }: { children: ReactNode }) {
     // after the URL has already moved on. Hard-coding "/" here would let
     // that stale render win the race with its own `replace` navigation,
     // silently bouncing the user off the CLI-authorize prompt onto the
-    // drive (the exact bug: reaches /cli-auth?code=… correctly, then ~1s
+    // drive (the exact bug: reaches /cli-auth correctly, then ~1s
     // later re-navigates to "/"). Honouring the SAME allowlisted `next`
     // login.tsx itself would follow (safe-redirect.ts) makes both
     // navigations agree on the destination, so whichever one the render
@@ -192,7 +369,11 @@ function GuestRoute({ children }: { children: ReactNode }) {
     // eliminating the race as a user-visible symptom rather than trying to
     // win a timing contest against React's scheduling.
     const fromQuery = sanitizeRedirect(searchParams.get('next'))
-    return <Navigate to={fromQuery ?? '/'} replace />
+    // Same race for a brand-new account leaving /onboarding: its final
+    // refreshUser() re-renders this guard before onboarding's own navigate()
+    // to the plan chooser (plan picked on the site, src/lib/plan-intent.ts).
+    // Compute the same destination so neither navigation can undo the other.
+    return <Navigate to={fromQuery ?? guestRouteFallback(location.pathname, readPlanIntent())} replace />
   }
   return <>{children}</>
 }
@@ -235,6 +416,10 @@ const PUBLIC_ROUTE_PATTERNS: RegExp[] = [
   /^\/invite\//,
   /^\/auth\/impersonate(\/|$)/,
   /^\/cookies(\/|$)/,
+  /^\/return-to-app(\/|$)/, // checkout return page for native apps (task 1743)
+  /^\/surveys\//, // exit survey: the emailed link is the credential (task 1920)
+  /^\/erase-request\/cancel(\/|$)/, // erase-request cancel link (task 1918)
+  /^\/erase-request\/verify(\/|$)/, // erase-request confirmation link (task 1918 round 3)
 ]
 function isPublicPath(pathname: string): boolean {
   return PUBLIC_ROUTE_PATTERNS.some((re) => re.test(pathname))
@@ -291,8 +476,19 @@ function ApiErrorWiring() {
       // Do NOT call ev.preventDefault() — keep the browser's native
       // "Uncaught (in promise)" warning visible in DevTools.
     }
+    // Uncaught synchronous errors (event handlers, timers) — neither the React
+    // boundary nor the rejection handler sees these. Cross-origin "Script
+    // error." events carry no Error object and nothing diagnosable: skipped.
+    function handleWindowError(ev: ErrorEvent) {
+      if (!ev.error) return
+      reportError(ev.error, { boundary: 'window.onerror' })
+    }
     window.addEventListener('unhandledrejection', handleUnhandledRejection)
-    return () => window.removeEventListener('unhandledrejection', handleUnhandledRejection)
+    window.addEventListener('error', handleWindowError)
+    return () => {
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection)
+      window.removeEventListener('error', handleWindowError)
+    }
   }, [])
 
   return null
@@ -330,11 +526,38 @@ function GlobalShortcuts() {
   )
 }
 
+/**
+ * Task 1920: pages a person reaches from an email link with no account in sight. They render
+ * OUTSIDE the auth/key/sync providers, so KeyProvider never starts the crypto worker, WASM or the
+ * local vault for them (see `lib/vault-free-paths.ts`). The invitation id + token in the link are the
+ * credential. Any other path mounts the full app exactly as before.
+ */
+function VaultFreePages({ children }: { children: ReactNode }) {
+  const { pathname } = useLocation()
+  if (!isVaultFreePath(pathname)) return <>{children}</>
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center min-h-screen">
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-amber" />
+        </div>
+      }
+    >
+      <Routes>
+        <Route path="/surveys/:id" element={<SurveyPage />} />
+        <Route path="/erase-request/cancel" element={<EraseRequestCancelPage />} />
+        <Route path="/erase-request/verify" element={<EraseRequestVerifyPage />} />
+      </Routes>
+    </Suspense>
+  )
+}
+
 export function App() {
   return (
     <ErrorBoundary>
     <ThemeProvider>
     <BrowserRouter>
+      <VaultFreePages>
       <ImpersonationProvider>
       <DevAuthGate>
       <AuthProvider>
@@ -356,6 +579,7 @@ export function App() {
         <ImpersonationBanner />
         <OfflineBanner />
         <BillingBanner />
+        <AccountNoticeBanner />
         <BillingSuspendedOverlay />
         <GlobalShortcuts />
         <CookieBanner />
@@ -369,7 +593,7 @@ export function App() {
             path="/signup"
             element={
               <GuestRoute>
-                <Signup />
+                {SignupFromDocument ? <SignupFromDocument /> : <Signup />}
               </GuestRoute>
             }
           />
@@ -397,6 +621,28 @@ export function App() {
               </GuestRoute>
             }
           />
+          {/* Task 1704 — one-time set-password page. The emailed link is the
+              entry proof; the token rides in the PATH (preview-safe). A user
+              finishing here is logging OUT everywhere else and IN on this
+              device, so no auth guard beyond GuestRoute's own semantics. */}
+          <Route
+            path="/set-password/:token"
+            element={
+              <GuestRoute>
+                <SetPassword />
+              </GuestRoute>
+            }
+          />
+          {/* A link opened without its token → the page renders its own
+              "incomplete link" state; route without param kept explicit. */}
+          <Route
+            path="/set-password"
+            element={
+              <GuestRoute>
+                <SetPassword />
+              </GuestRoute>
+            }
+          />
           {/* Public — a locked-out user can't authenticate, so no guard (0764A). */}
           <Route path="/unlock/:token" element={<Unlock />} />
           <Route
@@ -413,6 +659,32 @@ export function App() {
               <ProtectedRoute>
                 <VerifyEmail />
               </ProtectedRoute>
+            }
+          />
+          {/* Office editor (task 1567) — its OWN top-level route, opened via
+              window.open() from file-preview.tsx, never nested in the Drive
+              page. See office-editor-page.tsx's header comment for why this
+              must be a real navigation and not an in-app overlay. Path is
+              `/office/:fileId` (not e.g. `/office-editor`) specifically to
+              reuse nginx.conf's PRE-EXISTING `location /office/` block,
+              which the task 1567 delivery-groundwork phase already wrote for
+              exactly this — "office page route itself (e.g. /office/<fileId>)
+              is client-rendered — SPA fallback... carrying the SAME
+              isolation headers" — rather than inventing a second one. */}
+          <Route
+            path="/office/:fileId"
+            element={
+              // Task 1567: the build flag (FEATURE_OFFICE_EDITOR, via
+              // isOfficeLabsEnabled() — a pure alias since Guus dropped the
+              // Labs opt-in, see office-labs.ts) is the only gate. The key
+              // is the prod image gate's bundle marker (OFFICE_ROUTE_MARKER).
+              isOfficeLabsEnabled() ? (
+                <ProtectedRoute key={OFFICE_ROUTE_MARKER}>
+                  <OfficeEditorPage />
+                </ProtectedRoute>
+              ) : (
+                <Navigate to="/" replace />
+              )
             }
           />
           <Route
@@ -512,6 +784,16 @@ export function App() {
               </ProtectedRoute>
             }
           />
+          {/* Task 1037 — trial with a payment mandate. Every new account lands
+              here after onboarding; Mollie returns here (?returned=1). */}
+          <Route
+            path="/choose-plan"
+            element={
+              <ProtectedRoute>
+                <ChoosePlan />
+              </ProtectedRoute>
+            }
+          />
           <Route path="/pricing" element={<Pricing />} />
           <Route path="/billing" element={<RedirectPreservingSearch to="/settings/billing" />} />
           {/* Admin moved to admin.beebeeb.io. Redirect any /admin/* URL
@@ -579,10 +861,18 @@ export function App() {
               query string is the credential. See task 0161. */}
           <Route path="/auth/impersonate" element={<ImpersonateRedeem />} />
           <Route path="/s/:token" element={<ShareViewPage />} />
+          {/* Task 2237b: a shared folder link. Public; the fragment carries the
+              link key and never reaches a server. */}
+          <Route path="/f/:token" element={<FolderLinkPage />} />
           {/* Public user profile — no auth required */}
           <Route path="/p/:username" element={<PublicProfilePage />} />
           <Route path="/join/:code" element={<JoinPage />} />
+          {/* Task 1814: coupon links. Public; the page routes to signup / login / claim. */}
+          <Route path="/c/:code" element={<Coupon />} />
           <Route path="/cookies" element={<Cookies />} />
+          {/* Task 1743: where a native app's Mollie checkout returns the system browser. Public;
+              the path is fixed server-side (checkout_return::APP_RETURN_PATH). */}
+          <Route path="/return-to-app" element={<ReturnToApp />} />
           <Route path="/receive" element={<Receive />} />
           {/* E2EE File Requests — creation page (auth required) */}
           <Route
@@ -597,6 +887,20 @@ export function App() {
           <Route path="/r/:token" element={<UploadRequestPage />} />
           <Route path="/logout" element={<Logout />} />
           <Route path="/500" element={<ServerError />} />
+          {/* Dev-only: task 1567 office loading-skeleton harness. Not present in prod. */}
+          {DevOfficePreview && <Route path="/dev/office-preview" element={<DevOfficePreview />} />}
+          {/* Dev-only: task 1745 onboarding fixture harness. Not present in prod. */}
+          {DevOnboardingFixtures && <Route path="/dev/onboarding/:fixture" element={<DevOnboardingFixtures />} />}
+          {AccountStatusFromDocument && (
+            <Route
+              path="/account-status"
+              element={
+                <ProtectedRoute>
+                  <AccountStatusFromDocument />
+                </ProtectedRoute>
+              }
+            />
+          )}
           <Route path="*" element={<NotFound />} />
         </Routes>
         </Suspense>
@@ -611,6 +915,7 @@ export function App() {
       </AuthProvider>
       </DevAuthGate>
       </ImpersonationProvider>
+      </VaultFreePages>
     </BrowserRouter>
     </ThemeProvider>
     </ErrorBoundary>

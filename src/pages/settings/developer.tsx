@@ -50,6 +50,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { BBButton } from '@beebeeb/shared'
 import { BBChip } from '@beebeeb/shared'
 import { useToast } from '../../components/toast'
+import { StepUpAuth } from '../../components/step-up-auth'
 import {
   listTokens,
   createToken,
@@ -316,6 +317,13 @@ function _SettingsDeveloperFull() {
   const [creating, setCreating] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [newToken, setNewToken] = useState<CreateTokenResponse | null>(null)
+  // Task 1536 (server PR #98): create_token now requires a fresh
+  // X-Confirm-Token for session-authenticated callers — this app always
+  // authenticates via session, never a bare PAT. Same step-up pattern as
+  // delete-account.tsx / use-add-passkey-flow.ts: validate the form, THEN
+  // open StepUpAuth, and only call createToken once it confirms. Cancel
+  // closes the modal with no request sent at all.
+  const [stepUpOpen, setStepUpOpen] = useState(false)
 
   const [revokingId, setRevokingId] = useState<string | null>(null)
   const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null)
@@ -346,18 +354,35 @@ function _SettingsDeveloperFull() {
     })
   }
 
-  async function handleCreate(e: React.FormEvent) {
+  function handleCreate(e: React.FormEvent) {
     e.preventDefault()
     if (!name.trim()) { setFormError('Name is required.'); return }
     if (selectedScopes.size === 0) { setFormError('Select at least one scope.'); return }
     setFormError(null)
+    // Validation passed — obtain step-up confirmation before the actual
+    // create call. The request only fires from performCreate's onConfirmed.
+    setStepUpOpen(true)
+  }
+
+  // Runs once StepUpAuth confirms (password or passkey re-auth). A 403 here
+  // is a real, honest failure to surface — either the old server pre-#98
+  // (which never reads the header, so this branch cannot fire against it)
+  // or the new server rejecting a stale/reused confirmation token — and
+  // `err.message` already carries the server's own
+  // "This action requires password confirmation" copy via ApiError, so no
+  // separate copy is needed here.
+  const performCreate = useCallback(async (confirmToken: string) => {
+    setStepUpOpen(false)
     setCreating(true)
     try {
-      const result = await createToken({
-        name: name.trim(),
-        scopes: Array.from(selectedScopes),
-        expires_in_days: expiryDays,
-      })
+      const result = await createToken(
+        {
+          name: name.trim(),
+          scopes: Array.from(selectedScopes),
+          expires_in_days: expiryDays,
+        },
+        confirmToken,
+      )
       setNewToken(result)
       setTokens(prev => [{
         id: result.id,
@@ -376,7 +401,7 @@ function _SettingsDeveloperFull() {
     } finally {
       setCreating(false)
     }
-  }
+  }, [name, selectedScopes, expiryDays])
 
   async function handleRevoke(id: string) {
     setRevokingId(id)
@@ -399,6 +424,13 @@ function _SettingsDeveloperFull() {
 
   return (
     <SettingsShell activeSection="developer">
+      <StepUpAuth
+        open={stepUpOpen}
+        description="Enter your password to create this access token."
+        submitLabel="Create token"
+        onConfirmed={performCreate}
+        onClose={() => setStepUpOpen(false)}
+      />
       <SettingsHeader
         title="Developer"
         subtitle="Personal access tokens for automation, CI/CD pipelines, and integrations."

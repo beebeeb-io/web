@@ -14,7 +14,7 @@
  * See task 0161.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { BBButton, BBLogo, Icon } from '@beebeeb/shared'
 import { redeemImpersonationToken, getMe } from '../../lib/api'
@@ -34,17 +34,54 @@ export function ImpersonateRedeem() {
   // redemption. Guard with a ref so the network call is sent at most once
   // per page load regardless of strict-mode behaviour.
   const fired = useRef(false)
+  // Task 1691 follow-up (1693 bug-rel round): StrictMode's mount1 → cleanup →
+  // mount2 cycle sets the mount1 closure's `cancelled = true` while the
+  // redeem POST it started is still in flight. The async work then completed
+  // AFTER mount2 early-returned on fired.current, so the ONLY thing between
+  // the user and the drive was the final `if (cancelled) return` — which
+  // bailed before setPhase('success')/location.replace('/'), leaving the
+  // page stuck on "Starting support view" while the target session was
+  // already live (reproduced on localhost: POST /auth/impersonate 200,
+  // /auth/me 200, sessionStorage markers set, no navigation). Once the
+  // redeem+getMe+markers have actually succeeded, the transition MUST NOT
+  // be suppressed by the stale cleanup flag — the page load is the unit
+  // that matters here (the token is single-use; the session IS live), so
+  // the completed work re-runs its transition on remount via a ref instead
+  // of trusting a per-mount cancellation flag.
+  const succeededRef = useRef(false)
+
+  const completeSuccess = useCallback(() => {
+    if (succeededRef.current) return
+    succeededRef.current = true
+    setPhase({ kind: 'success' })
+    // Hard navigate so AuthProvider, KeyProvider, and the rest of the
+    // tree re-initialise with the impersonated session token.
+    window.location.replace('/')
+  }, [])
+
+  const finishError = useCallback((message: string) => {
+    // An error surfaced by the single redeem attempt is real: the token was
+    // rejected (single-use, 15-minute TTL). No remount can fix that, so
+    // unlike the success path this is intentionally once-per-page-load —
+    // the fired guard above means a second attempt never happens anyway.
+    setPhase({ kind: 'error', message })
+  }, [])
 
   useEffect(() => {
     if (fired.current) return
+    if (succeededRef.current) {
+      // Remount after the async flow already completed (StrictMode):
+      // re-drive the transition that mount1's stale cancelled flag suppressed.
+      completeSuccess()
+      return
+    }
     fired.current = true
 
     if (!token) {
-      setPhase({ kind: 'error', message: 'Missing impersonation token in the URL.' })
+      finishError('Missing impersonation token in the URL.')
       return
     }
 
-    let cancelled = false
     ;(async () => {
       try {
         const result = await redeemImpersonationToken(token)
@@ -62,25 +99,28 @@ export function ImpersonateRedeem() {
         if (result.admin_user_id) {
           sessionStorage.setItem('bb_impersonating_admin_id', result.admin_user_id)
         }
-        if (cancelled) return
-        setPhase({ kind: 'success' })
-        // Hard navigate so AuthProvider, KeyProvider, and the rest of the
-        // tree re-initialise with the impersonated session token.
-        window.location.replace('/')
+        // Task 1691 follow-up: NOT gated on `cancelled` — see succeededRef
+        // above. The redeem succeeded; this page load is done either way.
+        completeSuccess()
       } catch (err) {
-        if (cancelled) return
+        // Task 1691 follow-up: NOT gated on `cancelled` either — under
+        // StrictMode the stale cleanup flag would suppress the error screen
+        // exactly like it suppressed the success transition (mount2 sits on
+        // "Starting support view" forever). The attempt is once-per-page-load
+        // (fired ref), so a remount cannot change the outcome; show it.
         const message =
           err instanceof Error
             ? err.message
             : 'This impersonation link has expired or already been used.'
-        setPhase({ kind: 'error', message })
+        finishError(message)
       }
     })()
 
-    return () => {
-      cancelled = true
-    }
-  }, [token])
+    // No cancellation cleanup: the flow's transitions are deliberately NOT
+    // gated on a per-mount cancelled flag (task 1691 follow-up — the stale
+    // flag was exactly what stranded the page). A genuinely unmounted
+    // component's setPhase is a harmless no-op in React 18+.
+  }, [token, completeSuccess, finishError])
 
   return (
     <div className="auth-bg min-h-screen flex flex-col items-center justify-center bg-paper px-4 py-6 sm:p-xl">

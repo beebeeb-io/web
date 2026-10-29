@@ -12,11 +12,20 @@ export class ApiError extends Error {
    * `message` field, which can change without notice.
    */
   code?: string
-  constructor(message: string, status: number, code?: string) {
+  /**
+   * Task 1605: the raw parsed JSON error body, additive fields and all (e.g.
+   * `is_trial_cap`, `limit_bytes`, `used_bytes` on a 413 `quota_exceeded`).
+   * Callers that need more than `code`/`message` read this instead of
+   * re-parsing anything — never guaranteed to be present (network errors,
+   * synthetic client-side ApiErrors have none).
+   */
+  details?: Record<string, unknown>
+  constructor(message: string, status: number, code?: string, details?: Record<string, unknown>) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.code = code
+    this.details = details
   }
 }
 
@@ -61,6 +70,45 @@ export function parseErrorBody(
   }
 
   return { code, message }
+}
+
+export interface ReadErrorResponse {
+  /** Machine code; undefined unless a parsed JSON object carried a string `error`. */
+  code: string | undefined
+  message: string
+  /** The parsed JSON object, or `{}` when the body was empty, not JSON, or not an object. */
+  body: Record<string, unknown>
+  /**
+   * What a caller that builds its own message (`body.message ?? body.error ?? x`)
+   * should use as `x`: `res.statusText` for a parsed object (unchanged behaviour),
+   * `Request failed (HTTP <status>)` when the body was unusable.
+   */
+  fallbackMessage: string
+}
+
+/**
+ * Task 2153: read the body of a non-2xx response without inventing a machine code.
+ *
+ * An empty or non-JSON body (a bare 403/404, a proxy's HTML 502/504) used to be replaced by
+ * a made-up `{ error: <sentence> }` object, whose sentence then became `ApiError.code`
+ * and sent code that branches on `code` down the wrong path. Here an unusable body has NO code;
+ * the readable text (naming the HTTP status) is the message only. A parsed object goes through
+ * `parseErrorBody` unchanged.
+ */
+export async function readErrorResponse(res: Response): Promise<ReadErrorResponse> {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(await res.text())
+  } catch {
+    parsed = undefined
+  }
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const body = parsed as Record<string, unknown>
+    const { code, message } = parseErrorBody(body, res.statusText)
+    return { code, message, body, fallbackMessage: res.statusText }
+  }
+  const text = res.statusText ? `Request failed (HTTP ${res.status}, ${res.statusText})` : `Request failed (HTTP ${res.status})`
+  return { code: undefined, message: text, body: {}, fallbackMessage: text }
 }
 
 /**

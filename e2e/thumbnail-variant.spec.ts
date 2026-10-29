@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import fs from 'fs'
-import { writePng, uploadAndWait, openImagePreview } from './helpers/thumb-fixtures'
+import { writePng, uploadAndWait, openImagePreview, escapeRe } from './helpers/thumb-fixtures'
 
 /**
  * Large-thumbnail gate E2E (task 0685).
@@ -35,7 +35,56 @@ test.describe('Large-thumbnail gate (0685)', () => {
 
     await openImagePreview(page, base)
 
-    expect(largeGet.length, 'a file with a large variant should request /thumbnail/large').toBeGreaterThan(0)
+    // Poll, don't sample: openImagePreview returns as soon as ANY blob <img>
+    // is visible in the preview, which can be milliseconds before the
+    // thumbnail-first loader's GET /thumbnail/large has even been answered
+    // (e2e classification 2026-09-26: trace showed the <img> 6 ms after the
+    // overlay mounted and the assertion ran 6 ms later, with the large GET
+    // still in flight — a spec race, not a product 404/regression).
+    await expect
+      .poll(() => largeGet.length, {
+        message: 'a file with a large variant should request /thumbnail/large',
+        timeout: 15_000,
+      })
+      .toBeGreaterThan(0)
+    expect(largeGet.every((s) => s !== 404), `/thumbnail/large should not 404, saw ${largeGet}`).toBe(true)
+  })
+
+  test('large variant still requested when the sync snapshot lands AFTER listFiles', async ({ page }) => {
+    // Deterministic form of the race found classifying this spec red on main
+    // (2026-09-26): GET /sync/snapshot omits has_large_thumbnail, and when it
+    // landed after GET /files the drive replaced the list with sync nodes,
+    // dropping the flag — the preview then skipped /thumbnail/large and showed
+    // the medium list thumbnail. Hold the snapshot back so it always lands last.
+    test.setTimeout(60_000)
+    await page.goto('/')
+    const base = await uploadAndWait(page, png)
+
+    await page.route('**/api/v1/sync/snapshot', async (route) => {
+      await new Promise((r) => setTimeout(r, 1500))
+      await route.continue()
+    })
+    const listed = page.waitForResponse(
+      (r) => /\/api\/v1\/files(\?|$)/.test(r.url()) && r.request().method() === 'GET' && r.ok(),
+      { timeout: 20_000 },
+    )
+    const snapshotted = page.waitForResponse((r) => r.url().includes('/api/v1/sync/snapshot'), { timeout: 20_000 })
+    await page.reload()
+    await listed
+    await snapshotted
+    await page.getByRole('row', { name: new RegExp(escapeRe(base)) }).first().waitFor({ timeout: 20_000 })
+
+    const largeGet: number[] = []
+    page.on('response', (res) => {
+      if (res.request().method() === 'GET' && LARGE_GET_RE.test(res.url())) largeGet.push(res.status())
+    })
+    await openImagePreview(page, base)
+    await expect
+      .poll(() => largeGet.length, {
+        message: 'a late sync snapshot must not hide the large variant from the preview',
+        timeout: 15_000,
+      })
+      .toBeGreaterThan(0)
     expect(largeGet.every((s) => s !== 404), `/thumbnail/large should not 404, saw ${largeGet}`).toBe(true)
   })
 

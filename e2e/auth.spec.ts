@@ -15,12 +15,6 @@ import { fillSignupForm } from './helpers/signup'
 
 const uniqueEmail = () => `e2e-${Date.now()}-${Math.random().toString(36).slice(2)}@beebeeb.io`
 
-// API origin for direct signup calls. Under the isolated e2e harness this is the
-// dedicated :3003 backend (E2E_API_URL); falls back to the dev :3001 API. Force
-// 127.0.0.1 (not localhost) — the API binds IPv4 and Playwright's apiRequestContext
-// resolves ::1 first, which the IPv4-only dev API refuses (task 0763).
-const API = (process.env.E2E_API_URL ?? 'http://127.0.0.1:3001').replace('://localhost', '://127.0.0.1')
-
 test.describe('Authentication', () => {
   // Override the [authenticated] project's storageState for ALL tests in this
   // describe block. Every test here manages auth state manually via beforeEach
@@ -66,46 +60,13 @@ test.describe('Authentication', () => {
     await expect(page).toHaveURL(/\/onboarding/, { timeout: 10_000 })
   })
 
-  test('login flow: fill form, submit, redirected to /', async ({ page }) => {
-    // OBSOLETE BY DESIGN (task 0763): this test creates an account via the
-    // legacy `/api/v1/auth/signup` (password-only, no OPAQUE password file) and
-    // then drives the login UI. The login page is now OPAQUE-mandatory with NO
-    // password fallback (src/pages/login.tsx:98 "OPAQUE is mandatory — no
-    // fallback path"), so a legacy account can never complete a UI login — it
-    // shows "Authentication failed." A real login-to-drive flow requires the
-    // full OPAQUE signup UI (recovery phrase + password step), which is already
-    // covered by refresh-stability.spec.ts (signupAndUnlock).
-    test.skip(true, 'legacy password login removed — app is OPAQUE-mandatory (task 0763); real login covered by refresh-stability.spec.ts')
-    const email = uniqueEmail()
-
-    // First, create the account via the API directly. Use 127.0.0.1 rather
-    // than `localhost` because Playwright's request context resolves to ::1
-    // first and the dev API binds to IPv4 only — the browser's fetch falls
-    // back via happy-eyeballs but apiRequestContext does not.
-    const signupResp = await page.request.post(`${API}/api/v1/auth/signup`, {
-      data: { email, password: 'test-password-12chars!' },
-    })
-    expect(signupResp.ok()).toBeTruthy()
-
-    // Now test the login UI
-    await page.goto('/login')
-    await expect(page).toHaveURL(/\/login/)
-
-    // Selector note: getByLabel(/password/i) also matches the show/hide
-    // password toggle button (aria-label "Show password") and gets
-    // .first() depending on DOM order. Target the input by placeholder
-    // instead — this matches the same pattern used by the 0010 regression
-    // test below (closes 0011).
-    await page.getByLabel(/email/i).fill(email)
-    await page.getByPlaceholder('Your password').fill('test-password-12chars!')
-
-    // The page also has a "Sign in with passkey" button; pick the submit
-    // one explicitly. Button label is "Sign in" (task 0763).
-    await page.getByRole('button', { name: 'Sign in', exact: true }).click()
-
-    // Should redirect to the drive (root page)
-    await expect(page).toHaveURL(/^\/$|\/$/,{ timeout: 10_000 })
-  })
+  // Task 1799: the old 'login flow' test here created its account through the
+  // legacy password-only signup route (no OPAQUE password file) and
+  // had been `test.skip`ped since task 0763 (the login page is OPAQUE-mandatory,
+  // so such an account can never complete a UI login). The legacy route is being
+  // retired, so the dead test is gone rather than ported. A real signup -> drive
+  // -> reload -> login-to-drive flow is covered by refresh-stability.spec.ts
+  // (signupAndUnlock) and the seeded-account test below.
 
   test('unauthenticated visit to / redirects to /login', async ({ page }) => {
     await page.goto('/')

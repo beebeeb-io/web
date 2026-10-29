@@ -35,7 +35,7 @@ export function JoinPage() {
     <div className="max-w-[384px] w-full space-y-8">
       <div>
         <div className="mb-4">
-          <BBChip variant="amber">10 GB free encrypted storage</BBChip>
+          <BBChip variant="amber">+10 GB bonus encrypted storage</BBChip>
         </div>
         <h1 className="text-[28px] font-bold tracking-tight text-ink leading-tight mb-3">
           You've been invited to Beebeeb
@@ -61,7 +61,7 @@ export function JoinPage() {
           </div>
           <div>
             <div className="text-[13.5px] font-semibold text-ink mb-0.5">EU servers</div>
-            <div className="text-[12.5px] text-ink-3">Stored in Falkenstein, Germany. Under EU jurisdiction and GDPR.</div>
+            <div className="text-[12.5px] text-ink-3">Stored in the EU. Under EU jurisdiction and GDPR.</div>
           </div>
         </li>
         <li className="flex items-start gap-3">
@@ -103,7 +103,7 @@ export function JoinPage() {
           disabled={!ready}
           onClick={() => { navigate(signupUrl) }}
         >
-          Get started — it's free
+          Start your free trial
         </BBButton>
 
         <p className="text-[12px] text-ink-4 text-center">
@@ -115,7 +115,7 @@ export function JoinPage() {
 
         <div className="border-t border-line pt-4 flex items-center gap-2 text-[11px] text-ink-3">
           <Icon name="shield" size={12} className="text-amber-deep shrink-0" />
-          <span>Stored in Falkenstein, Germany. Under EU jurisdiction.</span>
+          <span>Stored in the EU. Under EU jurisdiction.</span>
         </div>
       </div>
     </SplitAuthScreen>

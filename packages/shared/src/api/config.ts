@@ -53,3 +53,29 @@ export function provenanceHeaders(): Record<string, string> {
   if (!info) return {}
   return { 'X-Beebeeb-Client': info.client, 'X-Beebeeb-Client-Version': info.version }
 }
+
+/**
+ * Task 1531 (web #85 round 2) defence-in-depth header. Server task 1554 adds
+ * an OPTIONAL `X-Beebeeb-Expected-User` check on mutating endpoints: when
+ * present and it does not match the session's actual user id, the server
+ * refuses with 409 `account_mismatch` instead of silently writing under the
+ * wrong account. An absent header is accepted unchanged by both old and new
+ * servers, so this is safe to ship ahead of the server enforcing it.
+ *
+ * Opt-in, mirroring `setClientInfo`/`provenanceHeaders`: only an app that
+ * actually holds a resident master key (web) calls `setExpectedUserProvider`;
+ * admin never does, so admin traffic carries no such header. The provider is
+ * a FUNCTION, not a static id, so every call reads the CURRENT value (web
+ * wires it to `residentKeyUserIdRef.current`, a ref, never a stale snapshot).
+ */
+let EXPECTED_USER_PROVIDER: (() => string | null) | null = null
+
+export function setExpectedUserProvider(fn: (() => string | null) | null): void {
+  EXPECTED_USER_PROVIDER = fn
+}
+
+export function expectedUserHeaders(): Record<string, string> {
+  const id = EXPECTED_USER_PROVIDER?.()
+  if (!id) return {}
+  return { 'X-Beebeeb-Expected-User': id }
+}

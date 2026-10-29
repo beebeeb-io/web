@@ -34,6 +34,13 @@ interface BillingInfoStepProps {
   /** Called once the profile is persisted; the parent then redirects to Mollie. */
   onProceed: (profile: BillingProfile) => void | Promise<void>
   onBack?: () => void
+  /** Primary button label (default "Continue to payment"). Task 1037: the
+   *  trial flow uses "Start {N}-day free trial". */
+  proceedLabel?: string
+  /** Line under the price summary, e.g. when the total is first charged. */
+  summaryNote?: string
+  /** Footnote under the buttons (default: the payment-method-next-step hint). */
+  footnote?: string
 }
 
 /** Money formatter — integer cents → "EUR 39.95". Amounts render in mono. */
@@ -75,6 +82,9 @@ export function BillingInfoStep({
   netCentsFallback,
   onProceed,
   onBack,
+  proceedLabel = 'Continue to payment',
+  summaryNote,
+  footnote = 'You will be charged local VAT where it applies. Choose your payment method on the next step.',
 }: BillingInfoStepProps) {
   const [fullName, setFullName] = useState('')
   const [customerType, setCustomerType] = useState<CustomerType>('b2c')
@@ -503,6 +513,11 @@ export function BillingInfoStep({
             VAT is calculated at checkout based on your billing country.
           </div>
         )}
+        {summaryNote && (
+          <div className="text-[11px] text-ink-3 pt-0.5" data-testid="vat-preview-note">
+            {summaryNote}
+          </div>
+        )}
       </div>
 
       {error && <div className="text-sm text-red text-center">{error}</div>}
@@ -522,12 +537,12 @@ export function BillingInfoStep({
           disabled={submitting}
           data-testid="billing-continue"
         >
-          {submitting ? 'Saving...' : 'Continue to payment'}
+          {submitting ? 'Saving...' : proceedLabel}
           {!submitting && <Icon name="chevron-right" size={13} className="ml-1" />}
         </BBButton>
       </div>
       <p className="text-[11px] text-ink-4 text-center -mt-1">
-        You will be charged local VAT where it applies. Choose your payment method on the next step.
+        {footnote}
       </p>
     </div>
   )

@@ -28,6 +28,12 @@ interface SyncContextValue {
   /** True when sync is actively backing the UI (snapshot loaded). */
   ready: boolean
   /**
+   * True once the underlying SyncClient has full tree coverage: a snapshot
+   * merged and the op stream has been contiguous since (task 1700). While
+   * false, an empty `children()` result is NOT evidence of an empty vault.
+   */
+  treeComplete: boolean
+  /**
    * Monotonic counter bumped on every op-induced tree mutation. Include in
    * effect deps to re-derive UI state when the tree changes.
    */
@@ -38,6 +44,11 @@ interface SyncContextValue {
   getNode: (id: string) => SyncNode | undefined
   /** All nodes — useful for search indexing. */
   allNodes: () => SyncNode[]
+  /**
+   * Mirror an authoritative star state (the `PATCH /files/:id/star` response)
+   * into the tree, so a later tree-driven re-derive keeps it (task 1577).
+   */
+  setNodeStarred: (id: string, isStarred: boolean) => void
   /** Submit a local op (optimistic apply + POST). */
   submitOp: (
     opType: string,
@@ -54,6 +65,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<ConnectionStatus>('idle')
   const [loading, setLoading] = useState(true)
   const [ready, setReady] = useState(false)
+  const [treeComplete, setTreeComplete] = useState(false)
   const [error, setError] = useState<Error | null>(null)
 
   useEffect(() => {
@@ -64,6 +76,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       setStatus('idle')
       setLoading(true)
       setReady(false)
+      setTreeComplete(false)
       return
     }
 
@@ -71,6 +84,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     clientRef.current = client
     setLoading(true)
     setReady(false)
+    setTreeComplete(false)
     setError(null)
 
     const unsubscribe = client.subscribe((event) => {
@@ -80,7 +94,9 @@ export function SyncProvider({ children }: { children: ReactNode }) {
         setReady(true)
         setLoading(false)
         setTreeVersion((n) => n + 1)
-      } else if (event.type === 'op') {
+      } else if (event.type === 'coverage') {
+        setTreeComplete(!!event.complete)
+      } else if (event.type === 'op' || event.type === 'tree') {
         setTreeVersion((n) => n + 1)
       } else if (event.type === 'error' && event.error) {
         setError(event.error)
@@ -93,6 +109,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
         // Snapshot/catch-up complete — for catch-up the snapshot event
         // doesn't fire, so flip ready here too.
         setReady(true)
+        setTreeComplete(client.isCoverageComplete())
         setLoading(false)
       })
       .catch((err) => {
@@ -124,6 +141,10 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     return clientRef.current?.getAllNodes() ?? []
   }, [])
 
+  const setNodeStarred = useCallback((id: string, isStarred: boolean): void => {
+    clientRef.current?.setNodeStarred(id, isStarred)
+  }, [])
+
   const submitOp = useCallback(
     async (
       opType: string,
@@ -143,13 +164,15 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       loading,
       error,
       ready,
+      treeComplete,
       treeVersion,
       children: children_,
       getNode,
       allNodes,
+      setNodeStarred,
       submitOp,
     }),
-    [status, loading, error, ready, treeVersion, children_, getNode, allNodes, submitOp],
+    [status, loading, error, ready, treeComplete, treeVersion, children_, getNode, allNodes, setNodeStarred, submitOp],
   )
 
   return <SyncContext.Provider value={value}>{children}</SyncContext.Provider>

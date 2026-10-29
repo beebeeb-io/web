@@ -11,16 +11,24 @@ import {
   downloadSharedFile,
   downloadBundleItem,
   fetchShareCiphertextPreview,
+  getPlans,
   ApiError,
   type ShareView as ShareViewData,
   type ShareItem,
 } from '../lib/api'
 import { useAuth, isAuthenticated } from '../lib/auth-context'
-import { decryptFilename, fromBase64, toBase64url, parseEncryptedBlob, unwrapKeyFromShare, unwrapBundleItemKey, initCrypto } from '../lib/crypto'
-import { decryptEncryptedBytes, inferChunkCountFromEncryptedSize } from '../lib/encrypted-download'
+import { fromBase64, toBase64url, unwrapKeyFromShare, unwrapBundleItemKey, initCrypto, readFileMetadata, readNameMetadata, PIN_V2, type ContentPin } from '../lib/crypto'
+import { decryptEncryptedBytes, inferChunkCountFromEncryptedSize, UNVERIFIED_FILE_COPY } from '../lib/encrypted-download'
 import { withNetworkRetry } from '../lib/net-retry'
 import { formatBytes } from '../lib/format'
+import { formatEur } from '../lib/trial-checkout'
 import { parseShareKey, extractShareKeyToken, decodeShareKeyToken } from '../lib/share-key'
+// Task 2238 — the honest page for a folder link minted before this task.
+import {
+  LEGACY_FOLDER_LINK_COPY,
+  isFolderDownloadRefusal,
+  isFolderTarget,
+} from '../lib/legacy-folder-link'
 
 // ─── Meta tag helpers ─────────────────────────────────────────────────────────
 
@@ -363,6 +371,28 @@ function AcquisitionCTA({
 }: {
   signupUrl: string
 }) {
+  // Task 1701 — "From €X/month" renders the STORED price (the cheapest
+  // purchasable plan from the public /billing/plans), never a hardcoded
+  // literal: the owner's stored price is the only honest number here. Until
+  // the plans answer (or on error), the price sentence is simply omitted —
+  // a missing claim beats a made-up one.
+  const [fromPriceEur, setFromPriceEur] = useState<number | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    getPlans()
+      .then((plans) => {
+        if (cancelled) return
+        const purchasable = (plans ?? []).filter(
+          (p) => p.purchasable !== false && !p.coming_soon,
+        )
+        if (purchasable.length === 0) return
+        setFromPriceEur(Math.min(...purchasable.map((p) => p.price_eur)))
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [])
   return (
     <div className="mt-6 text-center px-4">
       <p className="text-[12.5px] text-ink-4 mb-1">Liked how this worked?</p>
@@ -374,10 +404,11 @@ function AcquisitionCTA({
         href={signupUrl}
         className="inline-flex items-center gap-2 px-5 py-2 bg-amber text-ink text-[13px] font-semibold rounded-lg hover:brightness-105 transition-all no-underline"
       >
-        Sign up free — 5 GB
+        Start a 14-day free trial
       </a>
       <p className="text-[11px] text-ink-4 mt-2.5">
-        No credit card. No tracking. Just encrypted storage.
+        {fromPriceEur != null && <>From {formatEur(fromPriceEur)}/month. </>}
+        Cancel any time during the trial. No tracking, no ads.
       </p>
     </div>
   )
@@ -470,7 +501,7 @@ function UnknownShareTypeCard({ shareType }: { shareType: string }) {
             <div className="px-8 py-3.5 bg-paper-2 border-t border-line">
               <div className="flex items-center justify-center gap-1.5 text-[11px] text-ink-3">
                 <Icon name="shield" size={11} className="text-amber-deep" />
-                End-to-end encrypted · Stored in Falkenstein, Germany
+                End-to-end encrypted · Stored in the EU
               </div>
             </div>
           </div>
@@ -496,36 +527,40 @@ interface BundleRow {
   chunk_count: number
   /** The item's FileKey (unwrapped from K_c), or null if K_c was wrong. */
   fileKey: Uint8Array | null
+  /**
+   * The item's content pin from its authenticated metadata (core's FILE
+   * reader, task 1943), or null when that cannot be read (a legacy plaintext
+   * name): the name still shows, but the content is not opened.
+   */
+  pin: ContentPin | null
 }
 
 /**
- * Decrypt one manifest item: unwrap its FileKey from K_c, then decrypt its name.
- * A wrong K_c (AES-GCM auth failure) yields `{ fileKey: null, name: null }` —
- * the row renders as an undecryptable placeholder rather than crashing the list.
+ * Decrypt one manifest item: unwrap its FileKey from K_c, then read its
+ * metadata with core's FILE reader (name + content pin; names sealed under the
+ * name subkey open too). A wrong K_c (AES-GCM auth failure) or a name that does
+ * not open yields `{ fileKey: null, name: null }`: the row renders as an
+ * undecryptable placeholder rather than crashing the list.
  */
 async function decryptBundleItem(clientKey: Uint8Array, item: ShareItem): Promise<BundleRow> {
   let fileKey: Uint8Array | null = null
   let name: string | null = null
+  let pin: ContentPin | null = null
   try {
     fileKey = await unwrapBundleItemKey(clientKey, item.wrapped_file_key)
     if (fileKey.length !== KEY_BYTES) {
       fileKey = null
     } else if (item.name_encrypted.startsWith('{')) {
-      const { nonce, ciphertext } = parseEncryptedBlob(item.name_encrypted)
-      const raw = await decryptFilename(fileKey, nonce, ciphertext)
-      name = raw
-      try {
-        const meta = JSON.parse(raw) as { name?: string }
-        if (meta && typeof meta.name === 'string') name = meta.name
-      } catch {
-        /* legacy plain string — raw IS the name */
-      }
+      const meta = await readFileMetadata(fileKey, item.name_encrypted)
+      name = meta.name
+      pin = meta.pin
     } else {
-      name = item.name_encrypted // legacy plaintext name
+      name = item.name_encrypted // legacy plaintext name: shown, but carries no pin
     }
   } catch {
     fileKey = null
     name = null
+    pin = null
   }
   return {
     file_id: item.file_id,
@@ -534,6 +569,7 @@ async function decryptBundleItem(clientKey: Uint8Array, item: ShareItem): Promis
     size: item.size,
     chunk_count: item.chunk_count,
     fileKey,
+    pin,
   }
 }
 
@@ -604,6 +640,10 @@ function BundleShareView({
       setDownloadError(`Couldn’t open “${row.name ?? 'this file'}” — the key in the link doesn’t match it.`)
       return false
     }
+    if (row.pin === null) {
+      setDownloadError(UNVERIFIED_FILE_COPY)
+      return false
+    }
     try {
       await initCrypto()
       const { blob, chunkCount: hdrCount, chunkSize: hdrSize, originalSize: hdrOriginal } =
@@ -614,7 +654,7 @@ function BundleShareView({
         ?? row.chunk_count
         ?? inferChunkCountFromEncryptedSize(encrypted.length, originalSize)
       const plaintext = await decryptEncryptedBytes(
-        row.fileKey, encrypted, chunkCount, originalSize, hdrSize ?? undefined,
+        row.fileKey, { fileId: row.file_id, pin: row.pin }, encrypted, chunkCount, originalSize, hdrSize ?? undefined,
       )
       const url = URL.createObjectURL(new Blob([plaintext as BlobPart]))
       const a = document.createElement('a')
@@ -849,6 +889,11 @@ export function ShareViewPage() {
   // Precise key-resolution failure (null = no hard error). Surfaced instead of
   // the generic locked UI so the recipient knows what's actually wrong (0709).
   const [keyError, setKeyError] = useState<KeyErrorKind | null>(null)
+  // Task 2238 — this `file` share points at a folder: a link minted before
+  // folder links existed. Irreparably broken (one wrapper key, no item list),
+  // so the page says so instead of failing a download. Set from the server
+  // metadata when present, else from the download refusal itself.
+  const [legacyFolderLink, setLegacyFolderLink] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
 
   // Recipients are anonymous — we never display the share creator's name.
@@ -958,6 +1003,7 @@ export function ShareViewPage() {
     setPassphrase('')
     setVerifyError(null)
     setDownloadError(null)
+    setLegacyFolderLink(false)
     setUnlockError(null)
     setKeyError(null)
     // Defensive (0709 cross-pollination from mobile 0710): also clear the
@@ -971,6 +1017,11 @@ export function ShareViewPage() {
     getShare(token)
       .then((data) => {
         setShareData(data)
+        // Task 2238: a `file` share whose target is a folder (a link minted
+        // before folder links existed) cannot download anything. Detect it from
+        // the metadata when the server reports `is_folder`, so the recipient
+        // reads the truth immediately rather than after a failed download.
+        if (isFolderTarget(data)) setLegacyFolderLink(true)
         setLoading(false)
       })
       .catch((e) => {
@@ -1015,15 +1066,10 @@ export function ShareViewPage() {
         // simply leave the name as the encrypted placeholder.
         if (outcome.kind !== 'ok') return
         const fileKey = outcome.key
-        const { nonce, ciphertext: ct } = parseEncryptedBlob(nameEnc)
-        const raw = await decryptFilename(fileKey, nonce, ct)
-        let displayName = raw
-        try {
-          const meta = JSON.parse(raw) as { name?: string; mime_type?: string }
-          if (meta && typeof meta.name === 'string') displayName = meta.name
-        } catch {
-          // Legacy format — raw is just the filename string
-        }
+        // Core's display reader: the name subkey first (names sealed since core
+        // 1908), then the legacy raw key; a JSON {name, mime_type} or a bare
+        // legacy filename inside (task 1943).
+        const { name: displayName } = await readNameMetadata(fileKey, nameEnc)
         if (!cancelled) setDecryptedName(displayName)
       } catch {
         // Can't decrypt -- will show encrypted placeholder
@@ -1124,6 +1170,25 @@ export function ShareViewPage() {
       // worker uninitialized when the user clicks Download.
       await initCrypto()
 
+      // The content pin from the file's authenticated metadata (core's FILE
+      // reader, task 1943). Unreadable: refuse before downloading anything.
+      let pin: ContentPin
+      try {
+        pin = (await readFileMetadata(fileKey, shareData.name_encrypted ?? '')).pin
+      } catch {
+        setDownloadError(UNVERIFIED_FILE_COPY)
+        return
+      }
+      // The single-file share view does not carry the file id, which every v2
+      // frame binds. Every file that exists today is v1 (pin 0), whose frames
+      // do not use it; a v2-pinned file cannot be opened from this link until
+      // the server sends `file_id` (task 1943 follow-up). Say so honestly
+      // instead of failing on a tag mismatch.
+      if (pin === PIN_V2) {
+        setDownloadError('This file uses a newer encryption format that this link cannot open yet.')
+        return
+      }
+
       const {
         blob,
         chunkCount: headerChunkCount,
@@ -1150,6 +1215,7 @@ export function ShareViewPage() {
         ?? inferChunkCountFromEncryptedSize(encrypted.length, originalSize)
       const plaintext = await decryptEncryptedBytes(
         fileKey,
+        { fileId: '', pin },
         encrypted,
         chunkCount,
         originalSize,
@@ -1166,6 +1232,14 @@ export function ShareViewPage() {
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
     } catch (err) {
+      // Task 2238: a folder link from before folder links existed. The server
+      // refuses the download itself ("cannot download a folder") — show the
+      // explanation, never the raw refusal. Servers that report `is_folder` in
+      // the metadata already flipped this on load; this covers the rest.
+      if (isFolderDownloadRefusal(err)) {
+        setLegacyFolderLink(true)
+        return
+      }
       // Log the real error so devtools surfaces WASM init failures, size
       // calculation errors, or anything else hiding behind the generic
       // user-facing message below.
@@ -1245,13 +1319,13 @@ export function ShareViewPage() {
                   href="https://app.beebeeb.io/signup"
                   className="mt-6 inline-flex items-center gap-2 px-5 py-2 bg-amber text-ink text-[13px] font-semibold rounded-lg hover:brightness-105 transition-all no-underline"
                 >
-                  Get Beebeeb — free 5 GB
+                  Try Beebeeb free for 14 days
                 </a>
               </div>
               <div className="px-8 py-3.5 bg-paper-2 border-t border-line">
                 <div className="flex items-center justify-center gap-1.5 text-[11px] text-ink-3">
                   <Icon name="shield" size={11} className="text-amber-deep" />
-                  End-to-end encrypted · Stored in Falkenstein, Germany
+                  End-to-end encrypted · Stored in the EU
                 </div>
               </div>
             </div>
@@ -1359,6 +1433,45 @@ export function ShareViewPage() {
     const fragment = getKeyFromFragment()
     const bundleKey = fragment && fragment.length === KEY_BYTES ? fragment : null
     return <BundleShareView token={token} data={shareData} clientKey={bundleKey} />
+  }
+
+  // ── Legacy folder link (task 2238) — a `file` share whose target is a folder.
+  //    Irreparably broken; say what is true instead of failing a download. ────
+  if (legacyFolderLink && token) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-paper relative overflow-hidden py-8">
+        {honeycombBg}
+        <div className="relative w-full max-w-[28rem] mx-4">
+          <div className="text-center mb-4">
+            <BBLogo size={16} />
+            <div className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-amber/30 bg-amber-bg text-[11.5px] font-medium text-amber-deep">
+              <Icon name="lock" size={11} className="shrink-0" />
+              Beebeeb — End-to-end encrypted
+            </div>
+          </div>
+          <div className="bg-paper border border-line-2 rounded-xl shadow-3 overflow-hidden">
+            <div className="px-6 py-4 border-b border-line flex items-center gap-2.5">
+              <Icon name="share" size={14} className="text-ink" />
+              <span className="text-sm font-semibold">Shared folder</span>
+            </div>
+            <div className="p-6" role="status">
+              <div className="flex items-start gap-3">
+                <div className="w-11 h-[52px] border rounded-md flex items-center justify-center shrink-0 bg-amber-bg border-amber-deep/30">
+                  <Icon name="lock" size={18} className="text-amber-deep" />
+                </div>
+                <p className="text-[13px] text-ink leading-relaxed">{LEGACY_FOLDER_LINK_COPY}</p>
+              </div>
+            </div>
+            <div className="px-6 py-3 bg-paper-2 border-t border-line">
+              <div className="flex items-center justify-center gap-1.5 text-[11px] text-ink-3">
+                <Icon name="shield" size={11} className="text-amber-deep" />
+                End-to-end encrypted with Beebeeb
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   // File info view

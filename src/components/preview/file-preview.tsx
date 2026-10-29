@@ -3,7 +3,7 @@ import { listVersions, restoreVersion, type DriveFile, type FileVersion } from '
 import { decryptToBlob, decryptVersionToBlob } from '../../lib/encrypted-download'
 import { fetchAndDecryptLargeThumbnail, fetchAndDecryptThumbnail } from '../../lib/thumbnail'
 import { PreviewChrome } from './preview-chrome'
-import { InfoRail } from './info-rail'
+import { InfoRail, CONTENT_CIPHER_LABEL } from './info-rail'
 import { VersionScrubber } from './version-scrubber'
 import { ImagePreview } from './image-preview'
 import { PdfPreview } from './pdf-preview'
@@ -15,11 +15,22 @@ import { DocxPreview } from './docx-preview'
 import { XlsxPreview } from './xlsx-preview'
 import { UnsupportedPreview } from './unsupported-preview'
 import { RawPreview } from './raw-preview'
+import type { RawExifInfo } from '../../lib/raw-embedded-jpeg'
 import { HeicPreview } from './heic-preview'
+import { TiffPreview } from './tiff-preview'
+import { ZipListingPreview } from './zip-listing-preview'
 import { BBButton } from '@beebeeb/shared'
 import { Icon } from '@beebeeb/shared'
 import { useKeys } from '../../lib/key-context'
+import { needsOwnership, sharedRootFor } from '../../lib/owner-adoption'
+import { sharedFoldersEnabled } from '../../lib/use-feature-flag'
+import { useAuth } from '../../lib/auth-context'
 import { decryptFileMetadata } from '../../lib/crypto'
+import { checkEditability, editabilityNotice, type EditabilityResult } from '../../lib/text-editability'
+import { FileEditor, type FileEditorHandle } from '../editor/file-editor'
+import { UnsavedChangesDialog } from '../editor/unsaved-changes-dialog'
+import { resolveOfficeFileKind } from '../../lib/office/office-file-kind'
+import { isOfficeLabsEnabled } from '../../lib/office/office-labs'
 
 interface FilePreviewProps {
   file: DriveFile
@@ -33,6 +44,13 @@ interface FilePreviewProps {
   onNext?: () => void
   hasPrev?: boolean
   hasNext?: boolean
+  /** Open straight into the text editor once the file is known editable —
+   *  set for a file just created from Drive's "+ New" menu (task 1582). */
+  startInEditMode?: boolean
+  /** The folder being browsed, so a guest-added row can find its shared root. */
+  folderId?: string
+  /** Trash this file — offered on the "can't open" card so the row is actionable. */
+  onDelete?: (file: DriveFile) => void | Promise<void>
 }
 
 function formatSize(bytes: number): string {
@@ -67,6 +85,11 @@ const EXT_LANGUAGE: Record<string, string> = {
   swift: 'swift', dart: 'dart', r: 'r', ex: 'elixir', exs: 'elixir',
   erl: 'erlang', hs: 'haskell', ml: 'ocaml', zig: 'zig', nim: 'nim',
   v: 'v', vue: 'vue', svelte: 'svelte', astro: 'astro',
+  // .NET — cs was missing entirely (task 1565 preview matrix finding): a
+  // C# file fell through every branch in pickRenderer (not text/*, not in
+  // TEXT_EXTENSIONS either) straight to the generic "Preview not available"
+  // card, unlike every other ~20 code languages this map covers.
+  cs: 'csharp',
 }
 
 /** Image/video extension sets used when mime_type is null (ZK-uploaded files) */
@@ -121,7 +144,15 @@ const CODE_MIME_TYPES: Record<string, string> = {
 
 function getExtension(filename: string): string {
   const dot = filename.lastIndexOf('.')
-  if (dot === -1) return ''
+  // Bare filenames with no dot at all (Dockerfile, Makefile, ...) previously
+  // returned '' here, which matches nothing in any extension set/map below —
+  // task 1565's preview matrix caught this: a real `Dockerfile` fixture fell
+  // through pickRenderer entirely (EXT_LANGUAGE already had a `dockerfile:
+  // 'docker'` entry that could never be reached) straight to the generic
+  // "Preview not available" card. Falling back to the whole lowercased
+  // filename lets bare-filename entries already present in EXT_LANGUAGE /
+  // TEXT_EXTENSIONS (dockerfile, makefile, gitignore, ...) actually match.
+  if (dot === -1) return filename.toLowerCase()
   return filename.slice(dot + 1).toLowerCase()
 }
 
@@ -185,12 +216,33 @@ const RAW_IMAGE_MIMES = new Set([
   'image/x-fuji-raf',
 ])
 
-// PPTX — no reliable in-browser renderer exists.
+// PPTX — no reliable in-browser renderer exists. Task 1574 evaluated reusing
+// the LibreOffice-WASM office editor (task 1567) for a read-only preview
+// here; as of this task, 1567 is an unmerged, still-in-spike-phase effort
+// (its own Notes: "Phase 1 spike done… STOP the native-macOS-host attempt
+// here" — no working WASM build yet, let alone a mergeable editor). A small
+// pure-JS PPTX slide renderer was also considered and rejected: PPTX slide
+// XML (themes, layouts, placeholders, shape/text positioning) has no small
+// maintained renderer that produces a faithful thumbnail — every option
+// found was either a generator (pptxgenjs/officegen, write-only) or would
+// have meant hand-building a slide layout engine, exactly the "throwaway
+// renderer" this task's own brief says not to build. Legacy .doc/.xls/.ppt
+// are binary OLE2 formats with no pure-JS reader in this repo's dependency
+// tree at all. All four stay on the honest download card.
 const PPTX_MIMES = new Set([
   'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   'application/vnd.ms-powerpoint',
 ])
 const PPTX_EXTS = new Set(['pptx', 'ppt', 'odp', 'key'])
+
+// TIFF — Chromium has no native TIFF codec (task 1565 finding). Decoded in
+// a Web Worker via utif2, see tiff-preview.tsx.
+const TIFF_MIMES = new Set(['image/tiff'])
+const TIFF_EXTS = new Set(['tiff', 'tif'])
+
+// ZIP — a honest file LISTING (names/sizes/folders) from the Central
+// Directory, never extraction. See zip-listing-preview.tsx.
+const ZIP_EXTS = new Set(['zip'])
 
 interface ImageControlProps {
   zoom: number
@@ -201,6 +253,9 @@ interface ImageControlProps {
   onNext?: () => void
   hasPrev?: boolean
   hasNext?: boolean
+  /** RAW only (task 1574) — reports the extracted EXIF summary so the Info
+   *  rail can show camera/lens/exposure, mirroring mobile's Info sheet. */
+  onRawInfo?: (info: RawExifInfo | null) => void
 }
 
 const MIN_ZOOM = 0.5
@@ -212,6 +267,11 @@ function pickRenderer(
   blob: Blob,
   filename: string,
   imageControls?: ImageControlProps,
+  /** True once `blob` is confirmed to be the full downloaded original —
+   *  false while it's still a server-generated thumbnail (task 1574 gate,
+   *  Codex review round 2, 2026-09-27; see the TIFF branch below and the
+   *  doc comment at this function's TIFF check for why this matters). */
+  blobIsOriginal = true,
 ): React.ReactNode {
   const ext = getExtension(filename)
 
@@ -228,9 +288,15 @@ function pickRenderer(
   ) {
     return <XlsxPreview blob={blob} filename={filename} />
   }
-  // Presentation formats — show download card
-  if (PPTX_MIMES.has(mimeType ?? '') || PPTX_EXTS.has(ext)) {
+  // Presentation formats + legacy .doc/.xls — show download card (see the
+  // PPTX_EXTS/PPTX_MIMES doc comment above for why, task 1574).
+  if (PPTX_MIMES.has(mimeType ?? '') || PPTX_EXTS.has(ext) || ext === 'doc' || ext === 'xls') {
     return <UnsupportedPreview blob={blob} filename={filename} />
+  }
+
+  // ZIP — a listing, not extraction (task 1574).
+  if (ZIP_EXTS.has(ext)) {
+    return <ZipListingPreview blob={blob} filename={filename} />
   }
 
   // Camera RAW — extract embedded JPEG preview, fall back to download card
@@ -247,6 +313,7 @@ function pickRenderer(
         onNext={imageControls?.onNext}
         hasPrev={imageControls?.hasPrev}
         hasNext={imageControls?.hasNext}
+        onInfo={imageControls?.onRawInfo}
       />
     )
   }
@@ -269,10 +336,52 @@ function pickRenderer(
     )
   }
 
+  // TIFF — decoded off the main thread via utif2 (task 1574), see
+  // TIFF_MIMES/TIFF_EXTS doc comment above. Checked before the generic
+  // image branch below, which otherwise fed TIFF bytes straight to a plain
+  // `<img>` that Chromium can never decode (task 1565 finding).
+  //
+  // Gated on `blobIsOriginal` (Codex review round 2, task 1574 gate,
+  // 2026-09-27): a current-version TIFF CAN already have a server-side WebP
+  // thumbnail (CLI/desktop/mobile decode TIFF via native/rust image
+  // libraries the browser doesn't have and generate one on upload, same as
+  // any other image — see repos/cli/src/thumbnail.rs). While `blob` is
+  // still that thumbnail (`blobIsOriginal` false — the fast thumbnail-first
+  // path below hasn't been superseded by the full download yet), routing
+  // here would feed WebP bytes to utif2, which rejects them outright. Round
+  // 1 of this review "fixed" that by excluding TIFF from thumbnail-first
+  // entirely — which traded one bug for a worse one Codex caught in round
+  // 2: a TIFF WITH a thumbnail now had to fully download+decrypt the
+  // ORIGINAL (however large) before ever getting a chance to render
+  // anything, even though a perfectly good thumbnail was sitting right
+  // there. This is the actual fix: thumbnail-first stays ENABLED for TIFF
+  // (see the `isImageFile` check above), and a still-thumbnail blob falls
+  // through to the generic image branch below instead (a plain `<img>`
+  // decodes WebP natively, exactly like every other image type) —
+  // TiffPreview's real utif2 decode only ever runs once `blobIsOriginal` is
+  // true, i.e. against the confirmed real original.
+  if (blobIsOriginal && (TIFF_MIMES.has(mimeType ?? '') || TIFF_EXTS.has(ext))) {
+    return (
+      <TiffPreview
+        blob={blob}
+        filename={filename}
+        zoom={imageControls?.zoom ?? 1}
+        rotation={imageControls?.rotation ?? 0}
+        onZoomChange={imageControls?.onZoomChange ?? (() => {})}
+        onClose={imageControls?.onClose}
+        onPrev={imageControls?.onPrev}
+        onNext={imageControls?.onNext}
+        hasPrev={imageControls?.hasPrev}
+        hasNext={imageControls?.hasNext}
+      />
+    )
+  }
+
   if (mimeType?.startsWith('image/') || IMAGE_EXTENSIONS_SET.has(ext)) {
     return (
       <ImagePreview
         blob={blob}
+        filename={filename}
         zoom={imageControls?.zoom ?? 1}
         rotation={imageControls?.rotation ?? 0}
         onZoomChange={imageControls?.onZoomChange ?? (() => {})}
@@ -311,8 +420,38 @@ function pickRenderer(
   return null
 }
 
-export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, onVersionRestored, onPrev, onNext, hasPrev, hasNext }: FilePreviewProps) {
-  const { getFileKeyForFile, isUnlocked } = useKeys()
+/**
+ * Decides whether a file is a candidate for the task-1563 editor at all
+ * (markdown, a recognized code language, or plain text) and what
+ * CodeMirror language id / markdown-ness applies. This runs BEFORE the
+ * byte-level editability gate (checkEditability) — a candidate can still
+ * end up read-only if it's over 2 MB, binary, or not valid UTF-8.
+ */
+interface EditableKind {
+  isMarkdown: boolean
+  language: string | undefined
+}
+
+function resolveEditableKind(
+  mimeType: string | null | undefined,
+  filename: string,
+): EditableKind | null {
+  const ext = getExtension(filename)
+  if (mimeType === 'text/markdown' || ext === 'md' || ext === 'mdx') {
+    return { isMarkdown: true, language: 'markdown' }
+  }
+  const lang = (mimeType ? CODE_MIME_TYPES[mimeType] : undefined) ?? EXT_LANGUAGE[ext]
+  if (lang) {
+    return { isMarkdown: false, language: lang }
+  }
+  if ((mimeType ? TEXT_MIME_TYPES.has(mimeType) : false) || TEXT_EXTENSIONS.has(ext)) {
+    return { isMarkdown: false, language: undefined }
+  }
+  return null
+}
+
+export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, onVersionRestored, onPrev, onNext, hasPrev, hasNext, startInEditMode, folderId, onDelete }: FilePreviewProps) {
+  const { getFileKeyForFile, getFileKeyForSharedFile, getSharedFileOrigin, isUnlocked } = useKeys()
   const [blob, setBlob] = useState<Blob | null>(null)
   /** True when `blob` holds the full original (non-image / fallback / version
    *  paths). False when `blob` is only a thumbnail (the thumbnail-first image
@@ -328,17 +467,74 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   // Image zoom + rotation state — reset on each new file
   const [zoom, setZoom] = useState(1)
   const [rotation, setRotation] = useState(0)
+  // RAW EXIF summary (camera/lens/exposure), task 1574 — reported by
+  // RawPreview once its worker-based extraction resolves; null for every
+  // non-RAW file and reset on each new file below.
+  const [rawExifInfo, setRawExifInfo] = useState<RawExifInfo | null>(null)
   const prevFileIdRef = useRef<string | null>(null)
   useEffect(() => {
     if (prevFileIdRef.current !== file.id) {
       setZoom(1)
       setRotation(0)
+      setRawExifInfo(null)
+      // Navigating to a different file (prev/next) always leaves edit mode —
+      // there is no cross-file unsaved draft to guard here since a plain
+      // navigation only happens when nothing was dirty (the close/nav guard
+      // below blocks it otherwise).
+      setEditing(false)
+      setDirty(false)
+      setEditability(null)
+      setDecodedText(null)
+      // Reset the save-conflict baseline to the NEW file's own version
+      // immediately (PR #103 review thread) — the version-list-fetch effect
+      // below only corrects it when the destination file has > 1 version
+      // (it early-returns to `setVersions(null)` for a version-1 file
+      // without touching this number), so navigating from a v5 file to a
+      // v1 file left `currentVersionNumber` stuck at 5. A save opened on
+      // that v1 file then compared a racing v2 against baseline 5 — no
+      // conflict shown, silent overwrite. Reproduced live: see
+      // e2e/1563-text-editor.spec.ts "prev/next resets the save-conflict
+      // baseline".
+      setCurrentVersionNumber(file.version_number ?? 1)
       prevFileIdRef.current = file.id
     }
   }, [file.id])
 
+  // ── Text/markdown/code editor (task 1563) ────────────────────────────────
+  const [editing, setEditing] = useState(false)
+  const [dirty, setDirty] = useState(false)
+  const [editability, setEditability] = useState<EditabilityResult | null>(null)
+  const [decodedText, setDecodedText] = useState<string | null>(null)
+  const [unsavedGuard, setUnsavedGuard] = useState<'close' | 'exit-edit' | null>(null)
+  const editorRef = useRef<FileEditorHandle>(null)
+  // The DOM node PreviewChrome's merged top bar renders while editing — the
+  // editor's own Split preview / Wrap / Save controls portal into it (PR
+  // #103 review: "double header" — see preview-chrome.tsx `onToolbarSlotReady`
+  // and file-editor.tsx's `toolbarSlotEl`/`createPortal`). State (not a bare
+  // ref) because the portal target needs a re-render once the ref callback
+  // actually fires with the mounted node.
+  const [toolbarSlot, setToolbarSlot] = useState<HTMLDivElement | null>(null)
+
   // Version state — only populated for files with > 1 version.
   const [versions, setVersions] = useState<FileVersion[] | null>(null)
+  // Mirrors `versions` for the content-loading effect below (task 1563 bug
+  // fix). That effect reads `versions` ONLY in its historical-version
+  // branch (selectedVersionId !== null) — it used to also list `versions`
+  // in its dependency array, so ANY setVersions() call (e.g. after a
+  // task-1563 save refreshes the version list) re-ran the WHOLE effect even
+  // while viewing the live version, re-fetching + re-decrypting the file
+  // from the network using the now-STALE `file.size_bytes` prop (the parent
+  // hasn't re-rendered with fresh metadata yet) against the server's
+  // ALREADY-UPDATED ciphertext — a GCM tag mismatch ("decryption failed:
+  // ciphertext is invalid or key is wrong"), reproduced live via the
+  // task-1563 e2e save test. Reading the historical branch's lookup through
+  // a ref (kept current, but NOT a dependency) fixes the live-view case
+  // without changing behavior for the historical-version branch, which
+  // still sees the latest array.
+  const versionsRef = useRef<FileVersion[] | null>(null)
+  useEffect(() => {
+    versionsRef.current = versions
+  }, [versions])
   const [currentVersionNumber, setCurrentVersionNumber] = useState<number>(file.version_number ?? 1)
   // null = viewing the live current version; otherwise a historical version id.
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null)
@@ -346,6 +542,27 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   // Bumped on every successful blob swap so the canvas key changes and
   // the renderer re-mounts with the decrypt-fade-in animation.
   const [renderKey, setRenderKey] = useState(0)
+  // Task 2237b: set when this row was added through a folder link and neither
+  // the owner wrap nor the folder key opens it. `undefined` = not applicable,
+  // `null` = cannot open with no known label.
+  const [shareOrigin, setShareOrigin] = useState<string | null | undefined>(undefined)
+  const { user } = useAuth()
+  const sharedFile = needsOwnership(file, user?.user_id)
+
+  /** Every load path asks here: an ordinary file derives from the master key,
+   *  a guest- or member-added row goes through the shared-folder resolver. */
+  const resolveFileKey = useCallback(async (): Promise<Uint8Array> => {
+    if (!sharedFile) return getFileKeyForFile(file)
+    // rv-web198d R1: with the flag off there is no shared-folder walk for the
+    // owner (no invites read, no link route asked); the key is derived, as on main.
+    if (!(await sharedFoldersEnabled())) return getFileKeyForFile(file)
+    const root = await sharedRootFor(folderId ?? null, file.id)
+    const key = root ? await getFileKeyForSharedFile(file, root) : null
+    if (key) return key
+    const label = root ? await getSharedFileOrigin(file, root) : null
+    setShareOrigin(label)
+    throw new Error(label ? `Can't open this file (added via ${label})` : "Can't open this file")
+  }, [sharedFile, getFileKeyForFile, getFileKeyForSharedFile, getSharedFileOrigin, file, folderId])
 
   // Display name: use prop, then locally decrypted, then raw
   const name = decryptedNameProp ?? localDecryptedName ?? file.name_encrypted
@@ -360,7 +577,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     let cancelled = false
     async function decrypt() {
       try {
-        const fileKey = await getFileKeyForFile(file)
+        const fileKey = await resolveFileKey()
         const { name, mimeType } = await decryptFileMetadata(fileKey, file.name_encrypted)
         if (!cancelled) {
           setLocalDecryptedName(name)
@@ -372,7 +589,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     }
     decrypt()
     return () => { cancelled = true }
-  }, [file.id, file.name_encrypted, decryptedNameProp, isUnlocked, getFileKeyForFile, file])
+  }, [file.id, file.name_encrypted, decryptedNameProp, isUnlocked, getFileKeyForFile, resolveFileKey, file])
 
   // Fetch the version list once per file (only if there's actually history).
   useEffect(() => {
@@ -408,11 +625,25 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     if (!isUnlocked) return
 
     const imageExt = getExtension(name)
-    const isImageFile = effectiveMime?.startsWith('image/') || IMAGE_EXTENSIONS_SET.has(imageExt) || HEIC_IMAGE_EXTS.has(imageExt)
+    // TIFF stays IN the thumbnail-first fast-path eligibility (task 1574
+    // gate, Codex review round 2, 2026-09-27 — this was briefly excluded in
+    // round 1's fix, which traded the round-1 bug for a worse one: ANY TIFF
+    // with a thumbnail then had to fully download+decrypt the original,
+    // however large, before ever rendering anything, defeating the whole
+    // point of thumbnail-first for exactly the files it matters most for
+    // — large studio/professional TIFFs, the ones most likely to come from
+    // a CLI/desktop/mobile client that generates thumbnails). The actual
+    // fix for round 1's bug (a WebP thumbnail reaching utif2, which rejects
+    // non-TIFF bytes) lives in `pickRenderer`'s TIFF branch instead: it only
+    // routes to `TiffPreview` once `blobIsOriginal` is true, so a
+    // still-thumbnail blob renders via the generic image branch (a plain
+    // `<img>` decodes WebP natively) until the real original has loaded.
+    const isImageFile =
+      effectiveMime?.startsWith('image/') || IMAGE_EXTENSIONS_SET.has(imageExt) || HEIC_IMAGE_EXTS.has(imageExt)
 
     async function loadAndDecrypt() {
       try {
-        const fileKey = await getFileKeyForFile(file)
+        const fileKey = await resolveFileKey()
 
         // Thumbnail-first path for images (current version only)
         if (isImageFile && selectedVersionId === null) {
@@ -472,13 +703,14 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
           )
           plaintext = res.plaintext
         } else {
-          const v = versions?.find((x) => x.id === selectedVersionId)
+          const v = versionsRef.current?.find((x) => x.id === selectedVersionId)
           if (!v) throw new Error('Version not found')
           setVersionLoading(true)
           plaintext = await decryptVersionToBlob(
             file.id,
             v.id,
             fileKey,
+            file.name_encrypted,
             file.mime_type ?? undefined,
             v.chunk_count,
             v.size_bytes,
@@ -526,7 +758,8 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     return () => {
       cancelled = true
     }
-  }, [file.id, file.name_encrypted, file.mime_type, file.chunk_count, file.size_bytes, isUnlocked, getFileKeyForFile, file, selectedVersionId, versions, effectiveMime, name])
+    // `versions` is intentionally NOT a dependency — see versionsRef above.
+  }, [file.id, file.name_encrypted, file.mime_type, file.chunk_count, file.size_bytes, isUnlocked, getFileKeyForFile, resolveFileKey, file, selectedVersionId, effectiveMime, name])
 
   const handleRestore = useCallback(async () => {
     if (selectedVersionId === null) return
@@ -544,12 +777,157 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     }
   }, [file.id, selectedVersionId, onVersionRestored])
 
+  // ── Text/markdown/code editor (task 1563) ─────────────────────────────────
+  // Editing is only offered for the LIVE version — editing a historical
+  // version directly isn't supported (restore it first, then edit).
+  const editKind = selectedVersionId === null ? resolveEditableKind(effectiveMime, name) : null
+
+  // ── Office editor (task 1567) — docx/doc/odt/xlsx/xls/ods/pptx/ppt/odp,
+  // feature-flagged off by default (see src/lib/flags.ts). Same LIVE-version-
+  // only restriction as the text editor above. Mutually exclusive with
+  // `editKind` (disjoint mime/extension sets). Opens in its OWN top-level
+  // tab (`/office/<fileId>`, see office-editor-page.tsx's header
+  // comment for why) rather than inline here — the engine's SharedArrayBuffer
+  // requirement needs the TOP-LEVEL document itself cross-origin isolated,
+  // which this page (shared with the rest of Drive) deliberately is not.
+  // Gated by the build flag only (isOfficeLabsEnabled() aliases
+  // FEATURE_OFFICE_EDITOR since the Labs opt-in was dropped — office-labs.ts).
+  const officeKind =
+    isOfficeLabsEnabled() && selectedVersionId === null ? resolveOfficeFileKind(effectiveMime, name) : null
+  const canEditOffice = !!officeKind
+
+  function openOfficeEditorTab() {
+    window.open(`/office/${encodeURIComponent(file.id)}`, `bb-office-${file.id}`)
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    if (!blob || !blobIsOriginal || !editKind) {
+      setEditability(null)
+      setDecodedText(null)
+      return
+    }
+    blob
+      .arrayBuffer()
+      .then((buf) => {
+        if (cancelled) return
+        const bytes = new Uint8Array(buf)
+        const result = checkEditability(bytes)
+        setEditability(result)
+        setDecodedText(result.editable ? new TextDecoder('utf-8').decode(bytes) : null)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setEditability(null)
+          setDecodedText(null)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blob, blobIsOriginal, editKind?.isMarkdown, editKind?.language])
+
+  const canEdit = !!editKind && editability?.editable === true
+
+  // "+ New" → Text file / Markdown (task 1582): enter edit mode by itself,
+  // once, as soon as the (empty) file has been decrypted and checked. Keyed
+  // on the file id so prev/next never inherits it.
+  const autoEditedFileIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!startInEditMode || !canEdit || editing) return
+    if (autoEditedFileIdRef.current === file.id) return
+    autoEditedFileIdRef.current = file.id
+    setEditing(true)
+  }, [startInEditMode, canEdit, editing, file.id])
+
+  const requestExitEdit = useCallback(() => {
+    if (dirty) {
+      setUnsavedGuard('exit-edit')
+    } else {
+      setEditing(false)
+    }
+  }, [dirty])
+
+  const requestClose = useCallback(() => {
+    if (editing && dirty) {
+      setUnsavedGuard('close')
+    } else {
+      onClose()
+    }
+  }, [editing, dirty, onClose])
+
+  function handleGuardDiscard() {
+    const action = unsavedGuard
+    // Cancel whatever save/conflict-resolution upload FileEditor might have
+    // in flight BEFORE it unmounts (both branches below unmount it — 'close'
+    // tears down the whole preview, 'exit-edit' flips back to read mode).
+    // Without this, "Discard changes" only cleared React state; a save
+    // already in progress kept running in the background and could still
+    // land as a new version moments after the dialog said it would be
+    // discarded (PR #103 review thread).
+    editorRef.current?.abortSave()
+    setUnsavedGuard(null)
+    setDirty(false)
+    if (action === 'close') {
+      setEditing(false)
+      onClose()
+    } else if (action === 'exit-edit') {
+      setEditing(false)
+    }
+  }
+
+  function handleGuardCancel() {
+    setUnsavedGuard(null)
+  }
+
+  /** A same-file save (new version) — refresh the read-mode blob + version
+   *  list in place so switching back to Read shows the saved content
+   *  without a reload, and Drive's own listing picks up the new version. */
+  function handleEditorSaved(updatedFile: DriveFile, savedText: string) {
+    setBlob(new Blob([savedText], { type: effectiveMime ?? 'text/plain' }))
+    setBlobIsOriginal(true)
+    setRenderKey((k) => k + 1)
+    setCurrentVersionNumber(updatedFile.version_number ?? currentVersionNumber + 1)
+    listVersions(file.id)
+      .then((res) => {
+        setVersions(res.versions)
+        setCurrentVersionNumber(res.current_version)
+      })
+      .catch(() => {})
+    onVersionRestored?.()
+  }
+
+  /** Keep Both created a sibling file — this file's own content is
+   *  untouched, so there's nothing to refresh here beyond Drive's listing.
+   *  Exits edit mode directly (not through requestExitEdit's dirty guard):
+   *  the edit that would have been "lost" was just saved successfully as
+   *  the sibling, so there's nothing left to confirm discarding. */
+  function handleEditorSiblingCreated(_newFile: DriveFile) {
+    setDirty(false)
+    setEditing(false)
+    onVersionRestored?.()
+  }
+
+
   const sizeStr = formatSize(file.size_bytes)
   const kindLabel = getKindLabel(effectiveMime, name)
 
   // Zoom helpers
   const imageExt = getExtension(name)
-  const isImage = effectiveMime?.startsWith('image/') || IMAGE_EXTENSIONS_SET.has(imageExt) || HEIC_IMAGE_EXTS.has(imageExt)
+  // RAW is included here (task 1574) now that RawPreview delegates its
+  // actual rendering to ImagePreview once extraction succeeds — before this
+  // task, `isImage` excluded RAW entirely, so the top-bar zoom/rotate
+  // buttons were never wired for it and RawPreview's own wheel-zoom handler
+  // received a permanent no-op `onZoomChange` (imageControls was always
+  // `undefined`) — zoom silently did nothing. TIFF was already covered via
+  // IMAGE_EXTENSIONS_SET.
+  const isImage =
+    effectiveMime?.startsWith('image/') ||
+    IMAGE_EXTENSIONS_SET.has(imageExt) ||
+    HEIC_IMAGE_EXTS.has(imageExt) ||
+    RAW_IMAGE_EXTS.has(imageExt) ||
+    RAW_IMAGE_MIMES.has(effectiveMime ?? '')
   function handleZoomIn() {
     setZoom((z) => Math.min(MAX_ZOOM, +(z + ZOOM_STEP).toFixed(2)))
   }
@@ -561,10 +939,10 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
   }
 
   const imageControls: ImageControlProps | undefined = isImage
-    ? { zoom, rotation, onZoomChange: setZoom, onClose, onPrev, onNext, hasPrev, hasNext }
+    ? { zoom, rotation, onZoomChange: setZoom, onClose, onPrev, onNext, hasPrev, hasNext, onRawInfo: setRawExifInfo }
     : undefined
 
-  const renderer = blob ? pickRenderer(effectiveMime, blob, name, imageControls) : null
+  const renderer = blob ? pickRenderer(effectiveMime, blob, name, imageControls, blobIsOriginal) : null
   const canPreview = renderer !== null
 
   function saveBlob(data: Blob) {
@@ -591,7 +969,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     }
     try {
       setDownloading(true)
-      const fileKey = await getFileKeyForFile(file)
+      const fileKey = await resolveFileKey()
       let original: Blob
       if (selectedVersionId === null) {
         const res = await decryptToBlob(
@@ -610,6 +988,7 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
           file.id,
           v.id,
           fileKey,
+          file.name_encrypted,
           file.mime_type ?? undefined,
           v.chunk_count,
           v.size_bytes,
@@ -623,11 +1002,24 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
     }
   }
 
-  // Keyboard navigation for prev/next (arrow keys)
+  // Keyboard navigation for prev/next (arrow keys) + ⌘E to enter the editor.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       // Don't intercept when typing in an input
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      // While editing, CodeMirror's own contenteditable surface owns the
+      // keyboard entirely — arrow keys move the cursor, not the file
+      // gallery, and Escape must NOT silently close a dirty editor (it
+      // used to reach the raw onClose() here, which had no unsaved-changes
+      // guard at all).
+      if (editing) return
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'e') {
+        if (canEdit) {
+          e.preventDefault()
+          setEditing(true)
+        }
+        return
+      }
       if (e.key === 'ArrowLeft' && onPrev && hasPrev) {
         e.preventDefault()
         onPrev()
@@ -635,27 +1027,80 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
         e.preventDefault()
         onNext()
       } else if (e.key === 'Escape') {
-        onClose()
+        requestClose()
       }
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [onPrev, onNext, hasPrev, hasNext, onClose])
+  }, [onPrev, onNext, hasPrev, hasNext, requestClose, editing, canEdit])
+
+  // Read-only editor notice (design screen 06): shown whenever the file is
+  // an editor candidate (markdown/code/plain-text) but fails the byte-level
+  // editability gate — too large, binary, or not valid UTF-8. For
+  // 'too-large' the normal renderer still shows underneath (TextPreview's
+  // own 500-line cap already makes it a reasonable read-only peek); for
+  // 'binary'/'invalid-utf8' the renderer is suppressed entirely rather than
+  // showing garbled decoded bytes.
+  const showReadOnlyNotice = !!editKind && editability !== null && !editability.editable
+  const suppressRendererForNotice =
+    showReadOnlyNotice && editability!.reason !== 'too-large'
+
+  // RAW camera details (task 1574) — camera/lens/exposure rows appended to
+  // the Info rail whenever RawPreview successfully extracted them, mirroring
+  // mobile's Info sheet (task 1569). Absent for every non-RAW file, and for
+  // a RAW file with no EXIF this reader could resolve (e.g. CR3's embedded
+  // preview, which carries none — an honest gap, not a bug).
+  const rawInfoRows: [string, string][] = rawExifInfo
+    ? [
+        ...(rawExifInfo.cameraModel ? ([['Camera', rawExifInfo.cameraModel]] as [string, string][]) : []),
+        ...(rawExifInfo.lensModel ? ([['Lens', rawExifInfo.lensModel]] as [string, string][]) : []),
+        // `rawExifInfo.iso` is `mapExifToRawInfo`'s own self-labeled string
+        // ("ISO 200") — its tested contract (test/1574-raw-embedded-jpeg.test.ts),
+        // left as-is there. This row's own "ISO" label column would repeat
+        // it verbatim ("ISO  ISO 200", Codex review round 2, task 1574
+        // gate, 2026-09-27) — every sibling row's value is bare (Shutter:
+        // "1/125s", not "Shutter 1/125s"), so strip the redundant prefix
+        // here, at the one place that adds the label, not in the mapper.
+        ...(rawExifInfo.iso
+          ? ([['ISO', rawExifInfo.iso.replace(/^ISO\s*/i, '')]] as [string, string][])
+          : []),
+        ...(rawExifInfo.shutterSpeed ? ([['Shutter', rawExifInfo.shutterSpeed]] as [string, string][]) : []),
+        ...(rawExifInfo.aperture ? ([['Aperture', rawExifInfo.aperture]] as [string, string][]) : []),
+        ...(rawExifInfo.focalLength ? ([['Focal length', rawExifInfo.focalLength]] as [string, string][]) : []),
+      ]
+    : []
 
   return (
     <PreviewChrome
       filename={name}
       kind={effectiveMime ?? ''}
       size={sizeStr}
-      onClose={onClose}
+      // The top bar's back control always closes the WHOLE preview, in
+      // either mode — unchanged from before the header merge. "Exit edit
+      // mode but stay on this file" is still its own separate control (the
+      // editor's own "Done", now portaled into this same row instead of a
+      // second row underneath it — PR #103 review: "double header" was
+      // about the DUPLICATE FILENAME/ROW, not about collapsing these two
+      // distinct actions into one).
+      onClose={requestClose}
       decrypted={!!blob}
-      onDownload={blob ? handleDownload : undefined}
+      onDownload={!editing && blob ? handleDownload : undefined}
       isStarred={file.is_starred}
       onZoomIn={isImage && blob ? handleZoomIn : undefined}
       onZoomOut={isImage && blob ? handleZoomOut : undefined}
       onRotate={isImage && blob ? handleRotate : undefined}
+      onEdit={
+        canEditOffice && !editing
+          ? openOfficeEditorTab
+          : canEdit && !editing
+            ? () => setEditing(true)
+            : undefined
+      }
+      editing={editing}
+      dirty={dirty}
+      onToolbarSlotReady={setToolbarSlot}
       belowTopBar={
-        versions && versions.length > 1 ? (
+        !editing && versions && versions.length > 1 ? (
           <VersionScrubber
             versions={versions}
             currentVersionNumber={currentVersionNumber}
@@ -667,14 +1112,24 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
         ) : undefined
       }
       rightRail={
-        <InfoRail
-          filename={name}
-          kind={kindLabel}
-          size={sizeStr}
-          items={[
-            ['Modified', new Date(file.updated_at).toLocaleDateString()],
-          ]}
-        />
+        editing ? undefined : (
+          <InfoRail
+            filename={name}
+            kind={kindLabel}
+            size={sizeStr}
+            items={[
+              ['Modified', new Date(file.updated_at).toLocaleDateString()],
+              ...rawInfoRows,
+            ]}
+            cipher={CONTENT_CIPHER_LABEL}
+            chunkCount={
+              selectedVersionId === null
+                ? file.chunk_count
+                : versions?.find((v) => v.id === selectedVersionId)?.chunk_count
+            }
+            tagsVerified={!!blob && blobIsOriginal && !error}
+          />
+        )
       }
     >
       {/* Loading state */}
@@ -688,11 +1143,23 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
       {/* Error state */}
       {error && (
         <div className="flex flex-col items-center gap-3 text-center">
-          <Icon name="shield" size={32} className="text-red" />
+          <Icon name={shareOrigin !== undefined ? 'lock' : 'shield'} size={32} className="text-red" />
           <p className="text-sm font-medium text-ink">{error}</p>
-          <BBButton variant="default" size="sm" onClick={onClose}>
-            Close
-          </BBButton>
+          {shareOrigin !== undefined && onDelete && (
+            <p className="max-w-[320px] text-xs text-ink-3">
+              You can remove the item from this folder, or ask the person who added it for a copy.
+            </p>
+          )}
+          <div className="flex items-center gap-2">
+            <BBButton variant="default" size="sm" onClick={requestClose}>
+              Close
+            </BBButton>
+            {shareOrigin !== undefined && onDelete && (
+              <BBButton variant="danger" size="sm" onClick={() => void onDelete(file)}>
+                Delete
+              </BBButton>
+            )}
+          </div>
         </div>
       )}
 
@@ -710,12 +1177,58 @@ export function FilePreview({ file, decryptedName: decryptedNameProp, onClose, o
         </div>
       )}
 
+      {/* Editor (task 1563) — replaces the read-mode renderer entirely
+          while active. Fills the canvas area itself (PreviewChrome's canvas
+          centers its children, which the editor doesn't want). */}
+      {editing && blob && decodedText !== null && (
+        <div className="absolute inset-0 p-3" data-testid="editor-container">
+          <FileEditor
+            ref={editorRef}
+            file={file}
+            decryptedName={name}
+            initialText={decodedText}
+            mimeType={effectiveMime}
+            isMarkdown={editKind?.isMarkdown ?? false}
+            language={editKind?.language}
+            openedVersionNumber={currentVersionNumber}
+            onDirtyChange={setDirty}
+            onSaved={handleEditorSaved}
+            onSiblingCreated={handleEditorSiblingCreated}
+            toolbarSlotEl={toolbarSlot}
+            onRequestExitEdit={requestExitEdit}
+          />
+        </div>
+      )}
+
+      {/* Read-only editor notice (design screen 06) — shown for a
+          markdown/code/text file that fails the editability gate. */}
+      {!editing && showReadOnlyNotice && editability && (
+        <div
+          className="flex w-full max-w-[520px] flex-col items-center gap-3 rounded-md border border-line bg-paper p-6 text-center shadow-1"
+          data-testid="editor-readonly-notice"
+        >
+          <Icon name={editability.reason === 'binary' ? 'file' : 'shield'} size={26} className="text-ink-3" />
+          <p className="text-sm font-semibold text-ink">{editabilityNotice(editability.reason).title}</p>
+          <p className="text-[12.5px] leading-relaxed text-ink-3">
+            {editabilityNotice(editability.reason).body}
+          </p>
+          <BBButton variant="amber" size="sm" onClick={handleDownload}>
+            <Icon name="download" size={13} className="mr-1.5" />
+            Download
+          </BBButton>
+        </div>
+      )}
+
       {/* Actual preview — keyed on renderKey so each blob swap (initial
           load, version switch) triggers a fresh fade-in animation. */}
-      {renderer && (
+      {!editing && renderer && !suppressRendererForNotice && (
         <div key={renderKey} className="decrypt-fade-in flex h-full w-full items-center justify-center">
           {renderer}
         </div>
+      )}
+
+      {unsavedGuard && (
+        <UnsavedChangesDialog onDiscard={handleGuardDiscard} onCancel={handleGuardCancel} />
       )}
     </PreviewChrome>
   )

@@ -6,14 +6,20 @@
  * intact, making the vault permanently unreadable. This page routes users to
  * the correct recovery path based on what they have access to.
  *
- * The old email-reset flow is intentionally not offered here. It's disabled
- * at the route level for any user with OPAQUE credentials.
+ * Task 1713 FIX A — the chooser ALSO exposes the email-based reset entry
+ * (the amendment, D-2026-10-02): posting to the shipped, always-200
+ * enumeration-safe endpoint (POST /api/v1/auth/forgot-password) emails a
+ * one-time 60-minute set-password link (1704 slice 1). The copy stays honest
+ * about what that does and does not do: it replaces the sign-in credential,
+ * it does NOT decrypt anything — the vault stays locked until the recovery
+ * phrase re-wraps it.
  */
 
 import React from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { AuthShell } from '../components/auth-shell'
-import { Icon, type IconName } from '@beebeeb/shared'
+import { ApiError, BBButton, BBInput, Icon, type IconName } from '@beebeeb/shared'
+import { forgotPassword } from '../lib/api'
 
 interface OptionCardProps {
   icon: IconName
@@ -66,9 +72,92 @@ function OptionCard({ icon, title, description, cta, ctaVariant = 'default', onC
   )
 }
 
+/**
+ * FIX A — the email-reset entry's network call, exported so the harness pin
+ * can prove at the HTTP level what leaves the browser (test/
+ * 1713-forgot-password-email-entry.test.tsx): exactly one POST to the shipped
+ * enumeration-safe endpoint with the email and nothing else. The server's
+ * verbatim 200 message comes back — it is the only honest thing to show.
+ */
+export async function submitEmailReset(email: string): Promise<string> {
+  const res = await forgotPassword(email)
+  return res.message
+}
+
+/**
+ * FIX A — the post-submit success screen. Shows the server's enumeration-safe
+ * message VERBATIM (never paraphrased into a promise) plus the honest truths:
+ * the emailed link is one-time and expires in 60 minutes
+ * (SET_PASSWORD_TOKEN_TTL_MINUTES, repos/server/beebeeb-api/src/routes/
+ * password.rs:323), it lets the user set a new password — and that does NOT
+ * unlock the vault. The vault stays locked until the recovery phrase re-wraps
+ * it under the new password (1704 slice 2's locked-state surface handles the
+ * aftermath after the next sign-in).
+ */
+export function EmailResetSuccess({ message }: { message: string }) {
+  return (
+    <AuthShell
+      title="Check your email"
+      subtitle="Follow the link in that message to set a new password."
+    >
+      <div className="space-y-4">
+        <div className="flex items-start gap-2.5 p-3 rounded-md bg-paper-2 border border-line">
+          <Icon name="mail" size={14} className="text-ink-3 shrink-0 mt-0.5" />
+          <p className="text-[12.5px] text-ink-2 leading-relaxed">{message}</p>
+        </div>
+
+        <p className="text-[12.5px] text-ink-2 leading-relaxed">
+          The link is one-time and opens a page where you can set a new
+          password. It works for 60 minutes — after that, request a fresh link.
+        </p>
+
+        <p className="text-[12.5px] text-ink-3 leading-relaxed">
+          Setting a new password changes how you sign in. It does not unlock
+          your vault: your vault stays locked until you verify your recovery
+          phrase, which re-wraps it under the new password.
+        </p>
+
+        <div className="text-center pt-2 border-t border-line mt-1">
+          <Link to="/login" className="text-[12px] text-ink-3 hover:text-ink-2 transition-colors">
+            Back to sign in
+          </Link>
+        </div>
+      </div>
+    </AuthShell>
+  )
+}
+
 export function ForgotPassword() {
   const navigate = useNavigate()
   const [showNoRecovery, setShowNoRecovery] = React.useState(false)
+  const [email, setEmail] = React.useState('')
+  const [submitting, setSubmitting] = React.useState(false)
+  const [emailError, setEmailError] = React.useState<string | null>(null)
+  const [resetMessage, setResetMessage] = React.useState<string | null>(null)
+
+  if (resetMessage !== null) {
+    return <EmailResetSuccess message={resetMessage} />
+  }
+
+  async function handleEmailSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    const trimmed = email.trim()
+    if (!trimmed || submitting) return
+    setSubmitting(true)
+    setEmailError(null)
+    try {
+      const message = await submitEmailReset(trimmed)
+      setResetMessage(message)
+    } catch (err) {
+      setEmailError(
+        err instanceof ApiError
+          ? err.message
+          : 'We could not send the reset request. Check the address and try again.',
+      )
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   if (showNoRecovery) {
     return (
@@ -142,6 +231,40 @@ export function ForgotPassword() {
           ctaVariant="amber"
           onClick={() => navigate('/recover-with-phrase')}
         />
+
+        <div className="relative rounded-lg border p-4 transition-colors border-line bg-paper hover:border-line-2">
+          <div className="flex items-start gap-3 mb-3">
+            <div className="w-8 h-8 rounded-md bg-paper-2 border border-line flex items-center justify-center shrink-0">
+              <Icon name="mail" size={15} className="text-ink-2" />
+            </div>
+            <div>
+              <div className="text-[13px] font-semibold text-ink mb-0.5">I know my email address</div>
+              <div className="text-[12px] text-ink-3 leading-relaxed">
+                We email a one-time link to set a new password. It does not decrypt your files — your vault stays locked until your recovery phrase re-wraps it.
+              </div>
+            </div>
+          </div>
+          <form onSubmit={handleEmailSubmit}>
+            <BBInput
+              type="email"
+              placeholder="you@example.com"
+              aria-label="Email address"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={submitting}
+            />
+            <BBButton
+              type="submit"
+              className="w-full mt-2"
+              disabled={submitting || !email.trim()}
+            >
+              Send reset link
+            </BBButton>
+          </form>
+          {emailError && (
+            <p className="text-[12px] text-red mt-1.5 leading-relaxed">{emailError}</p>
+          )}
+        </div>
 
         <OptionCard
           icon="cloud"

@@ -6,9 +6,11 @@ import { Icon } from '@beebeeb/shared'
 import { useToast } from './toast'
 import { createCheckoutSession } from '../lib/api'
 import { userFriendlyError } from '../lib/user-friendly-error'
+import { isSamePlanActiveError, samePlanConflictMessage } from '../lib/checkout-same-plan'
 import { useDriveData } from '../lib/drive-data-context'
 import { handleBillingResetTestMode } from '../lib/billing-reset'
 import { BillingInfoStep } from './billing/BillingInfoStep'
+import { dueTodayVatCaption } from '../lib/checkout-summary-copy'
 
 type BillingCycle = 'monthly' | 'yearly'
 type Step = 'cycle' | 'billing-info'
@@ -43,6 +45,26 @@ interface UpgradeDialogProps {
    * the cycle selector shows a note that the add-on will also switch cycles.
    */
   activeAddOnStorageTb?: number
+  /**
+   * Task 1707 — the user's current subscription's plan+cycle when its status
+   * is 'active' (the parent already holds the snapshot; null otherwise). When
+   * it equals this dialog's plan on the currently-selected cycle, the checkout
+   * would be the exact purchase the server's same-plan guard refuses — the
+   * Continue CTA is labelled "Current plan" and disabled instead of letting
+   * the server bounce the flow one step later.
+   */
+  activePlanCycle?: { plan: string; cycle: string } | null
+  /**
+   * Task 1707 review #133-A — the parent's own billing-state reload path for
+   * the same-plan-conflict 409, distinct from `onSuccess` (which stays
+   * reserved for real completions). The 409 proves the parent's subscription
+   * snapshot was stale — the dialog offered a purchase the server knows is
+   * moot — so the parent should re-fetch its billing/subscription state (and
+   * the shared plan details) BEFORE the dialog closes, without any
+   * success-toast UX. When not wired, the dialog falls back to its own shared
+   * plan-details refresh + the app-wide `beebeeb:plan-changed` signal.
+   */
+  onStaleSnapshot?: () => void
 }
 
 export function UpgradeDialog({
@@ -55,6 +77,8 @@ export function UpgradeDialog({
   onSuccess,
   onBeforeRedirect,
   activeAddOnStorageTb = 0,
+  activePlanCycle = null,
+  onStaleSnapshot,
 }: UpgradeDialogProps) {
   const [cycle, setCycle] = useState<BillingCycle>('yearly')
   const [step, setStep] = useState<Step>('cycle')
@@ -62,6 +86,12 @@ export function UpgradeDialog({
   const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
   const { showToast } = useToast()
   const { refreshPlanDetails } = useDriveData()
+
+  // Task 1707 — same-plan re-purchase guard, client side: the dialog targets
+  // THIS plan on the CURRENTLY-SELECTED cycle and the user's active
+  // subscription is already exactly that, so there is nothing to buy.
+  const isCurrentPlanCycle =
+    activePlanCycle !== null && activePlanCycle.plan === planId && activePlanCycle.cycle === cycle
 
   // All plans are single-user — no seat multiplier needed
   const monthlyTotal = pricePerSeat
@@ -83,20 +113,32 @@ export function UpgradeDialog({
   // existing 0865 pending-checkout watchdog marker is stamped here as before.
   const proceedToPayment = useCallback(async () => {
     try {
-      const { url, payment_id } = await createCheckoutSession({
+      const res = await createCheckoutSession({
         plan: planId,
         billing_cycle: cycle,
       })
+      // Task 1702 — a €0 plan came back already activated: no payment, no
+      // redirect. Refresh the parent's plan state and close.
+      if (res.activated) {
+        showToast({
+          icon: 'check',
+          title: 'Your plan is activated',
+          description: 'This plan is free right now — nothing was charged.',
+        })
+        onSuccess?.()
+        handleClose()
+        return
+      }
       // Stamp the unified pre-checkout intent (task 0946). The parent owns the
       // live subscription, so it captures the pre-state snapshot; if no callback
       // was wired, fall back to the legacy minimal marker so the abandoned-
       // checkout watchdog still works.
       if (onBeforeRedirect) {
-        onBeforeRedirect(planId, cycle, payment_id)
+        onBeforeRedirect(planId, cycle, res.payment_id)
       } else {
         try { localStorage.setItem('bb_pending_checkout', JSON.stringify({ kind: 'plan', plan: planId, cycle, ts: Date.now() })) } catch { /* ok */ }
       }
-      window.location.href = url
+      window.location.href = res.url
     } catch (checkoutErr) {
       // Task 1518 part C — the ordinary upgrade path used to fall through
       // to the generic re-throw below, which BillingInfoStep showed inline
@@ -128,11 +170,38 @@ export function UpgradeDialog({
         handleClose()
         return
       }
+      // Task 1707 — the server refused the checkout because this exact
+      // plan+cycle is already active (same-plan re-purchase guard; only
+      // reachable when the parent's subscription snapshot was stale). Close
+      // the dialog with the server's plan+cycle-specific copy — there is no
+      // retry to offer.
+      if (isSamePlanActiveError(checkoutErr)) {
+        showToast({
+          icon: 'info',
+          title: 'Already subscribed',
+          description: samePlanConflictMessage(checkoutErr),
+        })
+        // Task 1707 review #133-A — the 409 PROVES the parent's subscription
+        // snapshot was stale: refresh billing state (no success UX) so the
+        // billing page stops rendering the obsolete subscription and
+        // re-offering it. Prefer the parent's own reload path (billing.tsx's
+        // loadData — distinct from onSuccess, which stays reserved for real
+        // completions); the fallback refreshes the shared plan details and
+        // fires the app-wide signal the drive context listens on.
+        if (onStaleSnapshot) {
+          onStaleSnapshot()
+        } else {
+          refreshPlanDetails()
+          try { window.dispatchEvent(new Event('beebeeb:plan-changed')) } catch { /* non-browser env */ }
+        }
+        handleClose()
+        return
+      }
       // Re-throw so BillingInfoStep surfaces the error inline and keeps its
       // submitting state from sticking.
       throw new Error(userFriendlyError(checkoutErr))
     }
-  }, [planId, cycle, handleClose, showToast, onBeforeRedirect, refreshPlanDetails, onSuccess])
+  }, [planId, cycle, handleClose, showToast, onBeforeRedirect, refreshPlanDetails, onSuccess, onStaleSnapshot])
 
   if (!open) return null
 
@@ -245,8 +314,7 @@ export function UpgradeDialog({
               </span>
             </div>
             <div className="text-[11px] opacity-60">
-              EUR {cycle === 'yearly' ? yearlyTotal.toFixed(2) : monthlyTotal.toFixed(2)}{' '}
-              / {cycle === 'yearly' ? 'year' : 'month'} excl. VAT · cancel anytime
+              {dueTodayVatCaption(cycle, cycle === 'yearly' ? yearlyTotal : monthlyTotal)}
             </div>
           </div>
 
@@ -259,9 +327,10 @@ export function UpgradeDialog({
             size="lg"
             className="w-full justify-center"
             onClick={() => { setError(null); setStep('billing-info') }}
+            disabled={isCurrentPlanCycle}
             data-testid="upgrade-continue"
           >
-            Continue
+            {isCurrentPlanCycle ? 'Current plan' : 'Continue'}
             <Icon name="chevron-right" size={13} className="ml-1" />
           </BBButton>
 

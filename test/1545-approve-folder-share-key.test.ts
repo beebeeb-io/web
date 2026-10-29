@@ -31,7 +31,7 @@ function throwingPort(name: string) {
 }
 
 describe('buildApprovalKeyBlob — folder-share branch (1545#1)', () => {
-  test('recovers the REAL folder key via decryptOwnerFolderKey and wraps THAT for the recipient — never derives from getFileKey', async () => {
+  test('recovers the REAL folder key via the legacy invite owner copy (no custody record) and wraps THAT for the recipient — never derives from getFileKey', async () => {
     const decryptOwnerFolderKey = mock(async (mk: Uint8Array, fid: string, blob: Uint8Array) => {
       expect(mk).toBe(masterKey)
       expect(fid).toBe(folderId)
@@ -44,7 +44,7 @@ describe('buildApprovalKeyBlob — folder-share branch (1545#1)', () => {
         expect(pub).toBe(recipientPubKey)
         expect(fid).toBe(folderId)
         // THE regression guard: the key wrapped for the recipient must be
-        // EXACTLY the folder key decryptOwnerFolderKey returned — not a
+        // EXACTLY the folder key the owner copy opened to — not a
         // fresh deterministic value derived from fid/masterKey alone.
         expect(Array.from(folderKey)).toEqual(Array.from(realFolderKey))
         return new Uint8Array([9, 9, 9, 9])
@@ -55,6 +55,7 @@ describe('buildApprovalKeyBlob — folder-share branch (1545#1)', () => {
     })
 
     const ports: ApproveKeyCryptoPorts = {
+      custodyFolderKey: mock(async () => null),
       decryptOwnerFolderKey,
       encryptFolderKeyForRecipient,
       encryptFileKeyForSharing: throwingPort('encryptFileKeyForSharing'),
@@ -88,6 +89,7 @@ describe('buildApprovalKeyBlob — folder-share branch (1545#1)', () => {
       throw new Error('getFileKey must never be called for a folder-share invite')
     })
     const ports: ApproveKeyCryptoPorts = {
+      custodyFolderKey: mock(async () => null),
       decryptOwnerFolderKey: throwingPort('decryptOwnerFolderKey'),
       encryptFolderKeyForRecipient: throwingPort('encryptFolderKeyForRecipient'),
       encryptFileKeyForSharing: throwingPort('encryptFileKeyForSharing'),
@@ -103,8 +105,40 @@ describe('buildApprovalKeyBlob — folder-share branch (1545#1)', () => {
         getFileKey,
         ports,
       ),
-    ).rejects.toThrow()
+    ).rejects.toThrow(/missing its owner folder key/)
     expect(getFileKey).not.toHaveBeenCalled()
+  })
+
+  test('L6/L7b: a folder with a custody record approves with the custody key; the invite copy is never opened', async () => {
+    const custodyKey = new Uint8Array(32).fill(0x6c)
+    const encryptFolderKeyForRecipient = mock(
+      async (_mk: Uint8Array, _pub: Uint8Array, _fid: string, folderKey: Uint8Array) => {
+        expect(Array.from(folderKey)).toEqual(Array.from(custodyKey))
+        return new Uint8Array([7, 7])
+      },
+    )
+    const ports: ApproveKeyCryptoPorts = {
+      custodyFolderKey: mock(async (_mk: Uint8Array, fid: string) => {
+        expect(fid).toBe(folderId)
+        return { folderKey: custodyKey.slice(), encryptedOwnerFolderKeyB64: 'custody' }
+      }),
+      decryptOwnerFolderKey: throwingPort('decryptOwnerFolderKey'),
+      encryptFolderKeyForRecipient,
+      encryptFileKeyForSharing: throwingPort('encryptFileKeyForSharing'),
+      fromBase64: () => new Uint8Array(),
+      zeroize: () => {},
+    }
+    const result = await buildApprovalKeyBlob(
+      { file_id: folderId, is_folder_share: true, encrypted_owner_folder_key: ownerEncryptedFolderKeyB64 },
+      masterKey,
+      recipientPubKey,
+      async () => {
+        throw new Error('never')
+      },
+      ports,
+    )
+    expect(Array.from(result)).toEqual([7, 7])
+    expect(encryptFolderKeyForRecipient).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -126,6 +160,7 @@ describe('buildApprovalKeyBlob — single-file branch (unchanged, regression gua
       },
     )
     const ports: ApproveKeyCryptoPorts = {
+      custodyFolderKey: throwingPort('custodyFolderKey'),
       decryptOwnerFolderKey: throwingPort('decryptOwnerFolderKey'),
       encryptFolderKeyForRecipient: throwingPort('encryptFolderKeyForRecipient'),
       encryptFileKeyForSharing,
@@ -155,6 +190,7 @@ describe('buildApprovalKeyBlob — single-file branch (unchanged, regression gua
       nonce: new Uint8Array([2]),
     }))
     const ports: ApproveKeyCryptoPorts = {
+      custodyFolderKey: throwingPort('custodyFolderKey'),
       decryptOwnerFolderKey: throwingPort('decryptOwnerFolderKey'),
       encryptFolderKeyForRecipient: throwingPort('encryptFolderKeyForRecipient'),
       encryptFileKeyForSharing,

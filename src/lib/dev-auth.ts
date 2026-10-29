@@ -30,10 +30,14 @@ const API_URL = import.meta.env.VITE_API_URL || 'https://api.beebeeb.io'
 
 interface DevAutoLoginResponse {
   session_token: string
+  user_id: string
   master_key_bytes_base64: string
   email: string
   role: string
 }
+
+/** Upper bound on POST /dev/auto-login (see the fetch below for why). */
+const DEV_AUTO_LOGIN_TIMEOUT_MS = 20_000
 
 /**
  * Attempt dev auto-auth. Returns true if a session was injected.
@@ -82,7 +86,13 @@ export async function devAutoAuth(): Promise<boolean> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: devEmail }),
-      signal: AbortSignal.timeout(3000),
+      // The server derives a 256 MiB Argon2id key here: ~1.7-2 s on an idle
+      // laptop, well past 3 s under parallel e2e load. The old 3 s abort
+      // bounced the page to /login mid-spec (auth.spec setup "no bb_session
+      // cookie", drive.spec settings/billing — e2e classification
+      // 2026-09-25). A DOWN server still fails instantly (connection refused);
+      // this only bounds a hung one. Dev builds only (guarded above).
+      signal: AbortSignal.timeout(DEV_AUTO_LOGIN_TIMEOUT_MS),
       // Needed so the Set-Cookie on the response lands in the browser jar.
       credentials: 'include',
     })
@@ -113,7 +123,7 @@ export async function devAutoAuth(): Promise<boolean> {
     //    stash it in IndexedDB. KeyProvider's getVaultKey() will unwrap it
     //    on startup and call setIsUnlocked(true).
     await initSessionVault()
-    await cacheVaultKey(masterKeyBytes)
+    await cacheVaultKey(masterKeyBytes, data.user_id)
 
     // 3.5 (dev-only test-infra). A password-less /dev/auto-login account never
     //     runs the OPAQUE/onboarding path that uploads its x25519 public key, so

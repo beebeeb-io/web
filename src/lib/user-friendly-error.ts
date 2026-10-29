@@ -10,6 +10,11 @@
 
 import { ApiError } from './api'
 import { consumeAccountDeletedNotice, type NoticeStorage } from './account-deleted-notice'
+import { ACCOUNT_INACTIVE_NOTICE } from './account-inactive'
+import { UploadRestartFailedError } from './upload-session-reinit'
+import { FOLDER_NEEDS_UPGRADE, FolderUpgradeRefusedError, needsFolderUpgrade } from './folder-upgrade'
+import { strictRefusalMessage } from './storage-regions'
+import { shareRefusalCopy, startTrialErrorCopy, trialBillingRefusalCopy } from './no-card-trial'
 
 /** Maximum length below which we trust the existing message as user-facing. */
 const SHORT_MESSAGE_MAX = 80
@@ -114,6 +119,16 @@ function upgradeLimitMessage(message: string): string | null {
 }
 
 export function userFriendlyError(err: unknown): string {
+  // Task 1589 — a swept upload session whose fresh re-init also failed. Its
+  // message is written for users and says what to do (upload again).
+  if (err instanceof UploadRestartFailedError) return err.message
+
+  // Contract 2237 §2: a folder with legacy rows needs the upgrade before it can
+  // get a link or a new invite. Its own sentence, never a generic conflict.
+  if (needsFolderUpgrade(err)) return FOLDER_NEEDS_UPGRADE
+  // ...and a refused upgrade says why in its own sentence.
+  if (err instanceof FolderUpgradeRefusedError) return err.message
+
   // Network / offline takes priority — a 5xx during a flaky connection is
   // really "you have no connection", not "the server is down".
   if (isNetworkError(err)) {
@@ -139,11 +154,74 @@ export function userFriendlyError(err: unknown): string {
     // pattern-match the human message. Branch on these BEFORE the generic
     // status handling, otherwise the 403/413 fall-throughs swallow them with
     // "You don't have permission to do that." (server task 0670).
+    // Task 1952 / 2050 — strict placement: the chosen country cannot take the
+    // write, and the person said never to go anywhere else. Names the COUNTRY.
+    const strictRefusal = strictRefusalMessage(err)
+    if (strictRefusal) return strictRefusal
     if (err.code === 'object_budget_exceeded') {
       // Object-COUNT cap, distinct from the byte/storage quota below.
       return "File limit reached. This account has hit its maximum number of files — delete some files or contact support to raise the limit."
     }
+    // Task 1037 — an account without a plan: upload init and share creation
+    // are refused with 409 plan_required / account_lapsed (never
+    // quota_exceeded — a 0 quota would read as unlimited). Branch before the
+    // generic 409 handling so they never surface as a vague conflict.
+    // Task 1037 — signup is web-only; mobile/CLI get this 403. The web IS the
+    // signup surface so it should never see it, but never let it fall
+    // through to the generic 403 "permission" line.
+    // Task 1948 (1c): the session belonged to an account that is no longer
+    // active. `request()` has already signed it out on this device; say that,
+    // never the generic 403 line, and never why.
+    if (err.code === 'account_suspended') return ACCOUNT_INACTIVE_NOTICE
+    if (err.code === 'signup_web_only') {
+      return 'Accounts can only be created at app.beebeeb.io/signup. Open that page in your browser to continue.'
+    }
+    if (err.code === 'plan_required') {
+      return 'Choose a plan and start your free trial to upload or share files.'
+    }
+    if (err.code === 'account_lapsed') {
+      // Neutral on purpose: this refusal carries no reason, and a free coupon period ending
+      // is not a trial (task 1814). The banner and billing page say which one it was.
+      return 'Your vault is read-only. Subscribe to upload or share again.'
+    }
+    // Task 1757 (server task 1755) — the typed refusals of the no-card trial. Each has its
+    // own sentence; none may fall through to a vague conflict.
+    if (err.code === 'trial_ended') {
+      return 'Your trial has ended and your account holds more than its included storage, so it is read-only. Subscribe, or free up space (the trash counts), to upload again.'
+    }
+    const sharing = shareRefusalCopy(err)
+    if (sharing) return sharing
+    const billing = trialBillingRefusalCopy(err)
+    if (billing) return billing
+    if (
+      err.code === 'trial_temporarily_unavailable' ||
+      err.code === 'trial_already_used' ||
+      err.code === 'trial_previously_subscribed' ||
+      err.code === 'trial_has_active_subscription' ||
+      err.code === 'trial_requires_payment_method'
+    ) {
+      return startTrialErrorCopy(err)
+    }
+    // Task 1605 (server PR #129) — a never-paid trial cancelled before its
+    // first charge: uploads + new shares are refused immediately, even
+    // though the account is still `cancelling` (view/download keep working
+    // until access_until). Distinct copy from `account_lapsed` (the trial
+    // hasn't lapsed yet — it's cancelled, and resuming restores uploads).
+    if (err.code === 'trial_cancelled_read_only') {
+      return 'Uploads are off — you cancelled your trial before its first payment. Resume your trial or pay now to upload again.'
+    }
     if (err.code === 'quota_exceeded') {
+      // Task 1605 — the 25 GB TRIAL cap (not the account's real plan quota)
+      // carries its own actionable server message ("...Pay now to unlock
+      // your full plan storage.") via the additive `is_trial_cap` flag. An
+      // ordinary plan-quota hit keeps the existing generic copy.
+      // The no-card trial's sentence ("You've reached the 6 MB trial storage cap. Subscribe to
+      // unlock your full plan storage.", task 1755) is longer than the 80-character cutoff
+      // `looksUserFriendly` applies to unknown messages, but it is the server's own sentence for
+      // exactly this case, so it is trusted up to a sane bound.
+      if (err.details?.is_trial_cap === true && err.message.length > 0 && err.message.length <= 200) {
+        return err.message
+      }
       return 'Storage full. Free up space or upgrade your plan to keep uploading.'
     }
     if (err.code === 'downgrade_blocked_over_quota') {
@@ -162,6 +240,14 @@ export function userFriendlyError(err: unknown): string {
       // SHORT_MESSAGE_MAX (80) — so it needs its own branch here instead of
       // falling through `looksUserFriendly` into the generic fallback.
       return err.message
+    }
+    if (err.code === 'already_subscribed') {
+      // Task 1707 — the same-plan re-purchase guard: the server refused a
+      // checkout for the exact plan+cycle the user already has active. The
+      // server's message names the exact plan + cycle and points at /billing;
+      // keep it verbatim regardless of the 80-char cutoff so the plan/cycle
+      // specifics never degrade into a generic conflict line.
+      return err.message || 'You already have an active subscription on this plan. Manage it in Billing.'
     }
     if (status === 401) return 'Your session expired. Sign in again.'
     if (status === 403) return "You don't have permission to do that."

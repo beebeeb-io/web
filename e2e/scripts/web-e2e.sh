@@ -18,6 +18,10 @@
 # 1406) — SERVER_DIR always resolves to the one real repos/server via git's
 # common dir. Uses host `psql` if present, else falls back to `docker exec`
 # into the Postgres container (task 1406; override with E2E_PG_CONTAINER).
+# e2e/1534-cli-upload-share-decrypt.spec.ts additionally needs a built `bb`
+# binary — resolved from repos/cli the same way (sibling checkout) and
+# built on demand if missing (task 1534 review round 2); override with
+# E2E_BB_BIN. No other spec needs it and none are blocked if it's absent.
 # The pilot-access-key gate is OFF by default (task 1520) — matching prod,
 # which launched phase 2 with BB_REQUIRE_PILOT_KEY=0 on both nodes. Override
 # BB_REQUIRE_PILOT_KEY=1 (BB_PILOT_SIGNUP_KEY=test-pilot-key) before invoking
@@ -36,6 +40,15 @@ PG_USER=beebeeb
 PG_PASS=beebeeb_dev
 DB_NAME="${E2E_DB_NAME:-beebeeb_web_e2e_3003}"
 BLOB_DIR="$(mktemp -d /tmp/bb-web-e2e-blobs-XXXXXX)"
+# Per-RUN log paths. These used to be the fixed /tmp/bb-web-e2e-{api,vite}.log,
+# shared by every concurrent shard/lane on this machine — so the "see
+# /tmp/bb-web-e2e-api.log" hint on a boot failure pointed at ANOTHER run's log.
+# Keyed on the API port (unique per concurrent run by construction: two runs on
+# one port cannot both bind) and kept OUTSIDE $BLOB_DIR so they survive teardown
+# for post-mortem reading. Override with E2E_LOG_DIR.
+LOG_DIR="${E2E_LOG_DIR:-/tmp}"
+API_LOG="$LOG_DIR/bb-web-e2e-api-$API_PORT.log"
+VITE_LOG="$LOG_DIR/bb-web-e2e-vite-$VITE_PORT.log"
 WORKERS="${E2E_WORKERS:-1}"
 REPEAT="${E2E_REPEAT:-1}"
 # Task 1525: the signup email-code step's mail-sink helper
@@ -62,17 +75,14 @@ WEB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # entirely — convention `repos/web-NNNN` or `~/code/bb-worktrees/web-NNNN`
 # per the workspace CLAUDE.md — so a worktree 2 levels up lands outside
 # beebeeb.io altogether and SERVER_DIR below silently resolved to a
-# nonexistent path). `git rev-parse --git-common-dir` always returns the
+# nonexistent path). git's common dir (scripts/lib/workspace-root.sh) always returns the
 # PRIMARY checkout's .git, even when this script runs from a linked worktree,
 # so this locates the one real repos/server (and its built debug binary)
 # regardless of where THIS checkout lives on disk. Falls back to the old
 # relative computation if run outside a git worktree/repo entirely.
-if GIT_COMMON_DIR="$(cd "$WEB_DIR" && git rev-parse --git-common-dir 2>/dev/null)"; then
-  PRIMARY_WEB_DIR="$(cd "$GIT_COMMON_DIR/.." && pwd)"
-  WORKSPACE="$(cd "$PRIMARY_WEB_DIR/../.." && pwd)"
-else
-  WORKSPACE="$(cd "$WEB_DIR/../.." && pwd)"
-fi
+# shellcheck source=scripts/lib/workspace-root.sh
+source "$WEB_DIR/scripts/lib/workspace-root.sh"
+WORKSPACE="$(bb_workspace_root "$WEB_DIR")"  # task 1581: cwd-independent
 SERVER_DIR="$WORKSPACE/repos/server"
 # API binary: defaults to the debug build, but E2E_API_BIN can point elsewhere —
 # notably at a RELEASE build. The dev auto-login derives a 256 MiB Argon2id
@@ -81,6 +91,20 @@ SERVER_DIR="$WORKSPACE/repos/server"
 # timeout) and trivially fast in release. The CI gate builds + points here at
 # `target/release/beebeeb-api`.
 API_BIN="${E2E_API_BIN:-$SERVER_DIR/target/debug/beebeeb-api}"
+# CLI binary (task 1534 review round 2, Codex P1): same sibling-checkout
+# resolution as SERVER_DIR above (works from a linked worktree via git's
+# common dir). Only e2e/1534-cli-upload-share-decrypt.spec.ts needs this —
+# it drives a REAL `bb` binary against this harness's own isolated backend
+# to prove a CLI upload decrypts identically to a web one. Resolved and
+# exported unconditionally (like API_BIN) so a plain `E2E_BB_BIN=...`
+# override still wins, but every OTHER spec keeps running even when
+# repos/cli isn't checked out or built — that one spec enforces its OWN
+# hard requirement (fails, does not silently skip, unless
+# E2E_1534_ALLOW_SKIP=1 — see its own file) rather than this harness
+# blocking every unrelated spec on a binary only one of them needs.
+CLI_DIR="$WORKSPACE/repos/cli"
+BB_BIN="${E2E_BB_BIN:-$CLI_DIR/target/debug/bb}"
+export E2E_BB_BIN="$BB_BIN"
 DATABASE_URL="postgres://$PG_USER:$PG_PASS@$PG_HOST:$PG_PORT/$DB_NAME"
 # Local dev Postgres password (public, same as .env.dev.example / docker-compose).
 # Unquoted on purpose so the secret-scanner doesn't flag the dev credential.
@@ -106,6 +130,101 @@ export BB_REQUIRE_PILOT_KEY BB_PILOT_SIGNUP_KEY
 # BB_TEST_PILOT_KEY by default — keep it in lockstep with the server-side
 # expected key so an opted-in gate-ON run satisfies both sides.
 export BB_TEST_PILOT_KEY="${BB_TEST_PILOT_KEY:-$BB_PILOT_SIGNUP_KEY}"
+
+# Task 1037 — no free signups. Forwarded to the isolated API (all default
+# empty = the debug defaults: plan gate OFF, Mollie not configured):
+#   BB_REQUIRE_PLAN_AT_SIGNUP=1  new accounts start as account_state
+#                                "needs_plan" (release builds default ON).
+#   MOLLIE_API_KEY / MOLLIE_API_BASE  point the debug server at its OWN
+#                                built-in mock Mollie, so the trial-mandate
+#                                checkout can be walked end to end:
+#   BB_REQUIRE_PLAN_AT_SIGNUP=1 MOLLIE_API_KEY=test_mock_local \
+#     MOLLIE_API_BASE=http://localhost:$E2E_API_PORT/dev/mock-mollie/v2 \
+#     ./e2e/scripts/web-e2e.sh e2e/1037-trial-at-signup-real.spec.ts
+# The server ignores an empty MOLLIE_API_KEY and treats an empty gate flag as
+# its build default, so forwarding unset values is a no-op.
+BB_REQUIRE_PLAN_AT_SIGNUP="${BB_REQUIRE_PLAN_AT_SIGNUP:-}"
+# Forwarded through `env` (array form keeps the secret scanner quiet on a
+# non-secret pass-through of the caller's own value).
+MOLLIE_FWD_ENV=("MOLLIE_API_KEY=${MOLLIE_API_KEY:-}" "MOLLIE_API_BASE=${MOLLIE_API_BASE:-}")
+export BB_REQUIRE_PLAN_AT_SIGNUP
+
+# ── Never send real email (task 1555) ────────────────────────────────────────
+# beebeeb-api calls `dotenvy::dotenv()` at boot, which walks UP parent
+# directories looking for a `.env` file — and the workspace-root `.env` holds
+# real SMTP credentials. dotenvy only fills env vars that are NOT already
+# present in the process environment, so a debug API started from anywhere
+# under the workspace (this harness runs fine from a `git worktree add`
+# checkout OUTSIDE the workspace too, but nothing stops someone invoking it
+# from the PRIMARY repos/web checkout) would otherwise inherit the real
+# SMTP_HOST/PORT/USER/PASS/TLS_MODE and boot into `email service: smtp` —
+# meaning a Playwright signup/change-email spec would send a REAL email to
+# whatever address it happens to use as a test account.
+#
+# Fix, three layers:
+#   0. The API is launched from a scratch cwd with NO `.env` in it or any
+#      parent (see start_backend), so dotenvy finds nothing at all — this also
+#      keeps the workspace `.env`'s Stripe/S3/other keys out of the test API.
+#   1. EMAIL_PROVIDER is forced to "console" explicitly — from_env() reads
+#      this var FIRST and never even looks at SMTP_HOST when it's set.
+#   2. Every SMTP_*/EMAIL_* var `EmailService::from_env()` reads
+#      (beebeeb-api/src/email.rs) is set to an EXPLICIT EMPTY value, not
+#      unset (an unset var is exactly what dotenvy would fill in). Note an
+#      empty SMTP_HOST still counts as "set" at email.rs:225; that is covered
+#      by layer 1 plus the post-boot self-check, and is moot under layer 0.
+# Belt-and-suspenders: BB_ALLOW_REAL_EMAIL is forced to "0", so even a future
+# from_env() bug that resurrects the smtp branch is refused by the server's
+# own debug-build guard (task 1555's server-side half).
+#
+# Caller policy (the caller's env never comes from dotenvy):
+#   - caller SMTP_HOST unset            -> console + blanks (above).
+#   - caller SMTP_HOST loopback         -> pass the caller's SMTP_*/EMAIL_*
+#     (localhost | 127.0.0.1 | ::1)        through; local Mailpit specs
+#                                          (1745, 1757, 1814-1816, 1948) need it.
+#   - caller SMTP_HOST anything else    -> refuse loudly, start nothing.
+#
+# RUST_LOG: `from_env()`'s `tracing::info!("email service: ...")` line is
+# invisible by default (EnvFilter with RUST_LOG unset drops INFO). Append the
+# narrow `beebeeb_api::email=info` directive, but keep ERROR for every other
+# target when RUST_LOG is unset (a bare directive disables the default ERROR
+# level), and do not cap a caller who already has a `beebeeb_api` directive.
+case "${RUST_LOG:-}" in
+  *beebeeb_api*) EMAIL_LOG_RUST_LOG="$RUST_LOG" ;;
+  *)             EMAIL_LOG_RUST_LOG="${RUST_LOG:-error},beebeeb_api::email=info" ;;
+esac
+EMAIL_MODE=console
+if [ "${SMTP_HOST+set}" = set ]; then
+  case "$SMTP_HOST" in
+    localhost|127.0.0.1|::1) EMAIL_MODE=loopback ;;
+    *)
+      echo "web-e2e: refusing to start — SMTP_HOST is set to a non-loopback host. The e2e harness never talks to a real mail relay (task 1555). Unset SMTP_HOST, or use localhost / 127.0.0.1 / ::1 (Mailpit)." >&2
+      rm -rf "$BLOB_DIR" 2>/dev/null || true
+      exit 3 ;;
+  esac
+fi
+if [ "$EMAIL_MODE" = loopback ]; then
+  # Local Mailpit: caller's own values, only the ones they set.
+  EMAIL_SAFETY_ENV=(EMAIL_PROVIDER=smtp BB_ALLOW_REAL_EMAIL=1 "RUST_LOG=$EMAIL_LOG_RUST_LOG")
+  for _v in EMAIL_FROM SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASS SMTP_TLS_MODE; do
+    [ "${!_v+set}" = set ] && EMAIL_SAFETY_ENV+=("$_v=${!_v}")
+  done
+  EMAIL_EXPECT_RE='email service: smtp \((localhost|127\.0\.0\.1|\[::1\]|::1):'
+  EMAIL_EXPECT_DESC='email service: smtp (loopback host)'
+else
+  EMAIL_SAFETY_ENV=(
+    EMAIL_PROVIDER=console
+    EMAIL_FROM=
+    SMTP_HOST=
+    SMTP_PORT=
+    SMTP_USER=
+    SMTP_PASS=
+    SMTP_TLS_MODE=
+    BB_ALLOW_REAL_EMAIL=0
+    "RUST_LOG=$EMAIL_LOG_RUST_LOG"
+  )
+  EMAIL_EXPECT_RE='email service: console'
+  EMAIL_EXPECT_DESC='email service: console'
+fi
 
 # psql wrapper: prefer host `psql`, otherwise fall back to `docker exec` into
 # the dev Postgres container (task 1406 — this harness previously assumed
@@ -172,6 +291,21 @@ log "bun install --frozen-lockfile"
 
 [ -x "$API_BIN" ] || { echo "debug binary missing: $API_BIN — build with: (cd $SERVER_DIR && cargo build -p beebeeb-api)"; exit 1; }
 
+# Best-effort `bb` build (task 1534 review round 2) — NON-fatal: unlike the
+# API binary above, no spec but 1534-cli-upload-share-decrypt.spec.ts needs
+# this, so a missing/failed cli build must never block the rest of the
+# suite. If repos/cli is checked out as a sibling and the debug binary
+# isn't already there, build it now so a plain `./e2e/scripts/web-e2e.sh
+# e2e/1534-cli-upload-share-decrypt.spec.ts` works without the caller
+# having to build+point E2E_BB_BIN by hand first. E2E_BB_BIN (set above)
+# already wins over this when the caller passed one explicitly.
+if [ ! -x "$BB_BIN" ] && [ -d "$CLI_DIR" ]; then
+  CLI_BUILD_LOG="$LOG_DIR/bb-web-e2e-cli-build.log"
+  log "bb binary missing at $BB_BIN — building (cd $CLI_DIR && cargo build -p beebeeb-cli)…"
+  ( cd "$CLI_DIR" && cargo build -p beebeeb-cli ) >"$CLI_BUILD_LOG" 2>&1 \
+    || log "cli build failed (see $CLI_BUILD_LOG) — e2e/1534-cli-upload-share-decrypt.spec.ts will fail unless E2E_1534_ALLOW_SKIP=1 is set"
+fi
+
 # ── Backend lifecycle (fresh DB + blobs PER iteration, so repeats don't
 #    accumulate state and degrade — the durable reliability fix) ─────────────
 start_backend() {
@@ -207,8 +341,27 @@ SQL
   # specifically exercise pilot-key-registration.spec.ts's gate-ON recovery
   # path:
   #   BB_REQUIRE_PILOT_KEY=1 ./e2e/scripts/web-e2e.sh e2e/pilot-key-registration.spec.ts
-  RUST_LOG="$RUST_LOG" \
-    DATABASE_URL="$DATABASE_URL" BB_PORT="$API_PORT" \
+  # WEBAUTHN_RP_ORIGIN / WEBAUTHN_RP_ID: the server's build_webauthn()
+  # (routes/passkeys.rs) defaults the relying-party origin to
+  # http://localhost:5173. On any other E2E_VITE_PORT every passkey ceremony
+  # failed register-finish with webauthn-rs InvalidRPOrigin ("The clients
+  # relying party origin does not match our servers information"), so the
+  # passkey specs (1493, 1528) were red on every non-default port. The origin
+  # must follow the Vite port exactly like CORS_ORIGINS / APP_URL do.
+  # Scratch cwd with no `.env` anywhere above it (layer 0): $BLOB_DIR is a fresh
+  # mktemp dir under /tmp. Prove it, fail closed (return 3 = safety failure).
+  local _d; _d="$(cd -P "$BLOB_DIR" && pwd)" || return 3
+  while :; do
+    if [ -e "$_d/.env" ]; then
+      echo "EMAIL SAFETY CHECK FAILED: API scratch cwd has a .env at $_d/.env — dotenvy would load it. Refusing to start."; return 3
+    fi
+    [ "$_d" = / ] && break
+    _d="$(dirname "$_d")"
+  done
+  # No subshell: $! must stay the API's own PID (setsid is an exec-ing shell
+  # function on macOS), so cd in place and cd back after the launch.
+  local _cwd="$PWD"; cd "$BLOB_DIR" || return 3
+  DATABASE_URL="$DATABASE_URL" BB_PORT="$API_PORT" \
     CORS_ORIGINS="http://localhost:$VITE_PORT" \
     BLOB_STORE=local BLOB_STORE_PATH="$BLOB_DIR" \
     AUDIT_SIGNING_KEY=0000000000000000000000000000000000000000000000000000000000000001 \
@@ -218,20 +371,48 @@ SQL
     BEEBEEB_PWNED_CORPUS_PATH="$PWNED_CORPUS_DB" \
     BB_RATE_LIMIT_DISABLED=1 \
     APP_URL="http://localhost:$VITE_PORT" API_URL="http://localhost:$API_PORT" \
+    WEBAUTHN_RP_ID=localhost WEBAUTHN_RP_ORIGIN="http://localhost:$VITE_PORT" \
     BB_REQUIRE_PILOT_KEY="$BB_REQUIRE_PILOT_KEY" \
     BB_PILOT_SIGNUP_KEY="$BB_PILOT_SIGNUP_KEY" \
-    setsid "$API_BIN" >/tmp/bb-web-e2e-api.log 2>&1 &
+    BB_REQUIRE_PLAN_AT_SIGNUP="$BB_REQUIRE_PLAN_AT_SIGNUP" \
+    setsid env "${EMAIL_SAFETY_ENV[@]}" "${MOLLIE_FWD_ENV[@]}" "$API_BIN" >"$API_LOG" 2>&1 &
   API_PID=$!
+  cd "$_cwd" || return 3
   # -m10 (not -m3): the FIRST auto-login also creates the dev user (Argon2id
   # password hash) + derives the master key; allow headroom on a cold CI runner.
   # A genuinely dead API is still caught immediately by the kill -0 check below.
+  local healthy=0
   for i in $(seq 1 60); do
-    curl -fsS -m10 -o /dev/null -X POST "http://localhost:$API_PORT/dev/auto-login" \
-      -H 'Content-Type: application/json' -d '{"email":"dev@beebeeb.dev"}' && return 0
-    kill -0 "$API_PID" 2>/dev/null || { echo "API died on boot; see /tmp/bb-web-e2e-api.log"; tail -20 /tmp/bb-web-e2e-api.log; return 1; }
+    if curl -fsS -m10 -o /dev/null "http://localhost:$API_PORT/health"; then
+      healthy=1; break
+    fi
+    kill -0 "$API_PID" 2>/dev/null || { echo "API died on boot; see $API_LOG"; tail -20 "$API_LOG"; return 1; }
     sleep 1
   done
-  echo "API never became healthy on :$API_PORT"; return 1
+  [ "$healthy" -eq 1 ] || { echo "API never became healthy on :$API_PORT"; return 1; }
+
+  # Email safety self-check (task 1555) — BEFORE any auto-login/spec traffic:
+  # the boot log must show the expected backend (console, or a loopback smtp
+  # sink when the caller asked for Mailpit), never a real relay. A failure here
+  # is its own loud exit (return 3), never retried and never "infra".
+  if grep -Eq "$EMAIL_EXPECT_RE" "$API_LOG"; then
+    log "email safety check OK — \"$EMAIL_EXPECT_DESC\" confirmed in $API_LOG"
+  else
+    echo "EMAIL SAFETY CHECK FAILED: $API_LOG does not show \"$EMAIL_EXPECT_DESC\" — refusing to run specs against a backend that might send REAL email. Relevant log lines:"
+    grep -i "email service" "$API_LOG" || echo "(no \"email service\" line found in $API_LOG at all)"
+    return 3
+  fi
+  # -m10: the FIRST auto-login also creates the dev user (Argon2id hash) and
+  # derives the master key; allow headroom on a cold CI runner.
+  for i in $(seq 1 60); do
+    if curl -fsS -m10 -o /dev/null -X POST "http://localhost:$API_PORT/dev/auto-login" \
+      -H 'Content-Type: application/json' -d '{"email":"dev@beebeeb.dev"}'; then
+      return 0
+    fi
+    kill -0 "$API_PID" 2>/dev/null || { echo "API died on boot; see $API_LOG"; tail -20 "$API_LOG"; return 1; }
+    sleep 1
+  done
+  echo "API never completed dev auto-login on :$API_PORT"; return 1
 }
 
 stop_backend() {
@@ -257,7 +438,7 @@ stop_backend() {
 }
 
 log "starting backend on :$API_PORT (fresh DB $DB_NAME)"
-start_backend || exit 1
+start_backend || exit $?
 log "API healthy on :$API_PORT"
 
 # ── Vite (test mode) pointed at the isolated API ────────────────────────────
@@ -277,7 +458,7 @@ log "API healthy on :$API_PORT"
 # hits :3003 for signup/auth AND the dev auto-login.
 printf 'VITE_API_URL=http://localhost:%s\n' "$API_PORT" > "$WEB_DIR/.env.test.local"
 log "starting vite --mode test → API :$API_PORT"
-setsid bash -c "cd '$WEB_DIR' && NODE_ENV=test VITE_API_URL='http://localhost:$API_PORT' exec bunx vite --mode test --port $VITE_PORT --strictPort" >/tmp/bb-web-e2e-vite.log 2>&1 &
+setsid bash -c "cd '$WEB_DIR' && NODE_ENV=test VITE_API_URL='http://localhost:$API_PORT' exec bunx vite --mode test --port $VITE_PORT --strictPort" >"$VITE_LOG" 2>&1 &
 VITE_PID=$!
 for i in $(seq 1 60); do
   curl -fsS -m3 -o /dev/null "http://localhost:$VITE_PORT" && break
@@ -300,6 +481,23 @@ backend_alive() {
   kill -0 "$API_PID" 2>/dev/null &&
     curl -fsS -m10 -o /dev/null -X POST "http://localhost:$API_PORT/dev/auto-login" \
       -H 'Content-Type: application/json' -d '{"email":"dev@beebeeb.dev"}'
+}
+
+# Feature flags a spec needs ON (task 2237b). Migrations seed every flag OFF,
+# and each spec file gets a fresh DB, so a spec declares what it needs with a
+# line `// e2e-flags: <key> [<key> ...]` and the flags are switched on in that
+# spec's DB before Playwright starts. Specs without the line see the defaults.
+enable_spec_flags() {
+  local flags f
+  flags="$(sed -n 's#^// e2e-flags: ##p' "$1" | head -1)"
+  [ -n "$flags" ] || return 0
+  for f in $flags; do
+    case "$f" in *[!a-z0-9_]*|"") echo "bad e2e-flags entry '$f' in $1"; return 1 ;; esac
+    if [ "$(db_psql -d "$DB_NAME" -qtAc "UPDATE feature_flags SET enabled = TRUE WHERE key = '$f' RETURNING key;")" != "$f" ]; then
+      echo "e2e-flags: no feature_flags row '$f' in $DB_NAME (needed by $1)"; return 1
+    fi
+    log "flag $f ON for $1"
+  done
 }
 
 rc=0
@@ -350,17 +548,21 @@ for spec in "${SPECS[@]}"; do
       restarted=0
       for attempt in 1 2 3; do
         stop_backend
-        if start_backend && backend_alive; then restarted=1; break; fi
+        sbrc=0; start_backend || sbrc=$?
+        # rc 3 = email safety failure: loud exit, never retried, never "infra".
+        if [ "$sbrc" -eq 3 ]; then echo "EMAIL SAFETY FAILURE on restart for $spec — aborting (not an infra failure)."; exit 3; fi
+        if [ "$sbrc" -eq 0 ] && backend_alive; then restarted=1; break; fi
         log "restart attempt $attempt/3 for $spec did not come up healthy — retrying"
       done
       [ "$restarted" -eq 1 ] || { echo "BACKEND DOWN: :$API_PORT API never came up healthy for $spec after 3 attempts — infra, not a test failure."; rc=2; break 2; }
     fi
     first=0
+    enable_spec_flags "$spec" || { rc=2; break 2; }
     rm -rf playwright/.auth 2>/dev/null || true   # re-auth against the fresh account
     log "playwright $spec ${spec_config:+(own config: $spec_config) }(run $run/$REPEAT, workers=$WORKERS)"
     if ! backend_alive; then
-      echo "BACKEND DOWN before $spec — the :$API_PORT API is not responding (see /tmp/bb-web-e2e-api.log). This is infra, not a test failure."
-      tail -20 /tmp/bb-web-e2e-api.log
+      echo "BACKEND DOWN before $spec — the :$API_PORT API is not responding (see $API_LOG). This is infra, not a test failure."
+      tail -20 "$API_LOG"
       rc=2; break 2
     fi
     if ! bunx playwright test "$spec" $spec_config --workers="$WORKERS" --reporter=line; then

@@ -9,12 +9,15 @@ import { MnemonicVerify } from '../components/mnemonic-verify'
 import { SignupEmailCodeStep } from '../components/signup-email-code-step'
 import {
   ApiError,
+  clearLegacyBearer,
   opaqueRegisterStart,
   opaqueRegisterFinish,
+  getSubscription,
 } from '../lib/api'
 import { initialOnboardingStep, signupTicketInvalidCopy } from '../lib/signup-email-code'
 import { REFERRAL_SOURCE_KEY, REFERRAL_SHARER_KEY, REFERRAL_CODE_KEY } from './signup'
-import { generateRecoveryKitPDF } from '../lib/recovery-kit-pdf'
+import { readPlanIntent, postSignupDestination } from '../lib/plan-intent'
+import { RecoveryPhraseExport } from '../components/recovery-phrase-export'
 import { useAuth } from '../lib/auth-context'
 import { useKeys } from '../lib/key-context'
 import {
@@ -23,11 +26,12 @@ import {
   opaqueRegistrationFinish,
   deriveX25519Public,
   computeRecoveryCheck,
-  deriveFileKey,
   toBase64,
 } from '../lib/crypto'
 import { userFriendlyError } from '../lib/user-friendly-error'
-import { encryptedUpload } from '../lib/encrypted-upload'
+import { markWelcomeFilePending, uploadWelcomeFile } from '../lib/welcome-file-upload'
+import { welcomeFileAtSignup } from '../lib/welcome-file'
+import { accountStateFromError, resolveAccountState } from '../lib/account-state'
 
 type Step = 'code' | 'display' | 'verify' | 'password' | 'processing'
 
@@ -297,7 +301,7 @@ export function Onboarding() {
       const referralSharerId = localStorage.getItem(REFERRAL_SHARER_KEY) ?? undefined
       const referralCode = localStorage.getItem(REFERRAL_CODE_KEY) ?? undefined
       ticketInvalidCouldMeanFinishSucceeded = true
-      await opaqueRegisterFinish(
+      const registerResult = await opaqueRegisterFinish(
         email,
         toBase64(regUpload),
         toBase64(x25519Pub),
@@ -313,56 +317,65 @@ export function Onboarding() {
       localStorage.removeItem(REFERRAL_SHARER_KEY)
       localStorage.removeItem(REFERRAL_CODE_KEY)
 
-      // 4. Wrap master key with password, store in IndexedDB, set in memory
-      setProcessingStatus('Securing your vault...')
-      await setMasterKey(masterKeyBytes, password)
+      // Task 1553 — server set the bb_session cookie in the register-finish
+      // response above (opaqueRegisterFinish's own internal setToken() call
+      // just wrote it to localStorage too). Drop the localStorage copy the
+      // same way login.tsx's password path does right after OPAQUE auth
+      // succeeds: leaving it behind lets a stale bearer silently
+      // re-authenticate this account via POST /auth/upgrade-session on a
+      // later boot even after the httpOnly cookie itself is gone.
+      //
+      // clearLegacyBearer(), NOT clearToken() (PR #109 review round 2,
+      // Codex P2): the opaqueRegisterFinish() call above already ran its
+      // own internal setEmail(email) and just wrote bb_email — this
+      // account is NOT logging out, it is mid-signup. clearToken() also
+      // fires the registered
+      // onTokenCleared callback (src/lib/api.ts → clearEmail()), which
+      // would wipe that same bb_email it was just given, breaking a LATER
+      // VaultUnlock.handlePasskeyUnlock() call (it reads bb_email via
+      // getEmail()). clearLegacyBearer() drops only the redundant
+      // localStorage token, leaving the still-valid email in place.
+      clearLegacyBearer()
 
-      // 5. Upload a welcome file so new users land on a non-empty drive
+      // 4. Wrap master key with password, store in IndexedDB, set in memory.
+      // registerResult.user_id (task 1531/1534, P0) is the freshly-created
+      // account this key belongs to — bound explicitly rather than trusting
+      // whatever key might already be resident from an earlier account in
+      // this same tab/browser.
+      setProcessingStatus('Securing your vault...')
+      await setMasterKey(masterKeyBytes, password, registerResult.user_id)
+
+      // 5. Upload a welcome file so new users land on a non-empty drive.
+      // Task 1037: a new account without a plan (`needs_plan`, quota 0) can't
+      // store anything yet — the server refuses the upload with 409
+      // plan_required. Defer it instead: record `welcome_file: "pending"` and
+      // let /choose-plan (or the route gate, later) upload it ONCE the trial
+      // is live (src/lib/welcome-file.ts).
       setProcessingStatus('Setting up your vault...')
       try {
-        const welcomeContent = [
-          '# Welcome to Beebeeb',
-          '',
-          'Your files are now protected by end-to-end encryption.',
-          'The decryption key lives on this device — we never see it.',
-          '',
-          '## Try it',
-          '- Drag a file here to upload (it\'s encrypted before leaving your browser)',
-          '- Click "Share" to create a link (the key is in the URL fragment)',
-          '- Open the link in an incognito tab — watch it decrypt in the browser',
-          '',
-          '## Need help?',
-          '- Support: support@beebeeb.io',
-          '',
-          'You can delete this file anytime.',
-        ].join('\n')
-        const welcomeFile = new File(
-          [new TextEncoder().encode(welcomeContent)],
-          'Welcome to Beebeeb.md',
-          { type: 'text/markdown' },
-        )
-        const fileId = crypto.randomUUID()
-        const fileKey = await deriveFileKey(masterKeyBytes, fileId)
-        await encryptedUpload(
-          welcomeFile,
-          fileId,
-          fileKey,
-          masterKeyBytes,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          (serverFileId) => deriveFileKey(masterKeyBytes, serverFileId),
-        )
-      } catch {
+        const sub = await getSubscription().catch(() => null)
+        if (welcomeFileAtSignup(resolveAccountState(sub)) === 'defer') {
+          await markWelcomeFilePending()
+        } else {
+          await uploadWelcomeFile(masterKeyBytes)
+        }
+      } catch (err) {
+        // Belt and braces: a plan_required refusal we did not predict still
+        // defers rather than dropping the file.
+        if (accountStateFromError(err)) await markWelcomeFilePending().catch(() => {})
         // Welcome file is a nice-to-have — never block account creation on failure
       }
 
       // 6. Refresh user state and navigate to drive
       setProcessingStatus('Almost there...')
       await refreshUser()
-      navigate('/', { replace: true })
+      // Task 1037 — no free accounts: every new account continues to
+      // /choose-plan (payment method → trial), preselected on the plan picked
+      // on /signup or the marketing site. Not cleared here: GuestRoute's stale
+      // re-render after refreshUser() reads the same intent
+      // (guestRouteFallback) so both navigations agree; /choose-plan clears it
+      // once the trial is live.
+      navigate(postSignupDestination(readPlanIntent()), { replace: true })
     } catch (err) {
       // Pilot gate (private development): register-start rejects a missing/wrong
       // key with a typed 403. The key field lives on /signup, so bounce back
@@ -483,37 +496,7 @@ export function Onboarding() {
                           ))}
                         </div>
                       </div>
-                      <div className="flex flex-wrap gap-2">
-                        <BBButton size="sm" onClick={async () => {
-                          await navigator.clipboard.writeText(phrase)
-                          // Auto-clear clipboard after 60s to limit exposure of the recovery phrase
-                          setTimeout(() => { navigator.clipboard.writeText('').catch(() => {}) }, 60000)
-                        }}>
-                          <Icon name="copy" size={14} className="mr-1.5" /> Copy
-                        </BBButton>
-                        <BBButton size="sm" onClick={() => {
-                          const blob = new Blob(
-                            [words.map((w, i) => `${String(i + 1).padStart(2, '0')}  ${w}`).join('\n')],
-                            { type: 'text/plain' },
-                          )
-                          const url = URL.createObjectURL(blob)
-                          const a = document.createElement('a')
-                          a.href = url
-                          a.download = 'beebeeb-recovery-phrase.txt'
-                          a.click()
-                          URL.revokeObjectURL(url)
-                        }}>
-                          <Icon name="download" size={14} className="mr-1.5" /> Download .txt
-                        </BBButton>
-                        <BBButton
-                          size="sm"
-                          variant="amber"
-                          onClick={() => generateRecoveryKitPDF(phrase, email)}
-                          title="Opens a print-ready page — choose 'Save as PDF' in the print dialog"
-                        >
-                          <Icon name="file-text" size={14} className="mr-1.5" /> Recovery Kit PDF
-                        </BBButton>
-                      </div>
+                      <RecoveryPhraseExport words={words} email={email} />
 
                       {/* Mobile-only continue CTA. On md+ the same CTA appears
                           in the right panel (along with the "I've saved it"
@@ -747,7 +730,7 @@ export function Onboarding() {
                   </p>
                 )}
                 <p className="text-center mt-2.5 text-[11px] text-ink-4">
-                  Stored in Falkenstein, Germany. Under EU jurisdiction.
+                  Stored in the EU. Under EU jurisdiction.
                 </p>
               </div>
             </div>

@@ -1,5 +1,7 @@
+import { ALLOWANCE_LINE, currentPlanName } from '../lib/current-plan-display'
 import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react'
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom'
+import { isCheckoutReturn } from '../lib/checkout-return'
 import { SettingsShell, SettingsHeader } from '../components/settings-shell'
 import { BBButton } from '@beebeeb/shared'
 import { BBChip } from '@beebeeb/shared'
@@ -13,6 +15,8 @@ import {
   getSubscription,
   getPaymentStatus,
   getBillingInvoices,
+  getBillingCreditNotes,
+  type BillingCreditNote,
   getBillingTransactions,
   getPlans,
   listFiles,
@@ -23,8 +27,6 @@ import {
   reactivateSubscription,
   pauseSubscription,
   resumeSubscription,
-  getWinbackEligible,
-  claimWinback,
   getPreference,
   setPreference,
   getStorageAddons,
@@ -33,8 +35,8 @@ import {
   createStorageAddonCheckout,
   payOverdue,
   exportBillingTransactions,
-  startTrial,
   convertTrial,
+  payTrialNow,
   createCheckoutSession,
   ApiError,
   type Subscription,
@@ -48,11 +50,16 @@ import {
   cancelDowngrade,
 } from '../lib/api'
 import { useDriveData } from '../lib/drive-data-context'
+import { cardTrialCancelCopy } from '../lib/no-card-trial'
+import { NoCardTrialPlanLines, TrialEndedCard, TrialStartCard, TrialUnavailableNote } from '../components/no-card-trial'
+import { useStartNoCardTrial } from '../hooks/use-start-no-card-trial'
+import { noCardTrialStatus, trialBillingRefusalCopy, trialEndedStatus, trialOfferView } from '../lib/no-card-trial'
 import { useWsEvent } from '../lib/ws-context'
 import { userFriendlyError } from '../lib/user-friendly-error'
 import { handleBillingResetTestMode, type BillingResetNavigationState } from '../lib/billing-reset'
 
 import { formatStorageSI } from '../lib/format'
+import { resolveMeterTotalBytes, resolveCurrentTotalBytes, storageAllocationBreakdown } from '../lib/storage-totals'
 import { StorageBreakdown } from '../components/storage-breakdown'
 import {
   planCanAddStorage,
@@ -62,8 +69,19 @@ import {
   formatCentsAsEur,
 } from '../lib/plan-pricing'
 import { PlanComparisonTable } from '../components/plan-comparison'
+import {
+  isTrialing,
+  isCancelledTrial,
+  trialCancelledSwitchNote,
+  trialCycleSwitchNoteFor,
+  trialCycleSwitchToastFor,
+  cycleSwitchTargetTotalCents,
+  type BillingCycle,
+} from '../lib/cycle-switch-copy'
 import { InvoiceList } from '../components/billing/InvoiceList'
+import { CreditNoteList } from '../components/billing/CreditNoteList'
 import { TransactionList } from '../components/billing/TransactionList'
+import { CouponCard } from '../components/billing/coupon-card'
 import { PLAN_META, PLAN_RANK } from '../lib/plan-constants'
 import {
   type PendingCheckout,
@@ -79,6 +97,56 @@ import {
   reconcileSignalOutcome,
 } from '../lib/checkout-reconcile'
 import { resolveHasUsedTrial, isTrialEligible } from '../lib/trial-eligibility'
+import { parsePlanIntent, clearPlanIntent } from '../lib/plan-intent'
+import { choosePlanPath, trialAutoConvertCopy, trialRenewalAmount, trialTermsLine } from '../lib/trial-checkout'
+import { lapsedBannerCopy, lapsedHeading, resolveAccountState } from '../lib/account-state'
+import { billingPeriodLine } from '../lib/billing-period-line'
+import {
+  cancelledCardCopy,
+  cancelledCompactLine,
+  neverPaidViewDownloadSentence,
+  isTrialCapped,
+  trialCapExplainer,
+  payNowButtonLabel,
+} from '../lib/trial-limits-copy'
+import {
+  type PayNowState,
+  IDLE_STATE as PAY_NOW_IDLE_STATE,
+  stateAfterPayNowError,
+  payNowPollDecision,
+  stateForPollOutcome,
+  PAY_NOW_POLL_INTERVAL_MS,
+  PAY_NOW_PAYMENT_STORAGE_KEY,
+  shouldClearPayNowMarker,
+  PAY_NOW_RETURN_PARAM,
+  routePayNowResult,
+  payNowReturnKind,
+  safeCheckoutUrl,
+  payNowReturnDecision,
+  payNowReturnView,
+  type PayNowReturnView,
+} from '../lib/trial-pay-now'
+import {
+  confirmPaymentBy,
+  chargesAutomatically,
+  formatConfirmDate,
+  confirmPaymentBannerCopy,
+  confirmIntentAction,
+  heldTrialCancelCopy,
+  CONFIRM_PAYMENT_PARAM,
+  CONFIRM_PAYMENT_REASSURANCE,
+  CONFIRM_PAYMENT_CTA,
+  CONFIRM_OVERDUE_COPY,
+  holdDateLabel,
+} from '../lib/confirm-payment'
+import {
+  PAY_OVERDUE_RETURN_PARAM,
+  shouldHandlePayOverdueReturn,
+  payOverdueReturnDecision,
+  payOverdueReturnView,
+  type PayOverdueView,
+} from '../lib/pay-overdue-return'
+import { LiveNote } from '../components/live-note'
 
 /* ── Plan metadata (imported from plan-constants.ts) ──── */
 
@@ -215,9 +283,9 @@ function AnimatedProgress({ percent, className = '' }: { percent: number; classN
    non-accent) add-on bar alongside the amber primary bar. */
 
 /** A hairline-bordered card matching the mockups' radii + padding. */
-function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
+function Card({ children, className = '', 'data-testid': testId }: { children: ReactNode; className?: string; 'data-testid'?: string }) {
   return (
-    <div className={`border border-line rounded-xl bg-paper ${className}`}>{children}</div>
+    <div className={`border border-line rounded-xl bg-paper ${className}`} data-testid={testId}>{children}</div>
   )
 }
 
@@ -295,10 +363,27 @@ export function Billing() {
       { replace: true },
     )
   }, [setSearchParams])
-  const { usage: contextUsage, planDetails: contextPlanDetails, refreshPlanDetails } = useDriveData()
+  const { usage: contextUsage, planDetails: contextPlanDetails, refreshPlanDetails, refreshUsage, accountDocument, accountStateLabel } = useDriveData()
+  // Task 1757: the onboarding document is the authority on the no-card trial (offer, running
+  // status, ended status); `null` for each when the document is unavailable (legacy fallback).
+  const trialOffer = trialOfferView(accountDocument)
+  const noCardTrial = noCardTrialStatus(accountDocument, Date.now(), undefined, contextUsage?.used_bytes)
+  const trialEnded = trialEndedStatus(accountDocument)
+  const startNoCardTrial = useStartNoCardTrial()
+
+  // Task 1706 review #132-A — clear the transient add-on authority override on
+  // the next successful contextUsage refresh: every delivery is a new object
+  // (identity changes even when the numbers are unchanged), so the moment the
+  // drive context holds fresh usage the normal server-truth-first hierarchy is
+  // trustworthy again. Setting the already-current value is a no-op re-render
+  // (React bails out), so this is safe to run on every identity change.
+  useEffect(() => {
+    setAddonAuthorityOverride(false)
+  }, [contextUsage])
   // sub comes from context; re-synced after cancel/reactivate via loadData
   const [sub, setSub] = useState<Subscription | null>(contextPlanDetails.subscription)
   const [invoices, setInvoices] = useState<BillingInvoice[]>([])
+  const [creditNotes, setCreditNotes] = useState<BillingCreditNote[]>([])
   const [transactions, setTransactions] = useState<BillingTransaction[]>([])
   const [plans, setPlans] = useState<Plan[] | null>(null)
   const [files, setFiles] = useState<DriveFile[] | null>(null)
@@ -308,19 +393,30 @@ export function Billing() {
   const [upgradePlan, setUpgradePlan] = useState<string>('pro')
   const [portalLoading, setPortalLoading] = useState(false)
   const [payOverdueLoading, setPayOverdueLoading] = useState(false)
-  // Cancel flow is a four-step machine (task 0544 added 'pause'):
+  // Task 1605 — "pay now" to end a mandated trial's 25 GB cap early. See
+  // ../lib/trial-pay-now.ts for the phase/poll state machine.
+  const [payNowState, setPayNowState] = useState<PayNowState>(PAY_NOW_IDLE_STATE)
+  const payNowPollStartRef = useRef<number | null>(null)
+  const payNowPollCancelledRef = useRef(false)
+  // Task 2092: the result of a customer-present pay-now checkout, shown after the
+  // redirect back (`?trial_pay_now=returned|canceled`).
+  const [payNowReturn, setPayNowReturn] = useState<PayNowReturnView | null>(null)
+  const [payOverdueReturn, setPayOverdueReturn] = useState<PayOverdueView | null>(null)
+  useEffect(() => {
+    return () => {
+      payNowPollCancelledRef.current = true
+    }
+  }, [])
+  // Cancel flow is a three-step machine (task 0544 added 'pause'):
   //   'idle'    — initial state, "Cancel plan" link is visible
-  //   'offer'   — win-back offer card (50% off / 3 months); only when eligible
   //   'pause'   — "Pause instead?" card with 30/60/90-day options
   //   'confirm' — final cancel-confirmation panel
   // `cancelConfirm` is derived as `cancelStep === 'confirm'` so the existing
   // JSX condition keeps working unchanged.
-  const [cancelStep, setCancelStep] = useState<'idle' | 'offer' | 'pause' | 'confirm'>('idle')
+  const [cancelStep, setCancelStep] = useState<'idle' | 'pause' | 'confirm'>('idle')
   const cancelConfirm = cancelStep === 'confirm'
   const setCancelConfirm = (v: boolean) => setCancelStep(v ? 'confirm' : 'idle')
   const [cancelLoading, setCancelLoading] = useState(false)
-  const [winbackStartingLoading, setWinbackStartingLoading] = useState(false)
-  const [winbackAcceptLoading, setWinbackAcceptLoading] = useState(false)
   const [reactivateLoading, setReactivateLoading] = useState(false)
   // Pause flow (task 0544)
   const [pauseLoading, setPauseLoading] = useState<30 | 60 | 90 | null>(null)
@@ -333,8 +429,7 @@ export function Billing() {
   // checkout for a saved plan that differs from the current one); the
   // cycle-switch branch reuses `cycleSwitchLoading` via handleSwitchBillingCycle.
   const [resumeCheckoutLoading, setResumeCheckoutLoading] = useState(false)
-  // 14-day free trial (task 0905). `trialStarting` tracks the plan currently
-  // being started; `trialUsed` is an OPTIMISTIC local flip set when the server
+  // 14-day free trial (task 0905). `trialUsed` is an OPTIMISTIC local flip set when the server
   // reports the user already had a trial (409 trial_already_used) — kept as a
   // same-tab fallback for the instant between that 409 and `sub` re-fetching.
   // `convertLoading` tracks the convert/add-payment flow.
@@ -345,16 +440,19 @@ export function Billing() {
   // used weeks ago (no 409 this session at all) never sees a trial CTA in the
   // first place, instead of discovering ineligibility only after clicking
   // "Start trial" and getting a 409.
-  const [trialStarting, setTrialStarting] = useState<string | null>(null)
-  const [trialUsed, setTrialUsed] = useState(false)
+  // Task 1037: no local 409 path any more (trials start on /choose-plan), so
+  // this stays false; kept so `resolveHasUsedTrial` keeps its two-signal shape.
+  const [trialUsed] = useState(false)
   const [convertLoading, setConvertLoading] = useState(false)
+  // Task 1037 — inline confirm for cancelling a trial that converts on its own.
+  const [trialCancelConfirm, setTrialCancelConfirm] = useState(false)
   // Upgraded return — the user came back from the provider's hosted checkout.
   // Provisioning is async (the payment webhook writes the subscription row, NOT
   // the redirect), and the provider reuses ONE redirect URL for paid/cancelled/
   // expired, so `?upgraded=true` alone cannot assert success. We poll the
   // subscription and only claim "Upgrade complete" once it actually reflects the
   // change; otherwise we show an honest neutral "still processing" state. (0865)
-  const showUpgraded = searchParams.get('upgraded') === 'true' || Boolean(searchParams.get('session_id'))
+  const showUpgraded = isCheckoutReturn(searchParams)
   const upgradedDismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   // 'finalizing' = polling; 'complete' = subscription reflects the upgrade;
   // 'unconfirmed' = poll window elapsed without a change (payment may still be
@@ -532,6 +630,13 @@ export function Billing() {
   const [addonState, setAddonState] = useState<StorageAddonState | null>(null)
   const [sliderTB, setSliderTB] = useState<number>(0)
   const [addonSaving, setAddonSaving] = useState(false)
+  // Task 1706 review #132-A — transient override: set when the usage refresh
+  // after a just-applied add-on change FAILED (the drive-context value is
+  // then known-stale), so both storage readouts prefer the fresh apply
+  // response's `effective_storage_bytes` until the next successful
+  // contextUsage refresh clears it (effect below, keyed on the context
+  // usage's identity — every delivery is a new object).
+  const [addonAuthorityOverride, setAddonAuthorityOverride] = useState(false)
   const [addonPreview, setAddonPreview] = useState<StorageAddonPreview | null>(null)
   const [addonPreviewLoading, setAddonPreviewLoading] = useState(false)
   // SEPA two-path storage update (task 0941). `addonInstantPayLoading` tracks the
@@ -564,8 +669,6 @@ export function Billing() {
   // CSV export of the payment history (#7 "Export all", task 0942).
   const [exportingTransactions, setExportingTransactions] = useState(false)
 
-  const showSuccess = searchParams.get('success') === 'true'
-
   const loadData = useCallback(async () => {
     setLoading(true)
     setError(null)
@@ -573,9 +676,10 @@ export function Billing() {
       // getSubscription is fetched fresh here so cancel/reactivate flows see
       // the updated status immediately. getPlans is needed for the upgrade
       // cards section (context only stores the matched current-user plan).
-      const [subData, invData, txnData, invoicePref, plansData, filesData, addonsData, pmData] = await Promise.all([
+      const [subData, invData, cnData, txnData, invoicePref, plansData, filesData, addonsData, pmData] = await Promise.all([
         getSubscription(),
         getBillingInvoices().catch(() => [] as BillingInvoice[]),
+        getBillingCreditNotes().catch(() => [] as BillingCreditNote[]),
         getBillingTransactions().catch(() => [] as BillingTransaction[]),
         getPreference<{ send_email: boolean; invoice_email: string }>('invoice_settings').catch(() => null),
         getPlans().catch(() => null),
@@ -587,6 +691,7 @@ export function Billing() {
       ])
       setSub(subData)
       setInvoices(invData ?? [])
+      setCreditNotes(cnData ?? [])
       setTransactions(txnData ?? [])
       setPlans(plansData)
       setFiles(filesData)
@@ -708,11 +813,38 @@ export function Billing() {
   // Use the effective plan for display:
   // - 'cancelling' = user cancelled but still has access until current_period_end → show actual plan
   // - 'cancelled'  = subscription has ended (period expired) → show as free
+  // Task 1037: a needs_plan / lapsed account is entitled to nothing
+  // (server `effective_plan: "none"`) whatever plan the row still names — it
+  // shows as "No plan" and buys through normal checkout, like Free.
   const effectivePlan =
+    resolveAccountState(sub) !== 'ok' ? 'free' :
     sub?.status === 'cancelled' ? 'free' :
     sub?.status === 'cancelling' ? (sub.plan ?? 'free') :
     (sub?.plan ?? 'free')
   const meta = planMeta[effectivePlan] ?? planMeta.free
+  // Task 1604 review thread PRRT_kwDOSLX6Nc6nC4Vb: this used to pass
+  // `effectivePlan` (forced to 'free' the instant `account_state` is
+  // `lapsed`, above) into `billingPeriodLine`, which returns null at its own
+  // `plan === 'free'` guard before it can even look at `status`/
+  // `data_deletion_at`. But a `lapsed` account_state does NOT mean the raw
+  // subscription row itself flipped to 'free' — the server's own
+  // `resolve_account_state` (signup_plan.rs) derives `lapsed` from the
+  // ENTITLED plan (`quota::get_user_quota`), which is independent of the
+  // newest row's own `plan`/`status` columns exposed here. Concretely: a
+  // cancelled paid row stays `status: 'cancelling'` with its OLD `plan` (e.g.
+  // 'pro') in the DB until a later sweep tidies it up, even once
+  // `current_period_end` has passed and entitlement (and therefore
+  // `account_state`) has already flipped to `lapsed` — and `data_deletion_at`
+  // is set at exactly that same moment (`resolve_account_state`: non-null
+  // only once `account_state === Lapsed`). So the ONE shape that carries
+  // `data_deletion_at` is exactly the shape `effectivePlan` was clobbering to
+  // 'free' before `billingPeriodLine` ever saw the real `status`. Pass the
+  // row's own `plan`/`status` (not the display-only `effectivePlan`) —
+  // `billingPeriodLine`'s own guards (`plan === 'free'`, `status ===
+  // 'cancelled' | 'paused'`) already null out every case that should render
+  // nothing, using the ACTUAL row shape rather than a value already
+  // overwritten for an unrelated "No plan" display concern.
+  const periodLine = billingPeriodLine(sub ?? null)
   // Task 1517 — authoritative trial-eligibility signal. `sub?.has_used_trial`
   // is the server truth (set the moment ANY trial was ever started, whether
   // it lapsed, converted, or is still running); `trialUsed` is the optimistic
@@ -720,19 +852,90 @@ export function Billing() {
   // trial CTA below gates on this, not on `trialUsed` alone, so a user who
   // already used their trial — even in a PAST session, before this page ever
   // loaded — never sees "Start trial" and instead goes straight to checkout.
-  const hasUsedTrial = resolveHasUsedTrial(sub?.has_used_trial, trialUsed)
+  // Task 1757: with a document, the SERVER'S offer decides (`offers.trial`), not a guess from
+  // `has_used_trial` (the 1517 guess stays only as the fallback when no document is served).
+  const hasUsedTrial = trialOffer ? trialOffer.kind === 'unavailable' : resolveHasUsedTrial(sub?.has_used_trial, trialUsed)
+  // Task 1037 — `needs_plan` (never started a trial) / `lapsed` (trial or plan
+  // ended unpaid: read-only, deletion at data_deletion_at). Missing = ok.
+  const accountState = resolveAccountState(sub)
+  const hasNoPlan = accountState !== 'ok'
+  // Plan picked on the marketing site before signup, carried here by
+  // onboarding as /billing?view=change&plan=<slug>&cycle=<cycle>
+  // (src/lib/plan-intent.ts). Only offered to a Free account — a trialing or
+  // paid account already made its choice.
+  const planIntent = parsePlanIntent(searchParams.get('plan'), searchParams.get('cycle'))
+  // The URL now carries the intent, so the stored copy (kept through
+  // onboarding for GuestRoute, see plan-intent.ts) is consumed here — a later
+  // signup in this browser must not inherit it.
+  const hasPlanParam = searchParams.has('plan')
+  useEffect(() => {
+    if (hasPlanParam) clearPlanIntent()
+  }, [hasPlanParam])
+  const showPlanIntent =
+    planIntent !== null &&
+    !loading &&
+    effectivePlan === 'free' &&
+    sub?.status !== 'trialing' &&
+    Boolean(planMeta[planIntent.plan])
+  const planIntentTrialEligible =
+    planIntent !== null &&
+    isTrialEligible({
+      effectivePlan,
+      subStatus: sub?.status,
+      hasUsedTrial,
+      targetComingSoon: planMeta[planIntent.plan]?.comingSoon,
+    })
   const apiPlan = plans?.find(p => p.id === effectivePlan)
   const currentPriceMonthly = apiPlan?.price_eur ?? meta.priceMonthly
   const currentPriceYearly = apiPlan?.price_yearly_eur ?? meta.priceYearly
-  // When addon data is available, use the effective storage (base + extra).
-  // Otherwise fall back to the plan-level storage from planMeta.
-  const rawTotalStorageBytes = addonState
-    ? addonState.effective_storage_bytes
-    : meta.storageGB * 1_000_000_000
+  /**
+   * "EUR X.XX" for the TARGET cycle's full recurring total — base plan PLUS
+   * add-ons (task 1604 review thread PRRT_kwDOSLX6Nc6nC4VT). Used for the
+   * cycle-switch confirm/toast copy, which otherwise promised a "first
+   * charge" that silently dropped the storage/user add-on. See
+   * `cycleSwitchTargetTotalCents`'s doc comment for why this is exact and not
+   * an approximation.
+   */
+  function targetCycleTotalLabel(cycle: BillingCycle): string {
+    const basePlanTargetCents = Math.round((cycle === 'yearly' ? currentPriceYearly : currentPriceMonthly) * 100)
+    const currentCycle: BillingCycle = sub?.billing_cycle === 'yearly' ? 'yearly' : 'monthly'
+    const totalCents = cycleSwitchTargetTotalCents(basePlanTargetCents, sub?.addon_cents, currentCycle, cycle)
+    return `EUR ${(totalCents / 100).toFixed(2)}`
+  }
+  // Task 1605 — an active mandated trial's REAL enforced ceiling is the 25 GB
+  // cap, not the plan's full quota (PR #128 review, Codex P2: the meter was
+  // showing e.g. "24 GB / 200 GB" (~12%) for a trial the server would refuse
+  // uploads on at 25 GB — computed early so it can gate `totalStorageBytes`
+  // below, alongside the `cancelCopy`/`trialCapped` consts further down that
+  // read the same `sub`).
+  const trialCapBytes = isTrialCapped(sub) ? sub?.trial_storage_cap_bytes ?? null : null
+  // Task 1706 — server truth first: the drive-context usage carries
+  // `plan_limit_bytes` (GET /files/usage, merged with GET /billing/usage's
+  // bonus-inclusive `quota_bytes` — get_user_quota). It is the same number the
+  // quota engine enforces, so it outranks `addonState.effective_storage_bytes`;
+  // addonState stays authoritative ONLY for add-on quantities/prices. The
+  // final fallback is the static plan metadata.
+  // Task 1706 review #132-A — `addonAuthorityOverride` (a failed post-apply
+  // usage refresh) promotes the JUST-APPLIED response's
+  // `effective_storage_bytes` to first place until the context refreshes;
+  // decision logic unit-tested in test/1706-storage-authority.test.ts.
+  const contextPlanLimitBytes = contextUsage?.plan_limit_bytes
+  const rawTotalStorageBytes = resolveMeterTotalBytes(
+    contextPlanLimitBytes,
+    addonState?.effective_storage_bytes,
+    addonAuthorityOverride,
+    meta.storageGB * 1_000_000_000,
+  )
   // Guard against NaN/undefined — show 0 rather than NaN in the UI
-  const totalStorageBytes = Number.isFinite(rawTotalStorageBytes) && rawTotalStorageBytes > 0
-    ? rawTotalStorageBytes
-    : meta.storageGB * 1_000_000_000
+  // Task 1842: a no-card trial's ceiling is the trial cap from the onboarding document (10 GB),
+  // not the plan the trial would convert to.
+  const totalStorageBytes = noCardTrial != null && noCardTrial.capBytes > 0
+    ? noCardTrial.capBytes
+    : trialCapBytes != null
+    ? trialCapBytes
+    : Number.isFinite(rawTotalStorageBytes) && rawTotalStorageBytes > 0
+      ? rawTotalStorageBytes
+      : meta.storageGB * 1_000_000_000
   const usedBytes = contextUsage?.used_bytes ?? 0
   const usedPercent = totalStorageBytes > 0 ? (usedBytes / totalStorageBytes) * 100 : 0
 
@@ -746,8 +949,19 @@ export function Billing() {
   // subscription (task 0946, F4). A SEPA charge is "settling", never "failed".
   const checkoutIsSepa = intentMandate === 'directdebit' || isSepaMandate
 
+  // Task 1605 — cancelling-panel copy (never-paid trial vs. paid cancel) and
+  // the active-trial 25 GB cap. Pure helpers in ../lib/trial-limits-copy.ts.
+  const cancelCopy = cancelledCardCopy(sub, meta.label)
+  const trialCapped = isTrialCapped(sub)
+  // Task 2106 — a trial held for the bank's confirmation. ONE date formatter for every date that
+  // belongs to the hold (the Amsterdam day, en-GB), whichever surface shows it.
+  const heldUntil = confirmPaymentBy(sub)
+  const trialDateLabel = (iso: string | null): string => holdDateLabel(iso, heldUntil !== null, formatDate)
+
   // Storage slider derived values
-  const canAddStorage = planCanAddStorage(effectivePlan)
+  // Task 1842: a no-card trial has no subscription, so there is no add-on to buy; the Manage
+  // storage section is hidden for it and the near-cap line must not point at it.
+  const canAddStorage = planCanAddStorage(effectivePlan) && !noCardTrial
   const baseTB = addonState?.base_storage_tb || planBaseTB(effectivePlan)
   const rawMaxExtraTB = addonState
     ? addonState.max_storage_tb - addonState.base_storage_tb
@@ -755,9 +969,41 @@ export function Billing() {
   const maxExtraTB = Number.isFinite(rawMaxExtraTB) && rawMaxExtraTB > 0 ? rawMaxExtraTB : 0
   const maxTotalTB = baseTB + maxExtraTB
   const currentExtraTB = addonState?.extra_storage_tb ?? 0
+  // Task 1706 — the "Current total" readout prefers the server-truth quota
+  // (drive-context /files/usage, bonus-inclusive get_user_quota bytes) over
+  // the TB-integer reconstruction (baseTB + currentExtraTB); addonState's TB
+  // fields stay authoritative for the add-on axis (quantities/prices) only.
+  // Task 1706 review #132-A — the same transient override applies here (fresh
+  // add-on bytes win only when positive); decision logic unit-tested in
+  // test/1706-storage-authority.test.ts.
+  const currentTotalStorageBytes = resolveCurrentTotalBytes(
+    contextPlanLimitBytes,
+    addonState?.effective_storage_bytes,
+    addonAuthorityOverride,
+    (baseTB + currentExtraTB) * 1_000_000_000_000,
+  )
+  // Task 1706 review #132-B — reconcile the displayed total against the
+  // base+extra parts the parenthetical names: a bonus-inclusive total is
+  // larger than base+extra, so the remainder is surfaced as a neutral
+  // "additional storage" term (no web payload exposes a bonus-specific
+  // field — see storage-totals.ts) and irreconcilable parts omit the
+  // parenthetical instead of contradicting the total.
+  const currentAllocation = storageAllocationBreakdown(currentTotalStorageBytes, baseTB, currentExtraTB)
   const sliderChanged = sliderTB !== currentExtraTB
-  const currentCostCents = planMonthlyCostCents(effectivePlan, currentExtraTB)
-  const newCostCents = planMonthlyCostCents(effectivePlan, sliderTB)
+  // Task 1701 — the storage slider's "Monthly price" preview must come from
+  // the STORED plan price (the API plans row, the same source every other
+  // price on this page renders), never the WASM-compiled base price — the
+  // compiled-in numbers go stale the moment the owner edits the plan catalog
+  // (a plan priced €0 showed €1.99 here). The per-TB ADD-ON rate keeps the
+  // server-field → WASM-ladder → €10.99 chain: that is an add-on rate, not
+  // the plan price.
+  const sliderBaseCents = Math.round(currentPriceMonthly * 100)
+  const addonRateCents =
+    sub?.addon_per_tb_cents != null && sub.addon_per_tb_cents > 0
+      ? sub.addon_per_tb_cents
+      : (planMonthlyCostCents(effectivePlan, 1) - planMonthlyCostCents(effectivePlan, 0)) || 1099
+  const currentCostCents = sliderBaseCents + currentExtraTB * addonRateCents
+  const newCostCents = sliderBaseCents + sliderTB * addonRateCents
   const usedTB = Math.ceil(usedBytes / 1_000_000_000_000)
   const sliderMin = Math.max(0, usedTB - baseTB)
   const wouldReduceBelowUsage = (baseTB + sliderTB) * 1_000_000_000_000 < usedBytes
@@ -800,10 +1046,6 @@ function openUpgrade(plan: string) {
     openUpgrade(plan)
   }
 
-  function dismissSuccess() {
-    setSearchParams({}, { replace: true })
-  }
-
   async function handleCancelSubscription() {
     setCancelLoading(true)
     setCancelConfirm(false)
@@ -820,8 +1062,10 @@ function openUpgrade(plan: string) {
     } catch (err) {
       showToast({
         icon: 'x',
-        title: 'Could not cancel plan',
-        description: err instanceof Error ? err.message : 'Please try again.',
+        // Task 1757: a trial without a card has no subscription (409 no_subscription_to_cancel):
+        // say so plainly rather than "could not cancel".
+        title: err instanceof ApiError && err.code === 'no_subscription_to_cancel' ? 'Nothing to cancel' : 'Could not cancel plan',
+        description: trialBillingRefusalCopy(err) ?? (err instanceof Error ? err.message : 'Please try again.'),
         danger: true,
       })
     } finally {
@@ -829,30 +1073,13 @@ function openUpgrade(plan: string) {
     }
   }
 
-  // Entry point for the cancel flow. Checks win-back eligibility before
-  // jumping straight to the cancel-confirmation panel. The full sequence is
-  //   offer (if eligible) → pause → confirm
-  // — each step has a "no thanks" link to the next, so users always have a
-  // softer landing before committing to cancel.
-  //
-  // The 'pause' step only exists when the active billing provider supports
-  // pause/resume (task 0924). Under Mollie (`pause_supported === false`) there
-  // is no native pause, so we NEVER route to 'pause' — eligible users still see
-  // the retention offer (then continue straight to confirm), and ineligible
-  // users go directly to confirm.
+  // Entry point for the cancel flow: pause (only when the active billing
+  // provider supports pause/resume, task 0924) → confirm. Under Mollie
+  // (`pause_supported === false`) there is no native pause, so we go straight
+  // to confirm.
   const pauseSupported = sub?.pause_supported ?? false
-  async function startCancelFlow() {
-    setWinbackStartingLoading(true)
-    try {
-      const { eligible } = await getWinbackEligible()
-      setCancelStep(eligible ? 'offer' : pauseSupported ? 'pause' : 'confirm')
-    } catch {
-      // Don't block cancel if eligibility check fails — skip the offer and go
-      // to the pause card (or straight to confirm when pause isn't supported).
-      setCancelStep(pauseSupported ? 'pause' : 'confirm')
-    } finally {
-      setWinbackStartingLoading(false)
-    }
+  function startCancelFlow() {
+    setCancelStep(pauseSupported ? 'pause' : 'confirm')
   }
 
   async function handlePauseSubscription(days: 30 | 60 | 90) {
@@ -900,31 +1127,6 @@ function openUpgrade(plan: string) {
     }
   }
 
-  async function handleAcceptWinback() {
-    setWinbackAcceptLoading(true)
-    try {
-      const result = await claimWinback()
-      setCancelStep('idle')
-      showToast({
-        icon: 'check',
-        title: 'Discount applied',
-        description: `${result.discount_pct}% off for the next ${result.months} months — it shows up on your next invoice.`,
-      })
-      window.dispatchEvent(new Event('beebeeb:plan-changed'))
-      refreshPlanDetails()
-      await loadData()
-    } catch (err) {
-      showToast({
-        icon: 'x',
-        title: 'Could not apply discount',
-        description: err instanceof Error ? err.message : 'Please try again.',
-        danger: true,
-      })
-    } finally {
-      setWinbackAcceptLoading(false)
-    }
-  }
-
   async function handleReactivate() {
     setReactivateLoading(true)
     try {
@@ -956,6 +1158,168 @@ function openUpgrade(plan: string) {
   }
 
   /**
+   * Task 1605 — "pay now" ends a mandated trial's 25 GB cap early by
+   * charging the first period on the existing mandate right away. Double-
+   * click safe: refuses to re-enter while `submitting`/`pending`. Two
+   * settlement shapes from the server (see ../lib/trial-pay-now.ts):
+   *   - synchronous (card) → refresh once, done.
+   *   - `pending: true` (SEPA/off-session) → bounded poll of
+   *     GET /billing/subscription until `status === 'active'`.
+   */
+  async function handlePayNow() {
+    if (payNowState.phase === 'submitting' || payNowState.phase === 'pending') return
+    payNowPollCancelledRef.current = false
+    setPayNowState({ phase: 'submitting' })
+    try {
+      const result = await payTrialNow()
+      // Task 2092: a checkout_url means the bank may ask for 3-D Secure — send the
+      // person there. An older server (no checkout_url) keeps the inline behaviour.
+      const routed = routePayNowResult(result, { allowLocalHttp: import.meta.env.DEV })
+      if (routed.kind === 'redirect') {
+        try { sessionStorage.setItem(PAY_NOW_PAYMENT_STORAGE_KEY, routed.paymentId) } catch { /* return page falls back to the subscription */ }
+        window.location.assign(routed.url)
+        return // stay in 'submitting' while the browser navigates
+      }
+      const next = routed.state
+      setPayNowState(next)
+      if (next.phase === 'error') {
+        // Task 2162: a refused checkout_url is an error, never "settled" + an "unlocked" toast.
+        showToast({ icon: 'x', title: 'Could not start the payment', description: next.message, danger: true })
+        return
+      }
+      if (next.phase === 'pending') {
+        payNowPollStartRef.current = Date.now()
+        void pollPayNow(next.paymentId)
+        return
+      }
+      await onPayNowSettled()
+    } catch (err) {
+      const e = err instanceof ApiError ? { status: err.status, code: err.code, message: err.message } : { message: err instanceof Error ? err.message : undefined }
+      const failed = stateAfterPayNowError(e)
+      setPayNowState(failed)
+      // Task 2106: a refusal (e.g. 409 trial_not_active) must be seen even when the refetch below
+      // removes the card the inline message lives in.
+      showToast({ icon: 'x', title: 'Could not start the payment', description: failed.message, danger: true })
+      // Task 1605 (PR #128 review, Codex P2): `trial_not_active` means the
+      // trial ended/converted/was cancelled between render and submit — the
+      // stale capped `sub` in state would otherwise keep showing the 25 GB
+      // card with a now-re-enabled "Pay now" button the user could hit
+      // again. Refetch so the real current state (no longer trialing, or a
+      // fresh trial state) replaces it immediately, same as a settled
+      // pay-now already does via onPayNowSettled().
+      if (e.code === 'trial_not_active') {
+        refreshPlanDetails()
+        void loadData()
+      }
+    }
+  }
+
+  // Task 2092: handle the return from the pay-now checkout. Bounded poll of the
+  // payment status; honest copy for every outcome; query param cleaned up front.
+  // The stored payment marker survives a 'waiting' outcome (the payment may
+  // still be open): only a final state clears it. Refresh and a later plain
+  // visit to /billing both resume the check from the marker.
+  const payNowReconcileCancelRef = useRef<(() => void) | null>(null)
+  function reconcilePayNow(paymentId: string | null) {
+    payNowReconcileCancelRef.current?.()
+    setPayNowReturn(payNowReturnView('checking'))
+    let cancelled = false
+    payNowReconcileCancelRef.current = () => { cancelled = true }
+    const start = Date.now()
+    const tick = async () => {
+      if (cancelled) return
+      let status: string | null = null
+      try {
+        if (paymentId) {
+          status = (await getPaymentStatus(paymentId)).status
+        } else {
+          status = (await getSubscription()).status === 'active' ? 'paid' : null
+        }
+      } catch {
+        // Transient failure — keep polling until the bound.
+      }
+      if (cancelled) return
+      const decision = payNowReturnDecision(status, Date.now() - start)
+      if (decision === 'keep_polling') {
+        setTimeout(() => { void tick() }, PAY_NOW_POLL_INTERVAL_MS)
+        return
+      }
+      setPayNowReturn(payNowReturnView(decision))
+      if (shouldClearPayNowMarker(decision)) {
+        try { sessionStorage.removeItem(PAY_NOW_PAYMENT_STORAGE_KEY) } catch { /* ignore */ }
+      }
+      if (decision === 'paid') {
+        window.dispatchEvent(new Event('beebeeb:plan-changed'))
+        refreshPlanDetails()
+        void loadData()
+      }
+    }
+    void tick()
+  }
+
+  useEffect(() => {
+    const kind = payNowReturnKind(searchParams.get(PAY_NOW_RETURN_PARAM))
+    let paymentId: string | null = null
+    try {
+      // Read, don't remove yet: a dev-mode double effect run must see it again.
+      paymentId = sessionStorage.getItem(PAY_NOW_PAYMENT_STORAGE_KEY)
+    } catch { /* no storage: fall back to the subscription */ }
+    if (!kind) {
+      // Plain visit: resume checking a payment we never saw a final state for.
+      if (paymentId) reconcilePayNow(paymentId)
+      return () => { payNowReconcileCancelRef.current?.() }
+    }
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev)
+        p.delete(PAY_NOW_RETURN_PARAM)
+        return p
+      },
+      { replace: true },
+    )
+    if (kind === 'canceled') {
+      setPayNowReturn(payNowReturnView('canceled'))
+      try { sessionStorage.removeItem(PAY_NOW_PAYMENT_STORAGE_KEY) } catch { /* ignore */ }
+      return
+    }
+    reconcilePayNow(paymentId)
+    return () => { payNowReconcileCancelRef.current?.() }
+    // Runs once per landing: the param is removed above, so re-runs find nothing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function onPayNowSettled() {
+    window.dispatchEvent(new Event('beebeeb:plan-changed'))
+    refreshPlanDetails()
+    await loadData()
+    showToast({ icon: 'check', title: `${meta.label} unlocked`, description: 'Your full plan storage is now available.' })
+  }
+
+  async function pollPayNow(paymentId?: string) {
+    if (payNowPollCancelledRef.current) return
+    const start = payNowPollStartRef.current ?? Date.now()
+    let status: string | null = null
+    try {
+      const latest = await getSubscription()
+      status = latest.status ?? null
+      if (status === 'active') setSub(latest)
+    } catch {
+      // Transient fetch failure — keep polling until the bounded timeout.
+    }
+    if (payNowPollCancelledRef.current) return
+    const elapsed = Date.now() - start
+    const outcome = payNowPollDecision(elapsed, status)
+    setPayNowState(stateForPollOutcome(outcome, elapsed, paymentId))
+    if (outcome === 'keep_polling') {
+      setTimeout(() => { void pollPayNow(paymentId) }, PAY_NOW_POLL_INTERVAL_MS)
+      return
+    }
+    if (outcome === 'settled') {
+      await onPayNowSettled()
+    }
+  }
+
+  /**
    * Native payment-method update (task 0925). Provider-agnostic: the server
    * returns a hosted card re-auth checkout (Mollie) or a Stripe portal URL
    * (legacy Stripe customers); either way we just redirect. No Stripe-hosted
@@ -979,6 +1343,58 @@ function openUpgrade(plan: string) {
     }
   }
 
+  // Task 2162: the return from the pay-overdue checkout (`?paid_overdue=true`). The server gives
+  // no payment id, so this polls the subscription (the webhook un-freezes the account), bounded like
+  // the pay-now return. The param is stripped up front, so a reload or Back never re-runs it, and
+  // nothing here starts a checkout.
+  const payOverdueReconcileCancelRef = useRef<(() => void) | null>(null)
+  function reconcilePayOverdue() {
+    payOverdueReconcileCancelRef.current?.()
+    setPayOverdueReturn(payOverdueReturnView('checking'))
+    let cancelled = false
+    payOverdueReconcileCancelRef.current = () => { cancelled = true }
+    const start = Date.now()
+    const tick = async () => {
+      if (cancelled) return
+      let latest: Awaited<ReturnType<typeof getSubscription>> | null = null
+      try {
+        latest = await getSubscription()
+      } catch {
+        // Transient failure: keep polling until the bound.
+      }
+      if (cancelled) return
+      const decision = payOverdueReturnDecision(latest, Date.now() - start)
+      if (decision === 'keep_polling') {
+        setTimeout(() => { void tick() }, PAY_NOW_POLL_INTERVAL_MS)
+        return
+      }
+      setPayOverdueReturn(payOverdueReturnView(decision))
+      if (decision === 'paid') {
+        setConfirmOverdueIntent(false)
+        window.dispatchEvent(new Event('beebeeb:plan-changed'))
+        refreshPlanDetails()
+        void loadData()
+      }
+    }
+    void tick()
+  }
+
+  useEffect(() => {
+    if (!shouldHandlePayOverdueReturn(searchParams.get(PAY_OVERDUE_RETURN_PARAM))) return
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev)
+        p.delete(PAY_OVERDUE_RETURN_PARAM)
+        return p
+      },
+      { replace: true },
+    )
+    reconcilePayOverdue()
+    return () => { payOverdueReconcileCancelRef.current?.() }
+    // Runs once per landing: the param is removed above, so re-runs find nothing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   /**
    * Task 1062 (WP-D, decision 5) — settle the dunning arrears in full via a
    * one-off Mollie charge, the "Pay outstanding balance" CTA on the read-only
@@ -991,7 +1407,10 @@ function openUpgrade(plan: string) {
     setPayOverdueLoading(true)
     try {
       const result = await payOverdue()
-      window.location.href = result.checkout_url
+      // Same guard as pay-now: https, or the DEV-only loopback rule.
+      const url = safeCheckoutUrl(result.checkout_url, { allowLocalHttp: import.meta.env.DEV })
+      if (!url) throw new Error('The payment page could not be opened. Please try again.')
+      window.location.href = url
     } catch (err) {
       showToast({
         icon: 'x',
@@ -1002,6 +1421,41 @@ function openUpgrade(plan: string) {
       setPayOverdueLoading(false)
     }
   }
+
+  // Task 2106 — the mails' buttons land here with `?confirm_payment=1` (renewal / past due:
+  // pay-overdue) or `?confirm_payment=trial` (held trial: pay-now). The intent follows the URL (so
+  // the shell banner's link works on this very page), waits for the subscription to be loaded,
+  // starts a checkout ONLY when the account is in the state the mail described, and always
+  // consumes the param so a reload or Back never starts a payment by itself.
+  const confirmIntentRaw = searchParams.get(CONFIRM_PAYMENT_PARAM)
+  const confirmIntentHandledRef = useRef(false)
+  const [confirmNote, setConfirmNote] = useState<string | null>(null)
+  const [confirmOverdueIntent, setConfirmOverdueIntent] = useState(false)
+  useEffect(() => {
+    if (confirmIntentRaw === null) {
+      confirmIntentHandledRef.current = false
+      return
+    }
+    if (confirmIntentHandledRef.current) return
+    const action = confirmIntentAction(confirmIntentRaw, sub, { loading, loadFailed: error !== null })
+    // Not consumed while loading or after a failed load: the param stays, so Retry acts on it.
+    if (action.kind === 'wait') return
+    confirmIntentHandledRef.current = true
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev)
+        p.delete(CONFIRM_PAYMENT_PARAM)
+        return p
+      },
+      { replace: true },
+    )
+    if (action.kind === 'pay-now') void handlePayNow()
+    else if (action.kind === 'pay-overdue') {
+      setConfirmOverdueIntent(true)
+      void handlePayOverdue()
+    } else if (action.kind === 'note') setConfirmNote(action.text)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirmIntentRaw, loading, error])
 
   async function handlePreviewStorageAddon() {
     setAddonPreviewLoading(true)
@@ -1062,6 +1516,19 @@ function openUpgrade(plan: string) {
         })
       }
       window.dispatchEvent(new Event('beebeeb:plan-changed'))
+      // Task 1706 review #132-A — make the usage refresh awaitable and its
+      // outcome observable: on success the drive-context `/files/usage` is
+      // fresh and the normal server-truth-first hierarchy renders correctly;
+      // on failure the context value is KNOWN-stale, so the transient
+      // override keeps the just-applied response's effective_storage_bytes
+      // authoritative until the next successful contextUsage refresh clears
+      // it (effect keyed on contextUsage identity).
+      try {
+        const usageFresh = await refreshUsage()
+        if (!usageFresh) setAddonAuthorityOverride(true)
+      } catch {
+        setAddonAuthorityOverride(true)
+      }
       refreshPlanDetails()
     } catch (err) {
       const resetMessage = await handleBillingResetTestMode(err, {
@@ -1171,12 +1638,21 @@ function openUpgrade(plan: string) {
     try {
       const result = await switchBillingCycle(cycle)
       setCycleSwitchConfirm(null)
+      // Flow-4 finding 4 / task 1604: during a trial the server only re-pins
+      // the cycle (a mandated trial re-prices the pending first charge; a
+      // no-card trial re-pins what it will convert to) — nothing is charged
+      // today either way, so the paid-subscriber "next billing period" copy
+      // would be wrong. `trialCycleSwitchToastFor` routes on the payload.
+      const trialEnd = sub?.trial_ends_at ?? sub?.current_period_end ?? null
+      const newPriceLabel = targetCycleTotalLabel(cycle)
       showToast({
         icon: 'check',
         title: cycle === 'yearly' ? 'Switched to annual billing' : 'Switched to monthly billing',
-        description: result.annual_billing_start
-          ? `Your annual billing starts on ${formatDate(result.annual_billing_start)}.`
-          : 'The change takes effect at the start of your next billing period.',
+        description: isTrialing(sub?.status)
+          ? trialCycleSwitchToastFor(sub, cycle, trialDateLabel(trialEnd), newPriceLabel)
+          : result.annual_billing_start
+            ? `Your annual billing starts on ${formatDate(result.annual_billing_start)}.`
+            : 'The change takes effect at the start of your next billing period.',
       })
       refreshPlanDetails()
       await loadData()
@@ -1193,10 +1669,15 @@ function openUpgrade(plan: string) {
         showToast({ icon: 'info', title: 'Subscription reset', description: resetMessage })
         return
       }
+      // Task 1604 — a trial cancelled before its first charge (server #128)
+      // answers 409 `trial_cancelled`, never the bare "not found" it used to.
+      // Same copy as the pre-emptive UI gate (case c), in case of a race
+      // where the confirm dialog was already open in a stale tab.
+      const cancelled = e instanceof ApiError && e.code === 'trial_cancelled'
       showToast({
         icon: 'x',
-        title: 'Failed to switch billing cycle',
-        description: e instanceof Error ? e.message : 'Please try again.',
+        title: cancelled ? 'Your trial is cancelled' : 'Failed to switch billing cycle',
+        description: cancelled ? trialCancelledSwitchNote() : e instanceof Error ? e.message : 'Please try again.',
         danger: true,
       })
     } finally {
@@ -1220,18 +1701,39 @@ function openUpgrade(plan: string) {
    */
   async function handleResumeCheckout(pending: PendingCheckout) {
     const action = resolveResumeAction(pending, effectivePlan)
+    if (action.kind === 'trial') {
+      // Task 1037 — an abandoned trial-mandate checkout resumes on the chooser.
+      navigate(choosePlanPath({ plan: action.plan, cycle: action.cycle }, { fromBilling: true }))
+      return
+    }
     if (action.kind === 'switch-cycle') {
       await handleSwitchBillingCycle(action.cycle as 'monthly' | 'yearly')
       return
     }
     setResumeCheckoutLoading(true)
     try {
-      const { url, payment_id } = await createCheckoutSession({
+      const res = await createCheckoutSession({
         plan: action.plan,
         billing_cycle: action.cycle,
       })
-      setPendingCheckout(pending.kind, action.plan, action.cycle, makePreState(sub), payment_id)
-      window.location.href = url
+      // Task 1702 — a €0 plan came back already activated: no payment to
+      // reconcile, no redirect. Refresh and land on the page itself.
+      if (res.activated) {
+        showToast({
+          icon: 'check',
+          title: 'Your plan is activated',
+          description: 'This plan is free right now — nothing was charged.',
+        })
+        clearPendingCheckout()
+        setPendingCheckoutState(null)
+        await loadData()
+        window.dispatchEvent(new Event('beebeeb:plan-changed'))
+        refreshPlanDetails()
+        setResumeCheckoutLoading(false)
+        return
+      }
+      setPendingCheckout(pending.kind, action.plan, action.cycle, makePreState(sub), res.payment_id)
+      window.location.href = res.url
     } catch (err) {
       // Task 1518 (server PR #94) — the subscription this resume was trying
       // to recreate got reset because it was created while Mollie was in
@@ -1271,57 +1773,17 @@ function openUpgrade(plan: string) {
   }
 
   /**
-   * Start a 14-day free trial (task 0905, Pattern B — no card). On success the
-   * subscription flips to `trialing` immediately; we refresh state so the page
-   * shows the trialing summary + the global "N days left" banner. A 409
-   * `trial_already_used` is honest signal that this account already had a trial —
-   * we hide the trial CTA and fall back to the normal paid checkout.
+   * Start a trial for `plan` (task 1037 — trial WITH a payment mandate). The
+   * no-card `POST /billing/trial/start` is refused now (409
+   * `trial_requires_payment_method`), so every trial CTA on this page goes to
+   * `/choose-plan` — payment method → billing details →
+   * `POST /billing/trial/checkout` → Mollie — preselected on this plan + cycle.
+   * `from=billing` tells the chooser an existing account asked for it (it
+   * forwards a no-longer-eligible account back to paid checkout here).
+   * `setTrialUsed` stays for the chooser's `trial_already_used` bounce.
    */
-  async function handleStartTrial(plan: string) {
-    setTrialStarting(plan)
-    try {
-      await startTrial({ plan, billing_cycle: 'monthly' })
-      showToast({
-        icon: 'check',
-        title: 'Your free trial has started',
-        description: '14 days of full access. No card required — cancel anytime, you keep your files.',
-      })
-      window.dispatchEvent(new Event('beebeeb:plan-changed'))
-      refreshPlanDetails()
-      await loadData()
-    } catch (err) {
-      if (err instanceof ApiError && err.code === 'trial_already_used') {
-        setTrialUsed(true)
-        showToast({
-          icon: 'clock',
-          title: 'You have already used your free trial',
-          description: 'Subscribe to keep full access — your files stay encrypted either way.',
-        })
-        openUpgrade(plan)
-        return
-      }
-      if (err instanceof ApiError && err.code === 'trial_has_active_subscription') {
-        showToast({
-          icon: 'check',
-          title: 'You already have a plan',
-          description: 'Manage it from billing below.',
-        })
-        await loadData()
-        return
-      }
-      // Task 1517 — never surface a raw error body (a server 409 for this
-      // endpoint can come back double-JSON-encoded; `request()` now unwraps
-      // that, but `userFriendlyError` is the belt-and-suspenders that keeps
-      // ANY opaque/JSON-shaped fragment from ever reaching this toast).
-      showToast({
-        icon: 'x',
-        title: 'Could not start your trial',
-        description: userFriendlyError(err),
-        danger: true,
-      })
-    } finally {
-      setTrialStarting(null)
-    }
+  function handleStartTrial(plan: string, billingCycle: 'monthly' | 'yearly' = 'monthly') {
+    navigate(choosePlanPath({ plan, cycle: billingCycle }, { fromBilling: true }))
   }
 
   /**
@@ -1334,16 +1796,41 @@ function openUpgrade(plan: string) {
   async function handleConvertTrial() {
     setConvertLoading(true)
     try {
-      const { url, payment_id } = await convertTrial()
+      const res = await convertTrial()
+      // Task 1702 — a €0 plan's conversion is a direct activation: no Mollie
+      // checkout, nothing to poll. Refresh in place.
+      if (res.activated) {
+        showToast({
+          icon: 'check',
+          title: 'Your plan is activated',
+          description: 'This plan is free right now — nothing was charged.',
+        })
+        window.dispatchEvent(new Event('beebeeb:plan-changed'))
+        refreshPlanDetails()
+        await loadData()
+        setConvertLoading(false)
+        return
+      }
       setPendingCheckout(
         'plan',
         sub?.plan ?? effectivePlan,
         sub?.billing_cycle ?? 'monthly',
         makePreState(sub),
-        payment_id,
+        res.payment_id,
       )
-      window.location.href = url
+      window.location.href = res.url
     } catch (err) {
+      if (err instanceof ApiError && err.code === 'trial_convert_unavailable') {
+        // Task 1757: a trial without a card has nothing to convert: it subscribes at checkout.
+        showToast({
+          icon: 'clock',
+          title: 'Subscribe to keep your plan',
+          description: trialBillingRefusalCopy(err) ?? 'Choose a plan and pay at checkout.',
+        })
+        setView('change')
+        setConvertLoading(false)
+        return
+      }
       if (err instanceof ApiError && err.code === 'trial_not_active') {
         showToast({
           icon: 'clock',
@@ -1453,17 +1940,13 @@ function openUpgrade(plan: string) {
      (server fields absent → fall back to the old client recompute). */
   const serverBasePlanCents = sub?.base_plan_cents
   const serverAddonCents = sub?.addon_cents
-  const serverAddonPerTbCents = sub?.addon_per_tb_cents
   const serverMollieAmountCents = sub?.mollie_amount_cents
 
-  // Per-TB price: server truth first, else derive from the WASM ladder (the
-  // marginal cost of 1 extra TB), else the €14.99/TB add-on rate as a
-  // last-resort constant (1499 cents; raised from 1099, Guus ruling
-  // 2026-09-22, task 1463).
-  const addonPerTbCents =
-    serverAddonPerTbCents != null && serverAddonPerTbCents > 0
-      ? serverAddonPerTbCents
-      : (planMonthlyCostCents(effectivePlan, 1) - planMonthlyCostCents(effectivePlan, 0)) || 1499
+  // Per-TB price: the single add-on-rate chain computed above (server truth
+  // first, else the WASM ladder's marginal cost of 1 extra TB, else the
+  // €10.99/TB last-resort constant — reverted from 1499, Guus ruling
+  // 2026-09-29, task 1607, reversing task 1463's 2026-09-22 raise).
+  const addonPerTbCents = addonRateCents
 
   const basePlanCents =
     serverBasePlanCents != null && serverBasePlanCents > 0
@@ -1520,11 +2003,60 @@ function openUpgrade(plan: string) {
       ) : (
         <SettingsHeader
           title="Plan & billing"
-          subtitle={meta.tagline}
+          subtitle={noCardTrial ? 'Choose the plan you want to keep when the trial ends.' : meta.tagline}
         />
       )}
 
       <div className="p-7 space-y-6">
+        {/* Task 2162: the live regions exist before their text changes, so a screen reader announces it. */}
+        <div role="status" aria-live="polite">
+        {payOverdueReturn && (
+          <div
+            data-testid="pay-overdue-return"
+            data-kind={payOverdueReturn.kind}
+            className="rounded-xl border border-line bg-paper-2 px-6 py-4 flex items-center gap-4 flex-wrap"
+          >
+            <span className="flex-1 min-w-[16rem] text-[13.5px] text-ink-2">{payOverdueReturn.message}</span>
+            {payOverdueReturn.retry && (
+              <BBButton size="sm" variant="amber" data-testid="pay-overdue-return-retry" disabled={payOverdueLoading} onClick={() => { setPayOverdueReturn(null); void handlePayOverdue() }}>
+                Try again
+              </BBButton>
+            )}
+            {payOverdueReturn.refresh && (
+              <BBButton size="sm" data-testid="pay-overdue-return-refresh" onClick={() => reconcilePayOverdue()}>
+                Refresh
+              </BBButton>
+            )}
+          </div>
+        )}
+        </div>
+        <div role="status" aria-live="polite">
+        {payNowReturn && (
+          <div
+            data-testid="pay-now-return"
+            data-kind={payNowReturn.kind}
+            className={`rounded-xl border px-6 py-4 flex items-center gap-4 ${
+              payNowReturn.kind === 'paid' ? 'border-amber/60 bg-amber-bg' : 'border-line bg-paper-2'
+            }`}
+          >
+            <span className="flex-1 text-[13.5px] text-ink-2">{payNowReturn.message}</span>
+            {payNowReturn.retry && (
+              <BBButton size="sm" variant="amber" data-testid="pay-now-return-retry" onClick={() => { setPayNowReturn(null); void handlePayNow() }}>
+                Try again
+              </BBButton>
+            )}
+            {payNowReturn.refresh && (
+              <BBButton size="sm" data-testid="pay-now-return-refresh" onClick={() => {
+                let id: string | null = null
+                try { id = sessionStorage.getItem(PAY_NOW_PAYMENT_STORAGE_KEY) } catch { /* ignore */ }
+                reconcilePayNow(id)
+              }}>
+                Refresh
+              </BBButton>
+            )}
+          </div>
+        )}
+        </div>
         {/* Checkout return — provisioning is async, so we poll before claiming
             success. Three states: finalizing (polling) → complete (confirmed) or
             unconfirmed (poll window elapsed; honest "still processing"). (0865) */}
@@ -1570,7 +2102,7 @@ function openUpgrade(plan: string) {
                   <p className="text-[13.5px] text-ink-2 leading-relaxed mb-4">
                     Your vault just got bigger. You now have{' '}
                     <span className="font-semibold text-ink">{formatStorageSI(totalStorageBytes)}</span>{' '}
-                    of encrypted storage — stored in Falkenstein, Germany.
+                    of encrypted storage — stored in the EU.
                   </p>
                   <BBButton
                     variant="amber"
@@ -1634,20 +2166,6 @@ function openUpgrade(plan: string) {
           </div>
         )}
 
-        {/* Success banner after Stripe checkout (legacy ?success=true) */}
-        {showSuccess && (
-          <div className="flex items-center gap-3 p-3.5 bg-green/10 border border-green/30 rounded-lg text-sm">
-            <Icon name="check" size={14} className="text-green shrink-0" />
-            <span className="flex-1">Your subscription is now active. Welcome aboard.</span>
-            <button
-              onClick={dismissSuccess}
-              className="text-ink-3 hover:text-ink transition-colors"
-            >
-              <Icon name="x" size={14} />
-            </button>
-          </div>
-        )}
-
         {/* Checkout watchdog. Two distinct realities share this slot (task 0946):
             - A SEPA-mandate charge WAS made and is settling over a few days — it
               is NOT an abandoned checkout, so it must never say "didn't complete
@@ -1675,13 +2193,15 @@ function openUpgrade(plan: string) {
               <span className="flex-1 text-ink-2">
                 {pendingCheckout.kind === 'storage' ? (
                   <>You started adding storage but didn't complete checkout.</>
+                ) : pendingCheckout.kind === 'trial' ? (
+                  <>You started a free trial of <span className="font-semibold text-ink">{PLAN_META[pendingCheckout.plan]?.label ?? pendingCheckout.plan}</span> but didn't finish adding a payment method.</>
                 ) : pendingCheckout.plan !== effectivePlan ? (
                   <>You started upgrading to <span className="font-semibold text-ink">{PLAN_META[pendingCheckout.plan]?.label ?? pendingCheckout.plan}</span> but didn't complete checkout.</>
                 ) : (
                   <>You started switching to <span className="font-semibold text-ink">{pendingCheckout.cycle}</span> billing but didn't complete checkout.</>
                 )}
               </span>
-              {pendingCheckout.kind === 'plan' && (
+              {(pendingCheckout.kind === 'plan' || pendingCheckout.kind === 'trial') && (
                 <BBButton
                   size="sm"
                   variant="amber"
@@ -1709,17 +2229,45 @@ function openUpgrade(plan: string) {
         {sub?.status === 'past_due' && sub.billing_state !== 'read_only' && (
           <div className="flex items-center gap-3 p-3.5 bg-red/10 border border-red/30 rounded-lg text-sm">
             <Icon name="x" size={14} className="text-red shrink-0" />
-            <span className="flex-1">
-              Your last payment failed. Update your payment method to avoid losing access.
-            </span>
-            <BBButton
-              size="sm"
-              variant="danger"
-              onClick={() => void handleUpdatePaymentMethod()}
-              disabled={portalLoading}
-            >
-              {portalLoading ? 'Redirecting...' : 'Update payment method'}
-            </BBButton>
+            {confirmOverdueIntent ? (
+              <>
+                <span className="flex-1" data-testid="billing-past-due-confirm-copy">
+                  {CONFIRM_OVERDUE_COPY}
+                </span>
+                <BBButton
+                  size="sm"
+                  variant="amber"
+                  data-testid="billing-past-due-confirm-cta"
+                  onClick={() => void handlePayOverdue()}
+                  disabled={payOverdueLoading}
+                >
+                  {payOverdueLoading ? 'Redirecting...' : CONFIRM_PAYMENT_CTA}
+                </BBButton>
+                <BBButton
+                  size="sm"
+                  variant="ghost"
+                  data-testid="billing-past-due-update-method"
+                  onClick={() => void handleUpdatePaymentMethod()}
+                  disabled={portalLoading}
+                >
+                  {portalLoading ? 'Redirecting...' : 'Update payment method'}
+                </BBButton>
+              </>
+            ) : (
+              <>
+                <span className="flex-1">
+                  Your last payment failed. Update your payment method to avoid losing access.
+                </span>
+                <BBButton
+                  size="sm"
+                  variant="danger"
+                  onClick={() => void handleUpdatePaymentMethod()}
+                  disabled={portalLoading}
+                >
+                  {portalLoading ? 'Redirecting...' : 'Update payment method'}
+                </BBButton>
+              </>
+            )}
           </div>
         )}
 
@@ -1782,7 +2330,172 @@ function openUpgrade(plan: string) {
             this also guards against a stale "trialing" panel. Honest copy near
             expiry; the day count is mono (it reads like data); amber on the
             primary convert CTA only. */}
-        {sub?.status === 'trialing' && sub.trial_ends_at && remainingDays(sub.trial_ends_at) > 0 && (
+        {/* Task 1037 — a trial that ended unpaid: the vault is read-only and is
+            deleted at data_deletion_at unless the user subscribes. Normal paid
+            checkout (the trial is used), so the CTA opens the change view. */}
+        {/* Task 1757 — the no-card trial, drawn from the onboarding document: running,
+            ended over the allowance, or on offer. */}
+        {/* Task 1842: the running no-card trial is drawn by the Current plan card below (end date,
+            usage against the cap, what happens at the end, sharing) and by the global banner — the
+            former standalone panel said the same three things a third time. */}
+        {trialEnded && view === 'summary' && <TrialEndedCard status={trialEnded} variant="panel" />}
+        {view === 'summary' && trialOffer?.kind === 'available' && (
+          <div className="rounded-xl border border-line bg-paper-2 px-6 py-5" data-testid="billing-trial-offer">
+            <TrialStartCard offer={trialOffer} onStart={(choice) => startNoCardTrial(trialOffer, choice)} />
+          </div>
+        )}
+        {view === 'summary' && trialOffer?.kind === 'unavailable' && !trialEnded && <TrialUnavailableNote offer={trialOffer} showPlansLink={false} />}
+
+        {accountState === 'lapsed' && !trialEnded && (
+          <div className="rounded-xl border border-red/30 bg-red/5 px-6 py-5" data-testid="billing-lapsed">
+            <div className="flex items-start gap-3">
+              <Icon name="lock" size={16} className="text-red shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-red mb-1">
+                  Read-only
+                </div>
+                <h2 className="text-lg font-bold text-ink leading-snug mb-1.5">{lapsedHeading(sub?.lapse_kind)}</h2>
+                <p className="text-[13.5px] text-ink-2 leading-relaxed mb-4">
+                  {lapsedBannerCopy(sub?.data_deletion_at, sub?.lapse_kind)} You can still browse and download everything until then.
+                </p>
+                {view !== 'change' && (
+                  <BBButton variant="amber" size="md" onClick={() => setView('change')}>
+                    Choose a plan
+                    <Icon name="chevron-right" size={13} className="ml-1.5" />
+                  </BBButton>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Task 1037 — a trial started WITH a mandate converts on its own at
+            trial_ends_at: state the date + amount, offer the cancel action. */}
+        {/* Task 2106 — the bank asked the customer to confirm the first payment (3-D Secure).
+            The trial is held, `trial_auto_converts` is still true, but nothing charges by itself:
+            never the "charged automatically" copy below. */}
+        <LiveNote
+          text={confirmNote}
+          testId="billing-confirm-note"
+          className="flex items-center gap-3 p-3.5 bg-paper-2 border border-line rounded-lg text-sm text-ink-2"
+        >
+          <button type="button" className="text-ink-3 hover:text-ink" aria-label="Dismiss" onClick={() => setConfirmNote(null)}>
+            <Icon name="x" size={14} />
+          </button>
+        </LiveNote>
+
+        {heldUntil && (
+          <div className="rounded-xl border border-line bg-paper-2 px-6 py-5" data-testid="billing-trial-confirm">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-3 mb-1">
+              Free trial
+            </div>
+            <h2 className="text-lg font-bold text-ink leading-snug mb-1">Confirm your first payment</h2>
+            <p className="text-[13.5px] text-ink-2 leading-relaxed mb-1" data-testid="billing-trial-confirm-copy">
+              {confirmPaymentBannerCopy(heldUntil)}
+            </p>
+            <p className="text-[13px] text-ink-3 leading-relaxed mb-4">{CONFIRM_PAYMENT_REASSURANCE}</p>
+            {payNowState.phase === 'pending' && (
+              <p className="text-xs text-amber-deep leading-relaxed mb-3" data-testid="billing-trial-confirm-pending">{payNowState.message}</p>
+            )}
+            {payNowState.phase === 'error' && (
+              <p className="text-xs text-red leading-relaxed mb-3" data-testid="billing-trial-confirm-error">{payNowState.message}</p>
+            )}
+            <div className="flex items-center gap-4 flex-wrap">
+              <BBButton
+                size="sm"
+                variant="amber"
+                data-testid="billing-trial-confirm-cta"
+                onClick={() => void handlePayNow()}
+                disabled={payNowState.phase === 'submitting' || payNowState.phase === 'pending'}
+              >
+                {payNowState.phase === 'submitting' || payNowState.phase === 'pending' ? 'Processing…' : CONFIRM_PAYMENT_CTA}
+              </BBButton>
+              {!trialCancelConfirm && (
+                <button
+                  type="button"
+                  className="text-[13px] text-ink-3 hover:text-red transition-colors disabled:opacity-50"
+                  disabled={cancelLoading}
+                  onClick={() => setTrialCancelConfirm(true)}
+                  data-testid="billing-trial-cancel"
+                >
+                  Cancel trial
+                </button>
+              )}
+            </div>
+            {trialCancelConfirm && (
+              <div className="mt-4 p-4 bg-paper border border-line rounded-lg space-y-3">
+                <p className="text-[13px] text-ink-2 leading-relaxed">
+                  {heldTrialCancelCopy(formatConfirmDate(heldUntil))}
+                </p>
+                <div className="flex gap-2">
+                  <BBButton size="sm" variant="amber" onClick={() => setTrialCancelConfirm(false)}>
+                    Keep my trial
+                  </BBButton>
+                  <BBButton
+                    size="sm"
+                    variant="ghost"
+                    disabled={cancelLoading}
+                    onClick={() => { setTrialCancelConfirm(false); void handleCancelSubscription() }}
+                  >
+                    {cancelLoading ? 'Cancelling...' : 'Cancel trial'}
+                  </BBButton>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {chargesAutomatically(sub) && sub?.trial_ends_at && remainingDays(sub.trial_ends_at) > 0 && (
+          <div className="rounded-xl border border-line bg-paper-2 px-6 py-5" data-testid="billing-trial-auto">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep mb-1">
+              Free trial
+            </div>
+            <h2 className="text-lg font-bold text-ink leading-snug mb-1">
+              <span className="font-mono">{remainingDays(sub.trial_ends_at)}</span>{' '}
+              {remainingDays(sub.trial_ends_at) === 1 ? 'day' : 'days'} left in your {meta.label} trial
+            </h2>
+            <p className="text-[13.5px] text-ink-2 leading-relaxed mb-4" data-testid="billing-trial-auto-copy">
+              {(() => {
+                const amount = trialRenewalAmount(sub, apiPlan ?? null)
+                return amount != null
+                  ? trialAutoConvertCopy(sub.trial_ends_at, amount, sub.billing_cycle === 'yearly' ? 'yearly' : 'monthly')
+                  : `Trial — ends ${formatDate(sub.trial_ends_at)}. Then charged automatically.`
+              })()}{' '}
+              Cancel any time before then and nothing is charged.
+            </p>
+            {!trialCancelConfirm ? (
+              <button
+                className="text-[13px] text-ink-3 hover:text-red transition-colors disabled:opacity-50"
+                disabled={cancelLoading}
+                onClick={() => setTrialCancelConfirm(true)}
+                data-testid="billing-trial-cancel"
+              >
+                Cancel trial
+              </button>
+            ) : (
+              <div className="p-4 bg-paper border border-line rounded-lg space-y-3">
+                <p className="text-[13px] text-ink-2 leading-relaxed">
+                  {cardTrialCancelCopy(formatDate(sub.trial_ends_at))}
+                </p>
+                <div className="flex gap-2">
+                  <BBButton size="sm" variant="amber" onClick={() => setTrialCancelConfirm(false)}>
+                    Keep my trial
+                  </BBButton>
+                  <BBButton
+                    size="sm"
+                    variant="ghost"
+                    disabled={cancelLoading}
+                    onClick={() => { setTrialCancelConfirm(false); void handleCancelSubscription() }}
+                  >
+                    {cancelLoading ? 'Cancelling...' : 'Cancel trial'}
+                  </BBButton>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {sub?.status === 'trialing' && sub.trial_auto_converts !== true && !noCardTrial && sub.trial_ends_at && remainingDays(sub.trial_ends_at) > 0 && (
           <div className="rounded-xl border border-amber/60 bg-amber-bg px-6 py-5">
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1">
@@ -1807,8 +2520,9 @@ function openUpgrade(plan: string) {
                       marketed plan that no longer exists (Free is admin-only —
                       see WP-B/task 1060). A lapsed trial is a DIFFERENT server
                       path from cancel, though: it drops to the 5 GB quota with
-                      a 60-day grace before any deletion (billing_lifecycle.rs),
-                      not the cancel wipe-at-period-end model — so this stays
+                      no deletion at all (a legacy, grandfathered trial lands on Free; a new-model
+                      account never reaches this panel: it has the no-card trial and 14/60-day
+                      retention, task 2085), not the cancel wipe-at-period-end model — so this stays
                       honest about the real (gentler) trial-lapse behavior
                       instead of borrowing the cancel copy verbatim. */}
                   {' '}No card required — if you do nothing, your account simply
@@ -1839,18 +2553,19 @@ function openUpgrade(plan: string) {
         {view === 'summary' && (
           <div className="space-y-4">
             {/* Current Plan card */}
-            <Card className="overflow-hidden">
+            <Card className="overflow-hidden" data-testid="billing-current-plan-card">
               <div className="p-5 grid gap-6 md:grid-cols-2">
                 {/* Left: plan + price + actions */}
                 <div>
                   <SectionLabel className="mb-2">Current plan</SectionLabel>
                   <div className="flex items-center gap-3 mb-1">
-                    <span className="text-[28px] font-bold tracking-tight leading-none">
-                      {meta.label}
+                    <span className="text-[28px] font-bold tracking-tight leading-none" data-testid="billing-current-plan-name">
+                      {currentPlanName({ accountStateLabel, hasNoPlan, planLabel: meta.label, noCardTrial: noCardTrial !== null })}
                     </span>
-                    {effectivePlan !== 'free' && statusBadge()}
+                    {effectivePlan !== 'free' && !hasNoPlan && !noCardTrial && statusBadge()}
                   </div>
-                  {effectivePlan !== 'free' && (
+                  {noCardTrial && <NoCardTrialPlanLines status={noCardTrial} testIdPrefix="billing-current-plan" />}
+                  {effectivePlan !== 'free' && !noCardTrial && (
                     <div className="font-mono text-[13px] text-ink-2">
                       EUR {formatCentsAsEur(basePriceCents)} / {billingInterval}
                       <span className="text-ink-3">
@@ -1867,14 +2582,32 @@ function openUpgrade(plan: string) {
                       )}
                     </div>
                   )}
-                  {effectivePlan === 'free' && (
+                  {effectivePlan === 'free' && !hasNoPlan && (
                     <div className="text-[13px] text-ink-3">5 GB encrypted storage</div>
+                  )}
+                  {accountState === 'lapsed' && (
+                    <div className="text-[13px] text-ink-3">Read-only — uploads are paused</div>
+                  )}
+                  {accountState === 'needs_plan' && accountStateLabel === 'allowance' && (
+                    <div className="text-[13px] text-ink-3" data-testid="billing-allowance-line">
+                      {ALLOWANCE_LINE}
+                    </div>
+                  )}
+                  {accountState === 'needs_plan' && accountStateLabel !== 'allowance' && (
+                    <div className="text-[13px] text-ink-3">Start a free trial to begin uploading</div>
+                  )}
+                  {/* Task 1605 — a never-paid trial cancelled before its first
+                      charge is read-only for UPLOADS immediately, distinct
+                      from `accountState === 'lapsed'` above (the trial hasn't
+                      lapsed yet, it's cancelled early). */}
+                  {cancelCopy?.uploadsBlockedNow && (
+                    <div className="text-[13px] text-ink-3">Uploads and new shares are off — view and download still work</div>
                   )}
 
                   <div className="mt-5 flex items-center gap-3">
-                    <BBButton variant="amber" size="md" onClick={() => setView('change')}>
+                    <BBButton variant="amber" size="md" onClick={() => setView('change')} data-testid="billing-choose-plan">
                       <Icon name="arrow-up" size={13} className="mr-1.5" />
-                      {effectivePlan === 'free' ? 'Choose a plan' : 'Change plan'}
+                      {effectivePlan === 'free' || noCardTrial ? 'Choose a plan' : 'Change plan'}
                     </BBButton>
                     {effectivePlan !== 'free' &&
                       sub?.status !== 'cancelling' &&
@@ -1882,20 +2615,19 @@ function openUpgrade(plan: string) {
                       sub?.status !== 'trialing' && (
                         <button
                           className="text-[13px] text-ink-3 hover:text-red transition-colors disabled:opacity-50"
-                          disabled={winbackStartingLoading}
                           onClick={() => {
                             // Task 1064 (D7): this used to just switch to the
                             // full plan-comparison view — a mismatch with what
                             // "Cancel" says it does. Now it opens the SAME
                             // view AND starts the actual cancel sequence
-                            // (win-back check → offer/pause/confirm), so the
+                            // (pause/confirm), so the
                             // user who clicked "Cancel" lands directly in the
                             // cancel flow instead of a neutral compare screen.
                             setView('change')
                             void startCancelFlow()
                           }}
                         >
-                          {winbackStartingLoading ? 'Cancel...' : 'Cancel'}
+                          Cancel
                         </button>
                       )}
                   </div>
@@ -1933,25 +2665,98 @@ function openUpgrade(plan: string) {
                 </div>
               </div>
 
-              {/* Footer strip: next charge / renews */}
-              {sub?.current_period_end &&
-                effectivePlan !== 'free' &&
-                sub.status !== 'cancelling' &&
-                sub.status !== 'paused' && (
-                  <div className="flex items-center gap-3 px-5 py-3 border-t border-line bg-paper-2 text-xs">
+              {/* Footer strip: renews / trial ends / access until.
+                  Flow-money #5: a trial does not renew and a cancelling plan
+                  lapses — billingPeriodLine picks the honest label (same
+                  rules as mobile billing-status.ts and the CLI).
+                  Task 1605 — a never-paid trial cancelled before its first
+                  charge gets its OWN compact line ("Uploads stopped ·
+                  Access until · Files deleted on", never "Renews"), driven
+                  by uploads_blocked_at/access_until/data_deletion_at —
+                  distinct from a paying customer's ordinary cancel (unchanged
+                  below, uploads keep working through the grace period). */}
+              {cancelCopy?.kind === 'never_paid_trial' ? (
+                <div
+                  data-testid="cancelling-card"
+                  data-cancel-kind="never_paid_trial"
+                  className="flex items-center gap-3 px-5 py-3 border-t border-line bg-amber-bg/40 text-xs"
+                >
+                  <Icon name="upload" size={13} className="text-amber-deep shrink-0" />
+                  <span className="flex-1 text-ink-2" data-testid="cancelling-headline">
+                    {cancelledCompactLine(cancelCopy, formatDate)}
+                  </span>
+                </div>
+              ) : (
+                periodLine && !noCardTrial && (
+                  <div
+                    className="flex items-center gap-3 px-5 py-3 border-t border-line bg-paper-2 text-xs"
+                    data-testid={cancelCopy?.kind === 'paid_cancelling' ? 'cancelling-card' : undefined}
+                    data-cancel-kind={cancelCopy?.kind}
+                  >
                     <Icon name="clock" size={13} className="text-ink-3 shrink-0" />
-                    <span className="flex-1 text-ink-2">
-                      Renews <strong className="font-mono text-ink">{formatDate(sub.current_period_end)}</strong>
-                      {paymentMethod?.brand && (
+                    <span className="flex-1 text-ink-2" data-testid={cancelCopy?.kind === 'paid_cancelling' ? 'cancelling-headline' : undefined}>
+                      {periodLine.label} <strong className="font-mono text-ink">{trialDateLabel(periodLine.dateIso)}</strong>
+                      {periodLine.label === 'Renews' && paymentMethod?.brand && (
                         <> via <span className="text-ink">{paymentMethod.brand}</span></>
+                      )}
+                      {/* Task 1037/1604 — a cancelling row already marked for
+                          deletion surfaces that alongside "Access until", not
+                          in place of it: the two dates can differ. */}
+                      {periodLine.extra && (
+                        <>
+                          {' · '}
+                          {periodLine.extra.text}{' '}
+                          <strong className="font-mono text-ink">{formatDate(periodLine.extra.dateIso)}</strong>
+                        </>
                       )}
                     </span>
                     {currentExtraTB > 0 && (
                       <span className="font-mono text-ink-4">incl. add-on storage</span>
                     )}
                   </div>
-                )}
+                )
+              )}
+
+              {/* Task 1605 — active mandated trial, still under the 25 GB
+                  cap. Guus, 2026-09-29: "we need to make sure the user is
+                  not limited to 25gb for 2 weeks" — pay now ends the trial
+                  early and unlocks the full plan quota. */}
+              {trialCapped && !noCardTrial && sub?.trial_storage_cap_bytes != null && (
+                <div data-testid="trial-cap-card" className="flex items-center gap-3 px-5 py-3 border-t border-line bg-paper-2 text-xs">
+                  <Icon name="lock" size={13} className="text-ink-3 shrink-0" />
+                  <span className="flex-1 text-ink-2" data-testid="trial-cap-explainer">
+                    {trialCapExplainer(meta.label, sub.trial_storage_cap_bytes, formatStorageSI)}
+                  </span>
+                  {!heldUntil && (
+                    <BBButton
+                      size="sm"
+                      variant="amber"
+                      data-testid="pay-now-button"
+                      onClick={() => void handlePayNow()}
+                      disabled={payNowState.phase === 'submitting' || payNowState.phase === 'pending'}
+                    >
+                      {payNowState.phase === 'submitting' || payNowState.phase === 'pending'
+                        ? 'Processing…'
+                        : payNowButtonLabel(meta.label)}
+                    </BBButton>
+                  )}
+                </div>
+              )}
+              {trialCapped && !heldUntil && payNowState.phase === 'pending' && (
+                <div data-testid="pay-now-pending" className="px-5 py-2 border-t border-line bg-paper-2 text-xs text-amber-deep">
+                  {payNowState.message}
+                </div>
+              )}
+              {trialCapped && !heldUntil && payNowState.phase === 'error' && (
+                <div data-testid="pay-now-error" className="px-5 py-2 border-t border-line bg-paper-2 text-xs text-red">
+                  {payNowState.message}
+                </div>
+              )}
             </Card>
+
+            {/* Task 1814: redeem a coupon link or code. Only for an account that holds no plan
+                (the server refuses one that does, so the card is not offered there). */}
+            {(hasNoPlan || effectivePlan === 'free') && <CouponCard />}
 
             {/* Payment Method card (#7) — restyled. Binds ONLY to real
                 PaymentMethod fields (type/brand/last4/iban_last4/is_default);
@@ -2052,6 +2857,14 @@ function openUpgrade(plan: string) {
               }
             />
 
+            {/* Credit notes (task 1899) — only when there are any. */}
+            <CreditNoteList
+              creditNotes={creditNotes}
+              onError={(message) =>
+                showToast({ icon: 'download', title: 'Could not download credit note', description: message, danger: true })
+              }
+            />
+
             {/* Compliance footer line (#7) */}
             <div className="flex items-center gap-2.5 px-1 pt-1 text-[11.5px] text-ink-3">
               <Icon name="shield" size={13} className="text-ink-4 shrink-0" />
@@ -2077,13 +2890,68 @@ function openUpgrade(plan: string) {
           Back to billing
         </button>
 
+        {/* ── Plan picked before signup (flow-4 money flow) ── */}
+        {showPlanIntent && planIntent && (
+          <div
+            data-testid="plan-intent-card"
+            className="border border-amber/30 bg-amber-bg/30 rounded-xl p-5"
+          >
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep mb-1">
+              The plan you picked
+            </div>
+            <div className="flex items-baseline gap-3 mb-2">
+              <span className="text-[22px] font-bold tracking-tight leading-none">
+                {planMeta[planIntent.plan].label}
+              </span>
+              <BBChip variant={planIntent.cycle === 'yearly' ? 'amber' : undefined}>
+                {planIntent.cycle === 'yearly' ? 'Billed yearly' : 'Billed monthly'}
+              </BBChip>
+            </div>
+            {planIntentTrialEligible ? (
+              <p className="text-sm text-ink-2 mb-4">
+                {trialTermsLine(14, { noCardOffered: trialOffer?.kind === 'available' })}
+              </p>
+            ) : (
+              <p className="text-sm text-ink-2 mb-4">
+                This account has already used its free trial, so {planMeta[planIntent.plan].label}{' '}
+                starts with checkout.
+              </p>
+            )}
+            {planIntentTrialEligible ? (
+              <BBButton
+                variant="amber"
+                size="md"
+                onClick={() => handleStartTrial(planIntent.plan, planIntent.cycle)}
+              >
+                {`Start 14-day ${planMeta[planIntent.plan].label} trial`}
+              </BBButton>
+            ) : (
+              <BBButton variant="amber" size="md" onClick={() => openUpgrade(planIntent.plan)}>
+                Continue to checkout
+              </BBButton>
+            )}
+          </div>
+        )}
+
         {/* ── Plan summary ──────────────────────────── */}
         <div className="grid gap-4">
 
+          {/* Task 1604 (c): a trial cancelled before its first charge (server
+              #128) has no cycle to switch — replaces whichever switch-cycle
+              prompt would otherwise have shown below. */}
+          {isCancelledTrial(sub) && (
+            <div className="border border-line rounded-xl p-5 bg-paper-2 text-sm text-ink-2">
+              {trialCancelledSwitchNote()}
+            </div>
+          )}
+
           {/* Annual savings prompt — shown to monthly paid subscribers. Moved ABOVE
               the Current plan card (task 0942) to match mockup #8's order:
-              savings banner → current plan → switch plan → manage storage → cancel. */}
-          {sub?.billing_cycle === 'monthly' && effectivePlan !== 'free' && (
+              savings banner → current plan → switch plan → manage storage → cancel.
+              Task 1604 (c): a trial cancelled before its first charge has no
+              cycle left to switch — the prompt (and its switch UI) is not
+              offered at all for that row. */}
+          {sub?.billing_cycle === 'monthly' && effectivePlan !== 'free' && !isCancelledTrial(sub) && !noCardTrial && (
             <div className="border border-amber/30 bg-amber-bg/30 rounded-xl p-5">
               <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep mb-1">
                 Save on your plan
@@ -2113,11 +2981,22 @@ function openUpgrade(plan: string) {
                       That is EUR {(currentPriceYearly / 12).toFixed(2)}/mo instead of EUR {currentPriceMonthly.toFixed(2)}/mo.
                     </div>
                   </div>
-                  <p className="text-xs text-ink-3">
-                    Annual billing starts on{' '}
-                    <strong className="font-mono">{formatDate(sub?.current_period_end ?? null)}</strong>.
-                    Your current monthly period stays active until then — no double charge.
-                  </p>
+                  {isTrialing(sub?.status) ? (
+                    <p className="text-xs text-ink-3" data-testid="cycle-switch-trial-note">
+                      {trialCycleSwitchNoteFor(
+                        sub,
+                        'yearly',
+                        trialDateLabel(sub?.trial_ends_at ?? sub?.current_period_end ?? null),
+                        targetCycleTotalLabel('yearly'),
+                      )}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-ink-3">
+                      Annual billing starts on{' '}
+                      <strong className="font-mono">{formatDate(sub?.current_period_end ?? null)}</strong>.
+                      Your current monthly period stays active until then — no double charge.
+                    </p>
+                  )}
                   {(sub?.extra_storage_tb ?? 0) > 0 && (
                     <p className="text-xs text-ink-3">
                       Your storage add-on ({sub!.extra_storage_tb} TB) will also switch to annual billing on the same date.
@@ -2150,7 +3029,7 @@ function openUpgrade(plan: string) {
           )}
 
           {/* Current plan card */}
-          <div className="border border-line rounded-xl p-5 bg-paper relative">
+          <div className="border border-line rounded-xl p-5 bg-paper relative" data-testid="chooser-current-plan-card">
             {/* Plan badge */}
             <div className="flex items-start justify-between mb-4">
               <div>
@@ -2158,17 +3037,23 @@ function openUpgrade(plan: string) {
                   Current plan
                 </div>
                 <div className="flex items-baseline gap-3">
-                  <span className="text-[28px] font-bold tracking-tight leading-none">
-                    {meta.label}
+                  <span className="text-[28px] font-bold tracking-tight leading-none" data-testid="chooser-current-plan-name">
+                    {currentPlanName({ accountStateLabel, hasNoPlan, planLabel: meta.label, noCardTrial: noCardTrial !== null })}
                   </span>
-                  {sub?.billing_cycle === 'yearly' && effectivePlan !== 'free' && (
+                  {sub?.billing_cycle === 'yearly' && effectivePlan !== 'free' && !noCardTrial && (
                     <BBChip variant="amber">Yearly</BBChip>
                   )}
-                  {sub?.billing_cycle === 'monthly' && effectivePlan !== 'free' && (
+                  {sub?.billing_cycle === 'monthly' && effectivePlan !== 'free' && !noCardTrial && (
                     <BBChip>Monthly</BBChip>
                   )}
                 </div>
-                {effectivePlan !== 'free' && (
+                {accountState === 'needs_plan' && accountStateLabel === 'allowance' && (
+                  <div className="mt-1.5 text-[13px] text-ink-3" data-testid="chooser-allowance-line">
+                    {ALLOWANCE_LINE}
+                  </div>
+                )}
+                {noCardTrial && <NoCardTrialPlanLines status={noCardTrial} testIdPrefix="chooser-current-plan" />}
+                {effectivePlan !== 'free' && !noCardTrial && (
                   <div className="mt-1.5 space-y-0.5">
                     {currentExtraTB > 0 ? (
                       <>
@@ -2187,7 +3072,7 @@ function openUpgrade(plan: string) {
                   </div>
                 )}
               </div>
-              {statusBadge()}
+              {!noCardTrial && statusBadge()}
             </div>
 
             {/* Storage usage */}
@@ -2207,19 +3092,22 @@ function openUpgrade(plan: string) {
               <AnimatedProgress percent={usedPercent} />
               {usedPercent > 90 && (
                 <div className="text-[11px] text-red mt-1.5">
-                  {canAddStorage
+                  {noCardTrial
+                    ? 'Your trial is almost full. Choose a plan to store more.'
+                    : canAddStorage
                     ? 'Storage almost full. Add more storage below.'
                     : 'Storage almost full. Consider upgrading your plan.'}
                 </div>
               )}
             </div>
 
-            {/* Next billing / cancels on */}
-            {sub?.current_period_end && effectivePlan !== 'free' && sub.status !== 'cancelling' && sub.status !== 'paused' && (
+            {/* Next billing / trial ends (flow-money #5). Cancelling is
+                excluded here: the cancelling panel below owns that date. */}
+            {periodLine && !noCardTrial && periodLine.label !== 'Access until' && (
               <div className="flex items-center gap-3 p-3 bg-paper-2 border border-line rounded-lg text-xs">
                 <Icon name="clock" size={13} className="text-ink-3 shrink-0" />
                 <span className="flex-1">
-                  Renews <strong>{formatDate(sub.current_period_end)}</strong>
+                  {periodLine.label} <strong>{trialDateLabel(periodLine.dateIso)}</strong>
                 </span>
               </div>
             )}
@@ -2257,43 +3145,94 @@ function openUpgrade(plan: string) {
               </div>
             )}
 
-            {/* Cancelling state — prominent remaining period display */}
-            {sub?.current_period_end && sub.status === 'cancelling' && (
-              <div className="rounded-lg border border-amber/40 bg-amber-bg/40 p-4 space-y-3">
+            {/* Cancelling state — task 1605: server-driven copy from
+                uploads_blocked_at / access_until / data_deletion_at, in place
+                of the previous hardcoded "stays fully active until
+                <current_period_end>" / "permanently deleted on
+                <current_period_end>" text. That copy was wrong on two counts
+                (task 1605 Notes, 1604 gate-9 screenshot): it claimed a
+                deletion date that BB_CANCEL_WIPE_ENABLED-off prod never
+                enforces, and — Guus's 2026-09-29 ruling — it is flatly untrue
+                for a never-paid trial cancelled before its first charge,
+                which loses UPLOAD access immediately, not at period end. */}
+            {cancelCopy && (
+              <div
+                data-testid="cancelling-card"
+                data-cancel-kind={cancelCopy.kind}
+                className="rounded-lg border border-amber/40 bg-amber-bg/40 p-4 space-y-3"
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 space-y-1.5">
                     <div className="flex items-center gap-2">
-                      <Icon name="clock" size={14} className="text-amber-deep shrink-0" />
-                      <span className="text-sm font-semibold text-ink">
-                        {formatRemainingTime(sub.current_period_end) ?? 'Expires soon'}
+                      <Icon name={cancelCopy.uploadsBlockedNow ? 'upload' : 'clock'} size={14} className="text-amber-deep shrink-0" />
+                      <span className="text-sm font-semibold text-ink" data-testid="cancelling-headline">
+                        {cancelCopy.kind === 'never_paid_trial'
+                          ? cancelledCompactLine(cancelCopy, formatDate)
+                          : (formatRemainingTime(cancelCopy.accessUntilIso) ?? 'Expires soon')}
                       </span>
                     </div>
-                    <p className="text-xs text-ink-2 leading-relaxed">
-                      Your {meta.label} plan stays fully active until{' '}
-                      <strong className="font-mono">{formatDate(sub.current_period_end)}</strong>.
-                      {sub.billing_cycle === 'yearly' && remainingDays(sub.current_period_end) > 30 && (
-                        <> You have pre-paid for the full year.</>
-                      )}
-                    </p>
-                    {/* WP-B (task 1060): the true wipe model — at period-end the
-                        account closes and ALL files are permanently deleted. The
-                        remaining paid period IS the download window. Honest, calm,
-                        no "drops to Free" (Free is admin-only). */}
-                    <p className="text-xs text-ink-2 leading-relaxed">
-                      Your files will be permanently deleted on{' '}
-                      <strong className="font-mono text-ink">{formatDate(sub.current_period_end)}</strong>
-                      {(() => {
-                        const left = remainingDays(sub.current_period_end)
-                        return left > 0 ? (
-                          <> (<span className="font-mono">{left} day{left !== 1 ? 's' : ''}</span> left)</>
-                        ) : null
-                      })()}
-                      . Download them first — the{' '}
-                      <span className="font-mono">bb</span> CLI or the desktop app can pull your whole vault.
-                    </p>
-                    <p className="text-xs text-ink-3 leading-relaxed">
-                      We can&apos;t recover this. Reactivate any time before then to keep everything.
-                    </p>
+
+                    {cancelCopy.kind === 'never_paid_trial' ? (
+                      <>
+                        <p className="text-xs text-ink-2 leading-relaxed">
+                          You cancelled your trial before its first payment, so
+                          uploads and new shares are off.{' '}
+                          {neverPaidViewDownloadSentence(cancelCopy, formatDate)}
+                        </p>
+                        {cancelCopy.deletionIso && (
+                          <p className="text-xs text-ink-2 leading-relaxed">
+                            Files deleted on{' '}
+                            <strong className="font-mono text-ink">{formatDate(cancelCopy.deletionIso)}</strong>.
+                            Download them first — the{' '}
+                            <span className="font-mono">bb</span> CLI or the desktop app can pull your whole vault.
+                          </p>
+                        )}
+                        <p className="text-xs text-ink-3 leading-relaxed">
+                          We can&apos;t recover this after that date. Resume your trial to upload again.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-xs text-ink-2 leading-relaxed">
+                          Your {meta.label} plan stays fully active until{' '}
+                          {cancelCopy.accessUntilIso ? (
+                            <strong className="font-mono">{formatDate(cancelCopy.accessUntilIso)}</strong>
+                          ) : (
+                            '—'
+                          )}
+                          .
+                          {sub?.billing_cycle === 'yearly' &&
+                            cancelCopy.accessUntilIso &&
+                            remainingDays(cancelCopy.accessUntilIso) > 30 && <> You have pre-paid for the full year.</>}
+                        </p>
+                        {/* WP-B (task 1060): the true wipe model. Task 1605: only
+                            claim a deletion date the server has actually
+                            computed — data_deletion_at, never a blind reuse of
+                            the access date. */}
+                        {cancelCopy.deletionIso ? (
+                          <p className="text-xs text-ink-2 leading-relaxed">
+                            Your files will be permanently deleted on{' '}
+                            <strong className="font-mono text-ink">{formatDate(cancelCopy.deletionIso)}</strong>
+                            {(() => {
+                              const left = remainingDays(cancelCopy.deletionIso)
+                              return left > 0 ? (
+                                <> (<span className="font-mono">{left} day{left !== 1 ? 's' : ''}</span> left)</>
+                              ) : null
+                            })()}
+                            . Download them first — the{' '}
+                            <span className="font-mono">bb</span> CLI or the desktop app can pull your whole vault.
+                          </p>
+                        ) : (
+                          <p className="text-xs text-ink-2 leading-relaxed">
+                            Download your files before then — the{' '}
+                            <span className="font-mono">bb</span> CLI or the desktop app can pull your whole vault.
+                          </p>
+                        )}
+                        <p className="text-xs text-ink-3 leading-relaxed">
+                          We can&apos;t recover this. Reactivate any time before then to keep everything.
+                        </p>
+                      </>
+                    )}
                   </div>
                   <BBButton
                     size="sm"
@@ -2303,6 +3242,52 @@ function openUpgrade(plan: string) {
                   >
                     {reactivateLoading ? 'Reactivating...' : 'Reactivate'}
                   </BBButton>
+                </div>
+              </div>
+            )}
+
+            {/* Task 1605 — active mandated trial, still under the 25 GB cap
+                (server clears trial_storage_cap_bytes after the first
+                successful charge). Guus, 2026-09-29: "we need to make sure
+                the user is not limited to 25gb for 2 weeks" — pay now ends
+                the trial early and unlocks the full plan quota. */}
+            {trialCapped && !noCardTrial && sub?.trial_storage_cap_bytes != null && (
+              <div data-testid="trial-cap-card" className="rounded-lg border border-line-2 bg-paper-2 p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <Icon name="lock" size={14} className="text-ink-3 shrink-0" />
+                      <span className="text-sm font-semibold text-ink">Trial storage cap</span>
+                    </div>
+                    <p className="text-xs text-ink-2 leading-relaxed" data-testid="trial-cap-explainer">
+                      {trialCapExplainer(meta.label, sub.trial_storage_cap_bytes, formatStorageSI)}
+                    </p>
+                    {!heldUntil && payNowState.phase === 'pending' && (
+                      <p className="text-xs text-amber-deep leading-relaxed" data-testid="pay-now-pending">
+                        {payNowState.message}
+                      </p>
+                    )}
+                    {!heldUntil && payNowState.phase === 'error' && (
+                      <p className="text-xs text-red leading-relaxed" data-testid="pay-now-error">
+                        {payNowState.message}
+                      </p>
+                    )}
+                  </div>
+                  {!heldUntil && (
+                    <BBButton
+                      size="sm"
+                      variant="amber"
+                      data-testid="pay-now-button"
+                      onClick={() => void handlePayNow()}
+                      disabled={payNowState.phase === 'submitting' || payNowState.phase === 'pending'}
+                    >
+                      {payNowState.phase === 'submitting'
+                        ? 'Processing…'
+                        : payNowState.phase === 'pending'
+                          ? 'Processing…'
+                          : payNowButtonLabel(meta.label)}
+                    </BBButton>
+                  )}
                 </div>
               </div>
             )}
@@ -2368,17 +3353,15 @@ function openUpgrade(plan: string) {
                     <BBButton
                       variant="amber"
                       size="md"
-                      onClick={() => void handleStartTrial('pro')}
-                      disabled={trialStarting !== null}
+                      onClick={() => handleStartTrial('pro')}
                     >
-                      {trialStarting === 'pro' ? 'Starting trial...' : 'Start 14-day Pro trial'}
+                      Start 14-day Pro trial
                     </BBButton>
                     <BBButton
                       size="md"
-                      onClick={() => void handleStartTrial('basic')}
-                      disabled={trialStarting !== null}
+                      onClick={() => handleStartTrial('basic')}
                     >
-                      {trialStarting === 'basic' ? 'Starting trial...' : 'Start 14-day Basic trial'}
+                      Start 14-day Basic trial
                     </BBButton>
                   </>
                 ) : (
@@ -2398,6 +3381,28 @@ function openUpgrade(plan: string) {
                     </BBButton>
                   </>
                 )
+              ) : sub?.status === 'trialing' && sub.trial_auto_converts === true ? (
+                /* Task 1037 — a trial started with a mandate converts on its
+                   own; nothing to add. The trial panel above carries the
+                   charge date + amount and the cancel action. */
+                null
+              ) : sub?.status === 'trialing' && noCardTrial ? (
+                /* Task 1757 — a trial without a card has no mandate to charge ("pay now") and
+                   nothing to convert (server 409 trial_convert_unavailable): it subscribes at
+                   checkout, like anyone else, and the first charge lifts the cap.
+                   Task 1842 — it is not a Pro subscription either, so the action is "Choose a
+                   plan", which takes the user to the plan table below, never "Subscribe to Pro". */
+                <BBButton
+                  variant="amber"
+                  size="md"
+                  onClick={() =>
+                    document.querySelector('[data-testid="plan-comparison"]')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                  }
+                  data-testid="chooser-choose-plan"
+                >
+                  Choose a plan
+                  <Icon name="chevron-right" size={13} className="ml-1.5" />
+                </BBButton>
               ) : sub?.status === 'trialing' ? (
                 /* Trialing on a paid plan (task 0905). The user has no Mollie
                    customer yet, so "Manage billing" would dead-end — the primary
@@ -2434,50 +3439,18 @@ function openUpgrade(plan: string) {
                 so an account that already used its trial never sees this. */}
             {effectivePlan === 'free' && sub?.status !== 'trialing' && !hasUsedTrial && (
               <p className="mt-2.5 text-[11.5px] text-ink-3">
-                14 days free. No card required. Cancel anytime — you keep your files.
+                {trialTermsLine(14, { noCardOffered: trialOffer?.kind === 'available' })}
               </p>
             )}
 
             {/* Cancel plan — paid plans only, not already cancelling or paused.
-                Four steps (task 0544 added 'pause'):
+                Three steps (task 0544 added 'pause'):
                   idle    → "Cancel plan" link
-                  offer   → win-back 50%-off-3-months card (only when eligible)
                   pause   → "Pause instead?" card with 30/60/90-day options
                   confirm → existing cancel-confirmation panel
             */}
             {effectivePlan !== 'free' && sub?.status !== 'cancelling' && sub?.status !== 'paused' && sub?.status !== 'trialing' && (
-              cancelStep === 'offer' ? (
-                <div className="mt-3 p-3.5 bg-amber-bg/40 border border-amber/30 rounded-lg space-y-4">
-                  <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-deep">
-                    Before you go
-                  </div>
-                  <div className="text-sm text-ink">
-                    Wait — stay with us. Get 50% off for the next 3 months.
-                  </div>
-                  <p className="text-xs text-ink-3">
-                    One-time offer, applied to your next invoice. If it still
-                    isn&apos;t the right fit after that, you can cancel any
-                    time.
-                  </p>
-                  <div className="flex gap-2">
-                    <BBButton
-                      size="sm"
-                      onClick={() => void handleAcceptWinback()}
-                      disabled={winbackAcceptLoading}
-                    >
-                      {winbackAcceptLoading ? 'Applying...' : 'Accept offer'}
-                    </BBButton>
-                    <BBButton
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => setCancelStep(pauseSupported ? 'pause' : 'confirm')}
-                      disabled={winbackAcceptLoading}
-                    >
-                      No thanks
-                    </BBButton>
-                  </div>
-                </div>
-              ) : cancelStep === 'pause' && pauseSupported ? (
+              cancelStep === 'pause' && pauseSupported ? (
                 <div className="mt-3 p-3.5 bg-paper-2 border border-line rounded-lg space-y-4">
                   <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">
                     Pause instead?
@@ -2637,14 +3610,8 @@ function openUpgrade(plan: string) {
                   <button
                     className="text-[11.5px] text-ink-4 hover:text-red transition-colors disabled:opacity-50"
                     onClick={() => void startCancelFlow()}
-                    disabled={winbackStartingLoading}
                   >
-                    {/* Task 1064 (D7): "Cancel plan..." read as if cancelling
-                        were already in flight — it's just the win-back
-                        eligibility check that runs before the offer/pause/
-                        confirm panel opens. "Checking..." names what's
-                        actually happening. */}
-                    {winbackStartingLoading ? 'Checking...' : 'Cancel plan'}
+Cancel plan
                   </button>
                 </div>
               )
@@ -2652,7 +3619,7 @@ function openUpgrade(plan: string) {
           </div>
 
           {/* Monthly switch prompt — shown to yearly paid subscribers */}
-          {sub?.billing_cycle === 'yearly' && effectivePlan !== 'free' && sub.status !== 'cancelling' && (
+          {sub?.billing_cycle === 'yearly' && effectivePlan !== 'free' && sub.status !== 'cancelling' && !noCardTrial && (
             <div className="border border-line rounded-xl p-5 bg-paper">
               <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-4 mb-1">
                 Billing cycle
@@ -2683,11 +3650,22 @@ function openUpgrade(plan: string) {
                       Annual cost: EUR {(currentPriceMonthly * 12).toFixed(2)}/yr instead of EUR {currentPriceYearly.toFixed(2)}/yr.
                     </div>
                   </div>
-                  <p className="text-xs text-ink-3">
-                    The change takes effect at the start of your next billing period.
-                    Your current annual period remains active until{' '}
-                    <strong className="font-mono">{formatDate(sub.current_period_end ?? null)}</strong>.
-                  </p>
+                  {isTrialing(sub.status) ? (
+                    <p className="text-xs text-ink-3" data-testid="cycle-switch-trial-note">
+                      {trialCycleSwitchNoteFor(
+                        sub,
+                        'monthly',
+                        trialDateLabel(sub.trial_ends_at ?? sub.current_period_end ?? null),
+                        targetCycleTotalLabel('monthly'),
+                      )}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-ink-3">
+                      The change takes effect at the start of your next billing period.
+                      Your current annual period remains active until{' '}
+                      <strong className="font-mono">{formatDate(sub.current_period_end ?? null)}</strong>.
+                    </p>
+                  )}
                   <div className="flex gap-2">
                     <BBButton
                       size="sm"
@@ -2727,19 +3705,22 @@ function openUpgrade(plan: string) {
         <Card className="overflow-hidden">
           <div className="px-5 py-4 border-b border-line">
             <SectionLabel className="mb-1">Compare plans</SectionLabel>
-            <div className="text-sm text-ink-2">
-              {effectivePlan === 'free'
+            <div className="text-sm text-ink-2" data-testid="compare-plans-copy">
+              {effectivePlan === 'free' || noCardTrial
                 ? 'All paid plans include encrypted storage, photo library, and EU data residency.'
                 : 'Move to a different tier. Upgrades apply immediately; downgrades apply at your next renewal.'}
             </div>
           </div>
           <div className="p-5">
             <PlanComparisonTable
-              currentPlan={effectivePlan}
-              onUpgrade={handleUpgradeOrTrial}
+              // Task 1842: a no-card trial holds no plan, so no column is "Current", nothing is a
+              // downgrade, and the upgrade rate limit (a subscription rule) does not apply.
+              currentPlan={noCardTrial ? 'none' : effectivePlan}
+              onUpgrade={noCardTrial ? openUpgrade : handleUpgradeOrTrial}
               onDowngrade={openDowngrade}
-              canUpgrade={sub?.can_upgrade}
-              upgradeNextAvailableLabel={upgradeNextAvailableLabel}
+              canUpgrade={noCardTrial ? undefined : sub?.can_upgrade}
+              upgradeNextAvailableLabel={noCardTrial ? null : upgradeNextAvailableLabel}
+              ctaLabel={noCardTrial ? 'Choose' : undefined}
             />
           </div>
         </Card>
@@ -2838,14 +3819,14 @@ function openUpgrade(plan: string) {
             <StorageBreakdown
               usageBytes={usedBytes}
               quotaBytes={totalStorageBytes}
-              planName={effectivePlan}
+              planName={noCardTrial ? 'trial' : effectivePlan}
               files={files ?? undefined}
             />
           </div>
         )}
 
         {/* ── Manage Storage slider ───────────────────── */}
-        {canAddStorage && effectivePlan !== 'free' && (
+        {canAddStorage && effectivePlan !== 'free' && !noCardTrial && (
           <div className="border border-line rounded-xl overflow-hidden bg-paper">
             <div className="px-5 py-4 border-b border-line">
               <div className="text-[11px] font-semibold uppercase tracking-wider text-ink-4 mb-1">
@@ -2860,10 +3841,21 @@ function openUpgrade(plan: string) {
               <div className="flex items-baseline justify-between">
                 <span className="text-[13px] text-ink-2">Current total</span>
                 <span className="font-mono text-sm font-semibold text-ink">
-                  {formatStorageSI((baseTB + currentExtraTB) * 1_000_000_000_000)}
-                  {currentExtraTB > 0 && (
+                  {formatStorageSI(currentTotalStorageBytes)}
+                  {/* Task 1706 review #132-B — the parenthetical must reconcile
+                      with the displayed total: a bonus-inclusive server total is
+                      larger than base+extra, so the unexplained remainder is
+                      rendered as a neutral "additional storage" term (no web
+                      payload exposes a bonus-specific field), and when the parts
+                      exceed the total the parenthetical is omitted instead of
+                      contradicting the number next to it. */}
+                  {currentAllocation.show && (
                     <span className="text-ink-3 font-normal ml-1.5">
-                      ({formatStorageSI(baseTB * 1_000_000_000_000)} base + {formatStorageSI(currentExtraTB * 1_000_000_000_000)} extra)
+                      ({formatStorageSI(currentAllocation.baseBytes)} base
+                      {currentAllocation.extraBytes != null && ` + ${formatStorageSI(currentAllocation.extraBytes)} extra`}
+                      {currentAllocation.remainderBytes != null &&
+                        ` + ${formatStorageSI(currentAllocation.remainderBytes)} additional storage`}
+                      )
                     </span>
                   )}
                 </span>
@@ -2916,7 +3908,7 @@ function openUpgrade(plan: string) {
                   </div>
                   {sliderTB > currentExtraTB && (
                     <div className="text-[11px] text-ink-3 mt-1 font-mono">
-                      +{sliderTB - currentExtraTB} TB x EUR {formatCentsAsEur(addonState?.storage_addon_price_cents ?? (planMonthlyCostCents(effectivePlan, 1) - planMonthlyCostCents(effectivePlan, 0)))}/TB
+                      +{sliderTB - currentExtraTB} TB x EUR {formatCentsAsEur(addonState?.storage_addon_price_cents ?? addonRateCents)}/TB
                     </div>
                   )}
                   {sliderTB < currentExtraTB && (
@@ -3239,19 +4231,39 @@ function openUpgrade(plan: string) {
       )}
 
       {/* Upgrade dialog */}
-      <UpgradeDialog
-        planId={upgradePlan}
-        planName={upgradePlanDetails?.label ?? 'Pro'}
-        pricePerSeat={upgradePlanDetails?.priceMonthly ?? 39.95}
-        priceYearlySeat={upgradePlanDetails?.priceYearly ?? 383.52}
-        open={upgradeOpen}
-        onClose={() => setUpgradeOpen(false)}
-        onBeforeRedirect={(plan, cycle, paymentId) => setPendingCheckout('plan', plan, cycle, makePreState(sub), paymentId)}
-        onSuccess={() => {
-          void loadData()
-          window.dispatchEvent(new Event('beebeeb:plan-changed'))
-        }}
-      />
+      {/* Task 1701 — rendered only when a real plan card resolves (API row or
+          plan-constants). The old `?? 39.95` / `?? 383.52` literals were an
+          unreachable-in-practice fallback that would have shown a made-up
+          price for a plan that resolved to nothing. */}
+      {upgradePlanDetails && (
+        <UpgradeDialog
+          planId={upgradePlan}
+          planName={upgradePlanDetails.label}
+          pricePerSeat={upgradePlanDetails.priceMonthly}
+          priceYearlySeat={upgradePlanDetails.priceYearly}
+          open={upgradeOpen}
+          onClose={() => setUpgradeOpen(false)}
+          // Task 1707 — the dialog needs to know when its target plan+cycle IS
+          // the user's active subscription (stale plan-intent revisit, racing
+          // state) so it can label the CTA "Current plan" instead of starting a
+          // checkout the server's same-plan guard refuses.
+          activePlanCycle={sub?.status === 'active' ? { plan: sub.plan, cycle: sub.billing_cycle } : null}
+          onBeforeRedirect={(plan, cycle, paymentId) => setPendingCheckout('plan', plan, cycle, makePreState(sub), paymentId)}
+          // Task 1707 review #133-A — the same-plan 409 proves `sub` was stale:
+          // reload the billing page's subscription state (and the shared plan
+          // details via the plan-changed signal) before the dialog closes, so
+          // the obsolete snapshot stops re-offering the purchase. Distinct from
+          // onSuccess, which stays reserved for real completions.
+          onStaleSnapshot={() => {
+            void loadData()
+            window.dispatchEvent(new Event('beebeeb:plan-changed'))
+          }}
+          onSuccess={() => {
+            void loadData()
+            window.dispatchEvent(new Event('beebeeb:plan-changed'))
+          }}
+        />
+      )}
 
       {/* Downgrade dialog */}
       {downgradeTarget && (

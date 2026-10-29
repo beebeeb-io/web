@@ -48,6 +48,18 @@ describe('sanitizeRedirect', () => {
     expect(sanitizeRedirect('/settings/privacy')).toBe('/settings/privacy')
   })
 
+  // /settings/billing is allowlisted (task 1743) so the public return-to-app page's
+  // Billing link survives a sign-in bounce instead of dropping the person on the Drive root.
+  test('accepts /settings/billing exactly, and nothing that merely starts with it', () => {
+    expect(sanitizeRedirect('/settings/billing')).toBe('/settings/billing')
+    // Round 3: the query is stripped, so a forged ?success=true / ?upgraded=true cannot ride along.
+    expect(sanitizeRedirect('/settings/billing?upgraded=true')).toBe('/settings/billing')
+    expect(sanitizeRedirect('/settings/billing/')).toBeNull()
+    expect(sanitizeRedirect('/settings/billing/../admin')).toBeNull()
+    expect(sanitizeRedirect('/settings/billing-evil')).toBeNull()
+    expect(sanitizeRedirect('//evil.com/settings/billing')).toBeNull()
+  })
+
   // "/" is allowlisted (task 0839) so a copied deep-link `/?folder=<id>` survives
   // the login bounce and lands back at the exact vault location. It is our own
   // same-origin root and the match is still EXACT, so it is not an open redirect.

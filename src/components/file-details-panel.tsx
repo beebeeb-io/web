@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { Icon } from '@beebeeb/shared'
 import type { IconName } from '@beebeeb/shared'
-import type { FileVersion } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
 import { formatBytes } from '../lib/format'
-import { listVersions, updateFile } from '../lib/api'
+import { listVersions, updateFile, type VersionListItem } from '../lib/api'
+import { canDeleteVersion, versionContentBytes, versionDeleteCopy } from '../lib/version-delete-copy'
+import { useVersionDelete, VersionDeleteConfirm } from './version-delete'
 import { useKeys } from '../lib/key-context'
 import { fetchAndDecryptThumbnail } from '../lib/thumbnail'
 import { isPreviewable } from '../lib/preview'
-import { encryptFilename, decryptFilename, parseEncryptedBlob, serializeEncryptedBlob } from '../lib/crypto'
+import { openFileNote, sealFileNote, UNVERIFIED_NOTE_OWNER_COPY } from '../lib/file-note'
+import { UnverifiedFileMetadataError } from '../lib/crypto'
 
 // ─── Versions tab (inline, inside the detail panel) ─────────────────────────
 
@@ -30,10 +32,16 @@ function VersionsTab({
   fileId: string
   onOpenFullHistory?: () => void
 }) {
-  const [versions, setVersions] = useState<FileVersion[]>([])
+  const [versions, setVersions] = useState<VersionListItem[]>([])
   const [currentVersion, setCurrentVersion] = useState(1)
+  const [countsTowardQuota, setCountsTowardQuota] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(false)
+  const removeVersion = useCallback(
+    (versionId: string) => setVersions((prev) => prev.filter((v) => v.id !== versionId)),
+    [],
+  )
+  const del = useVersionDelete(fileId, countsTowardQuota, removeVersion)
 
   useEffect(() => {
     if (!fileId) return
@@ -43,6 +51,7 @@ function VersionsTab({
       .then((data) => {
         setVersions(data.versions)
         setCurrentVersion(data.current_version)
+        setCountsTowardQuota(data.versions_count_toward_quota === true)
       })
       .catch(() => setError(true))
       .finally(() => setLoading(false))
@@ -89,10 +98,13 @@ function VersionsTab({
         />
 
         {versions.map((v) => {
-          const isCurrent = v.version_number === currentVersion
+          const isCurrent = v.is_current ?? v.version_number === currentVersion
+          const deletable = !isCurrent && canDeleteVersion(v, currentVersion)
+          const contentBytes = versionContentBytes(v)
           return (
             <div
               key={v.id}
+              data-testid={`version-row-${v.version_number}`}
               className="relative flex items-start gap-3 px-xl py-2.5"
             >
               {/* Timeline dot */}
@@ -118,18 +130,42 @@ function VersionsTab({
                     </span>
                   )}
                   <span className="text-[10.5px] text-ink-3 font-mono ml-auto">
-                    {formatBytes(v.size_bytes)}
+                    {formatBytes(contentBytes)}
                   </span>
                 </div>
-                <div className="text-[10.5px] text-ink-4 mt-0.5">
-                  {timeAgoPanel(v.created_at)}
-                  {' · '}
-                  {new Date(v.created_at).toLocaleDateString('en-GB', {
-                    day: 'numeric',
-                    month: 'short',
-                    year: 'numeric',
-                  })}
+                <div className="text-[10.5px] text-ink-4 mt-0.5 flex items-center gap-1">
+                  <span>
+                    {timeAgoPanel(v.created_at)}
+                    {' · '}
+                    {new Date(v.created_at).toLocaleDateString('en-GB', {
+                      day: 'numeric',
+                      month: 'short',
+                      year: 'numeric',
+                    })}
+                  </span>
+                  {deletable && del.pendingId !== v.id && (
+                    <button
+                      type="button"
+                      onClick={() => del.request(v.id)}
+                      aria-label={`Delete version ${v.version_number}`}
+                      className="ml-auto text-[10.5px] text-red hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-deep rounded-sm"
+                    >
+                      Delete
+                    </button>
+                  )}
                 </div>
+                {deletable && del.pendingId === v.id && (
+                  <VersionDeleteConfirm
+                    copy={versionDeleteCopy({
+                      versionNumber: v.version_number,
+                      contentBytes,
+                      countsTowardQuota,
+                    })}
+                    busy={del.busy}
+                    onConfirm={() => void del.confirm(v)}
+                    onCancel={del.cancel}
+                  />
+                )}
               </div>
             </div>
           )
@@ -157,11 +193,14 @@ function VersionsTab({
 
 function EncryptedNoteSection({
   fileId,
+  nameEncrypted,
   noteEncrypted,
   getFileKey,
   onNoteUpdated,
 }: {
   fileId: string
+  /** The file's current `name_encrypted`: its pin decides how the note is sealed (task 1943). */
+  nameEncrypted: string
   noteEncrypted: string | null | undefined
   getFileKey: (id: string) => Promise<Uint8Array>
   onNoteUpdated?: (fileId: string, noteEncrypted: string | null) => void
@@ -169,19 +208,22 @@ function EncryptedNoteSection({
   const [text, setText] = useState('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [refused, setRefused] = useState(false)
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Decrypt the note on mount / when the file changes
   useEffect(() => {
     setText('')
     setSaved(false)
+    setRefused(false)
     if (!noteEncrypted) return
     let cancelled = false
     getFileKey(fileId)
       .then(async (fileKey) => {
         try {
-          const { nonce, ciphertext } = parseEncryptedBlob(noteEncrypted)
-          const plain = await decryptFilename(fileKey, nonce, ciphertext)
+          // Core's note reader: the note subkey, then the legacy raw key, so
+          // notes stored before task 1943 keep opening.
+          const plain = await openFileNote(fileKey, noteEncrypted)
           if (!cancelled) setText(plain)
         } catch {
           // Decryption failed — leave blank
@@ -201,6 +243,7 @@ function EncryptedNoteSection({
   const handleBlur = useCallback(async () => {
     if (saving) return
     setSaving(true)
+    setRefused(false)
     try {
       if (text.trim() === '') {
         // Send empty string to clear — JSON null is deserialized as "absent"
@@ -209,20 +252,25 @@ function EncryptedNoteSection({
         onNoteUpdated?.(fileId, null)
       } else {
         const fileKey = await getFileKey(fileId)
-        const enc = await encryptFilename(fileKey, text)
-        const stored = serializeEncryptedBlob(enc.nonce, enc.ciphertext)
+        // Sealed by core under the rule of THIS item's recorded pin, read from
+        // its authenticated metadata (files and folders alike: the server's
+        // folder flag never picks the key); an unreadable pin throws and
+        // nothing is written (task 1943, core 1908 round 5).
+        const stored = await sealFileNote(fileKey, text, { nameEncrypted })
         await updateFile(fileId, { note_encrypted: stored })
         onNoteUpdated?.(fileId, stored)
       }
       setSaved(true)
       if (savedTimerRef.current) clearTimeout(savedTimerRef.current)
       savedTimerRef.current = setTimeout(() => setSaved(false), 1500)
-    } catch {
-      // Save failed silently — user can retry by blurring again
+    } catch (err) {
+      // A refused owner is permanent: say so. Anything else (network) fails
+      // silently and the user can retry by blurring again.
+      if (err instanceof UnverifiedFileMetadataError) setRefused(true)
     } finally {
       setSaving(false)
     }
-  }, [fileId, text, saving, getFileKey, onNoteUpdated])
+  }, [fileId, nameEncrypted, text, saving, getFileKey, onNoteUpdated])
 
   return (
     <div className="px-xl pt-lg pb-lg border-b border-line">
@@ -252,6 +300,11 @@ function EncryptedNoteSection({
         <Icon name="lock" size={9} />
         {saving ? 'Saving...' : 'Encrypted · synced across devices'}
       </div>
+      {refused && (
+        <div role="alert" className="mt-1.5 text-[10px] text-red">
+          {UNVERIFIED_NOTE_OWNER_COPY}
+        </div>
+      )}
     </div>
   )
 }
@@ -271,6 +324,8 @@ export interface FileDetailsMeta {
   cipher?: string
   keyId?: string
   region?: string
+  /** The file's (or folder's) current `name_encrypted`; the note writer reads its pin from it. */
+  nameEncrypted: string
   noteEncrypted?: string | null
 }
 
@@ -720,6 +775,7 @@ export function FileDetailsPanel({
               {/* Encrypted note — synced server-side, decrypted with file key */}
               <EncryptedNoteSection
                 fileId={file.id}
+                nameEncrypted={file.nameEncrypted}
                 noteEncrypted={file.noteEncrypted}
                 getFileKey={getFileKey}
                 onNoteUpdated={onNoteUpdated}

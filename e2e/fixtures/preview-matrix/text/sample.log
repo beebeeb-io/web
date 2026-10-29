@@ -1,0 +1,5 @@
+2026-09-26T19:20:00Z INFO  boot sequence started
+2026-09-26T19:20:01Z DEBUG loaded config from /etc/beebeeb/config.toml
+2026-09-26T19:20:02Z WARN  clock skew detected: café naïve 日本語 Ελληνικά Москва
+2026-09-26T19:20:03Z ERROR simulated failure for fixture purposes only — 0123456789 0123456789 0123456789 0123456789 0123456789 0123456789 0123456789 0123456789 0123456789 end-of-long-line
+2026-09-26T19:20:04Z INFO  recovered, continuing

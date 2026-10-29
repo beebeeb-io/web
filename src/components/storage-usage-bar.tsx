@@ -6,7 +6,11 @@
  *   70–90 % → amber
  *   > 90 %  → red + optional warning banner
  *
- * `compact` mode renders the slim sidebar bar (no warning text, thin bar).
+ * `compact` mode renders the slim sidebar bar: thin bar + "X GB / Y GB" +
+ * Manage link, plus at most ONE warning line — "Running low. Upgrade →"
+ * from ≥80%, escalating to "Almost full. Upgrade →" at ≥95% (task 1705:
+ * exactly one bar and at most one warning line in the sidebar; the old
+ * duplicate second bar was removed).
  * Default (full) mode is for settings pages — taller bar + upgrade link.
  */
 
@@ -52,6 +56,11 @@ export function StorageUsageBar({
   const isWarning = pct > 90
   const isAmber   = pct > 70 && pct <= 90
   const color     = barColor(pct)
+  // Compact warning line (sidebar, task 1705): ONE line at ≥80%, wording
+  // escalates at ≥95%. Independent of the bar colour thresholds above, which
+  // stay as they were (amber >70%, red >90%).
+  const showWarning = pct >= 80
+  const isCritical  = pct >= 95
 
   if (compact) {
     // ── Compact (sidebar) ──────────────────────────────────────────────
@@ -71,10 +80,10 @@ export function StorageUsageBar({
             Manage
           </Link>
         </div>
-        {isWarning && (
-          <div className="mt-2 text-[11px] text-red leading-snug">
-            Running low.{' '}
-            <Link to="/settings/billing" className="font-semibold underline underline-offset-2">
+        {showWarning && (
+          <div className={`mt-2 text-[11px] leading-snug ${isCritical ? 'text-red' : 'text-amber-deep'}`}>
+            {isCritical ? 'Almost full. ' : 'Running low. '}
+            <Link to="/billing" className="font-semibold underline underline-offset-2">
               Upgrade →
             </Link>
           </div>

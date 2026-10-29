@@ -1,4 +1,5 @@
 import { describe, expect, test, beforeEach, beforeAll, afterAll, mock } from 'bun:test'
+import { mockModuleScoped } from './helpers/scoped-module-mock'
 
 // task 1436 — the desktop/web half of 1392. The server records
 // `X-Beebeeb-Client` / `X-Beebeeb-Client-Version` on every `object_versions`
@@ -12,13 +13,16 @@ import { describe, expect, test, beforeEach, beforeAll, afterAll, mock } from 'b
 
 // Mock the token module so request() doesn't touch localStorage (mirrors
 // test/rate-limit-retry.test.ts's pattern for the same reason).
-mock.module('../packages/shared/src/api/token', () => ({
+// Task 1590: scoped + complete (real exports spread under the overrides,
+// restored after this file) — a partial token mock broke every later file
+// that imports clearLegacyBearer, and was itself unrunnable alone.
+await mockModuleScoped('../packages/shared/src/api/token', import.meta.dir, {
   getToken: () => null,
   clearToken: () => {},
   setToken: () => {},
   setTokenStorageKey: () => {},
   registerOnTokenCleared: () => {},
-}))
+})
 
 let capturedHeaders: Record<string, string> = {}
 const originalFetch = globalThis.fetch

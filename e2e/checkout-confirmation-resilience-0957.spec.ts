@@ -144,7 +144,8 @@ function installMocks(page: Page, opts: MockOpts = {}) {
       const b64 = Buffer.from(bytes).toString('base64')
         .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
       return json(route, {
-        session_token: 'dev-mock-session', master_key_bytes_base64: b64,
+        session_token: 'dev-mock-session', user_id: AUTH_USER.user_id,
+        master_key_bytes_base64: b64,
         email: 'dev@beebeeb.dev', role: 'user',
       })
     }
@@ -358,7 +359,10 @@ test.describe('0957 checkout-confirmation resilience (spec §3.3 Component C)', 
 
   test('F — pricing.tsx: the plan-purchase button persists a pre-checkout intent before the checkout redirect (task 1469)', async ({ page }) => {
     const CHECKOUT_URL = 'https://checkout.mollie.test/1469-pricing-mock'
-    const counters = await installMocks(page, { subForRequest: () => FREE_SUB })
+    // Task 1037: a trial-ELIGIBLE account's "Start 14-day trial" now goes to
+    // /choose-plan (trial with a payment mandate); the paid checkout this gate
+    // covers is what an account that already used its trial gets.
+    const counters = await installMocks(page, { subForRequest: () => ({ ...FREE_SUB, has_used_trial: true }) })
     await page.route('**/api/v1/billing/checkout', (route) => json(route, { url: CHECKOUT_URL, payment_id: PAYMENT_ID }))
     await page.route(CHECKOUT_URL, (route) =>
       route.fulfill({ status: 200, contentType: 'text/html', body: '<html><body>mock checkout</body></html>' }),

@@ -9,18 +9,23 @@ import { useFocusTrap } from '../hooks/use-focus-trap'
 import { useDriveData } from '../lib/drive-data-context'
 import { decryptVersionToBlob } from '../lib/encrypted-download'
 import { UpgradeNudge } from './upgrade-nudge'
+import { shouldShowVersionHistoryUpsell } from '../lib/version-history-copy'
 import {
   listVersions,
   restoreVersion,
-  deleteVersion,
   type FileVersion,
+  type VersionListItem,
 } from '../lib/api'
+import { canDeleteVersion, versionContentBytes, versionDeleteCopy } from '../lib/version-delete-copy'
+import { useVersionDelete, VersionDeleteConfirm } from './version-delete'
 
 interface VersionHistoryProps {
   open: boolean
   onClose: () => void
   fileId: string
   fileName: string
+  /** The file's current `name_encrypted`: every version is read with the pin it records (task 1943). */
+  nameEncrypted: string
   /** Used to pick the right MIME for the decrypted version blob. */
   mimeType?: string
   onVersionRestored?: () => void
@@ -43,11 +48,13 @@ export function VersionHistory({
   onClose,
   fileId,
   fileName,
+  nameEncrypted,
   mimeType,
   onVersionRestored,
 }: VersionHistoryProps) {
-  const [versions, setVersions] = useState<FileVersion[]>([])
+  const [versions, setVersions] = useState<VersionListItem[]>([])
   const [currentVersion, setCurrentVersion] = useState(1)
+  const [countsTowardQuota, setCountsTowardQuota] = useState(false)
   const [selectedIdx, setSelectedIdx] = useState(0)
   const [loading, setLoading] = useState(false)
   const { showToast } = useToast()
@@ -55,11 +62,12 @@ export function VersionHistory({
   const focusTrapRef = useFocusTrap<HTMLDivElement>(open)
   const navigate = useNavigate()
   const { planDetails } = useDriveData()
-  // Free plan is the only tier that doesn't get retained version history.
-  // Treat "no subscription record yet" as free too — the nudge is harmless
-  // for new accounts and matches what the user sees in the billing page.
-  const planSlug = planDetails.subscription?.plan ?? 'free'
-  const isFree = planSlug === 'free'
+  const planSlug = planDetails.subscription?.plan
+  const removeVersion = useCallback((versionId: string) => {
+    setVersions((prev) => prev.filter((v) => v.id !== versionId))
+    setSelectedIdx(0)
+  }, [])
+  const del = useVersionDelete(fileId, countsTowardQuota, removeVersion)
 
   const fetchVersions = useCallback(async () => {
     if (!fileId) return
@@ -68,6 +76,7 @@ export function VersionHistory({
       const data = await listVersions(fileId)
       setVersions(data.versions)
       setCurrentVersion(data.current_version)
+      setCountsTowardQuota(data.versions_count_toward_quota === true)
     } catch (err) {
       console.error('[VersionHistory] Failed to load versions:', err)
       setVersions([])
@@ -101,6 +110,7 @@ export function VersionHistory({
         fileId,
         version.id,
         fileKey,
+        nameEncrypted,
         mimeType ?? 'application/octet-stream',
         version.chunk_count,
         version.size_bytes,
@@ -130,17 +140,6 @@ export function VersionHistory({
       onVersionRestored?.()
     } catch {
       showToast({ icon: 'x', title: 'Restore failed', danger: true })
-    }
-  }
-
-  async function handleDelete(version: FileVersion) {
-    if (!confirm(`Delete version ${version.version_number}? This cannot be undone.`)) return
-    try {
-      await deleteVersion(fileId, version.id)
-      showToast({ icon: 'check', title: `Version ${version.version_number} deleted` })
-      fetchVersions()
-    } catch {
-      showToast({ icon: 'x', title: 'Delete failed', danger: true })
     }
   }
 
@@ -174,7 +173,7 @@ export function VersionHistory({
         </div>
 
         <div className="flex-1 overflow-y-auto">
-          {isFree && (
+          {shouldShowVersionHistoryUpsell(planSlug) && (
             <div className="px-xl pt-md">
               <UpgradeNudge
                 surface="version-history"
@@ -208,7 +207,7 @@ export function VersionHistory({
                     key={v.id}
                     role="option"
                     aria-selected={isSelected}
-                    aria-label={`Version ${v.version_number}, ${timeAgo(v.created_at)}, ${formatBytes(v.size_bytes)}`}
+                    aria-label={`Version ${v.version_number}, ${timeAgo(v.created_at)}, ${formatBytes(versionContentBytes(v))}`}
                     className="w-full text-left relative cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-deep focus-visible:ring-inset"
                     style={{
                       padding: '12px 16px 12px 44px',
@@ -243,7 +242,7 @@ export function VersionHistory({
                         v{v.version_number}
                       </span>
                       <span className="text-[11px] text-ink-3">{timeAgo(v.created_at)}</span>
-                      <span className="text-[11px] font-mono text-ink-4">{formatBytes(v.size_bytes)}</span>
+                      <span className="text-[11px] font-mono text-ink-4">{formatBytes(versionContentBytes(v))}</span>
                     </div>
 
                     <div className="text-[11px] text-ink-4 mt-0.5 font-mono">
@@ -272,17 +271,32 @@ export function VersionHistory({
                         >
                           Restore
                         </BBButton>
-                        <BBButton
-                          size="sm"
-                          variant="danger"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleDelete(v)
-                          }}
-                        >
-                          Delete
-                        </BBButton>
+                        {canDeleteVersion(v, currentVersion) && del.pendingId !== v.id && (
+                          <BBButton
+                            size="sm"
+                            variant="danger"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              del.request(v.id)
+                            }}
+                          >
+                            Delete
+                          </BBButton>
+                        )}
                       </div>
+                    )}
+
+                    {isSelected && canDeleteVersion(v, currentVersion) && del.pendingId === v.id && (
+                      <VersionDeleteConfirm
+                        copy={versionDeleteCopy({
+                          versionNumber: v.version_number,
+                          contentBytes: versionContentBytes(v),
+                          countsTowardQuota,
+                        })}
+                        busy={del.busy}
+                        onConfirm={() => void del.confirm(v)}
+                        onCancel={del.cancel}
+                      />
                     )}
                   </div>
                 )

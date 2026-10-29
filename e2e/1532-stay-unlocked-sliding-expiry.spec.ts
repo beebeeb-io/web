@@ -24,7 +24,22 @@ import { signupAndUnlock, uniqueEmail } from './helpers/signup'
  * true here).
  */
 
-const WINDOW_MS = 3_000 // test-shortened sliding window
+// test-shortened sliding window. Both tests below check
+// sessionPersistState() IMMEDIATELY after signupAndUnlock() returns — but the
+// eager-clear timer is armed the moment persistSession() runs, DURING
+// signupAndUnlock (OPAQUE registration + Argon2id key-wrap + the client-side
+// WASM master-key derivation), not from when the test's own assertion
+// happens to run. A window shorter than that setup latency races itself: the
+// timer can fire and null the token before the very first `not.toBeNull()`
+// check ever sees it. Measured on this machine (gate for web PR #85 merge,
+// 2026-09-26, `[TIMING-DIAG]` instrumentation, 3 consecutive runs):
+// signupAndUnlock took 14743ms / 14585ms / 15305ms. signupAndUnlock's own
+// waits (30_000ms for the post-signup navigation + 10_000ms for "All files")
+// already budget up to 40s for this exact step, so 3_000ms was never safe on
+// anything but an idle machine. 45_000ms keeps a >2x margin over the
+// slowest observed run while staying far short of the real 60-minute
+// production default this is a stand-in for.
+const WINDOW_MS = 45_000
 
 // A brand-new account per test: override the [authenticated] project's
 // dev-auto-login storageState (task 1526's pattern, also used by 1528).
@@ -73,6 +88,14 @@ async function sessionPersistState(page: Page): Promise<{ token: string | null; 
 }
 
 test.describe('task 1532: stay-unlocked sliding expiry (real stack, test-shortened window)', () => {
+  // Default project test timeout is 30_000ms (playwright.config.ts) — too
+  // short once WINDOW_MS itself is 45_000ms (see the constant's comment
+  // above). Both tests here do real-stack signup + a real-time wait at
+  // least WINDOW_MS long, so budget generously rather than trade one flake
+  // (racing the eager-clear timer) for another (racing the runner's own
+  // timeout).
+  test.describe.configure({ timeout: 150_000 }) // headroom over WINDOW_MS + slow-signup worst case
+
   test('unlock persists a session; idle past the window → eagerly cleared with no reload; reload asks to unlock again', async ({ page }) => {
     await setTestWindow(page)
     await page.goto('/?nodev=1')

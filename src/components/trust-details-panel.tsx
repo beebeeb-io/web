@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Icon } from '@beebeeb/shared'
 import { BBButton } from '@beebeeb/shared'
 import { formatBytes } from '../lib/format'
+import { fileStorageCountry } from '../lib/storage-regions'
 import { EncryptionProof } from './encryption-proof'
 
 export interface TrustFile {
@@ -9,7 +10,8 @@ export interface TrustFile {
   name: string
   sizeBytes: number
   createdAt: string
-  city?: string
+  /** The country the server reports for the file's pool (task 2050). Never a city. */
+  country?: string
   region?: string
   cipher?: string
 }
@@ -58,9 +60,31 @@ export function TrustDetailsPanel({
     if (!open) setShowProof(false)
   }, [open])
 
+  // Where this file REALLY is (task 1919, by country since task 2050): the
+  // country the server reports for its pool. A drive row built from the sync
+  // stream carries none, so ask the file.
+  const [fetched, setFetched] = useState<{ id: string; country: string | null } | null>(null)
+  const fileId = file?.id
+  const knownCountry = file?.country
+  useEffect(() => {
+    if (!open || !fileId || knownCountry) return
+    let cancelled = false
+    void import('../lib/api')
+      .then(({ getFile }) => getFile(fileId))
+      .then((f) => {
+        if (!cancelled) setFetched({ id: fileId, country: fileStorageCountry(f) })
+      })
+      .catch(() => {
+        if (!cancelled) setFetched({ id: fileId, country: null })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, fileId, knownCountry])
+
   if (!open || !file) return null
 
-  const city = file.city ?? 'Falkenstein'
+  const country = file.country ?? (fetched?.id === file.id ? fetched.country : null)
   const region = file.region ?? 'Europe'
   const cipher = file.cipher ?? 'AES-256-GCM'
 
@@ -88,7 +112,7 @@ export function TrustDetailsPanel({
     { label: 'Key source', value: 'Derived from file ID' },
     { label: 'Encrypted at', value: formatTimestamp(file.createdAt) },
     { label: 'Encrypted by', value: 'This browser' },
-    { label: 'Stored in', value: `${region} · ${city}` },
+    { label: 'Stored in', value: country ?? region },
     { label: 'File size', value: formatBytes(file.sizeBytes), mono: true },
   ]
 

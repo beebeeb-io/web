@@ -1,9 +1,12 @@
 import { describe, expect, test, beforeEach, beforeAll, afterAll, mock } from 'bun:test'
+import { mockModuleScoped } from './helpers/scoped-module-mock'
 
 // Mock the token module so request() doesn't touch localStorage and we control
 // the bearer-token signal directly.
 let mockToken: string | null = null
-mock.module('../packages/shared/src/api/token', () => ({
+// Task 1590: scoped + complete (real exports spread under the overrides,
+// restored after this file).
+await mockModuleScoped('../packages/shared/src/api/token', import.meta.dir, {
   getToken: () => mockToken,
   clearToken: () => {
     mockToken = null
@@ -13,7 +16,7 @@ mock.module('../packages/shared/src/api/token', () => ({
   },
   setTokenStorageKey: () => {},
   registerOnTokenCleared: () => {},
-}))
+})
 
 // Stub fetch to return a controllable response — installed in beforeAll and
 // RESTORED in afterAll so it never leaks into other test files (bun shares
