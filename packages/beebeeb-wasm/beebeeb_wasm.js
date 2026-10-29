@@ -817,6 +817,16 @@ export class WasmDownloadPlanner {
         }
     }
     /**
+     * The ciphertext length of chunk `index` once the first window was accepted, else `null`.
+     * The link's `length` is this number; the caller checks a storage answer against it.
+     * @param {number} index
+     * @returns {number | null}
+     */
+    chunkLength(index) {
+        const ret = wasm.wasmdownloadplanner_chunkLength(this.__wbg_ptr, index);
+        return takeObject(ret);
+    }
+    /**
      * Chunk `index` arrived but did not authenticate when decrypted.
      * @param {number} index
      */
@@ -1156,6 +1166,31 @@ export class WasmSearchIndex {
         }
     }
     /**
+     * Encrypt only the given buckets under the folder key (incremental sync).
+     * @param {Uint8Array} folder_key
+     * @param {Uint32Array} buckets
+     * @returns {any}
+     */
+    encryptBucketsWithFolderKey(folder_key, buckets) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passArray8ToWasm0(folder_key, wasm.__wbindgen_export);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passArray32ToWasm0(buckets, wasm.__wbindgen_export);
+            const len1 = WASM_VECTOR_LEN;
+            wasm.wasmsearchindex_encryptBucketsWithFolderKey(retptr, this.__wbg_ptr, ptr0, len0, ptr1, len1);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
      * Encrypt every non-empty shard page → `[{bucket, page, blob: Uint8Array}]`.
      * @param {Uint8Array} master_key
      * @returns {any}
@@ -1166,6 +1201,28 @@ export class WasmSearchIndex {
             const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
             const len0 = WASM_VECTOR_LEN;
             wasm.wasmsearchindex_encryptShards(retptr, this.__wbg_ptr, ptr0, len0);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Encrypt every non-empty shard page under the folder key.
+     * @param {Uint8Array} folder_key
+     * @returns {any}
+     */
+    encryptShardsWithFolderKey(folder_key) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passArray8ToWasm0(folder_key, wasm.__wbindgen_export);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.wasmsearchindex_encryptShardsWithFolderKey(retptr, this.__wbg_ptr, ptr0, len0);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
             var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
@@ -1211,14 +1268,50 @@ export class WasmSearchIndex {
         }
     }
     /**
-     * Empty index with the given shard count (clamped to ≥ 1).
+     * Reconstruct a shared folder's index from shards sealed under the folder
+     * key (`encryptShardsWithFolderKey` output).
+     * @param {Uint8Array} folder_key
+     * @param {any} shards
+     * @param {number} num_shards
+     * @returns {WasmSearchIndex}
+     */
+    static fromEncryptedShardsWithFolderKey(folder_key, shards, num_shards) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passArray8ToWasm0(folder_key, wasm.__wbindgen_export);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.wasmsearchindex_fromEncryptedShardsWithFolderKey(retptr, ptr0, len0, addHeapObject(shards), num_shards);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return WasmSearchIndex.__wrap(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Empty index with 1–64 shards (zero is clamped to 1).
      * @param {number} num_shards
      */
     constructor(num_shards) {
-        const ret = wasm.wasmsearchindex_new(num_shards);
-        this.__wbg_ptr = ret >>> 0;
-        WasmSearchIndexFinalization.register(this, this.__wbg_ptr, this);
-        return this;
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.wasmsearchindex_new(retptr, num_shards);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            this.__wbg_ptr = r0 >>> 0;
+            WasmSearchIndexFinalization.register(this, this.__wbg_ptr, this);
+            return this;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
     }
     /**
      * Shard count this index uses.
@@ -1750,6 +1843,55 @@ export class WasmSignupCeremony {
 if (Symbol.dispose) WasmSignupCeremony.prototype[Symbol.dispose] = WasmSignupCeremony.prototype.free;
 
 /**
+ * Was the body a storage GET actually delivered the chunk? Same answer shape as
+ * `checkStorageGet`, but decided by the counted bytes: `stored` only when `received` is
+ * exactly `expected`. `Content-Length` is only the head; a truncated stream ends short.
+ * @param {number} received
+ * @param {number} expected
+ * @returns {DirectStorageGet}
+ */
+export function checkStorageBody(received, expected) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.checkStorageBody(retptr, received, expected);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Was a storage GET answer the chunk we asked for? `{ kind: "stored" }` or
+ * `{ kind: "failed", status }`; status `0` means there was no HTTP answer at all.
+ * Only a `200` whose `Content-Length` is exactly `expected` is `stored`.
+ * @param {number} status
+ * @param {number | null | undefined} content_length
+ * @param {number} expected
+ * @returns {DirectStorageGet}
+ */
+export function checkStorageGet(status, content_length, expected) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.checkStorageGet(retptr, status, !isLikeNone(content_length), isLikeNone(content_length) ? 0 : content_length, expected);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * May the client follow this storage link? Throws an `Error` whose `code` is
  * the refusal (`malformed`, `not_https`, `userinfo`, `ip_literal`, `loopback`,
  * `bad_host`, `port`, `host_not_listed`, `bucket_not_listed`, `bad_path`); the
@@ -1823,6 +1965,38 @@ export function classifyDirectAnswer(call, status, content_type, body, retry_aft
             throw takeObject(r1);
         }
         return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Combine a folder link's fragment key `K_c` with an optional 32-byte
+ * passphrase stretch (task 2237b). Pass `undefined`/`null` for a link without
+ * a passphrase. Returns a 32-byte `Uint8Array`: the key that unwraps the
+ * link's sealed folder key. Never send the result or `K_c` to the server.
+ * @param {Uint8Array} k_c
+ * @param {Uint8Array | null} [passphrase_stretch]
+ * @returns {Uint8Array}
+ */
+export function combineFolderLinkKey(k_c, passphrase_stretch) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(k_c, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(passphrase_stretch) ? 0 : passArray8ToWasm0(passphrase_stretch, wasm.__wbindgen_export);
+        var len1 = WASM_VECTOR_LEN;
+        wasm.combineFolderLinkKey(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v3 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v3;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
@@ -2246,6 +2420,68 @@ export function decrypt_thumbnail(file_key, frame) {
 }
 
 /**
+ * Stretch a folder-link passphrase (Argon2id over the canonical NFC form,
+ * token-bound salt). Refuses an empty passphrase. Pass the result to
+ * `combineFolderLinkKey`; never send it to the server.
+ * @param {string} passphrase
+ * @param {string} token
+ * @returns {Uint8Array}
+ */
+export function deriveFolderLinkPassphraseStretch(passphrase, token) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(passphrase, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(token, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.deriveFolderLinkPassphraseStretch(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v3 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v3;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Derive one bucket key of a shared folder's encrypted search index (task
+ * 2237b): `HKDF-SHA256(ikm = folder key, salt = none, info =
+ * "beebeeb-shared-folder-index-v1" || bucket as u32 LE)`. Returns a 32-byte
+ * `Uint8Array`. `bucket` must be below the index's shard count (64 in the
+ * standard layout); values of 64 or more are rejected here.
+ * @param {Uint8Array} folder_key
+ * @param {number} bucket
+ * @returns {Uint8Array}
+ */
+export function deriveSharedFolderIndexKey(folder_key, bucket) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(folder_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.deriveSharedFolderIndexKey(retptr, ptr0, len0, bucket);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * Derive a per-file encryption key from a master key and file ID via
  * HKDF-SHA256. Both `master_key` and `file_id` are raw byte slices.
  * Returns the 32-byte file key as `Uint8Array`.
@@ -2441,9 +2677,11 @@ export function directDownloadGrantsPath(file_id) {
 /**
  * `{ cap_object_download_v1, cap_object_upload_v1, capabilities_header,
  * discovery_path, max_window, default_window, chunk_overhead,
+ * max_discovery_body_bytes, max_grant_body_bytes, max_chunk_body_bytes,
  * storage_connect_timeout_ms, storage_get_idle_ms, discovery_timeout_ms,
  * api_call_timeout_ms, background_put_resource_timeout_ms }`: the contract's
- * names and numbers, and the time bounds every client applies, so no client re-types them.
+ * names and numbers, the response caps and the time bounds every client applies,
+ * so no client re-types them.
  * @returns {any}
  */
 export function directTransferConstants() {
@@ -2972,6 +3210,30 @@ export function list_tar_entries(data) {
 }
 
 /**
+ * The ciphertext bytes a process of `class` (`"native"`, `"browser"`, `"mobile_app"`,
+ * `"mobile_extension"`) may hold at once. Throws `class_invalid` for any other string.
+ * @param {string} _class
+ * @returns {number}
+ */
+export function maxInFlightBytes(_class) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(_class, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.maxInFlightBytes(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getFloat64(retptr + 8 * 0, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        return r0;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * Finish OPAQUE client login. Returns `{ message: Uint8Array, session_key: Uint8Array, export_key: Uint8Array }`.
  *
  * `ksf_version` selects the KSF the account's password file was registered
@@ -3085,6 +3347,48 @@ export function opaque_registration_start(password) {
 }
 
 /**
+ * L9 (task 2255): open a LEGACY invite owner copy and return its key only when
+ * core proves it over the folder's rows, in ONE call. `rows` are the server's
+ * `GET /shares/invites/{id}/folder-keys` rows verbatim:
+ * `[{ file_id: string, encrypted_file_key: string }]`, the key in standard base64.
+ * They are read lazily, and core examines at most 64 distinct ids. Returns
+ * `undefined` when the copy does not open, holds text, or is not proven; the
+ * unproven candidate never reaches JS. Attack B (task 2255) is a named residual.
+ * @param {Uint8Array} master_key
+ * @param {string} folder_id
+ * @param {Uint8Array} legacy_copy
+ * @param {any} rows
+ * @returns {Uint8Array | undefined}
+ */
+export function openLegacyInviteOwnerCopy(master_key, folder_id, legacy_copy, rows) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(folder_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(legacy_copy, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.openLegacyInviteOwnerCopy(retptr, ptr0, len0, ptr1, len1, ptr2, len2, addHeapObject(rows));
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        let v4;
+        if (r0 !== 0) {
+            v4 = getArrayU8FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        }
+        return v4;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * Open a sealed request upload (owner decrypt path). Recovers the content key.
  * `r_priv` and `e_pub` are 32 bytes; `file_id` is arbitrary bytes. Returns 32-byte `Uint8Array`.
  * @param {Uint8Array} r_priv
@@ -3115,6 +3419,61 @@ export function open_request_upload(r_priv, e_pub, file_id, wrapped_key) {
         var v5 = getArrayU8FromWasm0(r0, r1).slice();
         wasm.__wbindgen_export4(r0, r1 * 1, 1);
         return v5;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * When `wire_bytes` received since `start_ms` at `kbps` KiB/s lets the next storage
+ * request start. The three counts cross as JS numbers (`f64`), like every other count.
+ * `-Infinity` (`i64::MIN` in core) means there is no ceiling: a real deadline is a
+ * finite number, so a caller only has to test `Number.isFinite`. Desktop's formula,
+ * unchanged in value.
+ * @param {number} start_ms
+ * @param {number} wire_bytes
+ * @param {number} kbps
+ * @returns {number}
+ */
+export function pacedUntilMs(start_ms, wire_bytes, kbps) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.pacedUntilMs(retptr, start_ms, wire_bytes, kbps);
+        var r0 = getDataViewMemory0().getFloat64(retptr + 8 * 0, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        return r0;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * May this client use the direct transport for `direction`? True only when discovery
+ * offers it AND has at least one storage pair AND every pair in `discovery.storage_buckets`
+ * is in `pairs` (an array of `{host, bucket}`). Hosts compare ASCII case-insensitively,
+ * buckets exactly.
+ * @param {any} discovery
+ * @param {string} direction
+ * @param {any} pairs
+ * @returns {boolean}
+ */
+export function pairsAllowed(discovery, direction, pairs) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(direction, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.pairsAllowed(retptr, addHeapObject(discovery), ptr0, len0, addHeapObject(pairs));
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return r0 !== 0;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
@@ -3688,6 +4047,202 @@ export function transfer_sas_to_words(sas_bytes) {
 }
 
 /**
+ * @param {Uint8Array} folder_key
+ * @param {string} shared_folder_id
+ * @param {string} item_id
+ * @param {number} kind
+ * @param {Uint8Array} wrapped
+ * @returns {Uint8Array}
+ */
+export function unwrapFolderChild(folder_key, shared_folder_id, item_id, kind, wrapped) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(folder_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(shared_folder_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(item_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passArray8ToWasm0(wrapped, wasm.__wbindgen_export);
+        const len3 = WASM_VECTOR_LEN;
+        wasm.unwrapFolderChild(retptr, ptr0, len0, ptr1, len1, ptr2, len2, kind, ptr3, len3);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v5 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v5;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Open an L6 custody record. Never accepts a legacy (unbound) owner copy.
+ * @param {Uint8Array} master_key
+ * @param {string} folder_id
+ * @param {Uint8Array} wrapped
+ * @returns {Uint8Array}
+ */
+export function unwrapFolderCustody(master_key, folder_id, wrapped) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(folder_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(wrapped, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.unwrapFolderCustody(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v4 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v4;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Open a purpose-bound invite owner copy; never performs a legacy fallback.
+ * @param {Uint8Array} master_key
+ * @param {string} folder_id
+ * @param {Uint8Array} wrapped
+ * @returns {Uint8Array}
+ */
+export function unwrapInviteOwnerCopy(master_key, folder_id, wrapped) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(folder_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(wrapped, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.unwrapInviteOwnerCopy(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v4 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v4;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Open a link's owner copy of K_c. K_c is the deliberate export: JS puts it
+ * in the link fragment. The master key never leaves the caller.
+ * @param {Uint8Array} master_key
+ * @param {string} share_id
+ * @param {Uint8Array} wrapped
+ * @returns {Uint8Array}
+ */
+export function unwrapLinkOwnerKey(master_key, share_id, wrapped) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(share_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(wrapped, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.unwrapLinkOwnerKey(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v4 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v4;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Open a link's owner copy of its token.
+ * @param {Uint8Array} master_key
+ * @param {string} share_id
+ * @param {Uint8Array} wrapped
+ * @returns {Uint8Array}
+ */
+export function unwrapLinkOwnerToken(master_key, share_id, wrapped) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(share_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(wrapped, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.unwrapLinkOwnerToken(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v4 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v4;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Open only an L8 owner file-key record, requiring exactly 32 plaintext bytes.
+ * @param {Uint8Array} master_key
+ * @param {string} item_id
+ * @param {Uint8Array} wrapped
+ * @returns {Uint8Array}
+ */
+export function unwrapOwnerFileKey(master_key, item_id, wrapped) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(item_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(wrapped, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.unwrapOwnerFileKey(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v4 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v4;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * Unwrap a request's X25519 private key. Returns 32-byte `Uint8Array`.
  * @param {Uint8Array} master_key
  * @param {Uint8Array} request_id
@@ -3717,6 +4272,205 @@ export function unwrap_request_private(master_key, request_id, wrapped, nonce) {
         var v5 = getArrayU8FromWasm0(r0, r1).slice();
         wasm.__wbindgen_export4(r0, r1 * 1, 1);
         return v5;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * L7 wire = nonce(12) || ciphertext+tag(48); UUID strings bind raw UUID bytes.
+ * @param {Uint8Array} folder_key
+ * @param {string} shared_folder_id
+ * @param {string} item_id
+ * @param {number} kind
+ * @param {Uint8Array} child_key
+ * @returns {Uint8Array}
+ */
+export function wrapFolderChild(folder_key, shared_folder_id, item_id, kind, child_key) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(folder_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(shared_folder_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(item_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passArray8ToWasm0(child_key, wasm.__wbindgen_export);
+        const len3 = WASM_VECTOR_LEN;
+        wasm.wrapFolderChild(retptr, ptr0, len0, ptr1, len1, ptr2, len2, kind, ptr3, len3);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v5 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v5;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Seal a shared folder's key to the owner's master key (L6 custody record).
+ * @param {Uint8Array} master_key
+ * @param {string} folder_id
+ * @param {Uint8Array} folder_key
+ * @returns {Uint8Array}
+ */
+export function wrapFolderCustody(master_key, folder_id, folder_key) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(folder_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(folder_key, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.wrapFolderCustody(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v4 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v4;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Seal a purpose-bound invite owner copy (L9).
+ * @param {Uint8Array} master_key
+ * @param {string} folder_id
+ * @param {Uint8Array} folder_key
+ * @returns {Uint8Array}
+ */
+export function wrapInviteOwnerCopy(master_key, folder_id, folder_key) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(folder_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(folder_key, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.wrapInviteOwnerCopy(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v4 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v4;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Seal a folder link's fragment key K_c to the owner's master key, bound to
+ * the link's share id (so the owner can copy the link again later).
+ * @param {Uint8Array} master_key
+ * @param {string} share_id
+ * @param {Uint8Array} link_key
+ * @returns {Uint8Array}
+ */
+export function wrapLinkOwnerKey(master_key, share_id, link_key) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(share_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(link_key, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.wrapLinkOwnerKey(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v4 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v4;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Seal a folder link's raw token to the owner's master key, bound to the
+ * link's share id.
+ * @param {Uint8Array} master_key
+ * @param {string} share_id
+ * @param {Uint8Array} token
+ * @returns {Uint8Array}
+ */
+export function wrapLinkOwnerToken(master_key, share_id, token) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(share_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(token, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.wrapLinkOwnerToken(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v4 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v4;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Seal an owner file-key adoption record with its own purpose key and AAD (L8).
+ * Item IDs use the exact UTF-8 string bytes used by the L6 exports.
+ * @param {Uint8Array} master_key
+ * @param {string} item_id
+ * @param {Uint8Array} file_key
+ * @returns {Uint8Array}
+ */
+export function wrapOwnerFileKey(master_key, item_id, file_key) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(master_key, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(item_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(file_key, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.wrapOwnerFileKey(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v4 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v4;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
@@ -3971,6 +4725,10 @@ function __wbg_get_imports() {
             const ret = new Uint8Array(getObject(arg0));
             return addHeapObject(ret);
         },
+        __wbg_new_34d45cc8e36aaead: function() {
+            const ret = new Map();
+            return addHeapObject(ret);
+        },
         __wbg_new_5e360d2ff7b9e1c3: function(arg0, arg1) {
             const ret = new Error(getStringFromWasm0(arg0, arg1));
             return addHeapObject(ret);
@@ -4034,6 +4792,10 @@ function __wbg_get_imports() {
         },
         __wbg_set_6be42768c690e380: function(arg0, arg1, arg2) {
             getObject(arg0)[takeObject(arg1)] = takeObject(arg2);
+        },
+        __wbg_set_fde2cec06c23692b: function(arg0, arg1, arg2) {
+            const ret = getObject(arg0).set(getObject(arg1), getObject(arg2));
+            return addHeapObject(ret);
         },
         __wbg_static_accessor_GLOBAL_8cfadc87a297ca02: function() {
             const ret = typeof global === 'undefined' ? null : global;
