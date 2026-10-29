@@ -1321,8 +1321,9 @@ function openUpgrade(plan: string) {
 
   /**
    * Native payment-method update (task 0925). The server returns a hosted card
-   * re-auth checkout URL; for a legacy account it returns the billing page URL.
-   * Either way we just redirect. No provider-hosted "manage billing" portal is
+   * re-auth checkout URL and we just redirect to it. It answers 400 "billing not
+   * configured" only when no payment provider is configured, and 404 when there
+   * is no active subscription. No provider-hosted "manage billing" portal is
    * surfaced — everything else is native on this page.
    * `portalLoading` keeps the redirect spinner; the intent is now "update payment
    * method", not "open the portal".

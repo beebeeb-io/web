@@ -20,8 +20,11 @@ import {
  * This is the ONLY source of truth for the Email column. It mirrors the
  * senders that exist in beebeeb-api's EmailService and are called on main:
  *   - password_changed -> send_password_changed (routes/password.rs)
- *   - payment_failed   -> in-app only; the legacy billing sender was retired
- *   - plan_expiring    -> in-app only; the legacy billing senders were retired
+ *   - payment_failed   -> dunning flow: send_billing_confirm_payment /
+ *                         send_billing_grace_reminder (billing_lifecycle.rs)
+ * plan_expiring is not here: no server sender emails BEFORE a plan or trial
+ * expires any more. The Stripe-only send_trial_will_end and send_card_expiring
+ * were deleted, and the remaining trial emails fire only after a lapse.
  * Every other event has no email sender (new sign-ins are push-only via
  * push_delivery::notify_new_login; 2FA and recovery-phrase events send
  * nothing), and the server never reads a per-type `email` preference. So the
@@ -31,7 +34,6 @@ import {
 const EMAILED_ALWAYS: ReadonlySet<NotificationType> = new Set([
   'password_changed',
   'payment_failed',
-  'plan_expiring',
 ])
 
 /** Default channel state for a notification type. */
@@ -169,7 +171,7 @@ const SECTIONS: NotificationSection[] = [
   {
     title: 'Account',
     icon: 'settings',
-    note: 'Payment and plan emails are always sent.',
+    note: 'Payment emails are always sent.',
     rows: [
       {
         key: 'payment_failed',

@@ -65,7 +65,7 @@ const faqItems: FaqItem[] = [
   },
   {
     q: 'Which payment methods do you support?',
-    a: 'Card or iDEAL. Renewals are collected by SEPA Direct Debit from the same bank account. Business plans can also be invoiced. All prices are in EUR, billed in EUR — no currency conversion surprises. VAT is handled automatically with reverse charge for EU businesses.',
+    a: 'Card or iDEAL. If you pay with iDEAL, renewals are collected by SEPA Direct Debit from the same bank account. Business plans can also be invoiced. All prices are in EUR, billed in EUR — no currency conversion surprises. VAT is handled automatically with reverse charge for EU businesses.',
   },
   {
     q: 'Is there a free trial?',

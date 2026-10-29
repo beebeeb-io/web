@@ -2860,10 +2860,11 @@ export async function getPaymentMethod(): Promise<PaymentMethod> {
 }
 
 /**
- * Start a native payment-method update (task 0925). The server returns a hosted
- * card re-auth checkout URL (or, for a legacy account, the billing page URL).
- * The client just redirects the browser to `url`. 404 if there is no active
- * subscription.
+ * Start a native payment-method update (task 0925). The server's
+ * `/payment-method/update` returns a hosted card re-auth checkout URL; the
+ * client just redirects the browser to `url`. It answers 400 "billing not
+ * configured" only when no payment provider is configured, and 404 when there
+ * is no active subscription.
  */
 export async function updatePaymentMethod(): Promise<{ url: string }> {
   return request<{ url: string }>('/api/v1/billing/payment-method/update', { method: 'POST' })
