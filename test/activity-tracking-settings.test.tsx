@@ -2,7 +2,7 @@
 import { describe, expect, test } from 'bun:test'
 import { createElement, Fragment } from 'react'
 import { readFileSync } from 'node:fs'
-import ts from 'typescript'
+import ts from 'typescript-api'
 
 const source = readFileSync(new URL('../src/components/settings/activity-tracking.tsx', import.meta.url), 'utf8')
 const ast = ts.createSourceFile('tracking.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
-import ts from 'typescript'
+import ts from 'typescript-api'
 
 const read = (path: string) => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
 const profile = read('pages/settings/profile.tsx')
